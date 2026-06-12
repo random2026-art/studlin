@@ -4,7 +4,7 @@ import type { NextRequest } from 'next/server'
 const PROTECTED = ['/dashboard', '/essays', '/flashcards', '/focus', '/calendar', '/tutor', '/music', '/onboarding']
 const AUTH_ROUTES = ['/sign-in', '/sign-up']
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
   const hasSession = request.cookies.has('studlin-session')
 
