@@ -1,0 +1,73 @@
+@import "tailwindcss";
+
+@theme {
+  /* Brand colors */
+  --color-ink: #0E1F18;
+  --color-forest: #14342A;
+  --color-forest-deep: #0B201A;
+  --color-forest-mid: #1B4536;
+  --color-cream: #F6F1E6;
+  --color-cream-2: #EDE6D4;
+  --color-paper: #FBF7EE;
+  --color-lime: #C8FF5A;
+  --color-lime-deep: #9FE235;
+  --color-peach: #FFD7B5;
+  --color-butter: #FFE99A;
+  --color-sky: #BFE3FF;
+  --color-mint: #C4F0D8;
+  --color-lilac: #E2D0FF;
+  --color-rose: #FFC9D2;
+
+  /* Font families — resolved from next/font CSS variables */
+  --font-hand: var(--font-caveat);
+  --font-serif-display: var(--font-instrument-serif);
+  --font-mono: var(--font-jetbrains-mono);
+  --font-sans: var(--font-geist);
+}
+
+:root {
+  --shadow-card: 0 1px 0 rgba(255,255,255,0.6) inset, 0 30px 60px -30px rgba(11,32,26,0.35), 0 8px 20px -10px rgba(11,32,26,0.18);
+  --shadow-soft: 0 18px 40px -20px rgba(11,32,26,0.25);
+  --line: rgba(14,31,24,0.12);
+  --line-dark: rgba(246,241,230,0.14);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; }
+
+body {
+  background-color: #FBF7EE;
+  color: #0E1F18;
+  font-family: var(--font-geist), -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+/* Reveal animation */
+.reveal {
+  opacity: 0;
+  transform: translateY(28px);
+  transition: opacity 0.8s ease, transform 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.reveal.in {
+  opacity: 1;
+  transform: none;
+}
+
+/* Pulse dot */
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.85); }
+}
+.animate-pulse-dot {
+  animation: pulse 1.6s infinite;
+}
+
+/* Marquee scroll */
+@keyframes marquee {
+  to { transform: translateX(-50%); }
+}
+.animate-marquee {
+  animation: marquee 40s linear infinite;
+}
