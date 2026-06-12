@@ -3,376 +3,300 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Studlin — Your Study OS</title>
+<title>Studlin · The study OS</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="landing.css">
 </head>
 <body>
 
-<!-- ============ TOP MARQUEE ============ -->
-<div class="topbar">
-  <span>🌿 Finals season is here. Get <strong>30% off</strong> Studlin Pro</span>
-  <span class="pill">CRAM30</span>
-  <a href="#pricing" class="under">Claim deal →</a>
-</div>
-
 <!-- ============ NAV ============ -->
-<nav class="nav">
+<nav class="nav" id="nav">
   <div class="row">
-    <a href="#" class="brand">
-      <span class="glyph">S</span>
-      <span>Studlin</span>
-    </a>
+    <a href="#" class="brand"><img src="studlin-icon.png" alt="Studlin"><span>Studlin</span></a>
     <div class="nav-links">
       <a href="#features">Features</a>
-      <a href="#workflow">How it works</a>
-      <a href="#students">For Students</a>
+      <a href="#how">How it works</a>
+      <a href="#showcase">The app</a>
+      <a href="#loved">Students</a>
       <a href="#pricing">Pricing</a>
       <a href="#faq">FAQ</a>
     </div>
     <div class="nav-cta">
-      <a href="#" class="btn btn-ghost">Sign in</a>
-      <a href="#pricing" class="btn btn-lime">Start free →</a>
+      <a href="/sign-in" class="btn btn-ghost">Sign in</a>
+      <a href="/sign-up" class="btn btn-lime magnetic">Start free <span class="ar">→</span></a>
     </div>
   </div>
 </nav>
 
 <!-- ============ HERO ============ -->
-<section class="hero">
-  <div class="grid-bg"></div>
+<header class="hero">
+  <div class="aurora"><i class="a1"></i><i class="a2"></i><i class="a3"></i></div>
+  <div class="hero-grid"></div>
 
-  <!-- Floating chips -->
-  <div class="chip chip-peach float-1"><span class="ic">✍️</span> Essay Writer</div>
-  <div class="chip chip-sky float-2"><span class="ic">🃏</span> Flashcards</div>
-  <div class="chip chip-butter float-3"><span class="ic">⏱</span> Focus Timer</div>
-  <div class="chip chip-mint float-4"><span class="ic">📊</span> Insights</div>
-  <div class="chip chip-lilac float-5"><span class="ic">🔥</span> 12-day streak</div>
-  <div class="chip chip-rose float-6"><span class="ic">🎵</span> Focus Music</div>
-
-  <div class="container hero-inner">
-    <div class="eyebrow"><span class="dot"></span> Built for students who don't have time to waste</div>
-    <h1>
-      Your entire <span class="font-serif" style="font-style:italic;color:#FFE99A">study life,</span><br>
-      finally <span class="stroke"><span class="inner">in one place.</span></span>
-    </h1>
-    <p class="sub">Writing tools, smart scheduling, AI tutoring, flashcards, focus mode and gamified streaks — all in one calm command center built for how you actually study.</p>
-    <div class="hero-ctas">
-      <a href="#pricing" class="btn btn-lime btn-lg">Start free — 7 days of Pro →</a>
-      <a href="#workflow" class="btn btn-ghost btn-lg">See how it works</a>
+  <!-- floating fragments — mini live UI -->
+  <div class="frag f1" data-depth="0.04"><div class="fin">
+    <div class="fl">Day streak</div><div class="fv">12</div>
+    <div class="fdays"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></div>
+  </div></div>
+  <div class="frag f2" data-depth="-0.05"><div class="fin">
+    <div class="fl"><span class="livepip"></span>Focus session</div><div class="fv mono-num" id="fragTimer">24:59</div>
+    <div class="fbar"><i id="fragBar"></i></div>
+  </div></div>
+  <div class="frag f3 fcardwrap" data-depth="0.06"><div class="fin">
+    <div class="fcard3d" id="heroCard">
+      <div class="face front"><div class="fl">Flashcard · Bio 201</div><div class="fq">What carries oxygen in blood?</div><div class="fhint">tap to flip</div></div>
+      <div class="face back"><div class="fl">Answer</div><div class="fq">Hemoglobin</div><div class="fhint good">+1 mastered</div></div>
     </div>
-    <div class="hero-meta">
-      <div class="stack">
-        <div class="av" style="background:linear-gradient(135deg,#FFD7B5,#FFC9D2)"></div>
-        <div class="av" style="background:linear-gradient(135deg,#BFE3FF,#E2D0FF)"></div>
-        <div class="av" style="background:linear-gradient(135deg,#C4F0D8,#FFE99A)"></div>
-        <div class="av" style="background:linear-gradient(135deg,#E2D0FF,#FFD7B5)"></div>
+  </div></div>
+  <div class="frag f4" data-depth="-0.035"><div class="fin">
+    <div class="fl">Grade avg</div>
+    <div class="frow"><div class="fv">A−</div><div class="fbars"><b style="height:40%"></b><b style="height:55%"></b><b style="height:48%"></b><b style="height:70%"></b><b style="height:88%"></b></div></div>
+  </div></div>
+  <div class="frag f5" data-depth="0.045"><div class="fin">
+    <div class="fl">AI Tutor</div>
+    <div class="fchat">Explain entropy like I'm 12</div>
+    <div class="fchat ai">Imagine your room getting messy on its own…</div>
+  </div></div>
+  <div class="frag f6" data-depth="-0.04"><div class="fin">
+    <div class="fl">Up next</div>
+    <div class="fevent"><span class="edot"></span><div><div class="fq sm">Bio midterm review</div><div class="fhint">Fri · 9:00 AM</div></div></div>
+  </div></div>
+
+  <div class="wrap hero-inner">
+    <span class="tag" style="opacity:1;transform:none;"><span class="pip"></span> One workspace · every subject</span>
+    <h1>
+      <span class="line"><span class="reveal-up">Everything you</span></span>
+      <span class="line"><span class="reveal-up">study, in one</span></span>
+      <span class="line"><span class="reveal-up"><span class="hl-wrap"><span class="rotor"><span class="col"><span>place.</span><span>flow.</span><span>app.</span><span>tab.</span><span>OS.</span><span>place.</span></span></span><svg class="hl-ink" viewBox="0 0 220 22" preserveAspectRatio="none" aria-hidden="true"><path d="M6 14 C 60 6, 150 4, 214 11" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round"></path></svg></span></span></span>
+    </h1>
+    <p class="sub">Writing tools, AI tutoring, flashcards, smart scheduling, focus mode and gamified streaks, fused into one calm command center built for how you actually study.</p>
+    <div class="hero-ctas">
+      <a href="/sign-up" class="btn btn-lime btn-lg magnetic">Start free</a>
+      <a href="#showcase" class="btn btn-ghost btn-lg">See it move</a>
+    </div>
+    <div class="hero-trust">
+      <div class="avstack">
+        <div class="av" style="background:linear-gradient(135deg,#E9B98C,#FFC9D2)"></div>
+        <div class="av" style="background:linear-gradient(135deg,#8FBEDB,#B6A4D9)"></div>
+        <div class="av" style="background:linear-gradient(135deg,#8FCBA9,#FFE99A)"></div>
+        <div class="av" style="background:linear-gradient(135deg,#B6A4D9,#E9B98C)"></div>
       </div>
-      <span>Loved by 24,000+ students at 600+ universities</span>
+      <div class="txt">Loved by <b>24,000+ students</b> at <b>600+ universities</b></div>
+    </div>
+  </div>
+
+  <div class="scroll-cue">Scroll<div class="ln"></div></div>
+</header>
+
+<!-- ============ REPLACES MARQUEE ============ -->
+<section class="strip">
+  <div class="lab">One subscription · replaces your entire stack</div>
+  <div class="marq">
+    <div class="marq-track" id="replaceMarq">
+      <span class="marq-item">Writing Suite <span class="x">×</span></span>
+      <span class="marq-item">Flashcard Generator <span class="x">×</span></span>
+      <span class="marq-item">AI Tutor <span class="x">×</span></span>
+      <span class="marq-item">Focus Timer <span class="x">×</span></span>
+      <span class="marq-item">Smart Calendar <span class="x">×</span></span>
+      <span class="marq-item">Grade Tracker <span class="x">×</span></span>
+      <span class="marq-item">Study Planner <span class="x">×</span></span>
     </div>
   </div>
 </section>
 
-<!-- ============ STAT TICKER ============ -->
-<section class="product-section" id="features" style="padding-top:80px;padding-bottom:60px;">
-  <div class="container">
-    <div class="head-row center">
-      <span class="section-eyebrow">// Workflow</span>
-      <h2 class="display">A workspace that <span class="accent">actually</span> studies <em class="font-serif">with</em> you.</h2>
-      <p class="lead" style="text-align:center;margin:0 auto;">No more 14 tabs. No more lost notes. No more "where did I put that flashcard set?". Studlin is the home base for everything you're learning.</p>
-    </div>
-
-    <!-- Product mockup -->
-    <div class="app-window reveal">
-      <div class="app-bar">
-        <div class="dots"><span></span><span></span><span></span></div>
-        <div class="url">studlin.app/dashboard</div>
-        <div style="width:48px;"></div>
-      </div>
-      <div class="app-body">
-        <div class="app-side">
-          <div class="side-section">Workspace</div>
-          <div class="side-item active"><svg class="side-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg> Dashboard</div>
-          <div class="side-item"><svg class="side-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h12l4 4v12H4z"/><path d="M8 12h8M8 16h8M8 8h4"/></svg> Essays <span class="badge">3</span></div>
-          <div class="side-item"><svg class="side-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 6l9 7 9-7"/></svg> Flashcards</div>
-          <div class="side-item"><svg class="side-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg> Focus Timer</div>
-          <div class="side-item"><svg class="side-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/></svg> Calendar</div>
-          <div class="side-section">Tools</div>
-          <div class="side-item"><svg class="side-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l2.4 6.5L21 11l-6.6 2.5L12 20l-2.4-6.5L3 11l6.6-2.5z"/></svg> AI Tutor</div>
-          <div class="side-item"><svg class="side-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg> AI Detector</div>
-          <div class="side-item"><svg class="side-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h10"/></svg> Note Taker</div>
-          <div class="side-item"><svg class="side-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12c4-8 14-8 18 0M12 8v8M9 12h6"/></svg> Music</div>
-        </div>
-        <div class="app-main">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
-            <div>
-              <div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:rgba(14,31,24,0.5);margin-bottom:6px;">Tuesday, May 6</div>
-              <h3 style="font-family:'Caveat',cursive;font-size:42px;margin:0;line-height:1;color:var(--forest);">Hey Maya — let's lock in.</h3>
-            </div>
-            <div style="display:flex;gap:8px;align-items:center;">
-              <div style="background:var(--lime);color:var(--ink);padding:6px 12px;border-radius:999px;font-size:12px;font-weight:600;">🔥 12-day streak</div>
-              <div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--peach),var(--rose));"></div>
-            </div>
-          </div>
-
-          <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:16px;">
-            <!-- Today's plan -->
-            <div style="background:white;border:1px solid var(--line);border-radius:18px;padding:20px;">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-                <div style="font-weight:600;font-size:14px;">Today's plan</div>
-                <div style="font-size:12px;color:rgba(14,31,24,0.5);">3 of 5 done</div>
-              </div>
-              <div style="display:flex;flex-direction:column;gap:10px;">
-                <div style="display:flex;align-items:center;gap:12px;padding:10px;background:var(--mint);border-radius:12px;">
-                  <div style="width:18px;height:18px;border-radius:50%;background:var(--forest);color:var(--lime);display:grid;place-items:center;font-size:11px;">✓</div>
-                  <div style="flex:1;font-size:13px;text-decoration:line-through;opacity:0.6;">Bio: Cell respiration flashcards · 30 min</div>
-                </div>
-                <div style="display:flex;align-items:center;gap:12px;padding:10px;background:var(--mint);border-radius:12px;">
-                  <div style="width:18px;height:18px;border-radius:50%;background:var(--forest);color:var(--lime);display:grid;place-items:center;font-size:11px;">✓</div>
-                  <div style="flex:1;font-size:13px;text-decoration:line-through;opacity:0.6;">Read Ch. 4 — Macbeth Act III</div>
-                </div>
-                <div style="display:flex;align-items:center;gap:12px;padding:12px;background:var(--butter);border-radius:12px;border:2px solid var(--lime-deep);">
-                  <div style="width:18px;height:18px;border-radius:50%;border:2px solid var(--ink);"></div>
-                  <div style="flex:1;font-size:13.5px;font-weight:600;">Draft essay: <em>"Power &amp; corruption"</em> · 45 min</div>
-                  <div style="background:var(--ink);color:var(--cream);padding:3px 9px;border-radius:6px;font-size:10.5px;font-weight:700;">NOW</div>
-                </div>
-                <div style="display:flex;align-items:center;gap:12px;padding:10px;">
-                  <div style="width:18px;height:18px;border-radius:50%;border:2px solid rgba(14,31,24,0.3);"></div>
-                  <div style="flex:1;font-size:13px;">Calc: practice integrals · 25 min</div>
-                </div>
-                <div style="display:flex;align-items:center;gap:12px;padding:10px;">
-                  <div style="width:18px;height:18px;border-radius:50%;border:2px solid rgba(14,31,24,0.3);"></div>
-                  <div style="flex:1;font-size:13px;">Spanish: review subjunctive · 20 min</div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Focus + insights -->
-            <div style="display:flex;flex-direction:column;gap:16px;">
-              <div style="background:var(--forest);color:var(--cream);border-radius:18px;padding:20px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-                  <div style="font-size:12px;opacity:0.7;font-family:'JetBrains Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;">Focus session</div>
-                  <div style="width:8px;height:8px;border-radius:50%;background:var(--lime);box-shadow:0 0 10px var(--lime);"></div>
-                </div>
-                <div style="font-family:'Caveat',cursive;font-size:64px;line-height:0.9;font-weight:600;color:var(--lime);">22:14</div>
-                <div style="font-size:12px;opacity:0.7;margin:6px 0 14px;">Pomodoro · break in 22 min</div>
-                <div style="height:6px;background:rgba(246,241,230,0.15);border-radius:99px;overflow:hidden;">
-                  <div style="width:55%;height:100%;background:var(--lime);"></div>
-                </div>
-              </div>
-              <div style="background:white;border:1px solid var(--line);border-radius:18px;padding:18px;">
-                <div style="font-size:12px;color:rgba(14,31,24,0.5);font-family:'JetBrains Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:12px;">Week so far</div>
-                <div style="display:flex;align-items:flex-end;gap:6px;height:50px;">
-                  <div style="flex:1;background:var(--lime);border-radius:4px 4px 0 0;height:40%;"></div>
-                  <div style="flex:1;background:var(--lime);border-radius:4px 4px 0 0;height:65%;"></div>
-                  <div style="flex:1;background:var(--lime);border-radius:4px 4px 0 0;height:55%;"></div>
-                  <div style="flex:1;background:var(--lime-deep);border-radius:4px 4px 0 0;height:90%;"></div>
-                  <div style="flex:1;background:var(--lime);border-radius:4px 4px 0 0;height:70%;"></div>
-                  <div style="flex:1;background:rgba(14,31,24,0.1);border-radius:4px 4px 0 0;height:30%;"></div>
-                  <div style="flex:1;background:rgba(14,31,24,0.1);border-radius:4px 4px 0 0;height:0;"></div>
-                </div>
-                <div style="display:flex;justify-content:space-between;font-size:10px;margin-top:6px;color:rgba(14,31,24,0.4);font-family:'JetBrains Mono',monospace;">
-                  <span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="stat-ticker reveal">
+<!-- ============ STATS ============ -->
+<section class="sec" style="padding-bottom:0;">
+  <div class="wrap">
+    <div class="stats reveal">
       <div class="stat"><div class="n" data-count="24000">0</div><div class="l">Active students</div></div>
-      <div class="stat"><div class="n" data-count="1.4" data-suffix="M">0</div><div class="l">Flashcards mastered</div></div>
+      <div class="stat"><div class="n" data-count="1.4" data-suffix="M"><span class="u">0</span></div><div class="l">Flashcards mastered</div></div>
       <div class="stat"><div class="n" data-count="92" data-suffix="%">0</div><div class="l">Higher grade avg</div></div>
       <div class="stat"><div class="n" data-count="38" data-suffix="K">0</div><div class="l">Essays polished</div></div>
     </div>
   </div>
 </section>
 
-<!-- ============ FEATURES — bento ============ -->
-<section class="product-section" id="workflow" style="padding-top:60px;">
-  <div class="container">
-    <div class="head-row">
+<!-- ============ FEATURES BENTO ============ -->
+<section class="sec" id="features">
+  <div class="wrap">
+    <div class="head">
       <div>
-        <span class="section-eyebrow">// Everything you need</span>
-        <h2 class="display">Eight tools.<br>One <span class="underline">tab.<svg class="squiggle" viewBox="0 0 200 12" preserveAspectRatio="none"><path d="M2 8 Q 50 -2, 100 6 T 198 4"/></svg></span></h2>
+        <span class="sec-eyebrow">// Everything you need</span>
+        <h2>Eight tools.<br><span class="dim">One tab.</span></h2>
       </div>
-      <p class="lead">Stop paying for Grammarly, Quizlet, Notion, ChatGPT, Forest, and a calendar. Studlin replaces all of them — and they actually talk to each other.</p>
+      <p class="lead">Stop paying for six apps that ignore each other. Studlin replaces the whole stack, and every tool knows what the others are doing.</p>
     </div>
 
-    <div class="features-grid">
-      <!-- AI Writing Suite -->
-      <div class="feat col-7 dark reveal">
-        <div class="label">// 01 · AI Writing Suite</div>
-        <h3>Write, polish, humanize, cite — without leaving the page.</h3>
-        <p>Built-in grammar checker, AI detector, plagiarism checker, citation generator, and word counter. The full writing stack, on every doc.</p>
-        <div class="feat-canvas">
-          <div style="background:var(--forest-deep);border-radius:14px;padding:18px;font-size:13px;line-height:1.6;color:rgba(246,241,230,0.85);position:relative;">
-            <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--lime);margin-bottom:10px;letter-spacing:0.1em;">DRAFT · ESSAY · 1,247 WORDS</div>
-            <p style="margin:0;">In <em>Macbeth</em>, Shakespeare illustrates how unchecked <span style="background:rgba(255,233,154,0.25);border-bottom:2px solid var(--butter);padding:1px 2px;">ambition corodes</span> moral judgment. The protagonist's <span style="background:rgba(196,240,216,0.25);border-bottom:2px solid var(--mint);padding:1px 2px;">descent into tyranny</span> is foreshadowed in Act I…</p>
-            <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">
-              <div style="background:var(--butter);color:var(--ink);padding:4px 10px;border-radius:999px;font-size:11px;font-weight:600;">✏️ Spelling: corrodes</div>
-              <div style="background:var(--mint);color:var(--ink);padding:4px 10px;border-radius:999px;font-size:11px;font-weight:600;">🎯 Strong thesis</div>
-              <div style="background:var(--lime);color:var(--ink);padding:4px 10px;border-radius:999px;font-size:11px;font-weight:600;">🤖 0% AI detected</div>
+    <div class="bento">
+      <!-- writing -->
+      <div class="card col-7 reveal" data-spot>
+        <div class="knum">01 · AI Writing Suite</div>
+        <h3>Write, polish, humanize and cite, without leaving the page.</h3>
+        <p>Grammar checker, AI detector, plagiarism scan, citation generator, word counter. The full writing stack, live on every doc.</p>
+        <div class="canvas">
+          <div class="mini">
+            <div class="mono" style="font-size:10px;color:var(--lime);letter-spacing:0.1em;margin-bottom:10px;">DRAFT · ESSAY · 1,247 WORDS</div>
+            In <em>Macbeth</em>, Shakespeare shows how unchecked <span class="hl" style="background:rgba(233,185,140,0.22);border-bottom:2px solid var(--peach);">ambition corodes</span> moral judgment. The protagonist's <span class="hl" style="background:rgba(143,203,169,0.22);border-bottom:2px solid var(--mint);">descent into tyranny</span> is foreshadowed in Act I…
+            <div class="chiprow">
+              <span class="ck" style="background:var(--peach);color:var(--ink);">Spelling → corrodes</span>
+              <span class="ck" style="background:var(--mint);color:var(--ink);">Strong thesis</span>
+              <span class="ck" style="background:var(--lime);color:var(--ink);">0% AI detected</span>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Smart Reschedule -->
-      <div class="feat col-5 lime reveal">
-        <div class="label">// 02 · Smart Reschedule</div>
+      <!-- reschedule -->
+      <div class="card col-5 lime reveal d1">
+        <div class="knum">02 · Smart Reschedule</div>
         <h3>"I have a chem test Friday." Done.</h3>
-        <p>Describe a conflict in plain English. Studlin re-plans your week, blocks focus time, and reshuffles deadlines automatically.</p>
-        <div class="feat-canvas">
-          <div style="background:var(--ink);color:var(--cream);border-radius:14px;padding:14px 16px;font-size:13px;font-family:'JetBrains Mono',monospace;">
-            <div style="opacity:0.6;font-size:10.5px;margin-bottom:6px;">YOU</div>
-            <div>"move my history essay so I can study for chem"</div>
+        <p>Describe a conflict in plain English. Studlin re-plans your week, blocks focus time, reshuffles every deadline.</p>
+        <div class="canvas">
+          <div style="background:var(--ink);color:var(--cream);border-radius:13px;padding:13px 15px;font-family:var(--mono);font-size:12.5px;">
+            <div style="opacity:.55;font-size:10px;margin-bottom:5px;">YOU</div>move my history essay so i can study for chem
           </div>
-          <div style="background:white;border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin-top:8px;font-size:13px;">
-            <div style="opacity:0.5;font-size:10.5px;margin-bottom:6px;font-family:'JetBrains Mono',monospace;">STUDLIN</div>
-            <div>Pushed essay to <strong>Sat 10am</strong>. Added 4×45min chem blocks. Synced to Google Cal. ✓</div>
+          <div style="background:#fff;color:var(--ink);border-radius:13px;padding:13px 15px;margin-top:8px;font-size:12.5px;line-height:1.5;">
+            <div class="mono" style="opacity:.5;font-size:10px;margin-bottom:5px;">STUDLIN</div>Pushed essay to <strong>Sat 10am</strong>. Added 4×45m chem blocks. Synced to Google Cal.
           </div>
         </div>
       </div>
 
-      <!-- Flashcards -->
-      <div class="feat col-5 peach reveal">
-        <div class="label">// 03 · Flashcards</div>
-        <h3>Drop a PDF. Get cards.</h3>
-        <p>Upload notes, lectures, or textbooks. AI generates spaced-repetition decks tuned to your exam.</p>
-        <div class="feat-canvas" style="position:relative;">
-          <div style="background:white;border-radius:14px;padding:18px;box-shadow:var(--shadow-soft);position:relative;z-index:3;transform:rotate(-2deg);">
-            <div style="font-size:11px;font-family:'JetBrains Mono',monospace;color:rgba(14,31,24,0.4);margin-bottom:8px;">CARD 4 / 47</div>
-            <div style="font-family:'Instrument Serif',serif;font-style:italic;font-size:22px;line-height:1.2;">What is the Krebs cycle?</div>
+      <!-- flashcards -->
+      <div class="card col-5 reveal" data-spot>
+        <div class="knum">03 · Flashcards</div>
+        <h3>Drop a PDF. Get a deck.</h3>
+        <p>Upload notes, lectures, textbooks. AI builds spaced-repetition cards tuned to your exam.</p>
+        <div class="canvas deckwrap">
+          <div class="deckc" style="top:30px;left:24px;right:-10px;height:96px;background:var(--panel-2);border:1px solid var(--line);transform:rotate(5deg);"></div>
+          <div class="deckc" style="top:18px;left:12px;right:2px;height:104px;background:var(--cream);opacity:.5;transform:rotate(2.5deg);"></div>
+          <div class="deckc" style="top:6px;left:0;right:14px;box-shadow:0 20px 40px -18px rgba(0,0,0,.5);transform:rotate(-2deg);">
+            <div class="mono" style="font-size:10px;color:rgba(10,19,16,.45);">CARD 4 / 47</div>
+            <div style="font-family:var(--display);font-weight:600;font-size:20px;margin-top:8px;letter-spacing:-0.02em;">What is the Krebs cycle?</div>
           </div>
-          <div style="position:absolute;top:8px;left:14px;right:-6px;height:90%;background:var(--cream);border-radius:14px;z-index:2;transform:rotate(2deg);border:1px solid var(--line);"></div>
-          <div style="position:absolute;top:14px;left:24px;right:-12px;height:85%;background:var(--cream-2);border-radius:14px;z-index:1;transform:rotate(4deg);border:1px solid var(--line);"></div>
         </div>
       </div>
 
-      <!-- AI Tutor -->
-      <div class="feat col-7 reveal">
-        <div class="label">// 04 · AI Tutor — every subject</div>
-        <h3>Upload anything. <em class="font-serif">Ask anything.</em></h3>
-        <p>Snap a worksheet, drop a lecture recording, paste a problem. The tutor walks you through it — Socratically, not just spitting answers.</p>
-        <div class="feat-canvas">
+      <!-- tutor -->
+      <div class="card col-7 reveal d1" data-spot>
+        <div class="knum">04 · AI Tutor for every subject</div>
+        <h3>Upload anything. Ask anything.</h3>
+        <p>Snap a worksheet, drop a recording, paste a problem. The tutor walks you through it Socratically. It never just hands over answers.</p>
+        <div class="canvas">
           <div style="display:flex;flex-direction:column;gap:8px;">
-            <div style="align-self:flex-end;background:var(--forest);color:var(--cream);padding:10px 14px;border-radius:14px 14px 4px 14px;font-size:13px;max-width:75%;">why is sin(2x) = 2sin(x)cos(x)?</div>
-            <div style="align-self:flex-start;background:var(--cream);border:1px solid var(--line);padding:10px 14px;border-radius:14px 14px 14px 4px;font-size:13px;max-width:80%;line-height:1.5;">Let's derive it together. Start with sin(A+B) = sin A cos B + cos A sin B. Now substitute A = B = x… <span style="font-family:'JetBrains Mono',monospace;background:var(--butter);padding:1px 6px;border-radius:4px;">your turn →</span></div>
+            <div style="align-self:flex-end;background:var(--bg);border:1px solid var(--line);padding:10px 14px;border-radius:14px 14px 4px 14px;font-size:13px;max-width:78%;">why is sin(2x) = 2sin(x)cos(x)?</div>
+            <div style="align-self:flex-start;background:var(--panel-2);border:1px solid var(--line);padding:10px 14px;border-radius:14px 14px 14px 4px;font-size:13px;max-width:82%;line-height:1.5;">Start with sin(A+B) = sin A cos B + cos A sin B. Now set A = B = x… <span class="mono" style="background:var(--lime);color:var(--ink);padding:1px 6px;border-radius:4px;">your turn →</span></div>
           </div>
         </div>
       </div>
 
-      <!-- Streaks -->
-      <div class="feat col-4 butter reveal">
-        <div class="label">// 05 · Streaks</div>
+      <!-- streaks -->
+      <div class="card col-4 reveal" data-spot>
+        <div class="knum">05 · Streaks</div>
         <h3>The reason you'll show up.</h3>
-        <p>Daily streaks, Lock-In Leaderboard, and a Weekly Wrapped that's actually fun to share.</p>
-        <div class="feat-canvas">
-          <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            <span style="font-family:'Caveat',cursive;font-size:80px;line-height:0.85;color:var(--ink);font-weight:700;">12</span>
-            <div style="display:flex;flex-direction:column;justify-content:flex-end;">
-              <div style="font-size:13px;font-weight:600;">day streak 🔥</div>
-              <div style="font-size:11px;opacity:0.6;">longest: 31 days</div>
-            </div>
-          </div>
+        <p>Daily streaks, milestones, and a Weekly Wrapped that's actually fun to share.</p>
+        <div class="canvas" style="display:flex;align-items:flex-end;gap:12px;">
+          <span class="streakbig" style="color:var(--lime);">12</span>
+          <div style="padding-bottom:10px;"><div style="font-weight:600;font-size:13px;">day streak</div><div style="font-size:11.5px;color:var(--cream-faint);">longest: 31</div></div>
         </div>
       </div>
 
-      <!-- Focus music -->
-      <div class="feat col-4 sky reveal">
-        <div class="label">// 06 · Focus Music</div>
+      <!-- music -->
+      <div class="card col-4 reveal d1" data-spot>
+        <div class="knum">06 · Focus Music</div>
         <h3>Sounds your brain agrees with.</h3>
-        <p>AI-curated soundscapes tuned to what you're working on. Lo-fi for reading. Binaural for math.</p>
-        <div class="feat-canvas">
-          <div style="display:flex;align-items:flex-end;gap:3px;height:60px;">
-            <div style="flex:1;background:var(--ink);border-radius:2px;height:30%;"></div>
-            <div style="flex:1;background:var(--ink);border-radius:2px;height:55%;"></div>
-            <div style="flex:1;background:var(--ink);border-radius:2px;height:80%;"></div>
-            <div style="flex:1;background:var(--ink);border-radius:2px;height:45%;"></div>
-            <div style="flex:1;background:var(--ink);border-radius:2px;height:65%;"></div>
-            <div style="flex:1;background:var(--ink);border-radius:2px;height:90%;"></div>
-            <div style="flex:1;background:var(--ink);border-radius:2px;height:70%;"></div>
-            <div style="flex:1;background:var(--ink);border-radius:2px;height:35%;"></div>
-            <div style="flex:1;background:var(--ink);border-radius:2px;height:55%;"></div>
-            <div style="flex:1;background:var(--ink);border-radius:2px;height:75%;"></div>
-            <div style="flex:1;background:var(--ink);border-radius:2px;height:50%;"></div>
-            <div style="flex:1;background:var(--ink);border-radius:2px;height:25%;"></div>
-            <div style="flex:1;background:var(--ink);border-radius:2px;height:60%;"></div>
-            <div style="flex:1;background:var(--ink);border-radius:2px;height:85%;"></div>
-            <div style="flex:1;background:var(--ink);border-radius:2px;height:40%;"></div>
-          </div>
-          <div style="margin-top:10px;font-size:11px;font-family:'JetBrains Mono',monospace;">▶ Deep Focus · 45 min remaining</div>
+        <p>AI-curated soundscapes. Lo-fi for reading, binaural for math.</p>
+        <div class="canvas">
+          <div class="bars" id="eqBars"></div>
+          <div class="mono" style="font-size:11px;margin-top:10px;color:var(--cream-dim);">▶ Deep Focus · 45 min left</div>
         </div>
       </div>
 
-      <!-- Insights -->
-      <div class="feat col-4 lilac reveal">
-        <div class="label">// 07 · Wrapped</div>
-        <h3>Spotify Wrapped, but for studying.</h3>
-        <p>Weekly recaps showing your wins, focus hours, and exactly where you slipped.</p>
-        <div class="feat-canvas">
-          <div style="background:var(--ink);color:var(--cream);border-radius:14px;padding:18px;">
-            <div style="font-size:11px;opacity:0.6;font-family:'JetBrains Mono',monospace;letter-spacing:0.1em;">WEEK 18 · WRAPPED</div>
-            <div style="font-family:'Caveat',cursive;font-size:42px;line-height:1;color:var(--lime);margin:4px 0;">14h 22m</div>
-            <div style="font-size:12px;opacity:0.7;">+3.2h vs last week</div>
-            <div style="margin-top:14px;display:flex;justify-content:space-between;font-size:11px;opacity:0.7;">
-              <span>Top subject</span><strong style="color:var(--cream);opacity:1;">Bio</strong>
+      <!-- wrapped -->
+      <div class="card col-4 reveal d2" data-spot>
+        <div class="knum">07 · Wrapped</div>
+        <h3>Spotify Wrapped, for studying.</h3>
+        <p>Weekly recaps of your wins, focus hours, and exactly where you slipped.</p>
+        <div class="canvas">
+          <div class="mini" style="background:var(--bg-deep);">
+            <div class="mono" style="font-size:10px;color:var(--cream-faint);letter-spacing:0.1em;">WEEK 18 · WRAPPED</div>
+            <div style="font-family:var(--display);font-weight:700;font-size:36px;color:var(--lime);margin:4px 0;letter-spacing:-0.03em;">14h 22m</div>
+            <div style="font-size:12px;color:var(--cream-dim);">+3.2h vs last week</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- focus music wide -->
+      <div class="card col-12 reveal" style="padding:44px;" data-spot>
+        <div style="display:grid;grid-template-columns:1fr 1.15fr;gap:48px;align-items:center;">
+          <div>
+            <div class="knum">08 · Focus, scored.</div>
+            <h3 style="font-size:46px;line-height:1.0;">Sounds your brain agrees with.</h3>
+            <p>AI-curated soundscapes tuned to what you're working on. Lo-fi for reading, binaural for math, brown noise when it's crunch time. One tap and you're in the zone.</p>
+            <a href="/sign-up" class="btn btn-lime magnetic">Start a focus session <span class="ar">→</span></a>
+          </div>
+          <div style="background:var(--bg-deep);border:1px solid var(--line);border-radius:18px;padding:22px;">
+            <div class="mono" style="font-size:10.5px;color:var(--cream-faint);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:16px;">Now playing · Deep Focus</div>
+            <div style="display:flex;align-items:flex-end;gap:4px;height:90px;margin-bottom:18px;">
+              <div style="flex:1;background:var(--lime);border-radius:3px 3px 0 0;height:30%;"></div>
+              <div style="flex:1;background:var(--lime);border-radius:3px 3px 0 0;height:55%;"></div>
+              <div style="flex:1;background:var(--lime);border-radius:3px 3px 0 0;height:80%;"></div>
+              <div style="flex:1;background:var(--lime);border-radius:3px 3px 0 0;height:45%;"></div>
+              <div style="flex:1;background:var(--lime);border-radius:3px 3px 0 0;height:70%;"></div>
+              <div style="flex:1;background:var(--lime);border-radius:3px 3px 0 0;height:95%;"></div>
+              <div style="flex:1;background:var(--lime);border-radius:3px 3px 0 0;height:60%;"></div>
+              <div style="flex:1;background:rgba(244,239,227,0.18);border-radius:3px 3px 0 0;height:35%;"></div>
+              <div style="flex:1;background:rgba(244,239,227,0.18);border-radius:3px 3px 0 0;height:50%;"></div>
+              <div style="flex:1;background:rgba(244,239,227,0.18);border-radius:3px 3px 0 0;height:25%;"></div>
+              <div style="flex:1;background:rgba(244,239,227,0.18);border-radius:3px 3px 0 0;height:65%;"></div>
+              <div style="flex:1;background:rgba(244,239,227,0.18);border-radius:3px 3px 0 0;height:40%;"></div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <span class="mono" style="font-size:10px;background:var(--lime);color:var(--ink);padding:6px 12px;border-radius:99px;font-weight:700;">LO-FI</span>
+              <span class="mono" style="font-size:10px;background:rgba(244,239,227,0.06);color:var(--cream-dim);padding:6px 12px;border-radius:99px;border:1px solid var(--line);">BINAURAL</span>
+              <span class="mono" style="font-size:10px;background:rgba(244,239,227,0.06);color:var(--cream-dim);padding:6px 12px;border-radius:99px;border:1px solid var(--line);">BROWN NOISE</span>
+              <span class="mono" style="font-size:10px;background:rgba(244,239,227,0.06);color:var(--cream-dim);padding:6px 12px;border-radius:99px;border:1px solid var(--line);">NATURE</span>
             </div>
           </div>
         </div>
       </div>
+    </div>
+  </div>
+</section>
 
-      <!-- Friends -->
-      <div class="feat col-12 dark reveal" style="padding:48px;">
-        <div style="display:grid;grid-template-columns:1fr 1.2fr;gap:48px;align-items:center;">
-          <div>
-            <div class="label">// 08 · Lock-In Leaderboard</div>
-            <h3 style="font-size:54px;line-height:1;">Studying is more fun when your <em class="font-serif" style="color:var(--lime)">friends</em> are watching.</h3>
-            <p>Add classmates, share flashcard decks, compete on focus hours, and roast each other for breaking streaks. Healthy peer pressure, finally.</p>
-            <a href="#" class="btn btn-lime">Add your study squad →</a>
-          </div>
-          <div style="background:var(--forest-deep);border-radius:18px;padding:20px;border:1px solid var(--line-dark);">
-            <div style="font-size:11px;opacity:0.6;font-family:'JetBrains Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:14px;">This week · Bio Cram Squad</div>
-            <div style="display:flex;flex-direction:column;gap:10px;">
-              <div style="display:flex;align-items:center;gap:14px;padding:12px 16px;background:var(--lime);color:var(--ink);border-radius:14px;">
-                <div style="font-family:'Caveat',cursive;font-size:30px;font-weight:700;width:30px;">1</div>
-                <div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--peach),var(--rose));"></div>
-                <div style="flex:1;">
-                  <div style="font-weight:600;font-size:14px;">Maya R.</div>
-                  <div style="font-size:11.5px;opacity:0.7;">14h 22m focus · 12-day streak</div>
-                </div>
-                <div style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;">2,140</div>
-              </div>
-              <div style="display:flex;align-items:center;gap:14px;padding:12px 16px;background:rgba(246,241,230,0.06);border-radius:14px;">
-                <div style="font-family:'Caveat',cursive;font-size:30px;font-weight:700;width:30px;color:var(--lime);">2</div>
-                <div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--sky),var(--lilac));"></div>
-                <div style="flex:1;">
-                  <div style="font-weight:600;font-size:14px;">Devon K.</div>
-                  <div style="font-size:11.5px;opacity:0.6;">12h 08m focus · 8-day streak</div>
-                </div>
-                <div style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;">1,840</div>
-              </div>
-              <div style="display:flex;align-items:center;gap:14px;padding:12px 16px;background:rgba(246,241,230,0.06);border-radius:14px;">
-                <div style="font-family:'Caveat',cursive;font-size:30px;font-weight:700;width:30px;color:var(--lime);">3</div>
-                <div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--mint),var(--butter));"></div>
-                <div style="flex:1;">
-                  <div style="font-weight:600;font-size:14px;">Priya S.</div>
-                  <div style="font-size:11.5px;opacity:0.6;">10h 41m focus · 5-day streak</div>
-                </div>
-                <div style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;">1,602</div>
-              </div>
-              <div style="display:flex;align-items:center;gap:14px;padding:12px 16px;background:rgba(246,241,230,0.06);border-radius:14px;opacity:0.7;">
-                <div style="font-family:'Caveat',cursive;font-size:30px;font-weight:700;width:30px;">4</div>
-                <div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--lilac),var(--peach));"></div>
-                <div style="flex:1;">
-                  <div style="font-weight:600;font-size:14px;">Jordan T.</div>
-                  <div style="font-size:11.5px;opacity:0.6;">7h 15m focus · streak broken 💀</div>
-                </div>
-                <div style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;">1,088</div>
+<!-- ============ SHOWCASE ============ -->
+<section class="sec showcase" id="showcase">
+  <div class="wrap">
+    <div class="head center">
+      <span class="sec-eyebrow">// In your pocket</span>
+      <h2>It moves with <span class="dim">you.</span></h2>
+      <p class="lead">The whole command center on your phone. Move your cursor and feel it tilt.</p>
+      <span class="coming-pill"><span class="pulse"></span> iOS &amp; Android app · Coming soon</span>
+    </div>
+    <div class="show-stage">
+      <div class="show-float s1 reveal"><div class="mono" style="font-size:9.5px;color:var(--cream-faint);letter-spacing:0.12em;">NEXT UP</div><div style="font-size:13px;font-weight:600;margin-top:4px;">Macbeth essay · 45m</div></div>
+      <div class="show-float s2 reveal d1"><div style="display:flex;align-items:center;gap:8px;"><span style="width:8px;height:8px;border-radius:50%;background:var(--lime);box-shadow:0 0 8px var(--lime);"></span><span style="font-size:13px;font-weight:600;">Focus active</span></div></div>
+      <div class="device reveal" id="device">
+        <div class="screen">
+          <div class="notch"></div>
+          <div class="scr-pad">
+            <div class="scr-h">
+              <div><div class="mono" style="font-size:9.5px;color:var(--cream-faint);letter-spacing:0.14em;">FRI · MAY 17</div><div class="scr-title">Hey Maya.</div></div>
+              <div class="scr-av"></div>
+            </div>
+            <div class="scr-card dark">
+              <div class="mono" style="font-size:9.5px;color:var(--cream-faint);letter-spacing:0.12em;">FOCUS · SESSION 3 OF 4</div>
+              <div class="scr-timer">22:14</div>
+              <div style="font-size:11.5px;color:var(--cream-dim);margin-top:6px;">English IV · Macbeth essay</div>
+              <div style="height:5px;background:rgba(244,239,227,0.14);border-radius:99px;margin-top:12px;overflow:hidden;"><div style="height:100%;width:55%;background:var(--lime);"></div></div>
+            </div>
+            <div class="scr-card">
+              <div style="display:flex;justify-content:space-between;align-items:center;"><div style="font-weight:600;font-size:13px;">Today's plan</div><div class="mono" style="font-size:10px;color:var(--cream-faint);">3 / 5</div></div>
+              <div style="margin-top:12px;display:flex;flex-direction:column;gap:9px;">
+                <div style="display:flex;gap:10px;align-items:center;font-size:12px;color:var(--cream-faint);"><span style="width:16px;height:16px;border-radius:50%;background:var(--lime);display:grid;place-items:center;color:var(--ink);">✓</span><span style="text-decoration:line-through;">Cell respiration cards</span></div>
+                <div style="display:flex;gap:10px;align-items:center;font-size:12px;"><span style="width:16px;height:16px;border-radius:50%;border:1.5px solid var(--lime);"></span>Draft Macbeth essay</div>
+                <div style="display:flex;gap:10px;align-items:center;font-size:12px;color:var(--cream-dim);"><span style="width:16px;height:16px;border-radius:50%;border:1.5px solid var(--cream-faint);"></span>Practice integrals</div>
               </div>
             </div>
           </div>
@@ -382,314 +306,342 @@
   </div>
 </section>
 
-<!-- ============ AUDIENCE / TESTIMONIALS ============ -->
-<section class="product-section" id="students" style="padding-top:40px;background:var(--forest);color:var(--cream);">
-  <div class="container">
-    <div class="head-row center">
-      <span class="section-eyebrow" style="background:rgba(246,241,230,0.06);border-color:var(--line-dark);color:var(--lime);">// Loved by</span>
-      <h2 class="display" style="color:var(--cream);">Real students. <em class="font-serif" style="color:var(--lime)">Real grades.</em></h2>
+<!-- ============ HOW IT WORKS ============ -->
+<section class="hiw" id="how">
+  <div class="hiw-track" id="hiwTrack">
+    <div class="hiw-pin">
+      <div class="hiw-mega" id="hiwMega">
+        <span>How</span><span class="lit">It</span><span>Works</span><span>How</span><span class="lit">It</span><span>Works</span>
+      </div>
+      <div class="hiw-panel">
+        <div class="hiw-eyebrow">// From zero to locked-in, in four moves</div>
+        <div class="hiw-steps" id="hiwSteps">
+          <div class="hiw-step on" data-step="0">
+            <div class="si">01<small>SET UP</small></div>
+            <div>
+              <h3>Tell it what you're studying.</h3>
+              <p>Pick your subjects, drop your syllabus, link your calendar. Studlin reads it all and builds a plan around your real deadlines in seconds.</p>
+              <span class="stip">Imports from all major study tools</span>
+            </div>
+          </div>
+          <div class="hiw-step" data-step="1">
+            <div class="si">02<small>PLAN</small></div>
+            <div>
+              <h3>Wake up to a plan that already works.</h3>
+              <p>Every morning Studlin lays out the day: what to review, what to write, when to focus. Change one thing and the whole week reshuffles on its own.</p>
+              <span class="stip">Smart Reschedule built in</span>
+            </div>
+          </div>
+          <div class="hiw-step" data-step="2">
+            <div class="si">03<small>LOCK IN</small></div>
+            <div>
+              <h3>Do the work without leaving the page.</h3>
+              <p>Writing tools, AI tutor, flashcards and focus music all live in one window. Hit the timer, drop on the music, and let the streak count climb.</p>
+              <span class="stip">One tab replaces eight apps</span>
+            </div>
+          </div>
+          <div class="hiw-step" data-step="3">
+            <div class="si">04<small>LEVEL UP</small></div>
+            <div>
+              <h3>Watch the grades follow.</h3>
+              <p>Weekly Wrapped shows the wins, the streak graph keeps you honest, and your grades quietly climb. Studying that finally compounds.</p>
+              <span class="stip">Wrapped insights every Sunday</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="hiw-dots" id="hiwDots"><i class="on"></i><i></i><i></i><i></i></div>
     </div>
   </div>
+</section>
 
-  <div class="marquee" style="margin-top:60px;">
-    <div class="marquee-track">
-      <!-- set 1 -->
-      <div class="t-card lime">
-        <div class="stars">★★★★★</div>
-        <div class="t-quote">"I went from cramming the night before to actually <em>knowing</em> the material. The streak system is genuinely addictive in a good way."</div>
-        <div class="t-meta"><div class="t-av">MR</div><div><div class="t-name">Maya R.</div><div class="t-role">Pre-med, UCLA</div></div></div>
+<!-- ============ TESTIMONIALS ============ -->
+<section class="sec" id="loved" style="background:var(--bg-2);border-top:1px solid var(--line);border-bottom:1px solid var(--line);">
+  <div class="wrap">
+    <div class="head center">
+      <span class="sec-eyebrow">// Loved by</span>
+      <h2>Real students. <span class="dim">Real grades.</span></h2>
+    </div>
+  </div>
+  <div class="tmarq">
+    <div class="trow marq">
+      <div class="marq-track">
+        <div class="tcard lime"><div class="stars">★★★★★</div><div class="tq">"I went from cramming the night before to actually <em>knowing</em> the material. The streaks are addictive in a good way."</div><div class="tm"><div class="tav">MR</div><div><div class="tn">Maya</div><div class="tr">Pre-med, UCLA</div></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"I switched from a stack of five different apps and saved $50/month. Everything's in one place now."</div><div class="tm"><div class="tav">DK</div><div><div class="tn">Devon</div><div class="tr">Junior, NYU Stern</div></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"Told it I caught the flu and it just… fixed my whole week. No anxiety spiral. Unreal."</div><div class="tm"><div class="tav">PS</div><div><div class="tn">Priya</div><div class="tr">IB Senior, Singapore</div></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"My GPA went from 3.2 to 3.8 in a semester. The tutor explains things the way my professor never could."</div><div class="tm"><div class="tav">JT</div><div><div class="tn">Jordan</div><div class="tr">Sophomore, UT Austin</div></div></div></div>
+        <div class="tcard lime"><div class="stars">★★★★★</div><div class="tq">"I went from cramming the night before to actually <em>knowing</em> the material. The streaks are addictive in a good way."</div><div class="tm"><div class="tav">MR</div><div><div class="tn">Maya</div><div class="tr">Pre-med, UCLA</div></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"I switched from a stack of five different apps and saved $50/month. Everything's in one place now."</div><div class="tm"><div class="tav">DK</div><div><div class="tn">Devon</div><div class="tr">Junior, NYU Stern</div></div></div></div>
       </div>
-      <div class="t-card">
-        <div class="stars">★★★★★</div>
-        <div class="t-quote">"I cancelled Grammarly, Notion, and ChatGPT Plus. Studlin replaced all three and saved me $40/mo."</div>
-        <div class="t-meta"><div class="t-av">DK</div><div><div class="t-name">Devon K.</div><div class="t-role">Junior, NYU Stern</div></div></div>
-      </div>
-      <div class="t-card dark">
-        <div class="stars">★★★★★</div>
-        <div class="t-quote">"The smart reschedule is unreal. I told it I caught the flu and it just… fixed my whole week. No anxiety spiral."</div>
-        <div class="t-meta"><div class="t-av">PS</div><div><div class="t-name">Priya S.</div><div class="t-role">IB Senior, Singapore</div></div></div>
-      </div>
-      <div class="t-card">
-        <div class="stars">★★★★★</div>
-        <div class="t-quote">"My GPA went from 3.2 to 3.8 in one semester. The AI tutor explains things the way my professor never could."</div>
-        <div class="t-meta"><div class="t-av">JT</div><div><div class="t-name">Jordan T.</div><div class="t-role">Sophomore, UT Austin</div></div></div>
-      </div>
-      <div class="t-card lime">
-        <div class="stars">★★★★★</div>
-        <div class="t-quote">"Weekly Wrapped is the only social media I post anymore. My friends DM me roasting my focus hours."</div>
-        <div class="t-meta"><div class="t-av">AC</div><div><div class="t-name">Aisha C.</div><div class="t-role">Freshman, Cornell</div></div></div>
-      </div>
-      <!-- duplicate for loop -->
-      <div class="t-card lime">
-        <div class="stars">★★★★★</div>
-        <div class="t-quote">"I went from cramming the night before to actually <em>knowing</em> the material. The streak system is genuinely addictive in a good way."</div>
-        <div class="t-meta"><div class="t-av">MR</div><div><div class="t-name">Maya R.</div><div class="t-role">Pre-med, UCLA</div></div></div>
-      </div>
-      <div class="t-card">
-        <div class="stars">★★★★★</div>
-        <div class="t-quote">"I cancelled Grammarly, Notion, and ChatGPT Plus. Studlin replaced all three and saved me $40/mo."</div>
-        <div class="t-meta"><div class="t-av">DK</div><div><div class="t-name">Devon K.</div><div class="t-role">Junior, NYU Stern</div></div></div>
-      </div>
-      <div class="t-card dark">
-        <div class="stars">★★★★★</div>
-        <div class="t-quote">"The smart reschedule is unreal. I told it I caught the flu and it just… fixed my whole week. No anxiety spiral."</div>
-        <div class="t-meta"><div class="t-av">PS</div><div><div class="t-name">Priya S.</div><div class="t-role">IB Senior, Singapore</div></div></div>
-      </div>
-      <div class="t-card">
-        <div class="stars">★★★★★</div>
-        <div class="t-quote">"My GPA went from 3.2 to 3.8 in one semester. The AI tutor explains things the way my professor never could."</div>
-        <div class="t-meta"><div class="t-av">JT</div><div><div class="t-name">Jordan T.</div><div class="t-role">Sophomore, UT Austin</div></div></div>
-      </div>
-      <div class="t-card lime">
-        <div class="stars">★★★★★</div>
-        <div class="t-quote">"Weekly Wrapped is the only social media I post anymore. My friends DM me roasting my focus hours."</div>
-        <div class="t-meta"><div class="t-av">AC</div><div><div class="t-name">Aisha C.</div><div class="t-role">Freshman, Cornell</div></div></div>
+    </div>
+    <div class="trow rev marq">
+      <div class="marq-track">
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"Weekly Wrapped is the only social media I post anymore. My friends roast my focus hours."</div><div class="tm"><div class="tav">AC</div><div><div class="tn">Aisha</div><div class="tr">Freshman, Cornell</div></div></div></div>
+        <div class="tcard lime"><div class="stars">★★★★★</div><div class="tq">"The flashcard generator turned my 80-page bio PDF into a deck in ten seconds. I almost cried."</div><div class="tm"><div class="tav">LW</div><div><div class="tn">Leo</div><div class="tr">Pre-vet, UC Davis</div></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"Finally something built for how my brain actually works. The focus timer plus music combo is unbeatable."</div><div class="tm"><div class="tav">NR</div><div><div class="tn">Nadia</div><div class="tr">Law, Georgetown</div></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"I run my whole study group off the streak graph now. Nobody wants to break their streak on Sunday night."</div><div class="tm"><div class="tav">TK</div><div><div class="tn">Theo</div><div class="tr">CS, Waterloo</div></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"Weekly Wrapped is the only social media I post anymore. My friends roast my focus hours."</div><div class="tm"><div class="tav">AC</div><div><div class="tn">Aisha</div><div class="tr">Freshman, Cornell</div></div></div></div>
+        <div class="tcard lime"><div class="stars">★★★★★</div><div class="tq">"The flashcard generator turned my 80-page bio PDF into a deck in ten seconds. I almost cried."</div><div class="tm"><div class="tav">LW</div><div><div class="tn">Leo</div><div class="tr">Pre-vet, UC Davis</div></div></div></div>
       </div>
     </div>
   </div>
-
-  <div class="container" style="margin-top:80px;">
-    <div style="display:flex;align-items:center;gap:40px;justify-content:center;flex-wrap:wrap;opacity:0.7;font-family:'Instrument Serif',serif;font-size:24px;font-style:italic;color:var(--cream);">
-      <span style="font-size:13px;font-family:'JetBrains Mono',monospace;font-style:normal;text-transform:uppercase;letter-spacing:0.15em;opacity:0.6;">Used by students at</span>
-      <span>Stanford</span>
-      <span>MIT</span>
-      <span>Berkeley</span>
-      <span>Cambridge</span>
-      <span>Yale</span>
-      <span>Tsinghua</span>
-      <span>NUS</span>
+  <div class="wrap" style="margin-top:64px;">
+    <div style="display:flex;align-items:center;gap:38px;justify-content:center;flex-wrap:wrap;">
+      <span class="mono" style="font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--cream-faint);">Used at</span>
+      <span class="display" style="font-weight:600;font-size:22px;color:var(--cream-dim);">Stanford</span>
+      <span class="display" style="font-weight:600;font-size:22px;color:var(--cream-dim);">MIT</span>
+      <span class="display" style="font-weight:600;font-size:22px;color:var(--cream-dim);">Berkeley</span>
+      <span class="display" style="font-weight:600;font-size:22px;color:var(--cream-dim);">Cambridge</span>
+      <span class="display" style="font-weight:600;font-size:22px;color:var(--cream-dim);">Yale</span>
+      <span class="display" style="font-weight:600;font-size:22px;color:var(--cream-dim);">NUS</span>
     </div>
   </div>
 </section>
 
 <!-- ============ PRICING ============ -->
-<section class="pricing-section" id="pricing">
-  <div class="container">
-    <div class="head-row center">
-      <span class="section-eyebrow">// Pricing</span>
-      <h2 class="display">One subscription.<br>Replaces <em class="font-serif">six.</em></h2>
-      <div class="toggle" style="margin-top:24px;">
+<section class="sec" id="pricing">
+  <div class="wrap">
+    <div class="head center">
+      <span class="sec-eyebrow">// Pricing</span>
+      <h2>One subscription.<br><span class="dim">Replaces six.</span></h2>
+      <div class="toggle">
         <button class="active" data-bill="monthly">Monthly</button>
         <button data-bill="annual">Annual <span class="save">−25%</span></button>
       </div>
     </div>
-
     <div class="plans">
       <div class="plan reveal">
         <h3>Free</h3>
         <div class="price"><span class="num">$0</span><span class="per">/forever</span></div>
-        <p class="desc">For getting your feet wet. No credit card.</p>
+        <p class="pdesc">For getting your feet wet. No card needed.</p>
         <ul>
-          <li><span class="check">✓</span> Basic AI writing &amp; grammar</li>
-          <li><span class="check">✓</span> 30 flashcards / month</li>
-          <li><span class="check">✓</span> Pomodoro timer</li>
-          <li><span class="check">✓</span> 1 calendar sync</li>
-          <li><span class="check">✓</span> Streaks &amp; basic insights</li>
+          <li><span class="ck2">✓</span> 50 AI credits / month</li>
+          <li><span class="ck2">✓</span> Basic grammar checker</li>
+          <li><span class="ck2">✓</span> Manual flashcards</li>
+          <li><span class="ck2">✓</span> Pomodoro focus timer</li>
+          <li><span class="ck2">✓</span> Streaks &amp; basic stats</li>
         </ul>
-        <a href="#" class="btn btn-ink" style="width:100%;justify-content:center;">Start free</a>
+        <a href="/sign-up" class="btn btn-ghost">Start free</a>
       </div>
-
-      <div class="plan pro reveal">
-        <div class="plan-tag">7 days free</div>
-        <h3>Pro</h3>
-        <div class="price">
-          <span class="num" data-monthly="$14" data-annual="$10">$14</span>
-          <span class="per">/month</span>
-        </div>
-        <p class="desc">Unlimited everything. Built for serious students.</p>
+      <div class="plan feat reveal d1">
+        <div class="plan-tag">7 DAYS FREE</div>
+        <h3>Scholar Pro</h3>
+        <div class="price"><span class="num" data-monthly="$15" data-annual="$11">$15</span><span class="per" id="proPer">/month</span></div>
+        <p class="pdesc">Unlimited everything. Built for serious students.</p>
         <ul>
-          <li><span class="check">✓</span> Unlimited AI writing, detector &amp; humanizer</li>
-          <li><span class="check">✓</span> Unlimited flashcards from any file</li>
-          <li><span class="check">✓</span> Smart Reschedule + AI Tutor on every subject</li>
-          <li><span class="check">✓</span> Lock-In Leaderboard &amp; friends</li>
-          <li><span class="check">✓</span> AI Focus Music &amp; desktop notifications</li>
-          <li><span class="check">✓</span> Weekly Wrapped + advanced insights</li>
-          <li><span class="check">✓</span> Priority support</li>
+          <li><span class="ck2">✓</span> 500 AI credits / month</li>
+          <li><span class="ck2">✓</span> Full writing suite + Humanizer</li>
+          <li><span class="ck2">✓</span> AI flashcards from any file</li>
+          <li><span class="ck2">✓</span> Smart Reschedule + AI Tutor</li>
+          <li><span class="ck2">✓</span> AI focus music &amp; soundscapes</li>
+          <li><span class="ck2">✓</span> Weekly Wrapped insights</li>
         </ul>
-        <a href="#" class="btn btn-lime" style="width:100%;justify-content:center;">Start 7-day free trial →</a>
+        <a href="/sign-up" class="btn btn-lime magnetic">Start free trial <span class="ar">→</span></a>
+      </div>
+      <div class="plan reveal d2">
+        <h3>Academic</h3>
+        <div class="price"><span class="num" data-monthly="$30" data-annual="$22">$30</span><span class="per" id="elitePer">/month</span></div>
+        <p class="pdesc">Unlimited credits. For the obsessive.</p>
+        <ul>
+          <li><span class="ck2">✓</span> Unlimited AI credits</li>
+          <li><span class="ck2">✓</span> AI Detector + grade analytics</li>
+          <li><span class="ck2">✓</span> Subject-specific tutors</li>
+          <li><span class="ck2">✓</span> Exam prep + study plans</li>
+          <li><span class="ck2">✓</span> Predictive grade analytics</li>
+          <li><span class="ck2">✓</span> Sync with your calendar and task manager</li>
+        </ul>
+        <a href="/sign-up" class="btn btn-ghost">Go Academic</a>
       </div>
     </div>
+    <div style="text-align:center;margin-top:30px;font-size:14px;color:var(--cream-faint);">Most students juggle 4–6 apps. Studlin is all of them in one. Starts at just <span style="color:var(--cream);">$14.99/mo</span>.</div>
   </div>
 </section>
 
 <!-- ============ FAQ ============ -->
-<section class="faq-section" id="faq">
-  <div class="container">
-    <div class="head-row center">
-      <span class="section-eyebrow">// FAQ</span>
-      <h2 class="display">Ask us <em class="font-serif">anything.</em></h2>
+<section class="sec" id="faq" style="padding-top:0;">
+  <div class="wrap">
+    <div class="head center">
+      <span class="sec-eyebrow">// FAQ</span>
+      <h2>Ask us <span class="dim">anything.</span></h2>
     </div>
-
-    <div class="faq-list">
-      <div class="faq-item open">
-        <button class="faq-q">Will my professors know I used AI?<span class="icon">+</span></button>
-        <div class="faq-a"><div class="a-inner faq-a-inner">Studlin's AI Detector is the same one most universities use, and the Humanizer rewrites in your voice based on your past writing. We also let you toggle AI off entirely for honor-code-strict assignments.</div></div>
-      </div>
-      <div class="faq-item">
-        <button class="faq-q">How is this different from ChatGPT or Notion?<span class="icon">+</span></button>
-        <div class="faq-a"><div class="a-inner faq-a-inner">ChatGPT is a chat box. Notion is a doc. Studlin is the workspace built around how students actually study — with calendar, flashcards, focus, gamification and AI all designed to talk to each other.</div></div>
-      </div>
-      <div class="faq-item">
-        <button class="faq-q">What subjects does the AI Tutor support?<span class="icon">+</span></button>
-        <div class="faq-a"><div class="a-inner faq-a-inner">All of them. Math (with full LaTeX), sciences, humanities, languages, coding, business — including specialized exam boards (IB, AP, A-Levels, IGCSE, SAT, MCAT).</div></div>
-      </div>
-      <div class="faq-item">
-        <button class="faq-q">Can I import my existing notes &amp; flashcards?<span class="icon">+</span></button>
-        <div class="faq-a"><div class="a-inner faq-a-inner">Yes — import from Quizlet, Anki, Notion, Google Docs, PDFs, audio recordings, even photos of handwritten notes.</div></div>
-      </div>
-      <div class="faq-item">
-        <button class="faq-q">Does the free plan have a time limit?<span class="icon">+</span></button>
-        <div class="faq-a"><div class="a-inner faq-a-inner">Nope. Free is free forever. Pro just unlocks unlimited usage and the heavier AI features.</div></div>
-      </div>
-      <div class="faq-item">
-        <button class="faq-q">Is there a student discount?<span class="icon">+</span></button>
-        <div class="faq-a"><div class="a-inner faq-a-inner">Studlin is already built for students — Pro is $10/mo annual ($120/yr) which is cheaper than most single-purpose tools we replace.</div></div>
-      </div>
+    <div class="faq">
+      <div class="qitem open"><button class="qq">Will my professors know I used AI?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Studlin's AI Detector is the same one most universities deploy, and the Humanizer rewrites in your voice from your past writing. You can also toggle AI off entirely for honor-code-strict assignments.</div></div></div>
+      <div class="qitem"><button class="qq">How does Studlin compare to other study tools?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Most competing tools do one thing well. Studlin integrates writing, flashcards, scheduling, AI tutoring, and focus tracking into a single workspace designed for real student workflows.</div></div></div>
+      <div class="qitem"><button class="qq">What subjects does the AI Tutor support?<span class="ic">+</span></button><div class="qa"><div class="qa-in">All of them. Math with full LaTeX, sciences, humanities, languages, coding, business, including IB, AP, A Levels, IGCSE, SAT and MCAT exam boards.</div></div></div>
+      <div class="qitem"><button class="qq">Can I import my existing notes and flashcards?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Yes. Studlin imports from all major study platforms and file formats — PDFs, spreadsheets, audio files, and more.</div></div></div>
+      <div class="qitem"><button class="qq">Is there a student discount?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Studlin is already built for students. Scholar Pro is $11/mo billed annually, cheaper than most single-purpose tools it replaces.</div></div></div>
     </div>
   </div>
 </section>
 
-<!-- ============ CTA STRIP ============ -->
-<section class="cta-strip">
-  <div class="container">
-    <span class="section-eyebrow" style="background:var(--ink);color:var(--lime);border-color:var(--ink);">// Final exam season starts now</span>
-    <h2 class="display" style="margin-top:18px;">Stop juggling tabs.<br><em class="font-serif">Start lockin' in.</em></h2>
+<!-- ============ CTA ============ -->
+<section class="sec" style="padding-bottom:0;">
+  <div class="cta reveal">
+    <span class="tag">// Final exam season starts now</span>
+    <h2>Stop juggling tabs.<br>Start locking in.</h2>
     <p>Join 24,000+ students who study smarter, not harder.</p>
-    <a href="#" class="btn btn-ink btn-lg">Start free — 7 days of Pro →</a>
-    <div style="margin-top:18px;font-size:13px;color:rgba(14,31,24,0.6);">No credit card · Cancel anytime · Use code <strong>CRAM30</strong> for 30% off year one</div>
+    <a href="/sign-up" class="btn btn-ink btn-lg magnetic">Start free, 7 days of Pro <span class="ar">→</span></a>
+  </div>
+</section>
+
+<!-- ============ MOBILE APP COMING SOON ============ -->
+<section style="position:relative;padding:90px 0;background:var(--bg-2);border-top:1px solid var(--line);overflow:hidden;">
+  <div style="position:absolute;inset:0;background:radial-gradient(600px circle at 50% 60%,rgba(184,224,74,0.06),transparent 70%);pointer-events:none;"></div>
+  <div class="wrap" style="text-align:center;position:relative;z-index:1;">
+    <div class="mono" style="font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:var(--lime);margin-bottom:14px;">Coming Soon</div>
+    <h2 style="font-size:clamp(32px,5.2vw,56px);font-weight:700;line-height:1.06;margin:0 0 14px;color:var(--cream);letter-spacing:-0.03em;">The Studlin mobile app</h2>
+    <p style="font-size:17px;line-height:1.55;color:var(--cream-dim);max-width:520px;margin:0 auto;">Everything you love on desktop, optimized for your pocket. Be the first to know when we launch.</p>
+    <div style="margin-top:24px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+      <input type="email" placeholder="your@email.com" style="flex:0 1 300px;padding:12px 18px;border:1px solid var(--line);border-radius:99px;background:rgba(244,239,227,0.04);color:var(--cream);font-family:inherit;font-size:14px;outline:none;" />
+      <button style="padding:12px 26px;border:none;background:var(--lime);color:var(--ink);border-radius:99px;font-weight:700;font-family:inherit;font-size:14px;cursor:pointer;transition:all .2s;">Notify me</button>
+    </div>
   </div>
 </section>
 
 <!-- ============ FOOTER ============ -->
 <footer class="foot">
-  <div class="container">
+  <div class="wrap">
     <div class="foot-grid">
       <div>
-        <div class="brand" style="margin-bottom:18px;">
-          <span class="glyph">S</span>
-          <span style="color:var(--cream);">Studlin</span>
-        </div>
-        <p style="font-size:14px;line-height:1.6;opacity:0.7;max-width:280px;margin:0 0 18px;">Your entire study life, in one calm command center. Built by students, for students.</p>
-        <div style="display:flex;gap:10px;">
-          <a href="#" style="width:36px;height:36px;border-radius:50%;background:rgba(246,241,230,0.08);display:grid;place-items:center;font-size:13px;">𝕏</a>
-          <a href="#" style="width:36px;height:36px;border-radius:50%;background:rgba(246,241,230,0.08);display:grid;place-items:center;font-size:13px;">IG</a>
-          <a href="#" style="width:36px;height:36px;border-radius:50%;background:rgba(246,241,230,0.08);display:grid;place-items:center;font-size:13px;">TT</a>
-          <a href="#" style="width:36px;height:36px;border-radius:50%;background:rgba(246,241,230,0.08);display:grid;place-items:center;font-size:13px;">in</a>
-        </div>
+        <a href="#" class="brand" style="margin-bottom:18px;"><img src="studlin-icon.png" alt="Studlin"><span>Studlin</span></a>
+        <p style="font-size:14px;line-height:1.6;color:var(--cream-dim);max-width:280px;margin:0 0 20px;">Your entire study life in one calm command center. Built by students, for students.</p>
+        <div class="foot-social"><a href="#">X</a><a href="#">IG</a><a href="#">TT</a><a href="#">in</a></div>
       </div>
-      <div>
-        <h4>Product</h4>
-        <ul>
-          <li><a href="#">Features</a></li>
-          <li><a href="#">Pricing</a></li>
-          <li><a href="#">Changelog</a></li>
-          <li><a href="#">Roadmap</a></li>
-        </ul>
-      </div>
-      <div>
-        <h4>Tools</h4>
-        <ul>
-          <li><a href="#">AI Writing Suite</a></li>
-          <li><a href="#">Flashcards</a></li>
-          <li><a href="#">AI Tutor</a></li>
-          <li><a href="#">Focus Timer</a></li>
-        </ul>
-      </div>
-      <div>
-        <h4>For</h4>
-        <ul>
-          <li><a href="#">Students</a></li>
-          <li><a href="#">Teachers</a></li>
-          <li><a href="#">Professionals</a></li>
-          <li><a href="#">Schools</a></li>
-        </ul>
-      </div>
-      <div>
-        <h4>Company</h4>
-        <ul>
-          <li><a href="#">About</a></li>
-          <li><a href="#">Blog</a></li>
-          <li><a href="#">Careers</a></li>
-          <li><a href="#">Contact</a></li>
-        </ul>
-      </div>
+      <div><h4>Product</h4><ul><li><a href="#features">Features</a></li><li><a href="#pricing">Pricing</a></li><li><a href="#">Changelog</a></li><li><a href="#">Roadmap</a></li></ul></div>
+      <div><h4>Tools</h4><ul><li><a href="#">Writing Suite</a></li><li><a href="#">Flashcards</a></li><li><a href="#">AI Tutor</a></li><li><a href="#">Focus Timer</a></li></ul></div>
+      <div><h4>For</h4><ul><li><a href="#">Students</a></li><li><a href="#">Teachers</a></li><li><a href="#">Professionals</a></li><li><a href="#">Schools</a></li></ul></div>
+      <div><h4>Company</h4><ul><li><a href="#">About</a></li><li><a href="#">Blog</a></li><li><a href="#">Careers</a></li><li><a href="#">Contact</a></li></ul></div>
     </div>
     <div class="foot-bottom">
-      <span>© 2026 Studlin Labs, Inc. — Made with ☕ in Brooklyn</span>
-      <span style="display:flex;gap:18px;">
-        <a href="#">Terms</a><a href="#">Privacy</a><a href="#">Cookies</a>
-      </span>
+      <span>© 2026 Studlin Labs, Inc. · Made in Brooklyn</span>
+      <span style="display:flex;gap:18px;"><a href="#">Terms</a><a href="#">Privacy</a><a href="#">Cookies</a></span>
     </div>
   </div>
 </footer>
 
 <script>
-  // Reveal on scroll
-  const io = new IntersectionObserver((entries) => {
-    entries.forEach(e => {
-      if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
-    });
-  }, { threshold: 0.12 });
-  document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+  // nav scroll state
+  const nav=document.getElementById('nav');
+  addEventListener('scroll',()=>{nav.classList.toggle('scrolled',scrollY>20);},{passive:true});
 
-  // Count up
-  const countObs = new IntersectionObserver((entries) => {
-    entries.forEach(e => {
-      if (!e.isIntersecting) return;
-      const el = e.target;
-      const target = parseFloat(el.dataset.count);
-      const suffix = el.dataset.suffix || '';
-      const isInt = Number.isInteger(target);
-      const dur = 1400;
-      const start = performance.now();
-      function tick(now) {
-        const t = Math.min(1, (now - start) / dur);
-        const eased = 1 - Math.pow(1 - t, 3);
-        const v = target * eased;
-        el.textContent = (isInt ? Math.round(v).toLocaleString() : v.toFixed(1)) + suffix;
-        if (t < 1) requestAnimationFrame(tick);
-      }
-      requestAnimationFrame(tick);
-      countObs.unobserve(el);
-    });
-  }, { threshold: 0.4 });
-  document.querySelectorAll('[data-count]').forEach(el => countObs.observe(el));
+  // reveal on scroll
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}});},{threshold:0.12});
+  document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+
+  // count up
+  const cio=new IntersectionObserver(es=>{es.forEach(e=>{
+    if(!e.isIntersecting)return;
+    const el=e.target,target=parseFloat(el.dataset.count),suf=el.dataset.suffix||'',isInt=Number.isInteger(target),dur=1500,st=performance.now();
+    const u=el.querySelector('.u');
+    function tick(now){const t=Math.min(1,(now-st)/dur),k=1-Math.pow(1-t,3),v=target*k;
+      const txt=(isInt?Math.round(v).toLocaleString():v.toFixed(1))+suf;
+      if(u){u.textContent=txt;}else{el.textContent=txt;}
+      if(t<1)requestAnimationFrame(tick);}
+    requestAnimationFrame(tick);cio.unobserve(el);
+  });},{threshold:0.4});
+  document.querySelectorAll('[data-count]').forEach(el=>cio.observe(el));
+
+  // equalizer bars
+  const eq=document.getElementById('eqBars');
+  if(eq){const hs=[30,55,80,45,65,90,70,35,55,75,50,25,60,85,40];hs.forEach((h,i)=>{const b=document.createElement('i');b.style.height=h+'%';if(h>72)b.classList.add('hi');b.style.animation=`eqp ${0.7+(i%5)*0.12}s ease-in-out ${i*0.05}s infinite alternate`;eq.appendChild(b);});
+    const s=document.createElement('style');s.textContent='@keyframes eqp{from{transform:scaleY(.4)}to{transform:scaleY(1)}}.bars i{transform-origin:bottom;}';document.head.appendChild(s);}
 
   // FAQ
-  document.querySelectorAll('.faq-item').forEach(item => {
-    item.querySelector('.faq-q').addEventListener('click', () => {
-      const open = item.classList.contains('open');
-      document.querySelectorAll('.faq-item').forEach(i => i.classList.remove('open'));
-      if (!open) item.classList.add('open');
-    });
-  });
+  document.querySelectorAll('.qitem').forEach(it=>{it.querySelector('.qq').addEventListener('click',()=>{const o=it.classList.contains('open');document.querySelectorAll('.qitem').forEach(x=>x.classList.remove('open'));if(!o)it.classList.add('open');});});
 
-  // Pricing toggle
-  const billBtns = document.querySelectorAll('.toggle button');
-  const proPrice = document.querySelector('.plan.pro .num');
-  const proPer = document.querySelector('.plan.pro .per');
-  billBtns.forEach(b => b.addEventListener('click', () => {
-    billBtns.forEach(x => x.classList.remove('active'));
-    b.classList.add('active');
-    if (b.dataset.bill === 'annual') {
-      proPrice.textContent = proPrice.dataset.annual;
-      proPer.textContent = '/mo · billed yearly';
-    } else {
-      proPrice.textContent = proPrice.dataset.monthly;
-      proPer.textContent = '/month';
-    }
+  // pricing toggle
+  const bills=document.querySelectorAll('.toggle button');
+  bills.forEach(b=>b.addEventListener('click',()=>{
+    bills.forEach(x=>x.classList.remove('active'));b.classList.add('active');
+    const annual=b.dataset.bill==='annual';
+    document.querySelectorAll('.num[data-monthly]').forEach(n=>{n.textContent=annual?n.dataset.annual:n.dataset.monthly;});
+    document.getElementById('proPer').textContent=annual?'/mo billed yearly':'/month';
+    document.getElementById('elitePer').textContent=annual?'/mo billed yearly':'/month';
   }));
 
-  // Floating chips parallax
-  const chips = document.querySelectorAll('.chip');
-  window.addEventListener('scroll', () => {
-    const y = window.scrollY;
-    if (y > 800) return;
-    chips.forEach((c, i) => {
-      const speed = (i % 2 === 0 ? 1 : -1) * (0.05 + (i * 0.01));
-      c.style.transform = c.style.transform.replace(/translateY\([^)]*\)/, '') + ` translateY(${y * speed}px)`;
+  // magnetic buttons
+  document.querySelectorAll('.magnetic').forEach(btn=>{
+    btn.addEventListener('mousemove',e=>{const r=btn.getBoundingClientRect();const x=e.clientX-r.left-r.width/2,y=e.clientY-r.top-r.height/2;btn.style.transform=`translate(${x*0.25}px,${y*0.35}px)`;});
+    btn.addEventListener('mouseleave',()=>{btn.style.transform='';});
+  });
+
+  // hero fragment parallax — scroll + mouse, combined
+  const frags=document.querySelectorAll('.frag');
+  const hero=document.querySelector('.hero');
+  let pmx=0,pmy=0;
+  function setFrags(){
+    const y=Math.min(scrollY,900);
+    frags.forEach(f=>{
+      const d=parseFloat(f.dataset.depth);
+      f.style.transform=`translate3d(${pmx*d*220}px,${y*d*-1 + pmy*d*160}px,0)`;
     });
-  }, { passive: true });
+  }
+  addEventListener('scroll',setFrags,{passive:true});
+  if(hero && matchMedia('(prefers-reduced-motion: no-preference)').matches){
+    hero.addEventListener('mousemove',e=>{
+      const r=hero.getBoundingClientRect();
+      pmx=(e.clientX-r.left)/r.width-0.5;
+      pmy=(e.clientY-r.top)/r.height-0.5;
+      setFrags();
+    });
+    hero.addEventListener('mouseleave',()=>{pmx=0;pmy=0;setFrags();});
+  }
+
+  // live focus timer fragment
+  const fragTimer=document.getElementById('fragTimer');
+  const fragBar=document.getElementById('fragBar');
+  if(fragTimer){
+    let secs=24*60+59;
+    setInterval(()=>{
+      secs=secs>0?secs-1:25*60;
+      const m=String(Math.floor(secs/60)).padStart(2,'0'), s=String(secs%60).padStart(2,'0');
+      fragTimer.textContent=m+':'+s;
+      if(fragBar)fragBar.style.width=((1-secs/(25*60))*100)+'%';
+    },1000);
+  }
+
+  // hero flashcard — click to flip; auto-flip stops once you interact
+  const heroCard=document.getElementById('heroCard');
+  if(heroCard){
+    let autoFlip=null;
+    heroCard.addEventListener('click',()=>{
+      heroCard.classList.toggle('flip');
+      if(autoFlip){clearInterval(autoFlip);autoFlip=null;}
+    });
+    if(matchMedia('(prefers-reduced-motion: no-preference)').matches){
+      autoFlip=setInterval(()=>heroCard.classList.toggle('flip'),5200);
+    }
+  }
+
+  // card spotlight follow
+  document.querySelectorAll('[data-spot]').forEach(c=>{c.addEventListener('mousemove',e=>{const r=c.getBoundingClientRect();c.style.setProperty('--mx',(e.clientX-r.left)+'px');c.style.setProperty('--my',(e.clientY-r.top)+'px');});});
+
+  // seamless marquee loop — duplicate track content so it never runs out
+  document.querySelectorAll('.marq-track').forEach(t=>{ t.innerHTML += t.innerHTML; });
+
+  // HOW IT WORKS — scroll driven kinetic section
+  const hiwTrack=document.getElementById('hiwTrack');
+  const hiwMega=document.getElementById('hiwMega');
+  const hiwSteps=[...document.querySelectorAll('.hiw-step')];
+  const hiwDots=[...document.querySelectorAll('#hiwDots i')];
+  let curStep=-1;
+  function hiwUpdate(){
+    if(!hiwTrack)return;
+    const r=hiwTrack.getBoundingClientRect();
+    const total=hiwTrack.offsetHeight-window.innerHeight;
+    const p=Math.min(1,Math.max(0,-r.top/total));
+    if(hiwMega){hiwMega.style.transform=`translateY(-50%) translateX(${-p*42}vw)`;}
+    const n=hiwSteps.length;
+    const idx=Math.min(n-1,Math.floor(p*n*0.999));
+    if(idx!==curStep){
+      curStep=idx;
+      hiwSteps.forEach((s,i)=>s.classList.toggle('on',i===idx));
+      hiwDots.forEach((d,i)=>d.classList.toggle('on',i===idx));
+    }
+  }
+  addEventListener('scroll',hiwUpdate,{passive:true});
+  addEventListener('resize',hiwUpdate);
+  hiwUpdate();
 </script>
 </body>
 </html>
