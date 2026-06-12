@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import type { User } from 'firebase/auth'
+import type { User, UserCredential } from 'firebase/auth'
 import {
   onAuthStateChanged,
   signInWithPopup,
@@ -21,7 +21,7 @@ import { auth, googleProvider } from './firebase'
 interface AuthContextValue {
   user: User | null
   loading: boolean
-  signInWithGoogle: () => Promise<void>
+  signInWithGoogle: () => Promise<UserCredential>
   signInWithEmail: (email: string, password: string) => Promise<void>
   signUpWithEmail: (name: string, email: string, password: string) => Promise<void>
   signOutUser: () => Promise<void>
@@ -47,7 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   async function signInWithGoogle() {
-    await signInWithPopup(auth, googleProvider)
+    return signInWithPopup(auth, googleProvider)
   }
 
   async function signInWithEmail(email: string, password: string) {

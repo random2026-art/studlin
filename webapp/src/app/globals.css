@@ -71,3 +71,15 @@ body {
 .animate-marquee {
   animation: marquee 40s linear infinite;
 }
+
+/* Onboarding step + card entrance */
+@keyframes onboardIn {
+  from { opacity: 0; transform: translateY(16px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.onboard-step {
+  animation: onboardIn 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.onboard-merge {
+  animation: onboardIn 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}

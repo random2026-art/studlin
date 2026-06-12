@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { getAdditionalUserInfo } from 'firebase/auth'
 import { useAuth } from '@/lib/auth-context'
 
 export default function SignInPage() {
@@ -17,8 +18,9 @@ export default function SignInPage() {
     setError('')
     setLoading(true)
     try {
-      await signInWithGoogle()
-      router.replace('/dashboard')
+      const result = await signInWithGoogle()
+      const isNewUser = getAdditionalUserInfo(result)?.isNewUser
+      router.replace(isNewUser ? '/onboarding' : '/dashboard')
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Google sign-in failed')
     } finally {
