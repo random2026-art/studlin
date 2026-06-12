@@ -11,6 +11,9 @@
 </head>
 <body>
 
+<!-- scroll progress rail -->
+<div class="scroll-rail"><i id="scrollBar"></i></div>
+
 <!-- ============ NAV ============ -->
 <nav class="nav" id="nav">
   <div class="row">
@@ -34,6 +37,7 @@
 <header class="hero">
   <div class="aurora"><i class="a1"></i><i class="a2"></i><i class="a3"></i></div>
   <div class="hero-grid"></div>
+  <div class="hero-spot" id="heroSpot"></div>
 
   <!-- floating fragments — mini live UI -->
   <div class="frag f1" data-depth="0.04"><div class="fin">
@@ -69,7 +73,7 @@
     <h1>
       <span class="line"><span class="reveal-up">Everything you</span></span>
       <span class="line"><span class="reveal-up">study, in one</span></span>
-      <span class="line"><span class="reveal-up"><span class="hl-wrap"><span class="rotor"><span class="col"><span>place.</span><span>flow.</span><span>app.</span><span>tab.</span><span>OS.</span><span>place.</span></span></span><svg class="hl-ink" viewBox="0 0 220 22" preserveAspectRatio="none" aria-hidden="true"><path d="M6 14 C 60 6, 150 4, 214 11" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round"></path></svg></span></span></span>
+      <span class="line"><span class="reveal-up"><span class="hl-modern rotor"><span class="col"><span>place.</span><span>flow.</span><span>app.</span><span>tab.</span><span>OS.</span><span>place.</span></span></span></span></span>
     </h1>
     <p class="sub">Writing tools, AI tutoring, flashcards, smart scheduling, focus mode and gamified streaks, fused into one calm command center built for how you actually study.</p>
     <div class="hero-ctas">
@@ -168,13 +172,13 @@
         <div class="knum">03 · Flashcards</div>
         <h3>Drop a PDF. Get a deck.</h3>
         <p>Upload notes, lectures, textbooks. AI builds spaced-repetition cards tuned to your exam.</p>
-        <div class="canvas deckwrap">
-          <div class="deckc" style="top:30px;left:24px;right:-10px;height:96px;background:var(--panel-2);border:1px solid var(--line);transform:rotate(5deg);"></div>
-          <div class="deckc" style="top:18px;left:12px;right:2px;height:104px;background:var(--cream);opacity:.5;transform:rotate(2.5deg);"></div>
-          <div class="deckc" style="top:6px;left:0;right:14px;box-shadow:0 20px 40px -18px rgba(0,0,0,.5);transform:rotate(-2deg);">
-            <div class="mono" style="font-size:10px;color:rgba(10,19,16,.45);">CARD 4 / 47</div>
-            <div style="font-family:var(--display);font-weight:600;font-size:20px;margin-top:8px;letter-spacing:-0.02em;">What is the Krebs cycle?</div>
-          </div>
+        <div class="canvas deckwrap deckgen" aria-hidden="true">
+          <div class="dg-doc"><i class="l1"></i><i class="l2"></i><i class="l3"></i><span class="mono">notes.pdf</span></div>
+          <div class="dg-stream"><i></i><i></i><i></i></div>
+          <div class="dg-card c1">What is osmosis?</div>
+          <div class="dg-card c2">Define entropy</div>
+          <div class="dg-card c3">Mitosis vs meiosis?</div>
+          <div class="dg-progress"><i></i></div>
         </div>
       </div>
 
@@ -559,11 +563,18 @@
     document.getElementById('elitePer').textContent=annual?'/mo billed yearly':'/month';
   }));
 
-  // magnetic buttons
+  // magnetic buttons — pull + lift
   document.querySelectorAll('.magnetic').forEach(btn=>{
-    btn.addEventListener('mousemove',e=>{const r=btn.getBoundingClientRect();const x=e.clientX-r.left-r.width/2,y=e.clientY-r.top-r.height/2;btn.style.transform=`translate(${x*0.25}px,${y*0.35}px)`;});
+    btn.addEventListener('mousemove',e=>{const r=btn.getBoundingClientRect();const x=e.clientX-r.left-r.width/2,y=e.clientY-r.top-r.height/2;btn.style.transform=`translate(${x*0.28}px,${y*0.4}px) scale(1.045)`;});
     btn.addEventListener('mouseleave',()=>{btn.style.transform='';});
   });
+
+  // scroll progress rail
+  const scrollBar=document.getElementById('scrollBar');
+  if(scrollBar){
+    const upd=()=>{const max=document.documentElement.scrollHeight-innerHeight;scrollBar.style.width=(max>0?(scrollY/max*100):0)+'%';};
+    addEventListener('scroll',upd,{passive:true});addEventListener('resize',upd);upd();
+  }
 
   // hero fragment parallax — scroll + mouse, combined
   const frags=document.querySelectorAll('.frag');
@@ -578,13 +589,15 @@
   }
   addEventListener('scroll',setFrags,{passive:true});
   if(hero && matchMedia('(prefers-reduced-motion: no-preference)').matches){
+    const heroSpot=document.getElementById('heroSpot');
     hero.addEventListener('mousemove',e=>{
       const r=hero.getBoundingClientRect();
       pmx=(e.clientX-r.left)/r.width-0.5;
       pmy=(e.clientY-r.top)/r.height-0.5;
+      if(heroSpot){heroSpot.style.setProperty('--sx',(e.clientX-r.left)+'px');heroSpot.style.setProperty('--sy',(e.clientY-r.top)+'px');heroSpot.style.opacity='1';}
       setFrags();
     });
-    hero.addEventListener('mouseleave',()=>{pmx=0;pmy=0;setFrags();});
+    hero.addEventListener('mouseleave',()=>{pmx=0;pmy=0;if(heroSpot)heroSpot.style.opacity='0';setFrags();});
   }
 
   // live focus timer fragment
