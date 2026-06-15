@@ -39,10 +39,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u)
       setLoading(false)
+      const secure = location.protocol === 'https:' ? '; Secure' : ''
       if (u) {
-        document.cookie = 'studlin-session=1; path=/; max-age=604800; SameSite=Lax'
+        document.cookie = `studlin-session=1; path=/; max-age=604800; SameSite=Lax${secure}`
       } else {
-        document.cookie = 'studlin-session=; path=/; max-age=0'
+        document.cookie = `studlin-session=; path=/; max-age=0${secure}`
       }
     })
     return unsubscribe
