@@ -16,12 +16,14 @@ import {
   updateProfile,
   signOut,
 } from 'firebase/auth'
-import { auth, googleProvider } from './firebase'
+import { auth, googleProvider, appleProvider, microsoftProvider } from './firebase'
 
 interface AuthContextValue {
   user: User | null
   loading: boolean
   signInWithGoogle: () => Promise<UserCredential>
+  signInWithApple: () => Promise<UserCredential>
+  signInWithMicrosoft: () => Promise<UserCredential>
   signInWithEmail: (email: string, password: string) => Promise<void>
   signUpWithEmail: (name: string, email: string, password: string) => Promise<void>
   signOutUser: () => Promise<void>
@@ -50,6 +52,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return signInWithPopup(auth, googleProvider)
   }
 
+  async function signInWithApple() {
+    return signInWithPopup(auth, appleProvider)
+  }
+
+  async function signInWithMicrosoft() {
+    return signInWithPopup(auth, microsoftProvider)
+  }
+
   async function signInWithEmail(email: string, password: string) {
     await signInWithEmailAndPassword(auth, email, password)
   }
@@ -64,7 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, signInWithGoogle, signInWithEmail, signUpWithEmail, signOutUser }}>
+    <AuthContext.Provider value={{ user, loading, signInWithGoogle, signInWithApple, signInWithMicrosoft, signInWithEmail, signUpWithEmail, signOutUser }}>
       {children}
     </AuthContext.Provider>
   )

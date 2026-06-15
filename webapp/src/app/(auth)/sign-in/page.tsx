@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, type FormEvent } from 'react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { getAdditionalUserInfo } from 'firebase/auth'
 import { useAuth } from '@/lib/auth-context'
@@ -121,9 +120,9 @@ export default function SignInPage() {
 
       <p className="text-center text-cream/60 text-sm mt-6">
         New to Studlin?{' '}
-        <Link href="/sign-up" className="text-lime hover:underline font-medium">
+        <a href="/onboarding" className="text-lime hover:underline font-medium">
           Create account →
-        </Link>
+        </a>
       </p>
     </div>
   )
