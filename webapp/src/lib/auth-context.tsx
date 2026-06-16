@@ -36,6 +36,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    if (!auth) { setLoading(false); return }
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u)
       setLoading(false)
@@ -50,28 +51,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   async function signInWithGoogle() {
-    return signInWithPopup(auth, googleProvider)
+    return signInWithPopup(auth!, googleProvider)
   }
 
   async function signInWithApple() {
-    return signInWithPopup(auth, appleProvider)
+    return signInWithPopup(auth!, appleProvider)
   }
 
   async function signInWithMicrosoft() {
-    return signInWithPopup(auth, microsoftProvider)
+    return signInWithPopup(auth!, microsoftProvider)
   }
 
   async function signInWithEmail(email: string, password: string) {
-    await signInWithEmailAndPassword(auth, email, password)
+    await signInWithEmailAndPassword(auth!, email, password)
   }
 
   async function signUpWithEmail(name: string, email: string, password: string) {
-    const cred = await createUserWithEmailAndPassword(auth, email, password)
+    const cred = await createUserWithEmailAndPassword(auth!, email, password)
     await updateProfile(cred.user, { displayName: name })
   }
 
   async function signOutUser() {
-    await signOut(auth)
+    await signOut(auth!)
   }
 
   return (
