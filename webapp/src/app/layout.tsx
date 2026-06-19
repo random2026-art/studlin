@@ -1,7 +1,13 @@
 import type { Metadata } from 'next'
-import { Caveat, Instrument_Serif, JetBrains_Mono, Geist } from 'next/font/google'
+import { Bricolage_Grotesque, Caveat, Instrument_Serif, JetBrains_Mono, Geist } from 'next/font/google'
 import './globals.css'
 import { Providers } from '@/components/providers'
+
+const bricolageGrotesque = Bricolage_Grotesque({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700', '800'],
+  variable: '--font-bricolage',
+})
 
 const caveat = Caveat({
   subsets: ['latin'],
@@ -40,7 +46,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${caveat.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable} ${geist.variable} h-full`}
+      className={`${bricolageGrotesque.variable} ${caveat.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable} ${geist.variable} h-full`}
     >
       <body className="h-full antialiased">
         <Providers>{children}</Providers>
