@@ -219,8 +219,8 @@ a { color: inherit; text-decoration: none; }
   position: relative;
   display: flex; flex-direction: column;
 }
-.stage::-webkit-scrollbar { width: 6px; }
-.stage::-webkit-scrollbar-thumb { background: rgba(14,31,24,0.10); border-radius: 99px; }
+.stage::-webkit-scrollbar { display: none; }
+.stage { scrollbar-width: none; }
 
 .stage-top {
   padding: 26px 48px;
