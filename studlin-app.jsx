@@ -1,0 +1,2407 @@
+const { useState, useEffect, useRef } = React;
+
+// ─── DESIGN TOKENS · dark + light themes ──────────────────────────────────────
+const darkT = {
+  bg:     "#0D120F",
+  surface:"#141A16",
+  card:   "#19211C",
+  card2:  "#212A24",
+  border: "rgba(255,255,255,0.07)",
+  borderHover: "rgba(255,255,255,0.14)",
+  lime:   "#AECE5E",
+  limeDk: "#8BAE3C",
+  limeLt: "#CBDF92",
+  glow:   "rgba(174,206,94,0.22)",
+  text:   "#E8EFE7",
+  muted:  "#849389",
+  faint:  "#3F5147",
+  white:  "#ffffff",
+  red:    "#D9806B",
+  blue:   "#7BACDF",
+  amber:  "#DCA64A",
+  purple: "#A691DB",
+  teal:   "#5FCBA8",
+  butter: "#FFE99A",
+  peach:  "#FFD7B5",
+  mint:   "#C4F0D8",
+  lilac:  "#E2D0FF",
+  sky:    "#BFE3FF",
+  rose:   "#FFC9D2",
+  forest: "#14342A",
+  ink:    "#0E1F18",
+  cream:  "#F6F1E6",
+  font:   `"Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`,
+  hand:   `"Bricolage Grotesque", "Geist", sans-serif`,
+  serif:  `"Instrument Serif", serif`,
+  mono:   `"JetBrains Mono", ui-monospace, monospace`,
+  mode:   "dark",
+};
+const lightT = {
+  bg:     "#FAF6EC",
+  surface:"#14342A",
+  card:   "#ffffff",
+  card2:  "#F3EEE2",
+  border: "rgba(14,31,24,0.09)",
+  borderHover: "rgba(14,31,24,0.16)",
+  lime:   "#9EC83D",
+  limeDk: "#7FA82A",
+  limeLt: "#CBDF92",
+  glow:   "rgba(158,200,61,0.20)",
+  text:   "#0E1F18",
+  muted:  "rgba(14,31,24,0.55)",
+  faint:  "rgba(14,31,24,0.30)",
+  white:  "#14342A",
+  red:    "#A8412C",
+  blue:   "#2D6FB8",
+  amber:  "#A6700C",
+  purple: "#5E45A8",
+  teal:   "#1A8770",
+  butter: "#FFE99A",
+  peach:  "#FFD7B5",
+  mint:   "#C4F0D8",
+  lilac:  "#E2D0FF",
+  sky:    "#BFE3FF",
+  rose:   "#FFC9D2",
+  forest: "#14342A",
+  ink:    "#0E1F18",
+  cream:  "#F6F1E6",
+  font:   `"Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`,
+  hand:   `"Bricolage Grotesque", "Geist", sans-serif`,
+  serif:  `"Instrument Serif", serif`,
+  mono:   `"JetBrains Mono", ui-monospace, monospace`,
+  mode:   "light",
+};
+const T = {...darkT}; // mutable · applyTheme() swaps in place so all components re-read on render
+function applyTheme(name) {
+  Object.assign(T, name === 'light' ? lightT : darkT);
+  if (typeof document !== 'undefined' && document.body) {
+    document.body.style.background = T.bg;
+    document.body.style.color = T.text;
+    document.body.style.fontFamily = T.font;
+  }
+}
+applyTheme((typeof localStorage !== 'undefined' && localStorage.getItem('studlin-theme')) || 'dark');
+
+// ─── ICON LIBRARY (SVG, no emoji) ─────────────────────────────────────────────
+const ic = (path,size=16,vb="0 0 24 24") => (
+  <svg width={size} height={size} viewBox={vb} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0,display:"block"}}>{path}</svg>
+);
+
+const Icon = {
+  grid:      ic(<><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></>),
+  chat:      ic(<><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></>),
+  pen:       ic(<><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></>),
+  layers:    ic(<><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></>),
+  file:      ic(<><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></>),
+  clock:     ic(<><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></>),
+  cal:       ic(<><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></>),
+  user:      ic(<><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></>),
+  check:     ic(<><polyline points="20 6 9 17 4 12"/></>),
+  refresh:   ic(<><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></>),
+  music:     ic(<><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></>),
+  users:     ic(<><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>),
+  trophy:    ic(<><polyline points="8 17 12 13 16 17"/><path d="M16 7H8"/><path d="M4 7h16l-1.5 9H5.5L4 7z"/><path d="M9 3.5L7 7h10l-2-3.5"/></>),
+  settings:  ic(<><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></>),
+  send:      ic(<><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></>),
+  bar:       ic(<><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></>),
+  play:      ic(<><polygon points="5 3 19 12 5 21 5 3"/></>),
+  pause:     ic(<><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></>),
+  skip:      ic(<><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></>),
+  prev:      ic(<><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></>),
+  chevDown:  ic(<><polyline points="6 9 12 15 18 9"/></>),
+  plus:      ic(<><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></>),
+  bold:      ic(<><path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/><path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/></>),
+  italic:    ic(<><line x1="19" y1="4" x2="10" y2="4"/><line x1="14" y1="20" x2="5" y2="20"/><line x1="15" y1="4" x2="9" y2="20"/></>),
+  link:      ic(<><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></>),
+  quote:     ic(<><path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"/><path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3c0 1 0 1 1 1z"/></>),
+  wand:      ic(<><path d="m15 4-1 1"/><path d="m4 15 1-1"/><path d="M7 6 5 8"/><path d="m17 16-2 2"/><path d="M6 18l11.93-11.93a1 1 0 0 1 1.41 0l.59.59a1 1 0 0 1 0 1.41L8 20"/></>),
+  zap:       ic(<><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></>),
+  shield:    ic(<><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></>),
+  copy:      ic(<><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></>),
+  award:     ic(<><circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/></>),
+  star:      ic(<><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></>),
+  flame:     ic(<><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></>),
+  volume:    ic(<><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></>),
+  xmark:     ic(<><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>),
+  arrowR:    ic(<><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></>),
+  brain:     ic(<><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"/><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/><path d="M3.477 10.896a4 4 0 0 1 .585-.396"/><path d="M19.938 10.5a4 4 0 0 1 .585.396"/><path d="M6 18a4 4 0 0 1-1.967-.516"/><path d="M19.967 17.484A4 4 0 0 1 18 18"/></>),
+  scan:      ic(<><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="8" y1="12" x2="16" y2="12"/></>),
+  dot:       ic(<><circle cx="12" cy="12" r="4" fill="currentColor" stroke="none"/></>),
+};
+
+// ─── SHARED PRIMITIVES ────────────────────────────────────────────────────────
+const Btn = ({children,onClick,style={},variant="lime"}) => {
+  const base = {display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",border:"none",fontFamily:T.font,letterSpacing:"0.01em",transition:"opacity 0.15s"};
+  const variants = {
+    lime:{background:T.lime,color:T.bg},
+    ghost:{background:"transparent",color:T.muted,border:`1px solid ${T.border}`},
+    subtle:{background:T.card2,color:T.text,border:`1px solid ${T.border}`},
+    danger:{background:"rgba(224,90,71,0.1)",color:T.red,border:"1px solid rgba(224,90,71,0.2)"},
+  };
+  return <button onClick={onClick} style={{...base,...variants[variant],...style}}>{children}</button>;
+};
+const BtnSm = ({children,onClick,style={},variant="lime"}) => <Btn onClick={onClick} style={{padding:"5px 12px",fontSize:11,...style}} variant={variant}>{children}</Btn>;
+
+const Badge = ({children,color=T.lime}) => <span style={{display:"inline-flex",alignItems:"center",padding:"3px 9px",borderRadius:4,fontSize:11,fontWeight:600,letterSpacing:"0.03em",background:color+"18",color,border:`1px solid ${color}22`}}>{children}</span>;
+
+const Prog = ({pct,color=T.lime,height=4}) => <div style={{height,background:T.card2,borderRadius:height,overflow:"hidden"}}><div style={{height:"100%",width:`${pct}%`,background:color,borderRadius:height,transition:"width 0.5s ease"}}/></div>;
+
+const Divider = ({style={}}) => <div style={{height:"1px",background:T.border,...style}} />;
+
+const Label = ({children}) => <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.muted,marginBottom:6}}>{children}</div>;
+
+const Av = ({initials,color=T.lime,size=36}) => (
+  <div style={{width:size,height:size,borderRadius:"50%",background:color+"22",border:`1.5px solid ${color}44`,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,color,fontSize:Math.round(size*0.33),flexShrink:0,letterSpacing:"0.02em"}}>{initials}</div>
+);
+
+const Card = ({children,style={},onClick}) => (
+  <div data-card onClick={onClick} style={{background:T.card,borderRadius:10,padding:20,border:`1px solid ${T.border}`,cursor:onClick?"pointer":"default",...style}}>{children}</div>
+);
+
+// ─── MODAL ────────────────────────────────────────────────────────────────────
+const Modal = ({open, onClose, title, sub, children, footer, width=540}) => {
+  if (!open) return null;
+  return (
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:width,maxHeight:"90vh",background:T.card,borderRadius:16,border:`1px solid ${T.border}`,overflow:"hidden",display:"flex",flexDirection:"column",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)",boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)"}}>
+        <div style={{padding:"20px 22px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"flex-start",gap:12}}>
+          <div style={{flex:1}}>
+            <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>{title}</div>
+            {sub && <div style={{fontSize:12.5,color:T.muted,marginTop:3}}>{sub}</div>}
+          </div>
+          <button onClick={onClose} style={{width:30,height:30,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer"}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div style={{padding:22,overflowY:"auto",flex:1}}>{children}</div>
+        {footer && <div style={{padding:"14px 22px",borderTop:`1px solid ${T.border}`,background:T.bg,display:"flex",gap:10,justifyContent:"flex-end"}}>{footer}</div>}
+      </div>
+    </div>
+  );
+};
+const Field = ({label, children, hint}) => (
+  <div style={{marginBottom:14}}>
+    <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:6}}>{label}</div>
+    {children}
+    {hint && <div style={{fontSize:11,color:T.muted,marginTop:4}}>{hint}</div>}
+  </div>
+);
+const Input = (props) => (
+  <input {...props} style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.font,outline:"none",boxSizing:"border-box",...(props.style||{})}} />
+);
+const Textarea = (props) => (
+  <textarea {...props} style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.font,outline:"none",resize:"vertical",minHeight:90,boxSizing:"border-box",...(props.style||{})}} />
+);
+const SelectChip = ({options, value, onChange}) => (
+  <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+    {options.map(o=>{
+      const v = typeof o==="string"?o:o.value;
+      const label = typeof o==="string"?o:o.label;
+      const color = (typeof o==="object" && o.color) || null;
+      const sel = value===v;
+      return (
+        <button key={v} type="button" onClick={()=>onChange(v)} style={{padding:"7px 13px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${sel?T.lime+"66":T.border}`,background:sel?T.lime+"14":"transparent",color:sel?T.lime:T.muted,fontFamily:T.font,fontWeight:sel?600:400,display:"inline-flex",alignItems:"center",gap:6}}>
+          {color && <span style={{width:7,height:7,borderRadius:"50%",background:color}} />}
+          {label}
+        </button>
+      );
+    })}
+  </div>
+);
+
+const PH = ({title,sub,action}) => (
+  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:28}}>
+    <div>
+      <h1 style={{fontSize:22,fontWeight:700,color:T.white,marginBottom:3,letterSpacing:"-0.02em"}}>{title}</h1>
+      <p style={{fontSize:13,color:T.muted,margin:0}}>{sub}</p>
+    </div>
+    {action}
+  </div>
+);
+
+const Pills = ({tabs,active,onChange}) => (
+  <div style={{display:"flex",gap:4,marginBottom:20}}>
+    {tabs.map(t=>(
+      <button key={t} onClick={()=>onChange(t)} style={{padding:"6px 14px",borderRadius:6,fontSize:12,cursor:"pointer",border:`1px solid ${active===t?T.lime+"44":T.border}`,background:active===t?T.lime+"14":"transparent",color:active===t?T.lime:T.muted,fontWeight:active===t?600:400,fontFamily:T.font,letterSpacing:"0.01em",transition:"all 0.15s",textTransform:"capitalize"}}>{t}</button>
+    ))}
+  </div>
+);
+
+const StatNum = ({label,value,sub,accent,style={}}) => (
+  <div style={{...style}}>
+    <Label>{label}</Label>
+    <div style={{fontSize:32,fontWeight:700,color:accent||T.white,letterSpacing:"-0.03em",lineHeight:1}}>{value}</div>
+    {sub&&<div style={{fontSize:12,color:T.muted,marginTop:5}}>{sub}</div>}
+  </div>
+);
+
+// ─── PERSISTENCE + MONETIZATION HELPERS ──────────────────────────────────────
+const lsGet=(k,d)=>{try{const v=localStorage.getItem("studlin-"+k);return v===null?d:JSON.parse(v);}catch(e){return d;}};
+const lsSet=(k,v)=>{try{localStorage.setItem("studlin-"+k,JSON.stringify(v));}catch(e){}};
+const dayKey=(d)=>{const x=d||new Date();return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");};
+function touchStreak(){const days=lsGet("days",[]);const t=dayKey();if(!days.includes(t)){days.push(t);lsSet("days",days);}}
+function getStreak(){const days=new Set(lsGet("days",[]));let n=0;const d=new Date();while(days.has(dayKey(d))){n++;d.setDate(d.getDate()-1);}return n;}
+function logSession(mins,mode){const s=lsGet("sessions",[]);s.push({d:dayKey(),m:mins,t:Date.now(),mode:mode||"Focus"});lsSet("sessions",s);}
+function sessionStats(){
+  const s=lsGet("sessions",[]);
+  const weekAgo=Date.now()-6*86400000;
+  const week=s.filter(x=>x.t>=weekAgo);
+  const today=s.filter(x=>x.d===dayKey());
+  const weekMin=week.reduce((a,x)=>a+x.m,0);
+  const todayMin=today.reduce((a,x)=>a+x.m,0);
+  return {weekCount:week.length,weekMin,todayMin,avg:week.length?Math.round(weekMin/week.length):0,todayCount:today.length};
+}
+const fmtH=(m)=>m>=60?Math.floor(m/60)+"h "+(m%60)+"m":m+"m";
+const PLAN_LIMITS={Free:{music:2},Scholar:{music:5},Elite:{music:10}};
+function getPlan(){return lsGet("plan","Free");}
+function setPlanLS(p){lsSet("plan",p);}
+
+// ─── UPGRADE MODAL (shared paywall) ───────────────────────────────────────────
+function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
+  if(!open)return null;
+  const tiers=[
+    {name:"Scholar",price:"$8.99",perks:["5 AI music creations","500 AI credits / month","Unlimited decks + notes scanning"],color:T.lime},
+    {name:"Elite",price:"$14.99",perks:["10 AI music creations","2,000 AI credits / month","Exam prep mode + early features"],color:T.purple},
+  ];
+  const choose=(name)=>{setPlanLS(name);onClose();if(onUpgraded)onUpgraded(name);};
+  return (
+    <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:90,background:"rgba(8,12,10,0.72)",backdropFilter:"blur(7px)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:580,maxWidth:"92vw",background:T.surface,border:"1px solid "+T.border,borderRadius:16,padding:28,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
+          <span style={{display:"inline-flex",width:30,height:30,borderRadius:8,background:T.lime+"1c",border:"1px solid "+T.lime+"44",alignItems:"center",justifyContent:"center",color:T.lime}}>{Icon.wand}</span>
+          <div style={{fontSize:17,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>You have hit your {feature} limit</div>
+        </div>
+        <div style={{fontSize:12.5,color:T.muted,lineHeight:1.6,marginBottom:18}}>{detail}</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+          {tiers.map(t=>(
+            <div key={t.name} style={{background:T.card,border:"1px solid "+(t.name==="Elite"?t.color+"55":T.border),borderRadius:12,padding:16,position:"relative"}}>
+              {t.name==="Elite"&&<span style={{position:"absolute",top:-8,right:12,fontSize:9,fontWeight:700,letterSpacing:"0.08em",background:t.color,color:"#fff",padding:"2px 8px",borderRadius:4}}>BEST VALUE</span>}
+              <div style={{fontSize:13,fontWeight:700,color:t.color,marginBottom:2}}>{t.name}</div>
+              <div style={{fontSize:24,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>{t.price}<span style={{fontSize:11,color:T.muted,fontWeight:400}}> /month</span></div>
+              <div style={{margin:"10px 0 14px"}}>
+                {t.perks.map((p,i)=>(
+                  <div key={i} style={{display:"flex",gap:7,alignItems:"center",fontSize:11.5,color:T.text,padding:"3px 0"}}><span style={{color:t.color,display:"inline-flex"}}>{Icon.check}</span>{p}</div>
+                ))}
+              </div>
+              <Btn onClick={()=>choose(t.name)} style={{width:"100%",justifyContent:"center",background:t.name==="Elite"?t.color:T.lime,color:t.name==="Elite"?"#fff":T.ink}}>Upgrade to {t.name}</Btn>
+            </div>
+          ))}
+        </div>
+        <div onClick={onClose} style={{textAlign:"center",fontSize:12,color:T.muted,cursor:"pointer",padding:6}}>Maybe later</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── NAV ICONS MAP ────────────────────────────────────────────────────────────
+const navIcon = {dashboard:Icon.grid,aichat:Icon.chat,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,focustimer:Icon.clock,calendar:Icon.cal,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,music:Icon.music,settings:Icon.settings,profile:Icon.user};
+
+// ─── AI CHAT ──────────────────────────────────────────────────────────────────
+function AiChat() {
+  const [input,setInput]=useState("");
+  const [msgs,setMsgs]=useState([
+    {r:"ai",t:"Good afternoon, Maya. What are we working on today?"},
+    {r:"user",t:"Can you break down the dagger soliloquy in Macbeth Act II for my essay?"},
+    {r:"ai",t:"The dagger soliloquy (Act II, Scene 1) is one of Shakespeare's most precise explorations of a mind fracturing under the weight of intent. Macbeth sees a floating, blood-stained dagger guiding him toward Duncan's chamber. The central tension is whether this is a supernatural omen or a projection of his own guilt. The scholarly consensus leans toward the latter · the dagger is a materialisation of his ambition, not a supernatural sign. Note how it shifts from guiding him to \"marshalling\" him forward · his own psyche compelling the act."},
+  ]);
+  const send=(txt)=>{
+    const t=txt||input; if(!t.trim()) return;
+    setMsgs(m=>[...m,{r:"user",t},{r:"ai",t:"Let me work through that carefully. I'll pull the most relevant evidence from the text and structure it for your argument."}]);
+    setInput("");
+  };
+  const suggestions=["Analyse the symbolism","Pull supporting quotes","Compare to Lady Macbeth","Break down the themes"];
+  return (
+    <div>
+      <PH title="Chat" sub="Academic research and writing support" />
+      <div style={{display:"grid",gridTemplateColumns:"1fr 260px",gap:16}}>
+        <Card style={{display:"flex",flexDirection:"column",minHeight:500,padding:16}}>
+          <div style={{flex:1,overflowY:"auto",marginBottom:12,display:"flex",flexDirection:"column",gap:12}}>
+            {msgs.map((m,i)=>(
+              <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start",flexDirection:m.r==="user"?"row-reverse":"row"}}>
+                <div style={{width:28,height:28,borderRadius:"50%",background:m.r==="ai"?T.purple+"22":T.lime+"22",border:`1px solid ${m.r==="ai"?T.purple+"44":T.lime+"44"}`,display:"flex",alignItems:"center",justifyContent:"center",color:m.r==="ai"?T.purple:T.lime,flexShrink:0}}>{m.r==="ai"?Icon.brain:Icon.user}</div>
+                <div style={{maxWidth:"76%",padding:"10px 13px",borderRadius:8,fontSize:13,lineHeight:1.65,background:m.r==="ai"?T.card2:T.lime,color:m.r==="ai"?T.text:T.bg,border:m.r==="ai"?`1px solid ${T.border}`:"none"}}>{m.t}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+            {suggestions.map(s=><button key={s} onClick={()=>send(s)} style={{padding:"5px 11px",borderRadius:5,fontSize:11,cursor:"pointer",border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontFamily:T.font,transition:"all 0.15s"}}>{s}</button>)}
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <input style={{flex:1,background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"10px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none"}} placeholder="Ask a question or paste text to analyse..." value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} />
+            <Btn onClick={()=>send()} style={{padding:"10px 14px"}}>{Icon.send}</Btn>
+          </div>
+          <div style={{fontSize:11,color:T.muted,marginTop:8}}>180 credits remaining</div>
+        </Card>
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          <Card><Label>Session</Label><div style={{fontSize:28,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>12</div><div style={{fontSize:12,color:T.muted,marginTop:4}}>Conversations today</div></Card>
+          <Card>
+            <Label>Recent Topics</Label>
+            {["Macbeth · Act II symbolism","Krebs cycle overview","Spanish subjunctive mood","Integral calculus"].map((t,i)=>(
+              <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:i<3?`1px solid ${T.border}`:"none",fontSize:12,color:T.muted,cursor:"pointer"}}>
+                <span>{t}</span>
+                <span style={{color:T.faint}}>{Icon.arrowR}</span>
+              </div>
+            ))}
+          </Card>
+          <Card>
+            <Label>Mode</Label>
+            {["Research assistant","Essay coach","Exam preparation","Concept review"].map((m,i)=>(
+              <button key={i} style={{display:"flex",width:"100%",textAlign:"left",padding:"8px 10px",borderRadius:6,marginBottom:4,fontSize:12,cursor:"pointer",border:`1px solid ${i===0?T.lime+"44":T.border}`,background:i===0?T.lime+"0a":"transparent",color:i===0?T.lime:T.muted,fontFamily:T.font}}>{m}</button>
+            ))}
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── ESSAYS ───────────────────────────────────────────────────────────────────
+function Essays() {
+  const [tab,setTab]=useState("active");
+  const [newOpen,setNewOpen]=useState(false);
+  const [eTitle,setETitle]=useState("");
+  const [eSubject,setESubject]=useState("English IV");
+  const [eTarget,setETarget]=useState("1500");
+  const [ePrompt,setEPrompt]=useState("");
+  const [eCustom,setECustom]=useState("");
+  const [eMode,setEMode]=useState("self");
+  const [gdocs,setGdocs]=useState(()=>lsGet("gdocs",false));
+  const subjects=[{value:"English IV",label:"English IV",color:T.purple},{value:"Biology",label:"Biology",color:T.teal},{value:"History",label:"History",color:T.muted},{value:"Chemistry",label:"Chemistry",color:T.red},{value:"Calculus",label:"Calculus",color:T.blue},{value:"Other",label:"Other",color:T.lime}];
+  const essays=[
+    {title:"Power & Corruption in Macbeth",subject:"English IV",words:1247,target:1500,status:"In progress",grade:null},
+    {title:"Photosynthesis Lab Report",subject:"Biology",words:800,target:800,status:"Submitted",grade:"A−"},
+    {title:"Causes of World War I",subject:"History",words:450,target:1200,status:"Outline",grade:null},
+  ];
+  const subjectColor = {
+    "English IV":T.purple,
+    "Biology":T.teal,
+    "History":T.blue,
+  };
+  return (
+    <div>
+      <PH title="Essays" sub="Draft, refine, and submit your writing" action={<span style={{display:"flex",gap:8}}><Btn variant="subtle" onClick={()=>{const v=!gdocs;setGdocs(v);lsSet("gdocs",v);}}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},gdocs?Icon.check:Icon.link,gdocs?"Google Docs · connected":"Connect Google Docs")}</Btn><Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New essay")}</Btn></span>} />
+      <Modal open={newOpen} onClose={()=>setNewOpen(false)} title="Start a new essay" sub="Studlin will scaffold an outline and adapt the AI tutor to your subject."
+        footer={<><Btn variant="subtle" onClick={()=>setNewOpen(false)}>Cancel</Btn><Btn onClick={()=>setNewOpen(false)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.pen,"Create essay")}</Btn></>}>
+        <Field label="Title"><Input placeholder="e.g. Ambition and ruin in Macbeth" value={eTitle} onChange={e=>setETitle(e.target.value)} autoFocus /></Field>
+        <Field label="Subject"><SelectChip options={subjects} value={eSubject} onChange={setESubject} /></Field>
+        {eSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Physics, Economics, Psychology..." value={eCustom} onChange={ev=>setECustom(ev.target.value)} /></Field>}
+        <Field label="How do you want to write it?">
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <button type="button" onClick={()=>setEMode("self")} style={{padding:14,borderRadius:10,border:"1px solid "+(eMode==="self"?T.lime+"66":T.border),background:eMode==="self"?T.lime+"10":T.card2,color:T.text,cursor:"pointer",textAlign:"left",fontFamily:T.font}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}><span style={{color:eMode==="self"?T.lime:T.muted,display:"flex"}}>{Icon.pen}</span><span style={{fontSize:13,fontWeight:600}}>Write it myself</span></div>
+              <div style={{fontSize:11.5,color:T.muted}}>Blank editor. AI stays out of the way until you ask.</div>
+            </button>
+            <button type="button" onClick={()=>setEMode("ai")} style={{padding:14,borderRadius:10,border:"1px solid "+(eMode==="ai"?T.lime+"66":T.border),background:eMode==="ai"?T.lime+"10":T.card2,color:T.text,cursor:"pointer",textAlign:"left",fontFamily:T.font}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}><span style={{color:eMode==="ai"?T.lime:T.muted,display:"flex"}}>{Icon.wand}</span><span style={{fontSize:13,fontWeight:600}}>AI-assisted draft</span></div>
+              <div style={{fontSize:11.5,color:T.muted}}>Outline plus a first draft in your voice · 5 credits.</div>
+            </button>
+          </div>
+        </Field>
+        <Field label="Word target"><Input type="number" value={eTarget} onChange={e=>setETarget(e.target.value)} /></Field>
+        <Field label="Prompt or thesis (optional)" hint="Paste the assignment brief or sketch your argument.">
+          <Textarea placeholder="e.g. Argue that Macbeth's downfall is caused by ambition, not the witches." value={ePrompt} onChange={e=>setEPrompt(e.target.value)} />
+        </Field>
+      </Modal>
+      <Pills tabs={["active","library","templates"]} active={tab} onChange={setTab} />
+      <div style={{display:"grid",gridTemplateColumns:"1fr 280px",gap:16}}>
+        <div>
+          {tab==="active"&&(
+            <Card>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
+                <div>
+                  <div style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:3}}>Power &amp; Corruption in Macbeth</div>
+                  <div style={{fontSize:12,color:T.muted}}>English IV · {(1247).toLocaleString()} / {(1500).toLocaleString()} words</div>
+                </div>
+                <Badge color={T.amber}>In progress</Badge>
+              </div>
+              <div style={{display:"flex",gap:2,background:T.card2,padding:"6px",borderRadius:"6px 6px 0 0",flexWrap:"wrap",border:`1px solid ${T.border}`,borderBottom:"none"}}>
+                {[["B",Icon.bold],["I",Icon.italic],["Link",Icon.link],["Quote",Icon.quote]].map(([l,ico])=>(
+                  <button key={l} style={{display:"flex",alignItems:"center",gap:4,padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>{ico} {l}</button>
+                ))}
+                <div style={{width:1,background:T.border,margin:"2px 4px"}} />
+                {["H1","H2","H3"].map(h=><button key={h} style={{padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>{h}</button>)}
+              </div>
+              <div contentEditable suppressContentEditableWarning style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"0 0 6px 6px",padding:16,minHeight:200,fontSize:14,lineHeight:1.8,color:T.text,outline:"none"}}>
+                <p><strong style={{color:T.white,fontWeight:600}}>Introduction</strong></p>
+                <p style={{marginTop:12}}>In Shakespeare's Macbeth, the corrupting influence of unchecked ambition is illustrated through the protagonist's descent from celebrated warrior to tyrannical murderer. The play explores how power, when pursued without moral constraint, dismantles the very humanity of those who seek it · a thesis the playwright reinforces through recurring imagery, soliloquy, and dramatic irony.</p>
+              </div>
+              <div style={{display:"flex",gap:8,marginTop:14,alignItems:"center"}}>
+                <BtnSm variant="subtle">{Icon.wand} Refine prose</BtnSm>
+                <BtnSm variant="subtle">{Icon.check} Grammar pass</BtnSm>
+                <BtnSm variant="subtle">{Icon.quote} Cite source</BtnSm>
+                <div style={{marginLeft:"auto",fontSize:11,color:T.faint}}>Saved automatically</div>
+              </div>
+            </Card>
+          )}
+          {tab==="library"&&(
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {essays.map((e,i)=>(
+                <Card key={i} onClick={()=>{}} style={{display:"flex",alignItems:"center",gap:16}}>
+                  <div style={{width:3,height:40,borderRadius:2,background:subjectColor[e.subject]||T.lime,flexShrink:0}} />
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:13,fontWeight:600,color:T.white,marginBottom:2}}>{e.title}</div>
+                    <div style={{fontSize:11,color:T.muted}}>{e.subject} · {e.words.toLocaleString()} / {e.target.toLocaleString()} words</div>
+                  </div>
+                  <Badge color={e.status==="Submitted"?T.teal:e.status==="In progress"?T.amber:T.blue}>{e.status}</Badge>
+                  {e.grade&&<div style={{fontSize:20,fontWeight:700,color:T.lime,letterSpacing:"-0.02em"}}>{e.grade}</div>}
+                </Card>
+              ))}
+            </div>
+          )}
+          {tab==="templates"&&(
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              {["Five-paragraph essay","Literary analysis","Scientific lab report","Argumentative essay","Compare & contrast","Research paper","Personal statement","Reflective journal"].map(t=>(
+                <Card key={t} onClick={()=>{}} style={{cursor:"pointer",padding:16}}>
+                  <div style={{width:32,height:32,borderRadius:6,background:T.card2,border:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"center",color:T.muted,marginBottom:10}}>{Icon.file}</div>
+                  <div style={{fontSize:13,fontWeight:600,color:T.white,marginBottom:2}}>{t}</div>
+                  <div style={{fontSize:11,color:T.muted}}>Structured template</div>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          <Card style={{background:T.lime,border:"none"}}>
+            <Label style={{color:T.bg}}>Word count</Label>
+            <div style={{fontSize:32,fontWeight:700,color:T.bg,letterSpacing:"-0.03em",lineHeight:1}}>1,247</div>
+            <div style={{marginTop:10,height:4,background:T.bg+"22",borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",width:"83%",background:T.bg,borderRadius:2}} /></div>
+            <div style={{fontSize:12,color:T.bg,opacity:0.7,marginTop:5}}>253 words remaining</div>
+          </Card>
+          <Card>
+            <Label>Writing feedback</Label>
+            {[["Strengthen thesis statement",T.amber],["Include counterargument",T.amber],["Expand textual evidence",T.red],["Conclusion is underdeveloped",T.red]].map(([s,c],i)=>(
+              <div key={i} style={{display:"flex",gap:8,padding:"8px 0",borderBottom:i<3?`1px solid ${T.border}`:"none",fontSize:12,color:T.muted}}>
+                <div style={{width:5,height:5,borderRadius:"50%",background:c,flexShrink:0,marginTop:5}} />
+                {s}
+              </div>
+            ))}
+          </Card>
+          <Card>
+            <Label>Readability</Label>
+            <div style={{fontSize:32,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>B+</div>
+            <div style={{fontSize:12,color:T.muted,marginTop:4}}>Grade 11 reading level</div>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── FLASHCARDS ───────────────────────────────────────────────────────────────
+function Flashcards() {
+  const [flipped,setFlipped]=useState(false);
+  const [idx,setIdx]=useState(0);
+  const [newOpen,setNewOpen]=useState(false);
+  const [dName,setDName]=useState("");
+  const [dSubject,setDSubject]=useState("Biology");
+  const [dSource,setDSource]=useState("manual");
+  const dSubjects=[{value:"Biology",label:"Biology",color:T.teal},{value:"English IV",label:"English IV",color:T.purple},{value:"Calculus",label:"Calculus",color:T.blue},{value:"Spanish",label:"Spanish",color:T.amber},{value:"Chemistry",label:"Chemistry",color:T.red},{value:"Other",label:"Other",color:T.lime}];
+  const [dCustom,setDCustom]=useState("");
+  const [tab,setTab]=useState("study");
+  const cards=[
+    {q:"What does ATP stand for and what is its primary cellular function?",a:"Adenosine Triphosphate. It is the primary energy currency of the cell, providing the energy required to drive cellular processes including muscle contraction, nerve impulse propagation, and chemical synthesis."},
+    {q:"Describe the location and primary function of the mitochondria.",a:"The mitochondrion is a membrane-bound organelle found in the cytoplasm of eukaryotic cells. Its primary function is the production of ATP through the process of cellular respiration, specifically oxidative phosphorylation."},
+    {q:"State the principle of natural selection in one concise sentence.",a:"Natural selection is the process by which heritable traits that increase an organism's fitness in its environment become more common in a population over successive generations."},
+  ];
+  const decks=[
+    {name:"Cell respiration",course:"Biology",count:30,done:24,color:T.teal},
+    {name:"Macbeth · themes & quotes",course:"English IV",count:45,done:12,color:T.purple},
+    {name:"Differentiation rules",course:"Calculus",count:20,done:20,color:T.lime},
+    {name:"Subjunctive mood",course:"Spanish",count:28,done:8,color:T.amber},
+  ];
+  const next=()=>{setFlipped(false);setIdx(i=>(i+1)%cards.length);};
+  const prev=()=>{setFlipped(false);setIdx(i=>Math.max(0,i-1));};
+  return (
+    <div>
+      <PH title="Flashcards" sub="Spaced-repetition study system" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New deck")}</Btn>} />
+      <Modal open={newOpen} onClose={()=>setNewOpen(false)} title="Create a flashcard deck" sub="Build manually or drop a file and Studlin will generate spaced-repetition cards for you."
+        footer={<><Btn variant="subtle" onClick={()=>setNewOpen(false)}>Cancel</Btn><Btn onClick={()=>setNewOpen(false)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.layers,"Create deck")}</Btn></>}>
+        <Field label="Deck name"><Input placeholder="e.g. Chem 14B · Periodic trends" value={dName} onChange={e=>setDName(e.target.value)} autoFocus /></Field>
+        <Field label="Subject"><SelectChip options={dSubjects} value={dSubject} onChange={setDSubject} /></Field>
+        {dSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Physics, AP Gov, driving theory..." value={dCustom} onChange={ev=>setDCustom(ev.target.value)} /></Field>}
+        <Field label="Source">
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <button type="button" onClick={()=>setDSource("manual")} style={{padding:14,borderRadius:10,border:`1px solid ${dSource==="manual"?T.lime+"66":T.border}`,background:dSource==="manual"?T.lime+"10":T.card2,color:T.text,cursor:"pointer",textAlign:"left",fontFamily:T.font}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}><span style={{color:dSource==="manual"?T.lime:T.muted}}>{Icon.pen}</span><span style={{fontSize:13,fontWeight:600}}>Build manually</span></div>
+              <div style={{fontSize:11.5,color:T.muted}}>Type each question and answer yourself.</div>
+            </button>
+            <button type="button" onClick={()=>setDSource("file")} style={{padding:14,borderRadius:10,border:`1px solid ${dSource==="file"?T.lime+"66":T.border}`,background:dSource==="file"?T.lime+"10":T.card2,color:T.text,cursor:"pointer",textAlign:"left",fontFamily:T.font}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}><span style={{color:dSource==="file"?T.lime:T.muted}}>{Icon.file}</span><span style={{fontSize:13,fontWeight:600}}>Generate from file</span></div>
+              <div style={{fontSize:11.5,color:T.muted}}>Drop a PDF or notes. Costs 2 credits.</div>
+            </button>
+          </div>
+        </Field>
+        {dSource==="file" && (
+          <Field label="Upload" hint="Accepts PDF, DOCX, images, or audio recordings.">
+            <div style={{border:`1px dashed ${T.borderHover}`,borderRadius:10,padding:24,textAlign:"center",background:T.card2,cursor:"pointer"}}>
+              <div style={{color:T.muted,marginBottom:6,display:"flex",justifyContent:"center"}}>{Icon.file}</div>
+              <div style={{fontSize:13,color:T.text,fontWeight:500}}>Drop a file here or click to browse</div>
+              <div style={{fontSize:11,color:T.muted,marginTop:4}}>Up to 25MB</div>
+            </div>
+          </Field>
+        )}
+      </Modal>
+      <Pills tabs={["study","decks","create"]} active={tab} onChange={setTab} />
+      {tab==="study"&&(
+        <div style={{display:"grid",gridTemplateColumns:"1fr 260px",gap:16}}>
+          <div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+              <div style={{fontSize:12,color:T.muted}}>Biology · Cell respiration</div>
+              <div style={{fontSize:12,color:T.muted}}>Card {idx+1} of {cards.length}</div>
+            </div>
+            <div onClick={()=>setFlipped(f=>!f)} style={{cursor:"pointer",userSelect:"none"}}>
+              {!flipped
+                ?<Card style={{minHeight:200,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textAlign:"center",padding:32,background:T.card2}}>
+                    <div style={{fontSize:15,fontWeight:600,color:T.white,lineHeight:1.6,marginBottom:12}}>{cards[idx].q}</div>
+                    <div style={{fontSize:11,color:T.faint,letterSpacing:"0.03em"}}>CLICK TO REVEAL</div>
+                  </Card>
+                :<div style={{background:T.lime,borderRadius:10,minHeight:200,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textAlign:"center",padding:32}}>
+                    <div style={{fontSize:14,fontWeight:600,color:T.bg,lineHeight:1.7,marginBottom:10}}>{cards[idx].a}</div>
+                    <div style={{fontSize:11,color:T.bg,opacity:0.5,letterSpacing:"0.03em"}}>RATE YOUR RECALL</div>
+                  </div>
+              }
+            </div>
+            <div style={{display:"flex",gap:8,marginTop:14,justifyContent:"center"}}>
+              {flipped
+                ?[["Missed",T.red],["Hard",T.amber],["Good",T.teal],["Mastered",T.lime]].map(([l,c])=>(
+                    <button key={l} onClick={next} style={{flex:1,padding:"9px 0",borderRadius:7,background:c+"14",color:c,border:`1px solid ${c}33`,cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:T.font}}>{l}</button>
+                  ))
+                :<><Btn variant="ghost" onClick={prev}>← Prev</Btn><Btn onClick={()=>setFlipped(true)}>Reveal answer</Btn><Btn variant="ghost" onClick={next}>Next →</Btn></>
+              }
+            </div>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:12}}>
+            <Card>
+              <Label>Session progress</Label>
+              <div style={{fontSize:32,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:10}}>24<span style={{fontSize:18,color:T.muted}}>/30</span></div>
+              <Prog pct={80} />
+              <div style={{fontSize:12,color:T.muted,marginTop:8}}>Recall accuracy: 86%</div>
+            </Card>
+            <Card>
+              <Label>Due today</Label>
+              {decks.map((d,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:i<3?`1px solid ${T.border}`:"none"}}>
+                  <div style={{width:6,height:6,borderRadius:"50%",background:d.color,flexShrink:0}} />
+                  <span style={{fontSize:12,flex:1,color:T.text}}>{d.name}</span>
+                  <span style={{fontSize:11,color:T.muted}}>{d.done}/{d.count}</span>
+                </div>
+              ))}
+            </Card>
+          </div>
+        </div>
+      )}
+      {tab==="decks"&&(
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          {decks.map((d,i)=>(
+            <Card key={i} style={{cursor:"pointer"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+                <div style={{fontSize:13,fontWeight:700,color:T.white}}>{d.name}</div>
+                <span style={{fontSize:11,color:T.muted}}>{d.count}</span>
+              </div>
+              <div style={{fontSize:11,color:T.muted,marginBottom:14}}>{d.course}</div>
+              <Prog pct={Math.round((d.done/d.count)*100)} color={d.color} />
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10}}>
+                <span style={{fontSize:11,color:T.muted}}>{d.done} mastered</span>
+                <BtnSm>Study now</BtnSm>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+      {tab==="create"&&(
+        <Card>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
+            <div><Label>Deck name</Label><input style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",boxSizing:"border-box"}} placeholder="e.g. Chem · Periodic table" /></div>
+            <div><Label>Subject</Label><input style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",boxSizing:"border-box"}} placeholder="e.g. Chemistry" /></div>
+          </div>
+          <div style={{marginBottom:14}}><Label>Question (front)</Label><textarea style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",minHeight:80,boxSizing:"border-box"}} placeholder="Enter question..." /></div>
+          <div style={{marginBottom:16}}><Label>Answer (back)</Label><textarea style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",minHeight:100,boxSizing:"border-box"}} placeholder="Enter answer..." /></div>
+          <div style={{display:"flex",gap:8}}>
+            <Btn>Add card</Btn>
+            <Btn variant="subtle">Generate from notes</Btn>
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ─── NOTES ────────────────────────────────────────────────────────────────────
+function Notes(){
+  const MicIcon=<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0,display:"block"}}><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg>;
+  const seedNotes=[
+    {title:"Macbeth Act III · Key Themes",body:"Guilt and paranoia dominate the third act. Macbeth's hallucination of Banquo's ghost at the banquet is a direct parallel to the dagger soliloquy in Act II · Shakespeare uses recurring motifs of blood and vision to chart his protagonist's psychological disintegration. Lady Macbeth's attempts to contain the situation reveal the limits of her control.",tag:"English",date:"May 15"},
+    {title:"Cell Respiration · Krebs Cycle",body:"The Krebs cycle comprises eight enzymatic reactions. Beginning with Acetyl-CoA entering the cycle, each complete turn yields: 3 NADH, 1 FADH2, 1 ATP (or GTP), and 2 CO2 molecules. The cycle occurs in the mitochondrial matrix and is essential for the subsequent electron transport chain.",tag:"Biology",date:"May 14"},
+    {title:"Differentiation · Rule Summary",body:"Power rule: d/dx[xⁿ] = nxⁿ⁻¹. Product rule: d/dx[uv] = u'v + uv'. Chain rule: dy/dx = (dy/du)(du/dx). Quotient rule: d/dx[u/v] = (u'v − uv')/v². Trig: d/dx[sin x] = cos x, d/dx[cos x] = −sin x.",tag:"Calculus",date:"May 13"},
+    {title:"Spanish Subjunctive · Triggers",body:"The WEIRDO mnemonic: Wishes (querer que), Emotion (estar contento de que), Impersonal expressions (es importante que), Recommendations (recomendar que), Doubt/Denial (dudar que), Ojalá. Contrast with indicative in relative clauses when the antecedent is definite.",tag:"Spanish",date:"May 12"},
+  ];
+  const tagColor={Biology:T.teal,English:T.purple,Calculus:T.blue,Spanish:T.amber,Chemistry:T.red,History:T.muted};
+  const colorOf=(tg)=>tagColor[tg]||T.lime;
+  const [notes,setNotes]=useState(()=>lsGet("notes",seedNotes));
+  const [sel,setSel]=useState(null);
+  const [search,setSearch]=useState("");
+  const filtered=notes.filter(n=>n.title.toLowerCase().includes(search.toLowerCase()));
+  const [newOpen,setNewOpen]=useState(false);
+  const [src,setSrc]=useState("write");
+  const [newTitle,setNewTitle]=useState("");
+  const [newBody,setNewBody]=useState("");
+  const [newTag,setNewTag]=useState("Biology");
+  const [customTag,setCustomTag]=useState("");
+  const [yt,setYt]=useState("");
+  const [rec,setRec]=useState(false);
+  const [recSecs,setRecSecs]=useState(0);
+  useEffect(()=>{if(!rec)return;const id=setInterval(()=>setRecSecs(x=>x+1),1000);return ()=>clearInterval(id);},[rec]);
+  const fmtRec=(x)=>String(Math.floor(x/60)).padStart(2,"0")+":"+String(x%60).padStart(2,"0");
+  const tagOptions=[{value:"Biology",label:"Biology",color:T.teal},{value:"English",label:"English",color:T.purple},{value:"Calculus",label:"Calculus",color:T.blue},{value:"Spanish",label:"Spanish",color:T.amber},{value:"Chemistry",label:"Chemistry",color:T.red},{value:"History",label:"History",color:T.muted},{value:"Other",label:"Other",color:T.lime}];
+  const sources=[
+    {id:"write",label:"Write",desc:"Type or paste notes yourself",icon:Icon.pen,cost:null},
+    {id:"file",label:"Scan a file",desc:"PDF, slides, or photos of the board",icon:Icon.file,cost:"2 credits"},
+    {id:"record",label:"Record lecture",desc:"Live transcription + summary",icon:MicIcon,cost:"3 credits"},
+    {id:"youtube",label:"YouTube link",desc:"Transcribes and summarises a video",icon:Icon.link,cost:"3 credits"},
+  ];
+  const saveNote=()=>{
+    const tag=newTag==="Other"&&customTag.trim()?customTag.trim():newTag;
+    const title=newTitle.trim()||(src==="youtube"&&yt?"Notes from video":src==="record"?"Lecture · "+fmtRec(recSecs):"Untitled note");
+    const body=src==="write"?(newBody.trim()||"…"):src==="file"?"Scanned summary will appear here once processing finishes.":src==="record"?"Transcription processing · "+fmtRec(recSecs)+" of audio captured.":"Video transcript + AI summary processing: "+yt;
+    const next=[{title,body,tag,date:"Today"}].concat(notes);
+    setNotes(next);lsSet("notes",next);
+    setNewOpen(false);setNewTitle("");setNewBody("");setYt("");setRec(false);setRecSecs(0);setSrc("write");setSel(0);setSearch("");
+  };
+  return (
+    <div>
+      <PH title="Notes" sub="Write, scan, record, or import · organised by class" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New note")}</Btn>} />
+      <Modal open={newOpen} onClose={()=>{setNewOpen(false);setRec(false);}} title="Create a new note" sub="Pick a source · Studlin structures everything into clean, searchable notes." width={580}
+        footer={<><Btn variant="subtle" onClick={()=>{setNewOpen(false);setRec(false);}}>Cancel</Btn><Btn onClick={saveNote}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.check,src==="write"?"Save note":"Create note")}</Btn></>}>
+        <Field label="Source">
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            {sources.map(o=>(
+              <button key={o.id} type="button" onClick={()=>setSrc(o.id)} style={{padding:"12px 14px",borderRadius:10,border:"1px solid "+(src===o.id?T.lime+"66":T.border),background:src===o.id?T.lime+"10":T.card2,color:T.text,cursor:"pointer",textAlign:"left",fontFamily:T.font,position:"relative"}}>
+                {o.cost&&<span style={{position:"absolute",top:8,right:10,fontSize:9,fontFamily:T.mono,color:src===o.id?T.lime:T.faint,letterSpacing:"0.05em"}}>{o.cost}</span>}
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}><span style={{color:src===o.id?T.lime:T.muted,display:"flex"}}>{o.icon}</span><span style={{fontSize:12.5,fontWeight:600}}>{o.label}</span></div>
+                <div style={{fontSize:11,color:T.muted}}>{o.desc}</div>
+              </button>
+            ))}
+          </div>
+        </Field>
+        <Field label="Title"><Input placeholder="e.g. Macbeth Act IV · guilt motif" value={newTitle} onChange={ev=>setNewTitle(ev.target.value)} /></Field>
+        <Field label="Class"><SelectChip options={tagOptions} value={newTag} onChange={setNewTag} /></Field>
+        {newTag==="Other"&&<Field label="Custom class"><Input placeholder="e.g. Physics, SAT prep..." value={customTag} onChange={ev=>setCustomTag(ev.target.value)} /></Field>}
+        {src==="write"&&(
+          <Field label="Body" hint="Markdown supported.">
+            <Textarea placeholder="Start writing or paste your notes here..." value={newBody} onChange={ev=>setNewBody(ev.target.value)} style={{minHeight:130}} />
+          </Field>
+        )}
+        {src==="file"&&(
+          <Field label="Upload" hint="Studlin reads it and writes structured notes with headings, key terms, and a summary.">
+            <div style={{border:"1px dashed "+T.borderHover,borderRadius:10,padding:26,textAlign:"center",background:T.card2,cursor:"pointer"}}>
+              <div style={{color:T.muted,marginBottom:6,display:"flex",justifyContent:"center"}}>{Icon.file}</div>
+              <div style={{fontSize:13,color:T.text,fontWeight:500}}>Drop a PDF, slides, or photos here</div>
+              <div style={{fontSize:11,color:T.muted,marginTop:4}}>Up to 25MB · 2 credits per scan</div>
+            </div>
+          </Field>
+        )}
+        {src==="record"&&(
+          <Field label="Lecture recording" hint="Recording is transcribed live · you get clean notes plus the full transcript.">
+            <div style={{border:"1px solid "+(rec?T.red+"55":T.border),borderRadius:10,padding:22,textAlign:"center",background:rec?T.red+"0a":T.card2}}>
+              <button type="button" onClick={()=>setRec(r=>!r)} style={{width:54,height:54,borderRadius:"50%",border:"none",background:rec?T.red:T.lime,color:rec?"#fff":T.ink,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:10}}>{rec?<span style={{width:16,height:16,background:"#fff",borderRadius:3,display:"block"}} />:MicIcon}</button>
+              <div style={{fontSize:15,fontWeight:700,color:rec?T.red:T.white,fontVariantNumeric:"tabular-nums"}}>{fmtRec(recSecs)}</div>
+              <div style={{fontSize:11.5,color:T.muted,marginTop:3}}>{rec?"Recording · tap to stop":"Tap to start recording your lecture"}</div>
+            </div>
+          </Field>
+        )}
+        {src==="youtube"&&(
+          <Field label="YouTube link" hint="Paste any lecture or explainer video · Studlin transcribes it and writes the notes.">
+            <Input placeholder="https://youtube.com/watch?v=..." value={yt} onChange={ev=>setYt(ev.target.value)} />
+          </Field>
+        )}
+      </Modal>
+      <div style={{display:"grid",gridTemplateColumns:"250px 1fr",gap:14}}>
+        <div>
+          <input style={{width:"100%",background:T.card2,border:"1px solid "+T.border,borderRadius:7,padding:"8px 12px",color:T.text,fontSize:12,fontFamily:T.font,outline:"none",marginBottom:10,boxSizing:"border-box"}} placeholder="Search notes..." value={search} onChange={ev=>setSearch(ev.target.value)} />
+          {filtered.map((n,i)=>(
+            <div key={i} onClick={()=>setSel(i)} style={{background:sel===i?T.card2:T.card,borderRadius:8,padding:"12px 14px",marginBottom:6,border:"1px solid "+(sel===i?colorOf(n.tag)+"44":T.border),cursor:"pointer",transition:"all 0.15s"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:5}}>
+                <div style={{fontSize:12,fontWeight:600,color:T.white,flex:1,marginRight:8,lineHeight:1.3}}>{n.title}</div>
+                <Badge color={colorOf(n.tag)}>{n.tag}</Badge>
+              </div>
+              <div style={{fontSize:11,color:T.muted,lineHeight:1.5,maxHeight:40,overflow:"hidden"}}>{n.body}</div>
+              <div style={{fontSize:10,color:T.faint,marginTop:8}}>{n.date}</div>
+            </div>
+          ))}
+        </div>
+        <Card style={{minHeight:380,padding:24}}>
+          {sel!==null&&filtered[sel]
+            ?<>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20}}>
+                  <div>
+                    <div style={{fontSize:17,fontWeight:700,color:T.white,letterSpacing:"-0.01em",marginBottom:4}}>{filtered[sel].title}</div>
+                    <div style={{display:"flex",gap:8,alignItems:"center"}}><Badge color={colorOf(filtered[sel].tag)}>{filtered[sel].tag}</Badge><span style={{fontSize:11,color:T.muted}}>{filtered[sel].date}</span></div>
+                  </div>
+                  <div style={{display:"flex",gap:6}}><BtnSm variant="subtle">Summarise</BtnSm><BtnSm variant="subtle">Make flashcards</BtnSm><BtnSm variant="subtle">Export</BtnSm></div>
+                </div>
+                <div style={{fontSize:14,color:T.text,lineHeight:1.9}}>{filtered[sel].body}</div>
+              </>
+            :<div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:300,gap:12}}>
+                <div style={{color:T.faint,opacity:0.5}}>{Icon.file}</div>
+                <div style={{fontSize:13,color:T.muted}}>Select a note to read or edit it</div>
+              </div>
+          }
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+// ─── FOCUS TIMER ──────────────────────────────────────────────────────────────
+function FocusTimer({focusSecs,setFocusSecs,focusRunning,setFocusRunning,focusMode,setFocusMode,focusTotal,setFocusTotal}){
+  const time=focusSecs??25*60;
+  const setTime=setFocusSecs||(()=>{});
+  const running=focusRunning??false;
+  const setRunning=setFocusRunning||(()=>{});
+  const mode=focusMode||"Focus";
+  const setMode=setFocusMode||(()=>{});
+  const total=focusTotal||25*60;
+  const setTotal=setFocusTotal||(()=>{});
+  const modeMap={"Focus":25*60,"Short break":5*60,"Long break":15*60};
+  const [customOpen,setCustomOpen]=useState(false);
+  const [customMin,setCustomMin]=useState(45);
+  const [target,setTarget]=useState(()=>lsGet("sessionTarget",4));
+  const [warnOpen,setWarnOpen]=useState(false);
+  const [pendingTarget,setPendingTarget]=useState(5);
+  const [,bump]=useState(0);
+  const stats=sessionStats();
+  const streak=getStreak();
+  const fmt=s=>String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0");
+  const pct=Math.min(100,Math.round(((total-time)/total)*100));
+  const r=88;const circ=2*Math.PI*r;
+  const isCustom=!Object.values(modeMap).includes(total)&&mode==="Focus";
+  const pick=(m)=>{setMode(m);setTime(modeMap[m]);setTotal(modeMap[m]);setRunning(false);setCustomOpen(false);};
+  const applyCustom=()=>{const m=Math.max(1,Math.min(180,Math.round(+customMin)||25));setMode("Focus");setTotal(m*60);setTime(m*60);setRunning(false);setCustomOpen(false);};
+  const requestTarget=(n)=>{if(n<1||n>8)return;if(n>4){setPendingTarget(n);setWarnOpen(true);}else{setTarget(n);lsSet("sessionTarget",n);}};
+  const finishEarly=()=>{const elapsed=Math.round((total-time)/60);if(mode==="Focus"&&elapsed>=1)logSession(elapsed,"Focus");setTime(total);setRunning(false);bump(x=>x+1);};
+  const doneToday=stats.todayCount;
+  return (
+    <div>
+      <PH title="Focus Timer" sub={"Pomodoro · session "+Math.min(doneToday+1,target)+" of "+target+" today"} />
+      <Modal open={warnOpen} onClose={()=>setWarnOpen(false)} title="That is a lot of focus" sub="More than 4 deep-work sessions a day raises burnout risk. Research favours fewer, fully-rested blocks."
+        footer={<><Btn variant="subtle" onClick={()=>setWarnOpen(false)}>Keep it at 4</Btn><Btn onClick={()=>{setTarget(pendingTarget);lsSet("sessionTarget",pendingTarget);setWarnOpen(false);}}>Set {pendingTarget} anyway</Btn></>}>
+        <div style={{fontSize:13,color:T.text,lineHeight:1.7,background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"12px 14px"}}>Studlin will space your sessions with longer breaks and watch your average session quality if you go above four. You can change this anytime.</div>
+      </Modal>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 280px",gap:16}}>
+        <Card style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"40px 24px"}}>
+          <div style={{display:"flex",gap:4,marginBottom:14,background:T.card2,padding:4,borderRadius:8,border:"1px solid "+T.border}}>
+            {Object.keys(modeMap).map(m=>(
+              <button key={m} onClick={()=>pick(m)} style={{padding:"6px 16px",borderRadius:5,fontSize:12,cursor:"pointer",border:"none",background:mode===m&&!isCustom?T.surface:"transparent",color:mode===m&&!isCustom?T.white:T.muted,fontFamily:T.font,fontWeight:mode===m&&!isCustom?600:400,transition:"all 0.15s"}}>{m}</button>
+            ))}
+            <button onClick={()=>setCustomOpen(o=>!o)} style={{padding:"6px 16px",borderRadius:5,fontSize:12,cursor:"pointer",border:"none",background:isCustom?T.surface:"transparent",color:isCustom?T.lime:T.muted,fontFamily:T.font,fontWeight:isCustom?600:400,transition:"all 0.15s"}}>{isCustom?Math.round(total/60)+" min":"Custom"}</button>
+          </div>
+          {customOpen&&(
+            <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:16,background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"8px 10px"}}>
+              <input type="number" min="1" max="180" value={customMin} onChange={e=>setCustomMin(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")applyCustom();}} style={{width:64,background:T.surface,border:"1px solid "+T.border,borderRadius:6,padding:"7px 9px",color:T.white,fontSize:13,fontFamily:T.font,outline:"none",textAlign:"center"}} autoFocus />
+              <span style={{fontSize:12,color:T.muted}}>minutes</span>
+              <BtnSm onClick={applyCustom}>Set</BtnSm>
+            </div>
+          )}
+          <div style={{position:"relative",width:200,height:200,margin:"14px 0 32px"}}>
+            <svg width="200" height="200" style={{position:"absolute",top:0,left:0,transform:"rotate(-90deg)"}}>
+              <circle cx="100" cy="100" r={r} fill="none" stroke={T.card2} strokeWidth="6"/>
+              <circle cx="100" cy="100" r={r} fill="none" stroke={T.lime} strokeWidth="6" strokeDasharray={circ} strokeDashoffset={circ*(1-pct/100)} strokeLinecap="round" style={{transition:"stroke-dashoffset 1s linear"}}/>
+            </svg>
+            <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+              <div style={{fontSize:52,fontWeight:700,color:T.white,letterSpacing:"-3px",lineHeight:1,fontVariantNumeric:"tabular-nums"}}>{fmt(time)}</div>
+              <div style={{fontSize:11,color:T.muted,marginTop:8,letterSpacing:"0.08em",textTransform:"uppercase"}}>{mode==="Focus"?"Focused":"Rest"}</div>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:14,alignItems:"center",marginBottom:24}}>
+            <button onClick={()=>{setTime(total);setRunning(false);}} title="Reset" style={{width:40,height:40,borderRadius:"50%",border:"1px solid "+T.border,background:T.card2,color:T.muted,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{Icon.refresh}</button>
+            <button onClick={()=>setRunning(r2=>!r2)} style={{width:56,height:56,borderRadius:"50%",border:"none",background:T.lime,color:T.bg,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{running?Icon.pause:Icon.play}</button>
+            <button onClick={finishEarly} title="Finish session now" style={{width:40,height:40,borderRadius:"50%",border:"1px solid "+T.border,background:T.card2,color:T.muted,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{Icon.skip}</button>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:T.muted}}>
+            <div style={{width:6,height:6,borderRadius:"50%",background:T.teal}} />
+            This timer stays live in the top bar wherever you go
+          </div>
+        </Card>
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          <Card style={{background:T.lime,border:"none"}}>
+            <Label>Today&apos;s focus</Label>
+            <div style={{fontSize:32,fontWeight:700,color:T.bg,letterSpacing:"-0.02em",lineHeight:1}}>{fmtH(stats.todayMin)}</div>
+            <div style={{fontSize:12,color:T.bg,opacity:0.65,marginTop:5}}>{doneToday} session{doneToday===1?"":"s"} logged today</div>
+          </Card>
+          <Card>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+              <Label>Sessions</Label>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <button onClick={()=>requestTarget(target-1)} style={{width:22,height:22,borderRadius:6,border:"1px solid "+T.border,background:T.card2,color:T.muted,cursor:"pointer",fontSize:13,lineHeight:1}}>−</button>
+                <span style={{fontSize:12,color:T.white,fontWeight:600,minWidth:12,textAlign:"center"}}>{target}</span>
+                <button onClick={()=>requestTarget(target+1)} style={{width:22,height:22,borderRadius:6,border:"1px solid "+T.border,background:T.card2,color:T.muted,cursor:"pointer",fontSize:13,lineHeight:1}}>+</button>
+              </div>
+            </div>
+            {Array.from({length:target}).map((_,i)=>{
+              const st=i<doneToday?"done":(i===doneToday&&running?"active":"pending");
+              return (
+                <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:i<target-1?"1px solid "+T.border:"none"}}>
+                  <div style={{width:6,height:6,borderRadius:"50%",background:st==="done"?T.lime:st==="active"?T.teal:T.faint,flexShrink:0}} />
+                  <span style={{fontSize:12,flex:1,color:st==="pending"?T.muted:T.text}}>Session {i+1}</span>
+                  <span style={{fontSize:11,color:st==="active"?T.teal:T.muted}}>{st==="done"?"Done":st==="active"?"Running":Math.round(total/60)+":00"}</span>
+                </div>
+              );
+            })}
+          </Card>
+          <Card>
+            <Label>This week</Label>
+            {[["Streak",streak+(streak===1?" day":" days")],["Weekly total",fmtH(stats.weekMin)],["Average session",stats.avg+" min"],["Sessions completed",String(stats.weekCount)]].map(([k,v],i)=>(
+              <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<3?"1px solid "+T.border:"none",fontSize:12}}>
+                <span style={{color:T.muted}}>{k}</span>
+                <span style={{color:T.white,fontWeight:500}}>{v}</span>
+              </div>
+            ))}
+            <div style={{fontSize:10.5,color:T.faint,marginTop:10,lineHeight:1.5}}>Tracked automatically from finished sessions and daily logins.</div>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── CALENDAR ─────────────────────────────────────────────────────────────────
+function CalendarTab(){
+  const SUBJ=[
+    {value:"Chemistry",label:"Chemistry",color:T.red},
+    {value:"English IV",label:"English IV",color:T.purple},
+    {value:"Biology",label:"Biology",color:T.teal},
+    {value:"Calculus",label:"Calculus",color:T.blue},
+    {value:"Spanish",label:"Spanish",color:T.amber},
+    {value:"History",label:"History",color:T.muted},
+    {value:"Other",label:"Other",color:T.lime},
+  ];
+  const colorOf=(sub)=>{const x=SUBJ.find(o=>o.value===sub);return x?x.color:T.lime;};
+  const mk=(off,time,title,subject,kind)=>{const d=new Date();d.setDate(d.getDate()+off);return {id:"seed-"+off+"-"+time,date:dayKey(d),time,title,subject,kind};};
+  const seed=[
+    mk(0,"14:30","Chem quiz · Periodic trends","Chemistry","exam"),
+    mk(1,"23:59","Biology lab report due","Biology","deadline"),
+    mk(3,"09:00","Macbeth essay · first draft","English IV","deadline"),
+    mk(5,"10:00","Calculus test · Derivatives","Calculus","exam"),
+  ];
+  const [events,setEvents]=useState(()=>{const ev=lsGet("events",null);if(ev&&ev.length)return ev;lsSet("events",seed);return seed;});
+  const now=new Date();
+  const [ym,setYm]=useState({y:now.getFullYear(),m:now.getMonth()});
+  const [selDay,setSelDay]=useState(dayKey());
+  const [newOpen,setNewOpen]=useState(false);
+  const [evTitle,setEvTitle]=useState("");
+  const [evDate,setEvDate]=useState(dayKey());
+  const [evTime,setEvTime]=useState("14:30");
+  const [evSubject,setEvSubject]=useState("Chemistry");
+  const [evCustom,setEvCustom]=useState("");
+  const [evKind,setEvKind]=useState("deadline");
+  const [evNotes,setEvNotes]=useState("");
+  const [toast,setToast]=useState(false);
+  const monthNames=["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const lead=(new Date(ym.y,ym.m,1).getDay()+6)%7;
+  const dim=new Date(ym.y,ym.m+1,0).getDate();
+  const dimPrev=new Date(ym.y,ym.m,0).getDate();
+  const cells=[];
+  for(let i=lead-1;i>=0;i--)cells.push({d:dimPrev-i,out:true,key:dayKey(new Date(ym.y,ym.m-1,dimPrev-i))});
+  for(let d=1;d<=dim;d++)cells.push({d,out:false,key:dayKey(new Date(ym.y,ym.m,d))});
+  let nx=1;while(cells.length%7!==0){cells.push({d:nx,out:true,key:dayKey(new Date(ym.y,ym.m+1,nx))});nx++;}
+  const byDay={};events.forEach(ev=>{(byDay[ev.date]=byDay[ev.date]||[]).push(ev);});
+  const todayK=dayKey();
+  const fmtTime=(t)=>{const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
+  const niceDate=(k)=>{const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});};
+  const relDay=(k)=>{if(k===todayK)return "Today";const t=new Date();t.setDate(t.getDate()+1);if(k===dayKey(t))return "Tomorrow";const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{month:"short",day:"numeric"});};
+  const upcoming=events.filter(ev=>ev.date>=todayK).sort((a,b)=>a.date===b.date?(a.time<b.time?-1:1):(a.date<b.date?-1:1)).slice(0,6);
+  const dayEvents=(byDay[selDay]||[]).slice().sort((a,b)=>a.time<b.time?-1:1);
+  const openNew=(dateK)=>{setEvDate(dateK||selDay);setNewOpen(true);};
+  const saveEvent=()=>{
+    if(!evTitle.trim())return;
+    const subj=evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject;
+    const next=events.concat([{id:String(Date.now()),title:evTitle.trim(),date:evDate,time:evTime,subject:subj,kind:evKind,notes:evNotes}]);
+    setEvents(next);lsSet("events",next);
+    setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setSelDay(evDate);
+    if(evDate.slice(0,7)!==(ym.y+"-"+String(ym.m+1).padStart(2,"0"))){const p=evDate.split("-");setYm({y:+p[0],m:+p[1]-1});}
+    setToast(true);setTimeout(()=>setToast(false),2200);
+  };
+  const removeEvent=(id)=>{const next=events.filter(ev=>ev.id!==id);setEvents(next);lsSet("events",next);};
+  const nav=(d)=>setYm(c=>{const m2=c.m+d;return {y:c.y+Math.floor(m2/12),m:((m2%12)+12)%12};});
+  return (
+    <div>
+      <PH title="Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add event")}</Btn>} />
+      {toast&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} Event added · it is now in Upcoming</div>
+      )}
+      <Modal open={newOpen} onClose={()=>setNewOpen(false)} title="New event" sub="Studlin will reshuffle your study plan around it if needed."
+        footer={<><Btn variant="subtle" onClick={()=>setNewOpen(false)}>Cancel</Btn><Btn onClick={saveEvent} style={{opacity:evTitle.trim()?1:0.45}}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.cal,"Save event")}</Btn></>}>
+        <Field label="Title"><Input placeholder="e.g. Chem quiz · Periodic trends" value={evTitle} onChange={ev=>setEvTitle(ev.target.value)} autoFocus /></Field>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Field label="Date"><Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} /></Field>
+          <Field label="Time"><Input type="time" value={evTime} onChange={ev=>setEvTime(ev.target.value)} /></Field>
+        </div>
+        <Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field>
+        {evSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Drivers ed, SAT prep, club..." value={evCustom} onChange={ev=>setEvCustom(ev.target.value)} /></Field>}
+        <Field label="Type"><SelectChip options={["deadline","exam","class","study block","reminder"]} value={evKind} onChange={setEvKind} /></Field>
+        <Field label="Notes (optional)"><Textarea placeholder="e.g. Bring calculator, covers chapters 4 to 6." value={evNotes} onChange={ev=>setEvNotes(ev.target.value)} /></Field>
+      </Modal>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:16}}>
+        <Card style={{padding:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,padding:"4px 6px"}}>
+            <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>{monthNames[ym.m]} <span style={{color:T.muted,fontWeight:400}}>{ym.y}</span></div>
+            <div style={{display:"flex",gap:6}}>
+              <BtnSm variant="ghost" onClick={()=>nav(-1)}>←</BtnSm>
+              <BtnSm variant="ghost" onClick={()=>{setYm({y:now.getFullYear(),m:now.getMonth()});setSelDay(todayK);}}>Today</BtnSm>
+              <BtnSm variant="ghost" onClick={()=>nav(1)}>→</BtnSm>
+            </div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
+            {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((d,i)=><div key={i} style={{fontSize:10,fontWeight:600,color:T.muted,textAlign:"center",padding:"6px 0",letterSpacing:"0.05em"}}>{d}</div>)}
+            {cells.map((c,i)=>{
+              const evs=byDay[c.key]||[];
+              const isToday=c.key===todayK;
+              const isSel=c.key===selDay;
+              return (
+                <div key={i} onClick={()=>{setSelDay(c.key);}} onDoubleClick={()=>openNew(c.key)} style={{minHeight:64,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.card2:"transparent",border:"1px solid "+(isSel?T.lime+"55":"transparent"),transition:"all 0.12s",opacity:c.out?0.35:1}}>
+                  <div style={{display:"flex",justifyContent:"flex-start"}}>
+                    <span style={{width:22,height:22,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:isToday?700:500,background:isToday?T.lime:"transparent",color:isToday?T.ink:c.out?T.faint:T.text}}>{c.d}</span>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:2,marginTop:3}}>
+                    {evs.slice(0,2).map((ev,j)=>(
+                      <div key={j} style={{fontSize:9,fontWeight:600,color:colorOf(ev.subject),background:colorOf(ev.subject)+"16",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ev.title}</div>
+                    ))}
+                    {evs.length>2&&<div style={{fontSize:9,color:T.muted,paddingLeft:5}}>+{evs.length-2} more</div>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{fontSize:10.5,color:T.faint,marginTop:10,paddingLeft:6}}>Click a day to see its schedule · double-click to add an event</div>
+        </Card>
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          <Card style={{padding:16}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <div>
+                <div style={{fontSize:13,fontWeight:700,color:T.white}}>{relDay(selDay)}</div>
+                <div style={{fontSize:10.5,color:T.muted,marginTop:1}}>{niceDate(selDay)}</div>
+              </div>
+              <BtnSm variant="subtle" onClick={()=>openNew(selDay)}>+ Add</BtnSm>
+            </div>
+            {dayEvents.length===0
+              ?<div style={{fontSize:12,color:T.muted,padding:"14px 0 6px",textAlign:"center"}}>Nothing scheduled</div>
+              :dayEvents.map(ev=>(
+                <div key={ev.id} style={{display:"flex",gap:10,padding:"9px 0",borderBottom:"1px solid "+T.border,alignItems:"flex-start"}}>
+                  <div style={{width:3,alignSelf:"stretch",borderRadius:2,background:colorOf(ev.subject),flexShrink:0}} />
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:12.5,fontWeight:600,color:T.white,lineHeight:1.35}}>{ev.title}</div>
+                    <div style={{fontSize:11,color:T.muted,marginTop:2}}>{fmtTime(ev.time)} · {ev.subject}{ev.kind?" · "+ev.kind:""}</div>
+                  </div>
+                  <button onClick={()=>removeEvent(ev.id)} title="Delete" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,padding:2}}>×</button>
+                </div>
+              ))}
+          </Card>
+          <div>
+            <div style={{fontSize:12,fontWeight:600,color:T.muted,letterSpacing:"0.05em",textTransform:"uppercase",marginBottom:10}}>Upcoming</div>
+            {upcoming.length===0&&<Card style={{padding:14,fontSize:12,color:T.muted,textAlign:"center"}}>No upcoming events</Card>}
+            {upcoming.map(ev=>(
+              <Card key={ev.id} onClick={()=>{setSelDay(ev.date);const p=ev.date.split("-");setYm({y:+p[0],m:+p[1]-1});}} style={{borderLeft:"2px solid "+colorOf(ev.subject),marginBottom:8,cursor:"pointer",padding:14}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+                  <div style={{fontSize:11,color:T.muted}}>{relDay(ev.date)}</div>
+                  <Badge color={colorOf(ev.subject)}>{ev.subject}</Badge>
+                </div>
+                <div style={{fontSize:13,fontWeight:600,color:T.white}}>{ev.title}</div>
+                <div style={{fontSize:11,color:T.muted,marginTop:4}}>{fmtTime(ev.time)}</div>
+              </Card>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── AI TUTOR ─────────────────────────────────────────────────────────────────
+function AiTutor(){
+  const defaults=["English IV","Biology","Calculus","Spanish","Chemistry","History"];
+  const [subjects,setSubjects]=useState(()=>lsGet("subjects",defaults));
+  const [subject,setSubject]=useState(subjects[0]||"English IV");
+  const [adding,setAdding]=useState(false);
+  const [newSub,setNewSub]=useState("");
+  const [q,setQ]=useState("");
+  const [results,setResults]=useState(null);
+  const subColor={"English IV":T.purple,"Biology":T.teal,"Calculus":T.blue,"Spanish":T.amber,"Chemistry":T.red,"History":T.muted};
+  const colorOf=(sb)=>subColor[sb]||T.lime;
+  const ytHref=(query)=>"https://www.youtube.com/results?search_query="+encodeURIComponent(query);
+  const mkVids=(topic)=>[
+    {t:topic+" — explained from zero",ch:"StudyShelf",dur:"12:48",views:"2.1M views"},
+    {t:topic+" · full walkthrough with worked examples",ch:"BrightLearn Academy",dur:"18:25",views:"890K views"},
+    {t:topic+" in 8 minutes",ch:"QuickConcepts",dur:"8:04",views:"3.4M views"},
+  ];
+  const search=()=>{if(!q.trim())return;setResults({query:q.trim(),videos:mkVids(q.trim())});};
+  const addSubject=()=>{const v=newSub.trim();if(!v)return;if(!subjects.includes(v)){const next=subjects.concat([v]);setSubjects(next);lsSet("subjects",next);}setSubject(v);setNewSub("");setAdding(false);};
+  const removeSubject=(sb)=>{const next=subjects.filter(x=>x!==sb);setSubjects(next);lsSet("subjects",next);if(subject===sb)setSubject(next[0]||"");};
+  const suggested=mkVids(subject+" core concepts");
+  const VideoCard=({v})=>(
+    <div style={{display:"flex",gap:12,padding:"10px 0",borderBottom:"1px solid "+T.border,alignItems:"center"}}>
+      <a href={ytHref(v.t)} target="_blank" rel="noreferrer" style={{width:108,height:62,borderRadius:8,background:"linear-gradient(135deg,#1a1010,#0d0d1a)",border:"1px solid "+T.border,display:"flex",alignItems:"center",justifyContent:"center",position:"relative",flexShrink:0,textDecoration:"none"}}>
+        <span style={{width:28,height:28,borderRadius:"50%",background:"rgba(255,255,255,0.12)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff"}}>{Icon.play}</span>
+        <span style={{position:"absolute",bottom:4,right:5,fontSize:9,fontFamily:T.mono,background:"rgba(0,0,0,0.75)",color:"#fff",padding:"1px 5px",borderRadius:3}}>{v.dur}</span>
+      </a>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontSize:12.5,fontWeight:600,color:T.white,lineHeight:1.4,marginBottom:3}}>{v.t}</div>
+        <div style={{fontSize:11,color:T.muted}}>{v.ch} · {v.views}</div>
+        <div style={{display:"flex",gap:8,marginTop:6}}>
+          <a href={ytHref(v.t)} target="_blank" rel="noreferrer" style={{textDecoration:"none"}}><BtnSm variant="subtle">Watch on YouTube</BtnSm></a>
+          <BtnSm variant="ghost">AI summary · 1 credit</BtnSm>
+        </div>
+      </div>
+    </div>
+  );
+  return (
+    <div>
+      <PH title="Tutor" sub="One-on-one academic support, plus the best of the open web" />
+      <div style={{display:"grid",gridTemplateColumns:"190px 1fr",gap:16}}>
+        <div>
+          <Label>Subjects</Label>
+          {subjects.map(sb=>(
+            <div key={sb} onClick={()=>setSubject(sb)} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 11px",borderRadius:7,marginBottom:3,fontSize:12,cursor:"pointer",background:subject===sb?T.lime+"10":"transparent",color:subject===sb?T.lime:T.muted,fontWeight:subject===sb?600:400,border:"1px solid "+(subject===sb?T.lime+"33":"transparent"),transition:"all 0.15s",position:"relative"}}>
+              <div style={{width:5,height:5,borderRadius:"50%",background:subject===sb?T.lime:T.faint,flexShrink:0}} />
+              <span style={{flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{sb}</span>
+              {!defaults.includes(sb)&&<span onClick={ev=>{ev.stopPropagation();removeSubject(sb);}} style={{color:T.faint,fontSize:12}}>×</span>}
+            </div>
+          ))}
+          {adding
+            ?<div style={{display:"flex",gap:6,marginTop:6}}>
+               <input value={newSub} onChange={ev=>setNewSub(ev.target.value)} onKeyDown={ev=>{if(ev.key==="Enter")addSubject();}} placeholder="e.g. Physics" autoFocus style={{flex:1,minWidth:0,background:T.card2,border:"1px solid "+T.border,borderRadius:6,padding:"7px 9px",color:T.text,fontSize:11.5,fontFamily:T.font,outline:"none"}} />
+               <BtnSm onClick={addSubject}>Add</BtnSm>
+             </div>
+            :<div onClick={()=>setAdding(true)} style={{display:"flex",alignItems:"center",gap:8,padding:"9px 11px",borderRadius:7,fontSize:12,cursor:"pointer",color:T.muted,border:"1px dashed "+T.border,marginTop:6}}>{Icon.plus} Add subject</div>
+          }
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          <Card style={{padding:"14px 16px"}}>
+            <div style={{display:"flex",gap:10,alignItems:"center"}}>
+              <span style={{color:T.muted,display:"flex"}}>{Icon.search||Icon.brain}</span>
+              <input value={q} onChange={ev=>setQ(ev.target.value)} onKeyDown={ev=>{if(ev.key==="Enter")search();}} placeholder={"Search anything · e.g. how does the Krebs cycle work, derivatives, WWI causes"} style={{flex:1,background:"transparent",border:"none",outline:"none",color:T.text,fontSize:13.5,fontFamily:T.font}} />
+              <Btn onClick={search} style={{opacity:q.trim()?1:0.45}}>Search</Btn>
+            </div>
+          </Card>
+          {results&&(
+            <Card style={{padding:"14px 18px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                <Label>Top video results · {results.query}</Label>
+                <a href={ytHref(results.query)} target="_blank" rel="noreferrer" style={{fontSize:11,color:T.lime,textDecoration:"none",fontWeight:600}}>See all on YouTube →</a>
+              </div>
+              {results.videos.map((v,i)=><VideoCard key={i} v={v} />)}
+              <div style={{fontSize:11,color:T.muted,marginTop:10,display:"flex",alignItems:"center",gap:6}}><span style={{color:T.lime,display:"flex"}}>{Icon.wand}</span>Ask the tutor to turn any of these into notes or flashcards · 2 credits</div>
+            </Card>
+          )}
+          <Card style={{padding:24}}>
+            <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:16}}>
+              <div style={{width:44,height:44,borderRadius:10,background:colorOf(subject)+"18",border:"1px solid "+colorOf(subject)+"33",display:"flex",alignItems:"center",justifyContent:"center",color:colorOf(subject)}}>{Icon.brain}</div>
+              <div>
+                <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Studlin</div>
+                <div style={{fontSize:12,color:T.muted}}>{subject} · Socratic method</div>
+              </div>
+            </div>
+            <div style={{fontSize:14,color:T.text,lineHeight:1.75,padding:"14px 16px",background:T.card2,borderRadius:8,border:"1px solid "+T.border}}>
+              Ask me anything about <strong style={{color:T.lime,fontWeight:600}}>{subject}</strong> · I will walk you through it step by step, quiz you, or build a study plan. Search above to pull in the best videos on any topic.
+            </div>
+          </Card>
+          <Card style={{padding:"14px 18px"}}>
+            <Label>Suggested for {subject}</Label>
+            {suggested.map((v,i)=><VideoCard key={i} v={v} />)}
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── GRAMMAR & POLISH ─────────────────────────────────────────────────────────
+function GrammarPolish() {
+  const [text,setText]=useState("Shakespeare use of metaphors in Macbeth is very important for showing themes. The play have many example of this. Lady Macbeth she is a complex character who influence her husband decisions greatly.");
+  const [checked,setChecked]=useState(false);
+  const issues=[
+    {type:"Grammar",orig:"Shakespeare use",fix:"Shakespeare's use",color:T.red,desc:"Missing possessive apostrophe"},
+    {type:"Grammar",orig:"The play have",fix:"The play has",color:T.red,desc:"Subject-verb agreement"},
+    {type:"Style",orig:"very important",fix:"crucial / significant",color:T.amber,desc:"Weak intensifier · use stronger vocabulary"},
+    {type:"Grammar",orig:"Lady Macbeth she",fix:"Lady Macbeth",color:T.red,desc:"Pronoun redundancy"},
+    {type:"Grammar",orig:"influence her husband decisions",fix:"influences her husband's decisions",color:T.red,desc:"Tense error and missing possessive"},
+  ];
+  return (
+    <div>
+      <PH title="Grammar &amp; Polish" sub="Identify errors and elevate your academic writing" />
+      <div style={{display:"grid",gridTemplateColumns:"1fr 270px",gap:16}}>
+        <div>
+          <Card>
+            <Label>Your text</Label>
+            <textarea style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"12px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",minHeight:140,lineHeight:1.75,boxSizing:"border-box",marginBottom:12}} value={text} onChange={e=>setText(e.target.value)} />
+            <div style={{display:"flex",gap:8}}>
+              <Btn onClick={()=>setChecked(true)}>Run grammar check</Btn>
+              <Btn variant="subtle">Elevate prose</Btn>
+              <Btn variant="subtle">Tone analysis</Btn>
+            </div>
+          </Card>
+          {checked&&(
+            <div style={{marginTop:14}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                <div style={{fontSize:13,fontWeight:600,color:T.white}}>{issues.length} issues found</div>
+                <BtnSm variant="subtle">Accept all</BtnSm>
+              </div>
+              {issues.map((issue,i)=>(
+                <Card key={i} style={{borderLeft:`2px solid ${issue.color}`,marginBottom:8,padding:14}}>
+                  <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:8}}>
+                    <Badge color={issue.color}>{issue.type}</Badge>
+                    <span style={{fontSize:12,color:T.muted}}>{issue.desc}</span>
+                  </div>
+                  <div style={{display:"flex",gap:10,alignItems:"center",fontSize:13}}>
+                    <span style={{color:T.red,textDecoration:"line-through",opacity:0.8}}>{issue.orig}</span>
+                    <span style={{color:T.muted}}>→</span>
+                    <span style={{color:T.lime,fontWeight:600}}>{issue.fix}</span>
+                    <BtnSm style={{marginLeft:"auto"}}>Accept</BtnSm>
+                    <BtnSm variant="ghost">Dismiss</BtnSm>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          <Card style={{background:T.lime,border:"none"}}>
+            <Label>Overall grade</Label>
+            <div style={{fontSize:40,fontWeight:700,color:T.bg,letterSpacing:"-0.03em",lineHeight:1}}>{checked?"B+":"—"}</div>
+            <div style={{fontSize:12,color:T.bg,opacity:0.65,marginTop:5}}>Grade 11 reading level</div>
+          </Card>
+          <Card>
+            <Label>Rewrite tools</Label>
+            {["Rephrase for clarity","Elevate to academic register","Simplify sentence structure","Add transitional phrases","Vary sentence length"].map((a,i)=>(
+              <button key={i} style={{display:"flex",alignItems:"center",gap:8,width:"100%",textAlign:"left",padding:"9px 10px",borderRadius:6,marginBottom:4,fontSize:12,cursor:"pointer",border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontFamily:T.font,transition:"all 0.15s"}}>{Icon.wand} {a}</button>
+            ))}
+          </Card>
+          {checked&&(
+            <Card>
+              <Label>Error breakdown</Label>
+              {[["Grammar errors",3,T.red],["Style issues",2,T.amber],["Clarity flags",0,T.teal]].map(([k,v,c],i)=>(
+                <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<2?`1px solid ${T.border}`:"none",fontSize:12}}>
+                  <span style={{color:T.muted}}>{k}</span>
+                  <span style={{color:c,fontWeight:600}}>{v}</span>
+                </div>
+              ))}
+            </Card>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── AI HUMANIZER ─────────────────────────────────────────────────────────────
+function AiHumanizer() {
+  const [done,setDone]=useState(false);
+  const [voice,setVoice]=useState("Preserve my style");
+  const inputText="The utilization of metaphorical language throughout Shakespeare's Macbeth serves as a fundamental mechanism by which the playwright effectuates the thematic exploration of moral degradation and its consequential psychological ramifications.";
+  const outputText="Throughout Macbeth, Shakespeare uses metaphor to track moral collapse · each image of blood, vision, and darkness corresponds precisely to a stage in his protagonist's psychological unravelling.";
+  const scores=[{label:"Detection probability",before:91,after:8,lower:true},{label:"Originality index",before:28,after:92,lower:false},{label:"Readability score",before:58,after:90,lower:false}];
+  return (
+    <div>
+      <PH title="Rewrite" sub="Transform stilted prose into natural, confident academic writing" />
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+        <div>
+          <Label>Source text</Label>
+          <div style={{...({background:T.card,borderRadius:10,padding:16,border:`1px solid ${T.border}`,fontSize:13,lineHeight:1.75,color:T.muted,minHeight:160}),}}>{inputText}</div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:10}}>
+            {["Preserve my style","Academic register","Conversational","Formal"].map(s=>(
+              <button key={s} onClick={()=>setVoice(s)} style={{padding:"5px 12px",borderRadius:5,fontSize:11,cursor:"pointer",border:`1px solid ${voice===s?T.lime+"44":T.border}`,background:voice===s?T.lime+"10":"transparent",color:voice===s?T.lime:T.muted,fontFamily:T.font,transition:"all 0.15s"}}>{s}</button>
+            ))}
+          </div>
+          <div style={{marginTop:12}}>
+            <Btn onClick={()=>setDone(true)} style={{width:"100%",justifyContent:"center",gap:8}}>{Icon.wand} Rewrite</Btn>
+          </div>
+        </div>
+        <div>
+          <Label>Rewritten output</Label>
+          <div style={{background:T.card,borderRadius:10,padding:16,border:`1px solid ${done?T.lime+"33":T.border}`,fontSize:13,lineHeight:1.75,color:done?T.text:T.faint,minHeight:160,transition:"all 0.3s"}}>{done?outputText:"Output will appear here once you run the rewrite."}</div>
+          {done&&(
+            <div style={{display:"flex",gap:8,marginTop:10}}>
+              <BtnSm>{Icon.copy} Copy</BtnSm>
+              <BtnSm variant="subtle">Rerun</BtnSm>
+              <BtnSm variant="subtle">Adjust further</BtnSm>
+            </div>
+          )}
+        </div>
+      </div>
+      <Divider style={{marginBottom:16}} />
+      <Label>Text analysis</Label>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+        {scores.map((m,i)=>(
+          <Card key={i}>
+            <Label>{m.label}</Label>
+            <div style={{fontSize:34,fontWeight:700,color:done?(m.lower?T.lime:T.lime):T.muted,letterSpacing:"-0.02em",lineHeight:1,marginBottom:10}}>{done?m.after:m.before}<span style={{fontSize:16,fontWeight:400}}>%</span></div>
+            <Prog pct={done?m.after:m.before} color={m.lower?(done?T.lime:T.red):T.lime} />
+            {done&&<div style={{fontSize:11,color:T.lime,marginTop:8}}>{m.lower?"Risk reduced":"Improved"}</div>}
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── FOCUS MUSIC ──────────────────────────────────────────────────────────────
+function FocusMusic(){
+  const plan=getPlan();
+  const limit=(PLAN_LIMITS[plan]||PLAN_LIMITS.Free).music;
+  const [creations,setCreations]=useState(()=>lsGet("musicCreations",[]));
+  const [desc,setDesc]=useState("");
+  const [len,setLen]=useState("30 min");
+  const [genning,setGenning]=useState(false);
+  const [upgOpen,setUpgOpen]=useState(false);
+  const [playing,setPlaying]=useState(null);
+  const [vol,setVol]=useState(70);
+  const [,bump]=useState(0);
+  const playlists=[
+    {name:"Deep focus",sub:"Lo-fi instrumental · 2h 34m",bg:"#0d2235",flair:T.blue},
+    {name:"Study jazz",sub:"Acoustic quartet · 1h 48m",bg:"#1a0d35",flair:T.purple},
+    {name:"Classical flow",sub:"Strings and piano · 3h 10m",bg:"#0d2222",flair:T.teal},
+    {name:"Brown noise",sub:"Ambient texture · continuous",bg:"#1a1a0d",flair:T.amber},
+    {name:"Alpha waves",sub:"Binaural 10Hz · 90 min",bg:"#1a0d0d",flair:T.red},
+    {name:"Forest ambience",sub:"Rain and birds · 4h",bg:"#0d1a12",flair:T.lime},
+  ];
+  const used=creations.length;
+  const generate=()=>{
+    if(!desc.trim()||genning)return;
+    if(used>=limit){setUpgOpen(true);return;}
+    setGenning(true);
+    setTimeout(()=>{
+      const name=desc.trim().length>36?desc.trim().slice(0,36)+"…":desc.trim();
+      const next=creations.concat([{id:String(Date.now()),name,len}]);
+      setCreations(next);lsSet("musicCreations",next);
+      setGenning(false);setDesc("");setPlaying({kind:"own",i:next.length-1});
+    },2400);
+  };
+  const removeCreation=(id)=>{const next=creations.filter(c=>c.id!==id);setCreations(next);lsSet("musicCreations",next);setPlaying(null);};
+  const nowName=playing?(playing.kind==="own"?(creations[playing.i]?creations[playing.i].name:null):playlists[playing.i].name):null;
+  const nowSub=playing?(playing.kind==="own"?"Your AI creation · "+(creations[playing.i]?creations[playing.i].len:""):playlists[playing.i].sub):null;
+  const nowFlair=playing?(playing.kind==="own"?T.lime:playlists[playing.i].flair):T.lime;
+  const nowBg=playing?(playing.kind==="own"?"#0d1a12":playlists[playing.i].bg):T.card;
+  return (
+    <div>
+      <style>{"@keyframes eqb{0%,100%{transform:scaleY(0.3)}50%{transform:scaleY(1)}}"}</style>
+      <UpgradeModal open={upgOpen} onClose={()=>setUpgOpen(false)} feature="AI music" detail={"The "+plan+" plan includes "+limit+" AI-generated tracks. Upgrade to keep composing custom focus sound, or delete an old creation to free a slot."} onUpgraded={()=>bump(x=>x+1)} />
+      <PH title="Focus Music" sub="Curated environments, or describe your own and let AI compose it" />
+      <div style={{display:"grid",gridTemplateColumns:"1fr 270px",gap:16}}>
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          <Card style={{background:"linear-gradient(120deg, "+T.card+" 0%, "+T.lime+"0d 100%)",border:"1px solid "+T.lime+"33",padding:20}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <Label>AI sound studio</Label>
+              <span style={{fontFamily:T.mono,fontSize:10,color:used>=limit?T.red:T.muted,letterSpacing:"0.06em"}}>{used} of {limit} creations used · {plan}</span>
+            </div>
+            <Textarea placeholder="Describe your sound · e.g. mellow piano over soft rain, slow tempo, no drums" value={desc} onChange={ev=>setDesc(ev.target.value)} style={{minHeight:64,marginBottom:10}} />
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <SelectChip options={["15 min","30 min","60 min","Loop"]} value={len} onChange={setLen} />
+              <div style={{marginLeft:"auto"}}>
+                {genning
+                  ?<div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 14px"}}>
+                     <div style={{display:"flex",gap:3,alignItems:"center",height:18}}>
+                       {[0,1,2,3,4].map(i=>(<div key={i} style={{width:3,height:16,borderRadius:2,background:T.lime,transformOrigin:"center",animation:"eqb 0.9s ease-in-out infinite",animationDelay:(i*0.13)+"s"}} />))}
+                     </div>
+                     <span style={{fontSize:12,color:T.lime,fontWeight:600}}>Composing your mix…</span>
+                   </div>
+                  :<Btn onClick={generate} style={{opacity:desc.trim()?1:0.45}}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.wand,"Generate track")}</Btn>
+                }
+              </div>
+            </div>
+          </Card>
+          {creations.length>0&&(
+            <div>
+              <Label>Your creations</Label>
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {creations.map((c,i)=>(
+                  <Card key={c.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",border:"1px solid "+(playing&&playing.kind==="own"&&playing.i===i?T.lime+"55":T.border)}}>
+                    <button onClick={()=>setPlaying(playing&&playing.kind==="own"&&playing.i===i?null:{kind:"own",i})} style={{width:30,height:30,borderRadius:"50%",border:"1px solid "+T.lime+"44",background:T.lime+"18",color:T.lime,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{playing&&playing.kind==="own"&&playing.i===i?Icon.pause:Icon.play}</button>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:12.5,fontWeight:600,color:T.white,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name}</div>
+                      <div style={{fontSize:10.5,color:T.muted}}>AI generated · {c.len}</div>
+                    </div>
+                    <button onClick={()=>removeCreation(c.id)} title="Delete to free a slot" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:14}}>×</button>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          )}
+          <div>
+            <Label>Curated</Label>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
+              {playlists.map((p,i)=>(
+                <Card key={i} onClick={()=>setPlaying(playing&&playing.kind==="set"&&playing.i===i?null:{kind:"set",i})} style={{padding:0,overflow:"hidden",cursor:"pointer",border:"1px solid "+(playing&&playing.kind==="set"&&playing.i===i?p.flair+"44":T.border),transition:"border 0.2s"}}>
+                  <div style={{height:80,background:p.bg,borderBottom:"1px solid "+p.flair+"22",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                    <div style={{width:32,height:32,borderRadius:"50%",background:p.flair+"22",border:"1px solid "+p.flair+"44",display:"flex",alignItems:"center",justifyContent:"center",color:p.flair}}>{playing&&playing.kind==="set"&&playing.i===i?Icon.pause:Icon.play}</div>
+                  </div>
+                  <div style={{padding:"10px 12px"}}>
+                    <div style={{fontSize:12,fontWeight:600,color:T.white,marginBottom:2}}>{p.name}</div>
+                    <div style={{fontSize:11,color:T.muted}}>{p.sub}</div>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          {playing&&nowName
+            ?<Card style={{background:nowBg,border:"1px solid "+nowFlair+"33"}}>
+                <Label>Now playing</Label>
+                <div style={{fontSize:15,fontWeight:700,color:"#fff",marginBottom:2,lineHeight:1.35}}>{nowName}</div>
+                <div style={{fontSize:12,color:"rgba(255,255,255,0.55)",marginBottom:20}}>{nowSub}</div>
+                <div style={{display:"flex",gap:10,justifyContent:"center",marginBottom:20}}>
+                  <button style={{width:32,height:32,borderRadius:"50%",border:"1px solid rgba(255,255,255,0.1)",background:"transparent",color:"rgba(255,255,255,0.55)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{Icon.prev}</button>
+                  <button onClick={()=>setPlaying(null)} style={{width:44,height:44,borderRadius:"50%",border:"none",background:nowFlair,color:T.bg,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{Icon.pause}</button>
+                  <button style={{width:32,height:32,borderRadius:"50%",border:"1px solid rgba(255,255,255,0.1)",background:"transparent",color:"rgba(255,255,255,0.55)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{Icon.skip}</button>
+                </div>
+                <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                  <div style={{color:"rgba(255,255,255,0.55)"}}>{Icon.volume}</div>
+                  <input type="range" min="0" max="100" value={vol} onChange={ev=>setVol(+ev.target.value)} style={{flex:1}} />
+                  <span style={{fontSize:11,color:"rgba(255,255,255,0.55)",minWidth:28,textAlign:"right"}}>{vol}%</span>
+                </div>
+              </Card>
+            :<Card style={{textAlign:"center",padding:32}}>
+                <div style={{color:T.faint,display:"flex",justifyContent:"center",marginBottom:10}}>{Icon.music}</div>
+                <div style={{fontSize:13,color:T.muted}}>Pick a playlist or compose your own</div>
+              </Card>
+          }
+          <Card>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <Label>AI creations</Label>
+              <Badge color={plan==="Elite"?T.purple:T.lime}>{plan}</Badge>
+            </div>
+            <div style={{fontSize:24,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>{used}<span style={{fontSize:13,color:T.muted,fontWeight:400}}> / {limit} used</span></div>
+            <Prog pct={Math.min(100,Math.round(used/limit*100))} height={4} />
+            {plan!=="Elite"&&<div onClick={()=>setUpgOpen(true)} style={{fontSize:11.5,color:T.lime,marginTop:10,cursor:"pointer",fontWeight:600}}>Upgrade for more creations →</div>}
+          </Card>
+          <Card>
+            <Label>Ambient layer</Label>
+            {[["Rain",38],["Cafe background",20],["White fan",0]].map(([nm,v],i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+                <span style={{fontSize:11,color:T.muted,width:110,flexShrink:0}}>{nm}</span>
+                <input type="range" min="0" max="100" defaultValue={v} style={{flex:1}} />
+              </div>
+            ))}
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ─── SETTINGS ─────────────────────────────────────────────────────────────────
+function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}}) {
+  const [active,setActive]=useState("General");
+  const [toggles,setToggles]=useState({push:true,sound:true,streak:true,deadline:true,sr:true,auto:true,analytics:false,sync:true,emails:false,profile:true,share:true,twofa:false,collect:false});
+  const tog=k=>setToggles(t=>({...t,[k]:!t[k]}));
+  const sections=[
+    {id:"General",icon:Icon.settings},
+    {id:"Appearance",icon:Icon.wand},
+    {id:"Notifications",icon:Icon.send},
+    {id:"Privacy",icon:Icon.shield},
+    {id:"Study preferences",icon:Icon.brain},
+    {id:"Subscription",icon:Icon.zap},
+    {id:"Danger zone",icon:Icon.xmark},
+  ];
+  const Toggle = ({k}) => (
+    <div onClick={()=>tog(k)} style={{width:38,height:20,borderRadius:10,background:toggles[k]?T.lime:T.card2,border:`1px solid ${toggles[k]?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+      <div style={{width:14,height:14,borderRadius:"50%",background:toggles[k]?T.bg:"#fff",position:"absolute",top:2,left:toggles[k]?21:2,transition:"left 0.2s"}} />
+    </div>
+  );
+  const Row = ({label,sub,k,right}) => (
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"13px 0",borderBottom:`1px solid ${T.border}`}}>
+      <div style={{flex:1,marginRight:14}}>
+        <div style={{fontSize:13,color:T.text,fontWeight:500}}>{label}</div>
+        {sub && <div style={{fontSize:11.5,color:T.muted,marginTop:2,lineHeight:1.45}}>{sub}</div>}
+      </div>
+      {right || <Toggle k={k} />}
+    </div>
+  );
+  // Theme preview card
+  const ThemeCard = ({mode,label,sub}) => {
+    const sel=theme===mode;
+    const isLight=mode==="light";
+    return (
+      <div onClick={()=>setTheme(mode)} style={{flex:1,cursor:"pointer",borderRadius:12,padding:16,border:`2px solid ${sel?T.lime:T.border}`,background:sel?T.lime+"08":T.card2,transition:"all 0.15s"}}>
+        <div style={{height:90,borderRadius:8,overflow:"hidden",background:isLight?"#FBF7EE":"#0F1411",border:`1px solid ${isLight?"rgba(14,31,24,0.08)":"rgba(255,255,255,0.06)"}`,marginBottom:12,display:"flex"}}>
+          <div style={{width:24,background:"#14342A",display:"flex",flexDirection:"column",alignItems:"center",padding:"6px 0",gap:4}}>
+            <div style={{width:10,height:10,background:"#9EC83D",borderRadius:2}} />
+            <div style={{width:14,height:3,background:"rgba(255,255,255,0.2)",borderRadius:1,marginTop:4}} />
+            <div style={{width:14,height:3,background:"rgba(255,255,255,0.12)",borderRadius:1}} />
+            <div style={{width:14,height:3,background:"rgba(255,255,255,0.12)",borderRadius:1}} />
+          </div>
+          <div style={{flex:1,padding:8,display:"flex",flexDirection:"column",gap:5}}>
+            <div style={{display:"flex",gap:4}}>
+              <div style={{flex:1,height:18,background:isLight?"#14342A":"#1c2420",borderRadius:3}} />
+              <div style={{width:24,height:18,background:"#9EC83D",borderRadius:3}} />
+              <div style={{width:24,height:18,background:isLight?"#fff":"#1c2420",borderRadius:3,border:isLight?"1px solid rgba(14,31,24,0.08)":"none"}} />
+            </div>
+            <div style={{display:"flex",gap:4}}>
+              <div style={{flex:1,height:14,background:isLight?"#fff":"#1c2420",borderRadius:3,border:isLight?"1px solid rgba(14,31,24,0.08)":"none"}} />
+              <div style={{flex:1,height:14,background:isLight?"#fff":"#1c2420",borderRadius:3,border:isLight?"1px solid rgba(14,31,24,0.08)":"none"}} />
+            </div>
+          </div>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:14,fontWeight:600,color:T.white,letterSpacing:"-0.01em"}}>{label}</div>
+            <div style={{fontSize:11,color:T.muted,marginTop:2}}>{sub}</div>
+          </div>
+          <div style={{width:20,height:20,borderRadius:"50%",border:`2px solid ${sel?T.lime:T.border}`,background:sel?T.lime:"transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            {sel&&<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={T.bg} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+          </div>
+        </div>
+      </div>
+    );
+  };
+  // Chip group helper
+  const Chip = ({active,onClick,children}) => (
+    <button type="button" onClick={onClick} style={{padding:"7px 14px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${active?T.lime+"66":T.border}`,background:active?T.lime+"14":"transparent",color:active?T.lime:T.muted,fontFamily:T.font,fontWeight:active?600:400,transition:"all 0.15s"}}>{children}</button>
+  );
+  const [pom,setPom]=useState("25 min");
+  const [verb,setVerb]=useState("Balanced");
+  const [brk,setBrk]=useState("15 min");
+  const accents=[{n:"Lime",c:"#9EC83D"},{n:"Forest",c:"#5DA088"},{n:"Sky",c:"#7FB8E8"},{n:"Lilac",c:"#B89BE0"},{n:"Peach",c:"#E89A6E"}];
+
+  return (
+    <div>
+      <PH title="Settings" sub="Manage your account and preferences" />
+      <div style={{display:"grid",gridTemplateColumns:"200px 1fr",gap:16}}>
+        <div>
+          {sections.map(s=>(
+            <div key={s.id} onClick={()=>setActive(s.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 11px",borderRadius:7,marginBottom:3,fontSize:12.5,cursor:"pointer",background:active===s.id?T.lime+"10":"transparent",color:active===s.id?T.lime:T.muted,fontWeight:active===s.id?600:400,border:`1px solid ${active===s.id?T.lime+"22":"transparent"}`,transition:"all 0.15s"}}>
+              <span style={{color:active===s.id?T.lime:T.faint,width:14,height:14,display:"flex"}}>{s.icon}</span>
+              {s.id}
+            </div>
+          ))}
+        </div>
+        <div>
+
+          {active==="General" && (<>
+            <Card style={{marginBottom:12}}>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Profile basics</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:16}}>How you appear across Studlin.</div>
+              <Field label="Display name"><Input defaultValue="Maya Reyes" /></Field>
+              <Field label="Email"><Input defaultValue="maya.reyes@ucla.edu" type="email" /></Field>
+              <Field label="School or affiliation"><Input defaultValue="UCLA · Class of 2027" /></Field>
+              <Field label="Time zone">
+                <select style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.font,outline:"none"}} defaultValue="America/Los_Angeles">
+                  <option>America/Los_Angeles</option><option>America/New_York</option><option>Europe/London</option><option>Asia/Singapore</option>
+                </select>
+              </Field>
+            </Card>
+            <Card>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Connected accounts</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Sync your calendar and cloud notes.</div>
+              {[["Google Calendar","Synced",true],["Apple Calendar","Connect",false],["Notion workspace","Synced",true],["Dropbox","Connect",false]].map(([n,st,on],i)=>(
+                <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 0",borderBottom:i<3?`1px solid ${T.border}`:"none"}}>
+                  <div style={{fontSize:13,color:T.text,fontWeight:500}}>{n}</div>
+                  <BtnSm variant={on?"subtle":"lime"}>{st}</BtnSm>
+                </div>
+              ))}
+            </Card>
+          </>)}
+
+          {active==="Appearance" && (<>
+            <Card style={{marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+                <div>
+                  <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Theme</div>
+                  <div style={{fontSize:12,color:T.muted}}>Switch between light and dark. Your choice persists across sessions.</div>
+                </div>
+                <Badge color={T.lime}>{theme==="light"?"Light mode":"Dark mode"}</Badge>
+              </div>
+              <div style={{display:"flex",gap:10}}>
+                <ThemeCard mode="light" label="Light" sub="Cream paper · sage accents" />
+                <ThemeCard mode="dark"  label="Dark"  sub="Forest matte · refined" />
+              </div>
+            </Card>
+            <Card style={{marginBottom:12}}>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>Accent color</div>
+              <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                {accents.map(a=>(
+                  <button key={a.n} onClick={()=>setAccent(a.n)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 14px",borderRadius:8,border:`1.5px solid ${accent===a.n?a.c:T.border}`,background:accent===a.n?a.c+"15":T.card2,color:T.text,cursor:"pointer",fontFamily:T.font,fontSize:12.5,fontWeight:500}}>
+                    <span style={{width:14,height:14,borderRadius:"50%",background:a.c,border:`1px solid ${T.border}`}} />
+                    {a.n}
+                  </button>
+                ))}
+              </div>
+            </Card>
+            <Card>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>Density</div>
+              <div style={{display:"flex",gap:6,marginBottom:18}}>
+                {["Compact","Comfortable","Spacious"].map(d=><Chip key={d} active={density===d} onClick={()=>setDensity(d)}>{d}</Chip>)}
+              </div>
+              <Row label="Reduce motion" sub="Disable parallax and bouncy animations." k="motion" />
+              <Row label="Show handwritten display fonts" sub="Caveat for big numbers, Instrument Serif for accents." k="hand" />
+            </Card>
+          </>)}
+
+          {active==="Notifications" && (<>
+            <Card style={{marginBottom:12}}>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Reminders</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Choose what wakes you up.</div>
+              <Row label="Push notifications" sub="Deadline reminders, streak alerts, squad activity." k="push" />
+              <Row label="Deadline alerts" sub="Get notified 24 hours, 1 hour, and 10 minutes before due time." k="deadline" />
+              <Row label="Streak reminders" sub="A nudge if you haven't studied by 8pm." k="streak" />
+              <Row label="Focus sound alerts" sub="Audio cue when Pomodoro sessions complete." k="sound" />
+            </Card>
+            <Card>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Email</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Studlin will only email you when it matters.</div>
+              <Row label="Weekly Wrapped digest" sub="Your stats, every Sunday evening." k="wrapped" right={<Toggle k="emails" />} />
+              <Row label="Study milestones" sub="When you hit a streak milestone or level up." k="squad" />
+              <Row label="Product updates" sub="Occasional notes about new features and tips." k="emails" />
+            </Card>
+          </>)}
+
+          {active==="Privacy" && (<>
+            <Card style={{marginBottom:12}}>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Visibility</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Control what others can see.</div>
+              <Row label="Public profile" sub="Let others find you by name or handle." k="profile" />
+              <Row label="Share Weekly Wrapped" sub="Allow sharing your stats card on social." k="share" />
+              <Row label="Show online status" sub="Display a green dot when you're in a focus session." k="sync" />
+            </Card>
+            <Card style={{marginBottom:12}}>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Data &amp; AI</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:10}}>You own your notes, essays, and recordings.</div>
+              <Row label="Use my work to train Studlin AI" sub="Off by default. We will never share your raw content." k="collect" />
+              <Row label="Anonymous usage analytics" sub="Helps us fix bugs and prioritise features." k="analytics" />
+              <div style={{display:"flex",gap:8,marginTop:14,flexWrap:"wrap"}}>
+                <Btn variant="subtle">{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.copy,"Export all data")}</Btn>
+                <Btn variant="subtle">Download chat history</Btn>
+                <Btn variant="subtle">Privacy policy</Btn>
+              </div>
+            </Card>
+            <Card>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:10}}>Account security</div>
+              <Row label="Two-factor authentication" sub="Add a one-time code on every sign in." k="twofa" />
+              <Row label="Active sessions" sub="3 devices currently signed in." k="sessions" right={<BtnSm variant="subtle">View sessions</BtnSm>} />
+              <Row label="Change password" sub="Last changed 3 months ago." k="pw" right={<BtnSm variant="subtle">Change</BtnSm>} />
+            </Card>
+          </>)}
+
+          {active==="Study preferences" && (<>
+            <Card style={{marginBottom:12}}>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>Focus &amp; Pomodoro</div>
+              <Field label="Session length"><div style={{display:"flex",gap:6}}>{["15 min","20 min","25 min","30 min","45 min"].map(t=><Chip key={t} active={pom===t} onClick={()=>setPom(t)}>{t}</Chip>)}</div></Field>
+              <Field label="Break after 4 sessions"><div style={{display:"flex",gap:6}}>{["10 min","15 min","20 min","30 min"].map(t=><Chip key={t} active={brk===t} onClick={()=>setBrk(t)}>{t}</Chip>)}</div></Field>
+              <Row label="Auto-start next session" sub="Skip the play button between focus blocks." k="autoSession" />
+              <Row label="Block distracting sites" sub="Studlin's lightweight blocker pauses social media during focus." k="block" />
+            </Card>
+            <Card style={{marginBottom:12}}>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>AI tutor</div>
+              <Field label="Response verbosity"><div style={{display:"flex",gap:6}}>{["Concise","Balanced","Comprehensive"].map(t=><Chip key={t} active={verb===t} onClick={()=>setVerb(t)}>{t}</Chip>)}</div></Field>
+              <Field label="Tutor style">
+                <SelectChip options={["Socratic","Direct","Encouraging","Strict"]} value={"Socratic"} onChange={()=>{}} />
+              </Field>
+              <Row label="Spaced repetition engine" sub="Intelligent scheduling based on recall performance." k="sr" />
+              <Row label="Auto-save drafts" sub="Save essay and note changes every 30 seconds." k="auto" />
+            </Card>
+            <Card>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>Daily targets</div>
+              <Field label="Daily focus target (minutes)"><Input type="number" defaultValue="180" /></Field>
+              <Field label="Daily flashcard target"><Input type="number" defaultValue="30" /></Field>
+            </Card>
+          </>)}
+
+          {active==="Subscription" && (<>
+            <Card style={{marginBottom:12,background:T.lime,border:"none"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                <div>
+                  <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.bg,opacity:0.6}}>CURRENT PLAN</div>
+                  <div style={{fontSize:26,fontWeight:700,color:T.bg,letterSpacing:"-0.02em",marginTop:4}}>Scholar</div>
+                  <div style={{fontSize:13,color:T.bg,opacity:0.75,marginTop:4}}>$14.99/mo · annual · renews Jun 12, 2026</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.bg,opacity:0.6}}>AI CREDITS</div>
+                  <div style={{fontSize:26,fontWeight:700,color:T.bg,letterSpacing:"-0.02em",marginTop:4}}>180 / 500</div>
+                  <div style={{fontSize:13,color:T.bg,opacity:0.75,marginTop:4}}>Resets in 12 days</div>
+                </div>
+              </div>
+              <div style={{display:"flex",gap:8,marginTop:18}}>
+                <a href="Studlin Credits.html" style={{background:T.bg,color:T.lime,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Buy credit packs</a>
+                <a href="Studlin Credits.html" style={{background:"transparent",border:`1px solid ${T.bg}55`,color:T.bg,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Upgrade to Academic</a>
+              </div>
+            </Card>
+            <Card style={{marginBottom:12}}>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:10}}>Payment method</div>
+              <div style={{display:"flex",alignItems:"center",gap:12,padding:14,background:T.card2,borderRadius:10,border:`1px solid ${T.border}`}}>
+                <div style={{width:40,height:28,borderRadius:4,background:"linear-gradient(135deg,#1A1F36,#3F4865)",display:"grid",placeItems:"center",color:"#fff",fontSize:9,fontWeight:700,letterSpacing:"0.06em",fontFamily:T.mono}}>VISA</div>
+                <div style={{fontFamily:T.mono,fontSize:13,color:T.text}}>•••• 4242</div>
+                <div style={{fontSize:11.5,color:T.muted,marginLeft:"auto"}}>Exp 08/27</div>
+                <BtnSm variant="subtle">Update</BtnSm>
+              </div>
+            </Card>
+            <Card>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:10}}>Billing history</div>
+              {[["May 1, 2026","Scholar plan · monthly","$14.99","Paid"],["Apr 1, 2026","Scholar plan · monthly","$14.99","Paid"],["Mar 28, 2026","Credit pack · 300","$8.99","Paid"],["Mar 1, 2026","Scholar plan · monthly","$14.99","Paid"]].map(([d,t,a,s],i)=>(
+                <div key={i} style={{display:"grid",gridTemplateColumns:"110px 1fr 80px 70px",gap:14,padding:"11px 0",borderBottom:i<3?`1px solid ${T.border}`:"none",fontSize:12.5,alignItems:"center"}}>
+                  <span style={{color:T.muted,fontFamily:T.mono,fontSize:11}}>{d}</span>
+                  <span style={{color:T.text}}>{t}</span>
+                  <span style={{color:T.text,fontFamily:T.mono,fontWeight:600,textAlign:"right"}}>{a}</span>
+                  <Badge color={T.teal}>{s}</Badge>
+                </div>
+              ))}
+            </Card>
+          </>)}
+
+          {active==="Danger zone" && (<>
+            <Card style={{marginBottom:12,border:"1px solid rgba(214,117,96,0.3)"}}>
+              <div style={{fontSize:13,fontWeight:700,color:T.red,marginBottom:4}}>Reset progress</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Wipe your streak, XP, level, and Wrapped history. Notes and essays are kept.</div>
+              <Btn variant="danger">Reset all progress</Btn>
+            </Card>
+            <Card style={{marginBottom:12,border:"1px solid rgba(214,117,96,0.3)"}}>
+              <div style={{fontSize:13,fontWeight:700,color:T.red,marginBottom:4}}>Pause subscription</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Pause billing for up to 90 days. We'll keep your data intact and email you when it's about to resume.</div>
+              <Btn variant="danger">Pause for 30 days</Btn>
+            </Card>
+            <Card style={{border:"1px solid rgba(214,117,96,0.3)"}}>
+              <div style={{fontSize:13,fontWeight:700,color:T.red,marginBottom:4}}>Delete account</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Permanently remove your account, notes, essays, flashcards, and squad memberships. This cannot be undone.</div>
+              <Btn variant="danger">Delete my account</Btn>
+            </Card>
+          </>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ─── PROFILE ──────────────────────────────────────────────────────────────────
+function Profile() {
+  const badges=[
+    {icon:Icon.flame,name:"12-Day streak",color:T.amber},
+    {icon:Icon.trophy,name:"Squad #1",color:T.lime},
+    {icon:Icon.layers,name:"Card master",color:T.teal},
+    {icon:Icon.zap,name:"Speed reader",color:T.blue},
+    {icon:Icon.brain,name:"Bio distinction",color:T.purple},
+    {icon:Icon.pen,name:"Essay merit",color:T.red},
+    {icon:Icon.star,name:"Top scorer",color:T.amber},
+    {icon:Icon.award,name:"Peer mentor",color:T.lime},
+    {icon:Icon.shield,name:"Streak guard",color:T.teal},
+    {icon:Icon.check,name:"Consistent",color:T.blue},
+  ];
+  const activityData=[40,70,55,90,100,30,20];
+  return (
+    <div>
+      <Card style={{display:"flex",alignItems:"center",gap:24,marginBottom:16,padding:28}}>
+        <Av initials="MR" color={T.lime} size={80} />
+        <div style={{flex:1}}>
+          <div style={{fontSize:22,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:3}}>Maya Reyes</div>
+          <div style={{fontSize:13,color:T.muted,marginBottom:12}}>Scholar plan · UCLA · Class of 2027</div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            <Badge color={T.lime}>Scholar</Badge>
+            <Badge color={T.amber}>12-day streak</Badge>
+            <Badge color={T.blue}>Ranked #1 in squad</Badge>
+          </div>
+        </div>
+        <div style={{textAlign:"right"}}>
+          <div style={{fontSize:42,fontWeight:700,color:T.lime,letterSpacing:"-0.04em",lineHeight:1}}>2,140</div>
+          <div style={{fontSize:12,color:T.muted,marginTop:3}}>XP · Level 14</div>
+          <div style={{marginTop:10,width:160}}><Prog pct={72} /></div>
+          <div style={{fontSize:11,color:T.muted,marginTop:4}}>340 XP to Level 15</div>
+        </div>
+      </Card>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
+        {[["Total study time","42h 18m",T.lime],["Essays submitted","8",T.purple],["Cards mastered","147",T.teal],["Quizzes completed","23",T.amber],["Chat sessions","89",T.blue],["Focus sessions","64",T.red]].map(([l,v,c],i)=>(
+          <Card key={i} style={{textAlign:"center",padding:16}}>
+            <div style={{fontSize:26,fontWeight:700,color:c,letterSpacing:"-0.02em",lineHeight:1}}>{v}</div>
+            <div style={{fontSize:11,color:T.muted,marginTop:6}}>{l}</div>
+          </Card>
+        ))}
+      </div>
+      <div style={{fontSize:12,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:10}}>Achievements</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,marginBottom:16}}>
+        {badges.map((b,i)=>(
+          <Card key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:8,padding:14,cursor:"pointer"}}>
+            <div style={{width:36,height:36,borderRadius:8,background:b.color+"14",border:`1px solid ${b.color}33`,display:"flex",alignItems:"center",justifyContent:"center",color:b.color}}>{b.icon}</div>
+            <div style={{fontSize:10,color:T.muted,textAlign:"center",lineHeight:1.3}}>{b.name}</div>
+          </Card>
+        ))}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Card>
+          <Label>Weekly activity</Label>
+          <div style={{display:"flex",gap:5,alignItems:"flex-end",height:80,marginTop:8}}>
+            {activityData.map((h,i)=>(
+              <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:5}}>
+                <div style={{width:"100%",height:`${h}%`,background:i===4?T.lime:T.card2,borderRadius:"3px 3px 0 0",transition:"height 0.3s"}} />
+                <div style={{fontSize:9,color:T.faint,letterSpacing:"0.05em"}}>{"MTWTFSS"[i]}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+        <Card>
+          <Label>Subject distribution</Label>
+          {[["Biology",38,T.teal],["English",28,T.purple],["Calculus",22,T.blue],["Spanish",12,T.amber]].map(([s,p,c],i)=>(
+            <div key={i} style={{marginBottom:11}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:11,marginBottom:4}}>
+                <span style={{color:T.muted}}>{s}</span>
+                <span style={{color:c,fontWeight:600}}>{p}%</span>
+              </div>
+              <Prog pct={p} color={c} height={3} />
+            </div>
+          ))}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+// ─── DASHBOARD ────────────────────────────────────────────────────────────────
+function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRunning=()=>{}}) {
+  const realStats=sessionStats();
+  const realStreak=Math.max(1,getStreak());
+  const fm=String(Math.floor(focusSecs/60)).padStart(2,"0");
+  const fs=String(focusSecs%60).padStart(2,"0");
+  const fmtTime=`${fm}:${fs}`;
+  const totalSecs=25*60; // pomodoro session
+  const pct=Math.max(0,Math.min(100,((totalSecs-focusSecs)/totalSecs)*100));
+  const tasks=[
+    {task:"Bio · Cell respiration flashcards",sub:"Reviewed 24 / 30 cards · 86% accuracy",tag:"Bio",tagBg:T.mint,done:true,time:"30m"},
+    {task:"Read Ch. 4 · Macbeth Act III",sub:"Notes synced to \"English IV\"",tag:"Eng",tagBg:T.lilac,done:true,time:"25m"},
+    {task:"Spanish · review subjunctive",sub:"8 / 12 verbs mastered",tag:"Esp",tagBg:T.peach,done:true,time:"20m"},
+    {task:'Draft essay · "Power & corruption"',sub:"1,247 / 1,500 words · grammar pass pending",tag:"NOW",tagBg:T.ink,tagColor:T.cream,now:true,time:"45m"},
+    {task:"Calc · practice integrals",sub:"Set 4.2 · problems 1–14",tag:"Calc",tagBg:T.sky,time:"25m"},
+  ];
+  const decks=[
+    {subj:"BIO · DECK",title:"Cellular respiration",pct:80,a:"24 / 30",b:"86%",bg:T.mint},
+    {subj:"ENG · ESSAY",title:"Power & corruption (Macbeth)",pct:60,a:"1,247 wd",b:"DRAFT",bg:T.peach},
+    {subj:"CALC · NOTES",title:"Integration techniques",pct:45,a:"14 pages",b:"Mon",bg:T.sky},
+    {subj:"CHEM · DECK",title:"Stoichiometry · quiz prep",pct:35,a:"9 / 26",b:"QUIZ MON",bg:T.lilac},
+    {subj:"ESP · DECK",title:"Subjunctive verbs",pct:67,a:"8 / 12",b:"92%",bg:T.card2},
+    {subj:"HIST · NOTES",title:"Cold War timeline",pct:25,a:"6 pages",b:"3d ago",bg:T.card2},
+  ];
+  const lb=[
+    {r:1,n:"Maya R.",m:"14h 22m · 12-day streak",s:"2,140",you:true,grad:"linear-gradient(135deg,#FFD7B5,#FFC9D2)"},
+    {r:2,n:"Devon K.",m:"12h 08m · 8-day streak",s:"1,840",grad:"linear-gradient(135deg,#BFE3FF,#E2D0FF)"},
+    {r:3,n:"Priya S.",m:"10h 41m · 5-day streak",s:"1,602",grad:"linear-gradient(135deg,#C4F0D8,#FFE99A)"},
+    {r:4,n:"Jordan T.",m:"7h 15m · streak broken",s:"1,088",grad:"linear-gradient(135deg,#E2D0FF,#FFD7B5)"},
+  ];
+  const dl=[
+    {d:"20",mo:"MON",t:"Chem quiz · stoichiometry",sub:"CHEM 14B · weighs 12%",cd:"3d",urgent:true},
+    {d:"22",mo:"WED",t:"Macbeth essay due",sub:"1,500 words · 60% draft",cd:"5d"},
+    {d:"25",mo:"SAT",t:"Calc problem set 4.2",sub:"Integrals · 14 problems",cd:"8d"},
+    {d:"29",mo:"WED",t:"Bio midterm",sub:"Cell + molecular · 40 MCQ",cd:"12d"},
+  ];
+  // streak heatmap data
+  const seed=[0,1,2,0,3,4,2,1,0,3,2,4,1,0,2,3,1,4,2,3,0,1,2,4,3,2,1,3,4,2,3,1,4,3,2,4,3,2,1,2,3,4,3,2,3,4,2,3,2,4,3,2,3,4,3,4,2,3,4,3,4,3,2,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4];
+  const cellColor=(lvl)=>{
+    if(!lvl) return T.mode==="light"?"rgba(14,31,24,0.06)":"rgba(255,255,255,0.06)";
+    return [null,T.lime+"40",T.lime+"80",T.limeDk,T.forest][lvl];
+  };
+  // Mono label/eyebrow inside a card
+  const Eye=({children,style={}})=>(
+    <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.16em",textTransform:"uppercase",color:T.muted,padding:"4px 8px",border:`1px solid ${T.border}`,borderRadius:99,...style}}>{children}</span>
+  );
+  const Hand=({children,style={}})=>(
+    <h3 style={{fontFamily:T.hand,fontSize:30,lineHeight:1,fontWeight:600,margin:0,color:T.white,letterSpacing:"-0.01em",whiteSpace:"nowrap",...style}}>{children}</h3>
+  );
+  const CardHead=({title,label,more,light=false})=>(
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:12}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
+        <Hand style={light?{color:T.cream}:{}}>{title}</Hand>
+        {label&&<Eye style={light?{color:"rgba(246,241,230,0.6)",borderColor:"rgba(246,241,230,0.18)"}:{}}>{label}</Eye>}
+      </div>
+      {more&&<button style={{fontSize:12,color:light?"rgba(246,241,230,0.6)":T.muted,display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",background:"none",border:"none"}}>{more} <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>}
+    </div>
+  );
+  const isLight=T.mode==="light";
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16,paddingBottom:40}}>
+
+      {/* GREETING STRIP · greet + streak + xp */}
+      <div style={{display:"grid",gridTemplateColumns:"1.5fr 1fr 1fr",gap:16}}>
+        {/* Greeting */}
+        <div style={{background:`linear-gradient(135deg, ${T.forest} 0%, #1B4536 100%)`,color:T.cream,borderRadius:22,padding:"26px 30px",position:"relative",overflow:"hidden",minHeight:200}}>
+          <div style={{position:"absolute",right:-40,top:-40,width:240,height:240,background:"radial-gradient(circle,rgba(200,255,90,0.18),transparent 70%)",pointerEvents:"none"}} />
+          <div style={{position:"relative"}}>
+            <div style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)",marginBottom:6}}>Friday · May 17 · Week 20</div>
+            <div style={{fontFamily:T.hand,fontSize:54,lineHeight:0.95,fontWeight:600,color:T.cream,margin:"0 0 4px"}}>Good afternoon, <span style={{color:T.lime}}>Maya.</span></div>
+            <p style={{fontSize:13.5,color:"rgba(246,241,230,0.7)",margin:"8px 0 16px",lineHeight:1.5,maxWidth:380}}>You've got <strong style={{color:T.cream}}>2 tasks left</strong> on your plan and a chem quiz in 3 days. Let's lock in.</p>
+            <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+              <button onClick={()=>setActive("focustimer")} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",background:T.lime,color:T.ink,borderRadius:99,fontSize:13,fontWeight:600,border:"none",cursor:"pointer",fontFamily:T.font}}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg>
+                Resume focus session
+              </button>
+              <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",color:T.cream,border:"1px solid rgba(246,241,230,0.18)",background:"transparent",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>View today's plan</button>
+            </div>
+          </div>
+        </div>
+
+        {/* Streak */}
+        <div onClick={()=>setActive("profile")} style={{background:T.lime,borderRadius:22,padding:22,cursor:"pointer",border:"none",display:"flex",flexDirection:"column"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(14,31,24,0.6)",fontWeight:600}}>Day Streak</span>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={T.ink} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{opacity:0.6}}><path d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
+          </div>
+          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.ink,margin:"10px 0 2px"}}>{realStreak}<span style={{fontSize:20,color:"rgba(14,31,24,0.55)",marginLeft:6}}>days</span></div>
+          <div style={{fontSize:12,color:"rgba(14,31,24,0.7)"}}>Longest: 31 · +10 credits unlocked</div>
+          <div style={{display:"flex",gap:5,marginTop:"auto",paddingTop:14}}>
+            {["M","T","W","T","F","S","S"].map((d,i)=>{
+              const on=i<4, today=i===4;
+              return <div key={i} style={{flex:1,height:26,borderRadius:6,background:today?T.ink:on?T.forest:"rgba(14,31,24,0.10)",color:today?T.lime:on?T.lime:"rgba(14,31,24,0.4)",display:"grid",placeItems:"center",fontSize:10,fontFamily:T.mono,fontWeight:today?700:400,boxShadow:today?"0 0 0 2px "+T.ink:"none"}}>{d}</div>;
+            })}
+          </div>
+        </div>
+
+        {/* XP / Level */}
+        <div onClick={()=>setActive("profile")} style={{background:T.card,borderRadius:22,padding:22,cursor:"pointer",border:`1px solid ${T.border}`,display:"flex",flexDirection:"column"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,fontWeight:600}}>XP &amp; Level</span>
+            <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.12em",background:T.card2,padding:"3px 8px",borderRadius:99,color:T.text}}>LVL 14</span>
+          </div>
+          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.text,margin:"10px 0 2px"}}>2,140<span style={{fontSize:20,color:T.muted,marginLeft:6}}>xp</span></div>
+          <div style={{fontSize:12,color:T.muted}}>340 XP to Level 15 · Rank #1 in Bio Cram Squad</div>
+          <div style={{height:6,background:T.card2,borderRadius:99,marginTop:"auto",overflow:"hidden"}}>
+            <div style={{height:"100%",width:"62%",background:T.lime}} />
+          </div>
+        </div>
+      </div>
+
+      {/* ROW 2: Today's plan + Focus + Chat (5/3/4) */}
+      <div style={{display:"grid",gridTemplateColumns:"5fr 3fr 4fr",gap:16}}>
+        {/* Today's plan */}
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+          <CardHead title="Today's plan" label="3 / 5 DONE" more="Edit" />
+          {tasks.map((t,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,background:t.now?T.butter:"transparent",borderColor:t.now?T.limeDk:T.border,cursor:"pointer"}}>
+              <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${t.done?T.forest:t.now?T.ink:T.faint}`,background:t.done?T.forest:"transparent",flex:"none",display:"grid",placeItems:"center"}}>
+                {t.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+              </div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13.5,color:t.done?T.muted:T.text,textDecoration:t.done?"line-through":"none",fontWeight:500}}>{t.task}</div>
+                <div style={{fontSize:11.5,color:T.muted,marginTop:1}}>{t.sub}</div>
+              </div>
+              <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.06em",padding:"3px 8px",borderRadius:6,background:t.tagBg,color:t.tagColor||T.ink,textTransform:"uppercase",fontWeight:600,flex:"none"}}>{t.tag}</span>
+              <span style={{fontFamily:T.mono,fontSize:11,color:T.muted}}>{t.time}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Focus Pomodoro */}
+        <div style={{background:`linear-gradient(180deg, ${T.forest} 0%, #0B201A 100%)`,color:T.cream,borderRadius:22,padding:22,position:"relative",overflow:"hidden",display:"flex",flexDirection:"column"}}>
+          <div style={{position:"absolute",right:-60,bottom:-60,width:220,height:220,background:"radial-gradient(circle,rgba(200,255,90,0.15),transparent 65%)"}} />
+          <div style={{position:"relative",zIndex:1}}>
+            <CardHead title="Focus" label="POMODORO" light />
+            <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)"}}>Session 3 of 4</div>
+            <div style={{fontFamily:T.hand,fontSize:88,lineHeight:0.85,fontWeight:700,color:T.lime,margin:"8px 0 4px",fontVariantNumeric:"tabular-nums"}}>{fmtTime}</div>
+            <div style={{fontSize:12.5,color:"rgba(246,241,230,0.7)",marginBottom:16}}>{focusRunning?`Break in ${fm} min · then 5 min off`:"Session paused · tap play to resume"}</div>
+            <div style={{height:6,background:"rgba(246,241,230,0.12)",borderRadius:99,marginBottom:18,overflow:"hidden"}}><div style={{height:"100%",width:pct+"%",background:T.lime,transition:"width 1s linear"}}/></div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>setFocusRunning(r=>!r)} style={{width:48,height:48,borderRadius:"50%",background:T.lime,color:T.ink,border:"none",display:"grid",placeItems:"center",cursor:"pointer"}}>
+                {focusRunning
+                  ?<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+                  :<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg>
+                }
+              </button>
+              {[
+                <svg key="s" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>,
+                <svg key="m" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>,
+              ].map((ic,i)=>(
+                <button key={i} style={{width:38,height:38,borderRadius:"50%",background:"rgba(246,241,230,0.08)",color:T.cream,border:"1px solid rgba(246,241,230,0.14)",display:"grid",placeItems:"center",cursor:"pointer"}}>{ic}</button>
+              ))}
+            </div>
+            <div style={{display:"inline-flex",alignItems:"center",gap:8,padding:"7px 12px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,fontSize:12,marginTop:14}}>
+              <span style={{width:8,height:8,borderRadius:"50%",background:T.butter}}/>
+              English IV · Macbeth essay
+            </div>
+          </div>
+        </div>
+
+        {/* Ask Studlin */}
+        <div style={{background:T.ink,color:T.cream,borderRadius:22,padding:22,display:"flex",flexDirection:"column"}}>
+          <CardHead title="Ask Studlin" label="AI TUTOR" more="Open" light />
+          <div style={{fontSize:13,color:"rgba(246,241,230,0.7)",marginBottom:14,lineHeight:1.5}}>I noticed you're stuck on Macbeth Act III · want me to walk through the dagger soliloquy or pull quotes for your essay?</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>
+            {["Explain dagger soliloquy","Find quotes for essay","Quiz me on Act III"].map(s=>(
+              <button key={s} onClick={()=>setActive("aichat")} style={{fontSize:11.5,padding:"6px 11px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:"rgba(246,241,230,0.85)",cursor:"pointer",fontFamily:T.font}}>{s}</button>
+            ))}
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:10,background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:14,padding:"10px 12px",marginTop:"auto"}}>
+            <input placeholder="Ask anything · paste a problem" style={{flex:1,background:"none",border:"none",outline:"none",color:T.cream,fontSize:13,fontFamily:T.font,minWidth:0}}/>
+            <button onClick={()=>setActive("aichat")} style={{display:"grid",placeItems:"center",width:30,height:30,borderRadius:8,background:T.lime,color:T.ink,border:"none",cursor:"pointer",flex:"none"}}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="22 2 15 22 11 13 2 9"/></svg>
+            </button>
+          </div>
+          <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(246,241,230,0.45)",marginTop:10,display:"flex",justifyContent:"space-between"}}>
+            <span>1 credit per message</span>
+            <span>180 credits left</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ROW 3: Weekly chart (7) + Wrapped (5) */}
+      <div style={{display:"grid",gridTemplateColumns:"7fr 5fr",gap:16}}>
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+          <CardHead title="This week's focus" label={(fmtH(realStats.weekMin)||"0m").toUpperCase()+" THIS WEEK · TRACKED LIVE"} more="View Wrapped" />
+          <div style={{display:"flex",alignItems:"flex-end",gap:10,height:140,padding:"0 4px"}}>
+            {[
+              {segs:[{c:T.limeDk,h:18},{c:T.forest,h:32}],d:"Mon"},
+              {segs:[{c:T.butter,h:10},{c:T.limeDk,h:25},{c:T.forest,h:40}],d:"Tue"},
+              {segs:[{c:T.limeDk,h:20},{c:T.forest,h:35}],d:"Wed"},
+              {segs:[{c:T.butter,h:15},{c:T.limeDk,h:30},{c:T.forest,h:45}],d:"Thu"},
+              {segs:[{c:T.butter,h:8},{c:T.limeDk,h:22},{c:T.forest,h:38}],d:"Fri",today:true},
+              {segs:[],d:"Sat"},
+              {segs:[],d:"Sun"},
+            ].map((bar,i)=>(
+              <div key={i} style={{flex:1,display:"flex",flexDirection:"column-reverse",gap:2,height:"100%",position:"relative"}}>
+                {bar.segs.map((s,j)=><div key={j} style={{width:"100%",height:s.h+"%",background:s.c,borderRadius:j===bar.segs.length-1?"4px 4px 0 0":0}}/>)}
+                <div style={{position:"absolute",bottom:-22,left:0,right:0,textAlign:"center",fontFamily:T.mono,fontSize:10,color:bar.today?T.text:T.faint,fontWeight:bar.today?700:400}}>{bar.d}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:14,fontSize:11,color:T.muted,marginTop:36}}>
+            <span><span style={{width:10,height:10,borderRadius:3,background:T.forest,display:"inline-block",verticalAlign:"middle",marginRight:5}}/>Reading &amp; notes</span>
+            <span><span style={{width:10,height:10,borderRadius:3,background:T.limeDk,display:"inline-block",verticalAlign:"middle",marginRight:5}}/>Flashcards</span>
+            <span><span style={{width:10,height:10,borderRadius:3,background:T.butter,display:"inline-block",verticalAlign:"middle",marginRight:5}}/>Writing</span>
+            <span style={{marginLeft:"auto",color:T.text,fontWeight:500}}>Top subject: <span style={{fontFamily:T.mono}}>BIO</span></span>
+          </div>
+        </div>
+
+        <div style={{background:T.forest,color:T.cream,borderRadius:22,padding:22}}>
+          <CardHead title="Weekly Wrapped" label="WEEK 20" more="View full" light />
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:14}}>
+            {[{l:"Focus hours",v:"14h 22m",d:"+3.2h"},{l:"Cards mastered",v:"142",d:"+38"},{l:"Words written",v:"3,840",d:"+1,200"}].map((s,i)=>(
+              <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:12,padding:"12px 14px"}}>
+                <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.06em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)"}}>{s.l}</div>
+                <div style={{fontFamily:T.hand,fontSize:28,fontWeight:700,color:T.lime,lineHeight:1,marginTop:4}}>{s.v}</div>
+                <div style={{fontSize:11,color:T.lime,fontWeight:600,marginTop:2,opacity:0.85}}>{s.d} vs last wk</div>
+              </div>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {["12-day streak","Bio top 1%","Early bird"].map((b,i)=>(
+              <span key={i} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.12)",borderRadius:99,fontSize:11.5,color:T.cream}}>
+                <span style={{width:18,height:18,borderRadius:"50%",background:T.lime,display:"grid",placeItems:"center",color:T.ink,fontSize:10,fontWeight:700,flex:"none"}}>{["12","*","4"][i]}</span>
+                {b}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ROW 4: Quick tools (8) + Streak heatmap (4) */}
+      <div style={{display:"grid",gridTemplateColumns:"8fr 4fr",gap:16}}>
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+          <CardHead title="Quick tools" label="JUMP RIGHT IN" more="Browse all" />
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
+            {[
+              {ic:Icon.pen,h:"Essay Writer",p:"Draft, outline, intro & conclusion from a prompt",pg:"essays"},
+              {ic:Icon.layers,h:"Flashcards from file",p:"Drop a PDF · spaced-rep deck in 10s",pg:"flashcards"},
+              {ic:Icon.scan,h:"Plagiarism check",p:"Scan against academic databases",pg:"grammar"},
+              {ic:Icon.quote,h:"Citation generator",p:"MLA · APA · Chicago · from a URL",pg:"grammar"},
+              {ic:Icon.wand,h:"AI Humanizer",p:"Rewrite in your voice · beat detectors",lock:"SCHOLAR",pg:"humanizer"},
+              {ic:Icon.zap,h:"Equation solver",p:"Step-by-step math with explanations",pg:"aitutor"},
+              {ic:Icon.chat,h:"YouTube summarizer",p:"Paste a lecture URL · get key points",lock:"ELITE",pg:"aichat"},
+              {ic:Icon.brain,h:"Exam prep mode",p:"Practice tests & MCQs from your notes",lock:"ELITE",pg:"aitutor"},
+            ].map((tool,i)=>(
+              <div key={i} onClick={()=>setActive(tool.pg)} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:14,padding:16,display:"flex",flexDirection:"column",gap:4,cursor:"pointer",position:"relative",overflow:"hidden",transition:"transform 0.18s"}}>
+                <div style={{width:32,height:32,borderRadius:9,background:T.card,display:"grid",placeItems:"center",color:T.forest,marginBottom:6,border:`1px solid ${T.border}`}}>{tool.ic}</div>
+                <div style={{fontSize:13,fontWeight:600,color:T.text,letterSpacing:"-0.01em"}}>{tool.h}</div>
+                <div style={{fontSize:11.5,color:T.muted,lineHeight:1.4}}>{tool.p}</div>
+                {tool.lock&&<span style={{position:"absolute",top:12,right:12,fontFamily:T.mono,fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",background:T.ink,color:T.lime,padding:"2px 6px",borderRadius:4,fontWeight:600}}>{tool.lock}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+          <CardHead title="Study streak" label="LAST 91 DAYS" />
+          <div style={{display:"flex",gap:14,alignItems:"flex-end",marginBottom:14}}>
+            <div>
+              <div style={{fontFamily:T.hand,fontSize:54,lineHeight:0.85,fontWeight:700,color:T.text}}>{realStreak}</div>
+              <div style={{fontSize:11.5,color:T.muted,fontFamily:T.mono,letterSpacing:"0.06em",textTransform:"uppercase"}}>day streak</div>
+            </div>
+            <div style={{marginLeft:"auto",textAlign:"right"}}>
+              <div style={{fontSize:11.5,color:T.muted,fontFamily:T.mono,letterSpacing:"0.06em",textTransform:"uppercase"}}>longest</div>
+              <div style={{fontFamily:T.hand,fontSize:30,lineHeight:0.9,color:T.muted}}>31</div>
+            </div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(13,1fr)",gap:4}}>
+            {seed.map((lvl,i)=>(
+              <div key={i} style={{aspectRatio:"1",background:cellColor(lvl),borderRadius:4,boxShadow:i===seed.length-1?`0 0 0 1.5px ${T.ink}`:"none"}}/>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ROW 5: Upcoming + Quote + Decks rows split */}
+      <div style={{display:"grid",gridTemplateColumns:"4fr 4fr 8fr",gap:16}}>
+        {/* Upcoming */}
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+          <CardHead title="Upcoming" label="NEXT 14 DAYS" more="Calendar" />
+          {dl.map((d,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0",borderBottom:i<dl.length-1?`1px solid ${T.border}`:"none"}}>
+              <div style={{width:44,flex:"none",textAlign:"center",padding:"6px 0",background:d.urgent?T.lime:T.card2,borderRadius:8}}>
+                <div style={{fontFamily:T.hand,fontSize:22,fontWeight:700,lineHeight:1,color:T.text}}>{d.d}</div>
+                <div style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",color:T.muted}}>{d.mo}</div>
+              </div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:600,color:T.text}}>{d.t}</div>
+                <div style={{fontSize:11.5,color:T.muted}}>{d.sub}</div>
+              </div>
+              <span style={{fontFamily:T.mono,fontSize:11,padding:"3px 8px",background:d.urgent?T.butter:T.bg,borderRadius:6,color:T.text,border:d.urgent?"none":`1px solid ${T.border}`,fontWeight:d.urgent?600:400}}>{d.cd}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Pre-session quote */}
+        <div style={{background:T.butter,borderRadius:22,padding:22,position:"relative",overflow:"hidden",border:"none"}}>
+          <CardHead title="Pre-session" label="DAILY" />
+          <span style={{fontFamily:T.serif,fontSize:140,lineHeight:0.7,color:"rgba(14,31,24,0.12)",position:"absolute",top:0,left:12,fontStyle:"italic"}}>"</span>
+          <div style={{fontFamily:T.serif,fontStyle:"italic",fontSize:22,lineHeight:1.25,color:T.ink,margin:"14px 0 14px",position:"relative",zIndex:1}}>It is not that I'm so smart. It's just that I stay with problems longer.</div>
+          <div style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.12em",textTransform:"uppercase",color:"rgba(14,31,24,0.55)"}}>— Albert Einstein</div>
+        </div>
+
+        {/* Pick up where you left off */}
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+          <CardHead title="Pick up where you left off" label="FLASHCARDS · NOTES · ESSAYS" more="All library" />
+          <div style={{display:"flex",gap:10,overflowX:"auto",padding:"0 4px 4px"}}>
+            {decks.map((d,i)=>(
+              <div key={i} style={{flex:"none",width:160,background:d.bg,border:`1px solid ${T.border}`,borderRadius:14,padding:14,cursor:"pointer"}}>
+                <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.12em",textTransform:"uppercase",color:"rgba(14,31,24,0.55)"}}>{d.subj}</div>
+                <h5 style={{fontSize:14,margin:"6px 0 12px",lineHeight:1.2,color:T.ink,minHeight:34,fontWeight:600}}>{d.title}</h5>
+                <div style={{height:4,background:"rgba(14,31,24,0.10)",borderRadius:99,overflow:"hidden"}}><div style={{height:"100%",width:d.pct+"%",background:T.forest}}/></div>
+                <div style={{display:"flex",justifyContent:"space-between",marginTop:6,fontSize:10.5,color:"rgba(14,31,24,0.6)",fontFamily:T.mono}}>
+                  <span>{d.a}</span><span>{d.b}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ROW 6: Wrapped (full) */}
+      <div style={{background:T.forest,color:T.cream,borderRadius:22,padding:22}}>
+        <CardHead title="This week, you…" label="WRAPPED · DROPS SUNDAY" more="Share my Wrapped" light />
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginTop:14}}>
+          {[
+            {ln:"Focus hours",vn:"14h 22m",ch:"+3h 12m vs last wk"},
+            {ln:"Cards mastered",vn:"142",ch:"+38 vs last wk"},
+            {ln:"Words written",vn:"3,840",ch:"+1,200 vs last wk"},
+          ].map((ins,i)=>(
+            <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:12,padding:"12px 14px"}}>
+              <div style={{fontSize:11,color:"rgba(246,241,230,0.55)",fontFamily:T.mono,letterSpacing:"0.06em",textTransform:"uppercase"}}>{ins.ln}</div>
+              <div style={{fontFamily:T.hand,fontSize:32,lineHeight:1,fontWeight:600,color:T.lime,marginTop:4}}>{ins.vn}</div>
+              <div style={{fontSize:11,color:T.lime,fontWeight:600,marginTop:2,opacity:0.85}}>{ins.ch}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:18}}>
+          {[
+            {m:"12",t:"12-day streak"},{m:"★",t:"Bio top 1%"},{m:"W",t:"1st place · Bio Cram Squad"},
+            {m:"⚡",t:"Early bird (4 AM sessions)"},
+            {m:"30",t:"30-day streak · 18 to go",locked:true},{m:"∞",t:"Cram master · 20h / wk",locked:true},
+          ].map((a,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:a.locked?"rgba(246,241,230,0.04)":"rgba(246,241,230,0.06)",border:`1px solid rgba(246,241,230,${a.locked?0.06:0.12})`,borderRadius:99,fontSize:12,fontWeight:500,opacity:a.locked?0.5:1,color:T.cream}}>
+              <span style={{width:22,height:22,borderRadius:"50%",background:a.locked?"rgba(246,241,230,0.1)":T.lime,display:"grid",placeItems:"center",fontFamily:T.hand,fontWeight:700,fontSize:13,color:T.ink,flex:"none"}}>{a.m}</span>
+              {a.t}
+            </div>
+          ))}
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
+// ─── APP SHELL ────────────────────────────────────────────────────────────────
+function App() {
+  const [active,setActive]=useState("dashboard");
+  const [theme,setThemeState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-theme"))||"dark");
+  const [accent,setAccentState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-accent"))||"Lime");
+  const [density,setDensityState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-density"))||"Comfortable");
+  applyTheme(theme, accent, density); // mutate T on every render so all child components re-read
+  const setTheme=(name)=>{ setThemeState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-theme",name); };
+  const setAccent=(name)=>{ setAccentState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-accent",name); };
+  const setDensity=(name)=>{ setDensityState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-density",name); };
+  const [focusSecs,setFocusSecs]=useState(22*60+10);
+  const [focusRunning,setFocusRunning]=useState(true);
+  const [focusMode,setFocusMode]=useState("Focus");
+  const [focusTotal,setFocusTotal]=useState(25*60);
+  const [creditsOpen,setCreditsOpen]=useState(false);
+  const [pricingOpen,setPricingOpen]=useState(false);
+  useEffect(()=>{
+    if(!focusRunning) return;
+    const id=setInterval(()=>setFocusSecs(s=>s>0?s-1:0),1000);
+    return ()=>clearInterval(id);
+  },[focusRunning]);
+  useEffect(()=>{ touchStreak(); },[]);
+  useEffect(()=>{
+    if(focusSecs===0&&focusRunning){
+      setFocusRunning(false);
+      if(focusMode==="Focus"){ logSession(Math.max(1,Math.round(focusTotal/60)),"Focus"); }
+      setFocusSecs(focusTotal);
+    }
+  },[focusSecs,focusRunning,focusMode,focusTotal]);
+  const fm=String(Math.floor(focusSecs/60)).padStart(2,"0"), fs=String(focusSecs%60).padStart(2,"0");
+  const navSections=[
+    {label:"Workspace",items:[
+      {id:"dashboard",label:"Dashboard"},
+      {id:"aichat",label:"Chat"},
+      {id:"essays",label:"Essays",badge:"3"},
+      {id:"flashcards",label:"Flashcards"},
+      {id:"notes",label:"Notes"},
+      {id:"focustimer",label:"Focus timer"},
+      {id:"calendar",label:"Calendar"},
+    ]},
+    {label:"Tools",items:[
+      {id:"aitutor",label:"Tutor"},
+      {id:"grammar",label:"Grammar & Polish"},
+      {id:"humanizer",label:"Rewrite"},
+      {id:"music",label:"Focus music"},
+    ]},
+
+  ];
+  const bottomItems=[{id:"settings",label:"Settings"},{id:"profile",label:"Profile"}];
+  const pages={aichat:AiChat,essays:Essays,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,aitutor:AiTutor,grammar:GrammarPolish,humanizer:AiHumanizer,music:FocusMusic,profile:Profile};
+  const labelOf={dashboard:"Dashboard",aichat:"AI Chat",essays:"Essays",flashcards:"Flashcards",notes:"Notes",focustimer:"Focus Timer",calendar:"Calendar",aitutor:"AI Tutor",grammar:"Grammar & Polish",humanizer:"Rewrite",music:"Focus Music",settings:"Settings",profile:"Profile"};
+  const sectionOf={dashboard:"Workspace",aichat:"Workspace",essays:"Workspace",flashcards:"Workspace",notes:"Workspace",focustimer:"Workspace",calendar:"Workspace",aitutor:"Tools",grammar:"Tools",humanizer:"Tools",music:"Tools",settings:"Account",profile:"Account"};
+  const ActivePage=pages[active];
+  const isLight=T.mode==="light";
+  const sidebarText=isLight?"#F6F1E6":T.text;
+  const sidebarMuted=isLight?"rgba(246,241,230,0.55)":T.muted;
+  const sidebarFaint=isLight?"rgba(246,241,230,0.35)":T.faint;
+  const sidebarBorder=isLight?"rgba(246,241,230,0.10)":T.border;
+  const sidebarCardBg=isLight?"rgba(246,241,230,0.06)":T.card;
+  const NavItem=({item})=>{
+    const act=active===item.id;
+    return (
+      <div onClick={()=>setActive(item.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 11px",borderRadius:9,cursor:"pointer",fontSize:12.5,background:act?(isLight?"rgba(246,241,230,0.95)":`linear-gradient(100deg, ${T.lime}1c, ${T.lime}08)`):"transparent",color:act?(isLight?T.ink:T.lime):sidebarMuted,fontWeight:act?600:400,marginBottom:2,border:`1px solid ${act?(isLight?"transparent":T.lime+"30"):"transparent"}`,boxShadow:act&&!isLight?`0 4px 14px -8px ${T.lime}70`:"none",transition:"all 0.18s cubic-bezier(.2,.8,.2,1)"}}>
+        <span style={{width:16,height:16,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:act?(isLight?T.ink:T.lime):sidebarFaint}}>{navIcon[item.id]}</span>
+        <span style={{flex:1,letterSpacing:"0.01em"}}>{item.label}</span>
+        {item.badge&&<span style={{background:T.lime+(act?"":"18"),color:act?T.ink:T.lime,fontSize:9,fontWeight:700,padding:"2px 6px",borderRadius:4,letterSpacing:"0.03em"}}>{item.badge}</span>}
+      </div>
+    );
+  };
+  return (
+    <div style={{display:"flex",height:"100vh",overflow:"hidden",background:isLight?T.bg:`radial-gradient(1200px 600px at 78% -8%, ${T.glow}, transparent 60%), ${T.bg}`,fontFamily:T.font,color:T.text}}>
+      {/* SIDEBAR */}
+      <div style={{width:230,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #16201B 0%, #11181400 60%)",backgroundColor:isLight?T.surface:T.surface,display:"flex",flexDirection:"column",padding:"20px 12px",borderRight:`1px solid ${isLight?"transparent":T.border}`,overflowY:"auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 6px",marginBottom:20}}>
+          <div style={{width:28,height:28,background:T.lime,borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:T.ink,letterSpacing:"-0.02em",fontFamily:T.font,fontSize:13}}>S</div>
+          <span style={{fontSize:16,fontWeight:700,color:sidebarText,letterSpacing:"-0.02em",fontFamily:T.font}}>Studlin</span>
+        </div>
+        <div onClick={()=>setActive("profile")} style={{background:sidebarCardBg,borderRadius:8,padding:"10px 12px",marginBottom:16,display:"flex",alignItems:"center",gap:10,cursor:"pointer",border:`1px solid ${sidebarBorder}`}}>
+          <Av initials="MR" color={T.lime} size={30} />
+          <div><div style={{fontSize:12,fontWeight:600,color:sidebarText}}>Maya Reyes</div><div style={{fontSize:10,color:sidebarMuted}}>Scholar · UCLA</div></div>
+        </div>
+        {navSections.map(sec=>(
+          <div key={sec.label}>
+            <div style={{fontSize:9,fontWeight:700,letterSpacing:"0.1em",color:sidebarFaint,textTransform:"uppercase",padding:"0 6px",margin:"14px 0 5px"}}>{sec.label}</div>
+            {sec.items.map(item=><NavItem key={item.id} item={item} />)}
+          </div>
+        ))}
+        <div style={{margin:"14px 0 5px"}}>
+          {bottomItems.map(item=><NavItem key={item.id} item={item} />)}
+        </div>
+        {/* AI credits card */}
+        <div onClick={()=>setCreditsOpen(true)} style={{background:T.lime,borderRadius:12,padding:"12px 14px",marginTop:"auto",border:`1px solid ${T.limeDk}`,cursor:"pointer",position:"relative",overflow:"hidden",boxShadow:`0 12px 24px -12px ${T.lime}80`}}>
+          <div style={{position:"absolute",right:-30,top:-30,width:90,height:90,background:"radial-gradient(circle,rgba(255,255,255,0.5),transparent 70%)",pointerEvents:"none"}} />
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
+            <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",fontWeight:600,color:"rgba(14,31,24,0.65)"}}>AI CREDITS</span>
+            <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",fontWeight:700,background:T.ink,color:T.lime,padding:"2px 6px",borderRadius:4}}>SCHOLAR</span>
+          </div>
+          <div style={{fontFamily:T.hand,fontSize:36,fontWeight:700,color:T.ink,lineHeight:0.85,marginTop:6}}>180<span style={{fontFamily:T.font,fontSize:13,fontWeight:500,color:"rgba(14,31,24,0.5)",marginLeft:2}}>/ 500</span></div>
+          <div style={{fontSize:10.5,color:"rgba(14,31,24,0.6)",marginTop:2,position:"relative"}}>Resets in 12 days</div>
+          <div style={{height:4,background:"rgba(14,31,24,0.15)",borderRadius:99,marginTop:10,overflow:"hidden"}}><div style={{height:"100%",width:"36%",background:T.ink,borderRadius:99}} /></div>
+        </div>
+      </div>
+
+      {/* MAIN AREA */}
+      <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",background:T.bg}}>
+        {/* TOP BAR */}
+        <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 28px",borderBottom:`1px solid ${T.border}`,background:T.bg,position:"sticky",top:0,zIndex:10,flexShrink:0}}>
+          <div style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,flexShrink:0}}>
+            {sectionOf[active]} · <span style={{color:T.text,fontWeight:600}}>{labelOf[active]}</span>
+          </div>
+          <div style={{flex:1,maxWidth:480,marginLeft:"auto",display:"flex",alignItems:"center",gap:10,padding:"9px 14px",background:T.card,border:`1px solid ${T.border}`,borderRadius:99}}>
+            <span style={{color:T.muted,display:"flex"}}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+            <input placeholder="Search notes, flashcards, essays, or ask AI…" style={{flex:1,background:"none",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}} />
+            <span style={{fontFamily:T.mono,fontSize:10,background:T.bg,color:T.muted,padding:"2px 7px",borderRadius:5,border:`1px solid ${T.border}`}}>⌘ K</span>
+          </div>
+          <div onClick={()=>setActive("focustimer")} title={focusRunning?"Focus active · click to manage":"Focus paused · click to resume"} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"7px 13px",background:isLight?T.ink:T.card,color:isLight?T.cream:T.text,border:`1px solid ${T.border}`,borderRadius:99,fontSize:12.5,fontWeight:500,flexShrink:0,cursor:"pointer"}}>
+            <span style={{width:6,height:6,borderRadius:"50%",background:focusRunning?T.lime:T.muted,boxShadow:focusRunning?`0 0 8px ${T.lime}`:"none",animation:focusRunning?"studlinPulse 1.6s infinite":"none"}} />
+            {focusRunning?"Focus active · ":"Focus paused · "}<span style={{fontFamily:T.mono,fontVariantNumeric:"tabular-nums"}}>{fm}:{fs}</span>
+          </div>
+          {/* See Pricing button */}
+          <button onClick={()=>setPricingOpen(true)} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"8px 16px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:13,fontWeight:700,cursor:"pointer",flexShrink:0,fontFamily:T.font,letterSpacing:"-0.005em",boxShadow:`0 4px 14px -4px ${T.lime}80`}}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            See Pricing
+          </button>
+          <button style={{width:36,height:36,display:"grid",placeItems:"center",borderRadius:10,background:T.card,border:`1px solid ${T.border}`,color:T.text,position:"relative",cursor:"pointer",flexShrink:0}}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            <span style={{position:"absolute",top:7,right:7,width:7,height:7,background:T.limeDk,border:`2px solid ${T.bg}`,borderRadius:"50%"}} />
+          </button>
+          <button onClick={()=>setActive("profile")} style={{width:36,height:36,borderRadius:"50%",background:"linear-gradient(135deg,#FFD7B5,#FFC9D2)",display:"grid",placeItems:"center",fontWeight:600,fontSize:12,color:T.ink,border:`2px solid ${T.bg}`,cursor:"pointer",flexShrink:0,fontFamily:T.font}}>MR</button>
+        </div>
+
+        {/* CONTENT */}
+        <div key={active} data-page style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both"}}>
+          {active==="dashboard"?<Dashboard setActive={setActive} focusSecs={focusSecs} focusRunning={focusRunning} setFocusRunning={setFocusRunning} />:
+           active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} />:
+           active==="focustimer"?<FocusTimer focusSecs={focusSecs} setFocusSecs={setFocusSecs} focusRunning={focusRunning} setFocusRunning={setFocusRunning} focusMode={focusMode} setFocusMode={setFocusMode} focusTotal={focusTotal} setFocusTotal={setFocusTotal} />:
+           ActivePage?<ActivePage />:null}
+        </div>
+      </div>
+
+      {/* PRICING MODAL */}
+      <Modal open={pricingOpen} onClose={()=>setPricingOpen(false)} title="Studlin plans" sub="Start free. Upgrade when you're ready. Cancel anytime." width={820}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14}}>
+          {[
+            {
+              name:"Free",price:"$0",per:"forever",tag:null,
+              desc:"For getting your feet wet. No credit card needed.",
+              features:["50 AI credits / month","Basic grammar checker","Manual flashcards · 5 sets","Pomodoro focus timer","Day streaks · basic badges","Day streaks and basic badges"],
+              cta:"Get started free",variant:"subtle",
+            },
+            {
+              name:"Scholar",price:"$14.99",per:"/mo · annual",tag:"7 DAYS FREE",
+              desc:"For students who study hard and write a lot.",
+              features:["500 AI credits / month","Full writing suite + Humanizer","AI flashcards from any file","Smart calendar reschedule","AI focus music and soundscapes","Weekly Wrapped insights","Focus music · advanced analytics"],
+              cta:"Start free trial",variant:"lime",featured:true,
+            },
+            {
+              name:"Academic",price:"$29.99",per:"/mo · annual",tag:null,
+              desc:"Unlimited everything. For the serious student.",
+              features:["Unlimited AI credits","AI Detector · predictive grades","Subject-specific tutors","Exam prep mode · study plans","Predictive grade analytics","Double XP · VIP badges","Google Cal · Notion · Slack sync"],
+              cta:"Upgrade to Academic",variant:"ink",
+            },
+          ].map((plan,i)=>(
+            <div key={i} style={{
+              background:plan.featured?T.forest:T.card2,
+              border:`1.5px solid ${plan.featured?T.lime+"44":T.border}`,
+              borderRadius:18,
+              padding:24,
+              position:"relative",
+              display:"flex",flexDirection:"column",
+              boxShadow:plan.featured?`0 24px 48px -20px ${T.lime}30`:"none",
+            }}>
+              {plan.tag && (
+                <div style={{position:"absolute",top:-11,left:18,background:T.lime,color:T.ink,fontFamily:T.mono,fontSize:10,fontWeight:700,letterSpacing:"0.14em",padding:"4px 10px",borderRadius:99}}>{plan.tag}</div>
+              )}
+              <div style={{fontSize:18,fontWeight:700,color:plan.featured?T.cream:T.white,letterSpacing:"-0.02em",marginBottom:4}}>{plan.name}</div>
+              <div style={{display:"flex",alignItems:"baseline",gap:5,margin:"8px 0 6px"}}>
+                <span style={{fontFamily:T.hand,fontSize:50,fontWeight:700,lineHeight:0.9,color:plan.featured?T.lime:T.text,letterSpacing:"-0.02em"}}>{plan.price}</span>
+                <span style={{fontSize:13,color:T.muted}}>{plan.per}</span>
+              </div>
+              <div style={{fontSize:13,color:plan.featured?"rgba(246,241,230,0.7)":T.muted,marginBottom:18,lineHeight:1.5}}>{plan.desc}</div>
+              <ul style={{listStyle:"none",padding:0,margin:"0 0 20px",display:"flex",flexDirection:"column",gap:9,flex:1}}>
+                {plan.features.map((f,j)=>(
+                  <li key={j} style={{display:"flex",gap:9,fontSize:13,color:plan.featured?T.cream:T.text,lineHeight:1.45,alignItems:"flex-start"}}>
+                    <span style={{width:16,height:16,borderRadius:"50%",background:T.lime,color:T.ink,display:"grid",placeItems:"center",flex:"none",marginTop:1}}>
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    </span>
+                    {f}
+                  </li>
+                ))}
+              </ul>
+              <button onClick={()=>setPricingOpen(false)} style={{
+                width:"100%",padding:"11px",borderRadius:99,
+                fontWeight:600,fontSize:14,cursor:"pointer",fontFamily:T.font,
+                border:plan.variant==="subtle"?`1px solid ${T.border}`:"none",
+                background:plan.variant==="lime"?T.lime:plan.variant==="ink"?T.ink:T.card,
+                color:plan.variant==="lime"?T.ink:plan.variant==="ink"?T.cream:T.text,
+                transition:"opacity .15s",
+              }}>{plan.cta}</button>
+            </div>
+          ))}
+        </div>
+        <div style={{marginTop:20,padding:"16px 18px",background:T.card2,borderRadius:12,border:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
+          <div style={{fontSize:13,color:T.text,fontWeight:500}}>
+            Grammarly + Quizlet + ChatGPT + Notion = <span style={{color:T.red,fontWeight:700}}>$55/mo</span>.&nbsp;&nbsp;Scholar is <span style={{color:T.lime,fontWeight:700}}>$14.99</span>.
+          </div>
+          <div style={{fontSize:12,color:T.muted}}>All plans include a 14-day money-back guarantee. No credit card for Free or trial.</div>
+        </div>
+      </Modal>
+      <Modal open={creditsOpen} onClose={()=>setCreditsOpen(false)} title="AI Credits" sub="Every AI action uses credits. Top up, upgrade, or just check your balance." width={620}
+        footer={<><Btn variant="subtle" onClick={()=>setCreditsOpen(false)}>Close</Btn><a href="Studlin Credits.html" style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",borderRadius:7,fontSize:12,fontWeight:600,background:T.lime,color:T.ink,textDecoration:"none",fontFamily:T.font}}>Open full credits page</a></>}>
+        <div style={{background:T.lime,borderRadius:14,padding:"20px 22px",position:"relative",overflow:"hidden",marginBottom:18}}>
+          <div style={{position:"absolute",right:-30,top:-30,width:160,height:160,background:"radial-gradient(circle,rgba(255,255,255,0.45),transparent 70%)",pointerEvents:"none"}} />
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",position:"relative"}}>
+            <div>
+              <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",fontWeight:600,color:"rgba(14,31,24,0.6)"}}>CURRENT BALANCE</div>
+              <div style={{fontFamily:T.hand,fontSize:54,fontWeight:700,color:T.ink,lineHeight:0.9,marginTop:4}}>180<span style={{fontFamily:T.font,fontSize:18,fontWeight:500,color:"rgba(14,31,24,0.55)",marginLeft:4}}>/ 500</span></div>
+              <div style={{fontSize:12,color:"rgba(14,31,24,0.65)",marginTop:4}}>Resets in 12 days · 320 used this cycle</div>
+            </div>
+            <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.16em",fontWeight:700,background:T.ink,color:T.lime,padding:"4px 8px",borderRadius:5}}>SCHOLAR</span>
+          </div>
+          <div style={{height:5,background:"rgba(14,31,24,0.15)",borderRadius:99,marginTop:14,overflow:"hidden",position:"relative"}}><div style={{height:"100%",width:"36%",background:T.ink,borderRadius:99}} /></div>
+        </div>
+
+        <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.muted,textTransform:"uppercase",marginBottom:10}}>Quick top-up</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:18}}>
+          {[
+            {n:100,p:"$3.99",save:null},
+            {n:300,p:"$8.99",save:"−25%"},
+            {n:750,p:"$16.99",save:"−43%",featured:true},
+            {n:1500,p:"$24.99",save:"−58%"},
+          ].map((pk,i)=>(
+            <div key={i} style={{background:pk.featured?T.ink:T.card2,color:pk.featured?T.cream:T.text,borderRadius:10,padding:14,border:`1px solid ${pk.featured?T.ink:T.border}`,cursor:"pointer",position:"relative",transition:"transform 0.15s"}}>
+              <div style={{fontFamily:T.hand,fontSize:34,fontWeight:700,color:pk.featured?T.lime:T.text,lineHeight:0.9,letterSpacing:"-0.01em"}}>{pk.n.toLocaleString()}</div>
+              <div style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",color:pk.featured?"rgba(246,241,230,0.5)":T.muted,marginTop:2}}>CREDITS</div>
+              <div style={{fontSize:16,fontWeight:600,marginTop:6,letterSpacing:"-0.02em"}}>{pk.p}</div>
+              {pk.save && <div style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",fontWeight:700,color:pk.featured?T.lime:T.limeDk,marginTop:4}}>SAVE {pk.save}</div>}
+            </div>
+          ))}
+        </div>
+
+        <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.muted,textTransform:"uppercase",marginBottom:10}}>What costs what</div>
+        <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"4px 14px"}}>
+          {[["AI chat message","1"],["Citation generation","1"],["File upload + analysis","2"],["Plagiarism check","2"],["AI Humanizer run","2"],["Full essay analysis","3"],["Practice test generation","4"]].map(([k,v],i)=>(
+            <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:i<6?`1px solid ${T.border}`:"none",fontSize:13}}>
+              <span style={{color:T.text}}>{k}</span>
+              <span style={{fontFamily:T.mono,fontWeight:600,color:T.lime}}>{v}</span>
+            </div>
+          ))}
+        </div>
+
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:16,padding:"12px 14px",background:T.card2,borderRadius:10,border:`1px solid ${T.border}`}}>
+          <div>
+            <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>Hit your cap often?</div>
+            <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>Academic plan removes the credit ceiling.</div>
+          </div>
+          <a href="Studlin Credits.html" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:600,background:T.ink,color:T.lime,textDecoration:"none",fontFamily:T.font}}>Upgrade to Academic</a>
+        </div>
+      </Modal>
+
+      <style>{`
+        @keyframes studlinPulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.7)} }
+        @keyframes studlinFade { from{opacity:0} to{opacity:1} }
+        @keyframes studlinPop { from{opacity:0;transform:scale(0.96) translateY(8px)} to{opacity:1;transform:none} }
+        @keyframes studlinRise {
+          0% { opacity:0; transform: perspective(1100px) rotateX(7deg) translateY(26px) scale(.985); filter: blur(4px); }
+          65% { filter: blur(0); }
+          100% { opacity:1; transform: none; }
+        }
+        @keyframes studlinChild {
+          0% { opacity:0; transform: perspective(900px) rotateX(10deg) translateY(18px); }
+          100% { opacity:1; transform: none; }
+        }
+        [data-page] { transform-style: preserve-3d; }
+        [data-page] > * { animation: studlinChild .55s cubic-bezier(.2,.85,.25,1.1) both; }
+        [data-page] > *:nth-child(1) { animation-delay: 0s; }
+        [data-page] > *:nth-child(2) { animation-delay: .07s; }
+        [data-page] > *:nth-child(3) { animation-delay: .14s; }
+        [data-page] > *:nth-child(4) { animation-delay: .21s; }
+        [data-page] > *:nth-child(n+5) { animation-delay: .28s; }
+        [data-card] { transition: transform .3s cubic-bezier(.2,.9,.3,1.2), box-shadow .3s ease, border-color .2s ease; }
+        [data-card]:hover { transform: translateY(-3px); box-shadow: 0 16px 36px -18px rgba(0,0,0,0.45); }
+        button { transition: transform .15s ease, filter .2s ease, background .2s ease, color .2s ease, border-color .2s ease, opacity .2s ease; }
+        button:active { transform: scale(.96); }
+        @media (prefers-reduced-motion: reduce) {
+          [data-page], [data-page] > * { animation: none !important; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+
+// Mount
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
