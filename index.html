@@ -571,14 +571,12 @@ body::after{
 .hiw-sky .shoot::after{content:"";position:absolute;right:-1px;top:50%;width:4px;height:4px;border-radius:50%;background:#fff;transform:translateY(-50%);box-shadow:0 0 7px 1px rgba(244,239,227,0.7);}
 @keyframes shoot{0%{opacity:0;transform:rotate(var(--ang,18deg)) translateX(0) scaleX(.25);}6%{opacity:1;}54%{opacity:1;}74%{opacity:0;transform:rotate(var(--ang,18deg)) translateX(var(--dist,560px)) scaleX(1);}100%{opacity:0;}}
 /* giant outline word — large + spaced */
-.hiw-mega{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);white-space:nowrap;display:flex;gap:clamp(14px,2vw,40px);z-index:1;pointer-events:none;}
+.hiw-mega{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);white-space:nowrap;display:flex;gap:clamp(24px,4vw,80px);z-index:1;pointer-events:none;}
 .hiw-mega span{font-family:var(--display);font-weight:800;font-size:clamp(100px,19vw,300px);line-height:.8;letter-spacing:-.04em;-webkit-text-stroke:1.5px rgba(244,239,227,0.06);color:transparent;}
 .hiw-mega span.lit{color:rgba(244,239,227,0.06);-webkit-text-stroke:0;}
 /* the stage — a panel that slides left→right with scroll */
 .hiw-stage{position:relative;z-index:2;width:min(96%,1300px);min-height:clamp(360px,50vh,500px);display:flex;align-items:center;}
-.hiw-guide{position:absolute;left:0;right:0;top:50%;height:1px;transform:translateY(-.5px);background:linear-gradient(90deg,transparent,rgba(184,224,74,0.16) 16%,rgba(184,224,74,0.16) 84%,transparent);}
-.hiw-guide::before,.hiw-guide::after{content:"";position:absolute;top:50%;width:7px;height:7px;border-radius:50%;background:var(--lime);transform:translateY(-50%);box-shadow:0 0 10px rgba(184,224,74,0.6);}
-.hiw-guide::before{left:-1px;} .hiw-guide::after{right:-1px;}
+.hiw-guide{display:none;}
 .hiw-slider{position:relative;display:grid;width:min(960px,88vw);min-height:300px;transform:translateX(var(--tx,0));transition:transform .14s cubic-bezier(.33,1,.68,1);will-change:transform;}
 .hiw-card{grid-area:1/1;display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto auto auto;column-gap:clamp(30px,3.6vw,56px);row-gap:12px;align-content:center;padding:clamp(36px,3.6vw,54px);border-radius:26px;background:linear-gradient(160deg,rgba(23,40,31,0.98),rgba(8,14,11,0.99));border:1px solid rgba(184,224,74,0.18);box-shadow:0 40px 100px -50px rgba(0,0,0,0.92),0 24px 70px -40px rgba(184,224,74,0.2);opacity:0;transform:scale(.985);transition:opacity .5s ease,transform .5s ease;pointer-events:none;}
 .hiw-card.active{opacity:1;transform:none;pointer-events:auto;}
