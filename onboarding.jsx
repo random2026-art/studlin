@@ -445,11 +445,13 @@ function StepPlan({ state, set }) {
           <h3>Pro</h3>
           <div className="pp"><strong>${annual ? "95.88" : "9.99"}</strong> / {annual ? "year" : "mo"}</div>
           <ul>
-            <li><span className="ck">{Ic.check}</span> 300 AI credits / month</li>
-            <li><span className="ck">{Ic.check}</span> Full writing suite + AI Humanizer</li>
-            <li><span className="ck">{Ic.check}</span> AI flashcards from any file</li>
-            <li><span className="ck">{Ic.check}</span> AI tutor on every subject</li>
-            <li><span className="ck">{Ic.check}</span> Smart calendar &amp; Weekly Wrapped</li>
+            <li><span className="ck">{Ic.check}</span> 200 AI credits / month</li>
+            <li><span className="ck">{Ic.check}</span> AI tutor — all models + 4 study modes</li>
+            <li><span className="ck">{Ic.check}</span> Full essay suite + plagiarism check</li>
+            <li><span className="ck">{Ic.check}</span> AI flashcards from notes, PDFs &amp; YouTube</li>
+            <li><span className="ck">{Ic.check}</span> Google Docs sync + AI Rewrite (Humanizer)</li>
+            <li><span className="ck">{Ic.check}</span> Unlimited grammar + readability scores</li>
+            <li><span className="ck">{Ic.check}</span> Squad leaderboards + 2× focus XP</li>
           </ul>
         </button>
         <button className={"plan" + (state.plan === "max" ? " is-selected" : "")} onClick={()=>set({...state, plan:"max"})}>
@@ -457,11 +459,12 @@ function StepPlan({ state, set }) {
           <h3>Max</h3>
           <div className="pp"><strong>${annual ? "239.88" : "24.99"}</strong> / {annual ? "year" : "mo"}</div>
           <ul>
-            <li><span className="ck">{Ic.check}</span> <strong>1,500</strong> AI credits / month</li>
-            <li><span className="ck">{Ic.check}</span> Everything in Pro, no limits</li>
-            <li><span className="ck">{Ic.check}</span> Bulk operations &amp; advanced analytics</li>
-            <li><span className="ck">{Ic.check}</span> Priority support</li>
-            <li><span className="ck">{Ic.check}</span> 3x XP &amp; cosmetics shop</li>
+            <li><span className="ck">{Ic.check}</span> <strong>500</strong> AI credits / month</li>
+            <li><span className="ck">{Ic.check}</span> Everything in Pro, unlimited</li>
+            <li><span className="ck">{Ic.check}</span> Bulk ops — 100 flashcards at once</li>
+            <li><span className="ck">{Ic.check}</span> Advanced analytics &amp; learning paths</li>
+            <li><span className="ck">{Ic.check}</span> Cosmetics shop + monthly tournaments</li>
+            <li><span className="ck">{Ic.check}</span> Priority support + 3× focus XP</li>
           </ul>
         </button>
       </div>

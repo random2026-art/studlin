@@ -270,7 +270,7 @@ function sessionStats(){
   return {weekCount:week.length,weekMin,todayMin,avg:week.length?Math.round(weekMin/week.length):0,todayCount:today.length};
 }
 const fmtH=(m)=>m>=60?Math.floor(m/60)+"h "+(m%60)+"m":m+"m";
-const PLAN_LIMITS={Free:{music:2},Scholar:{music:5},Elite:{music:10}};
+const PLAN_LIMITS={Free:{music:2},Pro:{music:5},Max:{music:10}};
 function getPlan(){return lsGet("plan","Free");}
 function setPlanLS(p){lsSet("plan",p);}
 
@@ -305,8 +305,8 @@ function seedEventsIfStale(){
 function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
   if(!open)return null;
   const tiers=[
-    {name:"Scholar",price:"$8.99",perks:["5 AI music creations","500 AI credits / month","Unlimited decks + notes scanning"],color:T.lime},
-    {name:"Elite",price:"$14.99",perks:["10 AI music creations","2,000 AI credits / month","Exam prep mode + early features"],color:T.purple},
+    {name:"Pro",price:"$9.99",perks:["5 AI music creations","200 AI credits / month","Unlimited decks + notes scanning"],color:T.lime},
+    {name:"Max",price:"$24.99",perks:["10 AI music creations","500 AI credits / month","Advanced analytics + learning paths"],color:T.purple},
   ];
   const choose=(name)=>{setPlanLS(name);onClose();if(onUpgraded)onUpgraded(name);};
   return (
@@ -319,8 +319,8 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
         <div style={{fontSize:12.5,color:T.muted,lineHeight:1.6,marginBottom:18}}>{detail}</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
           {tiers.map(t=>(
-            <div key={t.name} style={{background:T.card,border:"1px solid "+(t.name==="Elite"?t.color+"55":T.border),borderRadius:12,padding:16,position:"relative"}}>
-              {t.name==="Elite"&&<span style={{position:"absolute",top:-8,right:12,fontSize:9,fontWeight:700,letterSpacing:"0.08em",background:t.color,color:"#fff",padding:"2px 8px",borderRadius:4}}>BEST VALUE</span>}
+            <div key={t.name} style={{background:T.card,border:"1px solid "+(t.name==="Max"?t.color+"55":T.border),borderRadius:12,padding:16,position:"relative"}}>
+              {t.name==="Max"&&<span style={{position:"absolute",top:-8,right:12,fontSize:9,fontWeight:700,letterSpacing:"0.08em",background:t.color,color:"#fff",padding:"2px 8px",borderRadius:4}}>BEST VALUE</span>}
               <div style={{fontSize:13,fontWeight:700,color:t.color,marginBottom:2}}>{t.name}</div>
               <div style={{fontSize:24,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>{t.price}<span style={{fontSize:11,color:T.muted,fontWeight:400}}> /month</span></div>
               <div style={{margin:"10px 0 14px"}}>
@@ -328,7 +328,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
                   <div key={i} style={{display:"flex",gap:7,alignItems:"center",fontSize:11.5,color:T.text,padding:"3px 0"}}><span style={{color:t.color,display:"inline-flex"}}>{Icon.check}</span>{p}</div>
                 ))}
               </div>
-              <Btn onClick={()=>choose(t.name)} style={{width:"100%",justifyContent:"center",background:t.name==="Elite"?t.color:T.lime,color:t.name==="Elite"?"#fff":T.ink}}>Upgrade to {t.name}</Btn>
+              <Btn onClick={()=>choose(t.name)} style={{width:"100%",justifyContent:"center",background:t.name==="Max"?t.color:T.lime,color:t.name==="Max"?"#fff":T.ink}}>Upgrade to {t.name}</Btn>
             </div>
           ))}
         </div>
@@ -408,7 +408,7 @@ function AiChat() {
             <input style={{flex:1,background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"10px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none"}} placeholder="Ask a question or paste text to analyse..." value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} />
             <Btn onClick={()=>send()} style={{padding:"10px 14px"}}>{Icon.send}</Btn>
           </div>
-          <div style={{fontSize:11,color:T.muted,marginTop:8}}>180 credits remaining · <span style={{color:T.text,fontWeight:600}}>{curModel.name}</span></div>
+          <div style={{fontSize:11,color:T.muted,marginTop:8}}>120 credits remaining · <span style={{color:T.text,fontWeight:600}}>{curModel.name}</span></div>
         </Card>
         <div style={{display:"flex",flexDirection:"column",gap:12}}>
           <Card><Label>Session</Label><div style={{fontSize:28,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>12</div><div style={{fontSize:12,color:T.muted,marginTop:4}}>Conversations today</div></Card>
@@ -1481,11 +1481,11 @@ function FocusMusic(){
           <Card>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
               <Label>AI creations</Label>
-              <Badge color={plan==="Elite"?T.purple:T.lime}>{plan}</Badge>
+              <Badge color={plan==="Max"?T.purple:T.lime}>{plan}</Badge>
             </div>
             <div style={{fontSize:24,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>{used}<span style={{fontSize:13,color:T.muted,fontWeight:400}}> / {limit} used</span></div>
             <Prog pct={Math.min(100,Math.round(used/limit*100))} height={4} />
-            {plan!=="Elite"&&<div onClick={()=>setUpgOpen(true)} style={{fontSize:11.5,color:T.lime,marginTop:10,cursor:"pointer",fontWeight:600}}>Upgrade for more creations →</div>}
+            {plan!=="Max"&&<div onClick={()=>setUpgOpen(true)} style={{fontSize:11.5,color:T.lime,marginTop:10,cursor:"pointer",fontWeight:600}}>Upgrade for more creations →</div>}
           </Card>
           <Card>
             <Label>Ambient layer</Label>
@@ -1755,18 +1755,18 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                 <div>
                   <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.bg,opacity:0.6}}>CURRENT PLAN</div>
-                  <div style={{fontSize:26,fontWeight:700,color:T.bg,letterSpacing:"-0.02em",marginTop:4}}>Scholar</div>
-                  <div style={{fontSize:13,color:T.bg,opacity:0.75,marginTop:4}}>$14.99/mo · annual · renews Jun 12, 2026</div>
+                  <div style={{fontSize:26,fontWeight:700,color:T.bg,letterSpacing:"-0.02em",marginTop:4}}>Pro</div>
+                  <div style={{fontSize:13,color:T.bg,opacity:0.75,marginTop:4}}>$9.99/mo · renews Jul 12, 2026</div>
                 </div>
                 <div style={{textAlign:"right"}}>
                   <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.bg,opacity:0.6}}>AI CREDITS</div>
-                  <div style={{fontSize:26,fontWeight:700,color:T.bg,letterSpacing:"-0.02em",marginTop:4}}>180 / 500</div>
+                  <div style={{fontSize:26,fontWeight:700,color:T.bg,letterSpacing:"-0.02em",marginTop:4}}>120 / 200</div>
                   <div style={{fontSize:13,color:T.bg,opacity:0.75,marginTop:4}}>Resets in 12 days</div>
                 </div>
               </div>
               <div style={{display:"flex",gap:8,marginTop:18}}>
                 <a href="Studlin Credits.html" style={{background:T.bg,color:T.lime,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Buy credit packs</a>
-                <a href="Studlin Credits.html" style={{background:"transparent",border:`1px solid ${T.bg}55`,color:T.bg,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Upgrade to Academic</a>
+                <a href="Studlin Credits.html" style={{background:"transparent",border:`1px solid ${T.bg}55`,color:T.bg,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Upgrade to Max</a>
               </div>
             </Card>
             <Card style={{marginBottom:12}}>
@@ -1780,7 +1780,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             </Card>
             <Card>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:10}}>Billing history</div>
-              {[["May 1, 2026","Scholar plan · monthly","$14.99","Paid"],["Apr 1, 2026","Scholar plan · monthly","$14.99","Paid"],["Mar 28, 2026","Credit pack · 300","$8.99","Paid"],["Mar 1, 2026","Scholar plan · monthly","$14.99","Paid"]].map(([d,t,a,s],i)=>(
+              {[["Jun 1, 2026","Pro plan · monthly","$9.99","Paid"],["May 1, 2026","Pro plan · monthly","$9.99","Paid"],["Apr 28, 2026","Credit pack · 300","$8.99","Paid"],["Apr 1, 2026","Pro plan · monthly","$9.99","Paid"]].map(([d,t,a,s],i)=>(
                 <div key={i} style={{display:"grid",gridTemplateColumns:"110px 1fr 80px 70px",gap:14,padding:"11px 0",borderBottom:i<3?`1px solid ${T.border}`:"none",fontSize:12.5,alignItems:"center"}}>
                   <span style={{color:T.muted,fontFamily:T.mono,fontSize:11}}>{d}</span>
                   <span style={{color:T.text}}>{t}</span>
@@ -1843,7 +1843,7 @@ function Profile() {
           <div style={{fontSize:22,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:3}}>{prof.name}</div>
           <div style={{fontSize:13,color:T.muted,marginBottom:12}}>{prof.school}</div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            <Badge color={T.lime}>Scholar</Badge>
+            <Badge color={T.lime}>Pro</Badge>
             <Badge color={T.amber}>{streak}-day streak</Badge>
             <Badge color={T.blue}>Level {lvl.level}</Badge>
           </div>
@@ -2101,7 +2101,7 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
           </div>
           <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(246,241,230,0.45)",marginTop:10,display:"flex",justifyContent:"space-between"}}>
             <span>1 credit per message</span>
-            <span>180 credits left</span>
+            <span>120 credits left</span>
           </div>
         </div>
       </div>
@@ -2310,8 +2310,8 @@ function App() {
   const [boughtMsg,setBoughtMsg]=useState("");
   const buyCustom=()=>{
     let v=Math.floor(+customDollars||0);
-    if(v<1){setBoughtMsg("Enter an amount of at least $1.");return;}
-    v=Math.min(1000000,v);
+    if(v<5){setBoughtMsg("Minimum purchase is $5.");return;}
+    v=Math.min(100000,v);
     const credits=v*30;
     setBoughtMsg("Success — added "+credits.toLocaleString()+" credits for $"+v.toLocaleString()+".");
     setCustomDollars("");
@@ -2386,7 +2386,7 @@ function App() {
         </div>
         <div onClick={()=>setActive("profile")} style={{background:sidebarCardBg,borderRadius:8,padding:"10px 12px",marginBottom:16,display:"flex",alignItems:"center",gap:10,cursor:"pointer",border:`1px solid ${sidebarBorder}`}}>
           <Av initials="MR" color={T.lime} size={30} />
-          <div><div style={{fontSize:12,fontWeight:600,color:sidebarText}}>Maya Reyes</div><div style={{fontSize:10,color:sidebarMuted}}>Scholar · UCLA</div></div>
+          <div><div style={{fontSize:12,fontWeight:600,color:sidebarText}}>Maya Reyes</div><div style={{fontSize:10,color:sidebarMuted}}>Pro · UCLA</div></div>
         </div>
         {navSections.map(sec=>(
           <div key={sec.label}>
@@ -2402,9 +2402,9 @@ function App() {
           <div style={{position:"absolute",right:-30,top:-30,width:90,height:90,background:"radial-gradient(circle,rgba(255,255,255,0.5),transparent 70%)",pointerEvents:"none"}} />
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
             <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",fontWeight:600,color:"rgba(14,31,24,0.65)"}}>AI CREDITS</span>
-            <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",fontWeight:700,background:T.ink,color:T.lime,padding:"2px 6px",borderRadius:4}}>SCHOLAR</span>
+            <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",fontWeight:700,background:T.ink,color:T.lime,padding:"2px 6px",borderRadius:4}}>PRO</span>
           </div>
-          <div style={{fontFamily:T.hand,fontSize:36,fontWeight:700,color:T.ink,lineHeight:0.85,marginTop:6}}>180<span style={{fontFamily:T.font,fontSize:13,fontWeight:500,color:"rgba(14,31,24,0.5)",marginLeft:2}}>/ 500</span></div>
+          <div style={{fontFamily:T.hand,fontSize:36,fontWeight:700,color:T.ink,lineHeight:0.85,marginTop:6}}>120<span style={{fontFamily:T.font,fontSize:13,fontWeight:500,color:"rgba(14,31,24,0.5)",marginLeft:2}}>/ 200</span></div>
           <div style={{fontSize:10.5,color:"rgba(14,31,24,0.6)",marginTop:2,position:"relative"}}>Resets in 12 days</div>
           <div style={{height:4,background:"rgba(14,31,24,0.15)",borderRadius:99,marginTop:10,overflow:"hidden"}}><div style={{height:"100%",width:"36%",background:T.ink,borderRadius:99}} /></div>
         </div>
@@ -2476,21 +2476,21 @@ function App() {
           {[
             {
               name:"Free",price:"$0",per:"forever",tag:null,
-              desc:"For getting your feet wet. No credit card needed.",
-              features:["50 AI credits / month","Basic grammar checker","Manual flashcards · 5 sets","Pomodoro focus timer","Day streaks · basic badges","Day streaks and basic badges"],
+              desc:"Get organized. No credit card needed.",
+              features:["30 AI credits / month","AI tutor — Standard model","Manual flashcards & notes","Focus timer, calendar & planner","Streaks, XP & basic stats"],
               cta:"Get started free",variant:"subtle",
             },
             {
-              name:"Scholar",price:"$14.99",per:"/mo · annual",tag:"7 DAYS FREE",
-              desc:"For students who study hard and write a lot.",
-              features:["500 AI credits / month","Full writing suite + Humanizer","AI flashcards from any file","Smart calendar reschedule","Distraction blocker + site blocking","Weekly Wrapped insights","Advanced focus analytics"],
+              name:"Pro",price:"$9.99",per:"/mo",tag:"7 DAYS FREE",
+              desc:"The full study OS. Built for serious students.",
+              features:["200 AI credits / month","AI tutor — all models + 4 study modes","Full essay suite + plagiarism check","AI flashcards from notes, PDFs & YouTube","Google Docs sync + AI Rewrite (Humanizer)","Unlimited grammar + readability scores","Squad leaderboards + 2× focus XP"],
               cta:"Start free trial",variant:"lime",featured:true,
             },
             {
-              name:"Academic",price:"$29.99",per:"/mo · annual",tag:null,
-              desc:"Unlimited everything. For the serious student.",
-              features:["Unlimited AI credits","AI Detector · predictive grades","Subject-specific tutors","Exam prep mode · study plans","Predictive grade analytics","Double XP · VIP badges","Google Cal · Notion · Slack sync"],
-              cta:"Upgrade to Academic",variant:"ink",
+              name:"Max",price:"$24.99",per:"/mo",tag:null,
+              desc:"Maximum firepower. No limits, ever.",
+              features:["500 AI credits / month","Everything in Pro, unlimited","Bulk ops — 100 flashcards at once","Advanced analytics & learning paths","Cosmetics shop + monthly tournaments","Priority support + 3× focus XP"],
+              cta:"Upgrade to Max",variant:"ink",
             },
           ].map((plan,i)=>(
             <div key={i} style={{
@@ -2534,7 +2534,7 @@ function App() {
         </div>
         <div style={{marginTop:20,padding:"16px 18px",background:T.card2,borderRadius:12,border:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
           <div style={{fontSize:13,color:T.text,fontWeight:500}}>
-            Grammarly + Quizlet + ChatGPT + Notion = <span style={{color:T.red,fontWeight:700}}>$55/mo</span>.&nbsp;&nbsp;Scholar is <span style={{color:T.lime,fontWeight:700}}>$14.99</span>.
+            Grammarly + Quizlet + ChatGPT + Notion = <span style={{color:T.red,fontWeight:700}}>$55/mo</span>.&nbsp;&nbsp;Pro is <span style={{color:T.lime,fontWeight:700}}>$9.99</span>.
           </div>
           <div style={{fontSize:12,color:T.muted}}>All plans include a 14-day money-back guarantee. No credit card for Free or trial.</div>
         </div>
@@ -2546,10 +2546,10 @@ function App() {
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",position:"relative"}}>
             <div>
               <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",fontWeight:600,color:"rgba(14,31,24,0.6)"}}>CURRENT BALANCE</div>
-              <div style={{fontFamily:T.hand,fontSize:54,fontWeight:700,color:T.ink,lineHeight:0.9,marginTop:4}}>180<span style={{fontFamily:T.font,fontSize:18,fontWeight:500,color:"rgba(14,31,24,0.55)",marginLeft:4}}>/ 500</span></div>
-              <div style={{fontSize:12,color:"rgba(14,31,24,0.65)",marginTop:4}}>Resets in 12 days · 320 used this cycle</div>
+              <div style={{fontFamily:T.hand,fontSize:54,fontWeight:700,color:T.ink,lineHeight:0.9,marginTop:4}}>120<span style={{fontFamily:T.font,fontSize:18,fontWeight:500,color:"rgba(14,31,24,0.55)",marginLeft:4}}>/ 200</span></div>
+              <div style={{fontSize:12,color:"rgba(14,31,24,0.65)",marginTop:4}}>Resets in 12 days · 80 used this cycle</div>
             </div>
-            <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.16em",fontWeight:700,background:T.ink,color:T.lime,padding:"4px 8px",borderRadius:5}}>SCHOLAR</span>
+            <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.16em",fontWeight:700,background:T.ink,color:T.lime,padding:"4px 8px",borderRadius:5}}>PRO</span>
           </div>
           <div style={{height:5,background:"rgba(14,31,24,0.15)",borderRadius:99,marginTop:14,overflow:"hidden",position:"relative"}}><div style={{height:"100%",width:"36%",background:T.ink,borderRadius:99}} /></div>
         </div>
@@ -2557,10 +2557,10 @@ function App() {
         <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.muted,textTransform:"uppercase",marginBottom:10}}>Quick top-up</div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:18}}>
           {[
-            {n:100,p:"$3.99",save:null},
-            {n:300,p:"$8.99",save:"−25%"},
-            {n:750,p:"$16.99",save:"−43%",featured:true},
-            {n:1500,p:"$24.99",save:"−58%"},
+            {n:150,p:"$4.99",save:null},
+            {n:500,p:"$14.99",save:"−17%"},
+            {n:1000,p:"$24.99",save:"−31%",featured:true},
+            {n:3000,p:"$59.99",save:"−45%"},
           ].map((pk,i)=>(
             <div key={i} onClick={()=>setBoughtMsg("Success — added "+pk.n.toLocaleString()+" credits for "+pk.p+".")} style={{background:pk.featured?T.ink:T.card2,color:pk.featured?T.cream:T.text,borderRadius:10,padding:14,border:`1px solid ${pk.featured?T.ink:T.border}`,cursor:"pointer",position:"relative",transition:"transform 0.15s"}}>
               <div style={{fontFamily:T.hand,fontSize:34,fontWeight:700,color:pk.featured?T.lime:T.text,lineHeight:0.9,letterSpacing:"-0.01em"}}>{pk.n.toLocaleString()}</div>
@@ -2575,13 +2575,13 @@ function App() {
         <div style={{display:"flex",gap:10,alignItems:"stretch",marginBottom:8,flexWrap:"wrap"}}>
           <div style={{flex:1,minWidth:220,display:"flex",alignItems:"center",gap:8,background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"6px 14px"}}>
             <span style={{fontSize:20,color:T.muted,fontWeight:600}}>$</span>
-            <input type="number" min="1" max="1000000" value={customDollars} onChange={e=>setCustomDollars(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")buyCustom();}} placeholder="Enter any amount" style={{flex:1,minWidth:60,background:"none",border:"none",outline:"none",color:T.text,fontSize:18,fontWeight:600,fontFamily:T.font}} />
-            <span style={{fontSize:12,color:T.muted,whiteSpace:"nowrap"}}>≈ {Math.round(Math.min(1000000,Math.max(0,+customDollars||0))*30).toLocaleString()} credits</span>
+            <input type="number" min="5" max="100000" value={customDollars} onChange={e=>setCustomDollars(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")buyCustom();}} placeholder="Enter any amount" style={{flex:1,minWidth:60,background:"none",border:"none",outline:"none",color:T.text,fontSize:18,fontWeight:600,fontFamily:T.font}} />
+            <span style={{fontSize:12,color:T.muted,whiteSpace:"nowrap"}}>≈ {Math.round(Math.min(100000,Math.max(0,+customDollars||0))*30).toLocaleString()} credits</span>
           </div>
           <button onClick={buyCustom} style={{background:T.lime,color:T.ink,border:"none",borderRadius:10,padding:"0 24px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Buy now</button>
         </div>
         {boughtMsg&&<div style={{fontSize:12.5,color:T.lime,fontWeight:600,marginBottom:8}}>{boughtMsg}</div>}
-        <div style={{fontSize:11,color:T.muted,marginBottom:18}}>Buy any amount you want — from $1 up to a $1,000,000 cap. Roughly 30 credits per $1.</div>
+        <div style={{fontSize:11,color:T.muted,marginBottom:18}}>Buy any amount you want — $5 minimum, $100,000 max. Roughly 30 credits per $1.</div>
 
         <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.muted,textTransform:"uppercase",marginBottom:10}}>What costs what</div>
         <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"4px 14px"}}>
@@ -2596,9 +2596,9 @@ function App() {
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:16,padding:"12px 14px",background:T.card2,borderRadius:10,border:`1px solid ${T.border}`}}>
           <div>
             <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>Hit your cap often?</div>
-            <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>Academic plan removes the credit ceiling.</div>
+            <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>Max plan gives you 500 credits / month.</div>
           </div>
-          <a href="Studlin Credits.html" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:600,background:T.ink,color:T.lime,textDecoration:"none",fontFamily:T.font}}>Upgrade to Academic</a>
+          <a href="Studlin Credits.html" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:600,background:T.ink,color:T.lime,textDecoration:"none",fontFamily:T.font}}>Upgrade to Max</a>
         </div>
       </Modal>
 
