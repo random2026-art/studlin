@@ -9,139 +9,57 @@
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
 <script src="https://js.stripe.com/v3/"></script>
 <style>
-:root {
-  --ink: #0E1F18;
-  --forest: #14342A;
-  --cream: #F6F1E6;
-  --paper: #FBF7EE;
-  --lime: #9EC83D;
-  --lime-dk: #7FA82A;
-  --line: rgba(14,31,24,0.10);
-  --muted: rgba(14,31,24,0.55);
-}
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body {
-  font-family: 'Geist', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  background: var(--paper);
-  color: var(--ink);
-  -webkit-font-smoothing: antialiased;
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 40px 20px;
-}
-.checkout {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0;
-  max-width: 920px;
-  width: 100%;
-  background: white;
-  border-radius: 24px;
-  border: 1px solid var(--line);
-  overflow: hidden;
-  box-shadow: 0 30px 60px -30px rgba(11,32,26,0.2);
-}
-.summary {
-  padding: 44px 40px;
-  background: var(--forest);
-  color: var(--cream);
-  display: flex;
-  flex-direction: column;
-}
-.summary .brand {
-  display: flex; align-items: center; gap: 10px;
-  font-family: 'Instrument Serif', serif; font-style: italic; font-size: 22px; margin-bottom: 40px;
-}
-.summary .brand .glyph {
-  width: 28px; height: 28px; background: var(--lime); border-radius: 8px;
-  display: grid; place-items: center; font-size: 18px; font-weight: 700;
-  color: var(--ink); font-family: 'Geist', sans-serif; font-style: normal;
-}
-.summary h2 { font-size: 28px; font-weight: 600; letter-spacing: -0.02em; margin-bottom: 8px; }
-.summary h2 em { font-family: 'Instrument Serif', serif; font-style: italic; color: var(--lime); font-weight: 400; }
-.summary .sub { font-size: 14.5px; color: rgba(246,241,230,0.65); line-height: 1.5; margin-bottom: 32px; }
-.plan-card {
-  background: rgba(246,241,230,0.06); border: 1px solid rgba(246,241,230,0.12);
-  border-radius: 16px; padding: 20px; margin-bottom: 20px;
-}
-.plan-card .plan-name {
-  font-family: 'JetBrains Mono', monospace; font-size: 11px;
-  letter-spacing: 0.14em; text-transform: uppercase; color: var(--lime); margin-bottom: 8px;
-}
-.plan-card .plan-price { font-size: 36px; font-weight: 700; letter-spacing: -0.03em; }
-.plan-card .plan-price .per { font-size: 14px; font-weight: 400; color: rgba(246,241,230,0.55); }
-.plan-card .plan-note { font-size: 12.5px; color: rgba(246,241,230,0.5); margin-top: 4px; }
-.plan-features { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
-.plan-features li { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: rgba(246,241,230,0.8); list-style: none; }
-.plan-features .ck {
-  width: 16px; height: 16px; border-radius: 50%; background: var(--lime); color: var(--ink);
-  display: grid; place-items: center; font-size: 10px; flex: none;
-}
-.trial-timeline { margin-top: auto; padding-top: 28px; border-top: 1px solid rgba(246,241,230,0.10); }
-.trial-timeline h4 { font-size: 13px; font-weight: 600; margin-bottom: 16px; color: rgba(246,241,230,0.7); }
-.tl-step { display: flex; gap: 14px; padding-bottom: 18px; position: relative; }
-.tl-step:not(:last-child)::before {
-  content: ""; position: absolute; left: 5px; top: 14px; bottom: 0;
-  width: 1.5px; background: rgba(246,241,230,0.12);
-}
-.tl-dot { width: 11px; height: 11px; border-radius: 50%; background: var(--lime); flex: none; margin-top: 3px; }
-.tl-step:last-child .tl-dot { background: rgba(246,241,230,0.3); }
-.tl-text strong { font-size: 13px; display: block; margin-bottom: 2px; }
-.tl-text span { font-size: 12px; color: rgba(246,241,230,0.5); }
-
-.form-side { padding: 44px 40px; display: flex; flex-direction: column; }
-.form-side h3 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; margin-bottom: 6px; }
-.form-side .form-sub { font-size: 14px; color: var(--muted); margin-bottom: 28px; }
-.billing-toggle {
-  display: flex; gap: 0; background: var(--paper); border: 1px solid var(--line);
-  padding: 4px; border-radius: 99px; margin-bottom: 28px;
-}
-.billing-toggle button {
-  flex: 1; padding: 10px 18px; border: none; border-radius: 99px; background: transparent;
-  font-family: inherit; font-size: 14px; font-weight: 500; color: var(--muted);
-  cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px;
-}
-.billing-toggle button.active { background: var(--ink); color: var(--cream); }
-.billing-toggle .save {
-  font-family: 'JetBrains Mono', monospace; font-size: 9.5px; font-weight: 700;
-  background: var(--lime); color: var(--ink); padding: 2px 7px; border-radius: 99px;
-}
-.form-label { font-size: 13px; font-weight: 600; color: var(--ink); margin-bottom: 8px; display: block; }
-.form-input {
-  width: 100%; padding: 13px 16px; border: 1.5px solid var(--line); border-radius: 12px;
-  font-family: inherit; font-size: 15px; color: var(--ink); background: white;
-  outline: none; transition: border-color 0.15s; margin-bottom: 18px;
-}
-.form-input:focus { border-color: var(--ink); }
-.form-input::placeholder { color: var(--muted); }
-#payment-element { margin-bottom: 18px; min-height: 40px; }
-#card-errors { font-size: 12.5px; color: #C4544A; min-height: 20px; margin-bottom: 10px; }
-.pay-btn {
-  width: 100%; padding: 16px; background: var(--lime); color: var(--ink); border: none;
-  border-radius: 99px; font-family: inherit; font-size: 16px; font-weight: 700;
-  cursor: pointer; transition: all 0.15s; margin-top: 8px;
-}
-.pay-btn:hover { background: var(--lime-dk); }
-.pay-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.pay-btn .spinner {
-  display: inline-block; width: 18px; height: 18px;
-  border: 2.5px solid rgba(14,31,24,0.2); border-top-color: var(--ink);
-  border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 8px;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
-.secure-note { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 12px; color: var(--muted); margin-top: 16px; }
-.cancel-note { text-align: center; font-size: 12.5px; color: var(--muted); margin-top: 12px; line-height: 1.5; }
-.back-link { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); text-decoration: none; margin-bottom: 24px; transition: color 0.15s; }
-.back-link:hover { color: var(--ink); }
-.loading-msg { text-align: center; padding: 20px; color: var(--muted); font-size: 14px; }
-@media (max-width: 768px) {
-  .checkout { grid-template-columns: 1fr; }
-  .summary { padding: 32px 28px; }
-  .form-side { padding: 32px 28px; }
-  body { padding: 20px 12px; }
-}
+:root{--ink:#0E1F18;--forest:#14342A;--cream:#F6F1E6;--paper:#FBF7EE;--lime:#9EC83D;--lime-dk:#7FA82A;--line:rgba(14,31,24,0.10);--muted:rgba(14,31,24,0.55)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Geist',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;background:var(--paper);color:var(--ink);-webkit-font-smoothing:antialiased;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:40px 20px}
+.checkout{display:grid;grid-template-columns:1fr 1fr;gap:0;max-width:920px;width:100%;background:white;border-radius:24px;border:1px solid var(--line);overflow:hidden;box-shadow:0 30px 60px -30px rgba(11,32,26,0.2)}
+.summary{padding:44px 40px;background:var(--forest);color:var(--cream);display:flex;flex-direction:column}
+.summary .brand{display:flex;align-items:center;gap:10px;font-family:'Instrument Serif',serif;font-style:italic;font-size:22px;margin-bottom:40px}
+.summary .brand .glyph{width:28px;height:28px;background:var(--lime);border-radius:8px;display:grid;place-items:center;font-size:18px;font-weight:700;color:var(--ink);font-family:'Geist',sans-serif;font-style:normal}
+.summary h2{font-size:28px;font-weight:600;letter-spacing:-0.02em;margin-bottom:8px}
+.summary h2 em{font-family:'Instrument Serif',serif;font-style:italic;color:var(--lime);font-weight:400}
+.summary .sub{font-size:14.5px;color:rgba(246,241,230,0.65);line-height:1.5;margin-bottom:32px}
+.plan-card{background:rgba(246,241,230,0.06);border:1px solid rgba(246,241,230,0.12);border-radius:16px;padding:20px;margin-bottom:20px}
+.plan-card .plan-name{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--lime);margin-bottom:8px}
+.plan-card .plan-price{font-size:36px;font-weight:700;letter-spacing:-0.03em}
+.plan-card .plan-price .per{font-size:14px;font-weight:400;color:rgba(246,241,230,0.55)}
+.plan-card .plan-note{font-size:12.5px;color:rgba(246,241,230,0.5);margin-top:4px}
+.plan-features{display:flex;flex-direction:column;gap:10px;margin-top:16px}
+.plan-features li{display:flex;align-items:center;gap:10px;font-size:13.5px;color:rgba(246,241,230,0.8);list-style:none}
+.plan-features .ck{width:16px;height:16px;border-radius:50%;background:var(--lime);color:var(--ink);display:grid;place-items:center;font-size:10px;flex:none}
+.trial-timeline{margin-top:auto;padding-top:28px;border-top:1px solid rgba(246,241,230,0.10)}
+.trial-timeline h4{font-size:13px;font-weight:600;margin-bottom:16px;color:rgba(246,241,230,0.7)}
+.tl-step{display:flex;gap:14px;padding-bottom:18px;position:relative}
+.tl-step:not(:last-child)::before{content:"";position:absolute;left:5px;top:14px;bottom:0;width:1.5px;background:rgba(246,241,230,0.12)}
+.tl-dot{width:11px;height:11px;border-radius:50%;background:var(--lime);flex:none;margin-top:3px}
+.tl-step:last-child .tl-dot{background:rgba(246,241,230,0.3)}
+.tl-text strong{font-size:13px;display:block;margin-bottom:2px}
+.tl-text span{font-size:12px;color:rgba(246,241,230,0.5)}
+.form-side{padding:44px 40px;display:flex;flex-direction:column}
+.form-side h3{font-size:22px;font-weight:600;letter-spacing:-0.02em;margin-bottom:6px}
+.form-side .form-sub{font-size:14px;color:var(--muted);margin-bottom:28px}
+.billing-toggle{display:flex;gap:0;background:var(--paper);border:1px solid var(--line);padding:4px;border-radius:99px;margin-bottom:28px}
+.billing-toggle button{flex:1;padding:10px 18px;border:none;border-radius:99px;background:transparent;font-family:inherit;font-size:14px;font-weight:500;color:var(--muted);cursor:pointer;transition:all 0.2s;display:flex;align-items:center;justify-content:center;gap:8px}
+.billing-toggle button.active{background:var(--ink);color:var(--cream)}
+.billing-toggle .save{font-family:'JetBrains Mono',monospace;font-size:9.5px;font-weight:700;background:var(--lime);color:var(--ink);padding:2px 7px;border-radius:99px}
+.form-label{font-size:13px;font-weight:600;color:var(--ink);margin-bottom:8px;display:block}
+.form-input{width:100%;padding:13px 16px;border:1.5px solid var(--line);border-radius:12px;font-family:inherit;font-size:15px;color:var(--ink);background:white;outline:none;transition:border-color 0.15s;margin-bottom:18px}
+.form-input:focus{border-color:var(--ink)}
+.form-input::placeholder{color:var(--muted)}
+#card-element{padding:14px 16px;border:1.5px solid var(--line);border-radius:12px;background:white;transition:border-color 0.15s;margin-bottom:8px}
+#card-element.StripeElement--focus{border-color:var(--ink)}
+#card-element.StripeElement--invalid{border-color:#C4544A}
+#card-errors{font-size:12.5px;color:#C4544A;min-height:20px;margin-bottom:12px}
+.pay-btn{width:100%;padding:16px;background:var(--lime);color:var(--ink);border:none;border-radius:99px;font-family:inherit;font-size:16px;font-weight:700;cursor:pointer;transition:all 0.15s;margin-top:8px}
+.pay-btn:hover{background:var(--lime-dk)}
+.pay-btn:disabled{opacity:0.5;cursor:not-allowed}
+.pay-btn .spinner{display:inline-block;width:18px;height:18px;border:2.5px solid rgba(14,31,24,0.2);border-top-color:var(--ink);border-radius:50%;animation:spin 0.6s linear infinite;vertical-align:middle;margin-right:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.secure-note{display:flex;align-items:center;justify-content:center;gap:6px;font-size:12px;color:var(--muted);margin-top:16px}
+.cancel-note{text-align:center;font-size:12.5px;color:var(--muted);margin-top:12px;line-height:1.5}
+.back-link{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);text-decoration:none;margin-bottom:24px;transition:color 0.15s}
+.back-link:hover{color:var(--ink)}
+@media(max-width:768px){.checkout{grid-template-columns:1fr}.summary{padding:32px 28px}.form-side{padding:32px 28px}body{padding:20px 12px}}
 </style>
 </head>
 <body>
@@ -163,28 +81,24 @@ body {
       <div class="tl-step"><div class="tl-dot" style="background:rgba(246,241,230,0.3)"></div><div class="tl-text"><strong>Day 7</strong><span id="trialEnd">Subscription begins at $9.99/mo</span></div></div>
     </div>
   </div>
-
   <div class="form-side">
     <a href="Studlin Onboarding.html" class="back-link" id="backLink">← Back to plans</a>
     <h3 id="formHeading">Enter your payment details</h3>
     <p class="form-sub" id="formSub">Your card won't be charged today.</p>
-
     <div class="billing-toggle" id="billingToggle">
       <button class="active" id="btnMonthly" onclick="setBilling('monthly')">Monthly</button>
       <button id="btnAnnual" onclick="setBilling('annual')">Annual <span class="save">Save 20%</span></button>
     </div>
-
     <label class="form-label">Full name</label>
     <input type="text" class="form-input" id="fullName" placeholder="Your full name">
     <label class="form-label">Email</label>
     <input type="email" class="form-input" id="email" placeholder="you@school.edu">
-
-    <label class="form-label">Payment</label>
-    <div id="payment-element"><div class="loading-msg">Loading payment methods...</div></div>
+    <label class="form-label">Card details</label>
+    <div id="card-element"></div>
     <div id="card-errors" role="alert"></div>
-
-    <button class="pay-btn" id="payBtn" disabled onclick="handlePayment()">Start free trial</button>
-
+    <label class="form-label">Country</label>
+    <input type="text" class="form-input" id="country" value="United States" placeholder="Country">
+    <button class="pay-btn" id="payBtn" onclick="handlePayment()">Start free trial</button>
     <div class="secure-note">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
       Secured by Stripe · 256-bit encryption
@@ -192,206 +106,117 @@ body {
     <div class="cancel-note" id="cancelNote">Cancel anytime from your account settings.<br>No questions asked.</div>
   </div>
 </div>
-
 <script>
-const PK = 'pk_live_51TLuXlFJjTMWMaWhX10200LKeE5JW0FHH2qp6evADegl2MIHuz26vUoBKyn7ug7Sb0akTI0MQHE34Ocyg2XeviKT00H9SklfJK';
-const stripe = Stripe(PK);
+const PK='pk_live_51TLuXlFJjTMWMaWhX10200LKeE5JW0FHH2qp6evADegl2MIHuz26vUoBKyn7ug7Sb0akTI0MQHE34Ocyg2XeviKT00H9SklfJK';
+const stripe=Stripe(PK);
+const elements=stripe.elements();
+const card=elements.create('card',{style:{base:{fontSize:'15px',fontFamily:"'Geist',-apple-system,sans-serif",color:'#0E1F18','::placeholder':{color:'rgba(14,31,24,0.4)'}},invalid:{color:'#C4544A'}}});
+card.mount('#card-element');
+card.on('change',e=>{document.getElementById('card-errors').textContent=e.error?e.error.message:'';});
 
-const params = new URLSearchParams(window.location.search);
-const creditParam = params.get('credits');
-const isCredits = creditParam !== null;
-let plan = params.get('plan') || 'pro';
-let billing = params.get('billing') || 'monthly';
+const params=new URLSearchParams(window.location.search);
+const creditParam=params.get('credits');
+const isCredits=creditParam!==null;
+let plan=params.get('plan')||'pro';
+let billing=params.get('billing')||'monthly';
 
-const PLAN_DATA = {
-  pro: {
-    name: 'STUDLIN PRO', monthly: '$9.99', annual: '$7.99', annualTotal: '$95.88',
-    features: [
-      '200 AI credits / month', 'AI tutor — all models + 4 study modes',
-      'Full essay suite + plagiarism check', 'AI flashcards from notes, PDFs & YouTube',
-      'Google Docs sync + AI Rewrite (Humanizer)', 'Unlimited grammar + readability scores',
-      'Squad leaderboards + 2× focus XP',
-    ],
-  },
-  max: {
-    name: 'STUDLIN MAX', monthly: '$24.99', annual: '$19.99', annualTotal: '$239.88',
-    features: [
-      '500 AI credits / month', 'Everything in Pro, unlimited',
-      'Bulk ops — 100 flashcards at once', 'Advanced analytics & learning paths',
-      'Cosmetics shop + monthly tournaments', 'Priority support + 3× focus XP',
-    ],
-  },
+const PLAN_DATA={
+  pro:{name:'STUDLIN PRO',monthly:'$9.99',annual:'$7.99',annualTotal:'$95.88',features:['200 AI credits / month','AI tutor — all models + 4 study modes','Full essay suite + plagiarism check','AI flashcards from notes, PDFs & YouTube','Google Docs sync + AI Rewrite (Humanizer)','Unlimited grammar + readability scores','Squad leaderboards + 2× focus XP']},
+  max:{name:'STUDLIN MAX',monthly:'$24.99',annual:'$19.99',annualTotal:'$239.88',features:['500 AI credits / month','Everything in Pro, unlimited','Bulk ops — 100 flashcards at once','Advanced analytics & learning paths','Cosmetics shop + monthly tournaments','Priority support + 3× focus XP']},
 };
 
-const CREDIT_PACKS = {
-  '150':  { price: '$4.99',  cents: 499,  label: '150 AI Credits' },
-  '500':  { price: '$14.99', cents: 1499, label: '500 AI Credits' },
-  '1000': { price: '$24.99', cents: 2499, label: '1,000 AI Credits' },
-  '3000': { price: '$59.99', cents: 5999, label: '3,000 AI Credits' },
-};
+const CREDIT_PACKS={'150':{price:'$4.99',label:'150 AI Credits'},'500':{price:'$14.99',label:'500 AI Credits'},'1000':{price:'$24.99',label:'1,000 AI Credits'},'3000':{price:'$59.99',label:'3,000 AI Credits'}};
 
-let elements, paymentElement;
-
-function updateUI() {
-  if (isCredits) {
-    const customAmt = params.get('amount');
-    let label, price, note;
-    if (creditParam === 'custom' && customAmt) {
-      const dollars = Math.max(5, Math.min(100000, Math.floor(+customAmt)));
-      label = 'CREDIT TOP-UP';
-      price = '$' + dollars.toLocaleString();
-      note = (dollars * 30).toLocaleString() + ' AI credits added instantly';
-    } else {
-      const pack = CREDIT_PACKS[creditParam] || CREDIT_PACKS['150'];
-      label = 'CREDIT TOP-UP';
-      price = pack.price;
-      note = pack.label + ' added instantly';
+function updateUI(){
+  if(isCredits){
+    const customAmt=params.get('amount');
+    let price,note;
+    if(creditParam==='custom'&&customAmt){
+      const d=Math.max(5,Math.min(100000,Math.floor(+customAmt)));
+      price='$'+d.toLocaleString();note=(d*30).toLocaleString()+' AI credits added instantly';
+    }else{
+      const pk=CREDIT_PACKS[creditParam]||CREDIT_PACKS['150'];
+      price=pk.price;note=pk.label+' added instantly';
     }
-    document.getElementById('summaryHeading').innerHTML = 'Top up your <em>credits.</em>';
-    document.getElementById('summarySub').textContent = 'Credits are added instantly after payment. Use them across all AI features.';
-    document.getElementById('summaryPlanName').textContent = label;
-    document.getElementById('summaryPrice').innerHTML = price + ' <span class="per">one-time</span>';
-    document.getElementById('summaryNote').textContent = note;
-    document.getElementById('summaryFeatures').innerHTML = [
-      'Instant delivery to your account', 'Works with AI chat, flashcards, essays & more',
-      'Credits never expire', 'Top up anytime you need more',
-    ].map(f => '<li><span class="ck">✓</span> ' + f + '</li>').join('');
-    document.getElementById('trialTimeline').style.display = 'none';
-    document.getElementById('billingToggle').style.display = 'none';
-    document.getElementById('formHeading').textContent = 'Complete your purchase';
-    document.getElementById('formSub').textContent = 'You will be charged immediately.';
-    document.getElementById('payBtn').textContent = 'Pay ' + price;
-    document.getElementById('cancelNote').innerHTML = 'Credits are non-refundable.<br>Need help? Contact support.';
-    document.getElementById('backLink').href = 'Studlin Web App.html';
-    document.getElementById('backLink').textContent = '← Back to app';
-  } else {
-    const p = PLAN_DATA[plan] || PLAN_DATA.pro;
-    const price = billing === 'annual' ? p.annualTotal : p.monthly;
-    const period = billing === 'annual' ? '/ year' : '/ month';
-    document.getElementById('summaryPlanName').textContent = p.name;
-    document.getElementById('summaryPrice').innerHTML = price + ' <span class="per">' + period + '</span>';
-    document.getElementById('summaryNote').textContent = billing === 'annual'
-      ? '$0.00 today · ' + p.annualTotal + '/year after 7-day trial'
-      : '$0.00 today · billed after 7-day trial';
-    document.getElementById('trialEnd').textContent = billing === 'annual'
-      ? 'Subscription begins at ' + p.annualTotal + '/year'
-      : 'Subscription begins at ' + price + '/mo';
-    document.getElementById('summaryFeatures').innerHTML = (PLAN_DATA[plan] || PLAN_DATA.pro).features.map(f =>
-      '<li><span class="ck">✓</span> ' + f + '</li>'
-    ).join('');
-    document.getElementById('btnMonthly').className = billing === 'monthly' ? 'active' : '';
-    document.getElementById('btnAnnual').className = billing === 'annual' ? 'active' : '';
-    document.getElementById('payBtn').textContent = 'Start free trial';
+    document.getElementById('summaryHeading').innerHTML='Top up your <em>credits.</em>';
+    document.getElementById('summarySub').textContent='Credits are added instantly after payment. Use them across all AI features.';
+    document.getElementById('summaryPlanName').textContent='CREDIT TOP-UP';
+    document.getElementById('summaryPrice').innerHTML=price+' <span class="per">one-time</span>';
+    document.getElementById('summaryNote').textContent=note;
+    document.getElementById('summaryFeatures').innerHTML=['Instant delivery to your account','Works with AI chat, flashcards, essays & more','Credits never expire','Top up anytime you need more'].map(f=>'<li><span class="ck">✓</span> '+f+'</li>').join('');
+    document.getElementById('trialTimeline').style.display='none';
+    document.getElementById('billingToggle').style.display='none';
+    document.getElementById('formHeading').textContent='Complete your purchase';
+    document.getElementById('formSub').textContent='You will be charged immediately.';
+    document.getElementById('payBtn').textContent='Pay '+price;
+    document.getElementById('cancelNote').innerHTML='Credits are non-refundable.<br>Need help? Contact support.';
+    document.getElementById('backLink').href='Studlin Web App.html';
+    document.getElementById('backLink').textContent='← Back to app';
+  }else{
+    const p=PLAN_DATA[plan]||PLAN_DATA.pro;
+    const price=billing==='annual'?p.annualTotal:p.monthly;
+    const period=billing==='annual'?'/ year':'/ month';
+    document.getElementById('summaryPlanName').textContent=p.name;
+    document.getElementById('summaryPrice').innerHTML=price+' <span class="per">'+period+'</span>';
+    document.getElementById('summaryNote').textContent=billing==='annual'?'$0.00 today · '+p.annualTotal+'/year after 7-day trial':'$0.00 today · billed after 7-day trial';
+    document.getElementById('trialEnd').textContent=billing==='annual'?'Subscription begins at '+p.annualTotal+'/year':'Subscription begins at '+price+'/mo';
+    document.getElementById('summaryFeatures').innerHTML=p.features.map(f=>'<li><span class="ck">✓</span> '+f+'</li>').join('');
+    document.getElementById('btnMonthly').className=billing==='monthly'?'active':'';
+    document.getElementById('btnAnnual').className=billing==='annual'?'active':'';
+    document.getElementById('payBtn').textContent='Start free trial';
   }
 }
-
-function setBilling(b) { billing = b; updateUI(); }
+function setBilling(b){billing=b;updateUI();}
 updateUI();
 
-async function initPayment() {
-  let body;
-  if (isCredits) {
-    const customAmt = params.get('amount');
-    if (creditParam === 'custom' && customAmt) {
-      body = { mode: 'payment', customAmount: Math.floor(+customAmt) };
-    } else {
-      body = { mode: 'payment', credits: +creditParam || 150 };
-    }
-  } else {
-    body = { mode: 'setup' };
-  }
+async function handlePayment(){
+  const btn=document.getElementById('payBtn');
+  const fullName=document.getElementById('fullName').value.trim();
+  const email=document.getElementById('email').value.trim();
+  const country=document.getElementById('country').value.trim();
+  const errEl=document.getElementById('card-errors');
 
-  try {
-    const errEl = document.getElementById('card-errors');
-    errEl.textContent = 'Connecting to Stripe...';
+  if(!fullName){errEl.textContent='Please enter your name.';return;}
+  if(!email){errEl.textContent='Please enter your email.';return;}
 
-    const res = await fetch('/api/create-intent', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const data = await res.json();
-    if (data.error) { errEl.textContent = data.error; return; }
+  btn.disabled=true;
+  btn.innerHTML='<span class="spinner"></span> Processing...';
+  errEl.textContent='';
 
-    errEl.textContent = 'Loading payment form...';
+  try{
+    if(isCredits){
+      const customAmt=params.get('amount');
+      let apiBody;
+      if(creditParam==='custom'&&customAmt){
+        apiBody={mode:'payment',customAmount:Math.floor(+customAmt)};
+      }else{
+        apiBody={mode:'payment',credits:+creditParam||150};
+      }
+      const res=await fetch('/api/create-intent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(apiBody)});
+      const data=await res.json();
+      if(data.error)throw new Error(data.error);
 
-    elements = stripe.elements({ clientSecret: data.clientSecret });
-    paymentElement = elements.create('payment');
-    paymentElement.mount('#payment-element');
-
-    paymentElement.on('ready', () => {
-      errEl.textContent = '';
-      document.getElementById('payBtn').disabled = false;
-    });
-
-    paymentElement.on('loaderror', (event) => {
-      errEl.textContent = 'Payment form error: ' + (event.error ? event.error.message : 'unknown');
-    });
-  } catch (err) {
-    document.getElementById('card-errors').textContent = 'Error: ' + (err.message || 'Failed to load. Refresh the page.');
-  }
-}
-
-initPayment();
-
-async function handlePayment() {
-  const btn = document.getElementById('payBtn');
-  const fullName = document.getElementById('fullName').value.trim();
-  const email = document.getElementById('email').value.trim();
-  const errEl = document.getElementById('card-errors');
-
-  if (!fullName) { errEl.textContent = 'Please enter your name.'; return; }
-  if (!email) { errEl.textContent = 'Please enter your email.'; return; }
-
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> Processing...';
-  errEl.textContent = '';
-
-  try {
-    const returnUrl = window.location.origin + '/Studlin%20Web%20App.html?payment=success';
-
-    if (isCredits) {
-      const { error } = await stripe.confirmPayment({
-        elements,
-        confirmParams: {
-          return_url: returnUrl,
-          payment_method_data: { billing_details: { name: fullName, email: email } },
-        },
-        redirect: 'if_required',
+      const{error}=await stripe.confirmCardPayment(data.clientSecret,{
+        payment_method:{card:card,billing_details:{name:fullName,email:email,address:{country:country}}}
       });
-      if (error) throw error;
-    } else {
-      const { error, setupIntent } = await stripe.confirmSetup({
-        elements,
-        confirmParams: {
-          return_url: returnUrl,
-          payment_method_data: { billing_details: { name: fullName, email: email } },
-        },
-        redirect: 'if_required',
-      });
-      if (error) throw error;
+      if(error)throw error;
+    }else{
+      const{paymentMethod,error:pmError}=await stripe.createPaymentMethod({type:'card',card:card,billing_details:{name:fullName,email:email,address:{country:country}}});
+      if(pmError)throw pmError;
 
-      const subRes = await fetch('/api/checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          plan: plan + '_' + billing,
-          email, name: fullName, country: 'US',
-          paymentMethodId: setupIntent.payment_method,
-        }),
-      });
-      const subData = await subRes.json();
-      if (subData.error) throw new Error(subData.error);
+      const res=await fetch('/api/checkout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan:plan+'_'+billing,email,name:fullName,country,paymentMethodId:paymentMethod.id})});
+      const data=await res.json();
+      if(data.error)throw new Error(data.error);
     }
 
-    btn.innerHTML = '✓ Success!';
-    btn.style.background = '#0E1F18';
-    btn.style.color = '#F6F1E6';
-    setTimeout(() => { window.location.href = 'Studlin Web App.html'; }, 1500);
-  } catch (err) {
-    errEl.textContent = err.message || 'Something went wrong.';
-    btn.disabled = false;
-    btn.textContent = isCredits ? 'Pay' : 'Start free trial';
+    btn.innerHTML='✓ Success!';
+    btn.style.background='#0E1F18';
+    btn.style.color='#F6F1E6';
+    setTimeout(()=>{window.location.href='Studlin Web App.html';},1500);
+  }catch(err){
+    errEl.textContent=err.message||'Something went wrong.';
+    btn.disabled=false;
+    btn.textContent=isCredits?'Pay':'Start free trial';
     updateUI();
   }
 }

@@ -2310,20 +2310,20 @@ function App() {
   const [boughtMsg,setBoughtMsg]=useState("");
   const [creditCheckout,setCreditCheckout]=useState(null);
   const [creditProcessing,setCreditProcessing]=useState(false);
-  const payElRef=useRef(null);
-  const stripeElRef=useRef(null);
+  const stripeCardRef=useRef(null);
+  const stripeRef=useRef(null);
   const stripePk='pk_live_51TLuXlFJjTMWMaWhX10200LKeE5JW0FHH2qp6evADegl2MIHuz26vUoBKyn7ug7Sb0akTI0MQHE34Ocyg2XeviKT00H9SklfJK';
 
   const startCreditCheckout=async(credits,customAmount)=>{
-    setBoughtMsg("Loading payment...");
+    setBoughtMsg("Loading...");
     try{
       const body=customAmount?{mode:"payment",customAmount}:{mode:"payment",credits};
       const res=await fetch("/api/create-intent",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
       const data=await res.json();
       if(data.error){setBoughtMsg(data.error);return;}
-      const label=customAmount?(customAmount*30).toLocaleString()+" credits":""+credits.toLocaleString()+" credits";
+      const label=customAmount?(customAmount*30).toLocaleString()+" credits":credits.toLocaleString()+" credits";
       const price=customAmount?"$"+customAmount:({150:"$4.99",500:"$14.99",1000:"$24.99",3000:"$59.99"}[credits]||"$?.??");
-      setCreditCheckout({clientSecret:data.clientSecret,label,price,credits:credits||customAmount*30});
+      setCreditCheckout({clientSecret:data.clientSecret,label,price});
       setBoughtMsg("");
     }catch(e){setBoughtMsg("Something went wrong.");}
   };
@@ -2332,21 +2332,24 @@ function App() {
     if(!creditCheckout)return;
     const s=typeof Stripe!=="undefined"?Stripe(stripePk):null;
     if(!s)return;
-    const el=s.elements({clientSecret:creditCheckout.clientSecret});
-    const pe=el.create("payment",{layout:"tabs"});
-    setTimeout(()=>{const node=document.getElementById("stripe-pay-el");if(node)pe.mount(node);},50);
-    stripeElRef.current={stripe:s,elements:el};
-    return()=>{pe.destroy();};
+    stripeRef.current=s;
+    const el=s.elements();
+    const cardEl=el.create("card",{style:{base:{fontSize:"15px",fontFamily:"'Geist',sans-serif",color:"#E8EFE7","::placeholder":{color:"rgba(255,255,255,0.35)"}},invalid:{color:"#D9806B"}}});
+    setTimeout(()=>{const node=document.getElementById("stripe-card-el");if(node)cardEl.mount(node);},50);
+    stripeCardRef.current=cardEl;
+    return()=>{cardEl.destroy();};
   },[creditCheckout]);
 
   const confirmCreditPurchase=async()=>{
-    if(!stripeElRef.current)return;
+    if(!stripeRef.current||!stripeCardRef.current||!creditCheckout)return;
     setCreditProcessing(true);
-    const{stripe:s,elements:el}=stripeElRef.current;
+    setBoughtMsg("");
     const prof=getProfile();
-    const{error}=await s.confirmPayment({elements:el,confirmParams:{return_url:window.location.origin+"/Studlin%20Web%20App.html?payment=success",payment_method_data:{billing_details:{name:prof.name,email:prof.email}}},redirect:"if_required"});
+    const{error}=await stripeRef.current.confirmCardPayment(creditCheckout.clientSecret,{
+      payment_method:{card:stripeCardRef.current,billing_details:{name:prof.name,email:prof.email}}
+    });
     if(error){setBoughtMsg(error.message);setCreditProcessing(false);}
-    else{setCreditCheckout(null);setCreditProcessing(false);setBoughtMsg("✓ "+creditCheckout.label+" added to your account!");}
+    else{setCreditCheckout(null);setCreditProcessing(false);setBoughtMsg("✓ Credits added to your account!");}
   };
 
   const buyPack=(credits)=>startCreditCheckout(credits,null);
@@ -2593,7 +2596,7 @@ function App() {
               </div>
               <div style={{fontFamily:T.hand,fontSize:36,fontWeight:700,color:T.ink}}>{creditCheckout.price}</div>
             </div>
-            <div id="stripe-pay-el" style={{minHeight:120,marginBottom:12}}></div>
+            <div id="stripe-card-el" style={{padding:"14px 16px",border:"1.5px solid "+T.border,borderRadius:12,background:T.card,marginBottom:12,minHeight:22}}></div>
             {boughtMsg&&<div style={{fontSize:12.5,color:boughtMsg.startsWith("✓")?T.lime:T.red,fontWeight:600,marginTop:8}}>{boughtMsg}</div>}
             <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,fontSize:11,color:T.muted,marginTop:12}}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
