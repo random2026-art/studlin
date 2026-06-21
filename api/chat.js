@@ -52,9 +52,10 @@ module.exports = async (req, res) => {
     });
 
     if (!response.ok) {
-      const err = await response.text();
-      console.error('Anthropic API error:', err);
-      return res.status(502).json({ error: 'AI service temporarily unavailable.' });
+      const errText = await response.text();
+      let detail = 'AI service error';
+      try { detail = JSON.parse(errText).error?.message || errText; } catch(e) { detail = errText; }
+      return res.status(502).json({ error: detail });
     }
 
     const data = await response.json();
