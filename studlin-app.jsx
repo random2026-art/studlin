@@ -2332,7 +2332,7 @@ function App() {
     if(!creditCheckout)return;
     const s=typeof Stripe!=="undefined"?Stripe(stripePk):null;
     if(!s)return;
-    const el=s.elements({clientSecret:creditCheckout.clientSecret,appearance:{theme:"night",variables:{fontFamily:"'Geist',sans-serif",colorPrimary:"#AECE5E",borderRadius:"10px",colorBackground:"#19211C",colorText:"#E8EFE7"}}});
+    const el=s.elements({clientSecret:creditCheckout.clientSecret});
     const pe=el.create("payment",{layout:"tabs"});
     setTimeout(()=>{const node=document.getElementById("stripe-pay-el");if(node)pe.mount(node);},50);
     stripeElRef.current={stripe:s,elements:el};

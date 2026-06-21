@@ -302,36 +302,33 @@ async function initPayment() {
   }
 
   try {
+    const errEl = document.getElementById('card-errors');
+    errEl.textContent = 'Connecting to Stripe...';
+
     const res = await fetch('/api/create-intent', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
     const data = await res.json();
-    if (data.error) {
-      document.getElementById('card-errors').textContent = data.error;
-      return;
-    }
+    if (data.error) { errEl.textContent = data.error; return; }
 
-    elements = stripe.elements({
-      clientSecret: data.clientSecret,
-      appearance: {
-        theme: 'stripe',
-        variables: {
-          fontFamily: "'Geist', -apple-system, sans-serif",
-          colorPrimary: '#0E1F18',
-          borderRadius: '12px',
-        },
-      },
-    });
+    errEl.textContent = 'Loading payment form...';
 
-    paymentElement = elements.create('payment', { layout: 'tabs' });
+    elements = stripe.elements({ clientSecret: data.clientSecret });
+    paymentElement = elements.create('payment');
     paymentElement.mount('#payment-element');
+
     paymentElement.on('ready', () => {
+      errEl.textContent = '';
       document.getElementById('payBtn').disabled = false;
     });
+
+    paymentElement.on('loaderror', (event) => {
+      errEl.textContent = 'Payment form error: ' + (event.error ? event.error.message : 'unknown');
+    });
   } catch (err) {
-    document.getElementById('card-errors').textContent = 'Failed to load payment methods. Please refresh.';
+    document.getElementById('card-errors').textContent = 'Error: ' + (err.message || 'Failed to load. Refresh the page.');
   }
 }
 

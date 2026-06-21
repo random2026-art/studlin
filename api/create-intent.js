@@ -19,7 +19,7 @@ module.exports = async (req, res) => {
 
     if (mode === 'setup') {
       const setupIntent = await stripe.setupIntents.create({
-        automatic_payment_methods: { enabled: true },
+        payment_method_types: ['card'],
       });
       return res.status(200).json({ clientSecret: setupIntent.client_secret });
     }
@@ -38,7 +38,7 @@ module.exports = async (req, res) => {
       const paymentIntent = await stripe.paymentIntents.create({
         amount: amountCents,
         currency: 'usd',
-        automatic_payment_methods: { enabled: true },
+        payment_method_types: ['card'],
         metadata: { type: 'credit_topup', credits: String(credits || Math.floor((+customAmount) * 30)) },
       });
       return res.status(200).json({ clientSecret: paymentIntent.client_secret });
