@@ -353,15 +353,27 @@ function AiChat() {
   const [modelOpen,setModelOpen]=useState(false);
   const curModel=MODELS.find(m=>m.id===model)||MODELS[0];
   const [input,setInput]=useState("");
+  const [loading,setLoading]=useState(false);
   const [msgs,setMsgs]=useState([
-    {r:"ai",t:"Good afternoon, Maya. What are we working on today?"},
-    {r:"user",t:"Can you break down the dagger soliloquy in Macbeth Act II for my essay?"},
-    {r:"ai",t:"The dagger soliloquy (Act II, Scene 1) is one of Shakespeare's most precise explorations of a mind fracturing under the weight of intent. Macbeth sees a floating, blood-stained dagger guiding him toward Duncan's chamber. The central tension is whether this is a supernatural omen or a projection of his own guilt. The scholarly consensus leans toward the latter · the dagger is a materialisation of his ambition, not a supernatural sign. Note how it shifts from guiding him to \"marshalling\" him forward · his own psyche compelling the act."},
+    {r:"ai",t:"Hey! What are we working on today?"},
   ]);
-  const send=(txt)=>{
-    const t=txt||input; if(!t.trim()) return;
-    setMsgs(m=>[...m,{r:"user",t},{r:"ai",t:"Let me work through that carefully. I'll pull the most relevant evidence from the text and structure it for your argument."}]);
+  const chatRef=useRef(null);
+  const scrollToBottom=()=>{if(chatRef.current)chatRef.current.scrollTop=chatRef.current.scrollHeight;};
+  useEffect(scrollToBottom,[msgs]);
+
+  const send=async(txt)=>{
+    const t=(txt||input).trim(); if(!t||loading)return;
+    const newMsgs=[...msgs,{r:"user",t}];
+    setMsgs(newMsgs);
     setInput("");
+    setLoading(true);
+    try{
+      const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:newMsgs,model})});
+      const data=await res.json();
+      if(data.error){setMsgs(m=>[...m,{r:"ai",t:"⚠ "+data.error}]);}
+      else{setMsgs(m=>[...m,{r:"ai",t:data.reply}]);}
+    }catch(e){setMsgs(m=>[...m,{r:"ai",t:"⚠ Couldn't reach the AI. Check your connection and try again."}]);}
+    setLoading(false);
   };
   const suggestions=["Analyse the symbolism","Pull supporting quotes","Compare to Lady Macbeth","Break down the themes"];
   return (
@@ -393,22 +405,30 @@ function AiChat() {
       } />
       <div style={{display:"grid",gridTemplateColumns:"1fr 260px",gap:16}}>
         <Card style={{display:"flex",flexDirection:"column",minHeight:500,padding:16}}>
-          <div style={{flex:1,overflowY:"auto",marginBottom:12,display:"flex",flexDirection:"column",gap:12}}>
+          <div ref={chatRef} style={{flex:1,overflowY:"auto",marginBottom:12,display:"flex",flexDirection:"column",gap:12}}>
             {msgs.map((m,i)=>(
               <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start",flexDirection:m.r==="user"?"row-reverse":"row"}}>
                 <div style={{width:28,height:28,borderRadius:"50%",background:m.r==="ai"?T.purple+"22":T.lime+"22",border:`1px solid ${m.r==="ai"?T.purple+"44":T.lime+"44"}`,display:"flex",alignItems:"center",justifyContent:"center",color:m.r==="ai"?T.purple:T.lime,flexShrink:0}}>{m.r==="ai"?Icon.brain:Icon.user}</div>
-                <div style={{maxWidth:"76%",padding:"10px 13px",borderRadius:8,fontSize:13,lineHeight:1.65,background:m.r==="ai"?T.card2:T.lime,color:m.r==="ai"?T.text:T.bg,border:m.r==="ai"?`1px solid ${T.border}`:"none"}}>{m.t}</div>
+                <div style={{maxWidth:"76%",padding:"10px 13px",borderRadius:8,fontSize:13,lineHeight:1.65,background:m.r==="ai"?T.card2:T.lime,color:m.r==="ai"?T.text:T.bg,border:m.r==="ai"?`1px solid ${T.border}`:"none",whiteSpace:"pre-wrap"}}>{m.t}</div>
               </div>
             ))}
+            {loading&&(
+              <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+                <div style={{width:28,height:28,borderRadius:"50%",background:T.purple+"22",border:"1px solid "+T.purple+"44",display:"flex",alignItems:"center",justifyContent:"center",color:T.purple,flexShrink:0}}>{Icon.brain}</div>
+                <div style={{padding:"10px 13px",borderRadius:8,background:T.card2,border:"1px solid "+T.border}}>
+                  <div style={{display:"flex",gap:4,alignItems:"center"}}><span style={{width:6,height:6,borderRadius:"50%",background:T.muted,animation:"studlinPulse 1.2s infinite"}}/><span style={{width:6,height:6,borderRadius:"50%",background:T.muted,animation:"studlinPulse 1.2s 0.2s infinite"}}/><span style={{width:6,height:6,borderRadius:"50%",background:T.muted,animation:"studlinPulse 1.2s 0.4s infinite"}}/></div>
+                </div>
+              </div>
+            )}
           </div>
           <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
             {suggestions.map(s=><button key={s} onClick={()=>send(s)} style={{padding:"5px 11px",borderRadius:5,fontSize:11,cursor:"pointer",border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontFamily:T.font,transition:"all 0.15s"}}>{s}</button>)}
           </div>
           <div style={{display:"flex",gap:8}}>
-            <input style={{flex:1,background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"10px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none"}} placeholder="Ask a question or paste text to analyse..." value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} />
-            <Btn onClick={()=>send()} style={{padding:"10px 14px"}}>{Icon.send}</Btn>
+            <input style={{flex:1,background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"10px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none"}} placeholder={loading?"Thinking...":"Ask a question or paste text to analyse..."} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} disabled={loading} />
+            <Btn onClick={()=>send()} style={{padding:"10px 14px",opacity:loading?0.5:1}} disabled={loading}>{Icon.send}</Btn>
           </div>
-          <div style={{fontSize:11,color:T.muted,marginTop:8}}>120 credits remaining · <span style={{color:T.text,fontWeight:600}}>{curModel.name}</span></div>
+          <div style={{fontSize:11,color:T.muted,marginTop:8}}><span style={{color:T.text,fontWeight:600}}>{curModel.name}</span> · {curModel.cost} per message</div>
         </Card>
         <div style={{display:"flex",flexDirection:"column",gap:12}}>
           <Card><Label>Session</Label><div style={{fontSize:28,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>12</div><div style={{fontSize:12,color:T.muted,marginTop:4}}>Conversations today</div></Card>
