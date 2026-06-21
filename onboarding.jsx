@@ -431,7 +431,7 @@ function StepPlan({ state, set }) {
     <div className="frame">
       <div className="frame-head">
         <h2>Unlock your full <em>potential.</em></h2>
-        <p>{first}, students on Scholar Pro study 2.4&times; more and report a full letter-grade jump. Try it free for 7 days.</p>
+        <p>{first}, students on Pro study 2.4&times; more and report a full letter-grade jump. Try it free for 7 days.</p>
       </div>
 
       <div className="bill-toggle">
@@ -440,34 +440,34 @@ function StepPlan({ state, set }) {
       </div>
 
       <div className="plans">
-        <button className={"plan" + (state.plan === "scholar" ? " is-selected" : "")} onClick={()=>set({...state, plan:"scholar"})}>
+        <button className={"plan" + (state.plan === "pro" ? " is-selected" : "")} onClick={()=>set({...state, plan:"pro"})}>
           <span className="plan-tag">7 DAYS FREE</span>
-          <h3>Scholar Pro</h3>
-          <div className="pp"><strong>${annual ? "14.99" : "19.99"}</strong> / mo{annual ? " · billed annually" : ""}</div>
+          <h3>Pro</h3>
+          <div className="pp"><strong>${annual ? "7.99" : "9.99"}</strong> / mo{annual ? " · billed annually" : ""}</div>
           <ul>
-            <li><span className="ck">{Ic.check}</span> 500 AI credits / month</li>
+            <li><span className="ck">{Ic.check}</span> 300 AI credits / month</li>
             <li><span className="ck">{Ic.check}</span> Full writing suite + AI Humanizer</li>
             <li><span className="ck">{Ic.check}</span> AI flashcards from any file</li>
             <li><span className="ck">{Ic.check}</span> AI tutor on every subject</li>
             <li><span className="ck">{Ic.check}</span> Smart calendar &amp; Weekly Wrapped</li>
           </ul>
         </button>
-        <button className={"plan" + (state.plan === "elite" ? " is-selected" : "")} onClick={()=>set({...state, plan:"elite"})}>
+        <button className={"plan" + (state.plan === "max" ? " is-selected" : "")} onClick={()=>set({...state, plan:"max"})}>
           <span className="plan-tag dark">BEST VALUE</span>
-          <h3>Elite</h3>
-          <div className="pp"><strong>${annual ? "29.99" : "39.99"}</strong> / mo{annual ? " · billed annually" : ""}</div>
+          <h3>Max</h3>
+          <div className="pp"><strong>${annual ? "19.99" : "24.99"}</strong> / mo{annual ? " · billed annually" : ""}</div>
           <ul>
-            <li><span className="ck">{Ic.check}</span> <strong>Unlimited</strong> AI credits</li>
-            <li><span className="ck">{Ic.check}</span> Everything in Scholar Pro</li>
-            <li><span className="ck">{Ic.check}</span> AI detector + predictive grades</li>
-            <li><span className="ck">{Ic.check}</span> Subject tutors &amp; exam prep mode</li>
+            <li><span className="ck">{Ic.check}</span> <strong>1,500</strong> AI credits / month</li>
+            <li><span className="ck">{Ic.check}</span> Everything in Pro, no limits</li>
+            <li><span className="ck">{Ic.check}</span> Bulk operations &amp; advanced analytics</li>
             <li><span className="ck">{Ic.check}</span> Priority support</li>
+            <li><span className="ck">{Ic.check}</span> 3x XP &amp; cosmetics shop</li>
           </ul>
         </button>
       </div>
 
       <div className="paywall-foot">
-        <div className="pw-compare">Most students juggle 4 to 6 apps. Studlin is all of them, starting at <strong>${annual ? "14.99" : "19.99"}/mo</strong>.</div>
+        <div className="pw-compare">Most students juggle 4 to 6 apps. Studlin is all of them, starting at <strong>${annual ? "7.99" : "9.99"}/mo</strong>.</div>
         <button className="pw-skip" onClick={()=>set({...state, plan:"free"})}>{state.plan==="free" ? "✓ Continuing on the free plan" : "Maybe later · continue with limited free plan"}</button>
       </div>
     </div>
@@ -666,7 +666,7 @@ function StepWelcome({ state }) {
 function App() {
   const [step, setStep] = useState(0);
   const [state, setState] = useState(() => {
-    try { const saved = JSON.parse(localStorage.getItem("studlin-onboarding")||"null"); if (saved && typeof saved === "object") return {goals:[],plan:"scholar",...saved}; } catch(e){}
+    try { const saved = JSON.parse(localStorage.getItem("studlin-onboarding")||"null"); if (saved && typeof saved === "object") return {goals:[],plan:"pro",...saved}; } catch(e){}
     return { goals: [], plan: "scholar" };
   });
   const [signupErrors, setSignupErrors] = useState({});
