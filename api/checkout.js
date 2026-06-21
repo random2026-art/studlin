@@ -17,14 +17,14 @@ module.exports = async (req, res) => {
     const priceId = PRICES[plan];
     if (!priceId) return res.status(400).json({ error: 'Invalid plan' });
 
-    const origin = req.headers.origin || req.headers.referer || 'https://studlin.vercel.app';
+    const origin = 'https://studlin.vercel.app';
 
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       payment_method_types: ['card'],
       line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${origin}/Studlin Web App.html?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${origin}/Studlin Onboarding.html`,
+      success_url: `${origin}/Studlin%20Web%20App.html?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${origin}/Studlin%20Onboarding.html`,
     });
 
     res.status(200).json({ url: session.url });
