@@ -2308,13 +2308,26 @@ function App() {
   const [notifSeen,setNotifSeen]=useState(false);
   const [customDollars,setCustomDollars]=useState("");
   const [boughtMsg,setBoughtMsg]=useState("");
-  const buyCustom=()=>{
+  const buyPack=async(credits)=>{
+    setBoughtMsg("Redirecting to checkout...");
+    try{
+      const res=await fetch("/api/buy-credits",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({credits})});
+      const data=await res.json();
+      if(data.error){setBoughtMsg(data.error);return;}
+      window.location.href=data.url;
+    }catch(e){setBoughtMsg("Something went wrong.");}
+  };
+  const buyCustom=async()=>{
     let v=Math.floor(+customDollars||0);
     if(v<5){setBoughtMsg("Minimum purchase is $5.");return;}
-    v=Math.min(100000,v);
-    const credits=v*30;
-    setBoughtMsg("Success — added "+credits.toLocaleString()+" credits for $"+v.toLocaleString()+".");
-    setCustomDollars("");
+    if(v>100000){setBoughtMsg("Maximum purchase is $100,000.");return;}
+    setBoughtMsg("Redirecting to checkout...");
+    try{
+      const res=await fetch("/api/buy-credits",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({customAmount:v})});
+      const data=await res.json();
+      if(data.error){setBoughtMsg(data.error);return;}
+      window.location.href=data.url;
+    }catch(e){setBoughtMsg("Something went wrong.");}
   };
   const notifs=(()=>{
     const ev=lsGet("events",[]); const tk=dayKey();
@@ -2562,7 +2575,7 @@ function App() {
             {n:1000,p:"$24.99",save:"−31%",featured:true},
             {n:3000,p:"$59.99",save:"−45%"},
           ].map((pk,i)=>(
-            <div key={i} onClick={()=>setBoughtMsg("Success — added "+pk.n.toLocaleString()+" credits for "+pk.p+".")} style={{background:pk.featured?T.ink:T.card2,color:pk.featured?T.cream:T.text,borderRadius:10,padding:14,border:`1px solid ${pk.featured?T.ink:T.border}`,cursor:"pointer",position:"relative",transition:"transform 0.15s"}}>
+            <div key={i} onClick={()=>buyPack(pk.n)} style={{background:pk.featured?T.ink:T.card2,color:pk.featured?T.cream:T.text,borderRadius:10,padding:14,border:`1px solid ${pk.featured?T.ink:T.border}`,cursor:"pointer",position:"relative",transition:"transform 0.15s"}}>
               <div style={{fontFamily:T.hand,fontSize:34,fontWeight:700,color:pk.featured?T.lime:T.text,lineHeight:0.9,letterSpacing:"-0.01em"}}>{pk.n.toLocaleString()}</div>
               <div style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",color:pk.featured?"rgba(246,241,230,0.5)":T.muted,marginTop:2}}>CREDITS</div>
               <div style={{fontSize:16,fontWeight:600,marginTop:6,letterSpacing:"-0.02em"}}>{pk.p}</div>
