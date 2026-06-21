@@ -2308,14 +2308,53 @@ function App() {
   const [notifSeen,setNotifSeen]=useState(false);
   const [customDollars,setCustomDollars]=useState("");
   const [boughtMsg,setBoughtMsg]=useState("");
-  const buyPack=(credits)=>{
-    window.location.href="checkout.html?credits="+credits;
+  const [creditCheckout,setCreditCheckout]=useState(null);
+  const [creditProcessing,setCreditProcessing]=useState(false);
+  const payElRef=useRef(null);
+  const stripeElRef=useRef(null);
+  const stripePk='pk_live_51TLuXlFJjTMWMaWhX10200LKeE5JW0FHH2qp6evADegl2MIHuz26vUoBKyn7ug7Sb0akTI0MQHE34Ocyg2XeviKT00H9SklfJK';
+
+  const startCreditCheckout=async(credits,customAmount)=>{
+    setBoughtMsg("Loading payment...");
+    try{
+      const body=customAmount?{mode:"payment",customAmount}:{mode:"payment",credits};
+      const res=await fetch("/api/create-intent",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+      const data=await res.json();
+      if(data.error){setBoughtMsg(data.error);return;}
+      const label=customAmount?(customAmount*30).toLocaleString()+" credits":""+credits.toLocaleString()+" credits";
+      const price=customAmount?"$"+customAmount:({150:"$4.99",500:"$14.99",1000:"$24.99",3000:"$59.99"}[credits]||"$?.??");
+      setCreditCheckout({clientSecret:data.clientSecret,label,price,credits:credits||customAmount*30});
+      setBoughtMsg("");
+    }catch(e){setBoughtMsg("Something went wrong.");}
   };
+
+  useEffect(()=>{
+    if(!creditCheckout)return;
+    const s=typeof Stripe!=="undefined"?Stripe(stripePk):null;
+    if(!s)return;
+    const el=s.elements({clientSecret:creditCheckout.clientSecret,appearance:{theme:"night",variables:{fontFamily:"'Geist',sans-serif",colorPrimary:"#AECE5E",borderRadius:"10px",colorBackground:"#19211C",colorText:"#E8EFE7"}}});
+    const pe=el.create("payment",{layout:"tabs"});
+    setTimeout(()=>{const node=document.getElementById("stripe-pay-el");if(node)pe.mount(node);},50);
+    stripeElRef.current={stripe:s,elements:el};
+    return()=>{pe.destroy();};
+  },[creditCheckout]);
+
+  const confirmCreditPurchase=async()=>{
+    if(!stripeElRef.current)return;
+    setCreditProcessing(true);
+    const{stripe:s,elements:el}=stripeElRef.current;
+    const prof=getProfile();
+    const{error}=await s.confirmPayment({elements:el,confirmParams:{return_url:window.location.origin+"/Studlin%20Web%20App.html?payment=success",payment_method_data:{billing_details:{name:prof.name,email:prof.email}}},redirect:"if_required"});
+    if(error){setBoughtMsg(error.message);setCreditProcessing(false);}
+    else{setCreditCheckout(null);setCreditProcessing(false);setBoughtMsg("✓ "+creditCheckout.label+" added to your account!");}
+  };
+
+  const buyPack=(credits)=>startCreditCheckout(credits,null);
   const buyCustom=()=>{
     let v=Math.floor(+customDollars||0);
     if(v<5){setBoughtMsg("Minimum purchase is $5.");return;}
     if(v>100000){setBoughtMsg("Maximum purchase is $100,000.");return;}
-    window.location.href="checkout.html?credits=custom&amount="+v;
+    startCreditCheckout(null,v);
   };
   const notifs=(()=>{
     const ev=lsGet("events",[]); const tk=dayKey();
@@ -2540,67 +2579,90 @@ function App() {
           <div style={{fontSize:12,color:T.muted}}>All plans include a 14-day money-back guarantee. No credit card for Free or trial.</div>
         </div>
       </Modal>
-      <Modal open={creditsOpen} onClose={()=>setCreditsOpen(false)} title="AI Credits" sub="Every AI action uses credits. Top up, upgrade, or just check your balance." width={620}
-        footer={<><Btn variant="subtle" onClick={()=>setCreditsOpen(false)}>Close</Btn><a href="checkout.html?credits=500" style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",borderRadius:7,fontSize:12,fontWeight:600,background:T.lime,color:T.ink,textDecoration:"none",fontFamily:T.font}}>Buy credits</a></>}>
-        <div style={{background:T.lime,borderRadius:14,padding:"20px 22px",position:"relative",overflow:"hidden",marginBottom:18}}>
-          <div style={{position:"absolute",right:-30,top:-30,width:160,height:160,background:"radial-gradient(circle,rgba(255,255,255,0.45),transparent 70%)",pointerEvents:"none"}} />
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",position:"relative"}}>
-            <div>
-              <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",fontWeight:600,color:"rgba(14,31,24,0.6)"}}>CURRENT BALANCE</div>
-              <div style={{fontFamily:T.hand,fontSize:54,fontWeight:700,color:T.ink,lineHeight:0.9,marginTop:4}}>120<span style={{fontFamily:T.font,fontSize:18,fontWeight:500,color:"rgba(14,31,24,0.55)",marginLeft:4}}>/ 200</span></div>
-              <div style={{fontSize:12,color:"rgba(14,31,24,0.65)",marginTop:4}}>Resets in 12 days · 80 used this cycle</div>
-            </div>
-            <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.16em",fontWeight:700,background:T.ink,color:T.lime,padding:"4px 8px",borderRadius:5}}>PRO</span>
-          </div>
-          <div style={{height:5,background:"rgba(14,31,24,0.15)",borderRadius:99,marginTop:14,overflow:"hidden",position:"relative"}}><div style={{height:"100%",width:"36%",background:T.ink,borderRadius:99}} /></div>
-        </div>
+      <Modal open={creditsOpen} onClose={()=>{setCreditsOpen(false);setCreditCheckout(null);setBoughtMsg("");}} title={creditCheckout?"Complete purchase":"AI Credits"} sub={creditCheckout?("Purchase "+creditCheckout.label+" for "+creditCheckout.price):"Every AI action uses credits. Top up, upgrade, or just check your balance."} width={620}
+        footer={creditCheckout
+          ?<><Btn variant="subtle" onClick={()=>{setCreditCheckout(null);setBoughtMsg("");}}>← Back</Btn><Btn onClick={confirmCreditPurchase} disabled={creditProcessing} style={{background:T.lime,color:T.ink}}>{creditProcessing?"Processing...":"Pay "+creditCheckout.price}</Btn></>
+          :<><Btn variant="subtle" onClick={()=>setCreditsOpen(false)}>Close</Btn></>}>
 
-        <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.muted,textTransform:"uppercase",marginBottom:10}}>Quick top-up</div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:18}}>
-          {[
-            {n:150,p:"$4.99",save:null},
-            {n:500,p:"$14.99",save:"−17%"},
-            {n:1000,p:"$24.99",save:"−31%",featured:true},
-            {n:3000,p:"$59.99",save:"−45%"},
-          ].map((pk,i)=>(
-            <div key={i} onClick={()=>buyPack(pk.n)} style={{background:pk.featured?T.ink:T.card2,color:pk.featured?T.cream:T.text,borderRadius:10,padding:14,border:`1px solid ${pk.featured?T.ink:T.border}`,cursor:"pointer",position:"relative",transition:"transform 0.15s"}}>
-              <div style={{fontFamily:T.hand,fontSize:34,fontWeight:700,color:pk.featured?T.lime:T.text,lineHeight:0.9,letterSpacing:"-0.01em"}}>{pk.n.toLocaleString()}</div>
-              <div style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",color:pk.featured?"rgba(246,241,230,0.5)":T.muted,marginTop:2}}>CREDITS</div>
-              <div style={{fontSize:16,fontWeight:600,marginTop:6,letterSpacing:"-0.02em"}}>{pk.p}</div>
-              {pk.save && <div style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",fontWeight:700,color:pk.featured?T.lime:T.limeDk,marginTop:4}}>SAVE {pk.save}</div>}
-            </div>
-          ))}
-        </div>
-
-        <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.muted,textTransform:"uppercase",marginBottom:10}}>Buy a custom amount</div>
-        <div style={{display:"flex",gap:10,alignItems:"stretch",marginBottom:8,flexWrap:"wrap"}}>
-          <div style={{flex:1,minWidth:220,display:"flex",alignItems:"center",gap:8,background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"6px 14px"}}>
-            <span style={{fontSize:20,color:T.muted,fontWeight:600}}>$</span>
-            <input type="number" min="5" max="100000" value={customDollars} onChange={e=>setCustomDollars(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")buyCustom();}} placeholder="Enter any amount" style={{flex:1,minWidth:60,background:"none",border:"none",outline:"none",color:T.text,fontSize:18,fontWeight:600,fontFamily:T.font}} />
-            <span style={{fontSize:12,color:T.muted,whiteSpace:"nowrap"}}>≈ {Math.round(Math.min(100000,Math.max(0,+customDollars||0))*30).toLocaleString()} credits</span>
-          </div>
-          <button onClick={buyCustom} style={{background:T.lime,color:T.ink,border:"none",borderRadius:10,padding:"0 24px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Buy now</button>
-        </div>
-        {boughtMsg&&<div style={{fontSize:12.5,color:T.lime,fontWeight:600,marginBottom:8}}>{boughtMsg}</div>}
-        <div style={{fontSize:11,color:T.muted,marginBottom:18}}>Buy any amount you want — $5 minimum, $100,000 max. Roughly 30 credits per $1.</div>
-
-        <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.muted,textTransform:"uppercase",marginBottom:10}}>What costs what</div>
-        <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"4px 14px"}}>
-          {[["AI chat message","1"],["Citation generation","1"],["File upload + analysis","2"],["Plagiarism check","2"],["AI Humanizer run","2"],["Full essay analysis","3"],["Practice test generation","4"]].map(([k,v],i)=>(
-            <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:i<6?`1px solid ${T.border}`:"none",fontSize:13}}>
-              <span style={{color:T.text}}>{k}</span>
-              <span style={{fontFamily:T.mono,fontWeight:600,color:T.lime}}>{v}</span>
-            </div>
-          ))}
-        </div>
-
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:16,padding:"12px 14px",background:T.card2,borderRadius:10,border:`1px solid ${T.border}`}}>
+        {creditCheckout ? (
           <div>
-            <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>Hit your cap often?</div>
-            <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>Max plan gives you 500 credits / month.</div>
+            <div style={{background:T.lime,borderRadius:14,padding:"18px 20px",marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",fontWeight:600,color:"rgba(14,31,24,0.6)"}}>YOU'RE BUYING</div>
+                <div style={{fontFamily:T.hand,fontSize:36,fontWeight:700,color:T.ink,lineHeight:0.9,marginTop:4}}>{creditCheckout.label}</div>
+              </div>
+              <div style={{fontFamily:T.hand,fontSize:36,fontWeight:700,color:T.ink}}>{creditCheckout.price}</div>
+            </div>
+            <div id="stripe-pay-el" style={{minHeight:120,marginBottom:12}}></div>
+            {boughtMsg&&<div style={{fontSize:12.5,color:boughtMsg.startsWith("✓")?T.lime:T.red,fontWeight:600,marginTop:8}}>{boughtMsg}</div>}
+            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,fontSize:11,color:T.muted,marginTop:12}}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+              Secured by Stripe · 256-bit encryption
+            </div>
           </div>
-          <a href="checkout.html?plan=max&billing=monthly" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:600,background:T.ink,color:T.lime,textDecoration:"none",fontFamily:T.font}}>Upgrade to Max</a>
-        </div>
+        ) : (
+          <>
+            <div style={{background:T.lime,borderRadius:14,padding:"20px 22px",position:"relative",overflow:"hidden",marginBottom:18}}>
+              <div style={{position:"absolute",right:-30,top:-30,width:160,height:160,background:"radial-gradient(circle,rgba(255,255,255,0.45),transparent 70%)",pointerEvents:"none"}} />
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",position:"relative"}}>
+                <div>
+                  <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",fontWeight:600,color:"rgba(14,31,24,0.6)"}}>CURRENT BALANCE</div>
+                  <div style={{fontFamily:T.hand,fontSize:54,fontWeight:700,color:T.ink,lineHeight:0.9,marginTop:4}}>120<span style={{fontFamily:T.font,fontSize:18,fontWeight:500,color:"rgba(14,31,24,0.55)",marginLeft:4}}>/ 200</span></div>
+                  <div style={{fontSize:12,color:"rgba(14,31,24,0.65)",marginTop:4}}>Resets in 12 days · 80 used this cycle</div>
+                </div>
+                <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.16em",fontWeight:700,background:T.ink,color:T.lime,padding:"4px 8px",borderRadius:5}}>PRO</span>
+              </div>
+              <div style={{height:5,background:"rgba(14,31,24,0.15)",borderRadius:99,marginTop:14,overflow:"hidden",position:"relative"}}><div style={{height:"100%",width:"36%",background:T.ink,borderRadius:99}} /></div>
+            </div>
+
+            <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.muted,textTransform:"uppercase",marginBottom:10}}>Quick top-up</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:18}}>
+              {[
+                {n:150,p:"$4.99",save:null},
+                {n:500,p:"$14.99",save:"−17%"},
+                {n:1000,p:"$24.99",save:"−31%",featured:true},
+                {n:3000,p:"$59.99",save:"−45%"},
+              ].map((pk,i)=>(
+                <div key={i} onClick={()=>buyPack(pk.n)} style={{background:pk.featured?T.ink:T.card2,color:pk.featured?T.cream:T.text,borderRadius:10,padding:14,border:`1px solid ${pk.featured?T.ink:T.border}`,cursor:"pointer",position:"relative",transition:"transform 0.15s"}}>
+                  <div style={{fontFamily:T.hand,fontSize:34,fontWeight:700,color:pk.featured?T.lime:T.text,lineHeight:0.9,letterSpacing:"-0.01em"}}>{pk.n.toLocaleString()}</div>
+                  <div style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",color:pk.featured?"rgba(246,241,230,0.5)":T.muted,marginTop:2}}>CREDITS</div>
+                  <div style={{fontSize:16,fontWeight:600,marginTop:6,letterSpacing:"-0.02em"}}>{pk.p}</div>
+                  {pk.save && <div style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",fontWeight:700,color:pk.featured?T.lime:T.limeDk,marginTop:4}}>SAVE {pk.save}</div>}
+                </div>
+              ))}
+            </div>
+
+            <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.muted,textTransform:"uppercase",marginBottom:10}}>Buy a custom amount</div>
+            <div style={{display:"flex",gap:10,alignItems:"stretch",marginBottom:8,flexWrap:"wrap"}}>
+              <div style={{flex:1,minWidth:220,display:"flex",alignItems:"center",gap:8,background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"6px 14px"}}>
+                <span style={{fontSize:20,color:T.muted,fontWeight:600}}>$</span>
+                <input type="number" min="5" max="100000" value={customDollars} onChange={e=>setCustomDollars(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")buyCustom();}} placeholder="Enter any amount" style={{flex:1,minWidth:60,background:"none",border:"none",outline:"none",color:T.text,fontSize:18,fontWeight:600,fontFamily:T.font}} />
+                <span style={{fontSize:12,color:T.muted,whiteSpace:"nowrap"}}>≈ {Math.round(Math.min(100000,Math.max(0,+customDollars||0))*30).toLocaleString()} credits</span>
+              </div>
+              <button onClick={buyCustom} style={{background:T.lime,color:T.ink,border:"none",borderRadius:10,padding:"0 24px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Buy now</button>
+            </div>
+            {boughtMsg&&<div style={{fontSize:12.5,color:boughtMsg.startsWith("✓")?T.lime:T.red,fontWeight:600,marginBottom:8}}>{boughtMsg}</div>}
+            <div style={{fontSize:11,color:T.muted,marginBottom:18}}>Buy any amount you want — $5 minimum, $100,000 max. Roughly 30 credits per $1.</div>
+
+            <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.muted,textTransform:"uppercase",marginBottom:10}}>What costs what</div>
+            <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"4px 14px"}}>
+              {[["AI chat message","1"],["Citation generation","1"],["File upload + analysis","2"],["Plagiarism check","2"],["AI Humanizer run","2"],["Full essay analysis","3"],["Practice test generation","4"]].map(([k,v],i)=>(
+                <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:i<6?`1px solid ${T.border}`:"none",fontSize:13}}>
+                  <span style={{color:T.text}}>{k}</span>
+                  <span style={{fontFamily:T.mono,fontWeight:600,color:T.lime}}>{v}</span>
+                </div>
+              ))}
+            </div>
+
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:16,padding:"12px 14px",background:T.card2,borderRadius:10,border:`1px solid ${T.border}`}}>
+              <div>
+                <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>Hit your cap often?</div>
+                <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>Max plan gives you 500 credits / month.</div>
+              </div>
+              <a href="checkout.html?plan=max&billing=monthly" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:600,background:T.ink,color:T.lime,textDecoration:"none",fontFamily:T.font}}>Upgrade to Max</a>
+            </div>
+          </>
+        )}
       </Modal>
 
       <style>{`
