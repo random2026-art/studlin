@@ -1,8 +1,17 @@
 {
   "functions": {
-    "api/checkout.js": {
-      "memory": 128,
-      "maxDuration": 10
+    "api/checkout.js": { "memory": 128, "maxDuration": 10 },
+    "api/create-intent.js": { "memory": 128, "maxDuration": 10 },
+    "api/buy-credits.js": { "memory": 128, "maxDuration": 10 }
+  },
+  "headers": [
+    {
+      "source": "/checkout.html",
+      "headers": [{ "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }]
+    },
+    {
+      "source": "/studlin-app.jsx",
+      "headers": [{ "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }]
     }
-  }
+  ]
 }
