@@ -15,17 +15,27 @@ module.exports = async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    const { plan } = req.body;
+    const { plan, email, name, country } = req.body;
     const priceId = PRICES[plan];
     if (!priceId) return res.status(400).json({ error: 'Invalid plan. Use: pro_monthly, pro_annual, max_monthly, max_annual' });
+    if (!email) return res.status(400).json({ error: 'Email is required.' });
 
-    const customer = await stripe.customers.create();
+    const customer = await stripe.customers.create({
+      email,
+      name: name || undefined,
+      address: { country: country || undefined },
+      metadata: {
+        plan,
+        signup_source: 'checkout_page',
+      },
+    });
 
     const subscription = await stripe.subscriptions.create({
       customer: customer.id,
       items: [{ price: priceId }],
       payment_behavior: 'default_incomplete',
       payment_settings: { save_default_payment_method: 'on_subscription' },
+      trial_period_days: 7,
       expand: ['latest_invoice.payment_intent'],
     });
 

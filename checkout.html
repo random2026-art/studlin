@@ -376,6 +376,9 @@ body {
       <button id="btnAnnual" onclick="setBilling('annual')">Annual <span class="save">Save 20%</span></button>
     </div>
 
+    <label class="form-label">Full name</label>
+    <input type="text" class="form-input" id="fullName" placeholder="Your full name">
+
     <label class="form-label">Email</label>
     <input type="email" class="form-input" id="email" placeholder="you@school.edu">
 
@@ -425,7 +428,7 @@ const PLAN_DATA = {
     name: 'STUDLIN PRO',
     monthly: '$9.99',
     annual: '$7.99',
-    annualTotal: '$95.88/year',
+    annualTotal: '$95.88',
     features: [
       '300 AI credits / month',
       'Full writing suite + AI Humanizer',
@@ -438,7 +441,7 @@ const PLAN_DATA = {
     name: 'STUDLIN MAX',
     monthly: '$24.99',
     annual: '$19.99',
-    annualTotal: '$239.88/year',
+    annualTotal: '$239.88',
     features: [
       '1,500 AI credits / month',
       'Everything in Pro, no limits',
@@ -451,15 +454,15 @@ const PLAN_DATA = {
 
 function updateUI() {
   const p = PLAN_DATA[plan] || PLAN_DATA.pro;
-  const price = billing === 'annual' ? p.annual : p.monthly;
-  const period = billing === 'annual' ? '/ mo · billed annually' : '/ month';
+  const price = billing === 'annual' ? p.annualTotal : p.monthly;
+  const period = billing === 'annual' ? '/ year' : '/ month';
   document.getElementById('summaryPlanName').textContent = p.name;
   document.getElementById('summaryPrice').innerHTML = price + ' <span class="per">' + period + '</span>';
   document.getElementById('summaryNote').textContent = billing === 'annual'
-    ? '$0.00 today · ' + p.annualTotal + ' after 7-day trial'
+    ? '$0.00 today · ' + p.annualTotal + '/year after 7-day trial'
     : '$0.00 today · billed after 7-day trial';
   document.getElementById('trialEnd').textContent = billing === 'annual'
-    ? 'Subscription begins at ' + p.annual + '/mo billed annually'
+    ? 'Subscription begins at ' + p.annualTotal + '/year'
     : 'Subscription begins at ' + price + '/mo';
   document.getElementById('summaryFeatures').innerHTML = p.features.map(f =>
     '<li><span class="ck">✓</span> ' + f + '</li>'
@@ -478,7 +481,11 @@ updateUI();
 
 async function handlePayment() {
   const btn = document.getElementById('payBtn');
-  const email = document.getElementById('email').value;
+  const fullName = document.getElementById('fullName').value.trim();
+  const email = document.getElementById('email').value.trim();
+  const country = document.getElementById('country').value.trim();
+
+  if (!fullName) { document.getElementById('card-errors').textContent = 'Please enter your name.'; return; }
   if (!email) { document.getElementById('card-errors').textContent = 'Please enter your email.'; return; }
 
   btn.disabled = true;
@@ -490,7 +497,7 @@ async function handlePayment() {
     const res = await fetch('/api/checkout', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ plan: planKey }),
+      body: JSON.stringify({ plan: planKey, email, name: fullName, country }),
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error);
@@ -498,7 +505,11 @@ async function handlePayment() {
     const { error } = await stripe.confirmCardPayment(data.clientSecret, {
       payment_method: {
         card: card,
-        billing_details: { email: email },
+        billing_details: {
+          name: fullName,
+          email: email,
+          address: { country: country },
+        },
       },
     });
 

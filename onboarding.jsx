@@ -443,7 +443,7 @@ function StepPlan({ state, set }) {
         <button className={"plan" + (state.plan === "pro" ? " is-selected" : "")} onClick={()=>set({...state, plan:"pro"})}>
           <span className="plan-tag">7 DAYS FREE</span>
           <h3>Pro</h3>
-          <div className="pp"><strong>${annual ? "7.99" : "9.99"}</strong> / mo{annual ? " · billed annually" : ""}</div>
+          <div className="pp"><strong>${annual ? "95.88" : "9.99"}</strong> / {annual ? "year" : "mo"}</div>
           <ul>
             <li><span className="ck">{Ic.check}</span> 300 AI credits / month</li>
             <li><span className="ck">{Ic.check}</span> Full writing suite + AI Humanizer</li>
@@ -455,7 +455,7 @@ function StepPlan({ state, set }) {
         <button className={"plan" + (state.plan === "max" ? " is-selected" : "")} onClick={()=>set({...state, plan:"max"})}>
           <span className="plan-tag dark">BEST VALUE</span>
           <h3>Max</h3>
-          <div className="pp"><strong>${annual ? "19.99" : "24.99"}</strong> / mo{annual ? " · billed annually" : ""}</div>
+          <div className="pp"><strong>${annual ? "239.88" : "24.99"}</strong> / {annual ? "year" : "mo"}</div>
           <ul>
             <li><span className="ck">{Ic.check}</span> <strong>1,500</strong> AI credits / month</li>
             <li><span className="ck">{Ic.check}</span> Everything in Pro, no limits</li>
@@ -467,7 +467,7 @@ function StepPlan({ state, set }) {
       </div>
 
       <div className="paywall-foot">
-        <div className="pw-compare">Most students juggle 4 to 6 apps. Studlin is all of them, starting at <strong>${annual ? "7.99" : "9.99"}/mo</strong>.</div>
+        <div className="pw-compare">Most students juggle 4 to 6 apps. Studlin is all of them, starting at <strong>${annual ? "95.88" : "9.99"}/{annual ? "year" : "mo"}</strong>.</div>
         <button className="pw-skip" onClick={()=>set({...state, plan:"free"})}>{state.plan==="free" ? "✓ Continuing on the free plan" : "Maybe later · continue with limited free plan"}</button>
       </div>
     </div>
