@@ -741,6 +741,21 @@ function App() {
 
   const CTA_LABEL = ["Sign up for free","Continue","Continue","Continue","Continue","Looks good", (state.plan==="free" ? "Continue with free plan" : "Start 7-day free trial"),"Enter Studlin"][step];
 
+  const handleCheckout = async () => {
+    if (state.plan === "free") { next(); return; }
+    const planKey = state.plan === "max" ? "max_monthly" : "pro_monthly";
+    try {
+      const res = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan: planKey }),
+      });
+      const data = await res.json();
+      if (data.url) window.location.href = data.url;
+      else alert("Something went wrong. Please try again.");
+    } catch(e) { alert("Payment error. Please try again."); }
+  };
+
   const isPaywall = step === 6;
   return (
     <div className={"shell" + (isPaywall ? " paywall-mode" : "")}>
@@ -764,7 +779,7 @@ function App() {
 
         <div className="stage-foot">
           {step < STEPS.length-1 ? (
-            <button className="cta" disabled={!isStepValid()} onClick={next}>
+            <button className="cta" disabled={!isStepValid()} onClick={step === 6 ? handleCheckout : next}>
               {CTA_LABEL}
               <span className="arrow">{Ic.arrow}</span>
             </button>
