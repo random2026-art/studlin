@@ -1765,8 +1765,8 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 </div>
               </div>
               <div style={{display:"flex",gap:8,marginTop:18}}>
-                <a href="Studlin Credits.html" style={{background:T.bg,color:T.lime,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Buy credit packs</a>
-                <a href="Studlin Credits.html" style={{background:"transparent",border:`1px solid ${T.bg}55`,color:T.bg,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Upgrade to Max</a>
+                <a href="checkout.html?credits=500" style={{background:T.bg,color:T.lime,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Buy credit packs</a>
+                <a href="checkout.html?plan=max&billing=monthly" style={{background:"transparent",border:`1px solid ${T.bg}55`,color:T.bg,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Upgrade to Max</a>
               </div>
             </Card>
             <Card style={{marginBottom:12}}>
@@ -2541,7 +2541,7 @@ function App() {
         </div>
       </Modal>
       <Modal open={creditsOpen} onClose={()=>setCreditsOpen(false)} title="AI Credits" sub="Every AI action uses credits. Top up, upgrade, or just check your balance." width={620}
-        footer={<><Btn variant="subtle" onClick={()=>setCreditsOpen(false)}>Close</Btn><a href="Studlin Credits.html" style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",borderRadius:7,fontSize:12,fontWeight:600,background:T.lime,color:T.ink,textDecoration:"none",fontFamily:T.font}}>Open full credits page</a></>}>
+        footer={<><Btn variant="subtle" onClick={()=>setCreditsOpen(false)}>Close</Btn><a href="checkout.html?credits=500" style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",borderRadius:7,fontSize:12,fontWeight:600,background:T.lime,color:T.ink,textDecoration:"none",fontFamily:T.font}}>Buy credits</a></>}>
         <div style={{background:T.lime,borderRadius:14,padding:"20px 22px",position:"relative",overflow:"hidden",marginBottom:18}}>
           <div style={{position:"absolute",right:-30,top:-30,width:160,height:160,background:"radial-gradient(circle,rgba(255,255,255,0.45),transparent 70%)",pointerEvents:"none"}} />
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",position:"relative"}}>
@@ -2599,7 +2599,7 @@ function App() {
             <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>Hit your cap often?</div>
             <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>Max plan gives you 500 credits / month.</div>
           </div>
-          <a href="Studlin Credits.html" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:600,background:T.ink,color:T.lime,textDecoration:"none",fontFamily:T.font}}>Upgrade to Max</a>
+          <a href="checkout.html?plan=max&billing=monthly" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:600,background:T.ink,color:T.lime,textDecoration:"none",fontFamily:T.font}}>Upgrade to Max</a>
         </div>
       </Modal>
 
