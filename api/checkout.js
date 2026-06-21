@@ -24,10 +24,7 @@ module.exports = async (req, res) => {
       email,
       name: name || undefined,
       address: { country: country || undefined },
-      metadata: {
-        plan,
-        signup_source: 'checkout_page',
-      },
+      metadata: { plan, signup_source: 'checkout_page' },
     });
 
     const subscription = await stripe.subscriptions.create({
@@ -36,13 +33,19 @@ module.exports = async (req, res) => {
       payment_behavior: 'default_incomplete',
       payment_settings: { save_default_payment_method: 'on_subscription' },
       trial_period_days: 7,
-      expand: ['latest_invoice.payment_intent'],
+      expand: ['latest_invoice.payment_intent', 'pending_setup_intent'],
     });
 
-    res.status(200).json({
-      subscriptionId: subscription.id,
-      clientSecret: subscription.latest_invoice.payment_intent.client_secret,
-    });
+    let clientSecret, intentType;
+    if (subscription.pending_setup_intent) {
+      clientSecret = subscription.pending_setup_intent.client_secret;
+      intentType = 'setup';
+    } else {
+      clientSecret = subscription.latest_invoice.payment_intent.client_secret;
+      intentType = 'payment';
+    }
+
+    res.status(200).json({ subscriptionId: subscription.id, clientSecret, intentType });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

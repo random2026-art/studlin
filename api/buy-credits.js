@@ -15,38 +15,38 @@ module.exports = async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    const { credits, customAmount } = req.body;
+    const { credits, customAmount, email, name } = req.body;
 
-    let amountCents, label;
+    let amountCents, label, creditCount;
 
     if (customAmount) {
       const dollars = Math.floor(+customAmount);
       if (dollars < 5) return res.status(400).json({ error: 'Minimum purchase is $5.' });
       if (dollars > 100000) return res.status(400).json({ error: 'Maximum purchase is $100,000.' });
       amountCents = dollars * 100;
-      label = (dollars * 30).toLocaleString() + ' AI Credits';
+      creditCount = dollars * 30;
+      label = creditCount.toLocaleString() + ' AI Credits';
     } else {
       const pack = PACKS[credits];
       if (!pack) return res.status(400).json({ error: 'Invalid credit pack.' });
       amountCents = pack.amount;
       label = pack.label;
+      creditCount = credits;
     }
 
-    const session = await stripe.checkout.sessions.create({
-      mode: 'payment',
-      line_items: [{
-        price_data: {
-          currency: 'usd',
-          product_data: { name: label, description: 'Studlin AI credit top-up' },
-          unit_amount: amountCents,
-        },
-        quantity: 1,
-      }],
-      success_url: req.headers.origin + '/Studlin%20Web%20App.html?credits=success',
-      cancel_url: req.headers.origin + '/Studlin%20Web%20App.html?credits=cancelled',
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: amountCents,
+      currency: 'usd',
+      metadata: { credits: String(creditCount), type: 'credit_topup', label },
+      receipt_email: email || undefined,
     });
 
-    res.status(200).json({ url: session.url });
+    res.status(200).json({
+      clientSecret: paymentIntent.client_secret,
+      intentType: 'payment',
+      amount: amountCents,
+      label,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

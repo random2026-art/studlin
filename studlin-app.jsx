@@ -2308,26 +2308,14 @@ function App() {
   const [notifSeen,setNotifSeen]=useState(false);
   const [customDollars,setCustomDollars]=useState("");
   const [boughtMsg,setBoughtMsg]=useState("");
-  const buyPack=async(credits)=>{
-    setBoughtMsg("Redirecting to checkout...");
-    try{
-      const res=await fetch("/api/buy-credits",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({credits})});
-      const data=await res.json();
-      if(data.error){setBoughtMsg(data.error);return;}
-      window.location.href=data.url;
-    }catch(e){setBoughtMsg("Something went wrong.");}
+  const buyPack=(credits)=>{
+    window.location.href="checkout.html?credits="+credits;
   };
-  const buyCustom=async()=>{
+  const buyCustom=()=>{
     let v=Math.floor(+customDollars||0);
     if(v<5){setBoughtMsg("Minimum purchase is $5.");return;}
     if(v>100000){setBoughtMsg("Maximum purchase is $100,000.");return;}
-    setBoughtMsg("Redirecting to checkout...");
-    try{
-      const res=await fetch("/api/buy-credits",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({customAmount:v})});
-      const data=await res.json();
-      if(data.error){setBoughtMsg(data.error);return;}
-      window.location.href=data.url;
-    }catch(e){setBoughtMsg("Something went wrong.");}
+    window.location.href="checkout.html?credits=custom&amount="+v;
   };
   const notifs=(()=>{
     const ev=lsGet("events",[]); const tk=dayKey();

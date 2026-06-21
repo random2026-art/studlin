@@ -248,16 +248,9 @@ body {
 .form-input:focus { border-color: var(--ink); }
 .form-input::placeholder { color: var(--muted); }
 
-#card-element {
-  padding: 14px 16px;
-  border: 1.5px solid var(--line);
-  border-radius: 12px;
-  background: white;
-  transition: border-color 0.15s;
+#payment-element {
   margin-bottom: 8px;
 }
-#card-element.StripeElement--focus { border-color: var(--ink); }
-#card-element.StripeElement--invalid { border-color: #C4544A; }
 #card-errors {
   font-size: 12.5px;
   color: #C4544A;
@@ -333,25 +326,17 @@ body {
 <div class="checkout">
   <div class="summary">
     <div class="brand"><span class="glyph">S</span> Studlin</div>
-    <h2>Start your <em>free trial.</em></h2>
-    <p class="sub">7 days free. Cancel anytime. We'll remind you 2 days before your trial ends.</p>
+    <h2 id="summaryHeading">Start your <em>free trial.</em></h2>
+    <p class="sub" id="summarySub">7 days free. Cancel anytime. We'll remind you 2 days before your trial ends.</p>
 
     <div class="plan-card">
       <div class="plan-name" id="summaryPlanName">STUDLIN PRO</div>
       <div class="plan-price" id="summaryPrice">$9.99 <span class="per">/ month</span></div>
       <div class="plan-note" id="summaryNote">$0.00 today · billed after 7-day trial</div>
-      <ul class="plan-features" id="summaryFeatures">
-        <li><span class="ck">✓</span> 200 AI credits / month</li>
-        <li><span class="ck">✓</span> AI tutor — all models + 4 study modes</li>
-        <li><span class="ck">✓</span> Full essay suite + plagiarism check</li>
-        <li><span class="ck">✓</span> AI flashcards from notes, PDFs & YouTube</li>
-        <li><span class="ck">✓</span> Google Docs sync + AI Rewrite (Humanizer)</li>
-        <li><span class="ck">✓</span> Unlimited grammar + readability scores</li>
-        <li><span class="ck">✓</span> Squad leaderboards + 2× focus XP</li>
-      </ul>
+      <ul class="plan-features" id="summaryFeatures"></ul>
     </div>
 
-    <div class="trial-timeline">
+    <div class="trial-timeline" id="trialTimeline">
       <h4>How your trial works</h4>
       <div class="tl-step">
         <div class="tl-dot"></div>
@@ -369,11 +354,11 @@ body {
   </div>
 
   <div class="form-side">
-    <a href="Studlin Onboarding.html" class="back-link">← Back to plans</a>
-    <h3>Enter your payment details</h3>
-    <p class="form-sub">Your card won't be charged today.</p>
+    <a href="Studlin Onboarding.html" class="back-link" id="backLink">← Back to plans</a>
+    <h3 id="formHeading">Enter your payment details</h3>
+    <p class="form-sub" id="formSub">Your card won't be charged today.</p>
 
-    <div class="billing-toggle">
+    <div class="billing-toggle" id="billingToggle">
       <button class="active" id="btnMonthly" onclick="setBilling('monthly')">Monthly</button>
       <button id="btnAnnual" onclick="setBilling('annual')">Annual <span class="save">Save 20%</span></button>
     </div>
@@ -384,12 +369,9 @@ body {
     <label class="form-label">Email</label>
     <input type="email" class="form-input" id="email" placeholder="you@school.edu">
 
-    <label class="form-label">Card details</label>
-    <div id="card-element"></div>
+    <label class="form-label" id="paymentLabel">Payment</label>
+    <div id="payment-element"></div>
     <div id="card-errors" role="alert"></div>
-
-    <label class="form-label">Country</label>
-    <input type="text" class="form-input" id="country" value="United States" placeholder="Country">
 
     <button class="pay-btn" id="payBtn" onclick="handlePayment()">Start free trial</button>
 
@@ -397,31 +379,17 @@ body {
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
       Secured by Stripe · 256-bit encryption
     </div>
-    <div class="cancel-note">Cancel anytime from your account settings.<br>No questions asked.</div>
+    <div class="cancel-note" id="cancelNote">Cancel anytime from your account settings.<br>No questions asked.</div>
   </div>
 </div>
 
 <script>
 const PK = 'pk_live_51TLuXlFJjTMWMaWhX10200LKeE5JW0FHH2qp6evADegl2MIHuz26vUoBKyn7ug7Sb0akTI0MQHE34Ocyg2XeviKT00H9SklfJK';
 const stripe = Stripe(PK);
-const elements = stripe.elements();
-const card = elements.create('card', {
-  style: {
-    base: {
-      fontSize: '15px',
-      fontFamily: "'Geist', -apple-system, sans-serif",
-      color: '#0E1F18',
-      '::placeholder': { color: 'rgba(14,31,24,0.4)' },
-    },
-    invalid: { color: '#C4544A' },
-  }
-});
-card.mount('#card-element');
-card.on('change', (e) => {
-  document.getElementById('card-errors').textContent = e.error ? e.error.message : '';
-});
 
 const params = new URLSearchParams(window.location.search);
+const creditParam = params.get('credits');
+const isCredits = creditParam !== null;
 let plan = params.get('plan') || 'pro';
 let billing = params.get('billing') || 'monthly';
 
@@ -457,24 +425,111 @@ const PLAN_DATA = {
   },
 };
 
-function updateUI() {
-  const p = PLAN_DATA[plan] || PLAN_DATA.pro;
-  const price = billing === 'annual' ? p.annualTotal : p.monthly;
-  const period = billing === 'annual' ? '/ year' : '/ month';
-  document.getElementById('summaryPlanName').textContent = p.name;
-  document.getElementById('summaryPrice').innerHTML = price + ' <span class="per">' + period + '</span>';
-  document.getElementById('summaryNote').textContent = billing === 'annual'
-    ? '$0.00 today · ' + p.annualTotal + '/year after 7-day trial'
-    : '$0.00 today · billed after 7-day trial';
-  document.getElementById('trialEnd').textContent = billing === 'annual'
-    ? 'Subscription begins at ' + p.annualTotal + '/year'
-    : 'Subscription begins at ' + price + '/mo';
-  document.getElementById('summaryFeatures').innerHTML = p.features.map(f =>
-    '<li><span class="ck">✓</span> ' + f + '</li>'
-  ).join('');
+const CREDIT_PACKS = {
+  '150':  { price: '$4.99',  cents: 499,  label: '150 AI Credits' },
+  '500':  { price: '$14.99', cents: 1499, label: '500 AI Credits' },
+  '1000': { price: '$24.99', cents: 2499, label: '1,000 AI Credits' },
+  '3000': { price: '$59.99', cents: 5999, label: '3,000 AI Credits' },
+};
 
-  document.getElementById('btnMonthly').className = billing === 'monthly' ? 'active' : '';
-  document.getElementById('btnAnnual').className = billing === 'annual' ? 'active' : '';
+let elements, paymentElement;
+
+function initElements() {
+  let opts;
+  if (isCredits) {
+    const customAmt = params.get('amount');
+    let cents;
+    if (creditParam === 'custom' && customAmt) {
+      const dollars = Math.max(5, Math.min(100000, Math.floor(+customAmt)));
+      cents = dollars * 100;
+    } else {
+      const pack = CREDIT_PACKS[creditParam];
+      cents = pack ? pack.cents : 499;
+    }
+    opts = { mode: 'payment', amount: cents, currency: 'usd' };
+  } else {
+    opts = { mode: 'setup', currency: 'usd' };
+  }
+
+  opts.appearance = {
+    theme: 'stripe',
+    variables: {
+      fontFamily: "'Geist', -apple-system, sans-serif",
+      colorPrimary: '#0E1F18',
+      borderRadius: '12px',
+    },
+  };
+
+  elements = stripe.elements(opts);
+  paymentElement = elements.create('payment', {
+    layout: { type: 'tabs' },
+  });
+  paymentElement.mount('#payment-element');
+}
+
+function updateUI() {
+  if (isCredits) {
+    const customAmt = params.get('amount');
+    let label, price, note;
+    if (creditParam === 'custom' && customAmt) {
+      const dollars = Math.max(5, Math.min(100000, Math.floor(+customAmt)));
+      const credits = (dollars * 30).toLocaleString();
+      label = 'CREDIT TOP-UP';
+      price = '$' + dollars.toLocaleString();
+      note = credits + ' AI credits added to your account';
+    } else {
+      const pack = CREDIT_PACKS[creditParam];
+      if (pack) {
+        label = 'CREDIT TOP-UP';
+        price = pack.price;
+        note = pack.label + ' added to your account';
+      } else {
+        label = 'CREDIT TOP-UP';
+        price = '$4.99';
+        note = '150 AI credits added to your account';
+      }
+    }
+
+    document.getElementById('summaryHeading').innerHTML = 'Top up your <em>credits.</em>';
+    document.getElementById('summarySub').textContent = 'Credits are added instantly after payment. Use them across all AI features.';
+    document.getElementById('summaryPlanName').textContent = label;
+    document.getElementById('summaryPrice').innerHTML = price + ' <span class="per">one-time</span>';
+    document.getElementById('summaryNote').textContent = note;
+    document.getElementById('summaryFeatures').innerHTML = [
+      'Instant delivery to your account',
+      'Works with AI chat, flashcards, essays & more',
+      'Credits never expire',
+      'Top up anytime you need more',
+    ].map(f => '<li><span class="ck">✓</span> ' + f + '</li>').join('');
+
+    document.getElementById('trialTimeline').style.display = 'none';
+    document.getElementById('billingToggle').style.display = 'none';
+    document.getElementById('formHeading').textContent = 'Complete your purchase';
+    document.getElementById('formSub').textContent = 'You will be charged immediately.';
+    document.getElementById('payBtn').textContent = 'Pay ' + price;
+    document.getElementById('cancelNote').innerHTML = 'Credits are non-refundable.<br>Need help? Contact support.';
+    document.getElementById('backLink').href = 'Studlin Web App.html';
+    document.getElementById('backLink').textContent = '← Back to app';
+  } else {
+    const p = PLAN_DATA[plan] || PLAN_DATA.pro;
+    const price = billing === 'annual' ? p.annualTotal : p.monthly;
+    const period = billing === 'annual' ? '/ year' : '/ month';
+    document.getElementById('summaryPlanName').textContent = p.name;
+    document.getElementById('summaryPrice').innerHTML = price + ' <span class="per">' + period + '</span>';
+    document.getElementById('summaryNote').textContent = billing === 'annual'
+      ? '$0.00 today · ' + p.annualTotal + '/year after 7-day trial'
+      : '$0.00 today · billed after 7-day trial';
+    document.getElementById('trialEnd').textContent = billing === 'annual'
+      ? 'Subscription begins at ' + p.annualTotal + '/year'
+      : 'Subscription begins at ' + price + '/mo';
+    document.getElementById('summaryFeatures').innerHTML = p.features.map(f =>
+      '<li><span class="ck">✓</span> ' + f + '</li>'
+    ).join('');
+
+    document.getElementById('btnMonthly').className = billing === 'monthly' ? 'active' : '';
+    document.getElementById('btnAnnual').className = billing === 'annual' ? 'active' : '';
+    document.getElementById('payBtn').textContent = 'Start free trial';
+  }
 }
 
 function setBilling(b) {
@@ -483,57 +538,92 @@ function setBilling(b) {
 }
 
 updateUI();
+initElements();
 
 async function handlePayment() {
   const btn = document.getElementById('payBtn');
   const fullName = document.getElementById('fullName').value.trim();
   const email = document.getElementById('email').value.trim();
-  const country = document.getElementById('country').value.trim();
+  const errEl = document.getElementById('card-errors');
 
-  if (!fullName) { document.getElementById('card-errors').textContent = 'Please enter your name.'; return; }
-  if (!email) { document.getElementById('card-errors').textContent = 'Please enter your email.'; return; }
+  if (!fullName) { errEl.textContent = 'Please enter your name.'; return; }
+  if (!email) { errEl.textContent = 'Please enter your email.'; return; }
 
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Processing...';
+  errEl.textContent = '';
 
-  const planKey = plan + '_' + billing;
+  const { error: submitError } = await elements.submit();
+  if (submitError) {
+    errEl.textContent = submitError.message;
+    btn.disabled = false;
+    btn.textContent = isCredits ? 'Pay' : 'Start free trial';
+    return;
+  }
 
   try {
-    const res = await fetch('/api/checkout', {
+    let apiUrl, apiBody;
+
+    if (isCredits) {
+      apiUrl = '/api/buy-credits';
+      const customAmt = params.get('amount');
+      if (creditParam === 'custom' && customAmt) {
+        apiBody = { customAmount: Math.floor(+customAmt), email, name: fullName };
+      } else {
+        apiBody = { credits: +creditParam, email, name: fullName };
+      }
+    } else {
+      apiUrl = '/api/checkout';
+      apiBody = { plan: plan + '_' + billing, email, name: fullName, country: 'US' };
+    }
+
+    const res = await fetch(apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ plan: planKey, email, name: fullName, country }),
+      body: JSON.stringify(apiBody),
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error);
 
-    const { error } = await stripe.confirmCardPayment(data.clientSecret, {
-      payment_method: {
-        card: card,
-        billing_details: {
-          name: fullName,
-          email: email,
-          address: { country: country },
-        },
-      },
-    });
+    const returnUrl = window.location.origin + '/Studlin%20Web%20App.html?payment=success';
+    let result;
 
-    if (error) {
-      document.getElementById('card-errors').textContent = error.message;
+    if (data.intentType === 'setup') {
+      result = await stripe.confirmSetup({
+        elements,
+        clientSecret: data.clientSecret,
+        confirmParams: {
+          return_url: returnUrl,
+          payment_method_data: { billing_details: { name: fullName, email: email } },
+        },
+        redirect: 'if_required',
+      });
+    } else {
+      result = await stripe.confirmPayment({
+        elements,
+        clientSecret: data.clientSecret,
+        confirmParams: {
+          return_url: returnUrl,
+          payment_method_data: { billing_details: { name: fullName, email: email } },
+        },
+        redirect: 'if_required',
+      });
+    }
+
+    if (result.error) {
+      errEl.textContent = result.error.message;
       btn.disabled = false;
-      btn.textContent = 'Start free trial';
+      btn.textContent = isCredits ? 'Pay' : 'Start free trial';
     } else {
       btn.innerHTML = '✓ Success!';
       btn.style.background = '#0E1F18';
       btn.style.color = '#F6F1E6';
-      setTimeout(() => {
-        window.location.href = 'Studlin Web App.html';
-      }, 1500);
+      setTimeout(() => { window.location.href = 'Studlin Web App.html'; }, 1500);
     }
   } catch (err) {
-    document.getElementById('card-errors').textContent = err.message || 'Something went wrong.';
+    errEl.textContent = err.message || 'Something went wrong.';
     btn.disabled = false;
-    btn.textContent = 'Start free trial';
+    btn.textContent = isCredits ? 'Pay' : 'Start free trial';
   }
 }
 </script>
