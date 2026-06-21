@@ -2,7 +2,8 @@
   "functions": {
     "api/checkout.js": { "memory": 128, "maxDuration": 10 },
     "api/create-intent.js": { "memory": 128, "maxDuration": 10 },
-    "api/buy-credits.js": { "memory": 128, "maxDuration": 10 }
+    "api/buy-credits.js": { "memory": 128, "maxDuration": 10 },
+    "api/search-videos.js": { "memory": 128, "maxDuration": 10 }
   },
   "headers": [
     {

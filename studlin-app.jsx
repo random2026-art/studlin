@@ -1139,120 +1139,93 @@ function AiTutor(){
   const [newSub,setNewSub]=useState("");
   const [q,setQ]=useState("");
   const [playing,setPlaying]=useState(null);
-  const [shuffleKey,setShuffleKey]=useState(0);
+  const [subjectVideos,setSubjectVideos]=useState([]);
+  const [searchResults,setSearchResults]=useState(null);
+  const [loading,setLoading]=useState(false);
+  const [searchLoading,setSearchLoading]=useState(false);
   const subColor={"English IV":T.purple,"Biology":T.teal,"Calculus":T.blue,"Spanish":T.amber,"Chemistry":T.red,"History":T.muted};
   const colorOf=(sb)=>subColor[sb]||T.lime;
 
-  const VIDEO_LIB={
-    "English IV":[
-      {id:"pXSSKBNDnRY",t:"How to Write a Perfect Essay",ch:"TED-Ed",dur:"4:36"},
-      {id:"OV5J6BfToSw",t:"Essay Writing — How to Structure",ch:"First Rate Tutors",dur:"10:14"},
-      {id:"vlwk02UqJhM",t:"Literary Devices Every Student Should Know",ch:"GrammarStar",dur:"9:42"},
-      {id:"HeZ4hVsmTtc",t:"How to Analyze Literature",ch:"Course Hero",dur:"4:39"},
-      {id:"YAKcbvioxFk",t:"Shakespeare's Macbeth — Summary & Analysis",ch:"SparkNotes",dur:"8:51"},
-      {id:"3jVcp4mN7JE",t:"How to Write a Thesis Statement",ch:"Scribbr",dur:"5:17"},
-    ],
-    "Biology":[
-      {id:"QnQe0xW_JY4",t:"Biology: Cell Structure",ch:"Nucleus Biology",dur:"10:22"},
-      {id:"dQw4w9WgXcQ",t:"DNA Replication — Step by Step",ch:"Amoeba Sisters",dur:"7:58"},
-      {id:"GcjgWov7mTM",t:"Photosynthesis — Light Reactions",ch:"Bozeman Science",dur:"12:03"},
-      {id:"LQMTJg_i4OE",t:"The Krebs Cycle — Explained Simply",ch:"Ninja Nerd",dur:"18:37"},
-      {id:"Z9OYLs_x6WA",t:"Mitosis vs Meiosis — Key Differences",ch:"Amoeba Sisters",dur:"8:15"},
-      {id:"fR3NxCR9z2U",t:"Evolution — Natural Selection",ch:"Stated Clearly",dur:"9:33"},
-    ],
-    "Calculus":[
-      {id:"WUvTyaaNkzM",t:"The Essence of Calculus",ch:"3Blue1Brown",dur:"17:04"},
-      {id:"riXcZT2ICjA",t:"Derivatives — The Paradox",ch:"3Blue1Brown",dur:"17:57"},
-      {id:"rfG8ce4nNh0",t:"Integration and the Fundamental Theorem",ch:"3Blue1Brown",dur:"20:46"},
-      {id:"TdLD2Zh-nUQ",t:"Limits — Intuitive Introduction",ch:"The Organic Chemistry Tutor",dur:"12:15"},
-      {id:"HfACrKJ_Y2w",t:"Chain Rule Made Easy",ch:"Professor Leonard",dur:"14:22"},
-      {id:"GN7530d7fR8",t:"L'Hôpital's Rule — When Limits Fail",ch:"PatrickJMT",dur:"6:45"},
-    ],
-    "Spanish":[
-      {id:"PX2GDRxcnuQ",t:"Spanish for Beginners — Conversation Practice",ch:"SpanishPod101",dur:"15:20"},
-      {id:"DAp_v7EH9AA",t:"100 Phrases Every Spanish Beginner Must Know",ch:"SpanishPod101",dur:"25:05"},
-      {id:"2VaM3Bl0OkA",t:"Ser vs Estar — Learn the Difference",ch:"Butterfly Spanish",dur:"11:32"},
-      {id:"PZHprCR1XzA",t:"Spanish Verb Conjugation — Present Tense",ch:"Butterfly Spanish",dur:"13:18"},
-      {id:"O_LI8YJHIHU",t:"Preterite vs Imperfect — When to Use Each",ch:"SpanishPod101",dur:"9:50"},
-      {id:"G6UPknLkYHo",t:"Subjunctive Mood — Simplified",ch:"Real Fast Spanish",dur:"12:44"},
-    ],
-    "Chemistry":[
-      {id:"FSyAehMdpyI",t:"Intro to Chemistry — Basic Concepts",ch:"The Organic Chemistry Tutor",dur:"18:36"},
-      {id:"Rd4a1X3B61w",t:"Balancing Chemical Equations",ch:"Tyler DeWitt",dur:"10:52"},
-      {id:"X9ypXXT3KJc",t:"Periodic Table Trends Explained",ch:"Professor Dave Explains",dur:"8:20"},
-      {id:"cWn1szJVseE",t:"Stoichiometry — Mole Ratios",ch:"CrashCourse",dur:"12:46"},
-      {id:"pBZ-RiT5nEE",t:"Acids and Bases — pH Scale",ch:"Bozeman Science",dur:"9:15"},
-      {id:"QXT4OVM4vXI",t:"Organic Chemistry — Introduction",ch:"The Organic Chemistry Tutor",dur:"22:10"},
-    ],
-    "History":[
-      {id:"xuCn8ux2gbs",t:"World War I — Summary on a Map",ch:"Geo History",dur:"18:14"},
-      {id:"DwKPFT-RioU",t:"World War II — Every Day on a Map",ch:"Emperor Tigerstar",dur:"16:33"},
-      {id:"Yocja_N5s1I",t:"The Cold War — Explained",ch:"CrashCourse",dur:"12:15"},
-      {id:"wHVQbi3vVKA",t:"The French Revolution — In a Nutshell",ch:"Kurzgesagt",dur:"9:42"},
-      {id:"UpkGaSo3cYE",t:"Roman Empire — Rise and Fall",ch:"Kings and Generals",dur:"20:18"},
-      {id:"3PYdMC8VDiA",t:"Civil Rights Movement — Key Events",ch:"CrashCourse",dur:"13:44"},
-    ],
+  const fmtDur=(secs)=>{if(!secs)return"";const m=Math.floor(secs/60);const s=secs%60;return m+":"+(s<10?"0":"")+s;};
+  const fmtViews=(n)=>{if(!n)return"";if(n>=1e6)return(n/1e6).toFixed(1)+"M views";if(n>=1e3)return(n/1e3).toFixed(1)+"K views";return n+" views";};
+
+  const fetchVideos=async(query)=>{
+    try{
+      const res=await fetch("/api/search-videos?q="+encodeURIComponent(query+" tutorial explained"));
+      const data=await res.json();
+      return data.videos||[];
+    }catch(e){return[];}
   };
 
-  const getVideos=(sub,query)=>{
-    let pool=VIDEO_LIB[sub]||[];
-    Object.values(VIDEO_LIB).forEach(vids=>{vids.forEach(v=>{if(!pool.find(p=>p.id===v.id))pool.push(v);});});
-    if(query){
-      const lq=query.toLowerCase();
-      pool=pool.filter(v=>v.t.toLowerCase().includes(lq)||v.ch.toLowerCase().includes(lq)||(sub&&sub.toLowerCase().includes(lq)));
-    }
-    const seed=shuffleKey;
-    pool=[...pool].sort(()=>Math.sin(seed+++pool.length*0.1)-0.3);
-    return pool.slice(0,6);
+  const loadSubjectVideos=async(sub)=>{
+    setLoading(true);setPlaying(null);setSubjectVideos([]);
+    const vids=await fetchVideos(sub);
+    setSubjectVideos(vids);setLoading(false);
   };
 
-  const currentVideos=getVideos(subject,"");
-  const [searchResults,setSearchResults]=useState(null);
+  useEffect(()=>{if(subject)loadSubjectVideos(subject);},[subject]);
 
-  const search=()=>{
+  const search=async()=>{
     if(!q.trim())return;
-    setSearchResults(getVideos(null,q.trim()));
+    setSearchLoading(true);setPlaying(null);
+    const vids=await fetchVideos(q.trim());
+    setSearchResults(vids);setSearchLoading(false);
   };
 
   const addSubject=()=>{const v=newSub.trim();if(!v)return;if(!subjects.includes(v)){const next=subjects.concat([v]);setSubjects(next);lsSet("subjects",next);}setSubject(v);setNewSub("");setAdding(false);};
   const removeSubject=(sb)=>{const next=subjects.filter(x=>x!==sb);setSubjects(next);lsSet("subjects",next);if(subject===sb)setSubject(next[0]||"");};
 
-  const VideoCard=({v})=>(
-    <div style={{borderRadius:12,overflow:"hidden",background:T.card2,border:"1px solid "+T.border,cursor:"pointer",transition:"border-color 0.15s"}}
-      onClick={()=>setPlaying(playing===v.id?null:v.id)}>
-      {playing===v.id?(
-        <div style={{position:"relative",paddingBottom:"56.25%",height:0}}>
-          <iframe src={"https://www.youtube.com/embed/"+v.id+"?autoplay=1&rel=0&modestbranding=1"} title={v.t}
-            style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:"none"}}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
-        </div>
-      ):(
-        <div style={{position:"relative",paddingBottom:"56.25%",height:0,background:"#000"}}>
-          <img src={"https://img.youtube.com/vi/"+v.id+"/mqdefault.jpg"} alt={v.t}
-            style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",objectFit:"cover"}} />
-          <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.3)"}}>
-            <div style={{width:48,height:48,borderRadius:"50%",background:"rgba(255,255,255,0.95)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="#0E1F18"><polygon points="6 3 20 12 6 21"/></svg>
+  const VideoCard=({v})=>{
+    const isPlaying=playing===v.id;
+    const thumb=v.thumbnail||("https://img.youtube.com/vi/"+v.id+"/mqdefault.jpg");
+    return (
+      <div style={{borderRadius:12,overflow:"hidden",background:T.card2,border:"1px solid "+(isPlaying?T.lime+"55":T.border),cursor:"pointer",transition:"all 0.15s"}}>
+        <div onClick={()=>setPlaying(isPlaying?null:v.id)}>
+          {isPlaying?(
+            <div style={{position:"relative",paddingBottom:"56.25%",height:0}}>
+              <iframe src={"https://www.youtube.com/embed/"+v.id+"?autoplay=1&rel=0&modestbranding=1"} title={v.title}
+                style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:"none"}}
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
             </div>
-          </div>
-          <span style={{position:"absolute",bottom:8,right:8,fontSize:10,fontFamily:T.mono,background:"rgba(0,0,0,0.8)",color:"#fff",padding:"2px 6px",borderRadius:4}}>{v.dur}</span>
+          ):(
+            <div style={{position:"relative",paddingBottom:"56.25%",height:0,background:"#000"}}>
+              <img src={thumb} alt={v.title} loading="lazy"
+                style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",objectFit:"cover"}} />
+              <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.25)",transition:"background 0.15s"}}>
+                <div style={{width:44,height:44,borderRadius:"50%",background:"rgba(255,255,255,0.95)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 12px rgba(0,0,0,0.3)"}}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="#0E1F18"><polygon points="6 3 20 12 6 21"/></svg>
+                </div>
+              </div>
+              {v.duration>0&&<span style={{position:"absolute",bottom:6,right:6,fontSize:10,fontFamily:T.mono,fontWeight:600,background:"rgba(0,0,0,0.85)",color:"#fff",padding:"2px 6px",borderRadius:4}}>{fmtDur(v.duration)}</span>}
+            </div>
+          )}
         </div>
-      )}
-      <div style={{padding:"10px 12px"}}>
-        <div style={{fontSize:12.5,fontWeight:600,color:T.white,lineHeight:1.4,marginBottom:3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{v.t}</div>
-        <div style={{fontSize:11,color:T.muted}}>{v.ch}</div>
+        <div style={{padding:"10px 12px"}}>
+          <div style={{fontSize:12.5,fontWeight:600,color:T.white,lineHeight:1.4,marginBottom:4,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{v.title}</div>
+          <div style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:T.muted}}>
+            <span style={{whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{v.channel}</span>
+            {v.views>0&&<><span>·</span><span style={{whiteSpace:"nowrap"}}>{fmtViews(v.views)}</span></>}
+          </div>
+          {v.uploaded&&<div style={{fontSize:10,color:T.faint,marginTop:2}}>{v.uploaded}</div>}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
+
+  const VideoGrid=({videos,loading:isLoading,empty})=>{
+    if(isLoading)return <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>{[0,1,2,3,4,5].map(i=><div key={i} style={{borderRadius:12,overflow:"hidden",background:T.card2,border:"1px solid "+T.border}}><div style={{paddingBottom:"56.25%",background:T.card,animation:"studlinPulse 1.5s infinite"}}/><div style={{padding:"10px 12px"}}><div style={{height:12,background:T.card,borderRadius:4,marginBottom:6,width:"80%"}}/><div style={{height:10,background:T.card,borderRadius:4,width:"50%"}}/></div></div>)}</div>;
+    if(!videos||videos.length===0)return <div style={{fontSize:13,color:T.muted,padding:"30px 0",textAlign:"center"}}>{empty||"No videos found."}</div>;
+    return <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>{videos.map((v,i)=><VideoCard key={v.id||i} v={v} />)}</div>;
+  };
 
   return (
     <div>
-      <PH title="Tutor" sub="One-on-one academic support, plus the best of the open web" />
+      <PH title="Tutor" sub="Search any topic. Watch videos. Learn in-app." />
       <div style={{display:"grid",gridTemplateColumns:"190px 1fr",gap:16}}>
         <div>
           <Label>Subjects</Label>
           {subjects.map(sb=>(
-            <div key={sb} onClick={()=>{setSubject(sb);setSearchResults(null);setPlaying(null);}} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 11px",borderRadius:7,marginBottom:3,fontSize:12,cursor:"pointer",background:subject===sb?T.lime+"10":"transparent",color:subject===sb?T.lime:T.muted,fontWeight:subject===sb?600:400,border:"1px solid "+(subject===sb?T.lime+"33":"transparent"),transition:"all 0.15s",position:"relative"}}>
+            <div key={sb} onClick={()=>{setSubject(sb);setSearchResults(null);setQ("");}} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 11px",borderRadius:7,marginBottom:3,fontSize:12,cursor:"pointer",background:subject===sb?T.lime+"10":"transparent",color:subject===sb?T.lime:T.muted,fontWeight:subject===sb?600:400,border:"1px solid "+(subject===sb?T.lime+"33":"transparent"),transition:"all 0.15s",position:"relative"}}>
               <div style={{width:5,height:5,borderRadius:"50%",background:subject===sb?T.lime:T.faint,flexShrink:0}} />
               <span style={{flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{sb}</span>
               {!defaults.includes(sb)&&<span onClick={ev=>{ev.stopPropagation();removeSubject(sb);}} style={{color:T.faint,fontSize:12}}>×</span>}
@@ -1270,8 +1243,10 @@ function AiTutor(){
           <Card style={{padding:"14px 16px"}}>
             <div style={{display:"flex",gap:10,alignItems:"center"}}>
               <span style={{color:T.muted,display:"flex"}}>{Icon.search||Icon.brain}</span>
-              <input value={q} onChange={ev=>setQ(ev.target.value)} onKeyDown={ev=>{if(ev.key==="Enter")search();}} placeholder={"Search videos · e.g. Krebs cycle, derivatives, WWI causes"} style={{flex:1,background:"transparent",border:"none",outline:"none",color:T.text,fontSize:13.5,fontFamily:T.font}} />
-              <Btn onClick={search} style={{opacity:q.trim()?1:0.45}}>Search</Btn>
+              <input value={q} onChange={ev=>setQ(ev.target.value)} onKeyDown={ev=>{if(ev.key==="Enter")search();}} placeholder="Search any topic · e.g. how photosynthesis works, quadratic formula, WWI causes" style={{flex:1,background:"transparent",border:"none",outline:"none",color:T.text,fontSize:13.5,fontFamily:T.font}} />
+              {searchLoading
+                ?<span style={{fontSize:12,color:T.muted}}>Searching...</span>
+                :<Btn onClick={search} style={{opacity:q.trim()?1:0.45}}>Search</Btn>}
             </div>
           </Card>
 
@@ -1279,38 +1254,39 @@ function AiTutor(){
             <Card style={{padding:"14px 18px"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
                 <Label>Results for "{q}"</Label>
-                <BtnSm variant="subtle" onClick={()=>{setSearchResults(null);setQ("");}}>Clear</BtnSm>
+                <div style={{display:"flex",gap:6}}>
+                  <BtnSm variant="subtle" onClick={search}>↻ Refresh</BtnSm>
+                  <BtnSm variant="subtle" onClick={()=>{setSearchResults(null);setQ("");setPlaying(null);}}>✕ Clear</BtnSm>
+                </div>
               </div>
-              {searchResults.length===0
-                ?<div style={{fontSize:13,color:T.muted,padding:"20px 0",textAlign:"center"}}>No videos found. Try a different search term.</div>
-                :<div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
-                  {searchResults.map((v,i)=><VideoCard key={v.id+i} v={v} />)}
-                </div>}
+              <VideoGrid videos={searchResults} loading={searchLoading} empty={"No results for \""+q+"\". Try different keywords."} />
             </Card>
           )}
 
-          <Card style={{padding:24}}>
-            <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:16}}>
-              <div style={{width:44,height:44,borderRadius:10,background:colorOf(subject)+"18",border:"1px solid "+colorOf(subject)+"33",display:"flex",alignItems:"center",justifyContent:"center",color:colorOf(subject)}}>{Icon.brain}</div>
-              <div>
-                <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Studlin</div>
-                <div style={{fontSize:12,color:T.muted}}>{subject} · Socratic method</div>
-              </div>
-            </div>
-            <div style={{fontSize:14,color:T.text,lineHeight:1.75,padding:"14px 16px",background:T.card2,borderRadius:8,border:"1px solid "+T.border}}>
-              Ask me anything about <strong style={{color:T.lime,fontWeight:600}}>{subject}</strong> · I will walk you through it step by step, quiz you, or build a study plan. Watch the videos below or search for any topic.
-            </div>
-          </Card>
+          {!searchResults&&(
+            <>
+              <Card style={{padding:24}}>
+                <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:16}}>
+                  <div style={{width:44,height:44,borderRadius:10,background:colorOf(subject)+"18",border:"1px solid "+colorOf(subject)+"33",display:"flex",alignItems:"center",justifyContent:"center",color:colorOf(subject)}}>{Icon.brain}</div>
+                  <div>
+                    <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Studlin</div>
+                    <div style={{fontSize:12,color:T.muted}}>{subject} · Socratic method</div>
+                  </div>
+                </div>
+                <div style={{fontSize:14,color:T.text,lineHeight:1.75,padding:"14px 16px",background:T.card2,borderRadius:8,border:"1px solid "+T.border}}>
+                  Ask me anything about <strong style={{color:T.lime,fontWeight:600}}>{subject}</strong> · I will walk you through it step by step, quiz you, or build a study plan. Watch the videos below or search any topic above.
+                </div>
+              </Card>
 
-          <Card style={{padding:"14px 18px"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-              <Label>{subject} videos</Label>
-              <BtnSm variant="subtle" onClick={()=>{setShuffleKey(k=>k+1);setPlaying(null);}}>↻ Refresh</BtnSm>
-            </div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
-              {currentVideos.map((v,i)=><VideoCard key={v.id+shuffleKey} v={v} />)}
-            </div>
-          </Card>
+              <Card style={{padding:"14px 18px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                  <Label>{subject} videos</Label>
+                  <BtnSm variant="subtle" onClick={()=>loadSubjectVideos(subject)}>↻ Refresh</BtnSm>
+                </div>
+                <VideoGrid videos={subjectVideos} loading={loading} empty={"Couldn't load videos right now. Hit refresh to try again."} />
+              </Card>
+            </>
+          )}
         </div>
       </div>
     </div>
