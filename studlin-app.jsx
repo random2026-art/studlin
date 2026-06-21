@@ -72,15 +72,33 @@ const lightT = {
   mode:   "light",
 };
 const T = {...darkT}; // mutable · applyTheme() swaps in place so all components re-read on render
-function applyTheme(name) {
+const hexA=(hex,a)=>{const h=hex.replace('#','');const r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16);return `rgba(${r},${g},${b},${a})`;};
+// accent palettes — override the lime family per user choice
+const ACCENTS={
+  Lime:  {dk:{lime:"#AECE5E",limeDk:"#8BAE3C",limeLt:"#CBDF92"}, lt:{lime:"#9EC83D",limeDk:"#7FA82A",limeLt:"#CBDF92"}},
+  Forest:{dk:{lime:"#6FC1A0",limeDk:"#4E9C7B",limeLt:"#A9E0CB"}, lt:{lime:"#2E8E6E",limeDk:"#22705680".slice(0,7),limeLt:"#A9E0CB"}},
+  Sky:   {dk:{lime:"#84BBEA",limeDk:"#5A93C9",limeLt:"#BFE0FA"}, lt:{lime:"#2D74BC",limeDk:"#225A98",limeLt:"#BFE0FA"}},
+  Lilac: {dk:{lime:"#B89BE0",limeDk:"#9474C9",limeLt:"#DCCBF5"}, lt:{lime:"#7E5BC0",limeDk:"#634599",limeLt:"#DCCBF5"}},
+  Peach: {dk:{lime:"#E8A06E",limeDk:"#C9764A",limeLt:"#F5C9AC"}, lt:{lime:"#C2683A",limeDk:"#A4542C",limeLt:"#F5C9AC"}},
+};
+function applyTheme(name, accent, density) {
   Object.assign(T, name === 'light' ? lightT : darkT);
+  const acc=ACCENTS[accent]||ACCENTS.Lime;
+  const a=name==='light'?acc.lt:acc.dk;
+  T.lime=a.lime; T.limeDk=a.limeDk; T.limeLt=a.limeLt;
+  T.glow=hexA(a.lime, name==='light'?0.18:0.22);
   if (typeof document !== 'undefined' && document.body) {
     document.body.style.background = T.bg;
     document.body.style.color = T.text;
     document.body.style.fontFamily = T.font;
+    document.body.setAttribute('data-density', density||'Comfortable');
   }
 }
-applyTheme((typeof localStorage !== 'undefined' && localStorage.getItem('studlin-theme')) || 'dark');
+applyTheme(
+  (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-theme')) || 'dark',
+  (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-accent')) || 'Lime',
+  (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-density')) || 'Comfortable'
+);
 
 // ─── ICON LIBRARY (SVG, no emoji) ─────────────────────────────────────────────
 const ic = (path,size=16,vb="0 0 24 24") => (
@@ -256,6 +274,33 @@ const PLAN_LIMITS={Free:{music:2},Scholar:{music:5},Elite:{music:10}};
 function getPlan(){return lsGet("plan","Free");}
 function setPlanLS(p){lsSet("plan",p);}
 
+// ─── XP · LEVEL · STREAK · PLAN (all derived from real activity) ───────────────
+const DOW_FULL=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+const MON_SHORT=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function todayLabel(){const d=new Date();return DOW_FULL[d.getDay()]+" · "+MON_SHORT[d.getMonth()]+" "+d.getDate();}
+function weekNo(){const d=new Date();const start=new Date(d.getFullYear(),0,1);return Math.ceil((((d-start)/86400000)+start.getDay()+1)/7);}
+function getXP(){const s=lsGet("sessions",[]);const focusMin=s.reduce((a,x)=>a+(x.m||0),0);const base=lsGet("xpBase",1850);return base+focusMin*4+getStreak()*25+lsGet("xpBonus",0);}
+function levelInfo(){const xp=getXP();const per=250;const level=Math.floor(xp/per)+1;const into=xp-(level-1)*per;return {xp,level,into,per,toNext:per-into,pct:Math.round(into/per*100)};}
+function weekStreak(){const days=new Set(lsGet("days",[]));const now=new Date();const dow=(now.getDay()+6)%7;const mon=new Date(now);mon.setDate(now.getDate()-dow);return ["M","T","W","T","F","S","S"].map((lab,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);const k=dayKey(d);const today=k===dayKey(now);return {lab,on:days.has(k),today,future:d>now&&!today};});}
+function todaysPlan(){const events=lsGet("events",[]);const tk=dayKey();const done=lsGet("planDone",{});return events.filter(e=>e.date===tk).sort((a,b)=>(a.time||"")<(b.time||"")?-1:1).map(e=>({...e,done:!!done[e.id]}));}
+function togglePlanDone(id){const done=lsGet("planDone",{});done[id]=!done[id];lsSet("planDone",done);return done;}
+function profileStats(){const s=lsGet("sessions",[]);const totalMin=s.reduce((a,x)=>a+(x.m||0),0);const st=sessionStats();return {totalMin,focusSessions:s.length,weekMin:st.weekMin,avg:st.avg};}
+function getProfile(){return lsGet("profile",{name:"Maya Reyes",email:"maya.reyes@ucla.edu",school:"UCLA · Class of 2027",tz:"America/Los_Angeles"});}
+function saveProfile(p){lsSet("profile",p);}
+function seedEventsIfStale(){
+  const ev=lsGet("events",null); const tk=dayKey();
+  if(ev&&ev.some(e=>e.date>=tk))return;
+  const mk=(off,time,title,subject,kind)=>{const d=new Date();d.setDate(d.getDate()+off);return {id:"seed-"+off+"-"+time,date:dayKey(d),time,title,subject,kind};};
+  lsSet("events",[
+    mk(0,"14:30","Chem quiz · Periodic trends","Chemistry","exam"),
+    mk(0,"19:00","Macbeth essay · draft a section","English IV","study block"),
+    mk(0,"21:00","Bio · cell respiration review","Biology","study block"),
+    mk(1,"23:59","Biology lab report due","Biology","deadline"),
+    mk(3,"09:00","Macbeth essay · first draft","English IV","deadline"),
+    mk(5,"10:00","Calculus test · Derivatives","Calculus","exam"),
+  ]);
+}
+
 // ─── UPGRADE MODAL (shared paywall) ───────────────────────────────────────────
 function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
   if(!open)return null;
@@ -298,6 +343,15 @@ const navIcon = {dashboard:Icon.grid,aichat:Icon.chat,essays:Icon.pen,flashcards
 
 // ─── AI CHAT ──────────────────────────────────────────────────────────────────
 function AiChat() {
+  const MODELS=[
+    {id:"standard",name:"Studlin Standard",desc:"Balanced · best for most study tasks",cost:"1 credit"},
+    {id:"pro",name:"Studlin Pro",desc:"Deeper reasoning for hard problems",cost:"2 credits"},
+    {id:"reason",name:"Studlin Reasoning",desc:"Step-by-step on complex, multi-part work",cost:"3 credits"},
+    {id:"flash",name:"Studlin Flash",desc:"Fastest answers for quick questions",cost:"1 credit"},
+  ];
+  const [model,setModel]=useState(()=>lsGet("chatModel","standard"));
+  const [modelOpen,setModelOpen]=useState(false);
+  const curModel=MODELS.find(m=>m.id===model)||MODELS[0];
   const [input,setInput]=useState("");
   const [msgs,setMsgs]=useState([
     {r:"ai",t:"Good afternoon, Maya. What are we working on today?"},
@@ -312,7 +366,31 @@ function AiChat() {
   const suggestions=["Analyse the symbolism","Pull supporting quotes","Compare to Lady Macbeth","Break down the themes"];
   return (
     <div>
-      <PH title="Chat" sub="Academic research and writing support" />
+      <PH title="Chat" sub="Academic research and writing support" action={
+        <div style={{position:"relative"}}>
+          <button onClick={()=>setModelOpen(o=>!o)} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"8px 14px",borderRadius:9,border:`1px solid ${modelOpen?T.lime+"55":T.border}`,background:T.card,color:T.text,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>
+            <span style={{width:7,height:7,borderRadius:"50%",background:T.lime}} />
+            {curModel.name}
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          {modelOpen&&(<>
+            <div onClick={()=>setModelOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
+            <div style={{position:"absolute",top:44,right:0,width:288,background:T.card,border:`1px solid ${T.border}`,borderRadius:12,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",padding:6}}>
+              <div style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:T.muted,padding:"6px 10px 4px"}}>Choose a model</div>
+              {MODELS.map(m=>(
+                <div key={m.id} onClick={()=>{setModel(m.id);lsSet("chatModel",m.id);setModelOpen(false);}} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 12px",borderRadius:8,cursor:"pointer",background:m.id===model?T.lime+"12":"transparent"}}>
+                  <span style={{width:16,height:16,marginTop:1,flexShrink:0,display:"flex",color:m.id===model?T.lime:T.faint}}>{m.id===model?Icon.check:Icon.dot}</span>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:12.5,fontWeight:600,color:m.id===model?T.lime:T.text}}>{m.name}</div>
+                    <div style={{fontSize:11,color:T.muted,marginTop:1,lineHeight:1.35}}>{m.desc}</div>
+                  </div>
+                  <span style={{fontFamily:T.mono,fontSize:9.5,color:T.faint,flexShrink:0,marginTop:2}}>{m.cost}</span>
+                </div>
+              ))}
+            </div>
+          </>)}
+        </div>
+      } />
       <div style={{display:"grid",gridTemplateColumns:"1fr 260px",gap:16}}>
         <Card style={{display:"flex",flexDirection:"column",minHeight:500,padding:16}}>
           <div style={{flex:1,overflowY:"auto",marginBottom:12,display:"flex",flexDirection:"column",gap:12}}>
@@ -330,7 +408,7 @@ function AiChat() {
             <input style={{flex:1,background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"10px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none"}} placeholder="Ask a question or paste text to analyse..." value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} />
             <Btn onClick={()=>send()} style={{padding:"10px 14px"}}>{Icon.send}</Btn>
           </div>
-          <div style={{fontSize:11,color:T.muted,marginTop:8}}>180 credits remaining</div>
+          <div style={{fontSize:11,color:T.muted,marginTop:8}}>180 credits remaining · <span style={{color:T.text,fontWeight:600}}>{curModel.name}</span></div>
         </Card>
         <div style={{display:"flex",flexDirection:"column",gap:12}}>
           <Card><Label>Session</Label><div style={{fontSize:28,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>12</div><div style={{fontSize:12,color:T.muted,marginTop:4}}>Conversations today</div></Card>
@@ -421,7 +499,7 @@ function Essays() {
                 <div style={{width:1,background:T.border,margin:"2px 4px"}} />
                 {["H1","H2","H3"].map(h=><button key={h} style={{padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>{h}</button>)}
               </div>
-              <div contentEditable suppressContentEditableWarning style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"0 0 6px 6px",padding:16,minHeight:200,fontSize:14,lineHeight:1.8,color:T.text,outline:"none"}}>
+              <div contentEditable suppressContentEditableWarning style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:"0 0 6px 6px",padding:16,minHeight:200,fontSize:14,lineHeight:1.8,color:T.text,outline:"none"}}>
                 <p><strong style={{color:T.white,fontWeight:600}}>Introduction</strong></p>
                 <p style={{marginTop:12}}>In Shakespeare's Macbeth, the corrupting influence of unchecked ambition is illustrated through the protagonist's descent from celebrated warrior to tyrannical murderer. The play explores how power, when pursued without moral constraint, dismantles the very humanity of those who seek it · a thesis the playwright reinforces through recurring imagery, soliloquy, and dramatic irony.</p>
               </div>
@@ -503,19 +581,35 @@ function Flashcards() {
     {q:"Describe the location and primary function of the mitochondria.",a:"The mitochondrion is a membrane-bound organelle found in the cytoplasm of eukaryotic cells. Its primary function is the production of ATP through the process of cellular respiration, specifically oxidative phosphorylation."},
     {q:"State the principle of natural selection in one concise sentence.",a:"Natural selection is the process by which heritable traits that increase an organism's fitness in its environment become more common in a population over successive generations."},
   ];
-  const decks=[
+  const seedDecks=[
     {name:"Cell respiration",course:"Biology",count:30,done:24,color:T.teal},
     {name:"Macbeth · themes & quotes",course:"English IV",count:45,done:12,color:T.purple},
     {name:"Differentiation rules",course:"Calculus",count:20,done:20,color:T.lime},
     {name:"Subjunctive mood",course:"Spanish",count:28,done:8,color:T.amber},
   ];
+  const [deckList,setDeckList]=useState(()=>lsGet("decks",seedDecks));
+  const colorMap={Biology:T.teal,"English IV":T.purple,Calculus:T.blue,Spanish:T.amber,Chemistry:T.red,History:T.muted};
+  const createDeck=()=>{
+    const subj=dSubject==="Other"&&dCustom.trim()?dCustom.trim():dSubject;
+    const name=dName.trim()||(subj+" deck");
+    const nd={name,course:subj,count:0,done:0,color:colorMap[subj]||T.lime,cards:[]};
+    const next=[nd,...deckList];setDeckList(next);lsSet("decks",next);
+    setNewOpen(false);setDName("");setDCustom("");setDSubject("Biology");setTab("decks");
+  };
+  const [cName,setCName]=useState("");
+  const [cSubj,setCSubj]=useState("");
+  const [cQ,setCQ]=useState("");
+  const [cA,setCA]=useState("");
+  const [draft,setDraft]=useState([]);
+  const addCard=()=>{if(!cQ.trim()&&!cA.trim())return;setDraft(d=>[...d,{q:cQ.trim()||"(no question)",a:cA.trim()||"(no answer)"}]);setCQ("");setCA("");};
+  const saveDraftDeck=()=>{const subj=cSubj.trim()||"General";const nd={name:cName.trim()||"New deck",course:subj,count:draft.length,done:0,color:colorMap[subj]||T.lime,cards:draft};const next=[nd,...deckList];setDeckList(next);lsSet("decks",next);setDraft([]);setCName("");setCSubj("");setCQ("");setCA("");setTab("decks");};
   const next=()=>{setFlipped(false);setIdx(i=>(i+1)%cards.length);};
   const prev=()=>{setFlipped(false);setIdx(i=>Math.max(0,i-1));};
   return (
     <div>
       <PH title="Flashcards" sub="Spaced-repetition study system" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New deck")}</Btn>} />
       <Modal open={newOpen} onClose={()=>setNewOpen(false)} title="Create a flashcard deck" sub="Build manually or drop a file and Studlin will generate spaced-repetition cards for you."
-        footer={<><Btn variant="subtle" onClick={()=>setNewOpen(false)}>Cancel</Btn><Btn onClick={()=>setNewOpen(false)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.layers,"Create deck")}</Btn></>}>
+        footer={<><Btn variant="subtle" onClick={()=>setNewOpen(false)}>Cancel</Btn><Btn onClick={createDeck}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.layers,"Create deck")}</Btn></>}>
         <Field label="Deck name"><Input placeholder="e.g. Chem 14B · Periodic trends" value={dName} onChange={e=>setDName(e.target.value)} autoFocus /></Field>
         <Field label="Subject"><SelectChip options={dSubjects} value={dSubject} onChange={setDSubject} /></Field>
         {dSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Physics, AP Gov, driving theory..." value={dCustom} onChange={ev=>setDCustom(ev.target.value)} /></Field>}
@@ -579,8 +673,8 @@ function Flashcards() {
             </Card>
             <Card>
               <Label>Due today</Label>
-              {decks.map((d,i)=>(
-                <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:i<3?`1px solid ${T.border}`:"none"}}>
+              {deckList.map((d,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:i<deckList.length-1?`1px solid ${T.border}`:"none"}}>
                   <div style={{width:6,height:6,borderRadius:"50%",background:d.color,flexShrink:0}} />
                   <span style={{fontSize:12,flex:1,color:T.text}}>{d.name}</span>
                   <span style={{fontSize:11,color:T.muted}}>{d.done}/{d.count}</span>
@@ -592,17 +686,17 @@ function Flashcards() {
       )}
       {tab==="decks"&&(
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          {decks.map((d,i)=>(
+          {deckList.map((d,i)=>(
             <Card key={i} style={{cursor:"pointer"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
                 <div style={{fontSize:13,fontWeight:700,color:T.white}}>{d.name}</div>
                 <span style={{fontSize:11,color:T.muted}}>{d.count}</span>
               </div>
               <div style={{fontSize:11,color:T.muted,marginBottom:14}}>{d.course}</div>
-              <Prog pct={Math.round((d.done/d.count)*100)} color={d.color} />
+              <Prog pct={d.count?Math.round((d.done/d.count)*100):0} color={d.color} />
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10}}>
                 <span style={{fontSize:11,color:T.muted}}>{d.done} mastered</span>
-                <BtnSm>Study now</BtnSm>
+                <BtnSm onClick={()=>setTab("study")}>Study now</BtnSm>
               </div>
             </Card>
           ))}
@@ -611,15 +705,28 @@ function Flashcards() {
       {tab==="create"&&(
         <Card>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
-            <div><Label>Deck name</Label><input style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",boxSizing:"border-box"}} placeholder="e.g. Chem · Periodic table" /></div>
-            <div><Label>Subject</Label><input style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",boxSizing:"border-box"}} placeholder="e.g. Chemistry" /></div>
+            <div><Label>Deck name</Label><input value={cName} onChange={e=>setCName(e.target.value)} style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",boxSizing:"border-box"}} placeholder="e.g. Chem · Periodic table" /></div>
+            <div><Label>Subject</Label><input value={cSubj} onChange={e=>setCSubj(e.target.value)} style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",boxSizing:"border-box"}} placeholder="e.g. Chemistry" /></div>
           </div>
-          <div style={{marginBottom:14}}><Label>Question (front)</Label><textarea style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",minHeight:80,boxSizing:"border-box"}} placeholder="Enter question..." /></div>
-          <div style={{marginBottom:16}}><Label>Answer (back)</Label><textarea style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",minHeight:100,boxSizing:"border-box"}} placeholder="Enter answer..." /></div>
-          <div style={{display:"flex",gap:8}}>
-            <Btn>Add card</Btn>
-            <Btn variant="subtle">Generate from notes</Btn>
+          <div style={{marginBottom:14}}><Label>Question (front)</Label><textarea value={cQ} onChange={e=>setCQ(e.target.value)} style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",minHeight:80,boxSizing:"border-box"}} placeholder="Enter question..." /></div>
+          <div style={{marginBottom:16}}><Label>Answer (back)</Label><textarea value={cA} onChange={e=>setCA(e.target.value)} style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",minHeight:100,boxSizing:"border-box"}} placeholder="Enter answer..." /></div>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            <Btn onClick={addCard}>Add card</Btn>
+            {draft.length>0&&<Btn variant="subtle" onClick={saveDraftDeck}>Save deck · {draft.length} card{draft.length===1?"":"s"}</Btn>}
+            <span style={{marginLeft:"auto",fontSize:11.5,color:T.muted}}>{draft.length} card{draft.length===1?"":"s"} added</span>
           </div>
+          {draft.length>0&&(
+            <div style={{marginTop:16,display:"flex",flexDirection:"column",gap:6}}>
+              {draft.map((c,i)=>(
+                <div key={i} style={{display:"flex",gap:12,padding:"9px 12px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`,fontSize:12,alignItems:"center"}}>
+                  <span style={{fontFamily:T.mono,fontSize:10,color:T.muted,flexShrink:0}}>{String(i+1).padStart(2,"0")}</span>
+                  <span style={{color:T.text,flex:1,minWidth:0}}>{c.q}</span>
+                  <span style={{color:T.muted,flex:1,minWidth:0}}>{c.a}</span>
+                  <button onClick={()=>setDraft(d=>d.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",flexShrink:0,display:"flex"}}>{Icon.xmark}</button>
+                </div>
+              ))}
+            </div>
+          )}
         </Card>
       )}
     </div>
@@ -791,13 +898,13 @@ function FocusTimer({focusSecs,setFocusSecs,focusRunning,setFocusRunning,focusMo
         <Card style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"40px 24px"}}>
           <div style={{display:"flex",gap:4,marginBottom:14,background:T.card2,padding:4,borderRadius:8,border:"1px solid "+T.border}}>
             {Object.keys(modeMap).map(m=>(
-              <button key={m} onClick={()=>pick(m)} style={{padding:"6px 16px",borderRadius:5,fontSize:12,cursor:"pointer",border:"none",background:mode===m&&!isCustom?T.surface:"transparent",color:mode===m&&!isCustom?T.white:T.muted,fontFamily:T.font,fontWeight:mode===m&&!isCustom?600:400,transition:"all 0.15s"}}>{m}</button>
+              <button key={m} onClick={()=>pick(m)} style={{padding:"6px 16px",borderRadius:5,fontSize:12,cursor:"pointer",border:"none",background:mode===m&&!isCustom?T.lime+"1f":"transparent",color:mode===m&&!isCustom?T.lime:T.muted,fontFamily:T.font,fontWeight:mode===m&&!isCustom?600:400,transition:"all 0.15s"}}>{m}</button>
             ))}
-            <button onClick={()=>setCustomOpen(o=>!o)} style={{padding:"6px 16px",borderRadius:5,fontSize:12,cursor:"pointer",border:"none",background:isCustom?T.surface:"transparent",color:isCustom?T.lime:T.muted,fontFamily:T.font,fontWeight:isCustom?600:400,transition:"all 0.15s"}}>{isCustom?Math.round(total/60)+" min":"Custom"}</button>
+            <button onClick={()=>setCustomOpen(o=>!o)} style={{padding:"6px 16px",borderRadius:5,fontSize:12,cursor:"pointer",border:"none",background:isCustom?T.lime+"1f":"transparent",color:isCustom?T.lime:T.muted,fontFamily:T.font,fontWeight:isCustom?600:400,transition:"all 0.15s"}}>{isCustom?Math.round(total/60)+" min":"Custom"}</button>
           </div>
           {customOpen&&(
             <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:16,background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"8px 10px"}}>
-              <input type="number" min="1" max="180" value={customMin} onChange={e=>setCustomMin(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")applyCustom();}} style={{width:64,background:T.surface,border:"1px solid "+T.border,borderRadius:6,padding:"7px 9px",color:T.white,fontSize:13,fontFamily:T.font,outline:"none",textAlign:"center"}} autoFocus />
+              <input type="number" min="1" max="180" value={customMin} onChange={e=>setCustomMin(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")applyCustom();}} style={{width:64,background:T.card2,border:"1px solid "+T.border,borderRadius:6,padding:"7px 9px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",textAlign:"center"}} autoFocus />
               <span style={{fontSize:12,color:T.muted}}>minutes</span>
               <BtnSm onClick={applyCustom}>Set</BtnSm>
             </div>
@@ -944,7 +1051,14 @@ function CalendarTab(){
       <div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:16}}>
         <Card style={{padding:16}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,padding:"4px 6px"}}>
-            <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>{monthNames[ym.m]} <span style={{color:T.muted,fontWeight:400}}>{ym.y}</span></div>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <select value={ym.m} onChange={e=>setYm(c=>({...c,m:+e.target.value}))} style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 10px",color:T.white,fontSize:15,fontWeight:700,fontFamily:T.font,outline:"none",cursor:"pointer",letterSpacing:"-0.01em"}}>
+                {monthNames.map((mn,i)=><option key={i} value={i}>{mn}</option>)}
+              </select>
+              <select value={ym.y} onChange={e=>setYm(c=>({...c,y:+e.target.value}))} style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 10px",color:T.muted,fontSize:15,fontFamily:T.font,outline:"none",cursor:"pointer"}}>
+                {Array.from({length:31},(_,i)=>2015+i).map(y=><option key={y} value={y}>{y}</option>)}
+              </select>
+            </div>
             <div style={{display:"flex",gap:6}}>
               <BtnSm variant="ghost" onClick={()=>nav(-1)}>←</BtnSm>
               <BtnSm variant="ghost" onClick={()=>{setYm({y:now.getFullYear(),m:now.getMonth()});setSelDay(todayK);}}>Today</BtnSm>
@@ -1392,8 +1506,15 @@ function FocusMusic(){
 // ─── SETTINGS ─────────────────────────────────────────────────────────────────
 function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}}) {
   const [active,setActive]=useState("General");
-  const [toggles,setToggles]=useState({push:true,sound:true,streak:true,deadline:true,sr:true,auto:true,analytics:false,sync:true,emails:false,profile:true,share:true,twofa:false,collect:false});
-  const tog=k=>setToggles(t=>({...t,[k]:!t[k]}));
+  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,sr:true,auto:true,analytics:false,sync:true,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false},...lsGet("settings",{})}));
+  const tog=k=>setToggles(t=>{const n={...t,[k]:!t[k]};lsSet("settings",n);return n;});
+  const [profile,setProfileState]=useState(()=>getProfile());
+  const updProfile=(patch)=>{const n={...profile,...patch};setProfileState(n);saveProfile(n);};
+  const allUsers=[{n:"Devon Karu",h:"@devonk",s:"UCLA"},{n:"Priya Shah",h:"@priyas",s:"Berkeley"},{n:"Jordan Tran",h:"@jtran",s:"UCLA"},{n:"Amara Okafor",h:"@amarao",s:"NYU"},{n:"Liam Chen",h:"@liamc",s:"Stanford"},{n:"Sofia Diaz",h:"@sofiad",s:"UCLA"}];
+  const [friendQ,setFriendQ]=useState("");
+  const [friends,setFriends]=useState(()=>lsGet("friends",[]));
+  const toggleFriend=(h)=>{const n=friends.includes(h)?friends.filter(x=>x!==h):[...friends,h];setFriends(n);lsSet("friends",n);};
+  const friendResults=friendQ.trim()?allUsers.filter(u=>(u.n+" "+u.h+" "+u.s).toLowerCase().includes(friendQ.toLowerCase())):allUsers.slice(0,3);
   const sections=[
     {id:"General",icon:Icon.settings},
     {id:"Appearance",icon:Icon.wand},
@@ -1458,10 +1579,10 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const Chip = ({active,onClick,children}) => (
     <button type="button" onClick={onClick} style={{padding:"7px 14px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${active?T.lime+"66":T.border}`,background:active?T.lime+"14":"transparent",color:active?T.lime:T.muted,fontFamily:T.font,fontWeight:active?600:400,transition:"all 0.15s"}}>{children}</button>
   );
-  const [pom,setPom]=useState("25 min");
-  const [verb,setVerb]=useState("Balanced");
-  const [brk,setBrk]=useState("15 min");
-  const accents=[{n:"Lime",c:"#9EC83D"},{n:"Forest",c:"#5DA088"},{n:"Sky",c:"#7FB8E8"},{n:"Lilac",c:"#B89BE0"},{n:"Peach",c:"#E89A6E"}];
+  const [pom,setPom]=useState(()=>lsGet("pref-pom","25 min"));
+  const [verb,setVerb]=useState(()=>lsGet("pref-verb","Balanced"));
+  const [brk,setBrk]=useState(()=>lsGet("pref-brk","15 min"));
+  const accents=[{n:"Lime",c:"#9EC83D"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"}];
 
   return (
     <div>
@@ -1481,11 +1602,11 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Profile basics</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:16}}>How you appear across Studlin.</div>
-              <Field label="Display name"><Input defaultValue="Maya Reyes" /></Field>
-              <Field label="Email"><Input defaultValue="maya.reyes@ucla.edu" type="email" /></Field>
-              <Field label="School or affiliation"><Input defaultValue="UCLA · Class of 2027" /></Field>
+              <Field label="Display name"><Input value={profile.name} onChange={e=>updProfile({name:e.target.value})} /></Field>
+              <Field label="Email"><Input value={profile.email} onChange={e=>updProfile({email:e.target.value})} type="email" /></Field>
+              <Field label="School or affiliation"><Input value={profile.school} onChange={e=>updProfile({school:e.target.value})} /></Field>
               <Field label="Time zone">
-                <select style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.font,outline:"none"}} defaultValue="America/Los_Angeles">
+                <select value={profile.tz} onChange={e=>updProfile({tz:e.target.value})} style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.font,outline:"none"}}>
                   <option>America/Los_Angeles</option><option>America/New_York</option><option>Europe/London</option><option>Asia/Singapore</option>
                 </select>
               </Field>
@@ -1499,6 +1620,29 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   <BtnSm variant={on?"subtle":"lime"}>{st}</BtnSm>
                 </div>
               ))}
+            </Card>
+            <Card style={{marginTop:12}}>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Friends</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Find classmates and add them to study together.</div>
+              <div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 13px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:9,marginBottom:12}}>
+                <span style={{color:T.muted,display:"flex"}}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+                <input value={friendQ} onChange={e=>setFriendQ(e.target.value)} placeholder="Search by name, handle, or school" style={{flex:1,background:"none",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}} />
+              </div>
+              {friendResults.length===0
+                ? <div style={{fontSize:12.5,color:T.muted,padding:"10px 0"}}>No students match “{friendQ}”.</div>
+                : friendResults.map((u,i)=>{
+                  const added=friends.includes(u.h);
+                  return (
+                  <div key={u.h} style={{display:"flex",alignItems:"center",gap:11,padding:"10px 0",borderBottom:i<friendResults.length-1?`1px solid ${T.border}`:"none"}}>
+                    <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={32} />
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,color:T.text,fontWeight:600}}>{u.n}</div>
+                      <div style={{fontSize:11,color:T.muted}}>{u.h} · {u.s}</div>
+                    </div>
+                    <BtnSm variant={added?"subtle":"lime"} onClick={()=>toggleFriend(u.h)}>{added?"Added":"Add friend"}</BtnSm>
+                  </div>
+                );})}
+              {friends.length>0&&<div style={{fontSize:11.5,color:T.muted,marginTop:12}}>{friends.length} friend{friends.length===1?"":"s"} added.</div>}
             </Card>
           </>)}
 
@@ -1585,14 +1729,14 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
           {active==="Study preferences" && (<>
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>Focus &amp; Pomodoro</div>
-              <Field label="Session length"><div style={{display:"flex",gap:6}}>{["15 min","20 min","25 min","30 min","45 min"].map(t=><Chip key={t} active={pom===t} onClick={()=>setPom(t)}>{t}</Chip>)}</div></Field>
-              <Field label="Break after 4 sessions"><div style={{display:"flex",gap:6}}>{["10 min","15 min","20 min","30 min"].map(t=><Chip key={t} active={brk===t} onClick={()=>setBrk(t)}>{t}</Chip>)}</div></Field>
+              <Field label="Session length"><div style={{display:"flex",gap:6}}>{["15 min","20 min","25 min","30 min","45 min"].map(t=><Chip key={t} active={pom===t} onClick={()=>{setPom(t);lsSet("pref-pom",t);}}>{t}</Chip>)}</div></Field>
+              <Field label="Break after 4 sessions"><div style={{display:"flex",gap:6}}>{["10 min","15 min","20 min","30 min"].map(t=><Chip key={t} active={brk===t} onClick={()=>{setBrk(t);lsSet("pref-brk",t);}}>{t}</Chip>)}</div></Field>
               <Row label="Auto-start next session" sub="Skip the play button between focus blocks." k="autoSession" />
               <Row label="Block distracting sites" sub="Studlin's lightweight blocker pauses social media during focus." k="block" />
             </Card>
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>AI tutor</div>
-              <Field label="Response verbosity"><div style={{display:"flex",gap:6}}>{["Concise","Balanced","Comprehensive"].map(t=><Chip key={t} active={verb===t} onClick={()=>setVerb(t)}>{t}</Chip>)}</div></Field>
+              <Field label="Response verbosity"><div style={{display:"flex",gap:6}}>{["Concise","Balanced","Comprehensive"].map(t=><Chip key={t} active={verb===t} onClick={()=>{setVerb(t);lsSet("pref-verb",t);}}>{t}</Chip>)}</div></Field>
               <Field label="Tutor style">
                 <SelectChip options={["Socratic","Direct","Encouraging","Strict"]} value={"Socratic"} onChange={()=>{}} />
               </Field>
@@ -1673,9 +1817,14 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 
 // ─── PROFILE ──────────────────────────────────────────────────────────────────
 function Profile() {
+  const prof=getProfile();
+  const lvl=levelInfo();
+  const streak=Math.max(1,getStreak());
+  const ps=profileStats();
+  const initials=((prof.name||"").split(" ").map(x=>x[0]).join("").slice(0,2).toUpperCase())||"S";
   const badges=[
-    {icon:Icon.flame,name:"12-Day streak",color:T.amber},
-    {icon:Icon.trophy,name:"Squad #1",color:T.lime},
+    {icon:Icon.flame,name:streak+"-Day streak",color:T.amber},
+    {icon:Icon.trophy,name:"Goal crusher",color:T.lime},
     {icon:Icon.layers,name:"Card master",color:T.teal},
     {icon:Icon.zap,name:"Speed reader",color:T.blue},
     {icon:Icon.brain,name:"Bio distinction",color:T.purple},
@@ -1689,25 +1838,25 @@ function Profile() {
   return (
     <div>
       <Card style={{display:"flex",alignItems:"center",gap:24,marginBottom:16,padding:28}}>
-        <Av initials="MR" color={T.lime} size={80} />
+        <Av initials={initials} color={T.lime} size={80} />
         <div style={{flex:1}}>
-          <div style={{fontSize:22,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:3}}>Maya Reyes</div>
-          <div style={{fontSize:13,color:T.muted,marginBottom:12}}>Scholar plan · UCLA · Class of 2027</div>
+          <div style={{fontSize:22,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:3}}>{prof.name}</div>
+          <div style={{fontSize:13,color:T.muted,marginBottom:12}}>{prof.school}</div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             <Badge color={T.lime}>Scholar</Badge>
-            <Badge color={T.amber}>12-day streak</Badge>
-            <Badge color={T.blue}>Ranked #1 in squad</Badge>
+            <Badge color={T.amber}>{streak}-day streak</Badge>
+            <Badge color={T.blue}>Level {lvl.level}</Badge>
           </div>
         </div>
         <div style={{textAlign:"right"}}>
-          <div style={{fontSize:42,fontWeight:700,color:T.lime,letterSpacing:"-0.04em",lineHeight:1}}>2,140</div>
-          <div style={{fontSize:12,color:T.muted,marginTop:3}}>XP · Level 14</div>
-          <div style={{marginTop:10,width:160}}><Prog pct={72} /></div>
-          <div style={{fontSize:11,color:T.muted,marginTop:4}}>340 XP to Level 15</div>
+          <div style={{fontSize:42,fontWeight:700,color:T.lime,letterSpacing:"-0.04em",lineHeight:1}}>{lvl.xp.toLocaleString()}</div>
+          <div style={{fontSize:12,color:T.muted,marginTop:3}}>XP · Level {lvl.level}</div>
+          <div style={{marginTop:10,width:160}}><Prog pct={lvl.pct} /></div>
+          <div style={{fontSize:11,color:T.muted,marginTop:4}}>{lvl.toNext} XP to Level {lvl.level+1}</div>
         </div>
       </Card>
       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
-        {[["Total study time","42h 18m",T.lime],["Essays submitted","8",T.purple],["Cards mastered","147",T.teal],["Quizzes completed","23",T.amber],["Chat sessions","89",T.blue],["Focus sessions","64",T.red]].map(([l,v,c],i)=>(
+        {[["Total study time",fmtH(ps.totalMin),T.lime],["Essays submitted","8",T.purple],["Cards mastered","147",T.teal],["Quizzes completed","23",T.amber],["Chat sessions","89",T.blue],["Focus sessions",String(ps.focusSessions),T.red]].map(([l,v,c],i)=>(
           <Card key={i} style={{textAlign:"center",padding:16}}>
             <div style={{fontSize:26,fontWeight:700,color:c,letterSpacing:"-0.02em",lineHeight:1}}>{v}</div>
             <div style={{fontSize:11,color:T.muted,marginTop:6}}>{l}</div>
@@ -1756,6 +1905,19 @@ function Profile() {
 function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRunning=()=>{}}) {
   const realStats=sessionStats();
   const realStreak=Math.max(1,getStreak());
+  const lvl=levelInfo();
+  const wk=weekStreak();
+  const [,forcePlan]=useState(0);
+  const plan=todaysPlan();
+  const planDoneCount=plan.filter(t=>t.done).length;
+  const planLeft=Math.max(0,plan.length-planDoneCount);
+  const subjColor={Chemistry:T.red,"English IV":T.purple,Biology:T.teal,Calculus:T.blue,Spanish:T.amber,History:T.muted};
+  const scOf=(s)=>subjColor[s]||T.lime;
+  const fmtClock=(t)=>{if(!t)return"";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+ap;};
+  const prof=getProfile();
+  const firstName=(prof.name||"there").split(" ")[0];
+  const hr=new Date().getHours();
+  const greet=hr<12?"Good morning":hr<18?"Good afternoon":"Good evening";
   const fm=String(Math.floor(focusSecs/60)).padStart(2,"0");
   const fs=String(focusSecs%60).padStart(2,"0");
   const fmtTime=`${fm}:${fs}`;
@@ -1820,13 +1982,15 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
         <div style={{background:`linear-gradient(135deg, ${T.forest} 0%, #1B4536 100%)`,color:T.cream,borderRadius:22,padding:"26px 30px",position:"relative",overflow:"hidden",minHeight:200}}>
           <div style={{position:"absolute",right:-40,top:-40,width:240,height:240,background:"radial-gradient(circle,rgba(200,255,90,0.18),transparent 70%)",pointerEvents:"none"}} />
           <div style={{position:"relative"}}>
-            <div style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)",marginBottom:6}}>Friday · May 17 · Week 20</div>
-            <div style={{fontFamily:T.hand,fontSize:54,lineHeight:0.95,fontWeight:600,color:T.cream,margin:"0 0 4px"}}>Good afternoon, <span style={{color:T.lime}}>Maya.</span></div>
-            <p style={{fontSize:13.5,color:"rgba(246,241,230,0.7)",margin:"8px 0 16px",lineHeight:1.5,maxWidth:380}}>You've got <strong style={{color:T.cream}}>2 tasks left</strong> on your plan and a chem quiz in 3 days. Let's lock in.</p>
+            <div style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)",marginBottom:6}}>{todayLabel()} · Week {weekNo()}</div>
+            <div style={{fontFamily:T.hand,fontSize:54,lineHeight:0.95,fontWeight:600,color:T.cream,margin:"0 0 4px"}}>{greet}, <span style={{color:T.lime}}>{firstName}.</span></div>
+            <p style={{fontSize:13.5,color:"rgba(246,241,230,0.7)",margin:"8px 0 16px",lineHeight:1.5,maxWidth:380}}>{planLeft>0?<>You've got <strong style={{color:T.cream}}>{planLeft} task{planLeft===1?"":"s"} left</strong> on today's plan. Let's lock in.</>:plan.length>0?<>All <strong style={{color:T.cream}}>{plan.length} tasks done</strong> today. Outstanding work.</>:<>Nothing scheduled yet. Add a few tasks and let's lock in.</>}</p>
             <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-              <button onClick={()=>setActive("focustimer")} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",background:T.lime,color:T.ink,borderRadius:99,fontSize:13,fontWeight:600,border:"none",cursor:"pointer",fontFamily:T.font}}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg>
-                Resume focus session
+              <button onClick={()=>setFocusRunning(r=>!r)} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",background:T.lime,color:T.ink,borderRadius:99,fontSize:13,fontWeight:600,border:"none",cursor:"pointer",fontFamily:T.font}}>
+                {focusRunning
+                  ?<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+                  :<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg>}
+                {focusRunning?"Pause focus session":"Resume focus session"}
               </button>
               <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",color:T.cream,border:"1px solid rgba(246,241,230,0.18)",background:"transparent",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>View today's plan</button>
             </div>
@@ -1842,9 +2006,9 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
           <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.ink,margin:"10px 0 2px"}}>{realStreak}<span style={{fontSize:20,color:"rgba(14,31,24,0.55)",marginLeft:6}}>days</span></div>
           <div style={{fontSize:12,color:"rgba(14,31,24,0.7)"}}>Longest: 31 · +10 credits unlocked</div>
           <div style={{display:"flex",gap:5,marginTop:"auto",paddingTop:14}}>
-            {["M","T","W","T","F","S","S"].map((d,i)=>{
-              const on=i<4, today=i===4;
-              return <div key={i} style={{flex:1,height:26,borderRadius:6,background:today?T.ink:on?T.forest:"rgba(14,31,24,0.10)",color:today?T.lime:on?T.lime:"rgba(14,31,24,0.4)",display:"grid",placeItems:"center",fontSize:10,fontFamily:T.mono,fontWeight:today?700:400,boxShadow:today?"0 0 0 2px "+T.ink:"none"}}>{d}</div>;
+            {wk.map((d,i)=>{
+              const today=d.today, on=d.on;
+              return <div key={i} style={{flex:1,height:26,borderRadius:6,background:today?T.ink:on?T.forest:"rgba(14,31,24,0.10)",color:today?T.lime:on?T.lime:"rgba(14,31,24,0.4)",opacity:d.future?0.45:1,display:"grid",placeItems:"center",fontSize:10,fontFamily:T.mono,fontWeight:today?700:400,boxShadow:today?"0 0 0 2px "+T.ink:"none"}}>{d.lab}</div>;
             })}
           </div>
         </div>
@@ -1853,12 +2017,12 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
         <div onClick={()=>setActive("profile")} style={{background:T.card,borderRadius:22,padding:22,cursor:"pointer",border:`1px solid ${T.border}`,display:"flex",flexDirection:"column"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,fontWeight:600}}>XP &amp; Level</span>
-            <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.12em",background:T.card2,padding:"3px 8px",borderRadius:99,color:T.text}}>LVL 14</span>
+            <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.12em",background:T.card2,padding:"3px 8px",borderRadius:99,color:T.text}}>LVL {lvl.level}</span>
           </div>
-          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.text,margin:"10px 0 2px"}}>2,140<span style={{fontSize:20,color:T.muted,marginLeft:6}}>xp</span></div>
-          <div style={{fontSize:12,color:T.muted}}>340 XP to Level 15 · Rank #1 in Bio Cram Squad</div>
+          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.text,margin:"10px 0 2px"}}>{lvl.xp.toLocaleString()}<span style={{fontSize:20,color:T.muted,marginLeft:6}}>xp</span></div>
+          <div style={{fontSize:12,color:T.muted}}>{lvl.toNext} XP to Level {lvl.level+1}</div>
           <div style={{height:6,background:T.card2,borderRadius:99,marginTop:"auto",overflow:"hidden"}}>
-            <div style={{height:"100%",width:"62%",background:T.lime}} />
+            <div style={{height:"100%",width:lvl.pct+"%",background:T.lime}} />
           </div>
         </div>
       </div>
@@ -1867,20 +2031,27 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
       <div style={{display:"grid",gridTemplateColumns:"5fr 3fr 4fr",gap:16}}>
         {/* Today's plan */}
         <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
-          <CardHead title="Today's plan" label="3 / 5 DONE" more="Edit" />
-          {tasks.map((t,i)=>(
-            <div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,background:t.now?T.butter:"transparent",borderColor:t.now?T.limeDk:T.border,cursor:"pointer"}}>
-              <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${t.done?T.forest:t.now?T.ink:T.faint}`,background:t.done?T.forest:"transparent",flex:"none",display:"grid",placeItems:"center"}}>
-                {t.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+          <CardHead title="Today's plan" label={planDoneCount+" / "+plan.length+" DONE"} more="Calendar" />
+          {plan.length===0
+            ? <div style={{padding:"22px 8px",textAlign:"center"}}>
+                <div style={{fontSize:13,color:T.muted,marginBottom:14,lineHeight:1.5}}>Nothing scheduled for today. Add events to your calendar and they appear here automatically.</div>
+                <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 16px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Open calendar</button>
               </div>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:13.5,color:t.done?T.muted:T.text,textDecoration:t.done?"line-through":"none",fontWeight:500}}>{t.task}</div>
-                <div style={{fontSize:11.5,color:T.muted,marginTop:1}}>{t.sub}</div>
+            : plan.map((t)=>{
+              const c=scOf(t.subject);
+              return (
+              <div key={t.id} onClick={()=>{togglePlanDone(t.id);forcePlan(x=>x+1);}} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer"}}>
+                <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${t.done?T.forest:T.faint}`,background:t.done?T.forest:"transparent",flex:"none",display:"grid",placeItems:"center"}}>
+                  {t.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13.5,color:t.done?T.muted:T.text,textDecoration:t.done?"line-through":"none",fontWeight:500}}>{t.title}</div>
+                  <div style={{fontSize:11.5,color:T.muted,marginTop:1,textTransform:"capitalize"}}>{t.subject}{t.kind?" · "+t.kind:""}</div>
+                </div>
+                <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.06em",padding:"3px 8px",borderRadius:6,background:c+"22",color:c,textTransform:"uppercase",fontWeight:600,flex:"none"}}>{t.subject.slice(0,4)}</span>
+                <span style={{fontFamily:T.mono,fontSize:11,color:T.muted}}>{fmtClock(t.time)}</span>
               </div>
-              <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.06em",padding:"3px 8px",borderRadius:6,background:t.tagBg,color:t.tagColor||T.ink,textTransform:"uppercase",fontWeight:600,flex:"none"}}>{t.tag}</span>
-              <span style={{fontFamily:T.mono,fontSize:11,color:T.muted}}>{t.time}</span>
-            </div>
-          ))}
+            );})}
         </div>
 
         {/* Focus Pomodoro */}
@@ -2112,9 +2283,16 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
 
 // ─── APP SHELL ────────────────────────────────────────────────────────────────
 function App() {
+  seedEventsIfStale();
   const [active,setActive]=useState("dashboard");
   const [theme,setThemeState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-theme"))||"dark");
-  const [accent,setAccentState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-accent"))||"Lime");
+  const [accent,setAccentState]=useState(()=>{
+    if(typeof localStorage!=="undefined"){
+      if(!localStorage.getItem("studlin-accent-reset3")){localStorage.setItem("studlin-accent","Lime");localStorage.setItem("studlin-accent-reset3","1");}
+      return localStorage.getItem("studlin-accent")||"Lime";
+    }
+    return "Lime";
+  });
   const [density,setDensityState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-density"))||"Comfortable");
   applyTheme(theme, accent, density); // mutate T on every render so all child components re-read
   const setTheme=(name)=>{ setThemeState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-theme",name); };
@@ -2126,6 +2304,26 @@ function App() {
   const [focusTotal,setFocusTotal]=useState(25*60);
   const [creditsOpen,setCreditsOpen]=useState(false);
   const [pricingOpen,setPricingOpen]=useState(false);
+  const [notifOpen,setNotifOpen]=useState(false);
+  const [notifSeen,setNotifSeen]=useState(false);
+  const [customDollars,setCustomDollars]=useState("");
+  const [boughtMsg,setBoughtMsg]=useState("");
+  const buyCustom=()=>{
+    let v=Math.floor(+customDollars||0);
+    if(v<1){setBoughtMsg("Enter an amount of at least $1.");return;}
+    v=Math.min(1000000,v);
+    const credits=v*30;
+    setBoughtMsg("Success — added "+credits.toLocaleString()+" credits for $"+v.toLocaleString()+".");
+    setCustomDollars("");
+  };
+  const notifs=(()=>{
+    const ev=lsGet("events",[]); const tk=dayKey();
+    const rel=(k)=>{const tomorrow=dayKey(new Date(Date.now()+86400000));if(k===tk)return"Today";if(k===tomorrow)return"Tomorrow";const p=k.split("-");return MON_SHORT[+p[1]-1]+" "+(+p[2]);};
+    const up=ev.filter(e=>e.date>=tk).sort((a,b)=>a.date===b.date?((a.time||"")<(b.time||"")?-1:1):(a.date<b.date?-1:1)).slice(0,4)
+      .map(e=>({icon:Icon.cal,title:e.title,sub:rel(e.date)+" · "+e.subject,color:T.blue}));
+    const list=[{icon:Icon.flame,title:getStreak()+"-day streak going",sub:"Study today to keep it alive",color:T.amber}].concat(up);
+    return list;
+  })();
   useEffect(()=>{
     if(!focusRunning) return;
     const id=setInterval(()=>setFocusSecs(s=>s>0?s-1:0),1000);
@@ -2154,14 +2352,13 @@ function App() {
       {id:"aitutor",label:"Tutor"},
       {id:"grammar",label:"Grammar & Polish"},
       {id:"humanizer",label:"Rewrite"},
-      {id:"music",label:"Focus music"},
     ]},
 
   ];
   const bottomItems=[{id:"settings",label:"Settings"},{id:"profile",label:"Profile"}];
-  const pages={aichat:AiChat,essays:Essays,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,aitutor:AiTutor,grammar:GrammarPolish,humanizer:AiHumanizer,music:FocusMusic,profile:Profile};
-  const labelOf={dashboard:"Dashboard",aichat:"AI Chat",essays:"Essays",flashcards:"Flashcards",notes:"Notes",focustimer:"Focus Timer",calendar:"Calendar",aitutor:"AI Tutor",grammar:"Grammar & Polish",humanizer:"Rewrite",music:"Focus Music",settings:"Settings",profile:"Profile"};
-  const sectionOf={dashboard:"Workspace",aichat:"Workspace",essays:"Workspace",flashcards:"Workspace",notes:"Workspace",focustimer:"Workspace",calendar:"Workspace",aitutor:"Tools",grammar:"Tools",humanizer:"Tools",music:"Tools",settings:"Account",profile:"Account"};
+  const pages={aichat:AiChat,essays:Essays,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,aitutor:AiTutor,grammar:GrammarPolish,humanizer:AiHumanizer,profile:Profile};
+  const labelOf={dashboard:"Dashboard",aichat:"AI Chat",essays:"Essays",flashcards:"Flashcards",notes:"Notes",focustimer:"Focus Timer",calendar:"Calendar",aitutor:"AI Tutor",grammar:"Grammar & Polish",humanizer:"Rewrite",settings:"Settings",profile:"Profile"};
+  const sectionOf={dashboard:"Workspace",aichat:"Workspace",essays:"Workspace",flashcards:"Workspace",notes:"Workspace",focustimer:"Workspace",calendar:"Workspace",aitutor:"Tools",grammar:"Tools",humanizer:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
   const sidebarText=isLight?"#F6F1E6":T.text;
@@ -2234,10 +2431,33 @@ function App() {
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
             See Pricing
           </button>
-          <button style={{width:36,height:36,display:"grid",placeItems:"center",borderRadius:10,background:T.card,border:`1px solid ${T.border}`,color:T.text,position:"relative",cursor:"pointer",flexShrink:0}}>
+          <div style={{position:"relative",flexShrink:0}}>
+          <button onClick={()=>{setNotifOpen(o=>!o);setNotifSeen(true);}} style={{width:36,height:36,display:"grid",placeItems:"center",borderRadius:10,background:notifOpen?T.lime+"18":T.card,border:`1px solid ${notifOpen?T.lime+"55":T.border}`,color:notifOpen?T.lime:T.text,position:"relative",cursor:"pointer"}}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-            <span style={{position:"absolute",top:7,right:7,width:7,height:7,background:T.limeDk,border:`2px solid ${T.bg}`,borderRadius:"50%"}} />
+            {!notifSeen && notifs.length>0 && <span style={{position:"absolute",top:7,right:7,width:7,height:7,background:T.limeDk,border:`2px solid ${T.bg}`,borderRadius:"50%"}} />}
           </button>
+          {notifOpen && (<>
+            <div onClick={()=>setNotifOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
+            <div style={{position:"absolute",top:46,right:0,width:340,maxWidth:"86vw",background:T.card,border:`1px solid ${T.border}`,borderRadius:14,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
+              <div style={{padding:"13px 16px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:13,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Notifications</span>
+                <span onClick={()=>setNotifOpen(false)} style={{fontSize:11,color:T.lime,cursor:"pointer",fontWeight:600}}>Mark all read</span>
+              </div>
+              <div style={{maxHeight:360,overflowY:"auto"}}>
+                {notifs.map((n,i)=>(
+                  <div key={i} onClick={()=>{setActive("calendar");setNotifOpen(false);}} style={{display:"flex",gap:11,padding:"12px 16px",borderBottom:i<notifs.length-1?`1px solid ${T.border}`:"none",cursor:"pointer",alignItems:"flex-start"}}>
+                    <span style={{width:30,height:30,borderRadius:8,flexShrink:0,background:n.color+"18",border:`1px solid ${n.color}33`,color:n.color,display:"grid",placeItems:"center"}}>{n.icon}</span>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:12.5,color:T.text,fontWeight:600,lineHeight:1.3}}>{n.title}</div>
+                      <div style={{fontSize:11,color:T.muted,marginTop:2}}>{n.sub}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div onClick={()=>{setActive("settings");setNotifOpen(false);}} style={{padding:"11px 16px",borderTop:`1px solid ${T.border}`,background:T.bg,fontSize:11.5,color:T.muted,cursor:"pointer",textAlign:"center"}}>Notification settings</div>
+            </div>
+          </>)}
+          </div>
           <button onClick={()=>setActive("profile")} style={{width:36,height:36,borderRadius:"50%",background:"linear-gradient(135deg,#FFD7B5,#FFC9D2)",display:"grid",placeItems:"center",fontWeight:600,fontSize:12,color:T.ink,border:`2px solid ${T.bg}`,cursor:"pointer",flexShrink:0,fontFamily:T.font}}>MR</button>
         </div>
 
@@ -2263,7 +2483,7 @@ function App() {
             {
               name:"Scholar",price:"$14.99",per:"/mo · annual",tag:"7 DAYS FREE",
               desc:"For students who study hard and write a lot.",
-              features:["500 AI credits / month","Full writing suite + Humanizer","AI flashcards from any file","Smart calendar reschedule","AI focus music and soundscapes","Weekly Wrapped insights","Focus music · advanced analytics"],
+              features:["500 AI credits / month","Full writing suite + Humanizer","AI flashcards from any file","Smart calendar reschedule","Distraction blocker + site blocking","Weekly Wrapped insights","Advanced focus analytics"],
               cta:"Start free trial",variant:"lime",featured:true,
             },
             {
@@ -2342,7 +2562,7 @@ function App() {
             {n:750,p:"$16.99",save:"−43%",featured:true},
             {n:1500,p:"$24.99",save:"−58%"},
           ].map((pk,i)=>(
-            <div key={i} style={{background:pk.featured?T.ink:T.card2,color:pk.featured?T.cream:T.text,borderRadius:10,padding:14,border:`1px solid ${pk.featured?T.ink:T.border}`,cursor:"pointer",position:"relative",transition:"transform 0.15s"}}>
+            <div key={i} onClick={()=>setBoughtMsg("Success — added "+pk.n.toLocaleString()+" credits for "+pk.p+".")} style={{background:pk.featured?T.ink:T.card2,color:pk.featured?T.cream:T.text,borderRadius:10,padding:14,border:`1px solid ${pk.featured?T.ink:T.border}`,cursor:"pointer",position:"relative",transition:"transform 0.15s"}}>
               <div style={{fontFamily:T.hand,fontSize:34,fontWeight:700,color:pk.featured?T.lime:T.text,lineHeight:0.9,letterSpacing:"-0.01em"}}>{pk.n.toLocaleString()}</div>
               <div style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",color:pk.featured?"rgba(246,241,230,0.5)":T.muted,marginTop:2}}>CREDITS</div>
               <div style={{fontSize:16,fontWeight:600,marginTop:6,letterSpacing:"-0.02em"}}>{pk.p}</div>
@@ -2350,6 +2570,18 @@ function App() {
             </div>
           ))}
         </div>
+
+        <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.muted,textTransform:"uppercase",marginBottom:10}}>Buy a custom amount</div>
+        <div style={{display:"flex",gap:10,alignItems:"stretch",marginBottom:8,flexWrap:"wrap"}}>
+          <div style={{flex:1,minWidth:220,display:"flex",alignItems:"center",gap:8,background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"6px 14px"}}>
+            <span style={{fontSize:20,color:T.muted,fontWeight:600}}>$</span>
+            <input type="number" min="1" max="1000000" value={customDollars} onChange={e=>setCustomDollars(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")buyCustom();}} placeholder="Enter any amount" style={{flex:1,minWidth:60,background:"none",border:"none",outline:"none",color:T.text,fontSize:18,fontWeight:600,fontFamily:T.font}} />
+            <span style={{fontSize:12,color:T.muted,whiteSpace:"nowrap"}}>≈ {Math.round(Math.min(1000000,Math.max(0,+customDollars||0))*30).toLocaleString()} credits</span>
+          </div>
+          <button onClick={buyCustom} style={{background:T.lime,color:T.ink,border:"none",borderRadius:10,padding:"0 24px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Buy now</button>
+        </div>
+        {boughtMsg&&<div style={{fontSize:12.5,color:T.lime,fontWeight:600,marginBottom:8}}>{boughtMsg}</div>}
+        <div style={{fontSize:11,color:T.muted,marginBottom:18}}>Buy any amount you want — from $1 up to a $1,000,000 cap. Roughly 30 credits per $1.</div>
 
         <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.muted,textTransform:"uppercase",marginBottom:10}}>What costs what</div>
         <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"4px 14px"}}>
@@ -2397,6 +2629,8 @@ function App() {
         @media (prefers-reduced-motion: reduce) {
           [data-page], [data-page] > * { animation: none !important; }
         }
+        body[data-density="Compact"] [data-page] { padding: 14px 22px !important; }
+        body[data-density="Spacious"] [data-page] { padding: 38px 50px !important; }
       `}</style>
     </div>
   );

@@ -203,6 +203,25 @@ function StepSignup({ state, set, advance }) {
           </div>
           <div className="divider">or sign up with email</div>
           <button className="provider" onClick={()=>setMode("email")}>{Ic.mail} Use email instead</button>
+          <div className="signup-trust">
+            <div className="trust-row">
+              <span className="tchip">{Ic.check} Free forever plan</span>
+              <span className="tchip">{Ic.check} No card required</span>
+              <span className="tchip">{Ic.check} 60-second setup</span>
+            </div>
+            <div className="signup-quote">
+              <div className="sq-mark">"</div>
+              <p>Studlin replaced five different apps I was paying for. My grades went from a 3.1 to a 3.8 in a single semester.</p>
+              <div className="sq-by">
+                <span className="sq-av">M</span>
+                <div className="sq-meta"><strong>Maya</strong><span>Senior · AP Bio &amp; Calculus</span></div>
+              </div>
+            </div>
+            <div className="trust-foot">
+              <div className="tf-avatars"><span></span><span></span><span></span><span></span></div>
+              Loved by <strong>24,000+</strong> students
+            </div>
+          </div>
         </>
       )}
 

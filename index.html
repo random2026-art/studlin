@@ -49,6 +49,7 @@ body{
   -webkit-font-smoothing:antialiased;
   text-rendering:optimizeLegibility;
   overflow-x:clip;
+  scrollbar-width:none;
 }
 img{max-width:100%;display:block;}
 a{color:inherit;text-decoration:none;}
@@ -503,6 +504,45 @@ body::after{
   .cmp-mob{display:block;}
 }
 
+/* ============ COMPARE PLANS TABLE ============ */
+.cpt-wrap{max-width:1120px;margin:60px auto 0;}
+.cpt{position:relative;display:grid;grid-template-columns:minmax(230px,1.75fr) repeat(3,minmax(120px,1fr));border:1px solid var(--line);border-radius:26px;background:var(--panel);box-shadow:0 50px 110px -55px rgba(0,0,0,0.8);overflow:hidden;}
+/* header cells */
+.cpt-h{padding:38px 20px 22px;display:flex;flex-direction:column;gap:5px;align-items:center;text-align:center;border-bottom:1px solid var(--line);position:relative;}
+.cpt-h.lbl{align-items:flex-start;justify-content:flex-end;text-align:left;gap:9px;padding-top:30px;}
+.cpt-h .cpt-kick{font-family:var(--mono);font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:var(--lime);}
+.cpt-h .cpt-lead{font-family:var(--display);font-weight:700;font-size:30px;line-height:0.98;letter-spacing:-0.03em;color:var(--cream);}
+.cpt-h .pname{font-family:var(--display);font-weight:700;font-size:19px;letter-spacing:-0.02em;color:var(--cream);}
+.cpt-h .pprice{font-family:var(--display);font-weight:700;font-size:34px;line-height:0.9;letter-spacing:-0.035em;color:var(--cream);display:flex;align-items:baseline;gap:3px;}
+.cpt-h .pprice .per{font-family:var(--body);font-weight:400;font-size:13px;letter-spacing:0;color:var(--cream-faint);}
+.cpt-h .pnote{font-family:var(--mono);font-size:9.5px;letter-spacing:0.07em;text-transform:uppercase;color:var(--cream-faint);}
+.cpt-h .pcta{margin-top:11px;width:100%;justify-content:center;padding:11px 14px;font-size:13px;}
+/* pro column tint + cap */
+.col-pro{background:linear-gradient(180deg,rgba(184,224,74,0.08),rgba(184,224,74,0.022));}
+.cpt-h.col-pro{box-shadow:inset 0 3px 0 0 var(--lime);}
+.cpt-h.col-pro .pname{color:var(--lime);}
+.cpt-h .rec{position:absolute;top:12px;left:50%;transform:translateX(-50%);background:var(--lime);color:var(--ink);font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;padding:5px 12px;border-radius:99px;white-space:nowrap;box-shadow:0 8px 20px -8px rgba(184,224,74,0.7);}
+/* category band */
+.cpt-cat{grid-column:1/-1;background:var(--bg-2);border-bottom:1px solid var(--line);border-top:1px solid var(--line);padding:13px 22px;font-family:var(--mono);font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--cream);display:flex;align-items:center;gap:10px;}
+.cpt-cat .cn{width:6px;height:6px;border-radius:50%;background:var(--lime);box-shadow:0 0 9px var(--lime);flex:none;}
+/* feature label + value cells */
+.cpt-f{padding:15px 22px;font-size:14px;color:var(--cream);display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line-2);line-height:1.35;}
+.cpt-f .info{font-size:11.5px;color:var(--cream-faint);font-weight:400;}
+.cpt-v{padding:15px 12px;display:flex;align-items:center;justify-content:center;text-align:center;border-bottom:1px solid var(--line-2);border-left:1px solid var(--line-2);font-size:13px;color:var(--cream-dim);}
+.cpt-v.txt{font-family:var(--mono);font-size:12px;letter-spacing:-0.01em;color:var(--cream);}
+.cpt-v.col-pro.txt{color:var(--lime);}
+.cpt-yes{width:25px;height:25px;border-radius:50%;background:var(--lime);color:var(--ink);display:grid;place-items:center;}
+.cpt-yes svg{width:13px;height:13px;}
+.cpt-no{width:15px;height:2px;border-radius:2px;background:rgba(244,239,227,0.2);}
+.cpt-foot{padding:24px 20px;border-left:1px solid var(--line-2);display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:8px;}
+.cpt-foot.lbl{border-left:none;align-items:flex-start;justify-content:center;}
+.cpt-foot .fnote{font-size:13px;color:var(--cream-dim);line-height:1.5;}
+.cpt-foot .btn{width:100%;justify-content:center;padding:12px 14px;font-size:13px;}
+@media(max-width:820px){
+  .cpt-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:26px;}
+  .cpt{min-width:720px;}
+}
+
 /* ============ PRICING ============ */
 .toggle{display:inline-flex;background:var(--panel);border:1px solid var(--line);padding:5px;border-radius:999px;gap:4px;margin-top:26px;}
 .toggle button{padding:10px 22px;border-radius:999px;font-size:14px;font-weight:500;color:var(--cream-dim);transition:all .2s;}
@@ -571,13 +611,15 @@ body::after{
 .hiw-sky .shoot::after{content:"";position:absolute;right:-1px;top:50%;width:4px;height:4px;border-radius:50%;background:#fff;transform:translateY(-50%);box-shadow:0 0 7px 1px rgba(244,239,227,0.7);}
 @keyframes shoot{0%{opacity:0;transform:rotate(var(--ang,18deg)) translateX(0) scaleX(.25);}6%{opacity:1;}54%{opacity:1;}74%{opacity:0;transform:rotate(var(--ang,18deg)) translateX(var(--dist,560px)) scaleX(1);}100%{opacity:0;}}
 /* giant outline word — large + spaced */
-.hiw-mega{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);white-space:nowrap;display:flex;gap:clamp(24px,4vw,80px);z-index:1;pointer-events:none;}
-.hiw-mega span{font-family:var(--display);font-weight:800;font-size:clamp(100px,19vw,300px);line-height:.8;letter-spacing:-.04em;-webkit-text-stroke:1.5px rgba(244,239,227,0.06);color:transparent;}
+.hiw-mega{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);white-space:nowrap;display:flex;gap:clamp(28px,6vw,118px);z-index:1;pointer-events:none;}
+.hiw-mega span{font-family:var(--display);font-weight:800;font-size:clamp(130px,18vw,460px);line-height:.8;letter-spacing:-.04em;-webkit-text-stroke:1.5px rgba(244,239,227,0.06);color:transparent;}
 .hiw-mega span.lit{color:rgba(244,239,227,0.06);-webkit-text-stroke:0;}
 /* the stage — a panel that slides left→right with scroll */
 .hiw-stage{position:relative;z-index:2;width:min(96%,1300px);min-height:clamp(360px,50vh,500px);display:flex;align-items:center;}
-.hiw-guide{display:none;}
-.hiw-slider{position:relative;display:grid;width:min(960px,88vw);min-height:300px;transform:translateX(var(--tx,0));transition:transform .14s cubic-bezier(.33,1,.68,1);will-change:transform;}
+.hiw-guide{position:absolute;left:0;right:0;top:50%;height:1px;transform:translateY(-.5px);background:linear-gradient(90deg,transparent,rgba(184,224,74,0.16) 16%,rgba(184,224,74,0.16) 84%,transparent);}
+.hiw-guide::before,.hiw-guide::after{content:"";position:absolute;top:50%;width:7px;height:7px;border-radius:50%;background:var(--lime);transform:translateY(-50%);box-shadow:0 0 10px rgba(184,224,74,0.6);}
+.hiw-guide::before{left:-1px;} .hiw-guide::after{right:-1px;}
+.hiw-slider{position:relative;display:grid;width:min(780px,76vw);min-height:300px;transform:translateX(var(--tx,0));transition:transform .14s cubic-bezier(.33,1,.68,1);will-change:transform;}
 .hiw-card{grid-area:1/1;display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto auto auto;column-gap:clamp(30px,3.6vw,56px);row-gap:12px;align-content:center;padding:clamp(36px,3.6vw,54px);border-radius:26px;background:linear-gradient(160deg,rgba(23,40,31,0.98),rgba(8,14,11,0.99));border:1px solid rgba(184,224,74,0.18);box-shadow:0 40px 100px -50px rgba(0,0,0,0.92),0 24px 70px -40px rgba(184,224,74,0.2);opacity:0;transform:scale(.985);transition:opacity .5s ease,transform .5s ease;pointer-events:none;}
 .hiw-card.active{opacity:1;transform:none;pointer-events:auto;}
 .hiw-card::before{content:"";position:absolute;inset:0;border-radius:26px;pointer-events:none;background:linear-gradient(180deg,rgba(244,239,227,0.05),transparent 26%);}
@@ -1101,47 +1143,240 @@ body::after{
       <div class="plan reveal">
         <h3>Free</h3>
         <div class="price"><span class="num">$0</span><span class="per">/forever</span></div>
-        <p class="pdesc">For getting your feet wet. No card needed.</p>
+        <p class="pdesc">Everything you need to get organized. Free, forever.</p>
         <ul>
           <li><span class="ck2">✓</span> 50 AI credits / month</li>
-          <li><span class="ck2">✓</span> Basic grammar checker</li>
-          <li><span class="ck2">✓</span> Manual flashcards</li>
-          <li><span class="ck2">✓</span> Pomodoro focus timer</li>
-          <li><span class="ck2">✓</span> Streaks & basic stats</li>
+          <li><span class="ck2">✓</span> AI tutor — Standard model, Research mode</li>
+          <li><span class="ck2">✓</span> Manual flashcards &amp; notes</li>
+          <li><span class="ck2">✓</span> Focus timer, calendar &amp; planner</li>
+          <li><span class="ck2">✓</span> Streaks, XP &amp; basic stats</li>
         </ul>
         <a href="Studlin Onboarding.html" class="btn btn-ghost">Start free</a>
       </div>
       <div class="plan feat reveal d1">
         <div class="plan-tag">7 DAYS FREE</div>
-        <h3>Scholar Pro</h3>
-        <div class="price"><span class="num" data-monthly="$15" data-annual="$11">$15</span><span class="per" id="proPer">/month</span></div>
-        <p class="pdesc">Unlimited everything. Built for serious students.</p>
+        <h3>Pro</h3>
+        <div class="price"><span class="num" data-monthly="$9.99" data-annual="$7.99">$9.99</span><span class="per" id="proPer">/month</span></div>
+        <p class="pdesc">Unlock the full study OS. Built for serious students.</p>
         <ul>
-          <li><span class="ck2">✓</span> 500 AI credits / month</li>
-          <li><span class="ck2">✓</span> Full writing suite + Humanizer</li>
-          <li><span class="ck2">✓</span> AI flashcards from any file</li>
-          <li><span class="ck2">✓</span> Smart Reschedule + AI Tutor</li>
-          <li><span class="ck2">✓</span> AI focus music &amp; soundscapes</li>
-          <li><span class="ck2">✓</span> Weekly Wrapped insights</li>
+          <li><span class="ck2">✓</span> 300 AI credits / month</li>
+          <li><span class="ck2">✓</span> Full essay suite + Google Docs + AI Rewrite</li>
+          <li><span class="ck2">✓</span> AI flashcards, note scanning, lecture &amp; YouTube import</li>
+          <li><span class="ck2">✓</span> All AI models + every study mode</li>
+          <li><span class="ck2">✓</span> Plagiarism check + unlimited grammar</li>
+          <li><span class="ck2">✓</span> Squad leaderboards + 2× focus XP</li>
         </ul>
         <a href="Studlin Onboarding.html" class="btn btn-lime magnetic">Start free trial <span class="ar">→</span></a>
       </div>
       <div class="plan reveal d2">
-        <h3>Academic</h3>
-        <div class="price"><span class="num" data-monthly="$30" data-annual="$22">$30</span><span class="per" id="elitePer">/month</span></div>
-        <p class="pdesc">Unlimited credits. For the obsessive.</p>
+        <h3>Max</h3>
+        <div class="price"><span class="num" data-monthly="$24.99" data-annual="$19.99">$24.99</span><span class="per" id="elitePer">/month</span></div>
+        <p class="pdesc">Maximum firepower. No limits, ever.</p>
         <ul>
-          <li><span class="ck2">✓</span> Unlimited AI credits</li>
-          <li><span class="ck2">✓</span> AI Detector + grade analytics</li>
-          <li><span class="ck2">✓</span> Subject-specific tutors</li>
-          <li><span class="ck2">✓</span> Exam prep + study plans</li>
-          <li><span class="ck2">✓</span> Predictive grade analytics</li>
-          <li><span class="ck2">✓</span> Sync with your calendar and task manager</li>
+          <li><span class="ck2">✓</span> 1,500 AI credits / month</li>
+          <li><span class="ck2">✓</span> Everything in Pro, with no limits</li>
+          <li><span class="ck2">✓</span> Bulk ops — 100 flashcards at once</li>
+          <li><span class="ck2">✓</span> Advanced analytics &amp; learning paths</li>
+          <li><span class="ck2">✓</span> Cosmetics shop + 3× focus XP</li>
+          <li><span class="ck2">✓</span> Monthly tournaments</li>
         </ul>
-        <a href="Studlin Onboarding.html" class="btn btn-ghost">Go Academic</a>
+        <a href="Studlin Onboarding.html" class="btn btn-ghost">Go Max</a>
       </div>
     </div>
-    <div style="text-align:center;margin-top:30px;font-size:14px;color:var(--cream-faint);">Most students juggle 4–6 apps. Studlin is all of them in one. Starts at just <span style="color:var(--cream);">$14.99/mo</span>.</div>
+    <div style="text-align:center;margin-top:30px;font-size:14px;color:var(--cream-faint);">Most students juggle 4–6 apps. Studlin is all of them in one. Starts at just <span style="color:var(--cream);">$9.99/mo</span>.</div>
+  </div>
+</section>
+
+<!-- ============ COMPARE PLANS ============ -->
+<section class="sec" id="compare-plans" style="padding-top:30px;">
+  <div class="wrap">
+    <div class="head center">
+      <span class="sec-eyebrow">// The whole picture</span>
+      <h2>Compare <span class="dim">every plan.</span></h2>
+    </div>
+    <div class="cpt-wrap reveal">
+      <div class="cpt">
+
+        <!-- HEADER -->
+        <div class="cpt-h lbl">
+          <span class="cpt-kick">// Compare plans</span>
+          <span class="cpt-lead">Every feature,<br>side by side.</span>
+        </div>
+        <div class="cpt-h">
+          <span class="pname">Free</span>
+          <span class="pprice">$0</span>
+          <span class="pnote">Forever, no card</span>
+        </div>
+        <div class="cpt-h col-pro">
+          <span class="rec">Most popular</span>
+          <span class="pname">Pro</span>
+          <span class="pprice">$9.99<span class="per">/mo</span></span>
+          <span class="pnote">or $7.99 billed annually</span>
+        </div>
+        <div class="cpt-h">
+          <span class="pname">Max</span>
+          <span class="pprice">$24.99<span class="per">/mo</span></span>
+          <span class="pnote">or $19.99 billed annually</span>
+        </div>
+
+        <!-- AI TUTOR & CREDITS -->
+        <div class="cpt-cat"><span class="cn"></span> AI Tutor &amp; Credits</div>
+        <div class="cpt-f">Monthly AI credits</div>
+        <div class="cpt-v txt">50</div>
+        <div class="cpt-v col-pro txt">300</div>
+        <div class="cpt-v txt">1,500</div>
+        <div class="cpt-f">AI chat tutor</div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">AI models</div>
+        <div class="cpt-v txt">Standard</div>
+        <div class="cpt-v col-pro txt">All models</div>
+        <div class="cpt-v txt">All + priority</div>
+        <div class="cpt-f">Study modes <span class="info">· Research, Essay Coach, Exam Prep, Concept Review</span></div>
+        <div class="cpt-v txt">Research</div>
+        <div class="cpt-v col-pro txt">All 4</div>
+        <div class="cpt-v txt">All 4</div>
+        <div class="cpt-f">Reasoning model</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Credit top-up packs</div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+
+        <!-- WRITING & ESSAYS -->
+        <div class="cpt-cat"><span class="cn"></span> Writing &amp; Essays</div>
+        <div class="cpt-f">Essay editor</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Google Docs sync</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">AI-assisted writing</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Feedback &amp; readability scores</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Grammar &amp; polish checks</div>
+        <div class="cpt-v txt">2 / mo</div>
+        <div class="cpt-v col-pro txt">Unlimited</div>
+        <div class="cpt-v txt">Unlimited</div>
+        <div class="cpt-f">Plagiarism detection</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">AI Rewrite (Humanizer)</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+
+        <!-- FLASHCARDS & NOTES -->
+        <div class="cpt-cat"><span class="cn"></span> Flashcards &amp; Notes</div>
+        <div class="cpt-f">Manual flashcards &amp; notes</div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">AI flashcard generation</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Document scanning</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Lecture recording</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">YouTube import</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Searchable library</div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+
+        <!-- FOCUS & PLANNING -->
+        <div class="cpt-cat"><span class="cn"></span> Focus &amp; Planning</div>
+        <div class="cpt-f">Focus timer + burnout alerts</div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Smart calendar &amp; planner</div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">AI video tutor suggestions</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Bulk operations</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-no"></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Focus session XP boost</div>
+        <div class="cpt-v txt">1&times;</div>
+        <div class="cpt-v col-pro txt">2&times;</div>
+        <div class="cpt-v txt">3&times;</div>
+
+        <!-- PROFILE & GAMIFICATION -->
+        <div class="cpt-cat"><span class="cn"></span> Profile &amp; Gamification</div>
+        <div class="cpt-f">Streaks, XP &amp; levels</div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Achievements</div>
+        <div class="cpt-v txt">Basic</div>
+        <div class="cpt-v col-pro txt">Advanced</div>
+        <div class="cpt-v txt">Advanced</div>
+        <div class="cpt-f">Subject-specific analytics</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Long-term trends &amp; learning paths</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-no"></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Squad leaderboards</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Streak credit bonuses</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+
+        <!-- PERKS & SUPPORT -->
+        <div class="cpt-cat"><span class="cn"></span> Perks &amp; Support</div>
+        <div class="cpt-f">Cosmetics shop <span class="info">· badges, frames, titles</span></div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-no"></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Monthly tournaments</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-no"></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Priority support</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+
+        <!-- FOOTER CTA -->
+        <div class="cpt-foot lbl"><span class="fnote">Cancel anytime.<br>Built for student budgets.</span></div>
+        <div class="cpt-foot"><a href="Studlin Onboarding.html" class="btn btn-ghost">Start free</a></div>
+        <div class="cpt-foot col-pro"><a href="Studlin Onboarding.html" class="btn btn-lime magnetic">Start 7-day trial</a></div>
+        <div class="cpt-foot"><a href="Studlin Onboarding.html" class="btn btn-ghost">Go Max</a></div>
+
+      </div>
+    </div>
   </div>
 </section>
 
@@ -1157,7 +1392,7 @@ body::after{
       <div class="qitem"><button class="qq">How does Studlin compare to other study tools?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Most competing tools do one thing well. Studlin integrates writing, flashcards, scheduling, AI tutoring, and focus tracking into a single workspace designed for real student workflows.</div></div></div>
       <div class="qitem"><button class="qq">What subjects does the AI Tutor support?<span class="ic">+</span></button><div class="qa"><div class="qa-in">All of them. Math with full LaTeX, sciences, humanities, languages, coding, business, including IB, AP, A Levels, IGCSE, SAT and MCAT exam boards.</div></div></div>
       <div class="qitem"><button class="qq">Can I import my existing notes and flashcards?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Yes. Studlin imports from all major study platforms and file formats — PDFs, spreadsheets, audio files, and more.</div></div></div>
-      <div class="qitem"><button class="qq">Is there a student discount?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Studlin is already built for students. Scholar Pro is $11/mo billed annually, cheaper than most single-purpose tools it replaces.</div></div></div>
+      <div class="qitem"><button class="qq">Is there a student discount?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Studlin is already built for students. Pro is $7.99/mo billed annually, cheaper than most single-purpose tools it replaces.</div></div></div>
     </div>
   </div>
 </section>
