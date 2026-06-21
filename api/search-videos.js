@@ -64,6 +64,8 @@ module.exports = async (req, res) => {
 
   const words = q.split(/\s+/).filter(Boolean);
 
+  const shuffle = req.query.shuffle === '1';
+
   const scored = VIDEOS.map(v => {
     const haystack = (v.title + ' ' + v.channel + ' ' + v.tags).toLowerCase();
     let score = 0;
@@ -73,6 +75,7 @@ module.exports = async (req, res) => {
       if (v.tags.includes(w)) score += 3;
     }
     if (score > 0) score += Math.log10(v.views || 1);
+    if (shuffle) score += Math.random() * 15;
     return { ...v, score };
   }).filter(v => v.score > 0).sort((a, b) => b.score - a.score).slice(0, 12);
 

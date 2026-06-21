@@ -1149,17 +1149,17 @@ function AiTutor(){
   const fmtDur=(secs)=>{if(!secs)return"";const m=Math.floor(secs/60);const s=secs%60;return m+":"+(s<10?"0":"")+s;};
   const fmtViews=(n)=>{if(!n)return"";if(n>=1e6)return(n/1e6).toFixed(1)+"M views";if(n>=1e3)return(n/1e3).toFixed(1)+"K views";return n+" views";};
 
-  const fetchVideos=async(query)=>{
+  const fetchVideos=async(query,shuffle)=>{
     try{
-      const res=await fetch("/api/search-videos?q="+encodeURIComponent(query+" tutorial explained"));
+      const res=await fetch("/api/search-videos?q="+encodeURIComponent(query+" tutorial explained")+(shuffle?"&shuffle=1":""));
       const data=await res.json();
       return data.videos||[];
     }catch(e){return[];}
   };
 
-  const loadSubjectVideos=async(sub)=>{
+  const loadSubjectVideos=async(sub,shuffle)=>{
     setLoading(true);setPlaying(null);setSubjectVideos([]);
-    const vids=await fetchVideos(sub);
+    const vids=await fetchVideos(sub,shuffle);
     setSubjectVideos(vids);setLoading(false);
   };
 
@@ -1176,29 +1176,18 @@ function AiTutor(){
   const removeSubject=(sb)=>{const next=subjects.filter(x=>x!==sb);setSubjects(next);lsSet("subjects",next);if(subject===sb)setSubject(next[0]||"");};
 
   const VideoCard=({v})=>{
-    const isPlaying=playing===v.id;
     const thumb=v.thumbnail||("https://img.youtube.com/vi/"+v.id+"/mqdefault.jpg");
     return (
-      <div style={{borderRadius:12,overflow:"hidden",background:T.card2,border:"1px solid "+(isPlaying?T.lime+"55":T.border),cursor:"pointer",transition:"all 0.15s"}}>
-        <div onClick={()=>setPlaying(isPlaying?null:v.id)}>
-          {isPlaying?(
-            <div style={{position:"relative",paddingBottom:"56.25%",height:0}}>
-              <iframe src={"https://www.youtube.com/embed/"+v.id+"?autoplay=1&rel=0&modestbranding=1"} title={v.title}
-                style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:"none"}}
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
+      <div onClick={()=>setPlaying(v)} style={{borderRadius:12,overflow:"hidden",background:T.card2,border:"1px solid "+T.border,cursor:"pointer",transition:"all 0.15s"}}>
+        <div style={{position:"relative",paddingBottom:"56.25%",height:0,background:"#000"}}>
+          <img src={thumb} alt={v.title} loading="lazy"
+            style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",objectFit:"cover"}} />
+          <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.25)"}}>
+            <div style={{width:44,height:44,borderRadius:"50%",background:"rgba(255,255,255,0.95)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 12px rgba(0,0,0,0.3)"}}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="#0E1F18"><polygon points="6 3 20 12 6 21"/></svg>
             </div>
-          ):(
-            <div style={{position:"relative",paddingBottom:"56.25%",height:0,background:"#000"}}>
-              <img src={thumb} alt={v.title} loading="lazy"
-                style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",objectFit:"cover"}} />
-              <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.25)",transition:"background 0.15s"}}>
-                <div style={{width:44,height:44,borderRadius:"50%",background:"rgba(255,255,255,0.95)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 12px rgba(0,0,0,0.3)"}}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="#0E1F18"><polygon points="6 3 20 12 6 21"/></svg>
-                </div>
-              </div>
-              {v.duration>0&&<span style={{position:"absolute",bottom:6,right:6,fontSize:10,fontFamily:T.mono,fontWeight:600,background:"rgba(0,0,0,0.85)",color:"#fff",padding:"2px 6px",borderRadius:4}}>{fmtDur(v.duration)}</span>}
-            </div>
-          )}
+          </div>
+          {v.duration>0&&<span style={{position:"absolute",bottom:6,right:6,fontSize:10,fontFamily:T.mono,fontWeight:600,background:"rgba(0,0,0,0.85)",color:"#fff",padding:"2px 6px",borderRadius:4}}>{fmtDur(v.duration)}</span>}
         </div>
         <div style={{padding:"10px 12px"}}>
           <div style={{fontSize:12.5,fontWeight:600,color:T.white,lineHeight:1.4,marginBottom:4,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{v.title}</div>
@@ -1206,9 +1195,32 @@ function AiTutor(){
             <span style={{whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{v.channel}</span>
             {v.views>0&&<><span>·</span><span style={{whiteSpace:"nowrap"}}>{fmtViews(v.views)}</span></>}
           </div>
-          {v.uploaded&&<div style={{fontSize:10,color:T.faint,marginTop:2}}>{v.uploaded}</div>}
         </div>
       </div>
+    );
+  };
+
+  const VideoPlayer=()=>{
+    if(!playing)return null;
+    return (
+      <Card style={{padding:0,overflow:"hidden",marginBottom:14,border:"1px solid "+T.lime+"44"}}>
+        <div style={{position:"relative",paddingBottom:"56.25%",height:0,background:"#000"}}>
+          <iframe src={"https://www.youtube.com/embed/"+playing.id+"?autoplay=1&rel=0&modestbranding=1"}
+            title={playing.title} style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:"none"}}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
+        </div>
+        <div style={{padding:"14px 18px",display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:15,fontWeight:700,color:T.white,lineHeight:1.4,marginBottom:4}}>{playing.title}</div>
+            <div style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:T.muted}}>
+              <span>{playing.channel}</span>
+              {playing.views>0&&<><span>·</span><span>{fmtViews(playing.views)}</span></>}
+              {playing.duration>0&&<><span>·</span><span>{fmtDur(playing.duration)}</span></>}
+            </div>
+          </div>
+          <button onClick={()=>setPlaying(null)} style={{background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"8px 14px",color:T.text,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>✕ Close</button>
+        </div>
+      </Card>
     );
   };
 
@@ -1263,25 +1275,29 @@ function AiTutor(){
             </Card>
           )}
 
+          <VideoPlayer />
+
           {!searchResults&&(
             <>
-              <Card style={{padding:24}}>
-                <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:16}}>
-                  <div style={{width:44,height:44,borderRadius:10,background:colorOf(subject)+"18",border:"1px solid "+colorOf(subject)+"33",display:"flex",alignItems:"center",justifyContent:"center",color:colorOf(subject)}}>{Icon.brain}</div>
-                  <div>
-                    <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Studlin</div>
-                    <div style={{fontSize:12,color:T.muted}}>{subject} · Socratic method</div>
+              {!playing&&(
+                <Card style={{padding:24}}>
+                  <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:16}}>
+                    <div style={{width:44,height:44,borderRadius:10,background:colorOf(subject)+"18",border:"1px solid "+colorOf(subject)+"33",display:"flex",alignItems:"center",justifyContent:"center",color:colorOf(subject)}}>{Icon.brain}</div>
+                    <div>
+                      <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Studlin</div>
+                      <div style={{fontSize:12,color:T.muted}}>{subject} · Socratic method</div>
+                    </div>
                   </div>
-                </div>
-                <div style={{fontSize:14,color:T.text,lineHeight:1.75,padding:"14px 16px",background:T.card2,borderRadius:8,border:"1px solid "+T.border}}>
-                  Ask me anything about <strong style={{color:T.lime,fontWeight:600}}>{subject}</strong> · I will walk you through it step by step, quiz you, or build a study plan. Watch the videos below or search any topic above.
-                </div>
-              </Card>
+                  <div style={{fontSize:14,color:T.text,lineHeight:1.75,padding:"14px 16px",background:T.card2,borderRadius:8,border:"1px solid "+T.border}}>
+                    Ask me anything about <strong style={{color:T.lime,fontWeight:600}}>{subject}</strong> · I will walk you through it step by step, quiz you, or build a study plan. Watch the videos below or search any topic above.
+                  </div>
+                </Card>
+              )}
 
               <Card style={{padding:"14px 18px"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
                   <Label>{subject} videos</Label>
-                  <BtnSm variant="subtle" onClick={()=>loadSubjectVideos(subject)}>↻ Refresh</BtnSm>
+                  <BtnSm variant="subtle" onClick={()=>loadSubjectVideos(subject,true)}>↻ Refresh</BtnSm>
                 </div>
                 <VideoGrid videos={subjectVideos} loading={loading} empty={"Couldn't load videos right now. Hit refresh to try again."} />
               </Card>
