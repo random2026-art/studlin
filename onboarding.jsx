@@ -741,19 +741,10 @@ function App() {
 
   const CTA_LABEL = ["Sign up for free","Continue","Continue","Continue","Continue","Looks good", (state.plan==="free" ? "Continue with free plan" : "Start 7-day free trial"),"Enter Studlin"][step];
 
-  const handleCheckout = async () => {
+  const handleCheckout = () => {
     if (state.plan === "free") { next(); return; }
-    const planKey = state.plan === "max" ? "max_monthly" : "pro_monthly";
-    try {
-      const res = await fetch("/api/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan: planKey }),
-      });
-      const data = await res.json();
-      if (data.url) window.location.href = data.url;
-      else alert("Something went wrong. Please try again.");
-    } catch(e) { alert("Payment error. Please try again."); }
+    const billing = state.billing === "monthly" ? "monthly" : "annual";
+    window.location.href = "checkout.html?plan=" + state.plan + "&billing=" + billing;
   };
 
   const isPaywall = step === 6;
