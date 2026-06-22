@@ -2565,7 +2565,10 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
 
 // ─── AUTH SCREEN ─────────────────────────────────────────────────────────────
 function AuthScreen(){
-  const [mode,setMode]=useState("signin");
+  const [mode,setMode]=useState(()=>{
+    try{const p=new URLSearchParams(window.location.search);if(p.get("mode")==="signin")return "signin";}catch(e){}
+    return "signup";
+  });
   const [showEmail,setShowEmail]=useState(false);
   const [email,setEmail]=useState("");
   const [pass,setPass]=useState("");
@@ -2577,14 +2580,25 @@ function AuthScreen(){
     e.preventDefault();setError("");setLoading(true);
     try{
       if(mode==="signup"){
+        if(!name.trim()){setError("Please enter your name.");setLoading(false);return;}
         const cred=await firebase.auth().createUserWithEmailAndPassword(email,pass);
-        if(name)await cred.user.updateProfile({displayName:name});
-        await cred.user.sendEmailVerification();
+        await cred.user.updateProfile({displayName:name.trim()});
+        try{await cred.user.sendEmailVerification();}catch(e){}
       }else{
         await firebase.auth().signInWithEmailAndPassword(email,pass);
       }
     }catch(err){
-      const msg={"auth/email-already-in-use":"An account with this email already exists.","auth/invalid-email":"Invalid email address.","auth/weak-password":"Password must be at least 6 characters.","auth/user-not-found":"No account found with this email.","auth/wrong-password":"Incorrect password.","auth/invalid-credential":"Incorrect email or password.","auth/too-many-requests":"Too many attempts. Try again later."}[err.code]||err.message;
+      const msg={
+        "auth/email-already-in-use":"An account with this email already exists. Try signing in instead.",
+        "auth/invalid-email":"Please enter a valid email address.",
+        "auth/weak-password":"Password must be at least 6 characters.",
+        "auth/user-not-found":"No account found with this email. Try signing up instead.",
+        "auth/wrong-password":"Incorrect password. Please try again.",
+        "auth/invalid-credential":"Incorrect email or password. Please try again.",
+        "auth/too-many-requests":"Too many attempts. Please wait a moment and try again.",
+        "auth/network-request-failed":"Network error. Check your connection and try again.",
+        "auth/popup-blocked":"Pop-up was blocked. Please allow pop-ups for this site.",
+      }[err.code]||"Something went wrong. Please try again.";
       setError(msg);
     }
     setLoading(false);
@@ -2593,7 +2607,15 @@ function AuthScreen(){
   const socialSign=async(provider)=>{
     setError("");setLoading(true);
     try{await firebase.auth().signInWithPopup(provider);}
-    catch(err){if(err.code!=="auth/popup-closed-by-user")setError(err.message);}
+    catch(err){
+      if(err.code==="auth/popup-closed-by-user"){setLoading(false);return;}
+      const msg={
+        "auth/account-exists-with-different-credential":"An account already exists with this email using a different sign-in method.",
+        "auth/popup-blocked":"Pop-up was blocked by your browser. Please allow pop-ups and try again.",
+        "auth/network-request-failed":"Network error. Check your connection and try again.",
+      }[err.code]||"Sign-in failed. Please try again.";
+      setError(msg);
+    }
     setLoading(false);
   };
 
@@ -2613,14 +2635,18 @@ function AuthScreen(){
         <div style={{width:48,height:48,borderRadius:12,background:"rgba(174,206,94,0.12)",display:"grid",placeItems:"center",marginBottom:20}}>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#AECE5E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
         </div>
-        <h1 style={{fontSize:38,fontWeight:700,color:"#E8EFE7",margin:"0 0 12px",lineHeight:1.1,letterSpacing:"-0.02em"}}>{isSI?"Welcome back.":"Join Studlin."}</h1>
-        <p style={{fontSize:15,color:"rgba(232,239,231,0.55)",lineHeight:1.55,margin:"0 0 36px",maxWidth:320}}>{isSI?"Your workspace is exactly where you left it.\nSign in to pick up your notes, decks, and streak.":"Create an account to start studying smarter.\nEverything in one place."}</p>
+        <h1 style={{fontSize:38,fontWeight:700,color:"#E8EFE7",margin:"0 0 12px",lineHeight:1.1,letterSpacing:"-0.02em"}}>{isSI?"Welcome back.":"Everything you need to study."}</h1>
+        <p style={{fontSize:15,color:"rgba(232,239,231,0.55)",lineHeight:1.55,margin:"0 0 36px",maxWidth:320}}>{isSI?"Your workspace is exactly where you left it.\nSign in to pick up your notes, decks, and streak.":"One app. AI tutor, notes, flashcards, essays,\nfocus timer, and more. Free to start."}</p>
         <div style={{display:"flex",flexDirection:"column",gap:10}}>
-          {[
+          {(isSI?[
             {icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#AECE5E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 12l4-8"/></svg>,title:"Your streak is waiting",sub:"Sign in today to keep your momentum alive"},
             {icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#AECE5E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>,title:"Everything synced",sub:"Notes, flashcards, essays and calendar, right where you left them"},
             {icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#AECE5E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,title:"Back in seconds",sub:"One tap with Google, Apple or Microsoft"},
-          ].map((c,i)=>(
+          ]:[
+            {icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#AECE5E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,title:"AI study assistant",sub:"Ask questions, get explanations, generate quizzes instantly"},
+            {icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#AECE5E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>,title:"Notes, flashcards, essays",sub:"Everything in one place. No more switching between five apps"},
+            {icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#AECE5E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,title:"Free to start",sub:"No credit card needed. Sign up in seconds"},
+          ]).map((c,i)=>(
             <div key={i} style={{background:"rgba(174,206,94,0.06)",border:"1px solid rgba(174,206,94,0.10)",borderRadius:14,padding:"16px 18px"}}>
               <div style={{width:36,height:36,borderRadius:9,background:"rgba(174,206,94,0.10)",display:"grid",placeItems:"center",marginBottom:10}}>{c.icon}</div>
               <div style={{fontSize:13.5,fontWeight:600,color:"#E8EFE7"}}>{c.title}</div>
