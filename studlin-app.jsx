@@ -386,16 +386,35 @@ function AiChat() {
   };
 
   const [attachedFile,setAttachedFile]=useState(null);
+  const [fileLoading,setFileLoading]=useState(false);
   const fileRef=useRef(null);
-  const handleFile=(e)=>{
+  const handleFile=async(e)=>{
     const file=e.target.files?.[0];if(!file)return;
+    e.target.value="";
     const maxSize=10*1024*1024;
     if(file.size>maxSize){setMicError("File too large. Max 10MB.");return;}
-    const reader=new FileReader();
-    reader.onload=()=>{setAttachedFile({name:file.name,text:reader.result});};
-    reader.onerror=()=>{setMicError("Couldn't read that file. Try a text-based file.");};
-    reader.readAsText(file);
-    e.target.value="";
+    const ext=file.name.split(".").pop().toLowerCase();
+    const binaryTypes=["doc","docx","ppt","pptx","xls","xlsx","zip","rar","exe","dmg","png","jpg","jpeg","gif","mp3","mp4","mov"];
+    if(binaryTypes.includes(ext)){setMicError("That file type isn't supported yet. Try .txt, .md, .csv, .pdf, or code files.");return;}
+    setMicError("");
+    if(ext==="pdf"){
+      setFileLoading(true);
+      try{
+        const pdfjsLib=await window._pdfjs;
+        const buf=await file.arrayBuffer();
+        const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+        let text="";
+        for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();text+=tc.items.map(it=>it.str).join(" ")+"\n\n";}
+        if(!text.trim()){setMicError("Couldn't extract text from this PDF. It might be scanned/image-based.");setFileLoading(false);return;}
+        setAttachedFile({name:file.name,text});
+      }catch(err){setMicError("Failed to read PDF: "+err.message);}
+      setFileLoading(false);
+    }else{
+      const reader=new FileReader();
+      reader.onload=()=>{setAttachedFile({name:file.name,text:reader.result});};
+      reader.onerror=()=>{setMicError("Couldn't read that file.");};
+      reader.readAsText(file);
+    }
   };
 
   const send=async(txt)=>{
@@ -478,7 +497,7 @@ function AiChat() {
           )}
           <div style={{display:"flex",gap:8}}>
             <input type="file" ref={fileRef} onChange={handleFile} accept=".txt,.md,.csv,.json,.py,.js,.jsx,.ts,.tsx,.html,.css,.pdf,.doc,.docx,.rtf,.xml,.yaml,.yml,.log,.tex,.bib" style={{display:"none"}} />
-            <button onClick={()=>fileRef.current?.click()} style={{display:"grid",placeItems:"center",width:40,height:40,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,cursor:"pointer",flexShrink:0}} title="Upload a file">
+            <button onClick={()=>fileRef.current?.click()} disabled={fileLoading} style={{display:"grid",placeItems:"center",width:40,height:40,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:fileLoading?T.lime:T.muted,cursor:"pointer",flexShrink:0,opacity:fileLoading?0.6:1}} title={fileLoading?"Reading file...":"Upload a file"}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
             </button>
             <input style={{flex:1,background:T.card2,border:`1px solid ${recording?T.lime:T.border}`,borderRadius:7,padding:"10px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none"}} placeholder={recording?"Listening — tap mic to stop...":loading?"Thinking...":"Ask a question or paste text to analyse..."} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} disabled={loading} />
