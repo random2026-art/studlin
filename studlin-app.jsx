@@ -2617,7 +2617,7 @@ function AuthScreen(){
           {[
             {icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#AECE5E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 12l4-8"/></svg>,title:"Your streak is waiting",sub:"Sign in today to keep your momentum alive"},
             {icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#AECE5E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>,title:"Everything synced",sub:"Notes, flashcards, essays and calendar, right where you left them"},
-            {icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#AECE5E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,title:"Back in seconds",sub:"One tap with Google, Apple or Microsoft"},
+            {icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#AECE5E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,title:"Back in seconds",sub:"One tap with Google or Apple"},
           ].map((c,i)=>(
             <div key={i} style={{background:"rgba(174,206,94,0.06)",border:"1px solid rgba(174,206,94,0.10)",borderRadius:14,padding:"16px 18px"}}>
               <div style={{width:36,height:36,borderRadius:9,background:"rgba(174,206,94,0.10)",display:"grid",placeItems:"center",marginBottom:10}}>{c.icon}</div>
@@ -2650,11 +2650,6 @@ function AuthScreen(){
               <svg width="18" height="18" viewBox="0 0 24 24" fill="#fff"><path d="M17.05 20.28c-.98.95-2.05.88-3.08.4-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.4C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>
               Continue with Apple
             </button>
-            <button onClick={()=>socialSign(new firebase.auth.OAuthProvider("microsoft.com"))} disabled={loading} style={{...providerBtn,border:"1px solid #D4D4D0",background:"#fff",color:"#1A1A1A"}}>
-              <svg width="18" height="18" viewBox="0 0 21 21"><rect x="1" y="1" width="9" height="9" fill="#F25022"/><rect x="11" y="1" width="9" height="9" fill="#7FBA00"/><rect x="1" y="11" width="9" height="9" fill="#00A4EF"/><rect x="11" y="11" width="9" height="9" fill="#FFB900"/></svg>
-              Continue with Microsoft
-            </button>
-
             <div style={{display:"flex",alignItems:"center",gap:12,margin:"18px 0"}}>
               <div style={{flex:1,height:1,background:"#D4D4D0"}}/>
               <span style={{fontSize:12,color:"#8A8A86"}}>or {isSI?"log in":"sign up"} with email</span>
