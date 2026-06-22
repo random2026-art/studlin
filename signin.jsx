@@ -84,7 +84,7 @@ function LeftRail() {
         <div className="rail-tile">
           <div className="ic">{Ic.clock}</div>
           <div className="t">Back in seconds</div>
-          <div className="s">One tap with Google, Apple or Microsoft</div>
+          <div className="s">One tap with Google or Apple</div>
         </div>
       </div>
     </aside>
@@ -106,10 +106,8 @@ function App() {
   const socialSign = async (provider) => {
     setGlobalError("");setLoading(true);
     try {
-      await firebase.auth().signInWithPopup(provider);
-      window.location.href = APP_URL;
+      await firebase.auth().signInWithRedirect(provider);
     } catch(err) {
-      if(err.code==="auth/popup-closed-by-user"){setLoading(false);return;}
       setGlobalError(ERR_MAP[err.code]||(err.message||"Sign-in failed. Please try again."));
       setLoading(false);
     }
@@ -161,7 +159,6 @@ function App() {
                 <div className="providers">
                   <button className="provider" onClick={()=>socialSign(new firebase.auth.GoogleAuthProvider())} disabled={loading}>{Ic.google} Continue with Google</button>
                   <button className="provider dark" onClick={()=>socialSign(new firebase.auth.OAuthProvider("apple.com"))} disabled={loading}>{Ic.apple} Continue with Apple</button>
-                  <button className="provider" onClick={()=>socialSign(new firebase.auth.OAuthProvider("microsoft.com"))} disabled={loading}>{Ic.microsoft} Continue with Microsoft</button>
                 </div>
                 <div className="divider">or log in with email</div>
                 <button className="provider" onClick={()=>setMode("email")}>{Ic.mail} Use email instead</button>
@@ -187,7 +184,7 @@ function App() {
                   <a className="forgot" href="#">Forgot password?</a>
                 </div>
                 <div style={{marginTop:18}}>
-                  <button className="provider" onClick={()=>{setMode("providers"); setErrors({}); setGlobalError("");}} style={{padding:"10px 14px",fontSize:13}}>← Use Google, Apple, or Microsoft instead</button>
+                  <button className="provider" onClick={()=>{setMode("providers"); setErrors({}); setGlobalError("");}} style={{padding:"10px 14px",fontSize:13}}>← Use Google or Apple instead</button>
                 </div>
               </React.Fragment>
             )}

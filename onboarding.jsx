@@ -130,12 +130,8 @@ function StepSignup({ state, set, advance }) {
   const socialSign = async (providerObj) => {
     setAuthError("");setLoading(true);
     try {
-      const result = await firebase.auth().signInWithPopup(providerObj);
-      const u = result.user;
-      set(s=>({...s, provider: providerObj.providerId||"google", name: u.displayName||s.name, email: u.email||s.email}));
-      advance(true);
+      await firebase.auth().signInWithRedirect(providerObj);
     } catch(err) {
-      if(err.code==="auth/popup-closed-by-user"){setLoading(false);return;}
       setAuthError(ERR_MAP[err.code]||(err.message||"Sign-up failed. Please try again."));
       setLoading(false);
     }
@@ -179,7 +175,6 @@ function StepSignup({ state, set, advance }) {
           <div className="providers">
             <button className="provider" onClick={()=>socialSign(new firebase.auth.GoogleAuthProvider())} disabled={loading}>{Ic.google} Continue with Google</button>
             <button className="provider dark" onClick={()=>socialSign(new firebase.auth.OAuthProvider("apple.com"))} disabled={loading}>{Ic.apple} Continue with Apple</button>
-            <button className="provider" onClick={()=>socialSign(new firebase.auth.OAuthProvider("microsoft.com"))} disabled={loading}>{Ic.microsoft} Continue with Microsoft</button>
           </div>
           <div className="divider">or sign up with email</div>
           <button className="provider" onClick={()=>setMode("email")}>{Ic.mail} Use email instead</button>
@@ -211,7 +206,7 @@ function StepSignup({ state, set, advance }) {
           <TextField label="Email address" value={state.email} onChange={v=>set({...state, email:v})} hint={errors.email?null:"Any email works — school, Gmail, whatever."} error={errors.email} type="email" autoComplete="email" />
           <TextField label="Create password" value={state.password} onChange={v=>set({...state, password:v})} type="password" autoComplete="new-password" error={errors.password} hint={errors.password?null:"At least 8 characters."} />
           <div style={{marginTop:18}}>
-            <button className="provider" onClick={()=>setMode("providers")} style={{padding:"10px 14px",fontSize:13}}>← Use Google, Apple, or Microsoft instead</button>
+            <button className="provider" onClick={()=>setMode("providers")} style={{padding:"10px 14px",fontSize:13}}>← Use Google or Apple instead</button>
           </div>
           <button data-cta="signup" onClick={tryAdvance} style={{display:"none"}}></button>
         </>
@@ -430,16 +425,29 @@ function StepWelcome({ state }) {
 }
 
 function App() {
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState(()=>{
+    if(firebase.auth().currentUser){const s=JSON.parse(localStorage.getItem("studlin-onboarding")||"null");return s&&s._step?s._step:1;}
+    return 0;
+  });
   const [state, setState] = useState(() => {
     try { const saved = JSON.parse(localStorage.getItem("studlin-onboarding")||"null"); if (saved && typeof saved === "object") return {goals:[],plan:"pro",...saved}; } catch(e){}
     return { goals: [], plan: "pro" };
   });
 
   useEffect(()=>{
+    firebase.auth().getRedirectResult().then(result=>{
+      if(result&&result.user){
+        const u=result.user;
+        setState(s=>({...s, provider:result.additionalUserInfo?.providerId||"google", name:u.displayName||s.name, email:u.email||s.email}));
+        setStep(1);
+      }
+    }).catch(()=>{});
+  },[]);
+
+  useEffect(()=>{
     try {
       const { password, ...safe } = state;
-      localStorage.setItem("studlin-onboarding", JSON.stringify({ ...safe, _updatedAt: new Date().toISOString() }));
+      localStorage.setItem("studlin-onboarding", JSON.stringify({ ...safe, _step:step, _updatedAt: new Date().toISOString() }));
     } catch(e){}
   }, [state, step]);
 
