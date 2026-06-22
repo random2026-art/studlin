@@ -349,8 +349,8 @@ const navIcon = {dashboard:Icon.grid,aichat:Icon.chat,essays:Icon.pen,flashcards
 function AiChat() {
   const MODELS=[
     {id:"standard",name:"Studlin Standard",desc:"Balanced · best for most study tasks",cost:"1 credit"},
-    {id:"pro",name:"Studlin Pro",desc:"Deeper reasoning for hard problems",cost:"2 credits"},
-    {id:"reason",name:"Studlin Reasoning",desc:"Step-by-step on complex, multi-part work",cost:"3 credits"},
+    {id:"pro",name:"Studlin Pro",desc:"Longer, deeper explanations for hard problems",cost:"2 credits"},
+    {id:"reason",name:"Studlin Reasoning",desc:"Extended thinking · step-by-step on complex work",cost:"3 credits"},
     {id:"flash",name:"Studlin Flash",desc:"Fastest answers for quick questions",cost:"1 credit"},
   ];
   const [model,setModel]=useState(()=>lsGet("chatModel","standard"));
@@ -376,7 +376,7 @@ function AiChat() {
     setMicError("");
     try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});stream.getTracks().forEach(t=>t.stop());}catch(e){setMicError("Microphone access denied. Please allow mic access and try again.");return;}
     const rec=new SR();
-    rec.continuous=false;rec.interimResults=true;rec.lang="en-US";
+    rec.continuous=true;rec.interimResults=true;rec.lang="en-US";
     recognitionRef.current=rec;
     rec.onstart=()=>setRecording(true);
     rec.onresult=(e)=>{let t="";for(let i=0;i<e.results.length;i++)t+=e.results[i][0].transcript;setInput(t);};
@@ -385,10 +385,29 @@ function AiChat() {
     rec.start();
   };
 
+  const [attachedFile,setAttachedFile]=useState(null);
+  const fileRef=useRef(null);
+  const handleFile=(e)=>{
+    const file=e.target.files?.[0];if(!file)return;
+    const maxSize=10*1024*1024;
+    if(file.size>maxSize){setMicError("File too large. Max 10MB.");return;}
+    const reader=new FileReader();
+    reader.onload=()=>{setAttachedFile({name:file.name,text:reader.result});};
+    reader.onerror=()=>{setMicError("Couldn't read that file. Try a text-based file.");};
+    reader.readAsText(file);
+    e.target.value="";
+  };
+
   const send=async(txt)=>{
-    const t=(txt||input).trim(); if(!t||loading)return;
+    let t=(txt||input).trim();
+    if(!t&&!attachedFile)return;if(loading)return;
     const cost=CREDIT_COST[model]||1;
     if(credits<cost){setMsgs(m=>[...m,{r:"ai",t:"⚠ Not enough credits. You need "+cost+" credit"+(cost>1?"s":"")+" for "+curModel.name+". Buy more or switch to a lighter model."}]);return;}
+    if(attachedFile){
+      const fileCtx="[Uploaded file: "+attachedFile.name+"]\n\n"+attachedFile.text.slice(0,50000);
+      t=t?(fileCtx+"\n\n"+t):("Here's a file I uploaded. Summarize the key points and help me understand it.\n\n"+fileCtx);
+      setAttachedFile(null);
+    }
     const newMsgs=[...msgs,{r:"user",t}];
     setMsgs(newMsgs);
     setInput("");
@@ -450,8 +469,19 @@ function AiChat() {
           <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
             {suggestions.map(s=><button key={s} onClick={()=>send(s)} style={{padding:"5px 11px",borderRadius:5,fontSize:11,cursor:"pointer",border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontFamily:T.font,transition:"all 0.15s"}}>{s}</button>)}
           </div>
+          {attachedFile&&(
+            <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:T.lime+"15",border:`1px solid ${T.lime}33`,borderRadius:7,marginBottom:6}}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              <span style={{fontSize:12,color:T.lime,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{attachedFile.name}</span>
+              <button onClick={()=>setAttachedFile(null)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:14,lineHeight:1,padding:0}}>×</button>
+            </div>
+          )}
           <div style={{display:"flex",gap:8}}>
-            <input style={{flex:1,background:T.card2,border:`1px solid ${recording?T.lime:T.border}`,borderRadius:7,padding:"10px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none"}} placeholder={recording?"Listening...":loading?"Thinking...":"Ask a question or paste text to analyse..."} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} disabled={loading} />
+            <input type="file" ref={fileRef} onChange={handleFile} accept=".txt,.md,.csv,.json,.py,.js,.jsx,.ts,.tsx,.html,.css,.pdf,.doc,.docx,.rtf,.xml,.yaml,.yml,.log,.tex,.bib" style={{display:"none"}} />
+            <button onClick={()=>fileRef.current?.click()} style={{display:"grid",placeItems:"center",width:40,height:40,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,cursor:"pointer",flexShrink:0}} title="Upload a file">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+            </button>
+            <input style={{flex:1,background:T.card2,border:`1px solid ${recording?T.lime:T.border}`,borderRadius:7,padding:"10px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none"}} placeholder={recording?"Listening — tap mic to stop...":loading?"Thinking...":"Ask a question or paste text to analyse..."} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} disabled={loading} />
             <button onClick={toggleVoice} style={{display:"grid",placeItems:"center",width:40,height:40,borderRadius:8,border:`1px solid ${recording?"#f87171":T.border}`,background:recording?"rgba(248,113,113,0.15)":T.card2,color:recording?"#f87171":T.muted,cursor:"pointer",flexShrink:0,animation:recording?"studlinPulse 1.2s infinite":"none"}} title={recording?"Stop recording":"Voice input"}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
             </button>

@@ -5,6 +5,13 @@ const MODEL_MAP = {
   flash: 'claude-haiku-4-5',
 };
 
+const MODEL_CONFIG = {
+  flash:    { max_tokens: 512 },
+  standard: { max_tokens: 1024 },
+  pro:      { max_tokens: 2048 },
+  reason:   { max_tokens: 4096, thinking: { type: 'adaptive' }, effort: 'high' },
+};
+
 const SYSTEM_PROMPTS = {
   standard: `You are Studlin, an AI study assistant for students. You help with homework, explain concepts, and provide academic support. Be clear, concise, and educational. Use examples when helpful. Format responses with markdown when it improves readability. Keep responses focused and under 400 words unless the student asks for more detail.`,
   pro: `You are Studlin Pro, an advanced AI study assistant. You provide deeper analysis, more thorough explanations, and can handle complex multi-step problems. Show your reasoning. Use markdown formatting. Be thorough but organized — use headers, bullet points, and code blocks when appropriate.`,
@@ -30,11 +37,21 @@ module.exports = async (req, res) => {
 
     const claudeModel = MODEL_MAP[modelId] || MODEL_MAP.standard;
     const systemPrompt = SYSTEM_PROMPTS[modelId] || SYSTEM_PROMPTS.standard;
+    const config = MODEL_CONFIG[modelId] || MODEL_CONFIG.standard;
 
     const claudeMessages = messages.map(m => ({
       role: m.r === 'ai' ? 'assistant' : 'user',
       content: m.t,
     }));
+
+    const body = {
+      model: claudeModel,
+      max_tokens: config.max_tokens,
+      system: systemPrompt,
+      messages: claudeMessages,
+    };
+    if (config.thinking) body.thinking = config.thinking;
+    if (config.effort) body.output_config = { effort: config.effort };
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -43,12 +60,7 @@ module.exports = async (req, res) => {
         'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
       },
-      body: JSON.stringify({
-        model: claudeModel,
-        max_tokens: modelId === 'flash' ? 512 : 1024,
-        system: systemPrompt,
-        messages: claudeMessages,
-      }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {
@@ -59,7 +71,8 @@ module.exports = async (req, res) => {
     }
 
     const data = await response.json();
-    const reply = data.content?.[0]?.text || 'Sorry, I couldn\'t generate a response.';
+    const textBlock = data.content?.find(b => b.type === 'text');
+    const reply = textBlock?.text || 'Sorry, I couldn\'t generate a response.';
 
     return res.status(200).json({ reply });
   } catch (err) {
