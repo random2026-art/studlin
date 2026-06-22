@@ -2075,18 +2075,13 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
           {active==="Danger zone" && (<>
             <Card style={{marginBottom:12,border:"1px solid rgba(214,117,96,0.3)"}}>
               <div style={{fontSize:13,fontWeight:700,color:T.red,marginBottom:4}}>Reset progress</div>
-              <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Wipe your streak, XP, level, and Wrapped history. Notes and essays are kept.</div>
-              <Btn variant="danger">Reset all progress</Btn>
-            </Card>
-            <Card style={{marginBottom:12,border:"1px solid rgba(214,117,96,0.3)"}}>
-              <div style={{fontSize:13,fontWeight:700,color:T.red,marginBottom:4}}>Pause subscription</div>
-              <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Pause billing for up to 90 days. We'll keep your data intact and email you when it's about to resume.</div>
-              <Btn variant="danger">Pause for 30 days</Btn>
+              <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Wipe your streak, XP, level, and session history. Notes and essays are kept.</div>
+              <Btn variant="danger" onClick={()=>{if(confirm("Reset all progress? This clears your streak, XP, and session history.")){lsSet("days",[]);lsSet("sessions",[]);lsSet("xpBase",0);lsSet("xpBonus",0);alert("Progress reset.");}}}>Reset all progress</Btn>
             </Card>
             <Card style={{border:"1px solid rgba(214,117,96,0.3)"}}>
               <div style={{fontSize:13,fontWeight:700,color:T.red,marginBottom:4}}>Delete account</div>
-              <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Permanently remove your account, notes, essays, flashcards, and squad memberships. This cannot be undone.</div>
-              <Btn variant="danger">Delete my account</Btn>
+              <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Permanently remove your account and all local data. This cannot be undone.</div>
+              <Btn variant="danger" onClick={async()=>{if(confirm("Permanently delete your account and all data? This cannot be undone.")){try{localStorage.clear();await firebase.auth().currentUser?.delete();window.location.href="/";}catch(e){alert("Error: "+e.message+". You may need to sign in again before deleting.");}}}}>Delete my account</Btn>
             </Card>
           </>)}
         </div>
@@ -2290,7 +2285,7 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={T.ink} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{opacity:0.6}}><path d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
           </div>
           <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.ink,margin:"10px 0 2px"}}>{realStreak}<span style={{fontSize:20,color:"rgba(14,31,24,0.55)",marginLeft:6}}>days</span></div>
-          <div style={{fontSize:12,color:"rgba(14,31,24,0.7)"}}>Longest: 31 · +10 credits unlocked</div>
+          <div style={{fontSize:12,color:"rgba(14,31,24,0.7)"}}>Best: {realStreak} day{realStreak!==1?"s":""}</div>
           <div style={{display:"flex",gap:5,marginTop:"auto",paddingTop:14}}>
             {wk.map((d,i)=>{
               const today=d.today, on=d.on;
@@ -2373,9 +2368,9 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
         {/* Ask Studlin */}
         <div style={{background:T.ink,color:T.cream,borderRadius:22,padding:22,display:"flex",flexDirection:"column"}}>
           <CardHead title="Ask Studlin" label="AI TUTOR" more="Open" light />
-          <div style={{fontSize:13,color:"rgba(246,241,230,0.7)",marginBottom:14,lineHeight:1.5}}>I noticed you're stuck on Macbeth Act III · want me to walk through the dagger soliloquy or pull quotes for your essay?</div>
+          <div style={{fontSize:13,color:"rgba(246,241,230,0.7)",marginBottom:14,lineHeight:1.5}}>Ask me anything — homework help, concept explanations, study tips, or just paste a problem.</div>
           <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>
-            {["Explain dagger soliloquy","Find quotes for essay","Quiz me on Act III"].map(s=>(
+            {["Explain a concept","Help with homework","Generate flashcards","Quiz me"].map(s=>(
               <button key={s} onClick={()=>setActive("aichat")} style={{fontSize:11.5,padding:"6px 11px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:"rgba(246,241,230,0.85)",cursor:"pointer",fontFamily:T.font}}>{s}</button>
             ))}
           </div>
@@ -2397,20 +2392,20 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
         <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
           <CardHead title="This week's focus" label={(fmtH(realStats.weekMin)||"0m").toUpperCase()+" THIS WEEK · TRACKED LIVE"} more="View Wrapped" />
           <div style={{display:"flex",alignItems:"flex-end",gap:10,height:140,padding:"0 4px"}}>
-            {[
-              {segs:[{c:T.limeDk,h:18},{c:T.forest,h:32}],d:"Mon"},
-              {segs:[{c:T.butter,h:10},{c:T.limeDk,h:25},{c:T.forest,h:40}],d:"Tue"},
-              {segs:[{c:T.limeDk,h:20},{c:T.forest,h:35}],d:"Wed"},
-              {segs:[{c:T.butter,h:15},{c:T.limeDk,h:30},{c:T.forest,h:45}],d:"Thu"},
-              {segs:[{c:T.butter,h:8},{c:T.limeDk,h:22},{c:T.forest,h:38}],d:"Fri",today:true},
-              {segs:[],d:"Sat"},
-              {segs:[],d:"Sun"},
-            ].map((bar,i)=>(
-              <div key={i} style={{flex:1,display:"flex",flexDirection:"column-reverse",gap:2,height:"100%",position:"relative"}}>
-                {bar.segs.map((s,j)=><div key={j} style={{width:"100%",height:s.h+"%",background:s.c,borderRadius:j===bar.segs.length-1?"4px 4px 0 0":0}}/>)}
-                <div style={{position:"absolute",bottom:-22,left:0,right:0,textAlign:"center",fontFamily:T.mono,fontSize:10,color:bar.today?T.text:T.faint,fontWeight:bar.today?700:400}}>{bar.d}</div>
-              </div>
-            ))}
+            {(()=>{
+              const sessions=lsGet("sessions",[]);
+              const now=new Date();const dow=(now.getDay()+6)%7;const mon=new Date(now);mon.setDate(now.getDate()-dow);
+              const days=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+              const maxMin=Math.max(1,...days.map((_,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);const k=dayKey(d);return sessions.filter(s=>s.d===k).reduce((a,s)=>a+(s.m||0),0);}));
+              return days.map((d,i)=>{
+                const dt=new Date(mon);dt.setDate(mon.getDate()+i);const k=dayKey(dt);const mins=sessions.filter(s=>s.d===k).reduce((a,s)=>a+(s.m||0),0);
+                const h=mins?Math.max(8,Math.round(mins/maxMin*90)):0;const today=i===dow;
+                return <div key={i} style={{flex:1,display:"flex",flexDirection:"column-reverse",gap:2,height:"100%",position:"relative"}}>
+                  {h>0&&<div style={{width:"100%",height:h+"%",background:today?T.lime:T.forest,borderRadius:"4px 4px 0 0",transition:"height 0.3s"}}/>}
+                  <div style={{position:"absolute",bottom:-22,left:0,right:0,textAlign:"center",fontFamily:T.mono,fontSize:10,color:today?T.text:T.faint,fontWeight:today?700:400}}>{d}</div>
+                </div>;
+              });
+            })()
           </div>
           <div style={{display:"flex",gap:14,fontSize:11,color:T.muted,marginTop:36}}>
             <span><span style={{width:10,height:10,borderRadius:3,background:T.forest,display:"inline-block",verticalAlign:"middle",marginRight:5}}/>Reading &amp; notes</span>
@@ -2421,20 +2416,20 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
         </div>
 
         <div style={{background:T.forest,color:T.cream,borderRadius:22,padding:22}}>
-          <CardHead title="Weekly Wrapped" label="WEEK 20" more="View full" light />
+          <CardHead title="Weekly Wrapped" label={"WEEK "+weekNo()} more="View full" light />
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:14}}>
-            {[{l:"Focus hours",v:"14h 22m",d:"+3.2h"},{l:"Cards mastered",v:"142",d:"+38"},{l:"Words written",v:"3,840",d:"+1,200"}].map((s,i)=>(
+            {[{l:"Focus time",v:fmtH(realStats.weekMin)||"0m"},{l:"Sessions",v:String(realStats.sessions||0)},{l:"Messages",v:String(lsGet("chatMsgs",[]).filter(m=>m.r==="user").length)}].map((s,i)=>(
               <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:12,padding:"12px 14px"}}>
                 <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.06em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)"}}>{s.l}</div>
                 <div style={{fontFamily:T.hand,fontSize:28,fontWeight:700,color:T.lime,lineHeight:1,marginTop:4}}>{s.v}</div>
-                <div style={{fontSize:11,color:T.lime,fontWeight:600,marginTop:2,opacity:0.85}}>{s.d} vs last wk</div>
+                <div style={{fontSize:11,color:T.lime,fontWeight:600,marginTop:2,opacity:0.85}}>this week</div>
               </div>
             ))}
           </div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            {["12-day streak","Bio top 1%","Early bird"].map((b,i)=>(
+            {[realStreak+"-day streak","Level "+lvl.level,fmtH(realStats.weekMin)||"0m"+" focus"].map((b,i)=>(
               <span key={i} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.12)",borderRadius:99,fontSize:11.5,color:T.cream}}>
-                <span style={{width:18,height:18,borderRadius:"50%",background:T.lime,display:"grid",placeItems:"center",color:T.ink,fontSize:10,fontWeight:700,flex:"none"}}>{["12","*","4"][i]}</span>
+                <span style={{width:18,height:18,borderRadius:"50%",background:T.lime,display:"grid",placeItems:"center",color:T.ink,fontSize:10,fontWeight:700,flex:"none"}}>{[realStreak,lvl.level,"⏱"][i]}</span>
                 {b}
               </span>
             ))}
@@ -2476,12 +2471,12 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
             </div>
             <div style={{marginLeft:"auto",textAlign:"right"}}>
               <div style={{fontSize:11.5,color:T.muted,fontFamily:T.mono,letterSpacing:"0.06em",textTransform:"uppercase"}}>longest</div>
-              <div style={{fontFamily:T.hand,fontSize:30,lineHeight:0.9,color:T.muted}}>31</div>
+              <div style={{fontFamily:T.hand,fontSize:30,lineHeight:0.9,color:T.muted}}>{realStreak}</div>
             </div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(13,1fr)",gap:4}}>
-            {seed.map((lvl,i)=>(
-              <div key={i} style={{aspectRatio:"1",background:cellColor(lvl),borderRadius:4,boxShadow:i===seed.length-1?`0 0 0 1.5px ${T.ink}`:"none"}}/>
+            {(()=>{const loginDays=new Set(lsGet("days",[]));const cells=[];const today=new Date();for(let i=90;i>=0;i--){const d=new Date(today);d.setDate(today.getDate()-i);const k=dayKey(d);cells.push(loginDays.has(k)?Math.min(4,1+Math.floor(Math.random()*3)):0);}return cells;})().map((lvl,i)=>(
+              <div key={i} style={{aspectRatio:"1",background:cellColor(lvl),borderRadius:4,boxShadow:i===90?`0 0 0 1.5px ${T.ink}`:"none"}}/>
             ))}
           </div>
         </div>
@@ -2725,6 +2720,7 @@ function App() {
   const [focusRunning,setFocusRunning]=useState(true);
   const [focusMode,setFocusMode]=useState("Focus");
   const [focusTotal,setFocusTotal]=useState(25*60);
+  const [searchQ,setSearchQ]=useState("");
   const [creditsOpen,setCreditsOpen]=useState(false);
   const [pricingOpen,setPricingOpen]=useState(false);
   const [notifOpen,setNotifOpen]=useState(false);
@@ -2883,10 +2879,22 @@ function App() {
           <div style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,flexShrink:0}}>
             {sectionOf[active]} · <span style={{color:T.text,fontWeight:600}}>{labelOf[active]}</span>
           </div>
-          <div style={{flex:1,maxWidth:480,marginLeft:"auto",display:"flex",alignItems:"center",gap:10,padding:"9px 14px",background:T.card,border:`1px solid ${T.border}`,borderRadius:99}}>
-            <span style={{color:T.muted,display:"flex"}}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
-            <input placeholder="Search notes, flashcards, essays, or ask AI…" style={{flex:1,background:"none",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}} />
-            <span style={{fontFamily:T.mono,fontSize:10,background:T.bg,color:T.muted,padding:"2px 7px",borderRadius:5,border:`1px solid ${T.border}`}}>⌘ K</span>
+          <div style={{flex:1,maxWidth:480,marginLeft:"auto",position:"relative"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 14px",background:T.card,border:`1px solid ${T.border}`,borderRadius:99}}>
+              <span style={{color:T.muted,display:"flex"}}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+              <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} onKeyDown={e=>{if(e.key==="Escape")setSearchQ("");}} placeholder="Search notes, flashcards, essays, or ask AI…" style={{flex:1,background:"none",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}} />
+              <span style={{fontFamily:T.mono,fontSize:10,background:T.bg,color:T.muted,padding:"2px 7px",borderRadius:5,border:`1px solid ${T.border}`}}>⌘ K</span>
+            </div>
+            {searchQ.trim()&&(
+              <div style={{position:"absolute",top:"100%",left:0,right:0,marginTop:6,background:T.card,border:`1px solid ${T.border}`,borderRadius:12,boxShadow:"0 16px 40px -12px rgba(0,0,0,0.4)",zIndex:60,overflow:"hidden",padding:6}}>
+                {Object.entries(labelOf).filter(([k,v])=>v.toLowerCase().includes(searchQ.toLowerCase())).map(([k,v])=>(
+                  <div key={k} onClick={()=>{setActive(k);setSearchQ("");}} style={{padding:"10px 12px",borderRadius:8,cursor:"pointer",fontSize:13,color:T.text,display:"flex",alignItems:"center",gap:10}}>{navIcon[k]||Icon.grid}<span>{v}</span></div>
+                ))}
+                {Object.entries(labelOf).filter(([k,v])=>v.toLowerCase().includes(searchQ.toLowerCase())).length===0&&(
+                  <div style={{padding:"10px 12px",fontSize:12,color:T.muted}}>No results for "{searchQ}"</div>
+                )}
+              </div>
+            )}
           </div>
           <div onClick={()=>setActive("focustimer")} title={focusRunning?"Focus active · click to manage":"Focus paused · click to resume"} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"7px 13px",background:isLight?T.ink:T.card,color:isLight?T.cream:T.text,border:`1px solid ${T.border}`,borderRadius:99,fontSize:12.5,fontWeight:500,flexShrink:0,cursor:"pointer"}}>
             <span style={{width:6,height:6,borderRadius:"50%",background:focusRunning?T.lime:T.muted,boxShadow:focusRunning?`0 0 8px ${T.lime}`:"none",animation:focusRunning?"studlinPulse 1.6s infinite":"none"}} />
