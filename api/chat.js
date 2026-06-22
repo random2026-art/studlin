@@ -1,8 +1,8 @@
 const MODEL_MAP = {
-  standard: 'claude-sonnet-4-20250514',
-  pro: 'claude-sonnet-4-20250514',
-  reason: 'claude-sonnet-4-20250514',
-  flash: 'claude-haiku-4-5-20251001',
+  standard: 'claude-sonnet-4-6',
+  pro: 'claude-sonnet-4-6',
+  reason: 'claude-sonnet-4-6',
+  flash: 'claude-haiku-4-5',
 };
 
 const SYSTEM_PROMPTS = {
