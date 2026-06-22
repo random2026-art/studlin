@@ -1,5 +1,11 @@
 # CLAUDE.md
 
+# CRITICAL RULE: DO NOT BREAK ANYTHING
+
+When making any change, verify that existing functionality still works. Never remove working code without a tested replacement. Test every link, every redirect, every auth flow. If you are unsure a change is safe, ask first. Breaking the app is not acceptable.
+
+---
+
 # Studlin AI Development Guide
 
 ## What is Studlin?

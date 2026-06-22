@@ -142,7 +142,7 @@ function App() {
       <LeftRail />
       <main className="stage">
         <div className="stage-top">
-          New to Studlin? <a href="Studlin Web App.html">Create an account</a>
+          New to Studlin? <a href="Studlin Onboarding.html">Create an account</a>
         </div>
 
         <div className="step-content is-entering">
