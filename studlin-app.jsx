@@ -3129,5 +3129,19 @@ function App() {
 }
 
 
+// Error boundary
+class ErrorBoundary extends React.Component{
+  constructor(p){super(p);this.state={err:null};}
+  static getDerivedStateFromError(e){return{err:e};}
+  render(){if(this.state.err)return(<div style={{minHeight:"100vh",background:"#0D120F",display:"flex",alignItems:"center",justifyContent:"center",padding:40}}>
+    <div style={{maxWidth:500,textAlign:"center"}}>
+      <div style={{fontSize:22,fontWeight:700,color:"#E8EFE7",marginBottom:12}}>Something went wrong</div>
+      <div style={{fontSize:13,color:"#f87171",background:"rgba(248,113,113,0.08)",padding:16,borderRadius:10,fontFamily:"monospace",textAlign:"left",marginBottom:16,wordBreak:"break-word"}}>{this.state.err?.message||"Unknown error"}</div>
+      <button onClick={()=>{localStorage.clear();window.location.reload();}} style={{padding:"10px 20px",borderRadius:8,background:"#AECE5E",color:"#0D120F",border:"none",fontSize:14,fontWeight:600,cursor:"pointer",marginRight:8}}>Clear data &amp; reload</button>
+      <button onClick={()=>window.location.reload()} style={{padding:"10px 20px",borderRadius:8,background:"transparent",color:"#E8EFE7",border:"1px solid rgba(255,255,255,0.15)",fontSize:14,fontWeight:600,cursor:"pointer"}}>Reload</button>
+    </div>
+  </div>);return this.props.children;}
+}
+
 // Mount
-ReactDOM.createRoot(document.getElementById('root')).render(<AuthGate />);
+ReactDOM.createRoot(document.getElementById('root')).render(<ErrorBoundary><AuthGate /></ErrorBoundary>);
