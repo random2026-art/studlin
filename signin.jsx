@@ -133,9 +133,9 @@ function App() {
     setLoading(false);
   };
 
-  firebase.auth().onAuthStateChanged(u => {
-    if(u) window.location.href = APP_URL;
-  });
+  React.useEffect(()=>{
+    return firebase.auth().onAuthStateChanged(u=>{if(u)window.location.href=APP_URL;});
+  },[]);
 
   return (
     <div className="shell">
