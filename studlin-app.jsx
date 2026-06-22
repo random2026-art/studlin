@@ -2418,7 +2418,7 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
         <div style={{background:T.forest,color:T.cream,borderRadius:22,padding:22}}>
           <CardHead title="Weekly Wrapped" label={"WEEK "+weekNo()} more="View full" light />
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:14}}>
-            {[{l:"Focus time",v:fmtH(realStats.weekMin)||"0m"},{l:"Sessions",v:String(realStats.sessions||0)},{l:"Messages",v:String(lsGet("chatMsgs",[]).filter(m=>m.r==="user").length)}].map((s,i)=>(
+            {[{l:"Focus time",v:fmtH(realStats.weekMin)||"0m"},{l:"Sessions",v:String(realStats.weekCount||0)},{l:"Messages",v:String(lsGet("chatMsgs",[]).filter(m=>m.r==="user").length)}].map((s,i)=>(
               <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:12,padding:"12px 14px"}}>
                 <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.06em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)"}}>{s.l}</div>
                 <div style={{fontFamily:T.hand,fontSize:28,fontWeight:700,color:T.lime,lineHeight:1,marginTop:4}}>{s.v}</div>
