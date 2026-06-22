@@ -199,7 +199,6 @@ function StepSignup({ state, set, advance }) {
           <div className="providers">
             <button className="provider" onClick={()=>{ set(s=>({...s, provider:"google"})); advance(true); }}>{Ic.google} Continue with Google</button>
             <button className="provider dark" onClick={()=>{ set(s=>({...s, provider:"apple"})); advance(true); }}>{Ic.apple} Continue with Apple</button>
-            <button className="provider" onClick={()=>{ set(s=>({...s, provider:"microsoft"})); advance(true); }}>{Ic.microsoft} Continue with Microsoft</button>
           </div>
           <div className="divider">or sign up with email</div>
           <button className="provider" onClick={()=>setMode("email")}>{Ic.mail} Use email instead</button>
@@ -243,7 +242,7 @@ function StepSignup({ state, set, advance }) {
             <div className={"pwi" + (pwOk.len   ? " ok" : "")}><span className="d"></span> 14 characters minimum</div>
           </div>
           <div style={{marginTop:18}}>
-            <button className="provider" onClick={()=>setMode("providers")} style={{padding:"10px 14px",fontSize:13}}>← Use Google, Apple, or Microsoft instead</button>
+            <button className="provider" onClick={()=>setMode("providers")} style={{padding:"10px 14px",fontSize:13}}>← Use Google or Apple instead</button>
           </div>
           <input type="hidden" data-advance="email" data-fn={tryAdvance.name} />
           <button data-cta="signup" onClick={tryAdvance} style={{display:"none"}}></button>
