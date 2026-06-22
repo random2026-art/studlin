@@ -505,7 +505,14 @@ function App() {
         </div>
         <div className="stage-foot">
           {step < STEPS.length-1 ? (
-            <button className="cta" disabled={!isStepValid()} onClick={step===6?handleCheckout:next}>
+            <button className="cta" disabled={!isStepValid()} onClick={()=>{
+              if(step===0&&!firebase.auth().currentUser){
+                const btn=document.querySelector('[data-cta="signup"]');
+                if(btn){btn.click();return;}
+              }
+              if(step===6){handleCheckout();return;}
+              next();
+            }}>
               {CTA_LABEL}<span className="arrow">{Ic.arrow}</span>
             </button>
           ) : (
