@@ -359,14 +359,12 @@ function AiChat() {
   const [input,setInput]=useState("");
   const [loading,setLoading]=useState(false);
   const [credits,setCredits]=useState(getCredits);
-  const [msgs,setMsgs]=useState(()=>{
-    const saved=lsGet("chatMsgs",null);
-    return saved||[{r:"ai",t:"Hey! What are we working on today?"}];
-  });
+  const [msgs,setMsgs]=useState([
+    {r:"ai",t:"Hey! What are we working on today?"},
+  ]);
   const chatRef=useRef(null);
   const scrollToBottom=()=>{if(chatRef.current)chatRef.current.scrollTop=chatRef.current.scrollHeight;};
   useEffect(scrollToBottom,[msgs]);
-  useEffect(()=>{lsSet("chatMsgs",msgs.map(m=>({r:m.r,t:m.t,file:m.file||null})));},[msgs]);
 
   const [recording,setRecording]=useState(false);
   const [micError,setMicError]=useState("");
@@ -528,18 +526,21 @@ function AiChat() {
           <div style={{fontSize:11,color:T.muted,marginTop:micError?4:8}}><span style={{color:T.text,fontWeight:600}}>{curModel.name}</span> · {curModel.cost} per message · <span style={{color:credits<(CREDIT_COST[model]||1)?T.red||"#f87171":T.lime}}>{credits} credits left</span></div>
         </Card>
         <div style={{display:"flex",flexDirection:"column",gap:12}}>
-          <Card><Label>Session</Label><div style={{fontSize:28,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>{msgs.filter(m=>m.r==="user").length}</div><div style={{fontSize:12,color:T.muted,marginTop:4}}>Messages sent</div></Card>
+          <Card><Label>Session</Label><div style={{fontSize:28,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>12</div><div style={{fontSize:12,color:T.muted,marginTop:4}}>Conversations today</div></Card>
           <Card>
-            <Label>Recent Messages</Label>
-            {msgs.filter(m=>m.r==="user").slice(-4).reverse().map((m,i)=>(
-              <div key={i} style={{padding:"9px 0",borderBottom:i<3?`1px solid ${T.border}`:"none",fontSize:12,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                {m.file||m.t.slice(0,40)}{m.t.length>40?"...":""}
+            <Label>Recent Topics</Label>
+            {["Macbeth · Act II symbolism","Krebs cycle overview","Spanish subjunctive mood","Integral calculus"].map((t,i)=>(
+              <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:i<3?`1px solid ${T.border}`:"none",fontSize:12,color:T.muted,cursor:"pointer"}}>
+                <span>{t}</span>
+                <span style={{color:T.faint}}>{Icon.arrowR}</span>
               </div>
             ))}
-            {msgs.filter(m=>m.r==="user").length===0&&<div style={{fontSize:12,color:T.faint,padding:"9px 0"}}>No messages yet</div>}
           </Card>
           <Card>
-            <Btn variant="ghost" onClick={()=>{setMsgs([{r:"ai",t:"Hey! What are we working on today?"}]);}} style={{width:"100%",justifyContent:"center",fontSize:12}}>Clear chat</Btn>
+            <Label>Mode</Label>
+            {["Research assistant","Essay coach","Exam preparation","Concept review"].map((m,i)=>(
+              <button key={i} style={{display:"flex",width:"100%",textAlign:"left",padding:"8px 10px",borderRadius:6,marginBottom:4,fontSize:12,cursor:"pointer",border:`1px solid ${i===0?T.lime+"44":T.border}`,background:i===0?T.lime+"0a":"transparent",color:i===0?T.lime:T.muted,fontFamily:T.font}}>{m}</button>
+            ))}
           </Card>
         </div>
       </div>
@@ -559,20 +560,11 @@ function Essays() {
   const [eMode,setEMode]=useState("self");
   const [gdocs,setGdocs]=useState(()=>lsGet("gdocs",false));
   const subjects=[{value:"English IV",label:"English IV",color:T.purple},{value:"Biology",label:"Biology",color:T.teal},{value:"History",label:"History",color:T.muted},{value:"Chemistry",label:"Chemistry",color:T.red},{value:"Calculus",label:"Calculus",color:T.blue},{value:"Other",label:"Other",color:T.lime}];
-  const seedEssays=[
-    {title:"Power & Corruption in Macbeth",subject:"English IV",body:"In Shakespeare's Macbeth, the corrupting influence of unchecked ambition is illustrated through the protagonist's descent from celebrated warrior to tyrannical murderer.",target:1500,status:"In progress"},
+  const essays=[
+    {title:"Power & Corruption in Macbeth",subject:"English IV",words:1247,target:1500,status:"In progress",grade:null},
+    {title:"Photosynthesis Lab Report",subject:"Biology",words:800,target:800,status:"Submitted",grade:"A−"},
+    {title:"Causes of World War I",subject:"History",words:450,target:1200,status:"Outline",grade:null},
   ];
-  const [essays,setEssays]=useState(()=>lsGet("essays",seedEssays));
-  const [activeIdx,setActiveIdx]=useState(0);
-  const activeEssay=essays[activeIdx]||null;
-  const wordCount=(s)=>(s||"").trim().split(/\s+/).filter(Boolean).length;
-  const updateEssayBody=(body)=>{const next=[...essays];next[activeIdx]={...next[activeIdx],body};setEssays(next);lsSet("essays",next);};
-  const createEssay=()=>{
-    const subj=eSubject==="Other"&&eCustom.trim()?eCustom.trim():eSubject;
-    const ne={title:eTitle.trim()||"Untitled essay",subject:subj,body:ePrompt||"",target:parseInt(eTarget)||1500,status:"In progress"};
-    const next=[ne,...essays];setEssays(next);lsSet("essays",next);setActiveIdx(0);
-    setNewOpen(false);setETitle("");setEPrompt("");setECustom("");setTab("active");
-  };
   const subjectColor = {
     "English IV":T.purple,
     "Biology":T.teal,
@@ -582,7 +574,7 @@ function Essays() {
     <div>
       <PH title="Essays" sub="Draft, refine, and submit your writing" action={<span style={{display:"flex",gap:8}}><Btn variant="subtle" onClick={()=>{const v=!gdocs;setGdocs(v);lsSet("gdocs",v);}}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},gdocs?Icon.check:Icon.link,gdocs?"Google Docs · connected":"Connect Google Docs")}</Btn><Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New essay")}</Btn></span>} />
       <Modal open={newOpen} onClose={()=>setNewOpen(false)} title="Start a new essay" sub="Studlin will scaffold an outline and adapt the AI tutor to your subject."
-        footer={<><Btn variant="subtle" onClick={()=>setNewOpen(false)}>Cancel</Btn><Btn onClick={createEssay}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.pen,"Create essay")}</Btn></>}>
+        footer={<><Btn variant="subtle" onClick={()=>setNewOpen(false)}>Cancel</Btn><Btn onClick={()=>setNewOpen(false)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.pen,"Create essay")}</Btn></>}>
         <Field label="Title"><Input placeholder="e.g. Ambition and ruin in Macbeth" value={eTitle} onChange={e=>setETitle(e.target.value)} autoFocus /></Field>
         <Field label="Subject"><SelectChip options={subjects} value={eSubject} onChange={setESubject} /></Field>
         {eSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Physics, Economics, Psychology..." value={eCustom} onChange={ev=>setECustom(ev.target.value)} /></Field>}
@@ -606,43 +598,47 @@ function Essays() {
       <Pills tabs={["active","library","templates"]} active={tab} onChange={setTab} />
       <div style={{display:"grid",gridTemplateColumns:"1fr 280px",gap:16}}>
         <div>
-          {tab==="active"&&activeEssay&&(
+          {tab==="active"&&(
             <Card>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
                 <div>
-                  <div style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:3}}>{activeEssay.title}</div>
-                  <div style={{fontSize:12,color:T.muted}}>{activeEssay.subject} · {wordCount(activeEssay.body).toLocaleString()} / {(activeEssay.target||1500).toLocaleString()} words</div>
+                  <div style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:3}}>Power &amp; Corruption in Macbeth</div>
+                  <div style={{fontSize:12,color:T.muted}}>English IV · {(1247).toLocaleString()} / {(1500).toLocaleString()} words</div>
                 </div>
-                <Badge color={T.amber}>{activeEssay.status||"In progress"}</Badge>
+                <Badge color={T.amber}>In progress</Badge>
               </div>
-              <textarea style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:6,padding:16,minHeight:260,fontSize:14,lineHeight:1.8,color:T.text,outline:"none",fontFamily:T.font,resize:"vertical",boxSizing:"border-box"}} value={activeEssay.body||""} onChange={e=>updateEssayBody(e.target.value)} placeholder="Start writing your essay..." />
+              <div style={{display:"flex",gap:2,background:T.card2,padding:"6px",borderRadius:"6px 6px 0 0",flexWrap:"wrap",border:`1px solid ${T.border}`,borderBottom:"none"}}>
+                {[["B",Icon.bold],["I",Icon.italic],["Link",Icon.link],["Quote",Icon.quote]].map(([l,ico])=>(
+                  <button key={l} style={{display:"flex",alignItems:"center",gap:4,padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>{ico} {l}</button>
+                ))}
+                <div style={{width:1,background:T.border,margin:"2px 4px"}} />
+                {["H1","H2","H3"].map(h=><button key={h} style={{padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>{h}</button>)}
+              </div>
+              <div contentEditable suppressContentEditableWarning style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:"0 0 6px 6px",padding:16,minHeight:200,fontSize:14,lineHeight:1.8,color:T.text,outline:"none"}}>
+                <p><strong style={{color:T.white,fontWeight:600}}>Introduction</strong></p>
+                <p style={{marginTop:12}}>In Shakespeare's Macbeth, the corrupting influence of unchecked ambition is illustrated through the protagonist's descent from celebrated warrior to tyrannical murderer. The play explores how power, when pursued without moral constraint, dismantles the very humanity of those who seek it · a thesis the playwright reinforces through recurring imagery, soliloquy, and dramatic irony.</p>
+              </div>
               <div style={{display:"flex",gap:8,marginTop:14,alignItems:"center"}}>
-                <BtnSm variant="subtle" onClick={async()=>{
-                  if(!activeEssay.body)return;
-                  const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"pro",messages:[{r:"user",t:"Refine this essay prose — improve clarity, flow, and academic tone. Return only the improved text, no commentary:\n\n"+activeEssay.body}]})});
-                  const data=await res.json();if(data.reply)updateEssayBody(data.reply);
-                }}>{Icon.wand} Refine prose</BtnSm>
-                <BtnSm variant="subtle" onClick={()=>{const next=[...essays];next.splice(activeIdx,1);setEssays(next);lsSet("essays",next);setActiveIdx(0);}}>Delete</BtnSm>
-                <div style={{marginLeft:"auto",fontSize:11,color:T.faint}}>Auto-saved to browser</div>
+                <BtnSm variant="subtle">{Icon.wand} Refine prose</BtnSm>
+                <BtnSm variant="subtle">{Icon.check} Grammar pass</BtnSm>
+                <BtnSm variant="subtle">{Icon.quote} Cite source</BtnSm>
+                <div style={{marginLeft:"auto",fontSize:11,color:T.faint}}>Saved automatically</div>
               </div>
             </Card>
-          )}
-          {tab==="active"&&!activeEssay&&(
-            <Card style={{padding:32,textAlign:"center"}}><div style={{color:T.muted,fontSize:14}}>No essays yet. Click "New essay" to start writing.</div></Card>
           )}
           {tab==="library"&&(
             <div style={{display:"flex",flexDirection:"column",gap:8}}>
               {essays.map((e,i)=>(
-                <Card key={i} onClick={()=>{setActiveIdx(i);setTab("active");}} style={{display:"flex",alignItems:"center",gap:16,cursor:"pointer"}}>
+                <Card key={i} onClick={()=>{}} style={{display:"flex",alignItems:"center",gap:16}}>
                   <div style={{width:3,height:40,borderRadius:2,background:subjectColor[e.subject]||T.lime,flexShrink:0}} />
                   <div style={{flex:1}}>
                     <div style={{fontSize:13,fontWeight:600,color:T.white,marginBottom:2}}>{e.title}</div>
-                    <div style={{fontSize:11,color:T.muted}}>{e.subject} · {wordCount(e.body).toLocaleString()} / {(e.target||1500).toLocaleString()} words</div>
+                    <div style={{fontSize:11,color:T.muted}}>{e.subject} · {e.words.toLocaleString()} / {e.target.toLocaleString()} words</div>
                   </div>
-                  <Badge color={e.status==="Submitted"?T.teal:T.amber}>{e.status||"In progress"}</Badge>
+                  <Badge color={e.status==="Submitted"?T.teal:e.status==="In progress"?T.amber:T.blue}>{e.status}</Badge>
+                  {e.grade&&<div style={{fontSize:20,fontWeight:700,color:T.lime,letterSpacing:"-0.02em"}}>{e.grade}</div>}
                 </Card>
               ))}
-              {essays.length===0&&<Card style={{padding:24,textAlign:"center"}}><div style={{color:T.muted,fontSize:13}}>No essays yet</div></Card>}
             </div>
           )}
           {tab==="templates"&&(
@@ -658,23 +654,26 @@ function Essays() {
           )}
         </div>
         <div style={{display:"flex",flexDirection:"column",gap:12}}>
-          {activeEssay&&(<>
           <Card style={{background:T.lime,border:"none"}}>
             <Label style={{color:T.bg}}>Word count</Label>
-            <div style={{fontSize:32,fontWeight:700,color:T.bg,letterSpacing:"-0.03em",lineHeight:1}}>{wordCount(activeEssay.body).toLocaleString()}</div>
-            <div style={{marginTop:10,height:4,background:T.bg+"22",borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",width:Math.min(100,Math.round(wordCount(activeEssay.body)/(activeEssay.target||1500)*100))+"%",background:T.bg,borderRadius:2}} /></div>
-            <div style={{fontSize:12,color:T.bg,opacity:0.7,marginTop:5}}>{Math.max(0,(activeEssay.target||1500)-wordCount(activeEssay.body)).toLocaleString()} words remaining</div>
+            <div style={{fontSize:32,fontWeight:700,color:T.bg,letterSpacing:"-0.03em",lineHeight:1}}>1,247</div>
+            <div style={{marginTop:10,height:4,background:T.bg+"22",borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",width:"83%",background:T.bg,borderRadius:2}} /></div>
+            <div style={{fontSize:12,color:T.bg,opacity:0.7,marginTop:5}}>253 words remaining</div>
           </Card>
           <Card>
-            <Label>Essays</Label>
-            {essays.map((e,i)=>(
-              <div key={i} onClick={()=>{setActiveIdx(i);setTab("active");}} style={{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:i<essays.length-1?`1px solid ${T.border}`:"none",fontSize:12,color:activeIdx===i?T.lime:T.muted,cursor:"pointer"}}>
-                <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{e.title}</span>
-                <span>{wordCount(e.body)}</span>
+            <Label>Writing feedback</Label>
+            {[["Strengthen thesis statement",T.amber],["Include counterargument",T.amber],["Expand textual evidence",T.red],["Conclusion is underdeveloped",T.red]].map(([s,c],i)=>(
+              <div key={i} style={{display:"flex",gap:8,padding:"8px 0",borderBottom:i<3?`1px solid ${T.border}`:"none",fontSize:12,color:T.muted}}>
+                <div style={{width:5,height:5,borderRadius:"50%",background:c,flexShrink:0,marginTop:5}} />
+                {s}
               </div>
             ))}
           </Card>
-          </>)}
+          <Card>
+            <Label>Readability</Label>
+            <div style={{fontSize:32,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>B+</div>
+            <div style={{fontSize:12,color:T.muted,marginTop:4}}>Grade 11 reading level</div>
+          </Card>
         </div>
       </div>
     </div>
@@ -691,24 +690,17 @@ function Flashcards() {
   const [dSource,setDSource]=useState("manual");
   const dSubjects=[{value:"Biology",label:"Biology",color:T.teal},{value:"English IV",label:"English IV",color:T.purple},{value:"Calculus",label:"Calculus",color:T.blue},{value:"Spanish",label:"Spanish",color:T.amber},{value:"Chemistry",label:"Chemistry",color:T.red},{value:"Other",label:"Other",color:T.lime}];
   const [dCustom,setDCustom]=useState("");
-  const [tab,setTab]=useState("decks");
-  const [studyDeck,setStudyDeck]=useState(null);
-  const [studyCorrect,setStudyCorrect]=useState(0);
-  const [studyTotal,setStudyTotal]=useState(0);
+  const [tab,setTab]=useState("study");
+  const cards=[
+    {q:"What does ATP stand for and what is its primary cellular function?",a:"Adenosine Triphosphate. It is the primary energy currency of the cell, providing the energy required to drive cellular processes including muscle contraction, nerve impulse propagation, and chemical synthesis."},
+    {q:"Describe the location and primary function of the mitochondria.",a:"The mitochondrion is a membrane-bound organelle found in the cytoplasm of eukaryotic cells. Its primary function is the production of ATP through the process of cellular respiration, specifically oxidative phosphorylation."},
+    {q:"State the principle of natural selection in one concise sentence.",a:"Natural selection is the process by which heritable traits that increase an organism's fitness in its environment become more common in a population over successive generations."},
+  ];
   const seedDecks=[
-    {name:"Cell respiration",course:"Biology",count:3,done:0,color:T.teal,cards:[
-      {q:"What does ATP stand for and what is its primary cellular function?",a:"Adenosine Triphosphate. It is the primary energy currency of the cell, providing energy for muscle contraction, nerve impulses, and chemical synthesis."},
-      {q:"Describe the location and primary function of the mitochondria.",a:"A membrane-bound organelle in eukaryotic cell cytoplasm. Produces ATP through cellular respiration (oxidative phosphorylation)."},
-      {q:"State the principle of natural selection in one sentence.",a:"Natural selection is the process by which heritable traits that increase fitness become more common in a population over generations."},
-    ]},
-    {name:"Macbeth · themes & quotes",course:"English IV",count:2,done:0,color:T.purple,cards:[
-      {q:"What is the significance of 'Fair is foul and foul is fair'?",a:"It establishes the theme of moral ambiguity and deception — things are not what they seem, and the boundary between good and evil is blurred throughout the play."},
-      {q:"How does Lady Macbeth's 'unsex me here' speech reveal her character?",a:"It shows her willingness to reject femininity and compassion to pursue power, foreshadowing the moral corruption that ultimately leads to her guilt and madness."},
-    ]},
-    {name:"Differentiation rules",course:"Calculus",count:2,done:0,color:T.lime,cards:[
-      {q:"What is the power rule for differentiation?",a:"If f(x) = xⁿ, then f'(x) = nxⁿ⁻¹. Bring the exponent down and subtract 1 from it."},
-      {q:"What is the chain rule?",a:"If y = f(g(x)), then dy/dx = f'(g(x)) · g'(x). Differentiate the outer function, keep the inner, then multiply by the derivative of the inner."},
-    ]},
+    {name:"Cell respiration",course:"Biology",count:30,done:24,color:T.teal},
+    {name:"Macbeth · themes & quotes",course:"English IV",count:45,done:12,color:T.purple},
+    {name:"Differentiation rules",course:"Calculus",count:20,done:20,color:T.lime},
+    {name:"Subjunctive mood",course:"Spanish",count:28,done:8,color:T.amber},
   ];
   const [deckList,setDeckList]=useState(()=>lsGet("decks",seedDecks));
   const colorMap={Biology:T.teal,"English IV":T.purple,Calculus:T.blue,Spanish:T.amber,Chemistry:T.red,History:T.muted};
@@ -726,11 +718,8 @@ function Flashcards() {
   const [draft,setDraft]=useState([]);
   const addCard=()=>{if(!cQ.trim()&&!cA.trim())return;setDraft(d=>[...d,{q:cQ.trim()||"(no question)",a:cA.trim()||"(no answer)"}]);setCQ("");setCA("");};
   const saveDraftDeck=()=>{const subj=cSubj.trim()||"General";const nd={name:cName.trim()||"New deck",course:subj,count:draft.length,done:0,color:colorMap[subj]||T.lime,cards:draft};const next=[nd,...deckList];setDeckList(next);lsSet("decks",next);setDraft([]);setCName("");setCSubj("");setCQ("");setCA("");setTab("decks");};
-  const cards=studyDeck?.cards||[];
-  const startStudy=(deck)=>{if(!deck.cards||deck.cards.length===0)return;setStudyDeck(deck);setIdx(0);setFlipped(false);setStudyCorrect(0);setStudyTotal(0);setTab("study");};
-  const next=()=>{setFlipped(false);if(idx<cards.length-1)setIdx(i=>i+1);else setTab("decks");};
+  const next=()=>{setFlipped(false);setIdx(i=>(i+1)%cards.length);};
   const prev=()=>{setFlipped(false);setIdx(i=>Math.max(0,i-1));};
-  const rateCard=(rating)=>{if(rating==="Good"||rating==="Mastered")setStudyCorrect(c=>c+1);setStudyTotal(t=>t+1);next();};
   return (
     <div>
       <PH title="Flashcards" sub="Spaced-repetition study system" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New deck")}</Btn>} />
@@ -766,7 +755,7 @@ function Flashcards() {
         <div style={{display:"grid",gridTemplateColumns:"1fr 260px",gap:16}}>
           <div>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-              <div style={{fontSize:12,color:T.muted}}>{studyDeck?.course||"Select a deck"} · {studyDeck?.name||""}</div>
+              <div style={{fontSize:12,color:T.muted}}>Biology · Cell respiration</div>
               <div style={{fontSize:12,color:T.muted}}>Card {idx+1} of {cards.length}</div>
             </div>
             <div onClick={()=>setFlipped(f=>!f)} style={{cursor:"pointer",userSelect:"none"}}>
@@ -784,7 +773,7 @@ function Flashcards() {
             <div style={{display:"flex",gap:8,marginTop:14,justifyContent:"center"}}>
               {flipped
                 ?[["Missed",T.red],["Hard",T.amber],["Good",T.teal],["Mastered",T.lime]].map(([l,c])=>(
-                    <button key={l} onClick={()=>rateCard(l)} style={{flex:1,padding:"9px 0",borderRadius:7,background:c+"14",color:c,border:`1px solid ${c}33`,cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:T.font}}>{l}</button>
+                    <button key={l} onClick={next} style={{flex:1,padding:"9px 0",borderRadius:7,background:c+"14",color:c,border:`1px solid ${c}33`,cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:T.font}}>{l}</button>
                   ))
                 :<><Btn variant="ghost" onClick={prev}>← Prev</Btn><Btn onClick={()=>setFlipped(true)}>Reveal answer</Btn><Btn variant="ghost" onClick={next}>Next →</Btn></>
               }
@@ -793,9 +782,9 @@ function Flashcards() {
           <div style={{display:"flex",flexDirection:"column",gap:12}}>
             <Card>
               <Label>Session progress</Label>
-              <div style={{fontSize:32,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:10}}>{Math.min(idx+1,cards.length)}<span style={{fontSize:18,color:T.muted}}>/{cards.length||0}</span></div>
-              <Prog pct={cards.length?(idx+1)/cards.length*100:0} />
-              <div style={{fontSize:12,color:T.muted,marginTop:8}}>Recall accuracy: {studyTotal?Math.round(studyCorrect/studyTotal*100):0}%</div>
+              <div style={{fontSize:32,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:10}}>24<span style={{fontSize:18,color:T.muted}}>/30</span></div>
+              <Prog pct={80} />
+              <div style={{fontSize:12,color:T.muted,marginTop:8}}>Recall accuracy: 86%</div>
             </Card>
             <Card>
               <Label>Due today</Label>
@@ -822,7 +811,7 @@ function Flashcards() {
               <Prog pct={d.count?Math.round((d.done/d.count)*100):0} color={d.color} />
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10}}>
                 <span style={{fontSize:11,color:T.muted}}>{d.done} mastered</span>
-                <BtnSm onClick={(e)=>{e.stopPropagation();startStudy(d);}} disabled={!d.cards||d.cards.length===0}>{d.cards?.length?"Study now":"No cards"}</BtnSm>
+                <BtnSm onClick={()=>setTab("study")}>Study now</BtnSm>
               </div>
             </Card>
           ))}
@@ -970,17 +959,9 @@ function Notes(){
                     <div style={{fontSize:17,fontWeight:700,color:T.white,letterSpacing:"-0.01em",marginBottom:4}}>{filtered[sel].title}</div>
                     <div style={{display:"flex",gap:8,alignItems:"center"}}><Badge color={colorOf(filtered[sel].tag)}>{filtered[sel].tag}</Badge><span style={{fontSize:11,color:T.muted}}>{filtered[sel].date}</span></div>
                   </div>
-                  <div style={{display:"flex",gap:6}}>
-                    <BtnSm variant="subtle" onClick={async()=>{
-                      const note=filtered[sel];if(!note?.body)return;
-                      const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"flash",messages:[{r:"user",t:"Summarize these notes in 3-5 bullet points, keep it concise:\n\n"+note.body}]})});
-                      const data=await res.json();if(data.reply){const nl=[...notes];const ri=notes.findIndex(n=>n.title===note.title);if(ri>=0){nl[ri]={...nl[ri],body:nl[ri].body+"\n\n--- AI Summary ---\n"+data.reply};setNotes(nl);lsSet("notes",nl);}}
-                    }}>Summarise</BtnSm>
-                    <BtnSm variant="subtle" onClick={()=>{navigator.clipboard?.writeText(filtered[sel].body);}}>Copy</BtnSm>
-                    <BtnSm variant="subtle" onClick={()=>{const nl=notes.filter(n=>n.title!==filtered[sel].title);setNotes(nl);lsSet("notes",nl);setSel(null);}}>Delete</BtnSm>
-                  </div>
+                  <div style={{display:"flex",gap:6}}><BtnSm variant="subtle">Summarise</BtnSm><BtnSm variant="subtle">Make flashcards</BtnSm><BtnSm variant="subtle">Export</BtnSm></div>
                 </div>
-                <div style={{fontSize:14,color:T.text,lineHeight:1.9,whiteSpace:"pre-wrap"}}>{filtered[sel].body}</div>
+                <div style={{fontSize:14,color:T.text,lineHeight:1.9}}>{filtered[sel].body}</div>
               </>
             :<div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:300,gap:12}}>
                 <div style={{color:T.faint,opacity:0.5}}>{Icon.file}</div>
@@ -1445,61 +1426,34 @@ function AiTutor(){
 
 // ─── GRAMMAR & POLISH ─────────────────────────────────────────────────────────
 function GrammarPolish() {
-  const [text,setText]=useState("");
-  const [loading,setLoading]=useState(false);
-  const [issues,setIssues]=useState([]);
-  const [grade,setGrade]=useState(null);
-  const [breakdown,setBreakdown]=useState(null);
-
-  const runCheck=async()=>{
-    if(!text.trim()||loading)return;
-    setLoading(true);setIssues([]);setGrade(null);setBreakdown(null);
-    try{
-      const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"standard",messages:[{r:"user",t:`Analyze this text for grammar, style, and clarity issues. Return ONLY valid JSON with this exact structure, no other text:
-{"grade":"A/B+/B/C+/C/D","level":"Grade X reading level","issues":[{"type":"Grammar"|"Style"|"Clarity","orig":"exact original text","fix":"corrected text","desc":"short explanation"}],"breakdown":{"grammar":0,"style":0,"clarity":0}}
-
-Text to analyze:
-${text}`}]})});
-      const data=await res.json();
-      if(data.error){setIssues([{type:"Error",orig:"",fix:"",desc:data.error,color:T.red}]);setLoading(false);return;}
-      try{
-        const parsed=JSON.parse(data.reply.replace(/```json?\n?/g,"").replace(/```/g,"").trim());
-        const colorMap={Grammar:T.red,Style:T.amber,Clarity:T.teal};
-        setIssues((parsed.issues||[]).map(i=>({...i,color:colorMap[i.type]||T.muted})));
-        setGrade(parsed.grade||"—");
-        setBreakdown(parsed.breakdown||null);
-      }catch(pe){setIssues([{type:"Grammar",orig:"",fix:data.reply,desc:"See AI response",color:T.muted}]);}
-    }catch(e){setIssues([{type:"Error",orig:"",fix:"",desc:"Couldn't reach AI.",color:T.red}]);}
-    setLoading(false);
-  };
-
-  const acceptFix=(idx)=>{
-    const issue=issues[idx];if(!issue.orig)return;
-    setText(t=>t.replace(issue.orig,issue.fix));
-    setIssues(iss=>iss.filter((_,i)=>i!==idx));
-  };
-  const acceptAll=()=>{
-    let t=text;issues.forEach(i=>{if(i.orig)t=t.replace(i.orig,i.fix);});
-    setText(t);setIssues([]);
-  };
-
+  const [text,setText]=useState("Shakespeare use of metaphors in Macbeth is very important for showing themes. The play have many example of this. Lady Macbeth she is a complex character who influence her husband decisions greatly.");
+  const [checked,setChecked]=useState(false);
+  const issues=[
+    {type:"Grammar",orig:"Shakespeare use",fix:"Shakespeare's use",color:T.red,desc:"Missing possessive apostrophe"},
+    {type:"Grammar",orig:"The play have",fix:"The play has",color:T.red,desc:"Subject-verb agreement"},
+    {type:"Style",orig:"very important",fix:"crucial / significant",color:T.amber,desc:"Weak intensifier · use stronger vocabulary"},
+    {type:"Grammar",orig:"Lady Macbeth she",fix:"Lady Macbeth",color:T.red,desc:"Pronoun redundancy"},
+    {type:"Grammar",orig:"influence her husband decisions",fix:"influences her husband's decisions",color:T.red,desc:"Tense error and missing possessive"},
+  ];
   return (
     <div>
-      <PH title="Grammar &amp; Polish" sub="AI-powered grammar, style, and clarity analysis" />
+      <PH title="Grammar &amp; Polish" sub="Identify errors and elevate your academic writing" />
       <div style={{display:"grid",gridTemplateColumns:"1fr 270px",gap:16}}>
         <div>
           <Card>
             <Label>Your text</Label>
-            <textarea style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"12px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",minHeight:140,lineHeight:1.75,boxSizing:"border-box",marginBottom:12}} value={text} onChange={e=>setText(e.target.value)} placeholder="Paste your essay, paragraph, or any text here..." />
+            <textarea style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"12px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",minHeight:140,lineHeight:1.75,boxSizing:"border-box",marginBottom:12}} value={text} onChange={e=>setText(e.target.value)} />
             <div style={{display:"flex",gap:8}}>
-              <Btn onClick={runCheck} disabled={loading||!text.trim()}>{loading?"Analyzing...":"Run grammar check"}</Btn>
+              <Btn onClick={()=>setChecked(true)}>Run grammar check</Btn>
+              <Btn variant="subtle">Elevate prose</Btn>
+              <Btn variant="subtle">Tone analysis</Btn>
             </div>
           </Card>
-          {issues.length>0&&(
+          {checked&&(
             <div style={{marginTop:14}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-                <div style={{fontSize:13,fontWeight:600,color:T.white}}>{issues.length} issue{issues.length!==1?"s":""} found</div>
-                <BtnSm variant="subtle" onClick={acceptAll}>Accept all</BtnSm>
+                <div style={{fontSize:13,fontWeight:600,color:T.white}}>{issues.length} issues found</div>
+                <BtnSm variant="subtle">Accept all</BtnSm>
               </div>
               {issues.map((issue,i)=>(
                 <Card key={i} style={{borderLeft:`2px solid ${issue.color}`,marginBottom:8,padding:14}}>
@@ -1507,13 +1461,13 @@ ${text}`}]})});
                     <Badge color={issue.color}>{issue.type}</Badge>
                     <span style={{fontSize:12,color:T.muted}}>{issue.desc}</span>
                   </div>
-                  {issue.orig&&(<div style={{display:"flex",gap:10,alignItems:"center",fontSize:13,flexWrap:"wrap"}}>
+                  <div style={{display:"flex",gap:10,alignItems:"center",fontSize:13}}>
                     <span style={{color:T.red,textDecoration:"line-through",opacity:0.8}}>{issue.orig}</span>
                     <span style={{color:T.muted}}>→</span>
                     <span style={{color:T.lime,fontWeight:600}}>{issue.fix}</span>
-                    <BtnSm style={{marginLeft:"auto"}} onClick={()=>acceptFix(i)}>Accept</BtnSm>
-                    <BtnSm variant="ghost" onClick={()=>setIssues(iss=>iss.filter((_,j)=>j!==i))}>Dismiss</BtnSm>
-                  </div>)}
+                    <BtnSm style={{marginLeft:"auto"}}>Accept</BtnSm>
+                    <BtnSm variant="ghost">Dismiss</BtnSm>
+                  </div>
                 </Card>
               ))}
             </div>
@@ -1522,8 +1476,8 @@ ${text}`}]})});
         <div style={{display:"flex",flexDirection:"column",gap:12}}>
           <Card style={{background:T.lime,border:"none"}}>
             <Label>Overall grade</Label>
-            <div style={{fontSize:40,fontWeight:700,color:T.bg,letterSpacing:"-0.03em",lineHeight:1}}>{grade||"—"}</div>
-            <div style={{fontSize:12,color:T.bg,opacity:0.65,marginTop:5}}>{loading?"Analyzing...":"Paste text and run check"}</div>
+            <div style={{fontSize:40,fontWeight:700,color:T.bg,letterSpacing:"-0.03em",lineHeight:1}}>{checked?"B+":"—"}</div>
+            <div style={{fontSize:12,color:T.bg,opacity:0.65,marginTop:5}}>Grade 11 reading level</div>
           </Card>
           <Card>
             <Label>Rewrite tools</Label>
@@ -1531,10 +1485,10 @@ ${text}`}]})});
               <button key={i} style={{display:"flex",alignItems:"center",gap:8,width:"100%",textAlign:"left",padding:"9px 10px",borderRadius:6,marginBottom:4,fontSize:12,cursor:"pointer",border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontFamily:T.font,transition:"all 0.15s"}}>{Icon.wand} {a}</button>
             ))}
           </Card>
-          {breakdown&&(
+          {checked&&(
             <Card>
               <Label>Error breakdown</Label>
-              {[["Grammar errors",breakdown.grammar,T.red],["Style issues",breakdown.style,T.amber],["Clarity flags",breakdown.clarity,T.teal]].map(([k,v,c],i)=>(
+              {[["Grammar errors",3,T.red],["Style issues",2,T.amber],["Clarity flags",0,T.teal]].map(([k,v,c],i)=>(
                 <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<2?`1px solid ${T.border}`:"none",fontSize:12}}>
                   <span style={{color:T.muted}}>{k}</span>
                   <span style={{color:c,fontWeight:600}}>{v}</span>
@@ -1550,59 +1504,35 @@ ${text}`}]})});
 
 // ─── AI HUMANIZER ─────────────────────────────────────────────────────────────
 function AiHumanizer() {
-  const [inputText,setInputText]=useState("");
-  const [outputText,setOutputText]=useState("");
-  const [loading,setLoading]=useState(false);
+  const [done,setDone]=useState(false);
   const [voice,setVoice]=useState("Preserve my style");
-  const [scores,setScores]=useState(null);
-
-  const rewrite=async()=>{
-    if(!inputText.trim()||loading)return;
-    setLoading(true);setOutputText("");setScores(null);
-    try{
-      const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"pro",messages:[{r:"user",t:`Rewrite the following text to sound natural, human-written, and confident. Voice style: "${voice}".
-
-Return ONLY valid JSON with this structure, no other text:
-{"rewritten":"the rewritten text","detection":number 0-100 estimating AI detection probability,"originality":number 0-100,"readability":number 0-100}
-
-Text to rewrite:
-${inputText}`}]})});
-      const data=await res.json();
-      if(data.error){setOutputText("Error: "+data.error);setLoading(false);return;}
-      try{
-        const parsed=JSON.parse(data.reply.replace(/```json?\n?/g,"").replace(/```/g,"").trim());
-        setOutputText(parsed.rewritten||data.reply);
-        setScores({detection:parsed.detection||10,originality:parsed.originality||85,readability:parsed.readability||80});
-      }catch(e){setOutputText(data.reply);}
-    }catch(e){setOutputText("Couldn't reach AI.");}
-    setLoading(false);
-  };
-
-  const copyOutput=()=>{if(outputText)navigator.clipboard?.writeText(outputText);};
-
+  const inputText="The utilization of metaphorical language throughout Shakespeare's Macbeth serves as a fundamental mechanism by which the playwright effectuates the thematic exploration of moral degradation and its consequential psychological ramifications.";
+  const outputText="Throughout Macbeth, Shakespeare uses metaphor to track moral collapse · each image of blood, vision, and darkness corresponds precisely to a stage in his protagonist's psychological unravelling.";
+  const scores=[{label:"Detection probability",before:91,after:8,lower:true},{label:"Originality index",before:28,after:92,lower:false},{label:"Readability score",before:58,after:90,lower:false}];
   return (
     <div>
       <PH title="Rewrite" sub="Transform stilted prose into natural, confident academic writing" />
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
         <div>
           <Label>Source text</Label>
-          <textarea style={{width:"100%",background:T.card,borderRadius:10,padding:16,border:`1px solid ${T.border}`,fontSize:13,lineHeight:1.75,color:T.text,minHeight:160,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} value={inputText} onChange={e=>setInputText(e.target.value)} placeholder="Paste the text you want to humanize..." />
+          <div style={{...({background:T.card,borderRadius:10,padding:16,border:`1px solid ${T.border}`,fontSize:13,lineHeight:1.75,color:T.muted,minHeight:160}),}}>{inputText}</div>
           <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:10}}>
             {["Preserve my style","Academic register","Conversational","Formal"].map(s=>(
               <button key={s} onClick={()=>setVoice(s)} style={{padding:"5px 12px",borderRadius:5,fontSize:11,cursor:"pointer",border:`1px solid ${voice===s?T.lime+"44":T.border}`,background:voice===s?T.lime+"10":"transparent",color:voice===s?T.lime:T.muted,fontFamily:T.font,transition:"all 0.15s"}}>{s}</button>
             ))}
           </div>
           <div style={{marginTop:12}}>
-            <Btn onClick={rewrite} disabled={loading||!inputText.trim()} style={{width:"100%",justifyContent:"center",gap:8}}>{Icon.wand} {loading?"Rewriting...":"Rewrite"}</Btn>
+            <Btn onClick={()=>setDone(true)} style={{width:"100%",justifyContent:"center",gap:8}}>{Icon.wand} Rewrite</Btn>
           </div>
         </div>
         <div>
           <Label>Rewritten output</Label>
-          <div style={{background:T.card,borderRadius:10,padding:16,border:`1px solid ${outputText?T.lime+"33":T.border}`,fontSize:13,lineHeight:1.75,color:outputText?T.text:T.faint,minHeight:160,transition:"all 0.3s",whiteSpace:"pre-wrap"}}>{loading?"Rewriting...":outputText||"Output will appear here once you run the rewrite."}</div>
-          {outputText&&!loading&&(
+          <div style={{background:T.card,borderRadius:10,padding:16,border:`1px solid ${done?T.lime+"33":T.border}`,fontSize:13,lineHeight:1.75,color:done?T.text:T.faint,minHeight:160,transition:"all 0.3s"}}>{done?outputText:"Output will appear here once you run the rewrite."}</div>
+          {done&&(
             <div style={{display:"flex",gap:8,marginTop:10}}>
-              <BtnSm onClick={copyOutput}>{Icon.copy} Copy</BtnSm>
-              <BtnSm variant="subtle" onClick={rewrite}>Rerun</BtnSm>
+              <BtnSm>{Icon.copy} Copy</BtnSm>
+              <BtnSm variant="subtle">Rerun</BtnSm>
+              <BtnSm variant="subtle">Adjust further</BtnSm>
             </div>
           )}
         </div>
@@ -1610,12 +1540,12 @@ ${inputText}`}]})});
       <Divider style={{marginBottom:16}} />
       <Label>Text analysis</Label>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
-        {[{label:"Detection probability",val:scores?.detection||0,lower:true},{label:"Originality index",val:scores?.originality||0,lower:false},{label:"Readability score",val:scores?.readability||0,lower:false}].map((m,i)=>(
+        {scores.map((m,i)=>(
           <Card key={i}>
             <Label>{m.label}</Label>
-            <div style={{fontSize:34,fontWeight:700,color:scores?(m.lower?(m.val<30?T.lime:T.red):T.lime):T.muted,letterSpacing:"-0.02em",lineHeight:1,marginBottom:10}}>{scores?m.val:"—"}<span style={{fontSize:16,fontWeight:400}}>{scores?"%":""}</span></div>
-            <Prog pct={scores?m.val:0} color={m.lower?(m.val<30?T.lime:T.red):T.lime} />
-            {scores&&<div style={{fontSize:11,color:T.lime,marginTop:8}}>{m.lower?(m.val<30?"Low risk":"High risk"):"Score"}</div>}
+            <div style={{fontSize:34,fontWeight:700,color:done?(m.lower?T.lime:T.lime):T.muted,letterSpacing:"-0.02em",lineHeight:1,marginBottom:10}}>{done?m.after:m.before}<span style={{fontSize:16,fontWeight:400}}>%</span></div>
+            <Prog pct={done?m.after:m.before} color={m.lower?(done?T.lime:T.red):T.lime} />
+            {done&&<div style={{fontSize:11,color:T.lime,marginTop:8}}>{m.lower?"Risk reduced":"Improved"}</div>}
           </Card>
         ))}
       </div>
@@ -2075,13 +2005,18 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
           {active==="Danger zone" && (<>
             <Card style={{marginBottom:12,border:"1px solid rgba(214,117,96,0.3)"}}>
               <div style={{fontSize:13,fontWeight:700,color:T.red,marginBottom:4}}>Reset progress</div>
-              <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Wipe your streak, XP, level, and session history. Notes and essays are kept.</div>
-              <Btn variant="danger" onClick={()=>{if(confirm("Reset all progress? This clears your streak, XP, and session history.")){lsSet("days",[]);lsSet("sessions",[]);lsSet("xpBase",0);lsSet("xpBonus",0);alert("Progress reset.");}}}>Reset all progress</Btn>
+              <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Wipe your streak, XP, level, and Wrapped history. Notes and essays are kept.</div>
+              <Btn variant="danger">Reset all progress</Btn>
+            </Card>
+            <Card style={{marginBottom:12,border:"1px solid rgba(214,117,96,0.3)"}}>
+              <div style={{fontSize:13,fontWeight:700,color:T.red,marginBottom:4}}>Pause subscription</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Pause billing for up to 90 days. We'll keep your data intact and email you when it's about to resume.</div>
+              <Btn variant="danger">Pause for 30 days</Btn>
             </Card>
             <Card style={{border:"1px solid rgba(214,117,96,0.3)"}}>
               <div style={{fontSize:13,fontWeight:700,color:T.red,marginBottom:4}}>Delete account</div>
-              <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Permanently remove your account and all local data. This cannot be undone.</div>
-              <Btn variant="danger" onClick={async()=>{if(confirm("Permanently delete your account and all data? This cannot be undone.")){try{localStorage.clear();await firebase.auth().currentUser?.delete();window.location.href="/";}catch(e){alert("Error: "+e.message+". You may need to sign in again before deleting.");}}}}>Delete my account</Btn>
+              <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Permanently remove your account, notes, essays, flashcards, and squad memberships. This cannot be undone.</div>
+              <Btn variant="danger">Delete my account</Btn>
             </Card>
           </>)}
         </div>
@@ -2097,12 +2032,7 @@ function Profile() {
   const lvl=levelInfo();
   const streak=Math.max(1,getStreak());
   const ps=profileStats();
-  const u=firebase.auth().currentUser;
-  const displayName=u?.displayName||prof.name||u?.email?.split("@")[0]||"Student";
-  const initials=(displayName.split(/[\s@]/).filter(Boolean).map(x=>x[0]).join("").slice(0,2).toUpperCase())||"S";
-  const essayCount=lsGet("essays",[]).length;
-  const cardCount=lsGet("decks",[]).reduce((a,d)=>a+(d.cards?.length||0),0);
-  const chatCount=lsGet("chatMsgs",[]).filter(m=>m.r==="user").length;
+  const initials=((prof.name||"").split(" ").map(x=>x[0]).join("").slice(0,2).toUpperCase())||"S";
   const badges=[
     {icon:Icon.flame,name:streak+"-Day streak",color:T.amber},
     {icon:Icon.trophy,name:"Goal crusher",color:T.lime},
@@ -2121,10 +2051,10 @@ function Profile() {
       <Card style={{display:"flex",alignItems:"center",gap:24,marginBottom:16,padding:28}}>
         <Av initials={initials} color={T.lime} size={80} />
         <div style={{flex:1}}>
-          <div style={{fontSize:22,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:3}}>{displayName}</div>
+          <div style={{fontSize:22,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:3}}>{prof.name}</div>
           <div style={{fontSize:13,color:T.muted,marginBottom:12}}>{prof.school}</div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            <Badge color={T.lime}>{getPlan()}</Badge>
+            <Badge color={T.lime}>Pro</Badge>
             <Badge color={T.amber}>{streak}-day streak</Badge>
             <Badge color={T.blue}>Level {lvl.level}</Badge>
           </div>
@@ -2137,7 +2067,7 @@ function Profile() {
         </div>
       </Card>
       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
-        {[["Total study time",fmtH(ps.totalMin),T.lime],["Essays written",String(essayCount),T.purple],["Flashcards created",String(cardCount),T.teal],["Chat messages",String(chatCount),T.blue],["Focus sessions",String(ps.focusSessions),T.red],["Credits used",String(getCreditLimit()-getCredits()),T.amber]].map(([l,v,c],i)=>(
+        {[["Total study time",fmtH(ps.totalMin),T.lime],["Essays submitted","8",T.purple],["Cards mastered","147",T.teal],["Quizzes completed","23",T.amber],["Chat sessions","89",T.blue],["Focus sessions",String(ps.focusSessions),T.red]].map(([l,v,c],i)=>(
           <Card key={i} style={{textAlign:"center",padding:16}}>
             <div style={{fontSize:26,fontWeight:700,color:c,letterSpacing:"-0.02em",lineHeight:1}}>{v}</div>
             <div style={{fontSize:11,color:T.muted,marginTop:6}}>{l}</div>
@@ -2285,7 +2215,7 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={T.ink} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{opacity:0.6}}><path d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
           </div>
           <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.ink,margin:"10px 0 2px"}}>{realStreak}<span style={{fontSize:20,color:"rgba(14,31,24,0.55)",marginLeft:6}}>days</span></div>
-          <div style={{fontSize:12,color:"rgba(14,31,24,0.7)"}}>Best: {realStreak} day{realStreak!==1?"s":""}</div>
+          <div style={{fontSize:12,color:"rgba(14,31,24,0.7)"}}>Longest: 31 · +10 credits unlocked</div>
           <div style={{display:"flex",gap:5,marginTop:"auto",paddingTop:14}}>
             {wk.map((d,i)=>{
               const today=d.today, on=d.on;
@@ -2368,9 +2298,9 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
         {/* Ask Studlin */}
         <div style={{background:T.ink,color:T.cream,borderRadius:22,padding:22,display:"flex",flexDirection:"column"}}>
           <CardHead title="Ask Studlin" label="AI TUTOR" more="Open" light />
-          <div style={{fontSize:13,color:"rgba(246,241,230,0.7)",marginBottom:14,lineHeight:1.5}}>Ask me anything — homework help, concept explanations, study tips, or just paste a problem.</div>
+          <div style={{fontSize:13,color:"rgba(246,241,230,0.7)",marginBottom:14,lineHeight:1.5}}>I noticed you're stuck on Macbeth Act III · want me to walk through the dagger soliloquy or pull quotes for your essay?</div>
           <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>
-            {["Explain a concept","Help with homework","Generate flashcards","Quiz me"].map(s=>(
+            {["Explain dagger soliloquy","Find quotes for essay","Quiz me on Act III"].map(s=>(
               <button key={s} onClick={()=>setActive("aichat")} style={{fontSize:11.5,padding:"6px 11px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:"rgba(246,241,230,0.85)",cursor:"pointer",fontFamily:T.font}}>{s}</button>
             ))}
           </div>
@@ -2392,20 +2322,20 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
         <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
           <CardHead title="This week's focus" label={(fmtH(realStats.weekMin)||"0m").toUpperCase()+" THIS WEEK · TRACKED LIVE"} more="View Wrapped" />
           <div style={{display:"flex",alignItems:"flex-end",gap:10,height:140,padding:"0 4px"}}>
-            {(()=>{
-              const sessions=lsGet("sessions",[]);
-              const now=new Date();const dow=(now.getDay()+6)%7;const mon=new Date(now);mon.setDate(now.getDate()-dow);
-              const days=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
-              const maxMin=Math.max(1,...days.map((_,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);const k=dayKey(d);return sessions.filter(s=>s.d===k).reduce((a,s)=>a+(s.m||0),0);}));
-              return days.map((d,i)=>{
-                const dt=new Date(mon);dt.setDate(mon.getDate()+i);const k=dayKey(dt);const mins=sessions.filter(s=>s.d===k).reduce((a,s)=>a+(s.m||0),0);
-                const h=mins?Math.max(8,Math.round(mins/maxMin*90)):0;const today=i===dow;
-                return <div key={i} style={{flex:1,display:"flex",flexDirection:"column-reverse",gap:2,height:"100%",position:"relative"}}>
-                  {h>0&&<div style={{width:"100%",height:h+"%",background:today?T.lime:T.forest,borderRadius:"4px 4px 0 0",transition:"height 0.3s"}}/>}
-                  <div style={{position:"absolute",bottom:-22,left:0,right:0,textAlign:"center",fontFamily:T.mono,fontSize:10,color:today?T.text:T.faint,fontWeight:today?700:400}}>{d}</div>
-                </div>;
-              });
-            })()
+            {[
+              {segs:[{c:T.limeDk,h:18},{c:T.forest,h:32}],d:"Mon"},
+              {segs:[{c:T.butter,h:10},{c:T.limeDk,h:25},{c:T.forest,h:40}],d:"Tue"},
+              {segs:[{c:T.limeDk,h:20},{c:T.forest,h:35}],d:"Wed"},
+              {segs:[{c:T.butter,h:15},{c:T.limeDk,h:30},{c:T.forest,h:45}],d:"Thu"},
+              {segs:[{c:T.butter,h:8},{c:T.limeDk,h:22},{c:T.forest,h:38}],d:"Fri",today:true},
+              {segs:[],d:"Sat"},
+              {segs:[],d:"Sun"},
+            ].map((bar,i)=>(
+              <div key={i} style={{flex:1,display:"flex",flexDirection:"column-reverse",gap:2,height:"100%",position:"relative"}}>
+                {bar.segs.map((s,j)=><div key={j} style={{width:"100%",height:s.h+"%",background:s.c,borderRadius:j===bar.segs.length-1?"4px 4px 0 0":0}}/>)}
+                <div style={{position:"absolute",bottom:-22,left:0,right:0,textAlign:"center",fontFamily:T.mono,fontSize:10,color:bar.today?T.text:T.faint,fontWeight:bar.today?700:400}}>{bar.d}</div>
+              </div>
+            ))}
           </div>
           <div style={{display:"flex",gap:14,fontSize:11,color:T.muted,marginTop:36}}>
             <span><span style={{width:10,height:10,borderRadius:3,background:T.forest,display:"inline-block",verticalAlign:"middle",marginRight:5}}/>Reading &amp; notes</span>
@@ -2416,20 +2346,20 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
         </div>
 
         <div style={{background:T.forest,color:T.cream,borderRadius:22,padding:22}}>
-          <CardHead title="Weekly Wrapped" label={"WEEK "+weekNo()} more="View full" light />
+          <CardHead title="Weekly Wrapped" label="WEEK 20" more="View full" light />
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:14}}>
-            {[{l:"Focus time",v:fmtH(realStats.weekMin)||"0m"},{l:"Sessions",v:String(realStats.weekCount||0)},{l:"Messages",v:String(lsGet("chatMsgs",[]).filter(m=>m.r==="user").length)}].map((s,i)=>(
+            {[{l:"Focus hours",v:"14h 22m",d:"+3.2h"},{l:"Cards mastered",v:"142",d:"+38"},{l:"Words written",v:"3,840",d:"+1,200"}].map((s,i)=>(
               <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:12,padding:"12px 14px"}}>
                 <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.06em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)"}}>{s.l}</div>
                 <div style={{fontFamily:T.hand,fontSize:28,fontWeight:700,color:T.lime,lineHeight:1,marginTop:4}}>{s.v}</div>
-                <div style={{fontSize:11,color:T.lime,fontWeight:600,marginTop:2,opacity:0.85}}>this week</div>
+                <div style={{fontSize:11,color:T.lime,fontWeight:600,marginTop:2,opacity:0.85}}>{s.d} vs last wk</div>
               </div>
             ))}
           </div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            {[realStreak+"-day streak","Level "+lvl.level,fmtH(realStats.weekMin)||"0m"+" focus"].map((b,i)=>(
+            {["12-day streak","Bio top 1%","Early bird"].map((b,i)=>(
               <span key={i} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.12)",borderRadius:99,fontSize:11.5,color:T.cream}}>
-                <span style={{width:18,height:18,borderRadius:"50%",background:T.lime,display:"grid",placeItems:"center",color:T.ink,fontSize:10,fontWeight:700,flex:"none"}}>{[realStreak,lvl.level,"⏱"][i]}</span>
+                <span style={{width:18,height:18,borderRadius:"50%",background:T.lime,display:"grid",placeItems:"center",color:T.ink,fontSize:10,fontWeight:700,flex:"none"}}>{["12","*","4"][i]}</span>
                 {b}
               </span>
             ))}
@@ -2471,12 +2401,12 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
             </div>
             <div style={{marginLeft:"auto",textAlign:"right"}}>
               <div style={{fontSize:11.5,color:T.muted,fontFamily:T.mono,letterSpacing:"0.06em",textTransform:"uppercase"}}>longest</div>
-              <div style={{fontFamily:T.hand,fontSize:30,lineHeight:0.9,color:T.muted}}>{realStreak}</div>
+              <div style={{fontFamily:T.hand,fontSize:30,lineHeight:0.9,color:T.muted}}>31</div>
             </div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(13,1fr)",gap:4}}>
-            {(()=>{const loginDays=new Set(lsGet("days",[]));const cells=[];const today=new Date();for(let i=90;i>=0;i--){const d=new Date(today);d.setDate(today.getDate()-i);const k=dayKey(d);cells.push(loginDays.has(k)?Math.min(4,1+Math.floor(Math.random()*3)):0);}return cells;})().map((lvl,i)=>(
-              <div key={i} style={{aspectRatio:"1",background:cellColor(lvl),borderRadius:4,boxShadow:i===90?`0 0 0 1.5px ${T.ink}`:"none"}}/>
+            {seed.map((lvl,i)=>(
+              <div key={i} style={{aspectRatio:"1",background:cellColor(lvl),borderRadius:4,boxShadow:i===seed.length-1?`0 0 0 1.5px ${T.ink}`:"none"}}/>
             ))}
           </div>
         </div>
@@ -2617,7 +2547,7 @@ function AuthScreen(){
           {[
             {icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#AECE5E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 12l4-8"/></svg>,title:"Your streak is waiting",sub:"Sign in today to keep your momentum alive"},
             {icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#AECE5E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>,title:"Everything synced",sub:"Notes, flashcards, essays and calendar, right where you left them"},
-            {icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#AECE5E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,title:"Back in seconds",sub:"One tap with Google or Apple"},
+            {icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#AECE5E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,title:"Back in seconds",sub:"One tap with Google, Apple or Microsoft"},
           ].map((c,i)=>(
             <div key={i} style={{background:"rgba(174,206,94,0.06)",border:"1px solid rgba(174,206,94,0.10)",borderRadius:14,padding:"16px 18px"}}>
               <div style={{width:36,height:36,borderRadius:9,background:"rgba(174,206,94,0.10)",display:"grid",placeItems:"center",marginBottom:10}}>{c.icon}</div>
@@ -2650,6 +2580,11 @@ function AuthScreen(){
               <svg width="18" height="18" viewBox="0 0 24 24" fill="#fff"><path d="M17.05 20.28c-.98.95-2.05.88-3.08.4-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.4C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>
               Continue with Apple
             </button>
+            <button onClick={()=>socialSign(new firebase.auth.OAuthProvider("microsoft.com"))} disabled={loading} style={{...providerBtn,border:"1px solid #D4D4D0",background:"#fff",color:"#1A1A1A"}}>
+              <svg width="18" height="18" viewBox="0 0 21 21"><rect x="1" y="1" width="9" height="9" fill="#F25022"/><rect x="11" y="1" width="9" height="9" fill="#7FBA00"/><rect x="1" y="11" width="9" height="9" fill="#00A4EF"/><rect x="11" y="11" width="9" height="9" fill="#FFB900"/></svg>
+              Continue with Microsoft
+            </button>
+
             <div style={{display:"flex",alignItems:"center",gap:12,margin:"18px 0"}}>
               <div style={{flex:1,height:1,background:"#D4D4D0"}}/>
               <span style={{fontSize:12,color:"#8A8A86"}}>or {isSI?"log in":"sign up"} with email</span>
@@ -2715,7 +2650,6 @@ function App() {
   const [focusRunning,setFocusRunning]=useState(true);
   const [focusMode,setFocusMode]=useState("Focus");
   const [focusTotal,setFocusTotal]=useState(25*60);
-  const [searchQ,setSearchQ]=useState("");
   const [creditsOpen,setCreditsOpen]=useState(false);
   const [pricingOpen,setPricingOpen]=useState(false);
   const [notifOpen,setNotifOpen]=useState(false);
@@ -2842,8 +2776,8 @@ function App() {
           <span style={{fontSize:16,fontWeight:700,color:sidebarText,letterSpacing:"-0.02em",fontFamily:T.font}}>Studlin</span>
         </div>
         <div onClick={()=>setActive("profile")} style={{background:sidebarCardBg,borderRadius:8,padding:"10px 12px",marginBottom:16,display:"flex",alignItems:"center",gap:10,cursor:"pointer",border:`1px solid ${sidebarBorder}`}}>
-          <Av initials={(()=>{const u=firebase.auth().currentUser;const n=u?.displayName||u?.email||"";const parts=n.split(/[\s@]/);return parts.length>1?(parts[0][0]+parts[1][0]).toUpperCase():(n.slice(0,2).toUpperCase()||"U");})()}color={T.lime} size={30} />
-          <div><div style={{fontSize:12,fontWeight:600,color:sidebarText}}>{firebase.auth().currentUser?.displayName||firebase.auth().currentUser?.email?.split("@")[0]||"User"}</div><div style={{fontSize:10,color:sidebarMuted}}>{getPlan()} · {getProfile().school||"Student"}</div></div>
+          <Av initials="MR" color={T.lime} size={30} />
+          <div><div style={{fontSize:12,fontWeight:600,color:sidebarText}}>Maya Reyes</div><div style={{fontSize:10,color:sidebarMuted}}>Pro · UCLA</div></div>
         </div>
         {navSections.map(sec=>(
           <div key={sec.label}>
@@ -2859,7 +2793,7 @@ function App() {
           <div style={{position:"absolute",right:-30,top:-30,width:90,height:90,background:"radial-gradient(circle,rgba(255,255,255,0.5),transparent 70%)",pointerEvents:"none"}} />
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
             <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",fontWeight:600,color:"rgba(14,31,24,0.65)"}}>AI CREDITS</span>
-            <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",fontWeight:700,background:T.ink,color:T.lime,padding:"2px 6px",borderRadius:4}}>{getPlan().toUpperCase()}</span>
+            <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",fontWeight:700,background:T.ink,color:T.lime,padding:"2px 6px",borderRadius:4}}>PRO</span>
           </div>
           <div style={{fontFamily:T.hand,fontSize:36,fontWeight:700,color:T.ink,lineHeight:0.85,marginTop:6}}>{getCredits()}<span style={{fontFamily:T.font,fontSize:13,fontWeight:500,color:"rgba(14,31,24,0.5)",marginLeft:2}}>/ {getCreditLimit()}</span></div>
           <div style={{fontSize:10.5,color:"rgba(14,31,24,0.6)",marginTop:2,position:"relative"}}>Resets in 12 days</div>
@@ -2874,22 +2808,10 @@ function App() {
           <div style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,flexShrink:0}}>
             {sectionOf[active]} · <span style={{color:T.text,fontWeight:600}}>{labelOf[active]}</span>
           </div>
-          <div style={{flex:1,maxWidth:480,marginLeft:"auto",position:"relative"}}>
-            <div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 14px",background:T.card,border:`1px solid ${T.border}`,borderRadius:99}}>
-              <span style={{color:T.muted,display:"flex"}}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
-              <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} onKeyDown={e=>{if(e.key==="Escape")setSearchQ("");}} placeholder="Search notes, flashcards, essays, or ask AI…" style={{flex:1,background:"none",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}} />
-              <span style={{fontFamily:T.mono,fontSize:10,background:T.bg,color:T.muted,padding:"2px 7px",borderRadius:5,border:`1px solid ${T.border}`}}>⌘ K</span>
-            </div>
-            {searchQ.trim()&&(
-              <div style={{position:"absolute",top:"100%",left:0,right:0,marginTop:6,background:T.card,border:`1px solid ${T.border}`,borderRadius:12,boxShadow:"0 16px 40px -12px rgba(0,0,0,0.4)",zIndex:60,overflow:"hidden",padding:6}}>
-                {Object.entries(labelOf).filter(([k,v])=>v.toLowerCase().includes(searchQ.toLowerCase())).map(([k,v])=>(
-                  <div key={k} onClick={()=>{setActive(k);setSearchQ("");}} style={{padding:"10px 12px",borderRadius:8,cursor:"pointer",fontSize:13,color:T.text,display:"flex",alignItems:"center",gap:10}}>{navIcon[k]||Icon.grid}<span>{v}</span></div>
-                ))}
-                {Object.entries(labelOf).filter(([k,v])=>v.toLowerCase().includes(searchQ.toLowerCase())).length===0&&(
-                  <div style={{padding:"10px 12px",fontSize:12,color:T.muted}}>No results for "{searchQ}"</div>
-                )}
-              </div>
-            )}
+          <div style={{flex:1,maxWidth:480,marginLeft:"auto",display:"flex",alignItems:"center",gap:10,padding:"9px 14px",background:T.card,border:`1px solid ${T.border}`,borderRadius:99}}>
+            <span style={{color:T.muted,display:"flex"}}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+            <input placeholder="Search notes, flashcards, essays, or ask AI…" style={{flex:1,background:"none",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}} />
+            <span style={{fontFamily:T.mono,fontSize:10,background:T.bg,color:T.muted,padding:"2px 7px",borderRadius:5,border:`1px solid ${T.border}`}}>⌘ K</span>
           </div>
           <div onClick={()=>setActive("focustimer")} title={focusRunning?"Focus active · click to manage":"Focus paused · click to resume"} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"7px 13px",background:isLight?T.ink:T.card,color:isLight?T.cream:T.text,border:`1px solid ${T.border}`,borderRadius:99,fontSize:12.5,fontWeight:500,flexShrink:0,cursor:"pointer"}}>
             <span style={{width:6,height:6,borderRadius:"50%",background:focusRunning?T.lime:T.muted,boxShadow:focusRunning?`0 0 8px ${T.lime}`:"none",animation:focusRunning?"studlinPulse 1.6s infinite":"none"}} />
@@ -3129,19 +3051,5 @@ function App() {
 }
 
 
-// Error boundary
-class ErrorBoundary extends React.Component{
-  constructor(p){super(p);this.state={err:null};}
-  static getDerivedStateFromError(e){return{err:e};}
-  render(){if(this.state.err)return(<div style={{minHeight:"100vh",background:"#0D120F",display:"flex",alignItems:"center",justifyContent:"center",padding:40}}>
-    <div style={{maxWidth:500,textAlign:"center"}}>
-      <div style={{fontSize:22,fontWeight:700,color:"#E8EFE7",marginBottom:12}}>Something went wrong</div>
-      <div style={{fontSize:13,color:"#f87171",background:"rgba(248,113,113,0.08)",padding:16,borderRadius:10,fontFamily:"monospace",textAlign:"left",marginBottom:16,wordBreak:"break-word"}}>{this.state.err?.message||"Unknown error"}</div>
-      <button onClick={()=>{localStorage.clear();window.location.reload();}} style={{padding:"10px 20px",borderRadius:8,background:"#AECE5E",color:"#0D120F",border:"none",fontSize:14,fontWeight:600,cursor:"pointer",marginRight:8}}>Clear data &amp; reload</button>
-      <button onClick={()=>window.location.reload()} style={{padding:"10px 20px",borderRadius:8,background:"transparent",color:"#E8EFE7",border:"1px solid rgba(255,255,255,0.15)",fontSize:14,fontWeight:600,cursor:"pointer"}}>Reload</button>
-    </div>
-  </div>);return this.props.children;}
-}
-
 // Mount
-ReactDOM.createRoot(document.getElementById('root')).render(<ErrorBoundary><AuthGate /></ErrorBoundary>);
+ReactDOM.createRoot(document.getElementById('root')).render(<AuthGate />);
