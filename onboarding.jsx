@@ -135,7 +135,7 @@ function StepSignup({ state, set, advance }) {
       set(s=>({...s, provider: providerObj.providerId, name: u.displayName||s.name, email: u.email||s.email}));
       advance(true);
     } catch(err) {
-      if(err.code!=="auth/popup-closed-by-user") setAuthError(ERR_MAP[err.code]||"Sign-up failed. Please try again.");
+      if(err.code!=="auth/popup-closed-by-user") setAuthError(ERR_MAP[err.code]||(err.message||"Sign-up failed. Please try again."));
     }
     setLoading(false);
   };

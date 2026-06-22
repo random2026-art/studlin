@@ -2613,7 +2613,7 @@ function AuthScreen(){
         "auth/account-exists-with-different-credential":"An account already exists with this email using a different sign-in method.",
         "auth/popup-blocked":"Pop-up was blocked by your browser. Please allow pop-ups and try again.",
         "auth/network-request-failed":"Network error. Check your connection and try again.",
-      }[err.code]||"Sign-in failed. Please try again.";
+      }[err.code]||(err.message||"Sign-in failed. Please try again.");
       setError(msg);
     }
     setLoading(false);
