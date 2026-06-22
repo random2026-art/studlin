@@ -438,9 +438,12 @@ function App() {
       if(result&&result.user){
         const u=result.user;
         setState(s=>({...s, provider:result.additionalUserInfo?.providerId||"google", name:u.displayName||s.name, email:u.email||s.email}));
-        setStep(1);
+        setStep(prev=>prev<1?1:prev);
       }
     }).catch(()=>{});
+    return firebase.auth().onAuthStateChanged(u=>{
+      if(u) setStep(prev=>prev<1?1:prev);
+    });
   },[]);
 
   useEffect(()=>{
