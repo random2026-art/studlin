@@ -8,6 +8,18 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
 <script src="https://js.stripe.com/v3/"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script>
+firebase.initializeApp({
+  apiKey:"AIzaSyApWyzKeifMgGCSjSjZClCCipUKDAiao4U",
+  authDomain:"studlin-cb78b.firebaseapp.com",
+  projectId:"studlin-cb78b",
+  storageBucket:"studlin-cb78b.firebasestorage.app",
+  messagingSenderId:"16831354472",
+  appId:"1:16831354472:web:50220e57868dba46c18ddd"
+});
+</script>
 <style>
 :root{--ink:#0E1F18;--forest:#14342A;--cream:#F6F1E6;--paper:#FBF7EE;--lime:#9EC83D;--lime-dk:#7FA82A;--line:rgba(14,31,24,0.10);--muted:rgba(14,31,24,0.55)}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -114,6 +126,22 @@ const card=elements.create('card',{style:{base:{fontSize:'15px',fontFamily:"'Gei
 card.mount('#card-element');
 card.on('change',e=>{document.getElementById('card-errors').textContent=e.error?e.error.message:'';});
 
+async function getAuthToken(){const u=firebase.auth().currentUser;if(!u)return null;return u.getIdToken();}
+async function authFetch(url,opts={}){const token=await getAuthToken();if(!token)throw new Error("Not signed in");const h={...opts.headers};h["Authorization"]="Bearer "+token;return fetch(url,{...opts,headers:h});}
+
+firebase.auth().onAuthStateChanged(u=>{
+  if(!u){
+    document.getElementById('card-errors').textContent='Please sign in first.';
+    document.getElementById('payBtn').disabled=true;
+    setTimeout(()=>{window.location.href='Studlin Web App.html';},2000);
+  }else{
+    const emailEl=document.getElementById('email');
+    const nameEl=document.getElementById('fullName');
+    if(emailEl&&!emailEl.value&&u.email)emailEl.value=u.email;
+    if(nameEl&&!nameEl.value&&u.displayName)nameEl.value=u.displayName;
+  }
+});
+
 const params=new URLSearchParams(window.location.search);
 const creditParam=params.get('credits');
 const isCredits=creditParam!==null;
@@ -192,7 +220,7 @@ async function handlePayment(){
       }else{
         apiBody={mode:'payment',credits:+creditParam||150};
       }
-      const res=await fetch('/api/create-intent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(apiBody)});
+      const res=await authFetch('/api/create-intent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(apiBody)});
       const data=await res.json();
       if(data.error)throw new Error(data.error);
 
@@ -204,7 +232,7 @@ async function handlePayment(){
       const{paymentMethod,error:pmError}=await stripe.createPaymentMethod({type:'card',card:card,billing_details:{name:fullName,email:email,address:{country:country}}});
       if(pmError)throw pmError;
 
-      const res=await fetch('/api/checkout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan:plan+'_'+billing,email,name:fullName,country,paymentMethodId:paymentMethod.id})});
+      const res=await authFetch('/api/checkout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan:plan+'_'+billing,country,paymentMethodId:paymentMethod.id})});
       const data=await res.json();
       if(data.error)throw new Error(data.error);
     }

@@ -1,4 +1,5 @@
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const { setCors, verifyAuth } = require('./_lib/auth');
 
 const CREDIT_PACKS = {
   150:  499,
@@ -8,11 +9,12 @@ const CREDIT_PACKS = {
 };
 
 module.exports = async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  setCors(req, res);
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  const user = await verifyAuth(req);
+  if (!user) return res.status(401).json({ error: 'Sign in required.' });
 
   try {
     const { mode, credits, customAmount } = req.body;
@@ -20,32 +22,42 @@ module.exports = async (req, res) => {
     if (mode === 'setup') {
       const setupIntent = await stripe.setupIntents.create({
         payment_method_types: ['card'],
+        metadata: { firebase_uid: user.uid },
       });
       return res.status(200).json({ clientSecret: setupIntent.client_secret });
     }
 
     if (mode === 'payment') {
-      let amountCents;
+      let amountCents, creditCount;
       if (customAmount) {
-        const dollars = Math.floor(+customAmount);
-        if (dollars < 5 || dollars > 100000) return res.status(400).json({ error: 'Amount must be $5–$100,000.' });
+        const dollars = Math.floor(Number(customAmount));
+        if (!Number.isFinite(dollars) || dollars < 5 || dollars > 100000) {
+          return res.status(400).json({ error: 'Amount must be a whole number between $5 and $100,000.' });
+        }
         amountCents = dollars * 100;
+        creditCount = dollars * 30;
       } else {
         amountCents = CREDIT_PACKS[credits];
         if (!amountCents) return res.status(400).json({ error: 'Invalid credit pack.' });
+        creditCount = credits;
       }
 
       const paymentIntent = await stripe.paymentIntents.create({
         amount: amountCents,
         currency: 'usd',
         payment_method_types: ['card'],
-        metadata: { type: 'credit_topup', credits: String(credits || Math.floor((+customAmount) * 30)) },
+        metadata: {
+          type: 'credit_topup',
+          credits: String(creditCount),
+          firebase_uid: user.uid,
+        },
       });
       return res.status(200).json({ clientSecret: paymentIntent.client_secret });
     }
 
     return res.status(400).json({ error: 'Invalid mode. Use "setup" or "payment".' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Payment intent error:', err);
+    res.status(500).json({ error: 'Payment processing failed. Please try again.' });
   }
 };

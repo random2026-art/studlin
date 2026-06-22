@@ -256,6 +256,9 @@ const StatNum = ({label,value,sub,accent,style={}}) => (
 // ─── PERSISTENCE + MONETIZATION HELPERS ──────────────────────────────────────
 const lsGet=(k,d)=>{try{const v=localStorage.getItem("studlin-"+k);return v===null?d:JSON.parse(v);}catch(e){return d;}};
 const lsSet=(k,v)=>{try{localStorage.setItem("studlin-"+k,JSON.stringify(v));}catch(e){}};
+async function getAuthToken(){const u=firebase.auth().currentUser;if(!u)return null;return u.getIdToken();}
+async function authFetch(url,opts={}){const token=await getAuthToken();if(!token)throw new Error("Not signed in");const h={...opts.headers};h["Authorization"]="Bearer "+token;return fetch(url,{...opts,headers:h});}
+async function fetchUserProfile(){try{const res=await authFetch("/api/me");if(!res.ok)return null;const d=await res.json();lsSet("credits",d.credits);lsSet("plan",d.plan||"Free");return d;}catch(e){return null;}}
 const dayKey=(d)=>{const x=d||new Date();return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");};
 function touchStreak(){const days=lsGet("days",[]);const t=dayKey();if(!days.includes(t)){days.push(t);lsSet("days",days);}}
 function getStreak(){const days=new Set(lsGet("days",[]));let n=0;const d=new Date();while(days.has(dayKey(d))){n++;d.setDate(d.getDate()-1);}return n;}
@@ -276,7 +279,7 @@ function setPlanLS(p){lsSet("plan",p);}
 function getCredits(){return lsGet("credits",120);}
 function setCreditsLS(n){lsSet("credits",Math.max(0,n));}
 function getCreditLimit(){const p=getPlan();return p==="Max"?500:p==="Pro"?200:30;}
-const CREDIT_COST={standard:1,pro:2,reason:3,flash:1};
+const CREDIT_COST={standard:1,flash:1};
 
 // ─── XP · LEVEL · STREAK · PLAN (all derived from real activity) ───────────────
 const DOW_FULL=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
@@ -348,23 +351,30 @@ const navIcon = {dashboard:Icon.grid,aichat:Icon.chat,essays:Icon.pen,flashcards
 // ─── AI CHAT ──────────────────────────────────────────────────────────────────
 function AiChat() {
   const MODELS=[
-    {id:"standard",name:"Studlin Standard",desc:"Balanced · best for most study tasks",cost:"1 credit"},
-    {id:"pro",name:"Studlin Pro",desc:"Longer, deeper explanations for hard problems",cost:"2 credits"},
-    {id:"reason",name:"Studlin Reasoning",desc:"Extended thinking · step-by-step on complex work",cost:"3 credits"},
+    {id:"standard",name:"Studlin",desc:"Smart, thorough answers for any study task",cost:"1 credit"},
     {id:"flash",name:"Studlin Flash",desc:"Fastest answers for quick questions",cost:"1 credit"},
   ];
-  const [model,setModel]=useState(()=>lsGet("chatModel","standard"));
+  const [model,setModel]=useState(()=>{const saved=lsGet("chatModel","standard");return(saved==="standard"||saved==="flash")?saved:"standard";});
   const [modelOpen,setModelOpen]=useState(false);
   const curModel=MODELS.find(m=>m.id===model)||MODELS[0];
   const [input,setInput]=useState("");
   const [loading,setLoading]=useState(false);
+  const [thinkStep,setThinkStep]=useState("");
   const [credits,setCredits]=useState(getCredits);
-  const [msgs,setMsgs]=useState([
-    {r:"ai",t:"Hey! What are we working on today?"},
-  ]);
+  const [msgs,setMsgs]=useState([]);
   const chatRef=useRef(null);
+  const inputRef=useRef(null);
   const scrollToBottom=()=>{if(chatRef.current)chatRef.current.scrollTop=chatRef.current.scrollHeight;};
-  useEffect(scrollToBottom,[msgs]);
+  useEffect(scrollToBottom,[msgs,thinkStep]);
+  const hasMessages=msgs.length>0;
+
+  const userName=(()=>{
+    const u=firebase.auth().currentUser;
+    if(u?.displayName)return u.displayName.split(" ")[0];
+    const p=getProfile();
+    if(p.name&&p.name!=="Maya Reyes")return p.name.split(" ")[0];
+    return "there";
+  })();
 
   const [recording,setRecording]=useState(false);
   const [micError,setMicError]=useState("");
@@ -417,6 +427,7 @@ function AiChat() {
     }
   };
 
+  const thinkSteps=["Reading your question","Searching for the best approach","Preparing your answer"];
   const send=async(txt)=>{
     let t=(txt||input).trim();
     if(!t&&!attachedFile)return;if(loading)return;
@@ -433,115 +444,175 @@ function AiChat() {
     setMsgs(newMsgs);
     setInput("");
     setLoading(true);
+    setThinkStep(thinkSteps[0]);
+    let stepIdx=0;
+    const stepTimer=setInterval(()=>{stepIdx++;if(stepIdx<thinkSteps.length)setThinkStep(thinkSteps[stepIdx]);},1200);
     try{
       const apiMsgs=newMsgs.map(m=>({r:m.r,t:m._ai||m.t}));
-      const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:apiMsgs,model})});
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:apiMsgs,model})});
       const data=await res.json();
+      clearInterval(stepTimer);
+      setThinkStep("");
       if(data.error){setMsgs(m=>[...m,{r:"ai",t:"⚠ "+data.error}]);}
-      else{const nc=credits-cost;setCredits(nc);setCreditsLS(nc);setMsgs(m=>[...m,{r:"ai",t:data.reply}]);}
-    }catch(e){setMsgs(m=>[...m,{r:"ai",t:"⚠ Couldn't reach the AI. Check your connection and try again."}]);}
+      else{
+        if(typeof data.credits==="number"){setCredits(data.credits);setCreditsLS(data.credits);}
+        const label=fileCtx?"Analyzed file and prepared response":"Analyzed your question and prepared response";
+        setMsgs(m=>[...m,{r:"ai",t:data.reply,thinkLabel:label}]);
+      }
+    }catch(e){clearInterval(stepTimer);setThinkStep("");setMsgs(m=>[...m,{r:"ai",t:"⚠ Couldn't reach the AI. Check your connection and try again."}]);}
     setLoading(false);
   };
-  const suggestions=["Analyse the symbolism","Pull supporting quotes","Compare to Lady Macbeth","Break down the themes"];
-  return (
-    <div>
-      <PH title="Chat" sub="Academic research and writing support" action={
-        <div style={{position:"relative"}}>
-          <button onClick={()=>setModelOpen(o=>!o)} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"8px 14px",borderRadius:9,border:`1px solid ${modelOpen?T.lime+"55":T.border}`,background:T.card,color:T.text,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>
-            <span style={{width:7,height:7,borderRadius:"50%",background:T.lime}} />
-            {curModel.name}
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
-          {modelOpen&&(<>
-            <div onClick={()=>setModelOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
-            <div style={{position:"absolute",top:44,right:0,width:288,background:T.card,border:`1px solid ${T.border}`,borderRadius:12,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",padding:6}}>
-              <div style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:T.muted,padding:"6px 10px 4px"}}>Choose a model</div>
-              {MODELS.map(m=>(
-                <div key={m.id} onClick={()=>{setModel(m.id);lsSet("chatModel",m.id);setModelOpen(false);}} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 12px",borderRadius:8,cursor:"pointer",background:m.id===model?T.lime+"12":"transparent"}}>
-                  <span style={{width:16,height:16,marginTop:1,flexShrink:0,display:"flex",color:m.id===model?T.lime:T.faint}}>{m.id===model?Icon.check:Icon.dot}</span>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:12.5,fontWeight:600,color:m.id===model?T.lime:T.text}}>{m.name}</div>
-                    <div style={{fontSize:11,color:T.muted,marginTop:1,lineHeight:1.35}}>{m.desc}</div>
-                  </div>
-                  <span style={{fontFamily:T.mono,fontSize:9.5,color:T.faint,flexShrink:0,marginTop:2}}>{m.cost}</span>
-                </div>
-              ))}
+
+  const quickActions=[
+    {label:"Explain a concept",icon:Icon.star,prompt:"Explain this concept to me simply: "},
+    {label:"Solve a problem",icon:Icon.zap,prompt:"Help me solve this step by step: "},
+    {label:"Summarise notes",icon:Icon.file,prompt:"Summarise these notes for me: "},
+    {label:"Quiz me",icon:Icon.layers,prompt:"Create a quick quiz to test my knowledge on: "},
+  ];
+
+  const modelSelector=(
+    <div style={{position:"relative",display:"inline-flex"}}>
+      <button onClick={()=>setModelOpen(o=>!o)} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,border:"none",background:"transparent",color:T.muted,fontSize:12.5,fontWeight:500,cursor:"pointer",fontFamily:T.font,transition:"color 0.15s"}}>
+        {curModel.name}
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      {modelOpen&&(<>
+        <div onClick={()=>setModelOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
+        <div style={{position:"absolute",bottom:"100%",left:0,marginBottom:6,width:288,background:T.card,border:`1px solid ${T.border}`,borderRadius:12,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",padding:6}}>
+          <div style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:T.muted,padding:"6px 10px 4px"}}>Choose a model</div>
+          {MODELS.map(m=>(
+            <div key={m.id} onClick={()=>{setModel(m.id);lsSet("chatModel",m.id);setModelOpen(false);}} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 12px",borderRadius:8,cursor:"pointer",background:m.id===model?T.lime+"12":"transparent"}}>
+              <span style={{width:16,height:16,marginTop:1,flexShrink:0,display:"flex",color:m.id===model?T.lime:T.faint}}>{m.id===model?Icon.check:Icon.dot}</span>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:12.5,fontWeight:600,color:m.id===model?T.lime:T.text}}>{m.name}</div>
+                <div style={{fontSize:11,color:T.muted,marginTop:1,lineHeight:1.35}}>{m.desc}</div>
+              </div>
+              <span style={{fontFamily:T.mono,fontSize:9.5,color:T.faint,flexShrink:0,marginTop:2}}>{m.cost}</span>
             </div>
-          </>)}
+          ))}
         </div>
-      } />
-      <div style={{display:"grid",gridTemplateColumns:"1fr 260px",gap:16}}>
-        <Card style={{display:"flex",flexDirection:"column",minHeight:500,padding:16}}>
-          <div ref={chatRef} style={{flex:1,overflowY:"auto",marginBottom:12,display:"flex",flexDirection:"column",gap:12}}>
-            {msgs.map((m,i)=>(
-              <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start",flexDirection:m.r==="user"?"row-reverse":"row"}}>
-                <div style={{width:28,height:28,borderRadius:"50%",background:m.r==="ai"?T.purple+"22":T.lime+"22",border:`1px solid ${m.r==="ai"?T.purple+"44":T.lime+"44"}`,display:"flex",alignItems:"center",justifyContent:"center",color:m.r==="ai"?T.purple:T.lime,flexShrink:0}}>{m.r==="ai"?Icon.brain:Icon.user}</div>
-                <div style={{maxWidth:"76%",padding:"10px 13px",borderRadius:8,fontSize:13,lineHeight:1.65,background:m.r==="ai"?T.card2:T.lime,color:m.r==="ai"?T.text:T.bg,border:m.r==="ai"?`1px solid ${T.border}`:"none",whiteSpace:"pre-wrap"}}>
-                  {m.file&&(
-                    <div style={{display:"inline-block",width:148,borderRadius:10,overflow:"hidden",border:`1px solid ${m.r==="ai"?T.border:"rgba(0,0,0,0.12)"}`,background:m.r==="ai"?T.card:"#fff",marginBottom:m.t&&m.t!=="Uploaded "+m.file?8:0,boxShadow:"0 2px 8px rgba(0,0,0,0.08)"}}>
-                      <div style={{height:88,background:m.r==="ai"?"rgba(255,255,255,0.03)":"#f5f5f4",display:"flex",alignItems:"center",justifyContent:"center",borderBottom:`1px solid ${m.r==="ai"?T.border:"#e5e5e4"}`}}>
-                        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke={m.r==="ai"?T.muted:"#a3a3a2"} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-                      </div>
-                      <div style={{padding:"8px 10px"}}>
-                        <div style={{fontSize:11.5,fontWeight:500,color:m.r==="ai"?T.text:"#1a1a1a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",lineHeight:1.3}}>{m.file.replace(/\.[^.]+$/,"")}</div>
-                        <div style={{marginTop:4}}><span style={{fontSize:9,fontWeight:700,letterSpacing:"0.08em",color:m.r==="ai"?T.muted:"#737373",background:m.r==="ai"?T.muted+"22":"#e5e5e4",padding:"2px 6px",borderRadius:3,textTransform:"uppercase"}}>{m.file.split(".").pop()}</span></div>
-                      </div>
-                    </div>
-                  )}
-                  {m.file&&m.t==="Uploaded "+m.file?null:m.t}
-                </div>
-              </div>
-            ))}
-            {loading&&(
-              <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
-                <div style={{width:28,height:28,borderRadius:"50%",background:T.purple+"22",border:"1px solid "+T.purple+"44",display:"flex",alignItems:"center",justifyContent:"center",color:T.purple,flexShrink:0}}>{Icon.brain}</div>
-                <div style={{padding:"10px 13px",borderRadius:8,background:T.card2,border:"1px solid "+T.border}}>
-                  <div style={{display:"flex",gap:4,alignItems:"center"}}><span style={{width:6,height:6,borderRadius:"50%",background:T.muted,animation:"studlinPulse 1.2s infinite"}}/><span style={{width:6,height:6,borderRadius:"50%",background:T.muted,animation:"studlinPulse 1.2s 0.2s infinite"}}/><span style={{width:6,height:6,borderRadius:"50%",background:T.muted,animation:"studlinPulse 1.2s 0.4s infinite"}}/></div>
-                </div>
-              </div>
-            )}
-          </div>
-          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
-            {suggestions.map(s=><button key={s} onClick={()=>send(s)} style={{padding:"5px 11px",borderRadius:5,fontSize:11,cursor:"pointer",border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontFamily:T.font,transition:"all 0.15s"}}>{s}</button>)}
-          </div>
-          {attachedFile&&(
-            <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:T.lime+"15",border:`1px solid ${T.lime}33`,borderRadius:7,marginBottom:6}}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-              <span style={{fontSize:12,color:T.lime,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{attachedFile.name}</span>
-              <button onClick={()=>setAttachedFile(null)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:14,lineHeight:1,padding:0}}>×</button>
-            </div>
-          )}
-          <div style={{display:"flex",gap:8}}>
+      </>)}
+    </div>
+  );
+
+  const inputBar=(compact)=>(
+    <div style={{width:"100%",maxWidth:compact?undefined:680,margin:compact?undefined:"0 auto"}}>
+      {attachedFile&&(
+        <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:T.lime+"15",border:`1px solid ${T.lime}33`,borderRadius:7,marginBottom:6}}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <span style={{fontSize:12,color:T.lime,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{attachedFile.name}</span>
+          <button onClick={()=>setAttachedFile(null)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:14,lineHeight:1,padding:0}}>×</button>
+        </div>
+      )}
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,overflow:"hidden",boxShadow:compact?"none":"0 8px 32px -8px rgba(0,0,0,0.2)"}}>
+        <div style={{display:"flex",alignItems:"center",padding:"4px 8px 4px 16px",gap:4}}>
+          <input ref={inputRef} style={{flex:1,background:"transparent",border:"none",padding:"14px 0",color:T.text,fontSize:14.5,fontFamily:T.font,outline:"none"}} placeholder={recording?"Listening — tap mic to stop...":loading?"Thinking...":"How can I help you today?"} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}} disabled={loading} />
+          <Btn onClick={()=>send()} style={{padding:"8px 12px",borderRadius:10,opacity:loading||(!input.trim()&&!attachedFile)?0.4:1}} disabled={loading||(!input.trim()&&!attachedFile)}>{Icon.send}</Btn>
+        </div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 8px 6px 8px",gap:8}}>
+          <div style={{display:"flex",alignItems:"center",gap:2}}>
             <input type="file" ref={fileRef} onChange={handleFile} accept=".txt,.md,.csv,.json,.py,.js,.jsx,.ts,.tsx,.html,.css,.pdf,.doc,.docx,.rtf,.xml,.yaml,.yml,.log,.tex,.bib" style={{display:"none"}} />
-            <button onClick={()=>fileRef.current?.click()} disabled={fileLoading} style={{display:"grid",placeItems:"center",width:40,height:40,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:fileLoading?T.lime:T.muted,cursor:"pointer",flexShrink:0,opacity:fileLoading?0.6:1}} title={fileLoading?"Reading file...":"Upload a file"}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+            <button onClick={()=>fileRef.current?.click()} disabled={fileLoading} style={{display:"grid",placeItems:"center",width:32,height:32,borderRadius:8,border:"none",background:"transparent",color:fileLoading?T.lime:T.muted,cursor:"pointer",opacity:fileLoading?0.6:1,transition:"color 0.15s"}} title={fileLoading?"Reading file...":"Attach a file"}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             </button>
-            <input style={{flex:1,background:T.card2,border:`1px solid ${recording?T.lime:T.border}`,borderRadius:7,padding:"10px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none"}} placeholder={recording?"Listening — tap mic to stop...":loading?"Thinking...":"Ask a question or paste text to analyse..."} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} disabled={loading} />
-            <button onClick={toggleVoice} style={{display:"grid",placeItems:"center",width:40,height:40,borderRadius:8,border:`1px solid ${recording?"#f87171":T.border}`,background:recording?"rgba(248,113,113,0.15)":T.card2,color:recording?"#f87171":T.muted,cursor:"pointer",flexShrink:0,animation:recording?"studlinPulse 1.2s infinite":"none"}} title={recording?"Stop recording":"Voice input"}>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:4}}>
+            {modelSelector}
+            <button onClick={toggleVoice} style={{display:"grid",placeItems:"center",width:32,height:32,borderRadius:8,border:"none",background:recording?"rgba(248,113,113,0.15)":"transparent",color:recording?"#f87171":T.muted,cursor:"pointer",transition:"color 0.15s",animation:recording?"studlinPulse 1.2s infinite":"none"}} title={recording?"Stop recording":"Voice input"}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
             </button>
-            <Btn onClick={()=>send()} style={{padding:"10px 14px",opacity:loading?0.5:1}} disabled={loading}>{Icon.send}</Btn>
           </div>
-          {micError&&<div style={{fontSize:11,color:"#f87171",marginTop:8,display:"flex",alignItems:"center",gap:6}}><span>⚠ {micError}</span><button onClick={()=>setMicError("")} style={{background:"none",border:"none",color:"#f87171",cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline",padding:0}}>dismiss</button></div>}
-          <div style={{fontSize:11,color:T.muted,marginTop:micError?4:8}}><span style={{color:T.text,fontWeight:600}}>{curModel.name}</span> · {curModel.cost} per message · <span style={{color:credits<(CREDIT_COST[model]||1)?T.red||"#f87171":T.lime}}>{credits} credits left</span></div>
-        </Card>
-        <div style={{display:"flex",flexDirection:"column",gap:12}}>
-          <Card><Label>Session</Label><div style={{fontSize:28,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>12</div><div style={{fontSize:12,color:T.muted,marginTop:4}}>Conversations today</div></Card>
-          <Card>
-            <Label>Recent Topics</Label>
-            {["Macbeth · Act II symbolism","Krebs cycle overview","Spanish subjunctive mood","Integral calculus"].map((t,i)=>(
-              <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:i<3?`1px solid ${T.border}`:"none",fontSize:12,color:T.muted,cursor:"pointer"}}>
-                <span>{t}</span>
-                <span style={{color:T.faint}}>{Icon.arrowR}</span>
+        </div>
+      </div>
+      {micError&&<div style={{fontSize:11,color:"#f87171",marginTop:8,textAlign:"center",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><span>⚠ {micError}</span><button onClick={()=>setMicError("")} style={{background:"none",border:"none",color:"#f87171",cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline",padding:0}}>dismiss</button></div>}
+    </div>
+  );
+
+  if(!hasMessages){
+    return(
+      <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"calc(100vh - 120px)",padding:"0 24px"}}>
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center",marginBottom:40,animation:"studlinRise 0.5s ease-out"}}>
+          <div style={{width:44,height:44,borderRadius:12,background:T.lime,display:"grid",placeItems:"center",marginBottom:20,fontSize:22,fontWeight:800,color:T.ink||T.bg,fontFamily:T.font}}>S</div>
+          <h1 style={{fontSize:32,fontWeight:700,color:T.white,letterSpacing:"-0.03em",margin:0,textAlign:"center",lineHeight:1.2}}>Hey {userName}, what are we studying?</h1>
+        </div>
+        {inputBar(false)}
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"center",marginTop:20,animation:"studlinFade 0.6s ease-out 0.1s both"}}>
+          {quickActions.map(a=>(
+            <button key={a.label} onClick={()=>{setInput(a.prompt);setTimeout(()=>inputRef.current?.focus(),50);}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 16px",borderRadius:99,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontSize:12.5,fontWeight:500,cursor:"pointer",fontFamily:T.font,transition:"all 0.15s"}}>
+              <span style={{display:"inline-flex",color:T.muted}}>{a.icon}</span>
+              {a.label}
+            </button>
+          ))}
+        </div>
+        <div style={{fontSize:11,color:T.faint,marginTop:24}}><span style={{color:T.muted}}>{curModel.name}</span> · {credits} credits remaining</div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 80px)"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 0 16px",flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <button onClick={()=>setMsgs([])} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.card,color:T.muted,fontSize:12,fontWeight:500,cursor:"pointer",fontFamily:T.font}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New chat
+          </button>
+        </div>
+        <div style={{fontSize:11,color:T.muted}}><span style={{color:credits<(CREDIT_COST[model]||1)?T.red||"#f87171":T.lime,fontWeight:600}}>{credits}</span> credits · {curModel.name}</div>
+      </div>
+
+      <div ref={chatRef} style={{flex:1,overflowY:"auto",paddingBottom:16}}>
+        <div style={{maxWidth:720,margin:"0 auto"}}>
+          {msgs.map((m,i)=>(
+            <div key={i} style={{display:"flex",gap:12,alignItems:"flex-start",marginBottom:20,flexDirection:m.r==="user"?"row-reverse":"row"}}>
+              {m.r==="ai"
+                ?<div style={{width:28,height:28,borderRadius:7,background:T.lime,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:T.ink||T.bg,fontSize:13,flexShrink:0,marginTop:2,fontFamily:T.font}}>S</div>
+                :<div style={{width:28,height:28,borderRadius:"50%",background:T.lime+"22",border:`1px solid ${T.lime}44`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,flexShrink:0,marginTop:2}}>{Icon.user}</div>
+              }
+              <div style={{maxWidth:"80%",fontSize:14,lineHeight:1.7,color:T.text,whiteSpace:"pre-wrap"}}>
+                {m.thinkLabel&&(
+                  <div style={{fontSize:12,color:T.muted,marginBottom:6,display:"flex",alignItems:"center",gap:6}}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={T.muted} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    {m.thinkLabel}
+                  </div>
+                )}
+                {m.file&&(
+                  <div style={{display:"inline-block",width:148,borderRadius:10,overflow:"hidden",border:`1px solid ${T.border}`,background:T.card,marginBottom:m.t&&m.t!=="Uploaded "+m.file?10:0,boxShadow:"0 2px 8px rgba(0,0,0,0.08)"}}>
+                    <div style={{height:88,background:T.card2,display:"flex",alignItems:"center",justifyContent:"center",borderBottom:`1px solid ${T.border}`}}>
+                      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke={T.muted} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                    </div>
+                    <div style={{padding:"8px 10px"}}>
+                      <div style={{fontSize:11.5,fontWeight:500,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",lineHeight:1.3}}>{m.file.replace(/\.[^.]+$/,"")}</div>
+                      <div style={{marginTop:4}}><span style={{fontSize:9,fontWeight:700,letterSpacing:"0.08em",color:T.muted,background:T.muted+"22",padding:"2px 6px",borderRadius:3,textTransform:"uppercase"}}>{m.file.split(".").pop()}</span></div>
+                    </div>
+                  </div>
+                )}
+                {m.file&&m.t==="Uploaded "+m.file?null:m.t}
               </div>
-            ))}
-          </Card>
-          <Card>
-            <Label>Mode</Label>
-            {["Research assistant","Essay coach","Exam preparation","Concept review"].map((m,i)=>(
-              <button key={i} style={{display:"flex",width:"100%",textAlign:"left",padding:"8px 10px",borderRadius:6,marginBottom:4,fontSize:12,cursor:"pointer",border:`1px solid ${i===0?T.lime+"44":T.border}`,background:i===0?T.lime+"0a":"transparent",color:i===0?T.lime:T.muted,fontFamily:T.font}}>{m}</button>
-            ))}
-          </Card>
+            </div>
+          ))}
+          {loading&&(
+            <div style={{display:"flex",gap:12,alignItems:"flex-start",marginBottom:20}}>
+              <div style={{width:28,height:28,borderRadius:7,background:T.lime,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:T.ink||T.bg,fontSize:13,flexShrink:0,marginTop:2,fontFamily:T.font}}>S</div>
+              <div style={{padding:"2px 0"}}>
+                {thinkStep&&(
+                  <div style={{fontSize:12.5,color:T.muted,marginBottom:4,display:"flex",alignItems:"center",gap:7,animation:"studlinFade 0.3s ease-out"}}>
+                    <span style={{width:14,height:14,borderRadius:"50%",border:`2px solid ${T.lime}`,borderTopColor:"transparent",animation:"studlinSpin 0.7s linear infinite",display:"inline-block",flexShrink:0}} />
+                    {thinkStep}
+                  </div>
+                )}
+                {!thinkStep&&(
+                  <div style={{display:"flex",gap:4,alignItems:"center",padding:"4px 0"}}><span style={{width:6,height:6,borderRadius:"50%",background:T.muted,animation:"studlinPulse 1.2s infinite"}}/><span style={{width:6,height:6,borderRadius:"50%",background:T.muted,animation:"studlinPulse 1.2s 0.2s infinite"}}/><span style={{width:6,height:6,borderRadius:"50%",background:T.muted,animation:"studlinPulse 1.2s 0.4s infinite"}}/></div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={{flexShrink:0,padding:"12px 0 8px",borderTop:`1px solid ${T.border}`}}>
+        <div style={{maxWidth:720,margin:"0 auto"}}>
+          {inputBar(true)}
         </div>
       </div>
     </div>
@@ -2508,6 +2579,7 @@ function AuthScreen(){
       if(mode==="signup"){
         const cred=await firebase.auth().createUserWithEmailAndPassword(email,pass);
         if(name)await cred.user.updateProfile({displayName:name});
+        await cred.user.sendEmailVerification();
       }else{
         await firebase.auth().signInWithEmailAndPassword(email,pass);
       }
@@ -2623,7 +2695,7 @@ function AuthScreen(){
 // ─── AUTH GATE ────────────────────────────────────────────────────────────────
 function AuthGate(){
   const [user,setUser]=useState(undefined);
-  useEffect(()=>{return firebase.auth().onAuthStateChanged(u=>setUser(u||null));},[]);
+  useEffect(()=>{return firebase.auth().onAuthStateChanged(u=>{setUser(u||null);if(u)fetchUserProfile();});},[]);
   if(user===undefined)return(<div style={{minHeight:"100vh",background:"#0D120F",display:"grid",placeItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"#AECE5E",display:"grid",placeItems:"center",fontSize:18,fontWeight:800,color:"#0D120F"}}>S</div><span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span></div></div>);
   if(!user)return <AuthScreen />;
   return <App />;
@@ -2666,7 +2738,7 @@ function App() {
     setBoughtMsg("Loading...");
     try{
       const body=customAmount?{mode:"payment",customAmount}:{mode:"payment",credits};
-      const res=await fetch("/api/create-intent",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+      const res=await authFetch("/api/create-intent",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
       const data=await res.json();
       if(data.error){setBoughtMsg(data.error);return;}
       const label=customAmount?(customAmount*30).toLocaleString()+" credits":credits.toLocaleString()+" credits";

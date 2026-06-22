@@ -673,10 +673,11 @@ function App() {
   });
   const [signupErrors, setSignupErrors] = useState({});
 
-  // ── DATA COLLECTION ── persist every answer as the user progresses
+  // ── DATA COLLECTION ── persist every answer as the user progresses (never persist secrets)
   useEffect(()=>{
     try {
-      const payload = { ...state, _updatedAt: new Date().toISOString() };
+      const { password, ...safe } = state;
+      const payload = { ...safe, _updatedAt: new Date().toISOString() };
       localStorage.setItem("studlin-onboarding", JSON.stringify(payload));
     } catch(e){}
   }, [state, step]);

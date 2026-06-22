@@ -44,7 +44,7 @@ const VIDEOS = [
   // Math
   {id:"HEfHFsfGXjs",title:"Algebra — Solving Linear Equations",channel:"The Organic Chemistry Tutor",duration:908,views:8300000,tags:"math algebra linear equations solving variables"},
   {id:"NybHckSEQBI",title:"The Pythagorean Theorem — Explained",channel:"Math Antics",duration:510,views:11000000,tags:"math geometry pythagorean theorem triangles"},
-  {id:"dQw4w9WgXcQ",title:"Probability — From Basics to Bayes",channel:"Veritasium",duration:574,views:5600000,tags:"math probability statistics bayes theorem"},
+  {id:"KZnGSVwIhvU",title:"Probability — From Basics to Bayes",channel:"Veritasium",duration:574,views:5600000,tags:"math probability statistics bayes theorem"},
   {id:"JnTa9XtvmfI",title:"Quadratic Formula — Easy Explanation",channel:"Mario's Math Tutoring",duration:387,views:4200000,tags:"math algebra quadratic formula equation roots"},
   {id:"E-d9mgo8FGk",title:"Fractions Made Easy",channel:"Math Antics",duration:520,views:7500000,tags:"math fractions arithmetic addition multiplication division"},
   {id:"z_KmNZNT5xw",title:"Trigonometry — SOH CAH TOA",channel:"The Organic Chemistry Tutor",duration:1184,views:6900000,tags:"math trigonometry sin cos tan angles sohcahtoa"},
@@ -67,8 +67,10 @@ const VIDEOS = [
   {id:"2tM1LFFxeKg",title:"Microeconomics vs Macroeconomics",channel:"Jacob Clifford",duration:420,views:2800000,tags:"economics micro macro differences overview introduction"},
 ];
 
+const { setCors } = require('./_lib/auth');
+
 module.exports = async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  setCors(req, res);
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
