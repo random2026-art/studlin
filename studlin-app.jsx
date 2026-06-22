@@ -2565,8 +2565,70 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
 
 // ─── AUTH SCREEN ─────────────────────────────────────────────────────────────
 function AuthScreen(){
-  window.location.href="Studlin Onboarding.html";
-  return null;
+  const [showEmail,setShowEmail]=useState(false);
+  const [email,setEmail]=useState("");
+  const [pass,setPass]=useState("");
+  const [error,setError]=useState("");
+  const [loading,setLoading]=useState(false);
+
+  const submit=async(e)=>{
+    e.preventDefault();setError("");setLoading(true);
+    try{
+      await firebase.auth().signInWithEmailAndPassword(email,pass);
+    }catch(err){
+      const msg={"auth/invalid-email":"Please enter a valid email address.","auth/user-not-found":"No account found. Try signing up instead.","auth/wrong-password":"Incorrect password.","auth/invalid-credential":"Incorrect email or password.","auth/too-many-requests":"Too many attempts. Please wait.","auth/network-request-failed":"Network error. Check your connection."}[err.code]||(err.message||"Something went wrong.");
+      setError(msg);
+    }
+    setLoading(false);
+  };
+  const socialSign=async(provider)=>{
+    setError("");setLoading(true);
+    try{await firebase.auth().signInWithPopup(provider);}
+    catch(err){if(err.code!=="auth/popup-closed-by-user")setError(err.message||"Sign-in failed.");}
+    setLoading(false);
+  };
+  const F="Geist,system-ui,sans-serif";
+  const providerBtn={width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:10,padding:"13px 16px",borderRadius:10,fontSize:14.5,fontWeight:500,cursor:"pointer",fontFamily:F,marginBottom:10};
+
+  return(
+    <div style={{display:"flex",minHeight:"100vh"}}>
+      <div style={{width:440,flexShrink:0,background:"#1A2418",padding:"48px 40px",display:"flex",flexDirection:"column",position:"relative",overflow:"hidden"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:48}}>
+          <div style={{width:32,height:32,borderRadius:8,background:"#AECE5E",display:"grid",placeItems:"center",fontSize:15,fontWeight:800,color:"#1A2418"}}>S</div>
+          <span style={{fontSize:17,fontWeight:600,color:"#E8EFE7",letterSpacing:"-0.01em"}}>studlin</span>
+        </div>
+        <div style={{width:48,height:48,borderRadius:12,background:"rgba(174,206,94,0.12)",display:"grid",placeItems:"center",marginBottom:20}}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#AECE5E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+        </div>
+        <h1 style={{fontSize:38,fontWeight:700,color:"#E8EFE7",margin:"0 0 12px",lineHeight:1.1,letterSpacing:"-0.02em"}}>Welcome back.</h1>
+        <p style={{fontSize:15,color:"rgba(232,239,231,0.55)",lineHeight:1.55,margin:"0 0 36px",maxWidth:320}}>Sign in to pick up your notes, decks, and streak.</p>
+      </div>
+      <div style={{flex:1,background:"#F5F2EC",display:"flex",flexDirection:"column",alignItems:"center",padding:"40px 40px 32px",overflowY:"auto"}}>
+        <div style={{alignSelf:"flex-end",fontSize:13,color:"#6B6B67",marginBottom:40}}>
+          New to Studlin? <a href="Studlin Onboarding.html" style={{color:"#7A9A2F",fontWeight:600,textDecoration:"none"}}>Create an account</a>
+        </div>
+        <div style={{width:"100%",maxWidth:420,flex:1,display:"flex",flexDirection:"column",justifyContent:"center"}}>
+          <h2 style={{fontSize:30,fontWeight:700,color:"#1A1A1A",margin:"0 0 6px",textAlign:"center",letterSpacing:"-0.02em"}}>Log in to <span style={{fontFamily:"'Instrument Serif',Georgia,serif",fontStyle:"italic",color:"#4A6B1A"}}>Studlin</span></h2>
+          <p style={{fontSize:14,color:"#8A8A86",textAlign:"center",margin:"0 0 32px"}}>Welcome back. Pick up right where you left off.</p>
+          {error&&<div style={{fontSize:12,color:"#dc2626",marginBottom:14,padding:"10px 12px",background:"#fef2f2",borderRadius:8,border:"1px solid #fecaca",textAlign:"center"}}>{error}</div>}
+          {!showEmail?(<>
+            <button onClick={()=>socialSign(new firebase.auth.GoogleAuthProvider())} disabled={loading} style={{...providerBtn,border:"1px solid #D4D4D0",background:"#fff",color:"#1A1A1A"}}><svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"/><path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z"/><path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238A11.91 11.91 0 0 1 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"/><path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.087 5.571l.003-.002 6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"/></svg>Continue with Google</button>
+            <button onClick={()=>socialSign(new firebase.auth.OAuthProvider("apple.com"))} disabled={loading} style={{...providerBtn,border:"none",background:"#1A1A1A",color:"#fff"}}><svg width="18" height="18" viewBox="0 0 24 24" fill="#fff"><path d="M17.05 20.28c-.98.95-2.05.88-3.08.4-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.4C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>Continue with Apple</button>
+            <div style={{display:"flex",alignItems:"center",gap:12,margin:"18px 0"}}><div style={{flex:1,height:1,background:"#D4D4D0"}}/><span style={{fontSize:12,color:"#8A8A86"}}>or log in with email</span><div style={{flex:1,height:1,background:"#D4D4D0"}}/></div>
+            <button onClick={()=>setShowEmail(true)} style={{...providerBtn,border:"1px solid #D4D4D0",background:"#fff",color:"#1A1A1A",marginBottom:0}}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6B6B67" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>Use email instead</button>
+          </>):(<>
+            <form onSubmit={submit}>
+              <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email address" required style={{width:"100%",padding:"13px 14px",borderRadius:10,border:"1px solid #D4D4D0",background:"#fff",color:"#1A1A1A",fontSize:14,fontFamily:F,outline:"none",marginBottom:10,boxSizing:"border-box"}} />
+              <input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="Password" required style={{width:"100%",padding:"13px 14px",borderRadius:10,border:"1px solid #D4D4D0",background:"#fff",color:"#1A1A1A",fontSize:14,fontFamily:F,outline:"none",marginBottom:10,boxSizing:"border-box"}} />
+              <button type="submit" disabled={loading} style={{width:"100%",padding:"13px 16px",borderRadius:10,border:"none",background:"#1A2418",color:"#E8EFE7",fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:F,opacity:loading?0.6:1}}>{loading?"Signing in...":"Sign in"}</button>
+            </form>
+            <button onClick={()=>{setShowEmail(false);setError("");}} style={{background:"none",border:"none",color:"#8A8A86",cursor:"pointer",fontFamily:F,fontSize:13,marginTop:12,padding:0}}>← Back to all options</button>
+          </>)}
+        </div>
+        <div style={{marginTop:32,fontSize:12,color:"#8A8A86",textAlign:"center"}}><a href="#" style={{color:"#7A9A2F",textDecoration:"none"}}>Privacy Policy</a> · <a href="#" style={{color:"#7A9A2F",textDecoration:"none"}}>Terms of Service</a></div>
+      </div>
+    </div>
+  );
 }
 
 
