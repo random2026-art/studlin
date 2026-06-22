@@ -369,18 +369,19 @@ function AiChat() {
   const [recording,setRecording]=useState(false);
   const [micError,setMicError]=useState("");
   const recognitionRef=useRef(null);
-  const toggleVoice=()=>{
+  const toggleVoice=async()=>{
     const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
     if(!SR){setMicError("Speech recognition isn't supported in this browser. Try Chrome or Edge.");return;}
     if(recording){recognitionRef.current?.stop();return;}
     setMicError("");
+    try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});stream.getTracks().forEach(t=>t.stop());}catch(e){setMicError("Microphone access denied. Please allow mic access and try again.");return;}
     const rec=new SR();
     rec.continuous=false;rec.interimResults=true;rec.lang="en-US";
     recognitionRef.current=rec;
     rec.onstart=()=>setRecording(true);
     rec.onresult=(e)=>{let t="";for(let i=0;i<e.results.length;i++)t+=e.results[i][0].transcript;setInput(t);};
     rec.onend=()=>setRecording(false);
-    rec.onerror=(e)=>{setRecording(false);if(e.error!=="aborted")setMicError(e.error==="not-allowed"?"Microphone blocked — click the lock icon in your address bar to allow mic access, then try again.":"Mic error: "+e.error);};
+    rec.onerror=(e)=>{setRecording(false);if(e.error!=="aborted")setMicError("Mic error: "+e.error);};
     rec.start();
   };
 
