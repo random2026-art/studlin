@@ -422,17 +422,20 @@ function AiChat() {
     if(!t&&!attachedFile)return;if(loading)return;
     const cost=CREDIT_COST[model]||1;
     if(credits<cost){setMsgs(m=>[...m,{r:"ai",t:"⚠ Not enough credits. You need "+cost+" credit"+(cost>1?"s":"")+" for "+curModel.name+". Buy more or switch to a lighter model."}]);return;}
+    let fileCtx=null;
     if(attachedFile){
-      const fileCtx="[Uploaded file: "+attachedFile.name+"]\n\n"+attachedFile.text.slice(0,50000);
-      t=t?(fileCtx+"\n\n"+t):("Here's a file I uploaded. Summarize the key points and help me understand it.\n\n"+fileCtx);
+      fileCtx=attachedFile;
       setAttachedFile(null);
     }
-    const newMsgs=[...msgs,{r:"user",t}];
+    const displayText=t||(fileCtx?"Uploaded "+fileCtx.name:"");
+    const aiText=fileCtx?("[Uploaded file: "+fileCtx.name+"]\n\n"+fileCtx.text.slice(0,50000)+(t?"\n\n"+t:"\n\nSummarize the key points and help me understand this file.")):t;
+    const newMsgs=[...msgs,{r:"user",t:displayText,file:fileCtx?fileCtx.name:null,_ai:aiText}];
     setMsgs(newMsgs);
     setInput("");
     setLoading(true);
     try{
-      const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:newMsgs,model})});
+      const apiMsgs=newMsgs.map(m=>({r:m.r,t:m._ai||m.t}));
+      const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:apiMsgs,model})});
       const data=await res.json();
       if(data.error){setMsgs(m=>[...m,{r:"ai",t:"⚠ "+data.error}]);}
       else{const nc=credits-cost;setCredits(nc);setCreditsLS(nc);setMsgs(m=>[...m,{r:"ai",t:data.reply}]);}
@@ -473,7 +476,16 @@ function AiChat() {
             {msgs.map((m,i)=>(
               <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start",flexDirection:m.r==="user"?"row-reverse":"row"}}>
                 <div style={{width:28,height:28,borderRadius:"50%",background:m.r==="ai"?T.purple+"22":T.lime+"22",border:`1px solid ${m.r==="ai"?T.purple+"44":T.lime+"44"}`,display:"flex",alignItems:"center",justifyContent:"center",color:m.r==="ai"?T.purple:T.lime,flexShrink:0}}>{m.r==="ai"?Icon.brain:Icon.user}</div>
-                <div style={{maxWidth:"76%",padding:"10px 13px",borderRadius:8,fontSize:13,lineHeight:1.65,background:m.r==="ai"?T.card2:T.lime,color:m.r==="ai"?T.text:T.bg,border:m.r==="ai"?`1px solid ${T.border}`:"none",whiteSpace:"pre-wrap"}}>{m.t}</div>
+                <div style={{maxWidth:"76%",padding:"10px 13px",borderRadius:8,fontSize:13,lineHeight:1.65,background:m.r==="ai"?T.card2:T.lime,color:m.r==="ai"?T.text:T.bg,border:m.r==="ai"?`1px solid ${T.border}`:"none",whiteSpace:"pre-wrap"}}>
+                  {m.file&&(
+                    <div style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 10px",background:m.r==="ai"?T.card:T.bg+"18",borderRadius:6,marginBottom:m.t&&m.t!=="Uploaded "+m.file?6:0,border:`1px solid ${m.r==="ai"?T.border:T.bg+"25"}`}}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                      <span style={{fontSize:12,fontWeight:500}}>{m.file}</span>
+                      <span style={{fontSize:9,fontWeight:700,letterSpacing:"0.08em",background:m.r==="ai"?T.muted+"33":T.bg+"30",padding:"1px 5px",borderRadius:3,textTransform:"uppercase"}}>{m.file.split(".").pop()}</span>
+                    </div>
+                  )}
+                  {m.file&&m.t==="Uploaded "+m.file?null:m.t}
+                </div>
               </div>
             ))}
             {loading&&(
