@@ -367,18 +367,20 @@ function AiChat() {
   useEffect(scrollToBottom,[msgs]);
 
   const [recording,setRecording]=useState(false);
+  const [micError,setMicError]=useState("");
   const recognitionRef=useRef(null);
   const toggleVoice=()=>{
     const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-    if(!SR){setMsgs(m=>[...m,{r:"ai",t:"⚠ Speech recognition isn't supported in this browser. Try Chrome or Edge."}]);return;}
+    if(!SR){setMicError("Speech recognition isn't supported in this browser. Try Chrome or Edge.");return;}
     if(recording){recognitionRef.current?.stop();return;}
+    setMicError("");
     const rec=new SR();
     rec.continuous=false;rec.interimResults=true;rec.lang="en-US";
     recognitionRef.current=rec;
     rec.onstart=()=>setRecording(true);
     rec.onresult=(e)=>{let t="";for(let i=0;i<e.results.length;i++)t+=e.results[i][0].transcript;setInput(t);};
     rec.onend=()=>setRecording(false);
-    rec.onerror=(e)=>{setRecording(false);if(e.error!=="aborted")setMsgs(m=>[...m,{r:"ai",t:"⚠ Mic error: "+e.error+". Check your microphone permissions."}]);};
+    rec.onerror=(e)=>{setRecording(false);if(e.error!=="aborted")setMicError(e.error==="not-allowed"?"Microphone blocked — click the lock icon in your address bar to allow mic access, then try again.":"Mic error: "+e.error);};
     rec.start();
   };
 
@@ -454,7 +456,8 @@ function AiChat() {
             </button>
             <Btn onClick={()=>send()} style={{padding:"10px 14px",opacity:loading?0.5:1}} disabled={loading}>{Icon.send}</Btn>
           </div>
-          <div style={{fontSize:11,color:T.muted,marginTop:8}}><span style={{color:T.text,fontWeight:600}}>{curModel.name}</span> · {curModel.cost} per message · <span style={{color:credits<(CREDIT_COST[model]||1)?T.red||"#f87171":T.lime}}>{credits} credits left</span></div>
+          {micError&&<div style={{fontSize:11,color:"#f87171",marginTop:8,display:"flex",alignItems:"center",gap:6}}><span>⚠ {micError}</span><button onClick={()=>setMicError("")} style={{background:"none",border:"none",color:"#f87171",cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline",padding:0}}>dismiss</button></div>}
+          <div style={{fontSize:11,color:T.muted,marginTop:micError?4:8}}><span style={{color:T.text,fontWeight:600}}>{curModel.name}</span> · {curModel.cost} per message · <span style={{color:credits<(CREDIT_COST[model]||1)?T.red||"#f87171":T.lime}}>{credits} credits left</span></div>
         </Card>
         <div style={{display:"flex",flexDirection:"column",gap:12}}>
           <Card><Label>Session</Label><div style={{fontSize:28,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>12</div><div style={{fontSize:12,color:T.muted,marginTop:4}}>Conversations today</div></Card>
