@@ -12,11 +12,9 @@ const Ic = {
   check: <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>,
   arrow: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>,
   userPlus: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>,
-  globe: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>,
   flame: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>,
   spark: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2l2.4 6.5L21 11l-6.6 2.5L12 20l-2.4-6.5L3 11l6.6-2.5z"/></svg>,
   zap: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
-  // role icons
   cap: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>,
   uni: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21h18"/><path d="M5 21V8l7-5 7 5v13"/><path d="M9 21V12h6v9"/></svg>,
   teacher: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg>,
@@ -30,7 +28,15 @@ const Ic = {
   star: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/></svg>,
 };
 
-// ─── INPUT (floating-label) ─────────────────────────────────────────────────
+const ERR_MAP = {
+  "auth/email-already-in-use":"An account with this email already exists. Try signing in.",
+  "auth/invalid-email":"Please enter a valid email address.",
+  "auth/weak-password":"Password must be at least 6 characters.",
+  "auth/network-request-failed":"Network error. Check your connection.",
+  "auth/popup-blocked":"Pop-up was blocked. Please allow pop-ups.",
+  "auth/account-exists-with-different-credential":"An account exists with this email using a different method.",
+};
+
 function TextField({ label, value, onChange, type="text", hint, error, autoFocus, autoComplete }) {
   const [focused, setFocused] = useState(false);
   const [show, setShow] = useState(false);
@@ -41,22 +47,10 @@ function TextField({ label, value, onChange, type="text", hint, error, autoFocus
     <div className="field">
       <div className={"input-wrap" + (hasValue ? " has-value" : "") + (focused ? " is-focused" : "") + (error ? " has-error" : "")}>
         <label>{label}</label>
-        <input
-          type={inputType}
-          value={value || ""}
-          onChange={e=>onChange(e.target.value)}
-          onFocus={()=>setFocused(true)}
-          onBlur={()=>setFocused(false)}
-          autoFocus={autoFocus}
-          autoComplete={autoComplete || "off"}
-        />
-        {isPw && (
-          <button type="button" className="pwd-toggle" onClick={()=>setShow(s=>!s)} aria-label={show?"Hide password":"Show password"}>
-            {show ? Ic.eyeOff : Ic.eye}
-          </button>
-        )}
+        <input type={inputType} value={value || ""} onChange={e=>onChange(e.target.value)} onFocus={()=>setFocused(true)} onBlur={()=>setFocused(false)} autoFocus={autoFocus} autoComplete={autoComplete || "off"} />
+        {isPw && <button type="button" className="pwd-toggle" onClick={()=>setShow(s=>!s)}>{show ? Ic.eyeOff : Ic.eye}</button>}
       </div>
-      {error && <div className="field-error"><strong>Required field</strong> · {error}</div>}
+      {error && <div className="field-error">{error}</div>}
       {!error && hint && <div className="field-hint">{hint}</div>}
     </div>
   );
@@ -71,11 +65,7 @@ function SelectField({ label, value, onChange, options, hint }) {
         <label>{label}</label>
         <select value={value || ""} onChange={e=>onChange(e.target.value)} onFocus={()=>setFocused(true)} onBlur={()=>setFocused(false)}>
           <option value="" disabled hidden></option>
-          {options.map(o=>{
-            const v = typeof o==="string"?o:o.value;
-            const lbl = typeof o==="string"?o:o.label;
-            return <option key={v} value={v}>{lbl}</option>;
-          })}
+          {options.map(o=><option key={typeof o==="string"?o:o.value} value={typeof o==="string"?o:o.value}>{typeof o==="string"?o:o.label}</option>)}
         </select>
         <span className="chev">{Ic.chev}</span>
       </div>
@@ -84,121 +74,111 @@ function SelectField({ label, value, onChange, options, hint }) {
   );
 }
 
-// ─── STEP DEFINITIONS ───────────────────────────────────────────────────────
 const STEPS = [
-  { name: "Sign up" },
-  { name: "Basic information" },
-  { name: "About you" },
-  { name: "Goals" },
-  { name: "Study load" },
-  { name: "Workspace preview" },
-  { name: "Choose plan" },
-  { name: "Welcome" },
+  { name: "Sign up" },{ name: "Basic information" },{ name: "About you" },
+  { name: "Goals" },{ name: "Study load" },{ name: "Workspace preview" },
+  { name: "Choose plan" },{ name: "Welcome" },
 ];
 
-// ─── LEFT RAIL ──────────────────────────────────────────────────────────────
 function LeftRail({ step, state }) {
-  // Step 0: signup hero with feature tiles
-  // Steps 1+: progress checklist + email + logout
   if (step === 0) {
     return (
       <aside className="rail">
         <div className="brand">
-          <img src="studlin-icon.png" alt="Studlin" />
+          <div style={{width:34,height:34,borderRadius:8,background:"#9EC83D",display:"grid",placeItems:"center",fontSize:17,fontWeight:800,color:"#14342A"}}>S</div>
           <span className="name">studlin</span>
         </div>
         <div className="rail-icon">{Ic.userPlus}</div>
         <h1>Sign up and lock in.</h1>
         <p className="lead">Sign up is simple, free and fast. One workspace for everything you study, write, and remember.</p>
         <div className="rail-tiles">
-          <div className="rail-tile">
-            <div className="ic">{Ic.spark}</div>
-            <div className="t">AI tutor on every subject</div>
-            <div className="s">Drop a PDF · ask anything</div>
-          </div>
-          <div className="rail-tile">
-            <div className="ic">{Ic.flame}</div>
-            <div className="t">Streaks that keep you going</div>
-            <div className="s">Daily momentum, milestones, and Weekly Wrapped</div>
-          </div>
-          <div className="rail-tile">
-            <div className="ic">{Ic.zap}</div>
-            <div className="t">All your tools, one price</div>
-            <div className="s">Writing, flashcards, AI tutor, focus timer and more</div>
-          </div>
+          <div className="rail-tile"><div className="ic">{Ic.spark}</div><div className="t">AI tutor on every subject</div><div className="s">Drop a PDF · ask anything</div></div>
+          <div className="rail-tile"><div className="ic">{Ic.flame}</div><div className="t">Streaks that keep you going</div><div className="s">Daily momentum, milestones, and Weekly Wrapped</div></div>
+          <div className="rail-tile"><div className="ic">{Ic.zap}</div><div className="t">All your tools, one price</div><div className="s">Writing, flashcards, AI tutor, focus timer and more</div></div>
         </div>
       </aside>
     );
   }
-  // Step 1+ : stepper
-  const groups = [
-    { name: "Sign up", from: 0, to: 0 },
-    { name: "Basic information", from: 1, to: 5 },
-    { name: "Confirm email", from: 6, to: 7 },
-  ];
+  const groups = [{ name: "Sign up", from: 0, to: 0 },{ name: "Basic information", from: 1, to: 5 },{ name: "Confirm email", from: 6, to: 7 }];
   return (
     <aside className="rail">
       <div className="brand">
-        <img src="studlin-icon.png" alt="Studlin" />
+        <div style={{width:34,height:34,borderRadius:8,background:"#9EC83D",display:"grid",placeItems:"center",fontSize:17,fontWeight:800,color:"#14342A"}}>S</div>
         <span className="name">studlin</span>
       </div>
       <div className="rail-icon">{Ic.userPlus}</div>
       <h1 style={{fontSize:28}}>Create your account in a few clicks.</h1>
       <div className="stepper" style={{marginTop:36}}>
-        {groups.map((g, i)=>{
-          const done = step > g.to;
-          const current = step >= g.from && step <= g.to;
-          return (
-            <div key={i} className={"step" + (done?" is-done":"") + (current?" is-current":"")}>
-              <span className="dot">{done ? Ic.check : i+1}</span>
-              <span className="name">{g.name}</span>
-            </div>
-          );
+        {groups.map((g,i)=>{
+          const done=step>g.to, current=step>=g.from&&step<=g.to;
+          return <div key={i} className={"step"+(done?" is-done":"")+(current?" is-current":"")}><span className="dot">{done?Ic.check:i+1}</span><span className="name">{g.name}</span></div>;
         })}
       </div>
       <div className="rail-meta">
-        <div className="row" style={{color:"rgba(246,241,230,0.85)"}}>{state.email || "you@studlin.app"}</div>
-        <div className="row"><a>Logout</a></div>
-        <div className="row"><a>← Change password</a></div>
+        <div className="row" style={{color:"rgba(246,241,230,0.85)"}}>{firebase.auth().currentUser?.email || state.email || "you@studlin.app"}</div>
       </div>
     </aside>
   );
 }
 
-// ─── STEP 0: SIGN UP (providers + email) ────────────────────────────────────
 function StepSignup({ state, set, advance }) {
   const [mode, setMode] = useState("providers");
   const [errors, setErrors] = useState({});
-  const pwOk = {
-    lower: /[a-z]/.test(state.password || ""),
-    upper: /[A-Z]/.test(state.password || ""),
-    nums:  /\d/.test(state.password || ""),
-    len:   (state.password || "").length >= 14,
-  };
-  const allOk = pwOk.lower && pwOk.upper && pwOk.nums && pwOk.len;
+  const [loading, setLoading] = useState(false);
+  const [authError, setAuthError] = useState("");
 
-  const tryAdvance = () => {
+  const socialSign = async (providerObj) => {
+    setAuthError("");setLoading(true);
+    try {
+      const result = await firebase.auth().signInWithPopup(providerObj);
+      const u = result.user;
+      set(s=>({...s, provider: providerObj.providerId, name: u.displayName||s.name, email: u.email||s.email}));
+      advance(true);
+    } catch(err) {
+      if(err.code!=="auth/popup-closed-by-user") setAuthError(ERR_MAP[err.code]||"Sign-up failed. Please try again.");
+    }
+    setLoading(false);
+  };
+
+  const pwOk = { len: (state.password||"").length >= 8 };
+  const allOk = pwOk.len;
+
+  const tryAdvance = async () => {
     const errs = {};
-    if (!state.name) errs.name = "Full name as it appears on identification document";
-    if (!state.email) errs.email = "Please enter your email address";
-    else if (state.email.includes("@gmail.") || state.email.includes("@yahoo.") || state.email.includes("@hotmail.")) errs.email = "Please use your school or company email";
-    if (!allOk) errs.password = "Password doesn't meet all criteria below";
+    if (!state.name?.trim()) errs.name = "Please enter your full name";
+    if (!state.email?.trim()) errs.email = "Please enter your email address";
+    else if (!/\S+@\S+\.\S+/.test(state.email)) errs.email = "Please enter a valid email address";
+    if (!allOk) errs.password = "Password must be at least 8 characters";
     setErrors(errs);
-    if (Object.keys(errs).length === 0) advance();
+    if (Object.keys(errs).length > 0) return;
+
+    setAuthError("");setLoading(true);
+    try {
+      const cred = await firebase.auth().createUserWithEmailAndPassword(state.email, state.password);
+      await cred.user.updateProfile({ displayName: state.name.trim() });
+      try { await cred.user.sendEmailVerification(); } catch(e) {}
+      advance(true);
+    } catch(err) {
+      setAuthError(ERR_MAP[err.code]||"Something went wrong. Please try again.");
+    }
+    setLoading(false);
   };
 
   return (
     <div className="frame">
       <div className="frame-head">
-        <h2>Welcome to Studlin</h2>
+        <h2>Welcome to <em>Studlin</em></h2>
         <p>Better grades start here. Create your account in a few clicks.</p>
       </div>
+
+      {authError && <div style={{fontSize:13,color:"#C4544A",marginBottom:16,padding:"12px 14px",background:"#FCF1EF",borderRadius:10,border:"1px solid #F5D4D0",textAlign:"center"}}>{authError}</div>}
 
       {mode === "providers" && (
         <>
           <div className="providers">
-            <button className="provider" onClick={()=>{ set(s=>({...s, provider:"google"})); advance(true); }}>{Ic.google} Continue with Google</button>
-            <button className="provider dark" onClick={()=>{ set(s=>({...s, provider:"apple"})); advance(true); }}>{Ic.apple} Continue with Apple</button>
+            <button className="provider" onClick={()=>socialSign(new firebase.auth.GoogleAuthProvider())} disabled={loading}>{Ic.google} Continue with Google</button>
+            <button className="provider dark" onClick={()=>socialSign(new firebase.auth.OAuthProvider("apple.com"))} disabled={loading}>{Ic.apple} Continue with Apple</button>
+            <button className="provider" onClick={()=>socialSign(new firebase.auth.OAuthProvider("microsoft.com"))} disabled={loading}>{Ic.microsoft} Continue with Microsoft</button>
           </div>
           <div className="divider">or sign up with email</div>
           <button className="provider" onClick={()=>setMode("email")}>{Ic.mail} Use email instead</button>
@@ -226,25 +206,12 @@ function StepSignup({ state, set, advance }) {
 
       {mode === "email" && (
         <>
-          <TextField label="Full legal name" value={state.name} onChange={v=>set({...state, name:v})}
-            hint={errors.name ? null : "Full name as it appears on identification document"}
-            error={errors.name} autoFocus autoComplete="name" />
-          <TextField label="School or work email" value={state.email} onChange={v=>set({...state, email:v})}
-            hint={errors.email ? null : "For example 'you@school.edu'"}
-            error={errors.email} type="email" autoComplete="email" />
-          <TextField label="Create password" value={state.password} onChange={v=>set({...state, password:v})}
-            type="password" autoComplete="new-password"
-            error={errors.password} />
-          <div className="pw-grid">
-            <div className={"pwi" + (pwOk.lower ? " ok" : "")}><span className="d"></span> Lowercase characters</div>
-            <div className={"pwi" + (pwOk.upper ? " ok" : "")}><span className="d"></span> Uppercase characters</div>
-            <div className={"pwi" + (pwOk.nums  ? " ok" : "")}><span className="d"></span> Numbers</div>
-            <div className={"pwi" + (pwOk.len   ? " ok" : "")}><span className="d"></span> 14 characters minimum</div>
-          </div>
+          <TextField label="Full name" value={state.name} onChange={v=>set({...state, name:v})} error={errors.name} autoFocus autoComplete="name" />
+          <TextField label="Email address" value={state.email} onChange={v=>set({...state, email:v})} hint={errors.email?null:"Any email works — school, Gmail, whatever."} error={errors.email} type="email" autoComplete="email" />
+          <TextField label="Create password" value={state.password} onChange={v=>set({...state, password:v})} type="password" autoComplete="new-password" error={errors.password} hint={errors.password?null:"At least 8 characters."} />
           <div style={{marginTop:18}}>
-            <button className="provider" onClick={()=>setMode("providers")} style={{padding:"10px 14px",fontSize:13}}>← Use Google or Apple instead</button>
+            <button className="provider" onClick={()=>setMode("providers")} style={{padding:"10px 14px",fontSize:13}}>← Use Google, Apple, or Microsoft instead</button>
           </div>
-          <input type="hidden" data-advance="email" data-fn={tryAdvance.name} />
           <button data-cta="signup" onClick={tryAdvance} style={{display:"none"}}></button>
         </>
       )}
@@ -252,8 +219,7 @@ function StepSignup({ state, set, advance }) {
   );
 }
 
-// ─── STEP 1: BASIC INFO (personalize + collect data) ─────────────────────────
-function StepBasic({ state, set, errors }) {
+function StepBasic({ state, set }) {
   const first = (state.name || "").split(" ")[0];
   return (
     <div className="frame">
@@ -262,12 +228,9 @@ function StepBasic({ state, set, errors }) {
         <p>A few quick questions so we can shape your workspace around you.</p>
       </div>
       <TextField label="What should we call you?" value={state.preferredName} onChange={v=>set({...state, preferredName:v})} hint="We'll greet you with this across the app." autoFocus />
-      <SelectField label="Preferred language" value={state.language} onChange={v=>set({...state, language:v})} hint="The interface and AI tutor will speak this."
-        options={["English","Español","Français","Deutsch","Português","हिन्दी","中文","日本語","العربية","Other"]} />
-      <SelectField label="How did you hear about Studlin?" value={state.referral} onChange={v=>set({...state, referral:v})} hint="Helps us know what's working · totally optional."
-        options={["TikTok","Instagram","YouTube","A friend or classmate","Reddit","Google search","Product Hunt","My school or teacher","X (Twitter)","Other"]} />
-      <SelectField label="What describes you best?" value={state.descriptor} onChange={v=>set({...state, descriptor:v})} hint="Sets your default dashboard layout."
-        options={["I'm cramming for exams","I want to stay organised","I write a lot of essays","I'm building a study habit","I teach or tutor others","Just exploring"]} />
+      <SelectField label="Preferred language" value={state.language} onChange={v=>set({...state, language:v})} hint="The interface and AI tutor will speak this." options={["English","Español","Français","Deutsch","Português","हिन्दी","中文","日本語","العربية","Other"]} />
+      <SelectField label="How did you hear about Studlin?" value={state.referral} onChange={v=>set({...state, referral:v})} hint="Helps us know what's working · totally optional." options={["TikTok","Instagram","YouTube","A friend or classmate","Reddit","Google search","Product Hunt","My school or teacher","X (Twitter)","Other"]} />
+      <SelectField label="What describes you best?" value={state.descriptor} onChange={v=>set({...state, descriptor:v})} hint="Sets your default dashboard layout." options={["I'm cramming for exams","I want to stay organised","I write a lot of essays","I'm building a study habit","I teach or tutor others","Just exploring"]} />
       <label className={"checkbox" + (state.terms ? " is-checked" : "")} onClick={()=>set({...state, terms:!state.terms})}>
         <span className="box">{Ic.check}</span>
         <span>I accept the <a>Terms of Service</a> and <a>Privacy Policy</a>.</span>
@@ -276,144 +239,73 @@ function StepBasic({ state, set, errors }) {
   );
 }
 
-// ─── STEP 2: ROLE ───────────────────────────────────────────────────────────
 function StepRole({ state, set }) {
   const roles = [
-    { id:"hs",      label:"High school student",   desc:"  Grades 9 to 12, IB, AP, A-Levels",     ic:Ic.cap },
-    { id:"uni",     label:"University student",    desc:"  Undergrad, graduate, or PhD",          ic:Ic.uni },
-    { id:"teacher", label:"Teacher or educator",   desc:"  Lesson planning and grading support",  ic:Ic.teacher },
-    { id:"pro",     label:"Working professional",  desc:"  Writing, focus, and productivity",     ic:Ic.brief },
-    { id:"self",    label:"Self-directed learner", desc:"  Cert prep, hobby learning, MOOCs",     ic:Ic.learn },
+    { id:"hs", label:"High school student", desc:"Grades 9 to 12, IB, AP, A-Levels", ic:Ic.cap },
+    { id:"uni", label:"University student", desc:"Undergrad, graduate, or PhD", ic:Ic.uni },
+    { id:"teacher", label:"Teacher or educator", desc:"Lesson planning and grading support", ic:Ic.teacher },
+    { id:"pro", label:"Working professional", desc:"Writing, focus, and productivity", ic:Ic.brief },
+    { id:"self", label:"Self-directed learner", desc:"Cert prep, hobby learning, MOOCs", ic:Ic.learn },
   ];
   return (
     <div className="frame">
-      <div className="frame-head">
-        <h2>Who are you, <em>really?</em></h2>
-        <p>We'll tune the AI tutor's voice and curriculum suggestions to match.</p>
-      </div>
+      <div className="frame-head"><h2>Who are you, <em>really?</em></h2><p>We'll tune the AI tutor's voice and curriculum suggestions to match.</p></div>
       <div className="opt-grid full">
-        {roles.map(r=>(
-          <button key={r.id} className={"opt" + (state.role === r.id ? " is-selected" : "")} onClick={()=>set({...state, role:r.id})}>
-            <span className="ic">{r.ic}</span>
-            <span className="body">
-              <span className="lbl">{r.label}</span>
-              <span className="desc">{r.desc}</span>
-            </span>
-            <span className="check">{Ic.check}</span>
-          </button>
-        ))}
+        {roles.map(r=><button key={r.id} className={"opt"+(state.role===r.id?" is-selected":"")} onClick={()=>set({...state, role:r.id})}><span className="ic">{r.ic}</span><span className="body"><span className="lbl">{r.label}</span><span className="desc">{r.desc}</span></span><span className="check">{Ic.check}</span></button>)}
       </div>
     </div>
   );
 }
 
-// ─── STEP 3: GOALS ──────────────────────────────────────────────────────────
 function StepGoals({ state, set }) {
-  const goals = [
-    { id:"writing",    label:"Writing essays",      ic:Ic.pen },
-    { id:"flashcards", label:"Memorising material", ic:Ic.cards },
-    { id:"focus",      label:"Staying focused",     ic:Ic.clock },
-    { id:"schedule",   label:"Planning my week",    ic:Ic.cal },
-    { id:"notes",      label:"Organising notes",    ic:Ic.notes },
-    { id:"all",        label:"All of the above",    ic:Ic.star },
-  ];
-  const selected = state.goals || [];
-  const toggle = (id) => {
-    let next;
-    if (id === "all") next = selected.includes("all") ? [] : ["all"];
-    else next = selected.includes(id) ? selected.filter(g=>g!==id) : [...selected.filter(g=>g!=="all"), id];
-    set({...state, goals: next});
-  };
+  const goals = [{id:"writing",label:"Writing essays",ic:Ic.pen},{id:"flashcards",label:"Memorising material",ic:Ic.cards},{id:"focus",label:"Staying focused",ic:Ic.clock},{id:"schedule",label:"Planning my week",ic:Ic.cal},{id:"notes",label:"Organising notes",ic:Ic.notes},{id:"all",label:"All of the above",ic:Ic.star}];
+  const selected = state.goals||[];
+  const toggle = id => { let next; if(id==="all") next=selected.includes("all")?[]:[id]; else next=selected.includes(id)?selected.filter(g=>g!==id):[...selected.filter(g=>g!=="all"),id]; set({...state, goals:next}); };
   return (
     <div className="frame">
-      <div className="frame-head">
-        <h2>What do you need <em>help with?</em></h2>
-        <p>Pick everything that applies · we'll prioritise these tools first.</p>
-      </div>
+      <div className="frame-head"><h2>What do you need <em>help with?</em></h2><p>Pick everything that applies · we'll prioritise these tools first.</p></div>
       <div className="opt-grid">
-        {goals.map(g=>(
-          <button key={g.id} className={"opt" + (selected.includes(g.id) ? " is-selected" : "")} onClick={()=>toggle(g.id)}>
-            <span className="ic">{g.ic}</span>
-            <span className="body"><span className="lbl">{g.label}</span></span>
-            <span className="check">{Ic.check}</span>
-          </button>
-        ))}
+        {goals.map(g=><button key={g.id} className={"opt"+(selected.includes(g.id)?" is-selected":"")} onClick={()=>toggle(g.id)}><span className="ic">{g.ic}</span><span className="body"><span className="lbl">{g.label}</span></span><span className="check">{Ic.check}</span></button>)}
       </div>
     </div>
   );
 }
 
-// ─── STEP 4: STUDY LOAD ─────────────────────────────────────────────────────
 function StepLoad({ state, set }) {
-  const opts = [
-    { id:"under1", label:"Less than 1 hour",  desc:"  Light review, weekend study" },
-    { id:"1to3",   label:"1 to 3 hours",      desc:"  Steady daily routine" },
-    { id:"3to5",   label:"3 to 5 hours",      desc:"  Serious student mode" },
-    { id:"over5",  label:"5+ hours",          desc:"  Cramming, prepping, deep work" },
-  ];
+  const opts = [{id:"under1",label:"Less than 1 hour",desc:"Light review, weekend study"},{id:"1to3",label:"1 to 3 hours",desc:"Steady daily routine"},{id:"3to5",label:"3 to 5 hours",desc:"Serious student mode"},{id:"over5",label:"5+ hours",desc:"Cramming, prepping, deep work"}];
   return (
     <div className="frame">
-      <div className="frame-head">
-        <h2>How long do you study <em>daily?</em></h2>
-        <p>Sets your Pomodoro defaults and daily focus target. You can change it anytime.</p>
-      </div>
+      <div className="frame-head"><h2>How long do you study <em>daily?</em></h2><p>Sets your Pomodoro defaults and daily focus target.</p></div>
       <div className="opt-grid full">
-        {opts.map(o=>(
-          <button key={o.id} className={"opt" + (state.load === o.id ? " is-selected" : "")} onClick={()=>set({...state, load:o.id})}>
-            <span className="ic">{Ic.clock}</span>
-            <span className="body">
-              <span className="lbl">{o.label}</span>
-              <span className="desc">{o.desc}</span>
-            </span>
-            <span className="check">{Ic.check}</span>
-          </button>
-        ))}
+        {opts.map(o=><button key={o.id} className={"opt"+(state.load===o.id?" is-selected":"")} onClick={()=>set({...state, load:o.id})}><span className="ic">{Ic.clock}</span><span className="body"><span className="lbl">{o.label}</span><span className="desc">{o.desc}</span></span><span className="check">{Ic.check}</span></button>)}
       </div>
     </div>
   );
 }
 
-// ─── STEP 5: WORKSPACE PREVIEW ──────────────────────────────────────────────
 function StepPreview({ state }) {
-  const first = (state.name || "you").split(" ")[0];
-  const goalsLabel = (state.goals||[]).length === 0 ? "everything" :
-    state.goals.includes("all") ? "every Studlin tool" :
-    state.goals.length === 1 ? state.goals[0] : state.goals.length + " areas";
-  const focusTarget = state.load === "under1" ? "30m" : state.load === "1to3" ? "2h" : state.load === "3to5" ? "4h" : "6h";
+  const first = (state.name||"you").split(" ")[0];
+  const goalsLabel = (state.goals||[]).length===0?"everything":state.goals.includes("all")?"every Studlin tool":state.goals.length===1?state.goals[0]:state.goals.length+" areas";
+  const focusTarget = state.load==="under1"?"30m":state.load==="1to3"?"2h":state.load==="3to5"?"4h":"6h";
   return (
     <div className="frame">
-      <div className="frame-head">
-        <h2>Hey <em>{first}.</em> Here's your space.</h2>
-        <p>Personalised based on what you just told us. Tweak anything in Settings later.</p>
-      </div>
+      <div className="frame-head"><h2>Hey <em>{first}.</em> Here's your space.</h2><p>Personalised based on what you just told us. Tweak anything in Settings later.</p></div>
       <div className="preview">
         <div className="preview-row">
-          <div className="preview-tile lime">
-            <div className="pt-label">DAILY FOCUS</div>
-            <div className="pt-value">{focusTarget}</div>
-            <div className="pt-sub">From your study load</div>
-          </div>
-          <div className="preview-tile">
-            <div className="pt-label">PRIMARY GOAL</div>
-            <div className="pt-value" style={{fontSize:18, fontFamily:"Geist, sans-serif", fontWeight:600}}>{goalsLabel}</div>
-            <div className="pt-sub">Pinned to dashboard</div>
-          </div>
-          <div className="preview-tile">
-            <div className="pt-label">STREAK</div>
-            <div className="pt-value">0</div>
-            <div className="pt-sub">Starts today</div>
-          </div>
+          <div className="preview-tile lime"><div className="pt-label">DAILY FOCUS</div><div className="pt-value">{focusTarget}</div><div className="pt-sub">From your study load</div></div>
+          <div className="preview-tile"><div className="pt-label">PRIMARY GOAL</div><div className="pt-value" style={{fontSize:18,fontFamily:"Geist,sans-serif",fontWeight:600}}>{goalsLabel}</div><div className="pt-sub">Pinned to dashboard</div></div>
+          <div className="preview-tile"><div className="pt-label">STREAK</div><div className="pt-value">0</div><div className="pt-sub">Starts today</div></div>
         </div>
         <div className="preview-row" style={{gridTemplateColumns:"1fr"}}>
-          <div className="preview-tile" style={{padding:"14px 16px", background:"white"}}>
+          <div className="preview-tile" style={{padding:"14px 16px",background:"white"}}>
             <div className="pt-label" style={{marginBottom:8}}>TUTOR VOICE</div>
-            <div style={{fontSize:13.5, color:"var(--ink)", lineHeight:1.55}}>
-              {state.role === "hs" && "Encouraging. Breaks topics down step by step. Uses analogies and worked examples."}
-              {state.role === "uni" && "Socratic. Citation-aware. Calibrated to advanced coursework and seminar discussion."}
-              {state.role === "teacher" && "Direct. Curriculum-aware. Includes rubric, pedagogy notes, and lesson plans."}
-              {state.role === "pro" && "Concise. Professional register. Optimised for deliverables and tight deadlines."}
-              {state.role === "self" && "Patient. Builds from fundamentals. Suggests learning paths and milestone checks."}
-              {!state.role && "Balanced and adaptive · personalised once you pick your role."}
+            <div style={{fontSize:13.5,color:"var(--ink)",lineHeight:1.55}}>
+              {state.role==="hs"&&"Encouraging. Breaks topics down step by step. Uses analogies and worked examples."}
+              {state.role==="uni"&&"Socratic. Citation-aware. Calibrated to advanced coursework and seminar discussion."}
+              {state.role==="teacher"&&"Direct. Curriculum-aware. Includes rubric, pedagogy notes, and lesson plans."}
+              {state.role==="pro"&&"Concise. Professional register. Optimised for deliverables and tight deadlines."}
+              {state.role==="self"&&"Patient. Builds from fundamentals. Suggests learning paths and milestone checks."}
+              {!state.role&&"Balanced and adaptive · personalised once you pick your role."}
             </div>
           </div>
         </div>
@@ -422,272 +314,78 @@ function StepPreview({ state }) {
   );
 }
 
-// ─── STEP 6: PAYWALL ────────────────────────────────────────────────────────
 function StepPlan({ state, set }) {
-  const annual = state.billing !== "monthly";
-  const first = (state.preferredName || state.name || "you").split(" ")[0];
+  const annual = state.billing!=="monthly";
+  const first = (state.preferredName||state.name||"you").split(" ")[0];
   return (
     <div className="frame">
-      <div className="frame-head">
-        <h2>Unlock your full <em>potential.</em></h2>
-        <p>{first}, students on Pro study 2.4&times; more and report a full letter-grade jump. Try it free for 7 days.</p>
-      </div>
-
+      <div className="frame-head"><h2>Unlock your full <em>potential.</em></h2><p>{first}, students on Pro study 2.4× more and report a full letter-grade jump. Try it free for 7 days.</p></div>
       <div className="bill-toggle">
-        <button className={!annual ? "on" : ""} onClick={()=>set({...state, billing:"monthly"})}>Monthly</button>
-        <button className={annual ? "on" : ""} onClick={()=>set({...state, billing:"annual"})}>Annual <span className="save">Save 25%</span></button>
+        <button className={!annual?"on":""} onClick={()=>set({...state, billing:"monthly"})}>Monthly</button>
+        <button className={annual?"on":""} onClick={()=>set({...state, billing:"annual"})}>Annual <span className="save">Save 25%</span></button>
       </div>
-
       <div className="plans">
-        <button className={"plan" + (state.plan === "pro" ? " is-selected" : "")} onClick={()=>set({...state, plan:"pro"})}>
+        <button className={"plan"+(state.plan==="pro"?" is-selected":"")} onClick={()=>set({...state, plan:"pro"})}>
           <span className="plan-tag">7 DAYS FREE</span>
           <h3>Pro</h3>
-          <div className="pp"><strong>${annual ? "95.88" : "9.99"}</strong> / {annual ? "year" : "mo"}</div>
+          <div className="pp"><strong>${annual?"7.99":"9.99"}</strong> / mo{annual?" · billed annually":""}</div>
           <ul>
             <li><span className="ck">{Ic.check}</span> 200 AI credits / month</li>
-            <li><span className="ck">{Ic.check}</span> AI tutor — all models + 4 study modes</li>
-            <li><span className="ck">{Ic.check}</span> Full essay suite + plagiarism check</li>
-            <li><span className="ck">{Ic.check}</span> AI flashcards from notes, PDFs &amp; YouTube</li>
-            <li><span className="ck">{Ic.check}</span> Google Docs sync + AI Rewrite (Humanizer)</li>
-            <li><span className="ck">{Ic.check}</span> Unlimited grammar + readability scores</li>
-            <li><span className="ck">{Ic.check}</span> Squad leaderboards + 2× focus XP</li>
+            <li><span className="ck">{Ic.check}</span> AI tutor — all models</li>
+            <li><span className="ck">{Ic.check}</span> Full essay suite + AI Humanizer</li>
+            <li><span className="ck">{Ic.check}</span> AI flashcards from any file</li>
+            <li><span className="ck">{Ic.check}</span> Smart calendar & Weekly Wrapped</li>
           </ul>
         </button>
-        <button className={"plan" + (state.plan === "max" ? " is-selected" : "")} onClick={()=>set({...state, plan:"max"})}>
+        <button className={"plan"+(state.plan==="max"?" is-selected":"")} onClick={()=>set({...state, plan:"max"})}>
           <span className="plan-tag dark">BEST VALUE</span>
           <h3>Max</h3>
-          <div className="pp"><strong>${annual ? "239.88" : "24.99"}</strong> / {annual ? "year" : "mo"}</div>
+          <div className="pp"><strong>${annual?"19.99":"24.99"}</strong> / mo{annual?" · billed annually":""}</div>
           <ul>
-            <li><span className="ck">{Ic.check}</span> <strong>500</strong> AI credits / month</li>
-            <li><span className="ck">{Ic.check}</span> Everything in Pro, unlimited</li>
-            <li><span className="ck">{Ic.check}</span> Bulk ops — 100 flashcards at once</li>
-            <li><span className="ck">{Ic.check}</span> Advanced analytics &amp; learning paths</li>
-            <li><span className="ck">{Ic.check}</span> Cosmetics shop + monthly tournaments</li>
+            <li><span className="ck">{Ic.check}</span> 500 AI credits / month</li>
+            <li><span className="ck">{Ic.check}</span> Everything in Pro</li>
+            <li><span className="ck">{Ic.check}</span> Advanced analytics & learning paths</li>
             <li><span className="ck">{Ic.check}</span> Priority support + 3× focus XP</li>
+            <li><span className="ck">{Ic.check}</span> Cosmetics shop + tournaments</li>
           </ul>
         </button>
       </div>
-
       <div className="paywall-foot">
-        <div className="pw-compare">Most students juggle 4 to 6 apps. Studlin is all of them, starting at <strong>${annual ? "95.88" : "9.99"}/{annual ? "year" : "mo"}</strong>.</div>
-        <button className="pw-skip" onClick={()=>set({...state, plan:"free"})}>{state.plan==="free" ? "✓ Continuing on the free plan" : "Maybe later · continue with limited free plan"}</button>
+        <button className="pw-skip" onClick={()=>set({...state, plan:"free"})}>{state.plan==="free"?"✓ Continuing on the free plan":"Maybe later · continue with limited free plan"}</button>
       </div>
-    </div>
-  );
-}
-
-// ─── STEP 7: WELCOME + INTERACTIVE TUTORIALS ───────────────────────────────
-const TUT_TASKS = [
-  { id:"dash",   text:"Open your personalised dashboard",         xp:5,  cap:"Your whole day, planned before you sit down." },
-  { id:"focus",  text:"Start your first 25-minute focus session", xp:10, cap:"One tap. Phone away. Totally locked in." },
-  { id:"cards",  text:"Drop a PDF and generate flashcards",       xp:10, cap:"Any file becomes a deck in seconds." },
-  { id:"tutor",  text:"Ask the AI tutor your first question",     xp:5,  cap:"It walks you through it, step by step." },
-  { id:"streak", text:"Complete your first day streak",           xp:10, cap:"Show up today. Future you says thanks." },
-];
-
-function useRun() {
-  const [on, setOn] = useState(false);
-  useEffect(() => {
-    const id = setTimeout(() => setOn(true), 60);
-    return () => clearTimeout(id);
-  }, []);
-  return on;
-}
-
-const FlameIc = (
-  <svg viewBox="0 0 24 24" width="44" height="44" fill="currentColor" aria-hidden="true">
-    <path d="M12 2c1.2 3.9-2.8 5.6-2.8 9a2.8 2.8 0 0 0 5.6 0c0-1.4-.6-2.5-1.3-3.4C16.2 8.7 18.5 10.9 18.5 14a6.5 6.5 0 0 1-13 0C5.5 9 10.4 6.8 12 2z"/>
-  </svg>
-);
-
-function Demo({ kind }) {
-  const on = useRun();
-  const cls = "demo" + (on ? " on" : "");
-  if (kind === "dash") return (
-    <div className={cls}>
-      <div className="dm-window">
-        <div className="dm-greet"><span className="dm-hi">Good morning, Maya</span><span className="dm-pill">3 tasks today</span></div>
-        <div className="dm-grid">
-          <div className="dm-tile t1"><div className="dm-tlab">Focus</div><i className="dm-spark"></i></div>
-          <div className="dm-tile t2"><div className="dm-tlab">Streak</div><div className="dm-big">12</div></div>
-          <div className="dm-tile t3"><div className="dm-tlab">This week</div><i className="dm-bars"><b></b><b></b><b></b><b></b><b></b></i></div>
-        </div>
-      </div>
-    </div>
-  );
-  if (kind === "focus") return (
-    <div className={cls}>
-      <div className="dm-focus">
-        <svg viewBox="0 0 120 120" className="dm-timer">
-          <circle cx="60" cy="60" r="52" className="track"></circle>
-          <circle cx="60" cy="60" r="52" className="prog"></circle>
-        </svg>
-        <div className="dm-mid"><div className="dm-time">25:00</div><div className="dm-lab">LOCKED IN</div></div>
-      </div>
-    </div>
-  );
-  if (kind === "cards") return (
-    <div className={cls}>
-      <div className="dm-doc"><span>notes.pdf</span></div>
-      <div className="dm-fan">
-        <div className="dm-card c1">What is osmosis?</div>
-        <div className="dm-card c2">Define entropy</div>
-        <div className="dm-card c3">Mitosis vs meiosis?</div>
-      </div>
-    </div>
-  );
-  if (kind === "tutor") return (
-    <div className={cls}>
-      <div className="dm-chat">
-        <div className="dm-bub me">Why does ice float?</div>
-        <div className="dm-bub ai">
-          <span className="dm-dots"><i></i><i></i><i></i></span>
-          <span className="dm-ans">Water expands as it freezes, so ice is less dense than liquid water. Less dense floats. Want the hydrogen-bond picture?</span>
-        </div>
-      </div>
-    </div>
-  );
-  return (
-    <div className={cls}>
-      <div className="dm-streak">
-        <div className="dm-flame">{FlameIc}</div>
-        <div className="dm-days">
-          {["M","T","W","T","F","S","S"].map((d,i)=>(
-            <span key={i} className="dm-day" style={{transitionDelay:(0.3+i*0.18)+"s"}}>{d}</span>
-          ))}
-        </div>
-        <div className="dm-dlab">Day 1 · started</div>
-      </div>
-    </div>
-  );
-}
-
-function TutTheater({ task, onFinish }) {
-  const on = useRun();
-  return (
-    <div className={"tut-veil" + (on ? " on" : "")} onClick={onFinish}>
-      <div className="tut-stage" onClick={e=>e.stopPropagation()}>
-        <Demo kind={task.id} key={task.id} />
-        <div className="tut-cap">{task.cap}</div>
-        <div className="tut-bar"><i></i></div>
-        <button className="tut-skip" onClick={onFinish}>Got it · collect +{task.xp} XP</button>
-      </div>
-    </div>
-  );
-}
-
-function ConfettiBurst() {
-  const on = useRun();
-  const pieces = React.useMemo(() => Array.from({length:60}).map((_,i)=>{
-    const colors = ["#9EC83D","#7FA82A","#FFE99A","#FFD7B5","#C4F0D8","#BFE3FF","#E2D0FF","#FFC9D2"];
-    return {
-      left: Math.random()*100,
-      bg: colors[i%colors.length],
-      delay: Math.random()*0.7,
-      dur: 2.5 + Math.random()*1.5,
-      rot: 360 + Math.random()*540,
-    };
-  }), []);
-  return (
-    <div className="confetti2">
-      {pieces.map((p,i)=>(
-        <i key={i} style={{
-          left: p.left+"%",
-          background: p.bg,
-          transition: "transform "+p.dur+"s cubic-bezier(.2,.85,.3,1) "+p.delay+"s, opacity "+p.dur+"s linear "+p.delay+"s",
-          transform: on ? "translateY(110vh) rotate("+p.rot+"deg)" : "translateY(-30px)",
-          opacity: on ? 0 : 1,
-        }}></i>
-      ))}
     </div>
   );
 }
 
 function StepWelcome({ state }) {
-  const [done, setDone] = useState({});
-  const [active, setActive] = useState(null);
-  const [justEarned, setJustEarned] = useState(null);
-  const timerRef = useRef(null);
-  const first = (state.preferredName || state.name || "Maya").split(" ")[0];
-  const max = TUT_TASKS.reduce((s,t)=>s+t.xp,0);
-  const total = TUT_TASKS.reduce((s,t)=>s+(done[t.id]?t.xp:0),0);
-  const allDone = TUT_TASKS.every(t=>done[t.id]);
-
-  const finish = (t) => {
-    clearTimeout(timerRef.current);
-    setActive(null);
-    setDone(d=>({...d,[t.id]:true}));
-    setJustEarned(t.id);
-    setTimeout(()=>setJustEarned(null), 1100);
-  };
-  const open = (t) => {
-    if (done[t.id]) return;
-    setActive(t);
-    clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(()=>finish(t), 4000);
-  };
-  useEffect(()=>()=>clearTimeout(timerRef.current),[]);
-
+  const first = (state.preferredName||state.name||"there").split(" ")[0];
   return (
     <div className="frame">
-      {allDone && <ConfettiBurst />}
       <div className="celebrate">
-        <div className="celebrate-glyph"><img src="studlin-icon.png" alt="" /></div>
-        <h2 style={{fontSize:32,margin:"0 0 8px",letterSpacing:"-0.025em",fontWeight:600}}>You're in, <em style={{fontFamily:"Instrument Serif, serif",fontStyle:"italic",color:"var(--lime-dk)",fontWeight:400}}>{first}.</em></h2>
-        <p style={{fontSize:15,color:"var(--muted)",margin:"0 auto",maxWidth:440,lineHeight:1.55}}>
-          Tap each one to see how it works · finish all five to unlock a 40 XP bonus and start your streak.
-        </p>
+        <div className="celebrate-glyph"><div style={{width:56,height:56,borderRadius:12,background:"#9EC83D",display:"grid",placeItems:"center",fontSize:28,fontWeight:800,color:"#14342A"}}>S</div></div>
+        <h2 style={{fontSize:32,margin:"0 0 8px",letterSpacing:"-0.025em",fontWeight:600}}>You're in, <em style={{fontFamily:"Instrument Serif,serif",fontStyle:"italic",color:"var(--lime-dk)",fontWeight:400}}>{first}.</em></h2>
+        <p style={{fontSize:15,color:"var(--muted)",margin:"0 auto",maxWidth:440,lineHeight:1.55}}>Your workspace is ready. Start exploring — everything's set up based on your answers.</p>
       </div>
-      <div className="checklist">
-        {TUT_TASKS.map((t,i)=>(
-          <div key={t.id} className={"cl-item" + (done[t.id]?" done":"")} onClick={()=>open(t)}>
-            <span className="box">{Ic.check}</span>
-            <span className="text">{t.text}</span>
-            {!done[t.id] && <span className="cl-play">Watch<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>}
-            <span className={"reward" + (justEarned===t.id?" pop":"")}>+{t.xp} XP</span>
-          </div>
-        ))}
-      </div>
-      <div className="xp-foot">
-        {allDone ? (
-          <div className="bonus-banner">Bonus unlocked · +40 XP · streak started</div>
-        ) : (
-          <React.Fragment>
-            <div className="xp-row"><span>Today's XP</span><strong>{total} / {max}</strong></div>
-            <div className="xp-track"><i style={{width:(total/max*100)+"%"}}></i></div>
-          </React.Fragment>
-        )}
-      </div>
-
-      {active && <TutTheater task={active} onFinish={()=>finish(active)} />}
     </div>
   );
 }
 
-// ─── APP ────────────────────────────────────────────────────────────────────
 function App() {
   const [step, setStep] = useState(0);
   const [state, setState] = useState(() => {
     try { const saved = JSON.parse(localStorage.getItem("studlin-onboarding")||"null"); if (saved && typeof saved === "object") return {goals:[],plan:"pro",...saved}; } catch(e){}
-    return { goals: [], plan: "scholar" };
+    return { goals: [], plan: "pro" };
   });
-  const [signupErrors, setSignupErrors] = useState({});
 
-  // ── DATA COLLECTION ── persist every answer as the user progresses (never persist secrets)
   useEffect(()=>{
     try {
       const { password, ...safe } = state;
-      const payload = { ...safe, _updatedAt: new Date().toISOString() };
-      localStorage.setItem("studlin-onboarding", JSON.stringify(payload));
+      localStorage.setItem("studlin-onboarding", JSON.stringify({ ...safe, _updatedAt: new Date().toISOString() }));
     } catch(e){}
   }, [state, step]);
 
   const isStepValid = () => {
-    if (step === 0) {
-      if (state.provider) return true;
-      const pwOk = state.password && /[a-z]/.test(state.password) && /[A-Z]/.test(state.password) && /\d/.test(state.password) && state.password.length >= 14;
-      return !!(state.name && state.email && pwOk);
-    }
+    if (step === 0) { return !!firebase.auth().currentUser || !!(state.provider) || !!(state.name && state.email && (state.password||"").length >= 8); }
     if (step === 1) return !!(state.preferredName && state.language && state.descriptor && state.terms);
     if (step === 2) return !!state.role;
     if (step === 3) return (state.goals||[]).length > 0;
@@ -697,52 +395,27 @@ function App() {
     return true;
   };
 
-  const validateStep = () => {
-    if (step === 0 && !state.provider) {
-      const errs = {};
-      const pwOk = state.password && /[a-z]/.test(state.password) && /[A-Z]/.test(state.password) && /\d/.test(state.password) && state.password.length >= 14;
-      if (!state.name) errs.name = "Full name as it appears on identification document";
-      if (!state.email) errs.email = "Please enter your email address";
-      else if (state.email.includes("@gmail.") || state.email.includes("@yahoo.") || state.email.includes("@hotmail.")) errs.email = "Please use your school or company email";
-      if (!pwOk) errs.password = "Password doesn't meet all criteria below";
-      setSignupErrors(errs);
-      return Object.keys(errs).length === 0;
-    }
-    return isStepValid();
-  };
-
   const [transitioning, setTransitioning] = useState(false);
   const [paywallRevealed, setPaywallRevealed] = useState(false);
 
   const next = () => {
-    if (validateStep()) {
-      const nextStep = Math.min(STEPS.length-1, step+1);
-      if (nextStep === 6) {
-        // Paywall entrance: fade out current, then reveal paywall
-        setTransitioning(true);
-        setTimeout(() => {
-          setStep(nextStep);
-          setTransitioning(false);
-          setTimeout(() => setPaywallRevealed(true), 50);
-        }, 400);
-      } else {
-        setTransitioning(true);
-        setTimeout(() => { setStep(nextStep); setTransitioning(false); }, 250);
-      }
+    if (!isStepValid()) return;
+    const nextStep = Math.min(STEPS.length-1, step+1);
+    if (nextStep === 6) {
+      setTransitioning(true);
+      setTimeout(() => { setStep(nextStep); setTransitioning(false); setTimeout(() => setPaywallRevealed(true), 50); }, 400);
+    } else {
+      setTransitioning(true);
+      setTimeout(() => { setStep(nextStep); setTransitioning(false); }, 250);
     }
   };
   const back = () => { setTransitioning(true); setPaywallRevealed(false); setTimeout(() => { setStep(s => Math.max(0, s-1)); setTransitioning(false); }, 250); };
 
   useEffect(()=>{
-    const fn = (e)=>{
-      if (e.key === "Enter" && step < STEPS.length-1) next();
-      if (e.key === "Escape" && step > 0) back();
-    };
+    const fn = e => { if (e.key === "Enter" && step < STEPS.length-1) next(); if (e.key === "Escape" && step > 0) back(); };
     window.addEventListener("keydown", fn);
     return ()=>window.removeEventListener("keydown", fn);
   });
-
-  const CTA_LABEL = ["Sign up for free","Continue","Continue","Continue","Continue","Looks good", (state.plan==="free" ? "Continue with free plan" : "Start 7-day free trial"),"Enter Studlin"][step];
 
   const handleCheckout = () => {
     if (state.plan === "free") { next(); return; }
@@ -750,45 +423,37 @@ function App() {
     window.location.href = "checkout.html?plan=" + state.plan + "&billing=" + billing;
   };
 
+  const CTA_LABEL = ["Sign up for free","Continue","Continue","Continue","Continue","Looks good",(state.plan==="free"?"Continue with free plan":"Start 7-day free trial"),"Enter Studlin"][step];
   const isPaywall = step === 6;
+
   return (
     <div className={"shell" + (isPaywall ? " paywall-mode" : "")}>
       {!isPaywall && <LeftRail step={step} state={state} />}
       <main className={"stage" + (isPaywall ? " paywall-stage" : "") + (paywallRevealed ? " paywall-revealed" : "")}>
         <div className="stage-top">
-          {step === 0 ? <>Already have an account? <a>Log in</a></> :
-                       <span style={{color:"var(--muted)",fontSize:13}}>Step {Math.min(step+1,7)} of 7</span>}
+          {step === 0 ? <>Already have an account? <a href="Studlin Sign In.html">Log in</a></> :
+            <span style={{color:"var(--muted)",fontSize:13}}>Step {Math.min(step+1,7)} of 7</span>}
         </div>
-
         <div className={"step-content" + (transitioning ? " is-leaving" : " is-entering")}>
-        {step === 0 && <StepSignup state={state} set={setState} advance={(skipValidate)=>{ if(skipValidate || validateStep()) { setTransitioning(true); setTimeout(()=>{ setStep(s=>Math.min(STEPS.length-1,s+1)); setTransitioning(false); }, 250); }}} />}
-        {step === 1 && <StepBasic state={state} set={setState} />}
-        {step === 2 && <StepRole state={state} set={setState} />}
-        {step === 3 && <StepGoals state={state} set={setState} />}
-        {step === 4 && <StepLoad state={state} set={setState} />}
-        {step === 5 && <StepPreview state={state} />}
-        {step === 6 && <StepPlan state={state} set={setState} />}
-        {step === 7 && <StepWelcome state={state} />}
+          {step === 0 && <StepSignup state={state} set={setState} advance={(skip)=>{ if(skip||isStepValid()){ setTransitioning(true); setTimeout(()=>{ setStep(s=>Math.min(STEPS.length-1,s+1)); setTransitioning(false); },250); }}} />}
+          {step === 1 && <StepBasic state={state} set={setState} />}
+          {step === 2 && <StepRole state={state} set={setState} />}
+          {step === 3 && <StepGoals state={state} set={setState} />}
+          {step === 4 && <StepLoad state={state} set={setState} />}
+          {step === 5 && <StepPreview state={state} />}
+          {step === 6 && <StepPlan state={state} set={setState} />}
+          {step === 7 && <StepWelcome state={state} />}
         </div>
-
         <div className="stage-foot">
           {step < STEPS.length-1 ? (
-            <button className="cta" disabled={!isStepValid()} onClick={step === 6 ? handleCheckout : next}>
-              {CTA_LABEL}
-              <span className="arrow">{Ic.arrow}</span>
+            <button className="cta" disabled={!isStepValid()} onClick={step===6?handleCheckout:next}>
+              {CTA_LABEL}<span className="arrow">{Ic.arrow}</span>
             </button>
           ) : (
-            <a className="cta lime" href="Studlin Web App.html">
-              Enter Studlin
-              <span className="arrow">{Ic.arrow}</span>
-            </a>
+            <a className="cta lime" href="Studlin Web App.html">Enter Studlin<span className="arrow">{Ic.arrow}</span></a>
           )}
-          {step === 0 && <div className="stage-links"><a>Privacy Policy</a> · <a>Terms of Service</a></div>}
-          {step > 0 && step < STEPS.length-1 && (
-            <div style={{marginTop:14}}>
-              <button onClick={back} style={{background:"transparent",border:"none",color:"var(--muted)",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>← Back</button>
-            </div>
-          )}
+          {step === 0 && <div className="stage-links"><a href="#">Privacy Policy</a> · <a href="#">Terms of Service</a></div>}
+          {step > 0 && step < STEPS.length-1 && <div style={{marginTop:14}}><button onClick={back} style={{background:"transparent",border:"none",color:"var(--muted)",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>← Back</button></div>}
         </div>
       </main>
     </div>
