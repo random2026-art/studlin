@@ -559,11 +559,20 @@ function Essays() {
   const [eMode,setEMode]=useState("self");
   const [gdocs,setGdocs]=useState(()=>lsGet("gdocs",false));
   const subjects=[{value:"English IV",label:"English IV",color:T.purple},{value:"Biology",label:"Biology",color:T.teal},{value:"History",label:"History",color:T.muted},{value:"Chemistry",label:"Chemistry",color:T.red},{value:"Calculus",label:"Calculus",color:T.blue},{value:"Other",label:"Other",color:T.lime}];
-  const essays=[
-    {title:"Power & Corruption in Macbeth",subject:"English IV",words:1247,target:1500,status:"In progress",grade:null},
-    {title:"Photosynthesis Lab Report",subject:"Biology",words:800,target:800,status:"Submitted",grade:"A−"},
-    {title:"Causes of World War I",subject:"History",words:450,target:1200,status:"Outline",grade:null},
+  const seedEssays=[
+    {title:"Power & Corruption in Macbeth",subject:"English IV",body:"In Shakespeare's Macbeth, the corrupting influence of unchecked ambition is illustrated through the protagonist's descent from celebrated warrior to tyrannical murderer.",target:1500,status:"In progress"},
   ];
+  const [essays,setEssays]=useState(()=>lsGet("essays",seedEssays));
+  const [activeIdx,setActiveIdx]=useState(0);
+  const activeEssay=essays[activeIdx]||null;
+  const wordCount=(s)=>(s||"").trim().split(/\s+/).filter(Boolean).length;
+  const updateEssayBody=(body)=>{const next=[...essays];next[activeIdx]={...next[activeIdx],body};setEssays(next);lsSet("essays",next);};
+  const createEssay=()=>{
+    const subj=eSubject==="Other"&&eCustom.trim()?eCustom.trim():eSubject;
+    const ne={title:eTitle.trim()||"Untitled essay",subject:subj,body:ePrompt||"",target:parseInt(eTarget)||1500,status:"In progress"};
+    const next=[ne,...essays];setEssays(next);lsSet("essays",next);setActiveIdx(0);
+    setNewOpen(false);setETitle("");setEPrompt("");setECustom("");setTab("active");
+  };
   const subjectColor = {
     "English IV":T.purple,
     "Biology":T.teal,
@@ -573,7 +582,7 @@ function Essays() {
     <div>
       <PH title="Essays" sub="Draft, refine, and submit your writing" action={<span style={{display:"flex",gap:8}}><Btn variant="subtle" onClick={()=>{const v=!gdocs;setGdocs(v);lsSet("gdocs",v);}}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},gdocs?Icon.check:Icon.link,gdocs?"Google Docs · connected":"Connect Google Docs")}</Btn><Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New essay")}</Btn></span>} />
       <Modal open={newOpen} onClose={()=>setNewOpen(false)} title="Start a new essay" sub="Studlin will scaffold an outline and adapt the AI tutor to your subject."
-        footer={<><Btn variant="subtle" onClick={()=>setNewOpen(false)}>Cancel</Btn><Btn onClick={()=>setNewOpen(false)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.pen,"Create essay")}</Btn></>}>
+        footer={<><Btn variant="subtle" onClick={()=>setNewOpen(false)}>Cancel</Btn><Btn onClick={createEssay}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.pen,"Create essay")}</Btn></>}>
         <Field label="Title"><Input placeholder="e.g. Ambition and ruin in Macbeth" value={eTitle} onChange={e=>setETitle(e.target.value)} autoFocus /></Field>
         <Field label="Subject"><SelectChip options={subjects} value={eSubject} onChange={setESubject} /></Field>
         {eSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Physics, Economics, Psychology..." value={eCustom} onChange={ev=>setECustom(ev.target.value)} /></Field>}
@@ -597,47 +606,43 @@ function Essays() {
       <Pills tabs={["active","library","templates"]} active={tab} onChange={setTab} />
       <div style={{display:"grid",gridTemplateColumns:"1fr 280px",gap:16}}>
         <div>
-          {tab==="active"&&(
+          {tab==="active"&&activeEssay&&(
             <Card>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
                 <div>
-                  <div style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:3}}>Power &amp; Corruption in Macbeth</div>
-                  <div style={{fontSize:12,color:T.muted}}>English IV · {(1247).toLocaleString()} / {(1500).toLocaleString()} words</div>
+                  <div style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:3}}>{activeEssay.title}</div>
+                  <div style={{fontSize:12,color:T.muted}}>{activeEssay.subject} · {wordCount(activeEssay.body).toLocaleString()} / {(activeEssay.target||1500).toLocaleString()} words</div>
                 </div>
-                <Badge color={T.amber}>In progress</Badge>
+                <Badge color={T.amber}>{activeEssay.status||"In progress"}</Badge>
               </div>
-              <div style={{display:"flex",gap:2,background:T.card2,padding:"6px",borderRadius:"6px 6px 0 0",flexWrap:"wrap",border:`1px solid ${T.border}`,borderBottom:"none"}}>
-                {[["B",Icon.bold],["I",Icon.italic],["Link",Icon.link],["Quote",Icon.quote]].map(([l,ico])=>(
-                  <button key={l} style={{display:"flex",alignItems:"center",gap:4,padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>{ico} {l}</button>
-                ))}
-                <div style={{width:1,background:T.border,margin:"2px 4px"}} />
-                {["H1","H2","H3"].map(h=><button key={h} style={{padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>{h}</button>)}
-              </div>
-              <div contentEditable suppressContentEditableWarning style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:"0 0 6px 6px",padding:16,minHeight:200,fontSize:14,lineHeight:1.8,color:T.text,outline:"none"}}>
-                <p><strong style={{color:T.white,fontWeight:600}}>Introduction</strong></p>
-                <p style={{marginTop:12}}>In Shakespeare's Macbeth, the corrupting influence of unchecked ambition is illustrated through the protagonist's descent from celebrated warrior to tyrannical murderer. The play explores how power, when pursued without moral constraint, dismantles the very humanity of those who seek it · a thesis the playwright reinforces through recurring imagery, soliloquy, and dramatic irony.</p>
-              </div>
+              <textarea style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:6,padding:16,minHeight:260,fontSize:14,lineHeight:1.8,color:T.text,outline:"none",fontFamily:T.font,resize:"vertical",boxSizing:"border-box"}} value={activeEssay.body||""} onChange={e=>updateEssayBody(e.target.value)} placeholder="Start writing your essay..." />
               <div style={{display:"flex",gap:8,marginTop:14,alignItems:"center"}}>
-                <BtnSm variant="subtle">{Icon.wand} Refine prose</BtnSm>
-                <BtnSm variant="subtle">{Icon.check} Grammar pass</BtnSm>
-                <BtnSm variant="subtle">{Icon.quote} Cite source</BtnSm>
-                <div style={{marginLeft:"auto",fontSize:11,color:T.faint}}>Saved automatically</div>
+                <BtnSm variant="subtle" onClick={async()=>{
+                  if(!activeEssay.body)return;
+                  const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"pro",messages:[{r:"user",t:"Refine this essay prose — improve clarity, flow, and academic tone. Return only the improved text, no commentary:\n\n"+activeEssay.body}]})});
+                  const data=await res.json();if(data.reply)updateEssayBody(data.reply);
+                }}>{Icon.wand} Refine prose</BtnSm>
+                <BtnSm variant="subtle" onClick={()=>{const next=[...essays];next.splice(activeIdx,1);setEssays(next);lsSet("essays",next);setActiveIdx(0);}}>Delete</BtnSm>
+                <div style={{marginLeft:"auto",fontSize:11,color:T.faint}}>Auto-saved to browser</div>
               </div>
             </Card>
+          )}
+          {tab==="active"&&!activeEssay&&(
+            <Card style={{padding:32,textAlign:"center"}}><div style={{color:T.muted,fontSize:14}}>No essays yet. Click "New essay" to start writing.</div></Card>
           )}
           {tab==="library"&&(
             <div style={{display:"flex",flexDirection:"column",gap:8}}>
               {essays.map((e,i)=>(
-                <Card key={i} onClick={()=>{}} style={{display:"flex",alignItems:"center",gap:16}}>
+                <Card key={i} onClick={()=>{setActiveIdx(i);setTab("active");}} style={{display:"flex",alignItems:"center",gap:16,cursor:"pointer"}}>
                   <div style={{width:3,height:40,borderRadius:2,background:subjectColor[e.subject]||T.lime,flexShrink:0}} />
                   <div style={{flex:1}}>
                     <div style={{fontSize:13,fontWeight:600,color:T.white,marginBottom:2}}>{e.title}</div>
-                    <div style={{fontSize:11,color:T.muted}}>{e.subject} · {e.words.toLocaleString()} / {e.target.toLocaleString()} words</div>
+                    <div style={{fontSize:11,color:T.muted}}>{e.subject} · {wordCount(e.body).toLocaleString()} / {(e.target||1500).toLocaleString()} words</div>
                   </div>
-                  <Badge color={e.status==="Submitted"?T.teal:e.status==="In progress"?T.amber:T.blue}>{e.status}</Badge>
-                  {e.grade&&<div style={{fontSize:20,fontWeight:700,color:T.lime,letterSpacing:"-0.02em"}}>{e.grade}</div>}
+                  <Badge color={e.status==="Submitted"?T.teal:T.amber}>{e.status||"In progress"}</Badge>
                 </Card>
               ))}
+              {essays.length===0&&<Card style={{padding:24,textAlign:"center"}}><div style={{color:T.muted,fontSize:13}}>No essays yet</div></Card>}
             </div>
           )}
           {tab==="templates"&&(
@@ -653,26 +658,23 @@ function Essays() {
           )}
         </div>
         <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          {activeEssay&&(<>
           <Card style={{background:T.lime,border:"none"}}>
             <Label style={{color:T.bg}}>Word count</Label>
-            <div style={{fontSize:32,fontWeight:700,color:T.bg,letterSpacing:"-0.03em",lineHeight:1}}>1,247</div>
-            <div style={{marginTop:10,height:4,background:T.bg+"22",borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",width:"83%",background:T.bg,borderRadius:2}} /></div>
-            <div style={{fontSize:12,color:T.bg,opacity:0.7,marginTop:5}}>253 words remaining</div>
+            <div style={{fontSize:32,fontWeight:700,color:T.bg,letterSpacing:"-0.03em",lineHeight:1}}>{wordCount(activeEssay.body).toLocaleString()}</div>
+            <div style={{marginTop:10,height:4,background:T.bg+"22",borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",width:Math.min(100,Math.round(wordCount(activeEssay.body)/(activeEssay.target||1500)*100))+"%",background:T.bg,borderRadius:2}} /></div>
+            <div style={{fontSize:12,color:T.bg,opacity:0.7,marginTop:5}}>{Math.max(0,(activeEssay.target||1500)-wordCount(activeEssay.body)).toLocaleString()} words remaining</div>
           </Card>
           <Card>
-            <Label>Writing feedback</Label>
-            {[["Strengthen thesis statement",T.amber],["Include counterargument",T.amber],["Expand textual evidence",T.red],["Conclusion is underdeveloped",T.red]].map(([s,c],i)=>(
-              <div key={i} style={{display:"flex",gap:8,padding:"8px 0",borderBottom:i<3?`1px solid ${T.border}`:"none",fontSize:12,color:T.muted}}>
-                <div style={{width:5,height:5,borderRadius:"50%",background:c,flexShrink:0,marginTop:5}} />
-                {s}
+            <Label>Essays</Label>
+            {essays.map((e,i)=>(
+              <div key={i} onClick={()=>{setActiveIdx(i);setTab("active");}} style={{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:i<essays.length-1?`1px solid ${T.border}`:"none",fontSize:12,color:activeIdx===i?T.lime:T.muted,cursor:"pointer"}}>
+                <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{e.title}</span>
+                <span>{wordCount(e.body)}</span>
               </div>
             ))}
           </Card>
-          <Card>
-            <Label>Readability</Label>
-            <div style={{fontSize:32,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>B+</div>
-            <div style={{fontSize:12,color:T.muted,marginTop:4}}>Grade 11 reading level</div>
-          </Card>
+          </>)}
         </div>
       </div>
     </div>
@@ -2100,7 +2102,12 @@ function Profile() {
   const lvl=levelInfo();
   const streak=Math.max(1,getStreak());
   const ps=profileStats();
-  const initials=((prof.name||"").split(" ").map(x=>x[0]).join("").slice(0,2).toUpperCase())||"S";
+  const u=firebase.auth().currentUser;
+  const displayName=u?.displayName||prof.name||u?.email?.split("@")[0]||"Student";
+  const initials=(displayName.split(/[\s@]/).filter(Boolean).map(x=>x[0]).join("").slice(0,2).toUpperCase())||"S";
+  const essayCount=lsGet("essays",[]).length;
+  const cardCount=lsGet("decks",[]).reduce((a,d)=>a+(d.cards?.length||0),0);
+  const chatCount=lsGet("chatMsgs",[]).filter(m=>m.r==="user").length;
   const badges=[
     {icon:Icon.flame,name:streak+"-Day streak",color:T.amber},
     {icon:Icon.trophy,name:"Goal crusher",color:T.lime},
@@ -2119,10 +2126,10 @@ function Profile() {
       <Card style={{display:"flex",alignItems:"center",gap:24,marginBottom:16,padding:28}}>
         <Av initials={initials} color={T.lime} size={80} />
         <div style={{flex:1}}>
-          <div style={{fontSize:22,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:3}}>{prof.name}</div>
+          <div style={{fontSize:22,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:3}}>{displayName}</div>
           <div style={{fontSize:13,color:T.muted,marginBottom:12}}>{prof.school}</div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            <Badge color={T.lime}>Pro</Badge>
+            <Badge color={T.lime}>{getPlan()}</Badge>
             <Badge color={T.amber}>{streak}-day streak</Badge>
             <Badge color={T.blue}>Level {lvl.level}</Badge>
           </div>
@@ -2135,7 +2142,7 @@ function Profile() {
         </div>
       </Card>
       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
-        {[["Total study time",fmtH(ps.totalMin),T.lime],["Essays submitted","8",T.purple],["Cards mastered","147",T.teal],["Quizzes completed","23",T.amber],["Chat sessions","89",T.blue],["Focus sessions",String(ps.focusSessions),T.red]].map(([l,v,c],i)=>(
+        {[["Total study time",fmtH(ps.totalMin),T.lime],["Essays written",String(essayCount),T.purple],["Flashcards created",String(cardCount),T.teal],["Chat messages",String(chatCount),T.blue],["Focus sessions",String(ps.focusSessions),T.red],["Credits used",String(getCreditLimit()-getCredits()),T.amber]].map(([l,v,c],i)=>(
           <Card key={i} style={{textAlign:"center",padding:16}}>
             <div style={{fontSize:26,fontWeight:700,color:c,letterSpacing:"-0.02em",lineHeight:1}}>{v}</div>
             <div style={{fontSize:11,color:T.muted,marginTop:6}}>{l}</div>
