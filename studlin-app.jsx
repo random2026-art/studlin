@@ -366,6 +366,22 @@ function AiChat() {
   const scrollToBottom=()=>{if(chatRef.current)chatRef.current.scrollTop=chatRef.current.scrollHeight;};
   useEffect(scrollToBottom,[msgs]);
 
+  const [recording,setRecording]=useState(false);
+  const recognitionRef=useRef(null);
+  const toggleVoice=()=>{
+    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    if(!SR){setMsgs(m=>[...m,{r:"ai",t:"⚠ Speech recognition isn't supported in this browser. Try Chrome or Edge."}]);return;}
+    if(recording){recognitionRef.current?.stop();return;}
+    const rec=new SR();
+    rec.continuous=false;rec.interimResults=true;rec.lang="en-US";
+    recognitionRef.current=rec;
+    rec.onstart=()=>setRecording(true);
+    rec.onresult=(e)=>{let t="";for(let i=0;i<e.results.length;i++)t+=e.results[i][0].transcript;setInput(t);};
+    rec.onend=()=>setRecording(false);
+    rec.onerror=(e)=>{setRecording(false);if(e.error!=="aborted")setMsgs(m=>[...m,{r:"ai",t:"⚠ Mic error: "+e.error+". Check your microphone permissions."}]);};
+    rec.start();
+  };
+
   const send=async(txt)=>{
     const t=(txt||input).trim(); if(!t||loading)return;
     const cost=CREDIT_COST[model]||1;
@@ -432,7 +448,10 @@ function AiChat() {
             {suggestions.map(s=><button key={s} onClick={()=>send(s)} style={{padding:"5px 11px",borderRadius:5,fontSize:11,cursor:"pointer",border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontFamily:T.font,transition:"all 0.15s"}}>{s}</button>)}
           </div>
           <div style={{display:"flex",gap:8}}>
-            <input style={{flex:1,background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"10px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none"}} placeholder={loading?"Thinking...":"Ask a question or paste text to analyse..."} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} disabled={loading} />
+            <input style={{flex:1,background:T.card2,border:`1px solid ${recording?T.lime:T.border}`,borderRadius:7,padding:"10px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none"}} placeholder={recording?"Listening...":loading?"Thinking...":"Ask a question or paste text to analyse..."} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} disabled={loading} />
+            <button onClick={toggleVoice} style={{display:"grid",placeItems:"center",width:40,height:40,borderRadius:8,border:`1px solid ${recording?"#f87171":T.border}`,background:recording?"rgba(248,113,113,0.15)":T.card2,color:recording?"#f87171":T.muted,cursor:"pointer",flexShrink:0,animation:recording?"studlinPulse 1.2s infinite":"none"}} title={recording?"Stop recording":"Voice input"}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+            </button>
             <Btn onClick={()=>send()} style={{padding:"10px 14px",opacity:loading?0.5:1}} disabled={loading}>{Icon.send}</Btn>
           </div>
           <div style={{fontSize:11,color:T.muted,marginTop:8}}><span style={{color:T.text,fontWeight:600}}>{curModel.name}</span> · {curModel.cost} per message · <span style={{color:credits<(CREDIT_COST[model]||1)?T.red||"#f87171":T.lime}}>{credits} credits left</span></div>
