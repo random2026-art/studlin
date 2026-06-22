@@ -273,6 +273,10 @@ const fmtH=(m)=>m>=60?Math.floor(m/60)+"h "+(m%60)+"m":m+"m";
 const PLAN_LIMITS={Free:{music:2},Pro:{music:5},Max:{music:10}};
 function getPlan(){return lsGet("plan","Free");}
 function setPlanLS(p){lsSet("plan",p);}
+function getCredits(){return lsGet("credits",120);}
+function setCreditsLS(n){lsSet("credits",Math.max(0,n));}
+function getCreditLimit(){const p=getPlan();return p==="Max"?500:p==="Pro"?200:30;}
+const CREDIT_COST={standard:1,pro:2,reason:3,flash:1};
 
 // ─── XP · LEVEL · STREAK · PLAN (all derived from real activity) ───────────────
 const DOW_FULL=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
@@ -354,6 +358,7 @@ function AiChat() {
   const curModel=MODELS.find(m=>m.id===model)||MODELS[0];
   const [input,setInput]=useState("");
   const [loading,setLoading]=useState(false);
+  const [credits,setCredits]=useState(getCredits);
   const [msgs,setMsgs]=useState([
     {r:"ai",t:"Hey! What are we working on today?"},
   ]);
@@ -363,6 +368,8 @@ function AiChat() {
 
   const send=async(txt)=>{
     const t=(txt||input).trim(); if(!t||loading)return;
+    const cost=CREDIT_COST[model]||1;
+    if(credits<cost){setMsgs(m=>[...m,{r:"ai",t:"⚠ Not enough credits. You need "+cost+" credit"+(cost>1?"s":"")+" for "+curModel.name+". Buy more or switch to a lighter model."}]);return;}
     const newMsgs=[...msgs,{r:"user",t}];
     setMsgs(newMsgs);
     setInput("");
@@ -371,7 +378,7 @@ function AiChat() {
       const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:newMsgs,model})});
       const data=await res.json();
       if(data.error){setMsgs(m=>[...m,{r:"ai",t:"⚠ "+data.error}]);}
-      else{setMsgs(m=>[...m,{r:"ai",t:data.reply}]);}
+      else{const nc=credits-cost;setCredits(nc);setCreditsLS(nc);setMsgs(m=>[...m,{r:"ai",t:data.reply}]);}
     }catch(e){setMsgs(m=>[...m,{r:"ai",t:"⚠ Couldn't reach the AI. Check your connection and try again."}]);}
     setLoading(false);
   };
@@ -428,7 +435,7 @@ function AiChat() {
             <input style={{flex:1,background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"10px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none"}} placeholder={loading?"Thinking...":"Ask a question or paste text to analyse..."} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} disabled={loading} />
             <Btn onClick={()=>send()} style={{padding:"10px 14px",opacity:loading?0.5:1}} disabled={loading}>{Icon.send}</Btn>
           </div>
-          <div style={{fontSize:11,color:T.muted,marginTop:8}}><span style={{color:T.text,fontWeight:600}}>{curModel.name}</span> · {curModel.cost} per message</div>
+          <div style={{fontSize:11,color:T.muted,marginTop:8}}><span style={{color:T.text,fontWeight:600}}>{curModel.name}</span> · {curModel.cost} per message · <span style={{color:credits<(CREDIT_COST[model]||1)?T.red||"#f87171":T.lime}}>{credits} credits left</span></div>
         </Card>
         <div style={{display:"flex",flexDirection:"column",gap:12}}>
           <Card><Label>Session</Label><div style={{fontSize:28,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>12</div><div style={{fontSize:12,color:T.muted,marginTop:4}}>Conversations today</div></Card>
@@ -2208,7 +2215,7 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
           </div>
           <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(246,241,230,0.45)",marginTop:10,display:"flex",justifyContent:"space-between"}}>
             <span>1 credit per message</span>
-            <span>120 credits left</span>
+            <span>{getCredits()} credits left</span>
           </div>
         </div>
       </div>
@@ -2554,9 +2561,9 @@ function App() {
             <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",fontWeight:600,color:"rgba(14,31,24,0.65)"}}>AI CREDITS</span>
             <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",fontWeight:700,background:T.ink,color:T.lime,padding:"2px 6px",borderRadius:4}}>PRO</span>
           </div>
-          <div style={{fontFamily:T.hand,fontSize:36,fontWeight:700,color:T.ink,lineHeight:0.85,marginTop:6}}>120<span style={{fontFamily:T.font,fontSize:13,fontWeight:500,color:"rgba(14,31,24,0.5)",marginLeft:2}}>/ 200</span></div>
+          <div style={{fontFamily:T.hand,fontSize:36,fontWeight:700,color:T.ink,lineHeight:0.85,marginTop:6}}>{getCredits()}<span style={{fontFamily:T.font,fontSize:13,fontWeight:500,color:"rgba(14,31,24,0.5)",marginLeft:2}}>/ {getCreditLimit()}</span></div>
           <div style={{fontSize:10.5,color:"rgba(14,31,24,0.6)",marginTop:2,position:"relative"}}>Resets in 12 days</div>
-          <div style={{height:4,background:"rgba(14,31,24,0.15)",borderRadius:99,marginTop:10,overflow:"hidden"}}><div style={{height:"100%",width:"36%",background:T.ink,borderRadius:99}} /></div>
+          <div style={{height:4,background:"rgba(14,31,24,0.15)",borderRadius:99,marginTop:10,overflow:"hidden"}}><div style={{height:"100%",width:Math.min(100,Math.round(getCredits()/getCreditLimit()*100))+"%",background:T.ink,borderRadius:99}} /></div>
         </div>
       </div>
 
