@@ -29,6 +29,18 @@
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 <script src="https://js.stripe.com/v3/"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script>
+firebase.initializeApp({
+  apiKey:"AIzaSyApWyzKeifMgGCSjSjZClCCipUKDAiao4U",
+  authDomain:"studlin-cb78b.firebaseapp.com",
+  projectId:"studlin-cb78b",
+  storageBucket:"studlin-cb78b.firebasestorage.app",
+  messagingSenderId:"16831354472",
+  appId:"1:16831354472:web:50220e57868dba46c18ddd"
+});
+</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs" type="module"></script>
 <script>
 window._pdfjs=import("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs").then(m=>{m.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";return m;});
@@ -36,6 +48,6 @@ window._pdfjs=import("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" src="studlin-app.jsx?v=20"></script>
+<script type="text/babel" src="studlin-app.jsx?v=21"></script>
 </body>
 </html>

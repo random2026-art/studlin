@@ -1807,6 +1807,15 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 </select>
               </Field>
             </Card>
+            <Card style={{marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <div style={{fontSize:14,fontWeight:700,color:T.white}}>Sign out</div>
+                  <div style={{fontSize:12,color:T.muted,marginTop:2}}>Signed in as {firebase.auth().currentUser?.email}</div>
+                </div>
+                <button onClick={()=>firebase.auth().signOut()} style={{padding:"8px 18px",borderRadius:8,border:"1px solid rgba(248,113,113,0.3)",background:"rgba(248,113,113,0.08)",color:"#f87171",fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Sign out</button>
+              </div>
+            </Card>
             <Card>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Connected accounts</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Sync your calendar and cloud notes.</div>
@@ -2483,6 +2492,89 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
   );
 }
 
+// ─── AUTH SCREEN ─────────────────────────────────────────────────────────────
+function AuthScreen({onAuth}){
+  const [mode,setMode]=useState("signin");
+  const [email,setEmail]=useState("");
+  const [pass,setPass]=useState("");
+  const [name,setName]=useState("");
+  const [error,setError]=useState("");
+  const [loading,setLoading]=useState(false);
+
+  const submit=async(e)=>{
+    e.preventDefault();setError("");setLoading(true);
+    try{
+      if(mode==="signup"){
+        const cred=await firebase.auth().createUserWithEmailAndPassword(email,pass);
+        if(name)await cred.user.updateProfile({displayName:name});
+      }else{
+        await firebase.auth().signInWithEmailAndPassword(email,pass);
+      }
+    }catch(err){
+      const msg={"auth/email-already-in-use":"An account with this email already exists.","auth/invalid-email":"Invalid email address.","auth/weak-password":"Password must be at least 6 characters.","auth/user-not-found":"No account found with this email.","auth/wrong-password":"Incorrect password.","auth/invalid-credential":"Incorrect email or password.","auth/too-many-requests":"Too many attempts. Try again later."}[err.code]||err.message;
+      setError(msg);
+    }
+    setLoading(false);
+  };
+
+  const googleSignIn=async()=>{
+    setError("");setLoading(true);
+    try{await firebase.auth().signInWithPopup(new firebase.auth.GoogleAuthProvider());}
+    catch(err){if(err.code!=="auth/popup-closed-by-user")setError(err.message);}
+    setLoading(false);
+  };
+
+  const is=s=>s===mode;
+  return(
+    <div style={{minHeight:"100vh",background:"#0D120F",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{width:"100%",maxWidth:400,animation:"studlinRise 0.4s ease"}}>
+        <div style={{textAlign:"center",marginBottom:32}}>
+          <div style={{display:"inline-flex",alignItems:"center",gap:10,marginBottom:8}}>
+            <div style={{width:36,height:36,borderRadius:10,background:"#AECE5E",display:"grid",placeItems:"center",fontSize:18,fontWeight:800,color:"#0D120F"}}>S</div>
+            <span style={{fontSize:22,fontWeight:700,color:"#E8EFE7",letterSpacing:"-0.02em"}}>Studlin</span>
+          </div>
+          <div style={{fontSize:14,color:"rgba(232,239,231,0.5)",marginTop:4}}>{is("signin")?"Welcome back":"Create your account"}</div>
+        </div>
+
+        <button onClick={googleSignIn} disabled={loading} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:10,padding:"12px 16px",borderRadius:10,border:"1px solid rgba(255,255,255,0.12)",background:"rgba(255,255,255,0.04)",color:"#E8EFE7",fontSize:14,fontWeight:500,cursor:"pointer",fontFamily:"Geist,system-ui,sans-serif",marginBottom:16}}>
+          <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"/><path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z"/><path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238A11.91 11.91 0 0 1 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"/><path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.087 5.571l.003-.002 6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"/></svg>
+          Continue with Google
+        </button>
+
+        <div style={{display:"flex",alignItems:"center",gap:12,margin:"16px 0"}}>
+          <div style={{flex:1,height:1,background:"rgba(255,255,255,0.08)"}}/>
+          <span style={{fontSize:11,color:"rgba(232,239,231,0.35)",textTransform:"uppercase",letterSpacing:"0.1em"}}>or</span>
+          <div style={{flex:1,height:1,background:"rgba(255,255,255,0.08)"}}/>
+        </div>
+
+        <form onSubmit={submit}>
+          {is("signup")&&(
+            <input value={name} onChange={e=>setName(e.target.value)} placeholder="Full name" style={{width:"100%",padding:"12px 14px",borderRadius:10,border:"1px solid rgba(255,255,255,0.12)",background:"rgba(255,255,255,0.04)",color:"#E8EFE7",fontSize:14,fontFamily:"Geist,system-ui,sans-serif",outline:"none",marginBottom:10}} />
+          )}
+          <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email address" required style={{width:"100%",padding:"12px 14px",borderRadius:10,border:"1px solid rgba(255,255,255,0.12)",background:"rgba(255,255,255,0.04)",color:"#E8EFE7",fontSize:14,fontFamily:"Geist,system-ui,sans-serif",outline:"none",marginBottom:10}} />
+          <input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="Password" required minLength={6} style={{width:"100%",padding:"12px 14px",borderRadius:10,border:"1px solid rgba(255,255,255,0.12)",background:"rgba(255,255,255,0.04)",color:"#E8EFE7",fontSize:14,fontFamily:"Geist,system-ui,sans-serif",outline:"none",marginBottom:10}} />
+          {error&&<div style={{fontSize:12,color:"#f87171",marginBottom:10,padding:"8px 12px",background:"rgba(248,113,113,0.08)",borderRadius:8,border:"1px solid rgba(248,113,113,0.15)"}}>{error}</div>}
+          <button type="submit" disabled={loading} style={{width:"100%",padding:"12px 16px",borderRadius:10,border:"none",background:"#AECE5E",color:"#0D120F",fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"Geist,system-ui,sans-serif",opacity:loading?0.6:1}}>{loading?"...":(is("signin")?"Sign in":"Create account")}</button>
+        </form>
+
+        <div style={{textAlign:"center",marginTop:16,fontSize:13,color:"rgba(232,239,231,0.5)"}}>
+          {is("signin")?(<>Don't have an account? <button onClick={()=>{setMode("signup");setError("");}} style={{background:"none",border:"none",color:"#AECE5E",cursor:"pointer",fontFamily:"Geist,system-ui,sans-serif",fontSize:13,fontWeight:600,padding:0}}>Sign up</button></>)
+          :(<>Already have an account? <button onClick={()=>{setMode("signin");setError("");}} style={{background:"none",border:"none",color:"#AECE5E",cursor:"pointer",fontFamily:"Geist,system-ui,sans-serif",fontSize:13,fontWeight:600,padding:0}}>Sign in</button></>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── AUTH GATE ────────────────────────────────────────────────────────────────
+function AuthGate(){
+  const [user,setUser]=useState(undefined);
+  useEffect(()=>{return firebase.auth().onAuthStateChanged(u=>setUser(u||null));},[]);
+  if(user===undefined)return(<div style={{minHeight:"100vh",background:"#0D120F",display:"grid",placeItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"#AECE5E",display:"grid",placeItems:"center",fontSize:18,fontWeight:800,color:"#0D120F"}}>S</div><span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span></div></div>);
+  if(!user)return <AuthScreen />;
+  return <App />;
+}
+
 // ─── APP SHELL ────────────────────────────────────────────────────────────────
 function App() {
   seedEventsIfStale();
@@ -2906,4 +2998,4 @@ function App() {
 
 
 // Mount
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+ReactDOM.createRoot(document.getElementById('root')).render(<AuthGate />);
