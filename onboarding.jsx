@@ -130,15 +130,24 @@ function StepSignup({ state, set, advance }) {
   const socialSign = async (providerObj) => {
     setAuthError("");setLoading(true);
     try {
-      const result = await firebase.auth().signInWithPopup(providerObj);
-      const u = result.user;
-      set(s=>({...s, provider: providerObj.providerId, name: u.displayName||s.name, email: u.email||s.email}));
-      advance(true);
+      await firebase.auth().signInWithRedirect(providerObj);
     } catch(err) {
-      if(err.code!=="auth/popup-closed-by-user") setAuthError(ERR_MAP[err.code]||(err.message||"Sign-up failed. Please try again."));
+      setAuthError(ERR_MAP[err.code]||(err.message||"Sign-up failed. Please try again."));
+      setLoading(false);
     }
-    setLoading(false);
   };
+
+  useEffect(()=>{
+    firebase.auth().getRedirectResult().then(result=>{
+      if(result.user){
+        const u=result.user;
+        set(s=>({...s, provider:result.credential?.providerId||"google", name:u.displayName||s.name, email:u.email||s.email}));
+        advance(true);
+      }
+    }).catch(err=>{
+      if(err.code&&err.code!=="auth/popup-closed-by-user") setAuthError(ERR_MAP[err.code]||(err.message||"Sign-up failed. Please try again."));
+    });
+  },[]);
 
   const pwOk = { len: (state.password||"").length >= 8 };
   const allOk = pwOk.len;

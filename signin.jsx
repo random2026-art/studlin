@@ -106,14 +106,20 @@ function App() {
   const socialSign = async (provider) => {
     setGlobalError("");setLoading(true);
     try {
-      await firebase.auth().signInWithPopup(provider);
-      window.location.href = APP_URL;
+      await firebase.auth().signInWithRedirect(provider);
     } catch(err) {
-      if(err.code==="auth/popup-closed-by-user"){setLoading(false);return;}
-      setGlobalError(ERR_MAP[err.code]||"Sign-in failed. Please try again.");
+      setGlobalError(ERR_MAP[err.code]||(err.message||"Sign-in failed. Please try again."));
+      setLoading(false);
     }
-    setLoading(false);
   };
+
+  React.useEffect(()=>{
+    firebase.auth().getRedirectResult().then(result=>{
+      if(result.user) window.location.href=APP_URL;
+    }).catch(err=>{
+      if(err.code) setGlobalError(ERR_MAP[err.code]||(err.message||"Sign-in failed."));
+    });
+  },[]);
 
   const tryLogin = async () => {
     const errs = {};

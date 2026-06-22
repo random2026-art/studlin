@@ -2606,18 +2606,20 @@ function AuthScreen(){
 
   const socialSign=async(provider)=>{
     setError("");setLoading(true);
-    try{await firebase.auth().signInWithPopup(provider);}
+    try{await firebase.auth().signInWithRedirect(provider);}
     catch(err){
-      if(err.code==="auth/popup-closed-by-user"){setLoading(false);return;}
       const msg={
         "auth/account-exists-with-different-credential":"An account already exists with this email using a different sign-in method.",
-        "auth/popup-blocked":"Pop-up was blocked by your browser. Please allow pop-ups and try again.",
         "auth/network-request-failed":"Network error. Check your connection and try again.",
       }[err.code]||(err.message||"Sign-in failed. Please try again.");
-      setError(msg);
+      setError(msg);setLoading(false);
     }
-    setLoading(false);
   };
+  useEffect(()=>{
+    firebase.auth().getRedirectResult().catch(err=>{
+      if(err.code)setError(err.message||"Sign-in failed.");
+    });
+  },[]);
 
   const F="Geist,system-ui,sans-serif";
   const providerBtn={width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:10,padding:"13px 16px",borderRadius:10,fontSize:14.5,fontWeight:500,cursor:"pointer",fontFamily:F,marginBottom:10};
