@@ -364,15 +364,67 @@ function StepPlan({ state, set }) {
   );
 }
 
+const TUT_TASKS=[
+  {id:"dash",text:"Open your personalised dashboard",xp:5,cap:"Your whole day, planned before you sit down."},
+  {id:"focus",text:"Start your first 25-minute focus session",xp:10,cap:"One tap. Phone away. Totally locked in."},
+  {id:"cards",text:"Drop a PDF and generate flashcards",xp:10,cap:"Any file becomes a deck in seconds."},
+  {id:"tutor",text:"Ask the AI tutor your first question",xp:5,cap:"It walks you through it, step by step."},
+  {id:"streak",text:"Complete your first day streak",xp:10,cap:"Show up today. Future you says thanks."},
+];
+
+function useRun(){const[on,setOn]=useState(false);useEffect(()=>{const id=setTimeout(()=>setOn(true),60);return()=>clearTimeout(id);},[]);return on;}
+
+const FlameIc=<svg viewBox="0 0 24 24" width="44" height="44" fill="currentColor"><path d="M12 2c1.2 3.9-2.8 5.6-2.8 9a2.8 2.8 0 0 0 5.6 0c0-1.4-.6-2.5-1.3-3.4C16.2 8.7 18.5 10.9 18.5 14a6.5 6.5 0 0 1-13 0C5.5 9 10.4 6.8 12 2z"/></svg>;
+
+function Demo({kind}){
+  const on=useRun();const cls="demo"+(on?" on":"");
+  if(kind==="dash")return(<div className={cls}><div className="dm-window"><div className="dm-greet"><span className="dm-hi">Good morning</span><span className="dm-pill">3 tasks today</span></div><div className="dm-grid"><div className="dm-tile t1"><div className="dm-tlab">Focus</div><i className="dm-spark"></i></div><div className="dm-tile t2"><div className="dm-tlab">Streak</div><div className="dm-big">12</div></div><div className="dm-tile t3"><div className="dm-tlab">This week</div><i className="dm-bars"><b></b><b></b><b></b><b></b><b></b></i></div></div></div></div>);
+  if(kind==="focus")return(<div className={cls}><div className="dm-focus"><svg viewBox="0 0 120 120" className="dm-timer"><circle cx="60" cy="60" r="52" className="track"></circle><circle cx="60" cy="60" r="52" className="prog"></circle></svg><div className="dm-mid"><div className="dm-time">25:00</div><div className="dm-lab">LOCKED IN</div></div></div></div>);
+  if(kind==="cards")return(<div className={cls}><div className="dm-doc"><span>notes.pdf</span></div><div className="dm-fan"><div className="dm-card c1">What is osmosis?</div><div className="dm-card c2">Define entropy</div><div className="dm-card c3">Mitosis vs meiosis?</div></div></div>);
+  if(kind==="tutor")return(<div className={cls}><div className="dm-chat"><div className="dm-bub me">Why does ice float?</div><div className="dm-bub ai"><span className="dm-dots"><i></i><i></i><i></i></span><span className="dm-ans">Water expands as it freezes, so ice is less dense than liquid water. Less dense floats.</span></div></div></div>);
+  return(<div className={cls}><div className="dm-streak"><div className="dm-flame">{FlameIc}</div><div className="dm-days">{["M","T","W","T","F","S","S"].map((d,i)=><span key={i} className="dm-day" style={{transitionDelay:(0.3+i*0.18)+"s"}}>{d}</span>)}</div><div className="dm-dlab">Day 1 · started</div></div></div>);
+}
+
+function TutTheater({task,onFinish}){
+  const on=useRun();
+  return(<div className={"tut-veil"+(on?" on":"")} onClick={onFinish}><div className="tut-stage" onClick={e=>e.stopPropagation()}><Demo kind={task.id} key={task.id} /><div className="tut-cap">{task.cap}</div><div className="tut-bar"><i></i></div><button className="tut-skip" onClick={onFinish}>Got it · collect +{task.xp} XP</button></div></div>);
+}
+
 function StepWelcome({ state }) {
-  const first = (state.preferredName||state.name||"there").split(" ")[0];
+  const [done,setDone]=useState({});
+  const [active,setActive]=useState(null);
+  const [justEarned,setJustEarned]=useState(null);
+  const timerRef=useRef(null);
+  const first=(state.preferredName||state.name||"there").split(" ")[0];
+  const max=TUT_TASKS.reduce((s,t)=>s+t.xp,0);
+  const total=TUT_TASKS.reduce((s,t)=>s+(done[t.id]?t.xp:0),0);
+  const allDone=TUT_TASKS.every(t=>done[t.id]);
+
+  const finish=(t)=>{clearTimeout(timerRef.current);setActive(null);setDone(d=>({...d,[t.id]:true}));setJustEarned(t.id);setTimeout(()=>setJustEarned(null),1100);};
+  const open=(t)=>{if(done[t.id])return;setActive(t);clearTimeout(timerRef.current);timerRef.current=setTimeout(()=>finish(t),4000);};
+  useEffect(()=>()=>clearTimeout(timerRef.current),[]);
+
   return (
     <div className="frame">
       <div className="celebrate">
         <div className="celebrate-glyph"><div style={{width:56,height:56,borderRadius:12,background:"#9EC83D",display:"grid",placeItems:"center",fontSize:28,fontWeight:800,color:"#14342A"}}>S</div></div>
         <h2 style={{fontSize:32,margin:"0 0 8px",letterSpacing:"-0.025em",fontWeight:600}}>You're in, <em style={{fontFamily:"Instrument Serif,serif",fontStyle:"italic",color:"var(--lime-dk)",fontWeight:400}}>{first}.</em></h2>
-        <p style={{fontSize:15,color:"var(--muted)",margin:"0 auto",maxWidth:440,lineHeight:1.55}}>Your workspace is ready. Start exploring — everything's set up based on your answers.</p>
+        <p style={{fontSize:15,color:"var(--muted)",margin:"0 auto",maxWidth:440,lineHeight:1.55}}>Tap each one to see how it works · finish all five to unlock a 40 XP bonus and start your streak.</p>
       </div>
+      <div className="checklist">
+        {TUT_TASKS.map(t=>(
+          <div key={t.id} className={"cl-item"+(done[t.id]?" done":"")} onClick={()=>open(t)}>
+            <span className="box">{Ic.check}</span>
+            <span className="text">{t.text}</span>
+            {!done[t.id]&&<span className="cl-play">Watch<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>}
+            <span className={"reward"+(justEarned===t.id?" pop":"")}>+{t.xp} XP</span>
+          </div>
+        ))}
+      </div>
+      <div className="xp-foot">
+        {allDone?(<div className="bonus-banner">Bonus unlocked · +40 XP · streak started</div>):(<><div className="xp-row"><span>Today's XP</span><strong>{total} / {max}</strong></div><div className="xp-track"><i style={{width:(total/max*100)+"%"}}></i></div></>)}
+      </div>
+      {active&&<TutTheater task={active} onFinish={()=>finish(active)} />}
     </div>
   );
 }
