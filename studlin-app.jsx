@@ -974,10 +974,10 @@ function Notes(){
                     <BtnSm variant="subtle" onClick={async()=>{
                       const note=filtered[sel];if(!note?.body)return;
                       const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"flash",messages:[{r:"user",t:"Summarize these notes in 3-5 bullet points, keep it concise:\n\n"+note.body}]})});
-                      const data=await res.json();if(data.reply){const nl=[...noteList];const ri=noteList.findIndex(n=>n.title===note.title);if(ri>=0){nl[ri]={...nl[ri],body:nl[ri].body+"\n\n--- AI Summary ---\n"+data.reply};setNoteList(nl);lsSet("notes",nl);}}
+                      const data=await res.json();if(data.reply){const nl=[...notes];const ri=notes.findIndex(n=>n.title===note.title);if(ri>=0){nl[ri]={...nl[ri],body:nl[ri].body+"\n\n--- AI Summary ---\n"+data.reply};setNotes(nl);lsSet("notes",nl);}}
                     }}>Summarise</BtnSm>
                     <BtnSm variant="subtle" onClick={()=>{navigator.clipboard?.writeText(filtered[sel].body);}}>Copy</BtnSm>
-                    <BtnSm variant="subtle" onClick={()=>{const nl=noteList.filter(n=>n.title!==filtered[sel].title);setNoteList(nl);lsSet("notes",nl);setSel(null);}}>Delete</BtnSm>
+                    <BtnSm variant="subtle" onClick={()=>{const nl=notes.filter(n=>n.title!==filtered[sel].title);setNotes(nl);lsSet("notes",nl);setSel(null);}}>Delete</BtnSm>
                   </div>
                 </div>
                 <div style={{fontSize:14,color:T.text,lineHeight:1.9,whiteSpace:"pre-wrap"}}>{filtered[sel].body}</div>
