@@ -329,7 +329,10 @@ function StepPlan({ state, set }) {
         <button className={"plan"+(state.plan==="pro"?" is-selected":"")} onClick={()=>set({...state, plan:"pro"})}>
           <span className="plan-tag">7 DAYS FREE</span>
           <h3>Pro</h3>
-          <div className="pp"><strong>${annual?"7.99":"9.99"}</strong> / mo{annual?" · billed annually":""}</div>
+          {annual
+            ? <div className="pp"><strong>$95.88</strong> / year<br/><span style={{fontSize:12,color:"var(--muted)"}}>That's just $7.99/mo</span></div>
+            : <div className="pp"><strong>$9.99</strong> / month</div>
+          }
           <ul>
             <li><span className="ck">{Ic.check}</span> 200 AI credits / month</li>
             <li><span className="ck">{Ic.check}</span> AI tutor — all models</li>
@@ -341,7 +344,10 @@ function StepPlan({ state, set }) {
         <button className={"plan"+(state.plan==="max"?" is-selected":"")} onClick={()=>set({...state, plan:"max"})}>
           <span className="plan-tag dark">BEST VALUE</span>
           <h3>Max</h3>
-          <div className="pp"><strong>${annual?"19.99":"24.99"}</strong> / mo{annual?" · billed annually":""}</div>
+          {annual
+            ? <div className="pp"><strong>$239.88</strong> / year<br/><span style={{fontSize:12,color:"var(--muted)"}}>That's just $19.99/mo</span></div>
+            : <div className="pp"><strong>$24.99</strong> / month</div>
+          }
           <ul>
             <li><span className="ck">{Ic.check}</span> 500 AI credits / month</li>
             <li><span className="ck">{Ic.check}</span> Everything in Pro</li>
