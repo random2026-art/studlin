@@ -84,7 +84,7 @@ function LeftRail() {
         <div className="rail-tile">
           <div className="ic">{Ic.clock}</div>
           <div className="t">Back in seconds</div>
-          <div className="s">One tap with Google or Apple</div>
+          <div className="s">One tap with Google — or use your email</div>
         </div>
       </div>
     </aside>
@@ -158,7 +158,6 @@ function App() {
               <React.Fragment>
                 <div className="providers">
                   <button className="provider" onClick={()=>socialSign(new firebase.auth.GoogleAuthProvider())} disabled={loading}>{Ic.google} Continue with Google</button>
-                  <button className="provider dark" onClick={()=>socialSign(new firebase.auth.OAuthProvider("apple.com"))} disabled={loading}>{Ic.apple} Continue with Apple</button>
                 </div>
                 <div className="divider">or log in with email</div>
                 <button className="provider" onClick={()=>setMode("email")}>{Ic.mail} Use email instead</button>
@@ -184,7 +183,7 @@ function App() {
                   <a className="forgot" href="#">Forgot password?</a>
                 </div>
                 <div style={{marginTop:18}}>
-                  <button className="provider" onClick={()=>{setMode("providers"); setErrors({}); setGlobalError("");}} style={{padding:"10px 14px",fontSize:13}}>← Use Google or Apple instead</button>
+                  <button className="provider" onClick={()=>{setMode("providers"); setErrors({}); setGlobalError("");}} style={{padding:"10px 14px",fontSize:13}}>← Use Google instead</button>
                 </div>
               </React.Fragment>
             )}

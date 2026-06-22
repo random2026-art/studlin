@@ -174,7 +174,6 @@ function StepSignup({ state, set, advance }) {
         <>
           <div className="providers">
             <button className="provider" onClick={()=>socialSign(new firebase.auth.GoogleAuthProvider())} disabled={loading}>{Ic.google} Continue with Google</button>
-            <button className="provider dark" onClick={()=>socialSign(new firebase.auth.OAuthProvider("apple.com"))} disabled={loading}>{Ic.apple} Continue with Apple</button>
           </div>
           <div className="divider">or sign up with email</div>
           <button className="provider" onClick={()=>setMode("email")}>{Ic.mail} Use email instead</button>
@@ -206,7 +205,7 @@ function StepSignup({ state, set, advance }) {
           <TextField label="Email address" value={state.email} onChange={v=>set({...state, email:v})} hint={errors.email?null:"Any email works — school, Gmail, whatever."} error={errors.email} type="email" autoComplete="email" />
           <TextField label="Create password" value={state.password} onChange={v=>set({...state, password:v})} type="password" autoComplete="new-password" error={errors.password} hint={errors.password?null:"At least 8 characters."} />
           <div style={{marginTop:18}}>
-            <button className="provider" onClick={()=>setMode("providers")} style={{padding:"10px 14px",fontSize:13}}>← Use Google or Apple instead</button>
+            <button className="provider" onClick={()=>setMode("providers")} style={{padding:"10px 14px",fontSize:13}}>← Use Google instead</button>
           </div>
           <button data-cta="signup" onClick={tryAdvance} style={{display:"none"}}></button>
         </>
