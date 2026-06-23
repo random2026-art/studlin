@@ -512,13 +512,12 @@ function AiChat() {
     const stepTimer=setInterval(()=>{stepIdx++;if(stepIdx<thinkSteps.length)setThinkStep(thinkSteps[stepIdx]);},1200);
     try{
       const apiMsgs=newMsgs.map(m=>({r:m.r,t:m._ai||m.t}));
-      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:apiMsgs,model})});
+      const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:apiMsgs,model})});
       const data=await res.json();
       clearInterval(stepTimer);
       setThinkStep("");
       if(data.error){setMsgs(m=>[...m,{r:"ai",t:"⚠ "+data.error}]);}
       else{
-        if(typeof data.credits==="number"){setCredits(data.credits);setCreditsLS(data.credits);}
         const label=fileCtx?"Analyzed file and prepared response":"Analyzed your question and prepared response";
         setMsgs(m=>[...m,{r:"ai",t:data.reply,thinkLabel:label}]);
       }
@@ -1413,7 +1412,7 @@ function CalendarTab(){
     const perSession=Math.round(evDuration/splitCount);
     const prompt="You are a scheduling AI. Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+PRIORITY_LABELS[evPriority]+(evDeadline?". Deadline: "+evDeadline:"")+". Today is "+tk+". Existing schedule: "+JSON.stringify(existing)+". RULES: Higher priority = earlier slots. Must be before deadline. Avoid conflicts. Hours 8:00-22:00. Spread splits across days. Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
     try{
-      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
+      const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
       const data=await res.json();
       const raw=data.reply.replace(/```json?|```/g,"").trim();
       const parsed=JSON.parse(raw);
