@@ -147,6 +147,49 @@ const Icon = {
   dot:       ic(<><circle cx="12" cy="12" r="4" fill="currentColor" stroke="none"/></>),
 };
 
+// ─── MOTIVATIONAL QUOTES + BREAK IDEAS ───────────────────────────────────────
+const QUOTES=[
+  {text:"The secret of getting ahead is getting started.",author:"Mark Twain"},
+  {text:"It's not that I'm so smart. It's just that I stay with problems longer.",author:"Albert Einstein"},
+  {text:"You don't have to be great to start, but you have to start to be great.",author:"Zig Ziglar"},
+  {text:"The only way to do great work is to love what you do.",author:"Steve Jobs"},
+  {text:"Success is the sum of small efforts, repeated day in and day out.",author:"Robert Collier"},
+  {text:"Don't watch the clock; do what it does. Keep going.",author:"Sam Levenson"},
+  {text:"A little progress each day adds up to big results.",author:"Satya Nani"},
+  {text:"Start where you are. Use what you have. Do what you can.",author:"Arthur Ashe"},
+  {text:"The expert in anything was once a beginner.",author:"Helen Hayes"},
+  {text:"Focus on being productive instead of busy.",author:"Tim Ferriss"},
+  {text:"It always seems impossible until it's done.",author:"Nelson Mandela"},
+  {text:"You are never too old to set another goal or to dream a new dream.",author:"C.S. Lewis"},
+  {text:"Discipline is choosing between what you want now and what you want most.",author:"Abraham Lincoln"},
+  {text:"The beautiful thing about learning is that no one can take it away from you.",author:"B.B. King"},
+  {text:"Small daily improvements over time lead to stunning results.",author:"Robin Sharma"},
+  {text:"Education is the most powerful weapon you can use to change the world.",author:"Nelson Mandela"},
+  {text:"You miss 100% of the shots you don't take.",author:"Wayne Gretzky"},
+  {text:"Studying is not about time spent but about effort invested.",author:"Anonymous"},
+  {text:"The pain of studying is temporary. The pain of not knowing is forever.",author:"Anonymous"},
+  {text:"Your future self will thank you for the work you put in today.",author:"Anonymous"},
+];
+const BREAK_IDEAS=[
+  "Go for a quick walk. Even 2 minutes helps clear your head.",
+  "Are you hungry? Go eat silly.",
+  "Stretch your arms, neck, and back. You've earned it.",
+  "Grab some water. Stay hydrated.",
+  "Look out a window for 20 seconds. Rest your eyes.",
+  "Do 10 pushups. Seriously, it wakes you up.",
+  "Text a friend something nice. Spread good energy.",
+  "Take 5 deep breaths. In through the nose, out through the mouth.",
+  "Stand up and shake it out. Wiggle your arms and legs.",
+  "Close your eyes for 30 seconds. Just breathe.",
+  "Play your favorite song. One song, then back to it.",
+  "Splash some cold water on your face. Instant refresh.",
+  "Do a quick doodle. Draw anything for 60 seconds.",
+  "Look at something green. Plants are good for your brain.",
+  "Roll your shoulders 10 times forward, 10 times back.",
+];
+const PRIORITY_LABELS=["","Low","Medium-Low","Medium","High","Urgent"];
+const PRIORITY_COLORS=["","#5FCBA8","#7BACDF","#DCA64A","#E8946B","#D9806B"];
+
 // ─── SHARED PRIMITIVES ────────────────────────────────────────────────────────
 const Btn = ({children,onClick,style={},variant="lime"}) => {
   const base = {display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",border:"none",fontFamily:T.font,letterSpacing:"0.01em",transition:"opacity 0.15s"};
@@ -260,6 +303,10 @@ async function getAuthToken(){try{const u=firebase.auth().currentUser;if(!u)retu
 async function authFetch(url,opts={}){try{const token=await getAuthToken();const h=Object.assign({},opts.headers||{});if(token)h["Authorization"]="Bearer "+token;return fetch(url,Object.assign({},opts,{headers:h}));}catch(e){return fetch(url,opts);}}
 async function fetchUserProfile(){try{const res=await authFetch("/api/me");if(!res.ok)return null;const d=await res.json();lsSet("credits",d.credits);lsSet("plan",d.plan||"Free");return d;}catch(e){return null;}}
 const dayKey=(d)=>{const x=d||new Date();return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");};
+function daysOverdue(ev){if(!ev.deadline)return 0;if(ev.date<=ev.deadline)return 0;const d1=new Date(ev.date),d2=new Date(ev.deadline);return Math.ceil((d1-d2)/86400000);}
+function daysUntilDeadline(ev){if(!ev.deadline)return null;const d1=new Date(ev.deadline),d2=new Date(dayKey());return Math.ceil((d1-d2)/86400000);}
+function scheduleTaskNotif(task){try{if(!("Notification" in window)||Notification.permission!=="granted")return;const t=new Date(task.date+"T"+task.time);const delay=t.getTime()-10*60*1000-Date.now();if(delay<=0)return;setTimeout(()=>{new Notification("Studlin",{body:task.title+" starts in 10 minutes"});},delay);}catch(e){}}
+function requestNotifPermission(){if(!("Notification" in window))return;Notification.requestPermission();}
 function touchStreak(){const days=lsGet("days",[]);const t=dayKey();if(!days.includes(t)){days.push(t);lsSet("days",days);}}
 function getStreak(){const days=new Set(lsGet("days",[]));let n=0;const d=new Date();while(days.has(dayKey(d))){n++;d.setDate(d.getDate()-1);}return n;}
 function logSession(mins,mode){const s=lsGet("sessions",[]);s.push({d:dayKey(),m:mins,t:Date.now(),mode:mode||"Focus"});lsSet("sessions",s);}
@@ -1174,6 +1221,110 @@ function FocusTimer({focusSecs,setFocusSecs,focusRunning,setFocusRunning,focusMo
 }
 
 // ─── CALENDAR ─────────────────────────────────────────────────────────────────
+// ─── TASK TIMER MODAL ────────────────────────────────────────────────────────
+function TaskTimerModal({task,onClose,onComplete}){
+  const [phase,setPhase]=useState("quote");
+  const [breakOn,setBreakOn]=useState(true);
+  const [breakMins,setBreakMins]=useState(5);
+  const [secs,setSecs]=useState((task.duration||25)*60);
+  const [running,setRunning]=useState(false);
+  const [breakSecs,setBreakSecs]=useState(0);
+  const [breakIdea,setBreakIdea]=useState("");
+  const [elapsed,setElapsed]=useState(0);
+  const totalSecs=(task.duration||25)*60;
+  const quote=QUOTES[Math.floor(Math.random()*QUOTES.length)];
+  const breakInterval=breakOn?Math.min(25*60,totalSecs):totalSecs;
+
+  useEffect(()=>{
+    if(!running)return;
+    const id=setInterval(()=>{
+      if(phase==="focus"){
+        setSecs(s=>{
+          if(s<=1){
+            if(breakOn&&elapsed+totalSecs-0<totalSecs){
+              setPhase("break");setBreakSecs(breakMins*60);setBreakIdea(BREAK_IDEAS[Math.floor(Math.random()*BREAK_IDEAS.length)]);setRunning(true);
+              return 0;
+            }
+            setPhase("done");setRunning(false);
+            if(onComplete)onComplete(Math.round(totalSecs/60));
+            return 0;
+          }
+          return s-1;
+        });
+        setElapsed(e=>e+1);
+      }else if(phase==="break"){
+        setBreakSecs(s=>{
+          if(s<=1){setPhase("focus");setSecs(Math.max(0,totalSecs-elapsed-1));return 0;}
+          return s-1;
+        });
+      }
+    },1000);
+    return()=>clearInterval(id);
+  },[running,phase,breakOn,breakMins,elapsed,totalSecs]);
+
+  const fm=String(Math.floor(secs/60)).padStart(2,"0"),fs=String(secs%60).padStart(2,"0");
+  const bm=String(Math.floor(breakSecs/60)).padStart(2,"0"),bs=String(breakSecs%60).padStart(2,"0");
+  const pct=totalSecs>0?Math.round(((totalSecs-secs)/totalSecs)*100):0;
+  const circumference=2*Math.PI*52;
+
+  if(phase==="quote")return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(10px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:480,background:T.card,borderRadius:20,border:`1px solid ${T.border}`,padding:"40px 36px",textAlign:"center"}}>
+        <div style={{fontSize:48,marginBottom:20}}>✨</div>
+        <div style={{fontSize:18,fontStyle:"italic",color:T.text,lineHeight:1.6,marginBottom:8,fontFamily:T.serif}}>"{quote.text}"</div>
+        <div style={{fontSize:13,color:T.muted,marginBottom:28}}>— {quote.author}</div>
+        <div style={{fontSize:14,fontWeight:600,color:T.white,marginBottom:6}}>{task.title}</div>
+        <div style={{fontSize:12,color:T.muted,marginBottom:24}}>{task.duration||25} minutes · {task.subject||"Study session"}</div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 16px",background:T.card2,borderRadius:10,marginBottom:20,border:`1px solid ${T.border}`}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}} onClick={()=>setBreakOn(b=>!b)}>
+            <div style={{width:32,height:18,borderRadius:9,background:breakOn?T.lime:T.faint,position:"relative",transition:"background 0.2s"}}><div style={{width:14,height:14,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:breakOn?16:2,transition:"left 0.2s"}} /></div>
+            <span style={{fontSize:12,color:T.text}}>Breaks</span>
+          </div>
+          {breakOn&&<div style={{display:"flex",alignItems:"center",gap:6}}><input type="number" min={1} max={30} value={breakMins} onChange={e=>setBreakMins(Math.max(1,+e.target.value||5))} style={{width:48,padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontSize:12,fontFamily:T.font,textAlign:"center"}} /><span style={{fontSize:11,color:T.muted}}>min break</span></div>}
+        </div>
+        <Btn onClick={()=>{setPhase("focus");setRunning(true);}} style={{width:"100%",justifyContent:"center",padding:"14px 24px",fontSize:15}}>Lock in</Btn>
+      </div>
+    </div>
+  );
+
+  if(phase==="done")return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(10px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:420,background:T.card,borderRadius:20,border:`1px solid ${T.border}`,padding:"40px 36px",textAlign:"center"}}>
+        <div style={{fontSize:48,marginBottom:16}}>🎉</div>
+        <h2 style={{fontSize:24,fontWeight:700,color:T.white,margin:"0 0 8px"}}>Session complete</h2>
+        <p style={{fontSize:14,color:T.muted,margin:"0 0 8px"}}>{task.title}</p>
+        <div style={{fontSize:28,fontWeight:700,color:T.lime,fontFamily:T.mono,marginBottom:20}}>{Math.round(elapsed/60)} min focused</div>
+        <Btn onClick={onClose} style={{width:"100%",justifyContent:"center"}}>Done</Btn>
+      </div>
+    </div>
+  );
+
+  const isBreak=phase==="break";
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",backdropFilter:"blur(12px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{width:"100%",maxWidth:400,textAlign:"center"}}>
+        <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:isBreak?T.amber:T.lime,marginBottom:16}}>{isBreak?"Break time":"Focused"}</div>
+        <div style={{position:"relative",width:180,height:180,margin:"0 auto 20px"}}>
+          <svg viewBox="0 0 120 120" style={{width:180,height:180,transform:"rotate(-90deg)"}}>
+            <circle cx="60" cy="60" r="52" fill="none" stroke={T.card2} strokeWidth="6" />
+            <circle cx="60" cy="60" r="52" fill="none" stroke={isBreak?T.amber:T.lime} strokeWidth="6" strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={isBreak?circumference*(1-breakSecs/(breakMins*60)):circumference*(1-pct/100)} style={{transition:"stroke-dashoffset 0.5s"}} />
+          </svg>
+          <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+            <div style={{fontSize:42,fontWeight:700,color:T.white,fontFamily:T.mono,letterSpacing:"-0.02em"}}>{isBreak?bm+":"+bs:fm+":"+fs}</div>
+            <div style={{fontSize:11,color:T.muted,marginTop:4}}>{isBreak?"break":"remaining"}</div>
+          </div>
+        </div>
+        <div style={{fontSize:15,fontWeight:600,color:T.white,marginBottom:4}}>{task.title}</div>
+        {isBreak&&<div style={{fontSize:13,color:T.amber,marginTop:12,padding:"12px 16px",background:T.amber+"12",borderRadius:10,lineHeight:1.5}}>{breakIdea}</div>}
+        <div style={{display:"flex",gap:10,justifyContent:"center",marginTop:24}}>
+          <Btn variant="ghost" onClick={()=>setRunning(r=>!r)}>{running?"Pause":"Resume"}</Btn>
+          <Btn variant="danger" onClick={()=>{setPhase("done");setRunning(false);if(onComplete)onComplete(Math.round(elapsed/60));}}>Finish early</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CalendarTab(){
   const SUBJ=[
     {value:"Chemistry",label:"Chemistry",color:T.red},
@@ -1204,7 +1355,14 @@ function CalendarTab(){
   const [evCustom,setEvCustom]=useState("");
   const [evKind,setEvKind]=useState("deadline");
   const [evNotes,setEvNotes]=useState("");
+  const [evPriority,setEvPriority]=useState(3);
+  const [evDeadline,setEvDeadline]=useState("");
+  const [evDuration,setEvDuration]=useState(60);
+  const [evSplitEnabled,setEvSplitEnabled]=useState(false);
+  const [evSplitCount,setEvSplitCount]=useState(2);
+  const [aiLoading,setAiLoading]=useState(false);
   const [toast,setToast]=useState(false);
+  const [dragId,setDragId]=useState(null);
   const monthNames=["January","February","March","April","May","June","July","August","September","October","November","December"];
   const lead=(new Date(ym.y,ym.m,1).getDay()+6)%7;
   const dim=new Date(ym.y,ym.m+1,0).getDate();
@@ -1220,34 +1378,96 @@ function CalendarTab(){
   const relDay=(k)=>{if(k===todayK)return "Today";const t=new Date();t.setDate(t.getDate()+1);if(k===dayKey(t))return "Tomorrow";const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{month:"short",day:"numeric"});};
   const upcoming=events.filter(ev=>ev.date>=todayK).sort((a,b)=>a.date===b.date?(a.time<b.time?-1:1):(a.date<b.date?-1:1)).slice(0,6);
   const dayEvents=(byDay[selDay]||[]).slice().sort((a,b)=>a.time<b.time?-1:1);
-  const openNew=(dateK)=>{setEvDate(dateK||selDay);setNewOpen(true);};
-  const saveEvent=()=>{
-    if(!evTitle.trim())return;
+  const openNew=(dateK)=>{setEvDate(dateK||selDay);setEvDeadline("");setEvPriority(3);setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setNewOpen(true);};
+  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvPriority(3);setEvDeadline("");setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);};
+  const buildTask=(date,time,titleSuffix,splitInfo)=>{
     const subj=evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject;
-    const next=events.concat([{id:String(Date.now()),title:evTitle.trim(),date:evDate,time:evTime,subject:subj,kind:evKind,notes:evNotes}]);
+    return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,kind:evKind,notes:evNotes,priority:evPriority,deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,...(splitInfo||{})};
+  };
+  const commitTasks=(newTasks)=>{
+    const next=events.concat(newTasks);
     setEvents(next);lsSet("events",next);
-    setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setSelDay(evDate);
-    if(evDate.slice(0,7)!==(ym.y+"-"+String(ym.m+1).padStart(2,"0"))){const p=evDate.split("-");setYm({y:+p[0],m:+p[1]-1});}
+    newTasks.forEach(t=>scheduleTaskNotif(t));
+    resetForm();setSelDay(newTasks[0].date);
+    const d=newTasks[0].date;if(d.slice(0,7)!==(ym.y+"-"+String(ym.m+1).padStart(2,"0"))){const p=d.split("-");setYm({y:+p[0],m:+p[1]-1});}
     setToast(true);setTimeout(()=>setToast(false),2200);
   };
+  const saveManual=()=>{
+    if(!evTitle.trim())return;
+    if(!evSplitEnabled){commitTasks([buildTask(evDate,evTime)]);return;}
+    const groupId="split-"+Date.now();
+    const perSession=Math.round(evDuration/evSplitCount);
+    const tasks=[];
+    for(let i=0;i<evSplitCount;i++){
+      const d=new Date(evDate);d.setDate(d.getDate()+i);
+      tasks.push(buildTask(dayKey(d),evTime," ("+(i+1)+"/"+evSplitCount+")",{splitGroup:groupId,splitIndex:i+1,splitTotal:evSplitCount,duration:perSession}));
+    }
+    commitTasks(tasks);
+  };
+  const aiArrange=async()=>{
+    if(!evTitle.trim())return;
+    setAiLoading(true);
+    const tk=dayKey();
+    const existing=events.filter(ev=>ev.date>=tk).map(ev=>({title:ev.title,date:ev.date,time:ev.time,duration:ev.duration||60}));
+    const splitCount=evSplitEnabled?evSplitCount:1;
+    const perSession=Math.round(evDuration/splitCount);
+    const prompt="You are a scheduling AI. Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+PRIORITY_LABELS[evPriority]+(evDeadline?". Deadline: "+evDeadline:"")+". Today is "+tk+". Existing schedule: "+JSON.stringify(existing)+". RULES: Higher priority = earlier slots. Must be before deadline. Avoid conflicts. Hours 8:00-22:00. Spread splits across days. Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
+    try{
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
+      const data=await res.json();
+      const raw=data.reply.replace(/```json?|```/g,"").trim();
+      const parsed=JSON.parse(raw);
+      if(parsed.sessions&&parsed.sessions.length>0){
+        const groupId=splitCount>1?"split-"+Date.now():null;
+        const tasks=parsed.sessions.slice(0,splitCount).map((s,i)=>buildTask(s.date,s.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})));
+        commitTasks(tasks);
+      }else{saveManual();}
+    }catch(e){saveManual();}
+    setAiLoading(false);
+  };
   const removeEvent=(id)=>{const next=events.filter(ev=>ev.id!==id);setEvents(next);lsSet("events",next);};
+  const moveEvent=(id,newDate)=>{const next=events.map(ev=>ev.id===id?{...ev,date:newDate}:ev);setEvents(next);lsSet("events",next);};
+  const markDone=(id)=>{const next=events.map(ev=>ev.id===id?{...ev,status:"done",completedAt:Date.now()}:ev);setEvents(next);lsSet("events",next);};
   const nav=(d)=>setYm(c=>{const m2=c.m+d;return {y:c.y+Math.floor(m2/12),m:((m2%12)+12)%12};});
   return (
     <div>
-      <PH title="Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add event")}</Btn>} />
+      <PH title="Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn>} />
       {toast&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} Event added · it is now in Upcoming</div>
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} Task added</div>
       )}
-      <Modal open={newOpen} onClose={()=>setNewOpen(false)} title="New event" sub="Studlin will reshuffle your study plan around it if needed."
-        footer={<><Btn variant="subtle" onClick={()=>setNewOpen(false)}>Cancel</Btn><Btn onClick={saveEvent} style={{opacity:evTitle.trim()?1:0.45}}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.cal,"Save event")}</Btn></>}>
-        <Field label="Title"><Input placeholder="e.g. Chem quiz · Periodic trends" value={evTitle} onChange={ev=>setEvTitle(ev.target.value)} autoFocus /></Field>
+      <Modal open={newOpen} onClose={resetForm} title="New task" sub="Add details and let Studlin schedule it, or place it manually." width={580}
+        footer={<><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn variant="ghost" onClick={saveManual} style={{opacity:evTitle.trim()?1:0.45}}>Save manually</Btn><Btn onClick={aiArrange} style={{opacity:evTitle.trim()?1:0.45}} disabled={aiLoading}>{aiLoading?"Scheduling...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.wand,"AI arrange")}</Btn></>}>
+        <Field label="Title"><Input placeholder="e.g. Study Bio chapter 4-6" value={evTitle} onChange={ev=>setEvTitle(ev.target.value)} autoFocus /></Field>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <Field label="Date"><Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} /></Field>
-          <Field label="Time"><Input type="time" value={evTime} onChange={ev=>setEvTime(ev.target.value)} /></Field>
+          <Field label="Scheduled date"><Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} /></Field>
+          <Field label="Start time"><Input type="time" value={evTime} onChange={ev=>setEvTime(ev.target.value)} /></Field>
         </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Field label="Deadline" hint="When this must be done by"><Input type="date" value={evDeadline} onChange={ev=>setEvDeadline(ev.target.value)} /></Field>
+          <Field label="Duration (minutes)" hint="How long you plan to spend"><Input type="number" min={5} max={480} value={evDuration} onChange={ev=>setEvDuration(Math.max(5,+ev.target.value||5))} /></Field>
+        </div>
+        <Field label={"Priority · "+PRIORITY_LABELS[evPriority]}>
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <span style={{fontSize:11,color:T.muted,width:24}}>Low</span>
+            <input type="range" min={1} max={5} value={evPriority} onChange={ev=>setEvPriority(+ev.target.value)} style={{flex:1,accentColor:PRIORITY_COLORS[evPriority]}} />
+            <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Urgent</span>
+          </div>
+        </Field>
         <Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field>
         {evSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Drivers ed, SAT prep, club..." value={evCustom} onChange={ev=>setEvCustom(ev.target.value)} /></Field>}
         <Field label="Type"><SelectChip options={["deadline","exam","class","study block","reminder"]} value={evKind} onChange={setEvKind} /></Field>
+        <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14}}>
+          <div onClick={()=>setEvSplitEnabled(s=>!s)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+            <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Split into sessions</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Spread this task across multiple days</div></div>
+            <div style={{width:36,height:20,borderRadius:10,background:evSplitEnabled?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer"}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:evSplitEnabled?18:2,transition:"left 0.2s"}} /></div>
+          </div>
+          {evSplitEnabled&&(
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
+              <Field label="Number of sessions"><Input type="number" min={2} max={10} value={evSplitCount} onChange={ev=>setEvSplitCount(Math.max(2,Math.min(10,+ev.target.value||2)))} /></Field>
+              <Field label="Per session"><div style={{fontSize:14,fontWeight:600,color:T.lime,padding:"10px 0"}}>{Math.round(evDuration/evSplitCount)} min each</div></Field>
+            </div>
+          )}
+        </div>
         <Field label="Notes (optional)"><Textarea placeholder="e.g. Bring calculator, covers chapters 4 to 6." value={evNotes} onChange={ev=>setEvNotes(ev.target.value)} /></Field>
       </Modal>
       <div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:16}}>
@@ -1274,21 +1494,27 @@ function CalendarTab(){
               const isToday=c.key===todayK;
               const isSel=c.key===selDay;
               return (
-                <div key={i} onClick={()=>{setSelDay(c.key);}} onDoubleClick={()=>openNew(c.key)} style={{minHeight:64,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.card2:"transparent",border:"1px solid "+(isSel?T.lime+"55":"transparent"),transition:"all 0.12s",opacity:c.out?0.35:1}}>
+                <div key={i} onClick={()=>{setSelDay(c.key);}} onDoubleClick={()=>openNew(c.key)}
+                  onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(dragId){moveEvent(dragId,c.key);setDragId(null);}}}
+                  style={{minHeight:64,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.card2:"transparent",border:"1px solid "+(isSel?T.lime+"55":"transparent"),transition:"all 0.12s",opacity:c.out?0.35:1}}>
                   <div style={{display:"flex",justifyContent:"flex-start"}}>
                     <span style={{width:22,height:22,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:isToday?700:500,background:isToday?T.lime:"transparent",color:isToday?T.ink:c.out?T.faint:T.text}}>{c.d}</span>
                   </div>
                   <div style={{display:"flex",flexDirection:"column",gap:2,marginTop:3}}>
-                    {evs.slice(0,2).map((ev,j)=>(
-                      <div key={j} style={{fontSize:9,fontWeight:600,color:colorOf(ev.subject),background:colorOf(ev.subject)+"16",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ev.title}</div>
-                    ))}
+                    {evs.slice(0,2).map((ev,j)=>{
+                      const over=daysOverdue(ev);
+                      return <div key={j} style={{fontSize:9,fontWeight:600,color:over>0?T.red:colorOf(ev.subject),background:(over>0?T.red:colorOf(ev.subject))+"16",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",display:"flex",alignItems:"center",gap:3}}>
+                        {ev.priority&&ev.priority>=4&&<span style={{width:5,height:5,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority],flexShrink:0}} />}
+                        {ev.title}
+                      </div>;
+                    })}
                     {evs.length>2&&<div style={{fontSize:9,color:T.muted,paddingLeft:5}}>+{evs.length-2} more</div>}
                   </div>
                 </div>
               );
             })}
           </div>
-          <div style={{fontSize:10.5,color:T.faint,marginTop:10,paddingLeft:6}}>Click a day to see its schedule · double-click to add an event</div>
+          <div style={{fontSize:10.5,color:T.faint,marginTop:10,paddingLeft:6}}>Click a day to see its schedule · double-click to add a task · drag tasks between days</div>
         </Card>
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
           <Card style={{padding:16}}>
@@ -1301,30 +1527,56 @@ function CalendarTab(){
             </div>
             {dayEvents.length===0
               ?<div style={{fontSize:12,color:T.muted,padding:"14px 0 6px",textAlign:"center"}}>Nothing scheduled</div>
-              :dayEvents.map(ev=>(
-                <div key={ev.id} style={{display:"flex",gap:10,padding:"9px 0",borderBottom:"1px solid "+T.border,alignItems:"flex-start"}}>
-                  <div style={{width:3,alignSelf:"stretch",borderRadius:2,background:colorOf(ev.subject),flexShrink:0}} />
+              :dayEvents.map(ev=>{
+                const over=daysOverdue(ev);
+                const isDone=ev.status==="done";
+                return(
+                <div key={ev.id} draggable onDragStart={()=>setDragId(ev.id)} style={{display:"flex",gap:10,padding:"9px 0",borderBottom:"1px solid "+T.border,alignItems:"flex-start",opacity:isDone?0.5:1,cursor:"grab"}}>
+                  <div style={{width:3,alignSelf:"stretch",borderRadius:2,background:over>0?T.red:colorOf(ev.subject),flexShrink:0}} />
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:12.5,fontWeight:600,color:T.white,lineHeight:1.35}}>{ev.title}</div>
-                    <div style={{fontSize:11,color:T.muted,marginTop:2}}>{fmtTime(ev.time)} · {ev.subject}{ev.kind?" · "+ev.kind:""}</div>
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      {ev.priority&&<span style={{width:7,height:7,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority||3],flexShrink:0}} />}
+                      <span style={{fontSize:12.5,fontWeight:600,color:isDone?T.muted:T.white,lineHeight:1.35,textDecoration:isDone?"line-through":"none"}}>{ev.title}</span>
+                    </div>
+                    <div style={{fontSize:11,color:T.muted,marginTop:2,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                      <span>{fmtTime(ev.time)}</span>
+                      {ev.duration&&<span style={{background:T.card2,padding:"1px 6px",borderRadius:4,fontSize:10,fontWeight:600}}>{ev.duration>=60?Math.floor(ev.duration/60)+"h"+(ev.duration%60?" "+ev.duration%60+"m":""):ev.duration+"m"}</span>}
+                      <span>{ev.subject}</span>
+                      {over>0&&<span style={{color:T.red,fontWeight:600}}>{over}d overdue</span>}
+                    </div>
                   </div>
-                  <button onClick={()=>removeEvent(ev.id)} title="Delete" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,padding:2}}>×</button>
+                  <div style={{display:"flex",gap:4,flexShrink:0,alignItems:"center"}}>
+                    {!isDone&&ev.duration&&<button onClick={()=>{if(window._setTimerTask)window._setTimerTask(ev);}} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.lime}44`,background:T.lime+"12",color:T.lime,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Begin</button>}
+                    {!isDone&&<button onClick={()=>markDone(ev.id)} title="Mark done" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",display:"flex"}}>{Icon.check}</button>}
+                    <button onClick={()=>removeEvent(ev.id)} title="Delete" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,padding:2}}>×</button>
+                  </div>
                 </div>
-              ))}
+              );})}
           </Card>
           <div>
             <div style={{fontSize:12,fontWeight:600,color:T.muted,letterSpacing:"0.05em",textTransform:"uppercase",marginBottom:10}}>Upcoming</div>
             {upcoming.length===0&&<Card style={{padding:14,fontSize:12,color:T.muted,textAlign:"center"}}>No upcoming events</Card>}
-            {upcoming.map(ev=>(
-              <Card key={ev.id} onClick={()=>{setSelDay(ev.date);const p=ev.date.split("-");setYm({y:+p[0],m:+p[1]-1});}} style={{borderLeft:"2px solid "+colorOf(ev.subject),marginBottom:8,cursor:"pointer",padding:14}}>
+            {upcoming.map(ev=>{
+              const dl=daysUntilDeadline(ev);
+              const over=daysOverdue(ev);
+              return(
+              <Card key={ev.id} onClick={()=>{setSelDay(ev.date);const p=ev.date.split("-");setYm({y:+p[0],m:+p[1]-1});}} style={{borderLeft:"2px solid "+(over>0?T.red:colorOf(ev.subject)),marginBottom:8,cursor:"pointer",padding:14}}>
                 <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
                   <div style={{fontSize:11,color:T.muted}}>{relDay(ev.date)}</div>
-                  <Badge color={colorOf(ev.subject)}>{ev.subject}</Badge>
+                  <Badge color={over>0?T.red:colorOf(ev.subject)}>{ev.subject}</Badge>
                 </div>
-                <div style={{fontSize:13,fontWeight:600,color:T.white}}>{ev.title}</div>
-                <div style={{fontSize:11,color:T.muted,marginTop:4}}>{fmtTime(ev.time)}</div>
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  {ev.priority&&<span style={{width:6,height:6,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority||3]}} />}
+                  <span style={{fontSize:13,fontWeight:600,color:T.white}}>{ev.title}</span>
+                </div>
+                <div style={{fontSize:11,color:T.muted,marginTop:4,display:"flex",gap:8}}>
+                  <span>{fmtTime(ev.time)}</span>
+                  {ev.duration&&<span>{ev.duration}m</span>}
+                  {dl!==null&&dl>=0&&dl<=3&&<span style={{color:dl===0?T.red:T.amber,fontWeight:600}}>Due {dl===0?"today":"in "+dl+"d"}</span>}
+                  {over>0&&<span style={{color:T.red,fontWeight:600}}>{over}d overdue</span>}
+                </div>
               </Card>
-            ))}
+            );})}
           </div>
         </div>
       </div>
@@ -2343,8 +2595,14 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
                   {t.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
                 </div>
                 <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:13.5,color:t.done?T.muted:T.text,textDecoration:t.done?"line-through":"none",fontWeight:500}}>{t.title}</div>
-                  <div style={{fontSize:11.5,color:T.muted,marginTop:1,textTransform:"capitalize"}}>{t.subject}{t.kind?" · "+t.kind:""}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    {t.priority&&<span style={{width:6,height:6,borderRadius:"50%",background:PRIORITY_COLORS[t.priority||3],flexShrink:0}} />}
+                    <span style={{fontSize:13.5,color:t.done?T.muted:T.text,textDecoration:t.done?"line-through":"none",fontWeight:500}}>{t.title}</span>
+                  </div>
+                  <div style={{fontSize:11.5,color:T.muted,marginTop:1,display:"flex",gap:6,alignItems:"center"}}>
+                    <span style={{textTransform:"capitalize"}}>{t.subject}{t.kind?" · "+t.kind:""}</span>
+                    {t.duration&&<span style={{background:T.card2,padding:"0 5px",borderRadius:3,fontSize:10,fontWeight:600}}>{t.duration}m</span>}
+                  </div>
                 </div>
                 <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.06em",padding:"3px 8px",borderRadius:6,background:c+"22",color:c,textTransform:"uppercase",fontWeight:600,flex:"none"}}>{t.subject.slice(0,4)}</span>
                 <span style={{fontFamily:T.mono,fontSize:11,color:T.muted}}>{fmtClock(t.time)}</span>
@@ -2627,6 +2885,8 @@ function App() {
   const [focusRunning,setFocusRunning]=useState(true);
   const [focusMode,setFocusMode]=useState("Focus");
   const [focusTotal,setFocusTotal]=useState(25*60);
+  const [timerTask,setTimerTask]=useState(null);
+  window._setTimerTask=setTimerTask;
   const [creditsOpen,setCreditsOpen]=useState(false);
   const [pricingOpen,setPricingOpen]=useState(false);
   const [notifOpen,setNotifOpen]=useState(false);
@@ -2992,6 +3252,13 @@ function App() {
           </>
         )}
       </Modal>
+
+      {timerTask&&<TaskTimerModal task={timerTask} onClose={()=>setTimerTask(null)} onComplete={(mins)=>{
+        logSession(mins,"Task: "+timerTask.title);
+        const next=lsGet("events",[]).map(ev=>ev.id===timerTask.id?{...ev,status:"done",timeSpent:mins,completedAt:Date.now()}:ev);
+        lsSet("events",next);
+        setTimerTask(null);
+      }} />}
 
       <style>{`
         @keyframes studlinPulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.7)} }
