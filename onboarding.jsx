@@ -127,14 +127,28 @@ function StepSignup({ state, set, advance }) {
   const [loading, setLoading] = useState(false);
   const [authError, setAuthError] = useState("");
 
-  const socialSign = async (providerObj) => {
+  const googleSign = () => {
     setAuthError("");setLoading(true);
-    try {
-      await firebase.auth().signInWithRedirect(providerObj);
-    } catch(err) {
-      setAuthError(ERR_MAP[err.code]||(err.message||"Sign-up failed. Please try again."));
-      setLoading(false);
-    }
+    if(typeof google==="undefined"||!google.accounts){setAuthError("Google sign-in is still loading. Please try again.");setLoading(false);return;}
+    const client = google.accounts.oauth2.initTokenClient({
+      client_id:"16831354472-lbsnd5rithhidj57gfh5rqsqvc3cv7as.apps.googleusercontent.com",
+      scope:"email profile",
+      callback: async (tokenResponse) => {
+        if(tokenResponse.error){setAuthError("Google sign-in was cancelled.");setLoading(false);return;}
+        try {
+          const credential = firebase.auth.GoogleAuthProvider.credential(null, tokenResponse.access_token);
+          const result = await firebase.auth().signInWithCredential(credential);
+          const u = result.user;
+          set(s=>({...s, provider:"google", name:u.displayName||s.name, email:u.email||s.email}));
+          advance(true);
+        } catch(err) {
+          setAuthError(ERR_MAP[err.code]||(err.message||"Sign-up failed."));
+          setLoading(false);
+        }
+      },
+      error_callback: () => {setAuthError("Google sign-in was cancelled.");setLoading(false);}
+    });
+    client.requestAccessToken();
   };
 
   const pwOk = { len: (state.password||"").length >= 8 };
@@ -173,7 +187,7 @@ function StepSignup({ state, set, advance }) {
       {mode === "providers" && (
         <>
           <div className="providers">
-            <button className="provider" onClick={()=>socialSign(new firebase.auth.GoogleAuthProvider())} disabled={loading}>{Ic.google} Continue with Google</button>
+            <button className="provider" onClick={googleSign} disabled={loading}>{Ic.google} Continue with Google</button>
           </div>
           <div className="divider">or sign up with email</div>
           <button className="provider" onClick={()=>setMode("email")}>{Ic.mail} Use email instead</button>
@@ -434,13 +448,6 @@ function App() {
   });
 
   useEffect(()=>{
-    firebase.auth().getRedirectResult().then(result=>{
-      if(result&&result.user){
-        const u=result.user;
-        setState(s=>({...s, provider:result.additionalUserInfo?.providerId||"google", name:u.displayName||s.name, email:u.email||s.email}));
-        setStep(prev=>prev<1?1:prev);
-      }
-    }).catch(()=>{});
     return firebase.auth().onAuthStateChanged(u=>{
       if(u) setStep(prev=>prev<1?1:prev);
     });
