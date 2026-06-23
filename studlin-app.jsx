@@ -2567,10 +2567,21 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
   );
 }
 
-// ─── AUTH SCREEN — redirects to your designed Sign In page ──────────────────
+// ─── AUTH SCREEN — minimal gate, links to designed pages ────────────────────
 function AuthScreen(){
-  useEffect(()=>{window.location.href="Studlin Sign In.html";},[]);
-  return(<div style={{minHeight:"100vh",background:"#0D120F",display:"grid",placeItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"#AECE5E",display:"grid",placeItems:"center",fontSize:18,fontWeight:800,color:"#0D120F"}}>S</div><span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span></div></div>);
+  return(
+    <div style={{minHeight:"100vh",background:"#0D120F",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20}}>
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <div style={{width:36,height:36,borderRadius:10,background:"#AECE5E",display:"grid",placeItems:"center",fontSize:18,fontWeight:800,color:"#0D120F"}}>S</div>
+        <span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span>
+      </div>
+      <p style={{fontSize:15,color:"rgba(232,239,231,0.6)",margin:0}}>Sign in to access your workspace.</p>
+      <div style={{display:"flex",gap:12,marginTop:8}}>
+        <a href="Studlin Sign In.html" style={{padding:"12px 28px",borderRadius:10,background:"#AECE5E",color:"#0D120F",fontSize:14,fontWeight:600,textDecoration:"none"}}>Sign in</a>
+        <a href="Studlin Onboarding.html" style={{padding:"12px 28px",borderRadius:10,border:"1px solid rgba(174,206,94,0.3)",background:"transparent",color:"#AECE5E",fontSize:14,fontWeight:600,textDecoration:"none"}}>Create account</a>
+      </div>
+    </div>
+  );
 }
 
 
