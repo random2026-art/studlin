@@ -189,6 +189,8 @@ const BREAK_IDEAS=[
 ];
 const PRIORITY_LABELS=["","Low","Medium-Low","Medium","High","Urgent"];
 const PRIORITY_COLORS=["","#5FCBA8","#7BACDF","#DCA64A","#E8946B","#D9806B"];
+const DIFFICULTY_LABELS=["","Easy","Moderate","Challenging","Hard","Very Hard"];
+const DIFFICULTY_COLORS=["","#5FCBA8","#7BACDF","#DCA64A","#E8946B","#D9806B"];
 
 // ─── SHARED PRIMITIVES ────────────────────────────────────────────────────────
 const Btn = ({children,onClick,style={},variant="lime"}) => {
@@ -1355,6 +1357,7 @@ function CalendarTab(){
   const [evKind,setEvKind]=useState("deadline");
   const [evNotes,setEvNotes]=useState("");
   const [evPriority,setEvPriority]=useState(3);
+  const [evDifficulty,setEvDifficulty]=useState(3);
   const [evDeadline,setEvDeadline]=useState("");
   const [evDuration,setEvDuration]=useState(60);
   const [evSplitEnabled,setEvSplitEnabled]=useState(false);
@@ -1377,11 +1380,11 @@ function CalendarTab(){
   const relDay=(k)=>{if(k===todayK)return "Today";const t=new Date();t.setDate(t.getDate()+1);if(k===dayKey(t))return "Tomorrow";const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{month:"short",day:"numeric"});};
   const upcoming=events.filter(ev=>ev.date>=todayK).sort((a,b)=>a.date===b.date?(a.time<b.time?-1:1):(a.date<b.date?-1:1)).slice(0,6);
   const dayEvents=(byDay[selDay]||[]).slice().sort((a,b)=>a.time<b.time?-1:1);
-  const openNew=(dateK)=>{setEvDate(dateK||selDay);setEvDeadline("");setEvPriority(3);setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setNewOpen(true);};
-  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvPriority(3);setEvDeadline("");setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);};
+  const openNew=(dateK)=>{setEvDate(dateK||selDay);setEvDeadline("");setEvPriority(3);setEvDifficulty(3);setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setNewOpen(true);};
+  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvPriority(3);setEvDifficulty(3);setEvDeadline("");setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);};
   const buildTask=(date,time,titleSuffix,splitInfo)=>{
     const subj=evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject;
-    return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,kind:evKind,notes:evNotes,priority:evPriority,deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,...(splitInfo||{})};
+    return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,kind:evKind,notes:evNotes,priority:evPriority,difficulty:evDifficulty,deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,...(splitInfo||{})};
   };
   const commitTasks=(newTasks)=>{
     const next=events.concat(newTasks);
@@ -1445,13 +1448,34 @@ function CalendarTab(){
           <Field label="Deadline" hint="When this must be done by"><Input type="date" value={evDeadline} onChange={ev=>setEvDeadline(ev.target.value)} /></Field>
           <Field label="Duration (minutes)" hint="How long you plan to spend"><Input type="number" min={5} max={480} value={evDuration} onChange={ev=>setEvDuration(Math.max(5,+ev.target.value||5))} /></Field>
         </div>
-        <Field label={"Priority · "+PRIORITY_LABELS[evPriority]}>
-          <div style={{display:"flex",alignItems:"center",gap:12}}>
-            <span style={{fontSize:11,color:T.muted,width:24}}>Low</span>
-            <input type="range" min={1} max={5} value={evPriority} onChange={ev=>setEvPriority(+ev.target.value)} style={{flex:1,accentColor:PRIORITY_COLORS[evPriority]}} />
-            <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Urgent</span>
-          </div>
-        </Field>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Field label={"Priority"}>
+            <div style={{background:T.card2,borderRadius:10,padding:"12px 14px",border:`1px solid ${T.border}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <span style={{fontSize:11,color:T.muted}}>Low</span>
+                <span style={{fontSize:12,fontWeight:600,color:PRIORITY_COLORS[evPriority]}}>{PRIORITY_LABELS[evPriority]}</span>
+                <span style={{fontSize:11,color:T.muted}}>Urgent</span>
+              </div>
+              <div style={{position:"relative",height:6,background:T.border,borderRadius:3,cursor:"pointer"}} onClick={e=>{const r=e.currentTarget.getBoundingClientRect();setEvPriority(Math.max(1,Math.min(5,Math.round((e.clientX-r.left)/r.width*4)+1)));}}>
+                <div style={{position:"absolute",left:0,top:0,height:"100%",width:((evPriority-1)/4*100)+"%",background:`linear-gradient(90deg,#5FCBA8,${PRIORITY_COLORS[evPriority]})`,borderRadius:3,transition:"width 0.2s"}} />
+                <div style={{position:"absolute",top:"50%",left:((evPriority-1)/4*100)+"%",transform:"translate(-50%,-50%)",width:18,height:18,borderRadius:"50%",background:PRIORITY_COLORS[evPriority],border:"3px solid "+T.card,boxShadow:"0 2px 8px rgba(0,0,0,0.3)",transition:"left 0.2s",cursor:"grab"}} />
+              </div>
+            </div>
+          </Field>
+          <Field label={"Difficulty"}>
+            <div style={{background:T.card2,borderRadius:10,padding:"12px 14px",border:`1px solid ${T.border}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <span style={{fontSize:11,color:T.muted}}>Easy</span>
+                <span style={{fontSize:12,fontWeight:600,color:DIFFICULTY_COLORS[evDifficulty]}}>{DIFFICULTY_LABELS[evDifficulty]}</span>
+                <span style={{fontSize:11,color:T.muted}}>Hard</span>
+              </div>
+              <div style={{position:"relative",height:6,background:T.border,borderRadius:3,cursor:"pointer"}} onClick={e=>{const r=e.currentTarget.getBoundingClientRect();setEvDifficulty(Math.max(1,Math.min(5,Math.round((e.clientX-r.left)/r.width*4)+1)));}}>
+                <div style={{position:"absolute",left:0,top:0,height:"100%",width:((evDifficulty-1)/4*100)+"%",background:`linear-gradient(90deg,#5FCBA8,${DIFFICULTY_COLORS[evDifficulty]})`,borderRadius:3,transition:"width 0.2s"}} />
+                <div style={{position:"absolute",top:"50%",left:((evDifficulty-1)/4*100)+"%",transform:"translate(-50%,-50%)",width:18,height:18,borderRadius:"50%",background:DIFFICULTY_COLORS[evDifficulty],border:"3px solid "+T.card,boxShadow:"0 2px 8px rgba(0,0,0,0.3)",transition:"left 0.2s",cursor:"grab"}} />
+              </div>
+            </div>
+          </Field>
+        </div>
         <Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field>
         {evSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Drivers ed, SAT prep, club..." value={evCustom} onChange={ev=>setEvCustom(ev.target.value)} /></Field>}
         <Field label="Type"><SelectChip options={["deadline","exam","class","study block","reminder"]} value={evKind} onChange={setEvKind} /></Field>
@@ -2968,12 +2992,12 @@ function App() {
   const navSections=[
     {label:"Workspace",items:[
       {id:"dashboard",label:"Dashboard"},
+      {id:"calendar",label:"Calendar"},
       {id:"aichat",label:"Chat"},
       {id:"essays",label:"Essays",badge:"3"},
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
       {id:"focustimer",label:"Focus timer"},
-      {id:"calendar",label:"Calendar"},
     ]},
     {label:"Tools",items:[
       {id:"aitutor",label:"Tutor"},
