@@ -2484,8 +2484,9 @@ function Collection() {
   const totalUnlocked=CHARACTERS.filter(c=>unlocked.has(c.id)).length;
 
   useEffect(()=>{
-    const unseen=data.unlocked.filter(id=>!data.seen.includes(id));
-    if(unseen.length>0){const d={...data,seen:[...new Set([...data.seen,...unseen])]};saveCharacterData(d);}
+    const d=getCharacterData();
+    const unseen=d.unlocked.filter(id=>!d.seen.includes(id));
+    if(unseen.length>0){saveCharacterData({...d,seen:[...new Set([...d.seen,...unseen])]});}
   },[]);
 
   const nextStreak=streakChars.find(c=>!unlocked.has(c.id));
@@ -2614,7 +2615,7 @@ function Profile() {
       </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
         <div style={{fontSize:12,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase"}}>Characters · {getCharacterData().unlocked.length} / {CHARACTERS.length}</div>
-        <button onClick={()=>setActive("collection")} style={{fontSize:11,color:T.lime,fontWeight:600,cursor:"pointer",background:"none",border:"none",fontFamily:T.font}}>View all →</button>
+        <span style={{fontSize:11,color:T.lime,fontWeight:600}}>View all in Collection tab →</span>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,marginBottom:16}}>
         {(()=>{const data=getCharacterData();const unlocked=CHARACTERS.filter(c=>data.unlocked.includes(c.id)).slice(-5);const locked=CHARACTERS.filter(c=>!data.unlocked.includes(c.id)).slice(0,Math.max(0,5-unlocked.length));return [...unlocked,...locked].map((c,i)=>{const isUnlocked=data.unlocked.includes(c.id);return(
