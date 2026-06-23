@@ -293,9 +293,26 @@ function todaysPlan(){const events=lsGet("events",[]);const tk=dayKey();const do
 function togglePlanDone(id){const done=lsGet("planDone",{});done[id]=!done[id];lsSet("planDone",done);return done;}
 function profileStats(){const s=lsGet("sessions",[]);const totalMin=s.reduce((a,x)=>a+(x.m||0),0);const st=sessionStats();return {totalMin,focusSessions:s.length,weekMin:st.weekMin,avg:st.avg};}
 function getProfile(){
-  const u=typeof firebase!=="undefined"&&firebase.auth().currentUser;
-  const def={name:u?.displayName||"Student",email:u?.email||"you@studlin.app",school:"",tz:Intl.DateTimeFormat().resolvedOptions().timeZone||"America/New_York"};
-  return lsGet("profile",def);
+  try{
+    const u=typeof firebase!=="undefined"?firebase.auth().currentUser:null;
+    const def={name:(u&&u.displayName)||"Student",email:(u&&u.email)||"you@studlin.app",school:"",tz:"America/New_York"};
+    return lsGet("profile",def);
+  }catch(e){return{name:"Student",email:"you@studlin.app",school:"",tz:"America/New_York"};}
+}
+function getUserInitials(){
+  try{
+    const u=typeof firebase!=="undefined"?firebase.auth().currentUser:null;
+    const n=(u&&u.displayName)||getProfile().name||"S";
+    if(!n)return "S";
+    const p=n.trim().split(" ").filter(Boolean);
+    return p.length>1?(p[0][0]+p[p.length-1][0]).toUpperCase():n.slice(0,2).toUpperCase();
+  }catch(e){return "S";}
+}
+function getUserName(){
+  try{
+    const u=typeof firebase!=="undefined"?firebase.auth().currentUser:null;
+    return (u&&u.displayName)||getProfile().name||"Student";
+  }catch(e){return "Student";}
 }
 function saveProfile(p){lsSet("profile",p);}
 function seedEventsIfStale(){
@@ -372,13 +389,7 @@ function AiChat() {
   useEffect(scrollToBottom,[msgs,thinkStep]);
   const hasMessages=msgs.length>0;
 
-  const userName=(()=>{
-    const u=firebase.auth().currentUser;
-    if(u?.displayName)return u.displayName.split(" ")[0];
-    const p=getProfile();
-    if(p.name&&p.name!=="Maya Reyes")return p.name.split(" ")[0];
-    return "there";
-  })();
+  const userName=(getUserName()||"there").split(" ")[0];
 
   const [recording,setRecording]=useState(false);
   const [micError,setMicError]=useState("");
@@ -2741,8 +2752,8 @@ function App() {
           <span style={{fontSize:16,fontWeight:700,color:sidebarText,letterSpacing:"-0.02em",fontFamily:T.font}}>Studlin</span>
         </div>
         <div onClick={()=>setActive("profile")} style={{background:sidebarCardBg,borderRadius:8,padding:"10px 12px",marginBottom:16,display:"flex",alignItems:"center",gap:10,cursor:"pointer",border:`1px solid ${sidebarBorder}`}}>
-          <Av initials={(()=>{const n=firebase.auth().currentUser?.displayName||getProfile().name||"S";const parts=n.split(" ");return parts.length>1?(parts[0][0]+parts[parts.length-1][0]).toUpperCase():n.slice(0,2).toUpperCase();})()}} color={T.lime} size={30} />
-          <div><div style={{fontSize:12,fontWeight:600,color:sidebarText}}>{firebase.auth().currentUser?.displayName||getProfile().name||"Student"}</div><div style={{fontSize:10,color:sidebarMuted}}>{getPlan()}{getProfile().school?" · "+getProfile().school:""}</div></div>
+          <Av initials={getUserInitials()} color={T.lime} size={30} />
+          <div><div style={{fontSize:12,fontWeight:600,color:sidebarText}}>{getUserName()}</div><div style={{fontSize:10,color:sidebarMuted}}>{getPlan()}</div></div>
         </div>
         {navSections.map(sec=>(
           <div key={sec.label}>
@@ -2814,7 +2825,7 @@ function App() {
             </div>
           </>)}
           </div>
-          <button onClick={()=>setActive("profile")} style={{width:36,height:36,borderRadius:"50%",background:"linear-gradient(135deg,#FFD7B5,#FFC9D2)",display:"grid",placeItems:"center",fontWeight:600,fontSize:12,color:T.ink,border:`2px solid ${T.bg}`,cursor:"pointer",flexShrink:0,fontFamily:T.font}}>{(()=>{const n=firebase.auth().currentUser?.displayName||getProfile().name||"S";const p=n.split(" ");return p.length>1?(p[0][0]+p[p.length-1][0]).toUpperCase():n.slice(0,2).toUpperCase();})()}</button>
+          <button onClick={()=>setActive("profile")} style={{width:36,height:36,borderRadius:"50%",background:"linear-gradient(135deg,#FFD7B5,#FFC9D2)",display:"grid",placeItems:"center",fontWeight:600,fontSize:12,color:T.ink,border:`2px solid ${T.bg}`,cursor:"pointer",flexShrink:0,fontFamily:T.font}}>{getUserInitials()}</button>
         </div>
 
         {/* CONTENT */}
