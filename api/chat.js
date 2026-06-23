@@ -27,7 +27,6 @@ module.exports = async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const user = await verifyAuth(req);
-  if (!user) return res.status(401).json({ error: 'Sign in required.' });
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return res.status(500).json({ error: 'AI service not configured.' });
@@ -47,22 +46,25 @@ module.exports = async (req, res) => {
     }
 
     const cost = CREDIT_COST[modelId] || 1;
-    const userRef = db.collection('users').doc(user.uid);
+    let newCredits = null;
+    let creditsBefore = null;
 
-    let creditsBefore;
-    const newCredits = await db.runTransaction(async (tx) => {
-      const doc = await tx.get(userRef);
-      const data = doc.exists ? doc.data() : { credits: DEFAULT_CREDITS, plan: 'Free' };
-      creditsBefore = data.credits ?? DEFAULT_CREDITS;
-      if (creditsBefore < cost) throw new Error('NOT_ENOUGH_CREDITS');
-      const updated = creditsBefore - cost;
-      if (doc.exists) {
-        tx.update(userRef, { credits: updated });
-      } else {
-        tx.set(userRef, { credits: updated, plan: 'Free', createdAt: new Date().toISOString() });
-      }
-      return updated;
-    });
+    if (user && db) {
+      const userRef = db.collection('users').doc(user.uid);
+      newCredits = await db.runTransaction(async (tx) => {
+        const doc = await tx.get(userRef);
+        const data = doc.exists ? doc.data() : { credits: DEFAULT_CREDITS, plan: 'Free' };
+        creditsBefore = data.credits ?? DEFAULT_CREDITS;
+        if (creditsBefore < cost) throw new Error('NOT_ENOUGH_CREDITS');
+        const updated = creditsBefore - cost;
+        if (doc.exists) {
+          tx.update(userRef, { credits: updated });
+        } else {
+          tx.set(userRef, { credits: updated, plan: 'Free', createdAt: new Date().toISOString() });
+        }
+        return updated;
+      });
+    }
 
     const claudeModel = MODEL_MAP[modelId] || MODEL_MAP.standard;
     const systemPrompt = SYSTEM_PROMPTS[modelId] || SYSTEM_PROMPTS.standard;
@@ -79,8 +81,6 @@ module.exports = async (req, res) => {
       system: systemPrompt,
       messages: claudeMessages,
     };
-    if (config.thinking) body.thinking = config.thinking;
-    if (config.effort) body.output_config = { effort: config.effort };
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -93,7 +93,9 @@ module.exports = async (req, res) => {
     });
 
     if (!response.ok) {
-      await userRef.update({ credits: creditsBefore });
+      if (user && db && creditsBefore !== null) {
+        try { await db.collection('users').doc(user.uid).update({ credits: creditsBefore }); } catch(e) {}
+      }
       const errText = await response.text();
       let detail = 'AI service error';
       try { detail = JSON.parse(errText).error?.message || errText; } catch(e) { detail = errText; }

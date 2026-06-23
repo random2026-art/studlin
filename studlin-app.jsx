@@ -316,6 +316,7 @@ function getUserName(){
 }
 function saveProfile(p){lsSet("profile",p);}
 function seedEventsIfStale(){
+  return;
   const ev=lsGet("events",null); const tk=dayKey();
   if(ev&&ev.some(e=>e.date>=tk))return;
   const mk=(off,time,title,subject,kind)=>{const d=new Date();d.setDate(d.getDate()+off);return {id:"seed-"+off+"-"+time,date:dayKey(d),time,title,subject,kind};};
@@ -1191,7 +1192,7 @@ function CalendarTab(){
     mk(3,"09:00","Macbeth essay · first draft","English IV","deadline"),
     mk(5,"10:00","Calculus test · Derivatives","Calculus","exam"),
   ];
-  const [events,setEvents]=useState(()=>{const ev=lsGet("events",null);if(ev&&ev.length)return ev;lsSet("events",seed);return seed;});
+  const [events,setEvents]=useState(()=>{const ev=lsGet("events",null);return(ev&&Array.isArray(ev))?ev.filter(e=>!e.id.startsWith("seed-")):[];});
   const now=new Date();
   const [ym,setYm]=useState({y:now.getFullYear(),m:now.getMonth()});
   const [selDay,setSelDay]=useState(dayKey());
