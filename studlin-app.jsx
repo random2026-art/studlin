@@ -685,7 +685,7 @@ function AiChat() {
 
 // ─── ESSAYS ───────────────────────────────────────────────────────────────────
 function Essays() {
-  const [tab,setTab]=useState("active");
+  const [tab,setTab]=useState("library");
   const [newOpen,setNewOpen]=useState(false);
   const [eTitle,setETitle]=useState("");
   const [eSubject,setESubject]=useState("English IV");
@@ -693,123 +693,155 @@ function Essays() {
   const [ePrompt,setEPrompt]=useState("");
   const [eCustom,setECustom]=useState("");
   const [eMode,setEMode]=useState("self");
-  const [gdocs,setGdocs]=useState(()=>lsGet("gdocs",false));
+  const [essays,setEssays]=useState(()=>lsGet("essays",[]));
+  const [activeId,setActiveId]=useState(null);
+  const [exportOpen,setExportOpen]=useState(null);
+  const editorRef=useRef(null);
   const subjects=[{value:"English IV",label:"English IV",color:T.purple},{value:"Biology",label:"Biology",color:T.teal},{value:"History",label:"History",color:T.muted},{value:"Chemistry",label:"Chemistry",color:T.red},{value:"Calculus",label:"Calculus",color:T.blue},{value:"Other",label:"Other",color:T.lime}];
-  const essays=[
-    {title:"Power & Corruption in Macbeth",subject:"English IV",words:1247,target:1500,status:"In progress",grade:null},
-    {title:"Photosynthesis Lab Report",subject:"Biology",words:800,target:800,status:"Submitted",grade:"A−"},
-    {title:"Causes of World War I",subject:"History",words:450,target:1200,status:"Outline",grade:null},
+  const subjectColor={"English IV":T.purple,Biology:T.teal,History:T.blue,Chemistry:T.red,Calculus:T.blue};
+  const TEMPLATES=[
+    {name:"Five-paragraph essay",desc:"Intro, 3 body paragraphs, conclusion",content:"<h2>Introduction</h2><p>State your thesis here. Hook the reader and preview your three main points.</p><h2>Body Paragraph 1</h2><p>First main point with supporting evidence.</p><h2>Body Paragraph 2</h2><p>Second main point with supporting evidence.</p><h2>Body Paragraph 3</h2><p>Third main point with supporting evidence.</p><h2>Conclusion</h2><p>Restate your thesis and summarize your arguments. End with a final thought.</p>"},
+    {name:"Literary analysis",desc:"Thesis-driven analysis of a text",content:"<h2>Introduction</h2><p>Introduce the text, author, and your analytical lens. State your thesis about the text's meaning or technique.</p><h2>Context & Background</h2><p>Provide relevant historical or literary context.</p><h2>Analysis — Evidence 1</h2><p>Quote from the text and analyze its significance. How does it support your thesis?</p><h2>Analysis — Evidence 2</h2><p>Second piece of evidence with close reading.</p><h2>Analysis — Evidence 3</h2><p>Third piece of evidence. Show the pattern.</p><h2>Counterargument</h2><p>Acknowledge an alternative reading and explain why yours is stronger.</p><h2>Conclusion</h2><p>Synthesize your analysis. What does this reveal about the text as a whole?</p>"},
+    {name:"Scientific lab report",desc:"Hypothesis, method, results, discussion",content:"<h2>Title</h2><p>Descriptive title of your experiment.</p><h2>Abstract</h2><p>Brief summary of the experiment, methods, and key findings (150-250 words).</p><h2>Introduction</h2><p>Background information and your hypothesis. Why is this experiment important?</p><h2>Materials & Methods</h2><p>List all materials used. Describe your procedure step by step so someone could replicate it.</p><h2>Results</h2><p>Present your data objectively. Include tables, graphs, or measurements.</p><h2>Discussion</h2><p>Interpret your results. Did they support your hypothesis? Why or why not? What were sources of error?</p><h2>Conclusion</h2><p>Summarize findings. Suggest improvements or future experiments.</p><h2>References</h2><p>List your sources in the required citation format.</p>"},
+    {name:"Argumentative essay",desc:"Claim, evidence, counterargument",content:"<h2>Introduction</h2><p>Hook the reader. Provide context. State your clear, debatable thesis.</p><h2>Argument 1</h2><p>Your strongest point. Present evidence (statistics, quotes, examples) and explain how it supports your claim.</p><h2>Argument 2</h2><p>Second supporting point with evidence and analysis.</p><h2>Counterargument & Rebuttal</h2><p>Acknowledge the strongest opposing view. Then explain why it falls short or why your position is stronger.</p><h2>Conclusion</h2><p>Restate your thesis in light of the evidence. Call to action or final thought.</p>"},
+    {name:"Compare & contrast",desc:"Side-by-side analysis of two subjects",content:"<h2>Introduction</h2><p>Introduce both subjects. State what you're comparing and why it matters. Thesis: what's the key insight from this comparison?</p><h2>Subject A — Overview</h2><p>Describe the first subject's key characteristics.</p><h2>Subject B — Overview</h2><p>Describe the second subject's key characteristics.</p><h2>Similarities</h2><p>What do they have in common? Use specific examples.</p><h2>Differences</h2><p>Where do they diverge? What makes each unique?</p><h2>Analysis</h2><p>So what? What does this comparison reveal? Which is more effective/important/relevant and why?</p><h2>Conclusion</h2><p>Synthesize your comparison. What should the reader take away?</p>"},
+    {name:"Research paper",desc:"Thesis with cited sources and analysis",content:"<h2>Title Page</h2><p>Your title, name, course, date.</p><h2>Abstract</h2><p>200-word summary of your research question, methods, findings, and conclusion.</p><h2>Introduction</h2><p>Background on your topic. Research question. Why does this matter? Thesis statement.</p><h2>Literature Review</h2><p>Summarize what existing research says about your topic. Identify gaps your paper addresses.</p><h2>Methodology</h2><p>How did you conduct your research? What sources did you use?</p><h2>Findings</h2><p>Present your research findings with evidence and data.</p><h2>Discussion</h2><p>Interpret your findings. How do they relate to existing research? What are the implications?</p><h2>Conclusion</h2><p>Summarize your contribution. Limitations. Suggestions for future research.</p><h2>Works Cited</h2><p>Full bibliography in required format (MLA, APA, Chicago).</p>"},
+    {name:"Personal statement",desc:"College application or scholarship essay",content:"<h2>Opening Hook</h2><p>Start with a vivid moment, question, or detail that draws the reader in. Show, don't tell.</p><h2>The Challenge or Experience</h2><p>What happened? Describe the situation with specific details. What did you feel?</p><h2>Growth & Reflection</h2><p>How did this experience change you? What did you learn about yourself?</p><h2>Connection to Future</h2><p>How does this connect to your goals, values, or what you want to study?</p><h2>Closing</h2><p>End with a memorable line that ties back to your opening. Leave a lasting impression.</p>"},
+    {name:"Reflective journal",desc:"Personal reflection on learning",content:"<h2>What Happened</h2><p>Describe the experience, lesson, or reading you're reflecting on.</p><h2>What I Learned</h2><p>What new understanding did you gain? What surprised you?</p><h2>How I Feel About It</h2><p>Be honest about your emotional response. Confusion is OK. Frustration is OK.</p><h2>How This Connects</h2><p>How does this relate to other things you've learned or experienced?</p><h2>What I'll Do Differently</h2><p>How will this change your approach going forward?</p>"},
   ];
-  const subjectColor = {
-    "English IV":T.purple,
-    "Biology":T.teal,
-    "History":T.blue,
+  const active=essays.find(e=>e.id===activeId);
+  const wordCount=(html)=>{const t=(html||"").replace(/<[^>]*>/g," ").replace(/\s+/g," ").trim();return t?t.split(" ").length:0;};
+  const saveEssay=(id,updates)=>{const next=essays.map(e=>e.id===id?{...e,...updates,updatedAt:Date.now()}:e);setEssays(next);lsSet("essays",next);};
+  const createEssay=(title,subject,target,content,prompt)=>{
+    const subj=subject==="Other"&&eCustom.trim()?eCustom.trim():subject;
+    const essay={id:String(Date.now()),title:title||"Untitled essay",subject:subj,target:+target||1500,content:content||"<p>Start writing here...</p>",prompt:prompt||"",status:"In progress",createdAt:Date.now(),updatedAt:Date.now()};
+    const next=[essay,...essays];setEssays(next);lsSet("essays",next);
+    setActiveId(essay.id);setTab("active");setNewOpen(false);setETitle("");setEPrompt("");setECustom("");
   };
+  const deleteEssay=(id)=>{const next=essays.filter(e=>e.id!==id);setEssays(next);lsSet("essays",next);if(activeId===id)setActiveId(null);};
+  const execCmd=(cmd,val)=>{document.execCommand(cmd,false,val||null);editorRef.current?.focus();};
+  const exportText=(essay)=>{
+    const text=essay.content.replace(/<[^>]*>/g,"\n").replace(/\n{3,}/g,"\n\n").trim();
+    return text;
+  };
+  const copyToClipboard=(essay)=>{navigator.clipboard?.writeText(exportText(essay));};
+  const downloadTxt=(essay)=>{const blob=new Blob([exportText(essay)],{type:"text/plain"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=(essay.title||"essay")+".txt";a.click();};
+  const wc=active?wordCount(active.content):0;
+  const pct=active&&active.target?Math.min(100,Math.round(wc/active.target*100)):0;
   return (
     <div>
-      <PH title="Essays" sub="Draft, refine, and submit your writing" action={<span style={{display:"flex",gap:8}}><Btn variant="subtle" onClick={()=>{const v=!gdocs;setGdocs(v);lsSet("gdocs",v);}}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},gdocs?Icon.check:Icon.link,gdocs?"Google Docs · connected":"Connect Google Docs")}</Btn><Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New essay")}</Btn></span>} />
-      <Modal open={newOpen} onClose={()=>setNewOpen(false)} title="Start a new essay" sub="Studlin will scaffold an outline and adapt the AI tutor to your subject."
-        footer={<><Btn variant="subtle" onClick={()=>setNewOpen(false)}>Cancel</Btn><Btn onClick={()=>setNewOpen(false)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.pen,"Create essay")}</Btn></>}>
+      <PH title="Essays" sub="Draft, refine, and submit your writing" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New essay")}</Btn>} />
+      <Modal open={newOpen} onClose={()=>setNewOpen(false)} title="Start a new essay" sub="Pick a template or start from scratch."
+        footer={<><Btn variant="subtle" onClick={()=>setNewOpen(false)}>Cancel</Btn><Btn onClick={()=>createEssay(eTitle,eSubject,eTarget,null,ePrompt)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.pen,"Create essay")}</Btn></>}>
         <Field label="Title"><Input placeholder="e.g. Ambition and ruin in Macbeth" value={eTitle} onChange={e=>setETitle(e.target.value)} autoFocus /></Field>
         <Field label="Subject"><SelectChip options={subjects} value={eSubject} onChange={setESubject} /></Field>
-        {eSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Physics, Economics, Psychology..." value={eCustom} onChange={ev=>setECustom(ev.target.value)} /></Field>}
-        <Field label="How do you want to write it?">
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            <button type="button" onClick={()=>setEMode("self")} style={{padding:14,borderRadius:10,border:"1px solid "+(eMode==="self"?T.lime+"66":T.border),background:eMode==="self"?T.lime+"10":T.card2,color:T.text,cursor:"pointer",textAlign:"left",fontFamily:T.font}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}><span style={{color:eMode==="self"?T.lime:T.muted,display:"flex"}}>{Icon.pen}</span><span style={{fontSize:13,fontWeight:600}}>Write it myself</span></div>
-              <div style={{fontSize:11.5,color:T.muted}}>Blank editor. AI stays out of the way until you ask.</div>
-            </button>
-            <button type="button" onClick={()=>setEMode("ai")} style={{padding:14,borderRadius:10,border:"1px solid "+(eMode==="ai"?T.lime+"66":T.border),background:eMode==="ai"?T.lime+"10":T.card2,color:T.text,cursor:"pointer",textAlign:"left",fontFamily:T.font}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}><span style={{color:eMode==="ai"?T.lime:T.muted,display:"flex"}}>{Icon.wand}</span><span style={{fontSize:13,fontWeight:600}}>AI-assisted draft</span></div>
-              <div style={{fontSize:11.5,color:T.muted}}>Outline plus a first draft in your voice · 5 credits.</div>
-            </button>
-          </div>
-        </Field>
+        {eSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Physics, Economics..." value={eCustom} onChange={ev=>setECustom(ev.target.value)} /></Field>}
         <Field label="Word target"><Input type="number" value={eTarget} onChange={e=>setETarget(e.target.value)} /></Field>
         <Field label="Prompt or thesis (optional)" hint="Paste the assignment brief or sketch your argument.">
           <Textarea placeholder="e.g. Argue that Macbeth's downfall is caused by ambition, not the witches." value={ePrompt} onChange={e=>setEPrompt(e.target.value)} />
         </Field>
       </Modal>
+      <Modal open={!!exportOpen} onClose={()=>setExportOpen(null)} title="Export essay" sub={exportOpen?.title} width={400}
+        footer={<Btn variant="subtle" onClick={()=>setExportOpen(null)}>Close</Btn>}>
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          <Btn variant="ghost" onClick={()=>{copyToClipboard(exportOpen);setExportOpen(null);}} style={{width:"100%",justifyContent:"center"}}>{Icon.copy} Copy to clipboard</Btn>
+          <Btn variant="ghost" onClick={()=>{downloadTxt(exportOpen);setExportOpen(null);}} style={{width:"100%",justifyContent:"center"}}>{Icon.file} Download as .txt</Btn>
+          <Divider style={{margin:"4px 0"}} />
+          <div style={{fontSize:12,color:T.muted,textAlign:"center",padding:"4px 0"}}>Paste into Google Docs, Apple Notes, Notion, or any app</div>
+        </div>
+      </Modal>
       <Pills tabs={["active","library","templates"]} active={tab} onChange={setTab} />
-      <div style={{display:"grid",gridTemplateColumns:"1fr 280px",gap:16}}>
+      <div style={{display:"grid",gridTemplateColumns:active&&tab==="active"?"1fr 280px":"1fr",gap:16}}>
         <div>
-          {tab==="active"&&(
+          {tab==="active"&&active&&(
             <Card>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
                 <div>
-                  <div style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:3}}>Power &amp; Corruption in Macbeth</div>
-                  <div style={{fontSize:12,color:T.muted}}>English IV · {(1247).toLocaleString()} / {(1500).toLocaleString()} words</div>
+                  <input value={active.title} onChange={e=>saveEssay(active.id,{title:e.target.value})} style={{fontSize:15,fontWeight:700,color:T.white,background:"transparent",border:"none",outline:"none",fontFamily:T.font,width:"100%",padding:0}} />
+                  <div style={{fontSize:12,color:T.muted,marginTop:3}}>{active.subject} · {wc.toLocaleString()} / {(active.target||1500).toLocaleString()} words</div>
                 </div>
-                <Badge color={T.amber}>In progress</Badge>
+                <div style={{display:"flex",gap:6}}>
+                  <BtnSm variant="ghost" onClick={()=>setExportOpen(active)}>{Icon.copy} Export</BtnSm>
+                  <Badge color={T.amber}>In progress</Badge>
+                </div>
               </div>
               <div style={{display:"flex",gap:2,background:T.card2,padding:"6px",borderRadius:"6px 6px 0 0",flexWrap:"wrap",border:`1px solid ${T.border}`,borderBottom:"none"}}>
-                {[["B",Icon.bold],["I",Icon.italic],["Link",Icon.link],["Quote",Icon.quote]].map(([l,ico])=>(
-                  <button key={l} style={{display:"flex",alignItems:"center",gap:4,padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>{ico} {l}</button>
-                ))}
+                <button onClick={()=>execCmd("bold")} style={{display:"flex",alignItems:"center",gap:4,padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}} title="Bold">{Icon.bold} B</button>
+                <button onClick={()=>execCmd("italic")} style={{display:"flex",alignItems:"center",gap:4,padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}} title="Italic">{Icon.italic} I</button>
+                <button onClick={()=>{const url=prompt("Link URL:");if(url)execCmd("createLink",url);}} style={{display:"flex",alignItems:"center",gap:4,padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}} title="Link">{Icon.link} Link</button>
+                <button onClick={()=>execCmd("formatBlock","blockquote")} style={{display:"flex",alignItems:"center",gap:4,padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}} title="Quote">{Icon.quote} Quote</button>
                 <div style={{width:1,background:T.border,margin:"2px 4px"}} />
-                {["H1","H2","H3"].map(h=><button key={h} style={{padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>{h}</button>)}
+                <button onClick={()=>execCmd("formatBlock","h1")} style={{padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>H1</button>
+                <button onClick={()=>execCmd("formatBlock","h2")} style={{padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>H2</button>
+                <button onClick={()=>execCmd("formatBlock","h3")} style={{padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>H3</button>
+                <div style={{width:1,background:T.border,margin:"2px 4px"}} />
+                <button onClick={()=>execCmd("insertUnorderedList")} style={{padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>• List</button>
+                <button onClick={()=>execCmd("insertOrderedList")} style={{padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>1. List</button>
               </div>
-              <div contentEditable suppressContentEditableWarning style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:"0 0 6px 6px",padding:16,minHeight:200,fontSize:14,lineHeight:1.8,color:T.text,outline:"none"}}>
-                <p><strong style={{color:T.white,fontWeight:600}}>Introduction</strong></p>
-                <p style={{marginTop:12}}>In Shakespeare's Macbeth, the corrupting influence of unchecked ambition is illustrated through the protagonist's descent from celebrated warrior to tyrannical murderer. The play explores how power, when pursued without moral constraint, dismantles the very humanity of those who seek it · a thesis the playwright reinforces through recurring imagery, soliloquy, and dramatic irony.</p>
-              </div>
+              <div ref={editorRef} contentEditable suppressContentEditableWarning
+                onInput={()=>{if(editorRef.current)saveEssay(active.id,{content:editorRef.current.innerHTML});}}
+                dangerouslySetInnerHTML={{__html:active.content}}
+                style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:"0 0 6px 6px",padding:16,minHeight:300,fontSize:14,lineHeight:1.8,color:T.text,outline:"none",overflowY:"auto",maxHeight:"60vh"}} />
               <div style={{display:"flex",gap:8,marginTop:14,alignItems:"center"}}>
-                <BtnSm variant="subtle">{Icon.wand} Refine prose</BtnSm>
-                <BtnSm variant="subtle">{Icon.check} Grammar pass</BtnSm>
-                <BtnSm variant="subtle">{Icon.quote} Cite source</BtnSm>
-                <div style={{marginLeft:"auto",fontSize:11,color:T.faint}}>Saved automatically</div>
+                <div style={{marginLeft:"auto",fontSize:11,color:T.faint}}>Auto-saved</div>
+              </div>
+            </Card>
+          )}
+          {tab==="active"&&!active&&(
+            <Card style={{padding:32,textAlign:"center"}}>
+              <div style={{fontSize:14,color:T.muted,marginBottom:16}}>No essay open. Create a new one or pick from the library.</div>
+              <div style={{display:"flex",gap:8,justifyContent:"center"}}>
+                <Btn onClick={()=>setNewOpen(true)}>{Icon.plus} New essay</Btn>
+                <Btn variant="ghost" onClick={()=>setTab("library")}>Browse library</Btn>
               </div>
             </Card>
           )}
           {tab==="library"&&(
             <div style={{display:"flex",flexDirection:"column",gap:8}}>
-              {essays.map((e,i)=>(
-                <Card key={i} onClick={()=>{}} style={{display:"flex",alignItems:"center",gap:16}}>
+              {essays.length===0&&<Card style={{padding:24,textAlign:"center"}}><div style={{fontSize:13,color:T.muted,marginBottom:12}}>Your library is empty. Create your first essay.</div><Btn onClick={()=>setNewOpen(true)}>{Icon.plus} New essay</Btn></Card>}
+              {essays.map(e=>{
+                const wc2=wordCount(e.content);
+                return(
+                <Card key={e.id} onClick={()=>{setActiveId(e.id);setTab("active");}} style={{display:"flex",alignItems:"center",gap:16,cursor:"pointer"}}>
                   <div style={{width:3,height:40,borderRadius:2,background:subjectColor[e.subject]||T.lime,flexShrink:0}} />
                   <div style={{flex:1}}>
                     <div style={{fontSize:13,fontWeight:600,color:T.white,marginBottom:2}}>{e.title}</div>
-                    <div style={{fontSize:11,color:T.muted}}>{e.subject} · {e.words.toLocaleString()} / {e.target.toLocaleString()} words</div>
+                    <div style={{fontSize:11,color:T.muted}}>{e.subject} · {wc2.toLocaleString()} / {(e.target||1500).toLocaleString()} words</div>
                   </div>
-                  <Badge color={e.status==="Submitted"?T.teal:e.status==="In progress"?T.amber:T.blue}>{e.status}</Badge>
-                  {e.grade&&<div style={{fontSize:20,fontWeight:700,color:T.lime,letterSpacing:"-0.02em"}}>{e.grade}</div>}
+                  <BtnSm variant="ghost" onClick={ev=>{ev.stopPropagation();setExportOpen(e);}}>Export</BtnSm>
+                  <button onClick={ev=>{ev.stopPropagation();deleteEssay(e.id);}} style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:16,padding:4}}>×</button>
                 </Card>
-              ))}
+              );})}
             </div>
           )}
           {tab==="templates"&&(
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-              {["Five-paragraph essay","Literary analysis","Scientific lab report","Argumentative essay","Compare & contrast","Research paper","Personal statement","Reflective journal"].map(t=>(
-                <Card key={t} onClick={()=>{}} style={{cursor:"pointer",padding:16}}>
+              {TEMPLATES.map(t=>(
+                <Card key={t.name} onClick={()=>createEssay(t.name,"English IV","1500",t.content,"")} style={{cursor:"pointer",padding:16}}>
                   <div style={{width:32,height:32,borderRadius:6,background:T.card2,border:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"center",color:T.muted,marginBottom:10}}>{Icon.file}</div>
-                  <div style={{fontSize:13,fontWeight:600,color:T.white,marginBottom:2}}>{t}</div>
-                  <div style={{fontSize:11,color:T.muted}}>Structured template</div>
+                  <div style={{fontSize:13,fontWeight:600,color:T.white,marginBottom:2}}>{t.name}</div>
+                  <div style={{fontSize:11,color:T.muted}}>{t.desc}</div>
                 </Card>
               ))}
             </div>
           )}
         </div>
+        {active&&tab==="active"&&(
         <div style={{display:"flex",flexDirection:"column",gap:12}}>
           <Card style={{background:T.lime,border:"none"}}>
             <Label style={{color:T.bg}}>Word count</Label>
-            <div style={{fontSize:32,fontWeight:700,color:T.bg,letterSpacing:"-0.03em",lineHeight:1}}>1,247</div>
-            <div style={{marginTop:10,height:4,background:T.bg+"22",borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",width:"83%",background:T.bg,borderRadius:2}} /></div>
-            <div style={{fontSize:12,color:T.bg,opacity:0.7,marginTop:5}}>253 words remaining</div>
+            <div style={{fontSize:32,fontWeight:700,color:T.bg,letterSpacing:"-0.03em",lineHeight:1}}>{wc.toLocaleString()}</div>
+            <div style={{marginTop:10,height:4,background:T.bg+"22",borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",width:pct+"%",background:T.bg,borderRadius:2,transition:"width 0.3s"}} /></div>
+            <div style={{fontSize:12,color:T.bg,opacity:0.7,marginTop:5}}>{Math.max(0,(active.target||1500)-wc).toLocaleString()} words remaining</div>
           </Card>
+          {active.prompt&&(
           <Card>
-            <Label>Writing feedback</Label>
-            {[["Strengthen thesis statement",T.amber],["Include counterargument",T.amber],["Expand textual evidence",T.red],["Conclusion is underdeveloped",T.red]].map(([s,c],i)=>(
-              <div key={i} style={{display:"flex",gap:8,padding:"8px 0",borderBottom:i<3?`1px solid ${T.border}`:"none",fontSize:12,color:T.muted}}>
-                <div style={{width:5,height:5,borderRadius:"50%",background:c,flexShrink:0,marginTop:5}} />
-                {s}
-              </div>
-            ))}
+            <Label>Prompt</Label>
+            <div style={{fontSize:12,color:T.muted,lineHeight:1.5}}>{active.prompt}</div>
           </Card>
-          <Card>
-            <Label>Readability</Label>
-            <div style={{fontSize:32,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>B+</div>
-            <div style={{fontSize:12,color:T.muted,marginTop:4}}>Grade 11 reading level</div>
-          </Card>
+          )}
         </div>
+        )}
       </div>
     </div>
   );
