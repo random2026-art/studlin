@@ -192,6 +192,48 @@ const PRIORITY_COLORS=["","#5FCBA8","#7BACDF","#DCA64A","#E8946B","#D9806B"];
 const DIFFICULTY_LABELS=["","Easy","Moderate","Challenging","Hard","Very Hard"];
 const DIFFICULTY_COLORS=["","#5FCBA8","#7BACDF","#DCA64A","#E8946B","#D9806B"];
 
+// ─── COLLECTIBLE CHARACTERS ──────────────────────────────────────────────────
+const CHARACTERS=[
+  {id:"spark",name:"Spark",emoji:"⚡",desc:"Just getting started. Three days in — most people don't even make it this far.",type:"streak",threshold:3},
+  {id:"ember",name:"Ember",emoji:"🔥",desc:"One week locked in. The habit is forming. Don't stop now.",type:"streak",threshold:7},
+  {id:"flicker",name:"Flicker",emoji:"🕯️",desc:"Two weeks of showing up. You're building something real.",type:"streak",threshold:14},
+  {id:"blaze",name:"Blaze",emoji:"🌟",desc:"30 days. A full month of discipline. You're not the same person who started.",type:"streak",threshold:30},
+  {id:"torch",name:"Torch",emoji:"🔦",desc:"50 days. Most people dream about consistency like this.",type:"streak",threshold:50},
+  {id:"inferno",name:"Inferno",emoji:"💎",desc:"100 days. You've outlasted 99% of students. This is elite.",type:"streak",threshold:100},
+  {id:"phoenix",name:"Phoenix",emoji:"🦅",desc:"200 days. You rose from nothing and built an empire of knowledge.",type:"streak",threshold:200},
+  {id:"titan",name:"Titan",emoji:"👑",desc:"One full year. 365 days of relentless dedication. You are legendary.",type:"streak",threshold:365},
+  {id:"eternal",name:"Eternal",emoji:"🌌",desc:"Two years. At this point, studying isn't something you do — it's who you are.",type:"streak",threshold:730},
+  {id:"ascended",name:"Ascended",emoji:"✨",desc:"1,000 days. There are no words. You have transcended.",type:"streak",threshold:1000},
+  {id:"seedling",name:"Seedling",emoji:"🌱",desc:"Level 5. You planted the seed. Now water it.",type:"level",threshold:5},
+  {id:"sprout",name:"Sprout",emoji:"🌿",desc:"Level 10. Growing stronger every session.",type:"level",threshold:10},
+  {id:"sapling",name:"Sapling",emoji:"🌳",desc:"Level 15. Your roots run deep now.",type:"level",threshold:15},
+  {id:"scholar",name:"Scholar",emoji:"📚",desc:"Level 20. Knowledge is becoming your superpower.",type:"level",threshold:20},
+  {id:"sage",name:"Sage",emoji:"🧠",desc:"Level 30. You don't just study — you understand.",type:"level",threshold:30},
+  {id:"architect",name:"Architect",emoji:"🏛️",desc:"Level 40. Building a cathedral of knowledge, one brick at a time.",type:"level",threshold:40},
+  {id:"maestro",name:"Maestro",emoji:"🎯",desc:"Level 50. Precision. Discipline. Mastery.",type:"level",threshold:50},
+  {id:"oracle",name:"Oracle",emoji:"🔮",desc:"Level 75. You see connections others miss.",type:"level",threshold:75},
+  {id:"luminary",name:"Luminary",emoji:"⭐",desc:"Level 100. A beacon for everyone around you.",type:"level",threshold:100},
+  {id:"sovereign",name:"Sovereign",emoji:"🏔️",desc:"Level 150. You stand at the peak. The view is earned.",type:"level",threshold:150},
+  {id:"mythic",name:"Mythic",emoji:"🐉",desc:"Level 200. They'll tell stories about your grind.",type:"level",threshold:200},
+  {id:"infinite",name:"Infinite",emoji:"♾️",desc:"Level 300. Beyond measure. Beyond limits. Beyond.",type:"level",threshold:300},
+];
+function getCharacterData(){return lsGet("characters",{unlocked:[],unlockedAt:{},seen:[]});}
+function saveCharacterData(d){lsSet("characters",d);}
+function getUnlockedCharacters(){
+  const streak=getStreak();const lvl=levelInfo().level;
+  return CHARACTERS.filter(c=>(c.type==="streak"&&streak>=c.threshold)||(c.type==="level"&&lvl>=c.threshold)).map(c=>c.id);
+}
+function checkNewUnlocks(){
+  const data=getCharacterData();const shouldBeUnlocked=getUnlockedCharacters();
+  const newOnes=shouldBeUnlocked.filter(id=>!data.unlocked.includes(id));
+  if(newOnes.length>0){
+    data.unlocked=[...new Set([...data.unlocked,...newOnes])];
+    newOnes.forEach(id=>{data.unlockedAt[id]=Date.now();});
+    saveCharacterData(data);
+  }
+  return newOnes.map(id=>CHARACTERS.find(c=>c.id===id));
+}
+
 // ─── SHARED PRIMITIVES ────────────────────────────────────────────────────────
 const Btn = ({children,onClick,style={},variant="lime"}) => {
   const base = {display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",border:"none",fontFamily:T.font,letterSpacing:"0.01em",transition:"opacity 0.15s"};
@@ -335,8 +377,19 @@ const DOW_FULL=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Sat
 const MON_SHORT=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 function todayLabel(){const d=new Date();return DOW_FULL[d.getDay()]+" · "+MON_SHORT[d.getMonth()]+" "+d.getDate();}
 function weekNo(){const d=new Date();const start=new Date(d.getFullYear(),0,1);return Math.ceil((((d-start)/86400000)+start.getDay()+1)/7);}
-function getXP(){const s=lsGet("sessions",[]);const focusMin=s.reduce((a,x)=>a+(x.m||0),0);const base=lsGet("xpBase",1850);return base+focusMin*4+getStreak()*25+lsGet("xpBonus",0);}
-function levelInfo(){const xp=getXP();const per=250;const level=Math.floor(xp/per)+1;const into=xp-(level-1)*per;return {xp,level,into,per,toNext:per-into,pct:Math.round(into/per*100)};}
+function getXP(){
+  const s=lsGet("sessions",[]);const totalMin=s.reduce((a,x)=>a+(x.m||0),0);
+  const base=lsGet("xpBase",1850);
+  let focusXP=0;
+  const first60=Math.min(totalMin,60);focusXP+=first60*5;
+  const next60=Math.min(Math.max(totalMin-60,0),60);focusXP+=next60*4;
+  const rest=Math.max(totalMin-120,0);focusXP+=rest*3;
+  const streakXP=getStreak()*30;
+  const loginDays=lsGet("days",[]).length;const loginXP=loginDays*15;
+  const doneCount=Object.values(lsGet("planDone",{})).filter(Boolean).length;const taskXP=doneCount*20;
+  return base+focusXP+streakXP+loginXP+taskXP+lsGet("xpBonus",0);
+}
+function levelInfo(){const xp=getXP();const per=300;const level=Math.floor(xp/per)+1;const into=xp-(level-1)*per;return {xp,level,into,per,toNext:per-into,pct:Math.round(into/per*100)};}
 function weekStreak(){const days=new Set(lsGet("days",[]));const now=new Date();const dow=(now.getDay()+6)%7;const mon=new Date(now);mon.setDate(now.getDate()-dow);return ["M","T","W","T","F","S","S"].map((lab,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);const k=dayKey(d);const today=k===dayKey(now);return {lab,on:days.has(k),today,future:d>now&&!today};});}
 function todaysPlan(){const events=lsGet("events",[]);const tk=dayKey();const done=lsGet("planDone",{});return events.filter(e=>e.date===tk).sort((a,b)=>(a.time||"")<(b.time||"")?-1:1).map(e=>({...e,done:!!done[e.id]}));}
 function togglePlanDone(id){const done=lsGet("planDone",{});done[id]=!done[id];lsSet("planDone",done);return done;}
@@ -417,7 +470,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
 }
 
 // ─── NAV ICONS MAP ────────────────────────────────────────────────────────────
-const navIcon = {dashboard:Icon.grid,aichat:Icon.chat,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,focustimer:Icon.clock,calendar:Icon.cal,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,music:Icon.music,settings:Icon.settings,profile:Icon.user};
+const navIcon = {dashboard:Icon.grid,aichat:Icon.chat,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,focustimer:Icon.clock,calendar:Icon.cal,collection:Icon.award,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,music:Icon.music,settings:Icon.settings,profile:Icon.user};
 
 // ─── AI CHAT ──────────────────────────────────────────────────────────────────
 function AiChat() {
@@ -2420,6 +2473,97 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 }
 
 
+// ─── COLLECTION ──────────────────────────────────────────────────────────────
+function Collection() {
+  const [selectedChar,setSelectedChar]=useState(null);
+  const data=getCharacterData();
+  const unlocked=new Set(data.unlocked);
+  const streak=getStreak();const lvl=levelInfo();
+  const streakChars=CHARACTERS.filter(c=>c.type==="streak");
+  const levelChars=CHARACTERS.filter(c=>c.type==="level");
+  const totalUnlocked=CHARACTERS.filter(c=>unlocked.has(c.id)).length;
+
+  useEffect(()=>{
+    const unseen=data.unlocked.filter(id=>!data.seen.includes(id));
+    if(unseen.length>0){const d={...data,seen:[...new Set([...data.seen,...unseen])]};saveCharacterData(d);}
+  },[]);
+
+  const nextStreak=streakChars.find(c=>!unlocked.has(c.id));
+  const nextLevel=levelChars.find(c=>!unlocked.has(c.id));
+
+  const CharCard=({c})=>{
+    const isUnlocked=unlocked.has(c.id);
+    const progress=c.type==="streak"?Math.min(100,Math.round(streak/c.threshold*100)):Math.min(100,Math.round(lvl.level/c.threshold*100));
+    return(
+      <div onClick={()=>isUnlocked&&setSelectedChar(c)} style={{background:isUnlocked?T.card:T.card2,border:`1px solid ${isUnlocked?T.lime+"44":T.border}`,borderRadius:16,padding:18,cursor:isUnlocked?"pointer":"default",opacity:isUnlocked?1:0.5,transition:"all 0.2s",position:"relative"}}>
+        {isUnlocked&&data.unlockedAt[c.id]&&Date.now()-data.unlockedAt[c.id]<86400000*7&&<span style={{position:"absolute",top:8,right:10,fontSize:9,fontWeight:700,background:T.lime,color:T.ink,padding:"2px 6px",borderRadius:99}}>NEW</span>}
+        <div style={{fontSize:36,marginBottom:10,filter:isUnlocked?"none":"grayscale(1)"}}>{c.emoji}</div>
+        <div style={{fontSize:13,fontWeight:700,color:isUnlocked?T.white:T.muted,marginBottom:2}}>{c.name}</div>
+        <div style={{fontSize:10,color:T.muted,marginBottom:8}}>{c.type==="streak"?c.threshold+"-day streak":"Level "+c.threshold}</div>
+        {!isUnlocked&&<Prog pct={progress} color={T.faint} height={3} />}
+        {isUnlocked&&<div style={{fontSize:10,color:T.lime,fontWeight:600}}>Unlocked</div>}
+      </div>
+    );
+  };
+
+  return(
+    <div>
+      <PH title="Collection" sub={totalUnlocked+" / "+CHARACTERS.length+" characters collected"} />
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:24}}>
+        {nextStreak&&(
+          <Card style={{borderLeft:"3px solid "+T.amber}}>
+            <Label>Next streak unlock</Label>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <span style={{fontSize:28,filter:"grayscale(1)",opacity:0.5}}>{nextStreak.emoji}</span>
+              <div>
+                <div style={{fontSize:14,fontWeight:600,color:T.white}}>{nextStreak.name}</div>
+                <div style={{fontSize:11,color:T.muted}}>{nextStreak.threshold}-day streak · you're at {streak} days</div>
+                <Prog pct={Math.min(100,Math.round(streak/nextStreak.threshold*100))} color={T.amber} height={4} />
+              </div>
+            </div>
+          </Card>
+        )}
+        {nextLevel&&(
+          <Card style={{borderLeft:"3px solid "+T.purple}}>
+            <Label>Next level unlock</Label>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <span style={{fontSize:28,filter:"grayscale(1)",opacity:0.5}}>{nextLevel.emoji}</span>
+              <div>
+                <div style={{fontSize:14,fontWeight:600,color:T.white}}>{nextLevel.name}</div>
+                <div style={{fontSize:11,color:T.muted}}>Level {nextLevel.threshold} · you're at {lvl.level}</div>
+                <Prog pct={Math.min(100,Math.round(lvl.level/nextLevel.threshold*100))} color={T.purple} height={4} />
+              </div>
+            </div>
+          </Card>
+        )}
+      </div>
+      <div style={{marginBottom:20}}>
+        <Label>Streak Characters</Label>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10}}>
+          {streakChars.map(c=><CharCard key={c.id} c={c} />)}
+        </div>
+      </div>
+      <div>
+        <Label>Level Characters</Label>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
+          {levelChars.map(c=><CharCard key={c.id} c={c} />)}
+        </div>
+      </div>
+      <Modal open={!!selectedChar} onClose={()=>setSelectedChar(null)} title={selectedChar?.name} width={400}>
+        {selectedChar&&(
+          <div style={{textAlign:"center",padding:"20px 0"}}>
+            <div style={{fontSize:72,marginBottom:16}}>{selectedChar.emoji}</div>
+            <h2 style={{fontSize:24,fontWeight:700,color:T.white,margin:"0 0 8px"}}>{selectedChar.name}</h2>
+            <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",color:T.lime,textTransform:"uppercase",marginBottom:16}}>{selectedChar.type==="streak"?selectedChar.threshold+"-day streak":"Level "+selectedChar.threshold}</div>
+            <p style={{fontSize:15,color:T.muted,lineHeight:1.6,fontStyle:"italic",margin:0}}>"{selectedChar.desc}"</p>
+            {data.unlockedAt[selectedChar.id]&&<div style={{fontSize:11,color:T.faint,marginTop:16}}>Unlocked {new Date(data.unlockedAt[selectedChar.id]).toLocaleDateString()}</div>}
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
 // ─── PROFILE ──────────────────────────────────────────────────────────────────
 function Profile() {
   const prof=getProfile();
@@ -2468,14 +2612,17 @@ function Profile() {
           </Card>
         ))}
       </div>
-      <div style={{fontSize:12,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:10}}>Achievements</div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        <div style={{fontSize:12,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase"}}>Characters · {getCharacterData().unlocked.length} / {CHARACTERS.length}</div>
+        <button onClick={()=>setActive("collection")} style={{fontSize:11,color:T.lime,fontWeight:600,cursor:"pointer",background:"none",border:"none",fontFamily:T.font}}>View all →</button>
+      </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,marginBottom:16}}>
-        {badges.map((b,i)=>(
-          <Card key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:8,padding:14,cursor:"pointer"}}>
-            <div style={{width:36,height:36,borderRadius:8,background:b.color+"14",border:`1px solid ${b.color}33`,display:"flex",alignItems:"center",justifyContent:"center",color:b.color}}>{b.icon}</div>
-            <div style={{fontSize:10,color:T.muted,textAlign:"center",lineHeight:1.3}}>{b.name}</div>
+        {(()=>{const data=getCharacterData();const unlocked=CHARACTERS.filter(c=>data.unlocked.includes(c.id)).slice(-5);const locked=CHARACTERS.filter(c=>!data.unlocked.includes(c.id)).slice(0,Math.max(0,5-unlocked.length));return [...unlocked,...locked].map((c,i)=>{const isUnlocked=data.unlocked.includes(c.id);return(
+          <Card key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,padding:14,opacity:isUnlocked?1:0.4}}>
+            <div style={{fontSize:28,filter:isUnlocked?"none":"grayscale(1)"}}>{c.emoji}</div>
+            <div style={{fontSize:10,color:isUnlocked?T.white:T.muted,textAlign:"center",lineHeight:1.3,fontWeight:600}}>{c.name}</div>
           </Card>
-        ))}
+        );});})()}
       </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
         <Card>
@@ -2608,8 +2755,11 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
             <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(14,31,24,0.6)",fontWeight:600}}>Day Streak</span>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={T.ink} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{opacity:0.6}}><path d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
           </div>
-          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.ink,margin:"10px 0 2px"}}>{realStreak}<span style={{fontSize:20,color:"rgba(14,31,24,0.55)",marginLeft:6}}>days</span></div>
-          <div style={{fontSize:12,color:"rgba(14,31,24,0.7)"}}>Longest: 31 · +10 credits unlocked</div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.ink,margin:"10px 0 2px"}}>{realStreak}<span style={{fontSize:20,color:"rgba(14,31,24,0.55)",marginLeft:6}}>days</span></div>
+            {(()=>{const sc=CHARACTERS.filter(c=>c.type==="streak"&&realStreak>=c.threshold).pop();return sc?<span style={{fontSize:28}}>{sc.emoji}</span>:null;})()}
+          </div>
+          <div style={{fontSize:12,color:"rgba(14,31,24,0.7)"}}>{(()=>{const next=CHARACTERS.filter(c=>c.type==="streak"&&realStreak<c.threshold)[0];return next?(next.threshold-realStreak)+"d to unlock "+next.name+" "+next.emoji:"All streak characters unlocked";})()}</div>
           <div style={{display:"flex",gap:5,marginTop:"auto",paddingTop:14}}>
             {wk.map((d,i)=>{
               const today=d.today, on=d.on;
@@ -2746,24 +2896,31 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
         </div>
 
         <div style={{background:T.forest,color:T.cream,borderRadius:22,padding:22}}>
-          <CardHead title="Weekly Wrapped" label="WEEK 20" more="View full" light />
+          <CardHead title="Weekly Wrapped" label={"WEEK "+weekNo()} light />
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:14}}>
-            {[{l:"Focus hours",v:"14h 22m",d:"+3.2h"},{l:"Cards mastered",v:"142",d:"+38"},{l:"Words written",v:"3,840",d:"+1,200"}].map((s,i)=>(
+            {[{l:"Focus time",v:fmtH(wkStats.weekMin),d:wkStats.weekCount+" sessions"},{l:"Streak",v:realStreak+"d",d:realStreak>=7?"On fire":"Keep going"},{l:"Level",v:"Lvl "+lvl.level,d:lvl.toNext+" XP to next"}].map((s,i)=>(
               <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:12,padding:"12px 14px"}}>
                 <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.06em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)"}}>{s.l}</div>
                 <div style={{fontFamily:T.hand,fontSize:28,fontWeight:700,color:T.lime,lineHeight:1,marginTop:4}}>{s.v}</div>
-                <div style={{fontSize:11,color:T.lime,fontWeight:600,marginTop:2,opacity:0.85}}>{s.d} vs last wk</div>
+                <div style={{fontSize:11,color:T.lime,fontWeight:600,marginTop:2,opacity:0.85}}>{s.d}</div>
               </div>
             ))}
           </div>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            {["12-day streak","Bio top 1%","Early bird"].map((b,i)=>(
-              <span key={i} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.12)",borderRadius:99,fontSize:11.5,color:T.cream}}>
-                <span style={{width:18,height:18,borderRadius:"50%",background:T.lime,display:"grid",placeItems:"center",color:T.ink,fontSize:10,fontWeight:700,flex:"none"}}>{["12","*","4"][i]}</span>
-                {b}
-              </span>
-            ))}
-          </div>
+          {(()=>{const data=getCharacterData();const recent=CHARACTERS.filter(c=>data.unlocked.includes(c.id)&&data.unlockedAt[c.id]&&Date.now()-data.unlockedAt[c.id]<7*86400000);return recent.length>0?(
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",color:"rgba(246,241,230,0.5)",textTransform:"uppercase",marginBottom:8}}>Unlocked this week</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {recent.map(c=>(
+                  <span key={c.id} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.12)",borderRadius:99,fontSize:11.5,color:T.cream}}>
+                    <span style={{fontSize:16}}>{c.emoji}</span>{c.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ):null;})()}
+          <button onClick={()=>{const txt="This week on Studlin: "+fmtH(wkStats.weekMin)+" focused, "+realStreak+"-day streak, Level "+lvl.level+". "+lvl.xp.toLocaleString()+" XP.";navigator.clipboard?.writeText(txt);}} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,width:"100%",padding:"10px 16px",borderRadius:10,border:"1px solid rgba(246,241,230,0.15)",background:"rgba(246,241,230,0.06)",color:T.cream,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,marginTop:8}}>
+            {Icon.copy} Share your Wrapped
+          </button>
         </div>
       </div>
 
@@ -2941,6 +3098,8 @@ function App() {
   const [focusMode,setFocusMode]=useState("Focus");
   const [focusTotal,setFocusTotal]=useState(25*60);
   const [timerTask,setTimerTask]=useState(null);
+  const [newUnlock,setNewUnlock]=useState(null);
+  useEffect(()=>{const u=checkNewUnlocks();if(u.length>0)setNewUnlock(u[0]);},[]);
   window._setTimerTask=setTimerTask;
   const [creditsOpen,setCreditsOpen]=useState(false);
   const [pricingOpen,setPricingOpen]=useState(false);
@@ -3030,6 +3189,7 @@ function App() {
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
       {id:"focustimer",label:"Focus timer"},
+      {id:"collection",label:"Collection"},
     ]},
     {label:"Tools",items:[
       {id:"aitutor",label:"Tutor"},
@@ -3039,7 +3199,7 @@ function App() {
 
   ];
   const bottomItems=[{id:"settings",label:"Settings"},{id:"profile",label:"Profile"}];
-  const pages={aichat:AiChat,essays:Essays,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,aitutor:AiTutor,grammar:GrammarPolish,humanizer:AiHumanizer,profile:Profile};
+  const pages={aichat:AiChat,essays:Essays,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,aitutor:AiTutor,grammar:GrammarPolish,humanizer:AiHumanizer,collection:Collection,profile:Profile};
   const labelOf={dashboard:"Dashboard",aichat:"AI Chat",essays:"Essays",flashcards:"Flashcards",notes:"Notes",focustimer:"Focus Timer",calendar:"Calendar",aitutor:"AI Tutor",grammar:"Grammar & Polish",humanizer:"Rewrite",settings:"Settings",profile:"Profile"};
   const sectionOf={dashboard:"Workspace",aichat:"Workspace",essays:"Workspace",flashcards:"Workspace",notes:"Workspace",focustimer:"Workspace",calendar:"Workspace",aitutor:"Tools",grammar:"Tools",humanizer:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
@@ -3313,7 +3473,24 @@ function App() {
         const next=lsGet("events",[]).map(ev=>ev.id===timerTask.id?{...ev,status:"done",timeSpent:mins,completedAt:Date.now()}:ev);
         lsSet("events",next);
         setTimerTask(null);
+        setTimeout(()=>{const u=checkNewUnlocks();if(u.length>0)setNewUnlock(u[0]);},500);
       }} />}
+
+      {newUnlock&&(
+        <div onClick={()=>setNewUnlock(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",backdropFilter:"blur(12px)",zIndex:1100,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.3s ease"}}>
+          <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:400,background:T.card,borderRadius:24,border:`2px solid ${T.lime}`,padding:"48px 36px",textAlign:"center",animation:"studlinPop 0.5s cubic-bezier(.2,.85,.3,1)"}}>
+            <div style={{fontSize:12,fontWeight:700,letterSpacing:"0.12em",color:T.lime,textTransform:"uppercase",marginBottom:16}}>Character unlocked</div>
+            <div style={{fontSize:80,marginBottom:16,animation:"studlinPop 0.6s cubic-bezier(.2,.85,.3,1.2) 0.2s both"}}>{newUnlock.emoji}</div>
+            <h2 style={{fontSize:28,fontWeight:700,color:T.white,margin:"0 0 6px"}}>{newUnlock.name}</h2>
+            <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",color:T.lime,textTransform:"uppercase",marginBottom:16}}>{newUnlock.type==="streak"?newUnlock.threshold+"-day streak":"Level "+newUnlock.threshold}</div>
+            <p style={{fontSize:15,color:T.muted,lineHeight:1.6,fontStyle:"italic",margin:"0 0 28px"}}>"{newUnlock.desc}"</p>
+            <div style={{display:"flex",gap:10,justifyContent:"center"}}>
+              <Btn onClick={()=>{setNewUnlock(null);setActive("collection");}}>View collection</Btn>
+              <Btn variant="ghost" onClick={()=>setNewUnlock(null)}>Nice</Btn>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style>{`
         @keyframes studlinPulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.7)} }
