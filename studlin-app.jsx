@@ -1912,11 +1912,7 @@ function Solve(){
   const [textInput,setTextInput]=useState("");
   const fileRef=useRef(null);
   const scrollRef=useRef(null);
-  const subjects=[
-    {id:"Psychology",emoji:"🧠"},{id:"Physics",emoji:"⚛️"},{id:"Biology",emoji:"🧬"},{id:"Math",emoji:"📐"},
-    {id:"General",emoji:"📝"},{id:"Chemistry",emoji:"🧪"},{id:"History",emoji:"📜"},{id:"Economics",emoji:"📊"},
-    {id:"English",emoji:"📖"},{id:"Spanish",emoji:"🇪🇸"},{id:"Computer Science",emoji:"💻"},{id:"Other",emoji:"🔍"},
-  ];
+  const subjects=["Psychology","Physics","Biology","Math","General","Chemistry","History","Economics","English","Spanish","Computer Science","Other"];
 
   var handleFile=function(e){var file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";if(!file.type.startsWith("image/"))return;setImage(file);var reader=new FileReader();reader.onload=function(){setImagePreview(reader.result);};reader.readAsDataURL(file);};
   var handleDrop=function(e){e.preventDefault();e.stopPropagation();var file=e.dataTransfer.files&&e.dataTransfer.files[0];if(file&&file.type.startsWith("image/")){setImage(file);var reader=new FileReader();reader.onload=function(){setImagePreview(reader.result);};reader.readAsDataURL(file);}};
@@ -1947,8 +1943,8 @@ function Solve(){
         <button onClick={function(){scrollSubjects(-1);}} style={{width:32,height:32,borderRadius:"50%",border:"1px solid "+T.border,background:T.card,color:T.muted,cursor:"pointer",display:"grid",placeItems:"center",flexShrink:0,fontSize:14}}>‹</button>
         <div ref={scrollRef} style={{display:"flex",gap:8,overflowX:"auto",scrollbarWidth:"none",flex:1,WebkitOverflowScrolling:"touch",msOverflowStyle:"none"}}>
           {subjects.map(function(s){return(
-            <button key={s.id} onClick={function(){setSubject(s.id);}} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"8px 16px",borderRadius:99,fontSize:13,fontWeight:subject===s.id?600:400,cursor:"pointer",border:"1px solid "+(subject===s.id?T.lime+"66":T.border),background:subject===s.id?T.lime+"14":T.card,color:subject===s.id?T.lime:T.text,fontFamily:T.font,whiteSpace:"nowrap",flexShrink:0,transition:"all 0.15s"}}>
-              <span style={{fontSize:15}}>{s.emoji}</span> {s.id}
+            <button key={s} onClick={function(){setSubject(s);}} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"8px 16px",borderRadius:99,fontSize:13,fontWeight:subject===s?600:400,cursor:"pointer",border:"1px solid "+(subject===s?T.lime+"66":T.border),background:subject===s?T.lime+"14":T.card,color:subject===s?T.lime:T.text,fontFamily:T.font,whiteSpace:"nowrap",flexShrink:0,transition:"all 0.15s"}}>
+              {s}
             </button>
           );})}
         </div>
