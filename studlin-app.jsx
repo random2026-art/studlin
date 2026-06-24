@@ -189,50 +189,6 @@ const BREAK_IDEAS=[
 ];
 const PRIORITY_LABELS=["","Low","Medium-Low","Medium","High","Urgent"];
 const PRIORITY_COLORS=["","#5FCBA8","#7BACDF","#DCA64A","#E8946B","#D9806B"];
-const DIFFICULTY_LABELS=["","Easy","Moderate","Challenging","Hard","Very Hard"];
-const DIFFICULTY_COLORS=["","#5FCBA8","#7BACDF","#DCA64A","#E8946B","#D9806B"];
-
-// ─── COLLECTIBLE CHARACTERS ──────────────────────────────────────────────────
-const CHARACTERS=[
-  {id:"spark",name:"Spark",emoji:"⚡",desc:"Just getting started. Three days in — most people don't even make it this far.",type:"streak",threshold:3},
-  {id:"ember",name:"Ember",emoji:"🔥",desc:"One week locked in. The habit is forming. Don't stop now.",type:"streak",threshold:7},
-  {id:"flicker",name:"Flicker",emoji:"🕯️",desc:"Two weeks of showing up. You're building something real.",type:"streak",threshold:14},
-  {id:"blaze",name:"Blaze",emoji:"🌟",desc:"30 days. A full month of discipline. You're not the same person who started.",type:"streak",threshold:30},
-  {id:"torch",name:"Torch",emoji:"🔦",desc:"50 days. Most people dream about consistency like this.",type:"streak",threshold:50},
-  {id:"inferno",name:"Inferno",emoji:"💎",desc:"100 days. You've outlasted 99% of students. This is elite.",type:"streak",threshold:100},
-  {id:"phoenix",name:"Phoenix",emoji:"🦅",desc:"200 days. You rose from nothing and built an empire of knowledge.",type:"streak",threshold:200},
-  {id:"titan",name:"Titan",emoji:"👑",desc:"One full year. 365 days of relentless dedication. You are legendary.",type:"streak",threshold:365},
-  {id:"eternal",name:"Eternal",emoji:"🌌",desc:"Two years. At this point, studying isn't something you do — it's who you are.",type:"streak",threshold:730},
-  {id:"ascended",name:"Ascended",emoji:"✨",desc:"1,000 days. There are no words. You have transcended.",type:"streak",threshold:1000},
-  {id:"seedling",name:"Seedling",emoji:"🌱",desc:"Level 5. You planted the seed. Now water it.",type:"level",threshold:5},
-  {id:"sprout",name:"Sprout",emoji:"🌿",desc:"Level 10. Growing stronger every session.",type:"level",threshold:10},
-  {id:"sapling",name:"Sapling",emoji:"🌳",desc:"Level 15. Your roots run deep now.",type:"level",threshold:15},
-  {id:"scholar",name:"Scholar",emoji:"📚",desc:"Level 20. Knowledge is becoming your superpower.",type:"level",threshold:20},
-  {id:"sage",name:"Sage",emoji:"🧠",desc:"Level 30. You don't just study — you understand.",type:"level",threshold:30},
-  {id:"architect",name:"Architect",emoji:"🏛️",desc:"Level 40. Building a cathedral of knowledge, one brick at a time.",type:"level",threshold:40},
-  {id:"maestro",name:"Maestro",emoji:"🎯",desc:"Level 50. Precision. Discipline. Mastery.",type:"level",threshold:50},
-  {id:"oracle",name:"Oracle",emoji:"🔮",desc:"Level 75. You see connections others miss.",type:"level",threshold:75},
-  {id:"luminary",name:"Luminary",emoji:"⭐",desc:"Level 100. A beacon for everyone around you.",type:"level",threshold:100},
-  {id:"sovereign",name:"Sovereign",emoji:"🏔️",desc:"Level 150. You stand at the peak. The view is earned.",type:"level",threshold:150},
-  {id:"mythic",name:"Mythic",emoji:"🐉",desc:"Level 200. They'll tell stories about your grind.",type:"level",threshold:200},
-  {id:"infinite",name:"Infinite",emoji:"♾️",desc:"Level 300. Beyond measure. Beyond limits. Beyond.",type:"level",threshold:300},
-];
-function getCharacterData(){return lsGet("characters",{unlocked:[],unlockedAt:{},seen:[]});}
-function saveCharacterData(d){lsSet("characters",d);}
-function getUnlockedCharacters(){
-  const streak=getStreak();const lvl=levelInfo().level;
-  return CHARACTERS.filter(c=>(c.type==="streak"&&streak>=c.threshold)||(c.type==="level"&&lvl>=c.threshold)).map(c=>c.id);
-}
-function checkNewUnlocks(){
-  const data=getCharacterData();const shouldBeUnlocked=getUnlockedCharacters();
-  const newOnes=shouldBeUnlocked.filter(id=>!data.unlocked.includes(id));
-  if(newOnes.length>0){
-    data.unlocked=[...new Set([...data.unlocked,...newOnes])];
-    newOnes.forEach(id=>{data.unlockedAt[id]=Date.now();});
-    saveCharacterData(data);
-  }
-  return newOnes.map(id=>CHARACTERS.find(c=>c.id===id));
-}
 
 // ─── SHARED PRIMITIVES ────────────────────────────────────────────────────────
 const Btn = ({children,onClick,style={},variant="lime"}) => {
@@ -377,19 +333,8 @@ const DOW_FULL=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Sat
 const MON_SHORT=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 function todayLabel(){const d=new Date();return DOW_FULL[d.getDay()]+" · "+MON_SHORT[d.getMonth()]+" "+d.getDate();}
 function weekNo(){const d=new Date();const start=new Date(d.getFullYear(),0,1);return Math.ceil((((d-start)/86400000)+start.getDay()+1)/7);}
-function getXP(){
-  const s=lsGet("sessions",[]);const totalMin=s.reduce((a,x)=>a+(x.m||0),0);
-  const base=lsGet("xpBase",1850);
-  let focusXP=0;
-  const first60=Math.min(totalMin,60);focusXP+=first60*5;
-  const next60=Math.min(Math.max(totalMin-60,0),60);focusXP+=next60*4;
-  const rest=Math.max(totalMin-120,0);focusXP+=rest*3;
-  const streakXP=getStreak()*30;
-  const loginDays=lsGet("days",[]).length;const loginXP=loginDays*15;
-  const doneCount=Object.values(lsGet("planDone",{})).filter(Boolean).length;const taskXP=doneCount*20;
-  return base+focusXP+streakXP+loginXP+taskXP+lsGet("xpBonus",0);
-}
-function levelInfo(){const xp=getXP();const per=300;const level=Math.floor(xp/per)+1;const into=xp-(level-1)*per;return {xp,level,into,per,toNext:per-into,pct:Math.round(into/per*100)};}
+function getXP(){const s=lsGet("sessions",[]);const focusMin=s.reduce((a,x)=>a+(x.m||0),0);const base=lsGet("xpBase",1850);return base+focusMin*4+getStreak()*25+lsGet("xpBonus",0);}
+function levelInfo(){const xp=getXP();const per=250;const level=Math.floor(xp/per)+1;const into=xp-(level-1)*per;return {xp,level,into,per,toNext:per-into,pct:Math.round(into/per*100)};}
 function weekStreak(){const days=new Set(lsGet("days",[]));const now=new Date();const dow=(now.getDay()+6)%7;const mon=new Date(now);mon.setDate(now.getDate()-dow);return ["M","T","W","T","F","S","S"].map((lab,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);const k=dayKey(d);const today=k===dayKey(now);return {lab,on:days.has(k),today,future:d>now&&!today};});}
 function todaysPlan(){const events=lsGet("events",[]);const tk=dayKey();const done=lsGet("planDone",{});return events.filter(e=>e.date===tk).sort((a,b)=>(a.time||"")<(b.time||"")?-1:1).map(e=>({...e,done:!!done[e.id]}));}
 function togglePlanDone(id){const done=lsGet("planDone",{});done[id]=!done[id];lsSet("planDone",done);return done;}
@@ -470,7 +415,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
 }
 
 // ─── NAV ICONS MAP ────────────────────────────────────────────────────────────
-const navIcon = {dashboard:Icon.grid,aichat:Icon.chat,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,focustimer:Icon.clock,calendar:Icon.cal,collection:Icon.award,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,music:Icon.music,settings:Icon.settings,profile:Icon.user};
+const navIcon = {dashboard:Icon.grid,aichat:Icon.chat,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,focustimer:Icon.clock,calendar:Icon.cal,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,music:Icon.music,settings:Icon.settings,profile:Icon.user};
 
 // ─── AI CHAT ──────────────────────────────────────────────────────────────────
 function AiChat() {
@@ -567,12 +512,13 @@ function AiChat() {
     const stepTimer=setInterval(()=>{stepIdx++;if(stepIdx<thinkSteps.length)setThinkStep(thinkSteps[stepIdx]);},1200);
     try{
       const apiMsgs=newMsgs.map(m=>({r:m.r,t:m._ai||m.t}));
-      const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:apiMsgs,model})});
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:apiMsgs,model})});
       const data=await res.json();
       clearInterval(stepTimer);
       setThinkStep("");
       if(data.error){setMsgs(m=>[...m,{r:"ai",t:"⚠ "+data.error}]);}
       else{
+        if(typeof data.credits==="number"){setCredits(data.credits);setCreditsLS(data.credits);}
         const label=fileCtx?"Analyzed file and prepared response":"Analyzed your question and prepared response";
         setMsgs(m=>[...m,{r:"ai",t:data.reply,thinkLabel:label}]);
       }
@@ -738,7 +684,7 @@ function AiChat() {
 
 // ─── ESSAYS ───────────────────────────────────────────────────────────────────
 function Essays() {
-  const [tab,setTab]=useState("library");
+  const [tab,setTab]=useState("active");
   const [newOpen,setNewOpen]=useState(false);
   const [eTitle,setETitle]=useState("");
   const [eSubject,setESubject]=useState("English IV");
@@ -746,155 +692,123 @@ function Essays() {
   const [ePrompt,setEPrompt]=useState("");
   const [eCustom,setECustom]=useState("");
   const [eMode,setEMode]=useState("self");
-  const [essays,setEssays]=useState(()=>lsGet("essays",[]));
-  const [activeId,setActiveId]=useState(null);
-  const [exportOpen,setExportOpen]=useState(null);
-  const editorRef=useRef(null);
+  const [gdocs,setGdocs]=useState(()=>lsGet("gdocs",false));
   const subjects=[{value:"English IV",label:"English IV",color:T.purple},{value:"Biology",label:"Biology",color:T.teal},{value:"History",label:"History",color:T.muted},{value:"Chemistry",label:"Chemistry",color:T.red},{value:"Calculus",label:"Calculus",color:T.blue},{value:"Other",label:"Other",color:T.lime}];
-  const subjectColor={"English IV":T.purple,Biology:T.teal,History:T.blue,Chemistry:T.red,Calculus:T.blue};
-  const TEMPLATES=[
-    {name:"Five-paragraph essay",desc:"Intro, 3 body paragraphs, conclusion",content:"<h2>Introduction</h2><p>State your thesis here. Hook the reader and preview your three main points.</p><h2>Body Paragraph 1</h2><p>First main point with supporting evidence.</p><h2>Body Paragraph 2</h2><p>Second main point with supporting evidence.</p><h2>Body Paragraph 3</h2><p>Third main point with supporting evidence.</p><h2>Conclusion</h2><p>Restate your thesis and summarize your arguments. End with a final thought.</p>"},
-    {name:"Literary analysis",desc:"Thesis-driven analysis of a text",content:"<h2>Introduction</h2><p>Introduce the text, author, and your analytical lens. State your thesis about the text's meaning or technique.</p><h2>Context & Background</h2><p>Provide relevant historical or literary context.</p><h2>Analysis — Evidence 1</h2><p>Quote from the text and analyze its significance. How does it support your thesis?</p><h2>Analysis — Evidence 2</h2><p>Second piece of evidence with close reading.</p><h2>Analysis — Evidence 3</h2><p>Third piece of evidence. Show the pattern.</p><h2>Counterargument</h2><p>Acknowledge an alternative reading and explain why yours is stronger.</p><h2>Conclusion</h2><p>Synthesize your analysis. What does this reveal about the text as a whole?</p>"},
-    {name:"Scientific lab report",desc:"Hypothesis, method, results, discussion",content:"<h2>Title</h2><p>Descriptive title of your experiment.</p><h2>Abstract</h2><p>Brief summary of the experiment, methods, and key findings (150-250 words).</p><h2>Introduction</h2><p>Background information and your hypothesis. Why is this experiment important?</p><h2>Materials & Methods</h2><p>List all materials used. Describe your procedure step by step so someone could replicate it.</p><h2>Results</h2><p>Present your data objectively. Include tables, graphs, or measurements.</p><h2>Discussion</h2><p>Interpret your results. Did they support your hypothesis? Why or why not? What were sources of error?</p><h2>Conclusion</h2><p>Summarize findings. Suggest improvements or future experiments.</p><h2>References</h2><p>List your sources in the required citation format.</p>"},
-    {name:"Argumentative essay",desc:"Claim, evidence, counterargument",content:"<h2>Introduction</h2><p>Hook the reader. Provide context. State your clear, debatable thesis.</p><h2>Argument 1</h2><p>Your strongest point. Present evidence (statistics, quotes, examples) and explain how it supports your claim.</p><h2>Argument 2</h2><p>Second supporting point with evidence and analysis.</p><h2>Counterargument & Rebuttal</h2><p>Acknowledge the strongest opposing view. Then explain why it falls short or why your position is stronger.</p><h2>Conclusion</h2><p>Restate your thesis in light of the evidence. Call to action or final thought.</p>"},
-    {name:"Compare & contrast",desc:"Side-by-side analysis of two subjects",content:"<h2>Introduction</h2><p>Introduce both subjects. State what you're comparing and why it matters. Thesis: what's the key insight from this comparison?</p><h2>Subject A — Overview</h2><p>Describe the first subject's key characteristics.</p><h2>Subject B — Overview</h2><p>Describe the second subject's key characteristics.</p><h2>Similarities</h2><p>What do they have in common? Use specific examples.</p><h2>Differences</h2><p>Where do they diverge? What makes each unique?</p><h2>Analysis</h2><p>So what? What does this comparison reveal? Which is more effective/important/relevant and why?</p><h2>Conclusion</h2><p>Synthesize your comparison. What should the reader take away?</p>"},
-    {name:"Research paper",desc:"Thesis with cited sources and analysis",content:"<h2>Title Page</h2><p>Your title, name, course, date.</p><h2>Abstract</h2><p>200-word summary of your research question, methods, findings, and conclusion.</p><h2>Introduction</h2><p>Background on your topic. Research question. Why does this matter? Thesis statement.</p><h2>Literature Review</h2><p>Summarize what existing research says about your topic. Identify gaps your paper addresses.</p><h2>Methodology</h2><p>How did you conduct your research? What sources did you use?</p><h2>Findings</h2><p>Present your research findings with evidence and data.</p><h2>Discussion</h2><p>Interpret your findings. How do they relate to existing research? What are the implications?</p><h2>Conclusion</h2><p>Summarize your contribution. Limitations. Suggestions for future research.</p><h2>Works Cited</h2><p>Full bibliography in required format (MLA, APA, Chicago).</p>"},
-    {name:"Personal statement",desc:"College application or scholarship essay",content:"<h2>Opening Hook</h2><p>Start with a vivid moment, question, or detail that draws the reader in. Show, don't tell.</p><h2>The Challenge or Experience</h2><p>What happened? Describe the situation with specific details. What did you feel?</p><h2>Growth & Reflection</h2><p>How did this experience change you? What did you learn about yourself?</p><h2>Connection to Future</h2><p>How does this connect to your goals, values, or what you want to study?</p><h2>Closing</h2><p>End with a memorable line that ties back to your opening. Leave a lasting impression.</p>"},
-    {name:"Reflective journal",desc:"Personal reflection on learning",content:"<h2>What Happened</h2><p>Describe the experience, lesson, or reading you're reflecting on.</p><h2>What I Learned</h2><p>What new understanding did you gain? What surprised you?</p><h2>How I Feel About It</h2><p>Be honest about your emotional response. Confusion is OK. Frustration is OK.</p><h2>How This Connects</h2><p>How does this relate to other things you've learned or experienced?</p><h2>What I'll Do Differently</h2><p>How will this change your approach going forward?</p>"},
+  const essays=[
+    {title:"Power & Corruption in Macbeth",subject:"English IV",words:1247,target:1500,status:"In progress",grade:null},
+    {title:"Photosynthesis Lab Report",subject:"Biology",words:800,target:800,status:"Submitted",grade:"A−"},
+    {title:"Causes of World War I",subject:"History",words:450,target:1200,status:"Outline",grade:null},
   ];
-  const active=essays.find(e=>e.id===activeId);
-  const wordCount=(html)=>{const t=(html||"").replace(/<[^>]*>/g," ").replace(/\s+/g," ").trim();return t?t.split(" ").length:0;};
-  const saveEssay=(id,updates)=>{const next=essays.map(e=>e.id===id?{...e,...updates,updatedAt:Date.now()}:e);setEssays(next);lsSet("essays",next);};
-  const createEssay=(title,subject,target,content,prompt)=>{
-    const subj=subject==="Other"&&eCustom.trim()?eCustom.trim():subject;
-    const essay={id:String(Date.now()),title:title||"Untitled essay",subject:subj,target:+target||1500,content:content||"<p>Start writing here...</p>",prompt:prompt||"",status:"In progress",createdAt:Date.now(),updatedAt:Date.now()};
-    const next=[essay,...essays];setEssays(next);lsSet("essays",next);
-    setActiveId(essay.id);setTab("active");setNewOpen(false);setETitle("");setEPrompt("");setECustom("");
+  const subjectColor = {
+    "English IV":T.purple,
+    "Biology":T.teal,
+    "History":T.blue,
   };
-  const deleteEssay=(id)=>{const next=essays.filter(e=>e.id!==id);setEssays(next);lsSet("essays",next);if(activeId===id)setActiveId(null);};
-  const execCmd=(cmd,val)=>{document.execCommand(cmd,false,val||null);editorRef.current?.focus();};
-  const exportText=(essay)=>{
-    const text=essay.content.replace(/<[^>]*>/g,"\n").replace(/\n{3,}/g,"\n\n").trim();
-    return text;
-  };
-  const copyToClipboard=(essay)=>{navigator.clipboard?.writeText(exportText(essay));};
-  const downloadTxt=(essay)=>{const blob=new Blob([exportText(essay)],{type:"text/plain"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=(essay.title||"essay")+".txt";a.click();};
-  const wc=active?wordCount(active.content):0;
-  const pct=active&&active.target?Math.min(100,Math.round(wc/active.target*100)):0;
   return (
     <div>
-      <PH title="Essays" sub="Draft, refine, and submit your writing" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New essay")}</Btn>} />
-      <Modal open={newOpen} onClose={()=>setNewOpen(false)} title="Start a new essay" sub="Pick a template or start from scratch."
-        footer={<><Btn variant="subtle" onClick={()=>setNewOpen(false)}>Cancel</Btn><Btn onClick={()=>createEssay(eTitle,eSubject,eTarget,null,ePrompt)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.pen,"Create essay")}</Btn></>}>
+      <PH title="Essays" sub="Draft, refine, and submit your writing" action={<span style={{display:"flex",gap:8}}><Btn variant="subtle" onClick={()=>{const v=!gdocs;setGdocs(v);lsSet("gdocs",v);}}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},gdocs?Icon.check:Icon.link,gdocs?"Google Docs · connected":"Connect Google Docs")}</Btn><Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New essay")}</Btn></span>} />
+      <Modal open={newOpen} onClose={()=>setNewOpen(false)} title="Start a new essay" sub="Studlin will scaffold an outline and adapt the AI tutor to your subject."
+        footer={<><Btn variant="subtle" onClick={()=>setNewOpen(false)}>Cancel</Btn><Btn onClick={()=>setNewOpen(false)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.pen,"Create essay")}</Btn></>}>
         <Field label="Title"><Input placeholder="e.g. Ambition and ruin in Macbeth" value={eTitle} onChange={e=>setETitle(e.target.value)} autoFocus /></Field>
         <Field label="Subject"><SelectChip options={subjects} value={eSubject} onChange={setESubject} /></Field>
-        {eSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Physics, Economics..." value={eCustom} onChange={ev=>setECustom(ev.target.value)} /></Field>}
+        {eSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Physics, Economics, Psychology..." value={eCustom} onChange={ev=>setECustom(ev.target.value)} /></Field>}
+        <Field label="How do you want to write it?">
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <button type="button" onClick={()=>setEMode("self")} style={{padding:14,borderRadius:10,border:"1px solid "+(eMode==="self"?T.lime+"66":T.border),background:eMode==="self"?T.lime+"10":T.card2,color:T.text,cursor:"pointer",textAlign:"left",fontFamily:T.font}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}><span style={{color:eMode==="self"?T.lime:T.muted,display:"flex"}}>{Icon.pen}</span><span style={{fontSize:13,fontWeight:600}}>Write it myself</span></div>
+              <div style={{fontSize:11.5,color:T.muted}}>Blank editor. AI stays out of the way until you ask.</div>
+            </button>
+            <button type="button" onClick={()=>setEMode("ai")} style={{padding:14,borderRadius:10,border:"1px solid "+(eMode==="ai"?T.lime+"66":T.border),background:eMode==="ai"?T.lime+"10":T.card2,color:T.text,cursor:"pointer",textAlign:"left",fontFamily:T.font}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}><span style={{color:eMode==="ai"?T.lime:T.muted,display:"flex"}}>{Icon.wand}</span><span style={{fontSize:13,fontWeight:600}}>AI-assisted draft</span></div>
+              <div style={{fontSize:11.5,color:T.muted}}>Outline plus a first draft in your voice · 5 credits.</div>
+            </button>
+          </div>
+        </Field>
         <Field label="Word target"><Input type="number" value={eTarget} onChange={e=>setETarget(e.target.value)} /></Field>
         <Field label="Prompt or thesis (optional)" hint="Paste the assignment brief or sketch your argument.">
           <Textarea placeholder="e.g. Argue that Macbeth's downfall is caused by ambition, not the witches." value={ePrompt} onChange={e=>setEPrompt(e.target.value)} />
         </Field>
       </Modal>
-      <Modal open={!!exportOpen} onClose={()=>setExportOpen(null)} title="Export essay" sub={exportOpen?.title} width={400}
-        footer={<Btn variant="subtle" onClick={()=>setExportOpen(null)}>Close</Btn>}>
-        <div style={{display:"flex",flexDirection:"column",gap:8}}>
-          <Btn variant="ghost" onClick={()=>{copyToClipboard(exportOpen);setExportOpen(null);}} style={{width:"100%",justifyContent:"center"}}>{Icon.copy} Copy to clipboard</Btn>
-          <Btn variant="ghost" onClick={()=>{downloadTxt(exportOpen);setExportOpen(null);}} style={{width:"100%",justifyContent:"center"}}>{Icon.file} Download as .txt</Btn>
-          <Divider style={{margin:"4px 0"}} />
-          <div style={{fontSize:12,color:T.muted,textAlign:"center",padding:"4px 0"}}>Paste into Google Docs, Apple Notes, Notion, or any app</div>
-        </div>
-      </Modal>
       <Pills tabs={["active","library","templates"]} active={tab} onChange={setTab} />
-      <div style={{display:"grid",gridTemplateColumns:active&&tab==="active"?"1fr 280px":"1fr",gap:16}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 280px",gap:16}}>
         <div>
-          {tab==="active"&&active&&(
+          {tab==="active"&&(
             <Card>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
                 <div>
-                  <input value={active.title} onChange={e=>saveEssay(active.id,{title:e.target.value})} style={{fontSize:15,fontWeight:700,color:T.white,background:"transparent",border:"none",outline:"none",fontFamily:T.font,width:"100%",padding:0}} />
-                  <div style={{fontSize:12,color:T.muted,marginTop:3}}>{active.subject} · {wc.toLocaleString()} / {(active.target||1500).toLocaleString()} words</div>
+                  <div style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:3}}>Power &amp; Corruption in Macbeth</div>
+                  <div style={{fontSize:12,color:T.muted}}>English IV · {(1247).toLocaleString()} / {(1500).toLocaleString()} words</div>
                 </div>
-                <div style={{display:"flex",gap:6}}>
-                  <BtnSm variant="ghost" onClick={()=>setExportOpen(active)}>{Icon.copy} Export</BtnSm>
-                  <Badge color={T.amber}>In progress</Badge>
-                </div>
+                <Badge color={T.amber}>In progress</Badge>
               </div>
               <div style={{display:"flex",gap:2,background:T.card2,padding:"6px",borderRadius:"6px 6px 0 0",flexWrap:"wrap",border:`1px solid ${T.border}`,borderBottom:"none"}}>
-                <button onClick={()=>execCmd("bold")} style={{display:"flex",alignItems:"center",gap:4,padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}} title="Bold">{Icon.bold} B</button>
-                <button onClick={()=>execCmd("italic")} style={{display:"flex",alignItems:"center",gap:4,padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}} title="Italic">{Icon.italic} I</button>
-                <button onClick={()=>{const url=prompt("Link URL:");if(url)execCmd("createLink",url);}} style={{display:"flex",alignItems:"center",gap:4,padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}} title="Link">{Icon.link} Link</button>
-                <button onClick={()=>execCmd("formatBlock","blockquote")} style={{display:"flex",alignItems:"center",gap:4,padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}} title="Quote">{Icon.quote} Quote</button>
+                {[["B",Icon.bold],["I",Icon.italic],["Link",Icon.link],["Quote",Icon.quote]].map(([l,ico])=>(
+                  <button key={l} style={{display:"flex",alignItems:"center",gap:4,padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>{ico} {l}</button>
+                ))}
                 <div style={{width:1,background:T.border,margin:"2px 4px"}} />
-                <button onClick={()=>execCmd("formatBlock","h1")} style={{padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>H1</button>
-                <button onClick={()=>execCmd("formatBlock","h2")} style={{padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>H2</button>
-                <button onClick={()=>execCmd("formatBlock","h3")} style={{padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>H3</button>
-                <div style={{width:1,background:T.border,margin:"2px 4px"}} />
-                <button onClick={()=>execCmd("insertUnorderedList")} style={{padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>• List</button>
-                <button onClick={()=>execCmd("insertOrderedList")} style={{padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>1. List</button>
+                {["H1","H2","H3"].map(h=><button key={h} style={{padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>{h}</button>)}
               </div>
-              <div ref={editorRef} contentEditable suppressContentEditableWarning
-                onInput={()=>{if(editorRef.current)saveEssay(active.id,{content:editorRef.current.innerHTML});}}
-                dangerouslySetInnerHTML={{__html:active.content}}
-                style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:"0 0 6px 6px",padding:16,minHeight:300,fontSize:14,lineHeight:1.8,color:T.text,outline:"none",overflowY:"auto",maxHeight:"60vh"}} />
+              <div contentEditable suppressContentEditableWarning style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:"0 0 6px 6px",padding:16,minHeight:200,fontSize:14,lineHeight:1.8,color:T.text,outline:"none"}}>
+                <p><strong style={{color:T.white,fontWeight:600}}>Introduction</strong></p>
+                <p style={{marginTop:12}}>In Shakespeare's Macbeth, the corrupting influence of unchecked ambition is illustrated through the protagonist's descent from celebrated warrior to tyrannical murderer. The play explores how power, when pursued without moral constraint, dismantles the very humanity of those who seek it · a thesis the playwright reinforces through recurring imagery, soliloquy, and dramatic irony.</p>
+              </div>
               <div style={{display:"flex",gap:8,marginTop:14,alignItems:"center"}}>
-                <div style={{marginLeft:"auto",fontSize:11,color:T.faint}}>Auto-saved</div>
-              </div>
-            </Card>
-          )}
-          {tab==="active"&&!active&&(
-            <Card style={{padding:32,textAlign:"center"}}>
-              <div style={{fontSize:14,color:T.muted,marginBottom:16}}>No essay open. Create a new one or pick from the library.</div>
-              <div style={{display:"flex",gap:8,justifyContent:"center"}}>
-                <Btn onClick={()=>setNewOpen(true)}>{Icon.plus} New essay</Btn>
-                <Btn variant="ghost" onClick={()=>setTab("library")}>Browse library</Btn>
+                <BtnSm variant="subtle">{Icon.wand} Refine prose</BtnSm>
+                <BtnSm variant="subtle">{Icon.check} Grammar pass</BtnSm>
+                <BtnSm variant="subtle">{Icon.quote} Cite source</BtnSm>
+                <div style={{marginLeft:"auto",fontSize:11,color:T.faint}}>Saved automatically</div>
               </div>
             </Card>
           )}
           {tab==="library"&&(
             <div style={{display:"flex",flexDirection:"column",gap:8}}>
-              {essays.length===0&&<Card style={{padding:24,textAlign:"center"}}><div style={{fontSize:13,color:T.muted,marginBottom:12}}>Your library is empty. Create your first essay.</div><Btn onClick={()=>setNewOpen(true)}>{Icon.plus} New essay</Btn></Card>}
-              {essays.map(e=>{
-                const wc2=wordCount(e.content);
-                return(
-                <Card key={e.id} onClick={()=>{setActiveId(e.id);setTab("active");}} style={{display:"flex",alignItems:"center",gap:16,cursor:"pointer"}}>
+              {essays.map((e,i)=>(
+                <Card key={i} onClick={()=>{}} style={{display:"flex",alignItems:"center",gap:16}}>
                   <div style={{width:3,height:40,borderRadius:2,background:subjectColor[e.subject]||T.lime,flexShrink:0}} />
                   <div style={{flex:1}}>
                     <div style={{fontSize:13,fontWeight:600,color:T.white,marginBottom:2}}>{e.title}</div>
-                    <div style={{fontSize:11,color:T.muted}}>{e.subject} · {wc2.toLocaleString()} / {(e.target||1500).toLocaleString()} words</div>
+                    <div style={{fontSize:11,color:T.muted}}>{e.subject} · {e.words.toLocaleString()} / {e.target.toLocaleString()} words</div>
                   </div>
-                  <BtnSm variant="ghost" onClick={ev=>{ev.stopPropagation();setExportOpen(e);}}>Export</BtnSm>
-                  <button onClick={ev=>{ev.stopPropagation();deleteEssay(e.id);}} style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:16,padding:4}}>×</button>
+                  <Badge color={e.status==="Submitted"?T.teal:e.status==="In progress"?T.amber:T.blue}>{e.status}</Badge>
+                  {e.grade&&<div style={{fontSize:20,fontWeight:700,color:T.lime,letterSpacing:"-0.02em"}}>{e.grade}</div>}
                 </Card>
-              );})}
+              ))}
             </div>
           )}
           {tab==="templates"&&(
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-              {TEMPLATES.map(t=>(
-                <Card key={t.name} onClick={()=>createEssay(t.name,"English IV","1500",t.content,"")} style={{cursor:"pointer",padding:16}}>
+              {["Five-paragraph essay","Literary analysis","Scientific lab report","Argumentative essay","Compare & contrast","Research paper","Personal statement","Reflective journal"].map(t=>(
+                <Card key={t} onClick={()=>{}} style={{cursor:"pointer",padding:16}}>
                   <div style={{width:32,height:32,borderRadius:6,background:T.card2,border:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"center",color:T.muted,marginBottom:10}}>{Icon.file}</div>
-                  <div style={{fontSize:13,fontWeight:600,color:T.white,marginBottom:2}}>{t.name}</div>
-                  <div style={{fontSize:11,color:T.muted}}>{t.desc}</div>
+                  <div style={{fontSize:13,fontWeight:600,color:T.white,marginBottom:2}}>{t}</div>
+                  <div style={{fontSize:11,color:T.muted}}>Structured template</div>
                 </Card>
               ))}
             </div>
           )}
         </div>
-        {active&&tab==="active"&&(
         <div style={{display:"flex",flexDirection:"column",gap:12}}>
           <Card style={{background:T.lime,border:"none"}}>
             <Label style={{color:T.bg}}>Word count</Label>
-            <div style={{fontSize:32,fontWeight:700,color:T.bg,letterSpacing:"-0.03em",lineHeight:1}}>{wc.toLocaleString()}</div>
-            <div style={{marginTop:10,height:4,background:T.bg+"22",borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",width:pct+"%",background:T.bg,borderRadius:2,transition:"width 0.3s"}} /></div>
-            <div style={{fontSize:12,color:T.bg,opacity:0.7,marginTop:5}}>{Math.max(0,(active.target||1500)-wc).toLocaleString()} words remaining</div>
+            <div style={{fontSize:32,fontWeight:700,color:T.bg,letterSpacing:"-0.03em",lineHeight:1}}>1,247</div>
+            <div style={{marginTop:10,height:4,background:T.bg+"22",borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",width:"83%",background:T.bg,borderRadius:2}} /></div>
+            <div style={{fontSize:12,color:T.bg,opacity:0.7,marginTop:5}}>253 words remaining</div>
           </Card>
-          {active.prompt&&(
           <Card>
-            <Label>Prompt</Label>
-            <div style={{fontSize:12,color:T.muted,lineHeight:1.5}}>{active.prompt}</div>
+            <Label>Writing feedback</Label>
+            {[["Strengthen thesis statement",T.amber],["Include counterargument",T.amber],["Expand textual evidence",T.red],["Conclusion is underdeveloped",T.red]].map(([s,c],i)=>(
+              <div key={i} style={{display:"flex",gap:8,padding:"8px 0",borderBottom:i<3?`1px solid ${T.border}`:"none",fontSize:12,color:T.muted}}>
+                <div style={{width:5,height:5,borderRadius:"50%",background:c,flexShrink:0,marginTop:5}} />
+                {s}
+              </div>
+            ))}
           </Card>
-          )}
+          <Card>
+            <Label>Readability</Label>
+            <div style={{fontSize:32,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>B+</div>
+            <div style={{fontSize:12,color:T.muted,marginTop:4}}>Grade 11 reading level</div>
+          </Card>
         </div>
-        )}
       </div>
     </div>
   );
@@ -1442,7 +1356,6 @@ function CalendarTab(){
   const [evKind,setEvKind]=useState("deadline");
   const [evNotes,setEvNotes]=useState("");
   const [evPriority,setEvPriority]=useState(3);
-  const [evDifficulty,setEvDifficulty]=useState(3);
   const [evDeadline,setEvDeadline]=useState("");
   const [evDuration,setEvDuration]=useState(60);
   const [evSplitEnabled,setEvSplitEnabled]=useState(false);
@@ -1465,11 +1378,11 @@ function CalendarTab(){
   const relDay=(k)=>{if(k===todayK)return "Today";const t=new Date();t.setDate(t.getDate()+1);if(k===dayKey(t))return "Tomorrow";const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{month:"short",day:"numeric"});};
   const upcoming=events.filter(ev=>ev.date>=todayK).sort((a,b)=>a.date===b.date?(a.time<b.time?-1:1):(a.date<b.date?-1:1)).slice(0,6);
   const dayEvents=(byDay[selDay]||[]).slice().sort((a,b)=>a.time<b.time?-1:1);
-  const openNew=(dateK)=>{setEvDate(dateK||selDay);setEvDeadline("");setEvPriority(3);setEvDifficulty(3);setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setNewOpen(true);};
-  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvPriority(3);setEvDifficulty(3);setEvDeadline("");setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);};
+  const openNew=(dateK)=>{setEvDate(dateK||selDay);setEvDeadline("");setEvPriority(3);setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setNewOpen(true);};
+  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvPriority(3);setEvDeadline("");setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);};
   const buildTask=(date,time,titleSuffix,splitInfo)=>{
     const subj=evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject;
-    return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,kind:evKind,notes:evNotes,priority:evPriority,difficulty:evDifficulty,deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,...(splitInfo||{})};
+    return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,kind:evKind,notes:evNotes,priority:evPriority,deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,...(splitInfo||{})};
   };
   const commitTasks=(newTasks)=>{
     const next=events.concat(newTasks);
@@ -1500,7 +1413,7 @@ function CalendarTab(){
     const perSession=Math.round(evDuration/splitCount);
     const prompt="You are a scheduling AI. Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+PRIORITY_LABELS[evPriority]+(evDeadline?". Deadline: "+evDeadline:"")+". Today is "+tk+". Existing schedule: "+JSON.stringify(existing)+". RULES: Higher priority = earlier slots. Must be before deadline. Avoid conflicts. Hours 8:00-22:00. Spread splits across days. Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
     try{
-      const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
       const data=await res.json();
       const raw=data.reply.replace(/```json?|```/g,"").trim();
       const parsed=JSON.parse(raw);
@@ -1533,34 +1446,13 @@ function CalendarTab(){
           <Field label="Deadline" hint="When this must be done by"><Input type="date" value={evDeadline} onChange={ev=>setEvDeadline(ev.target.value)} /></Field>
           <Field label="Duration (minutes)" hint="How long you plan to spend"><Input type="number" min={5} max={480} value={evDuration} onChange={ev=>setEvDuration(Math.max(5,+ev.target.value||5))} /></Field>
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <Field label={"Priority"}>
-            <div style={{background:T.card2,borderRadius:10,padding:"12px 14px",border:`1px solid ${T.border}`}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <span style={{fontSize:11,color:T.muted}}>Low</span>
-                <span style={{fontSize:12,fontWeight:600,color:PRIORITY_COLORS[evPriority]}}>{PRIORITY_LABELS[evPriority]}</span>
-                <span style={{fontSize:11,color:T.muted}}>Urgent</span>
-              </div>
-              <div style={{position:"relative",height:6,background:T.border,borderRadius:3,cursor:"pointer"}} onClick={e=>{const r=e.currentTarget.getBoundingClientRect();setEvPriority(Math.max(1,Math.min(5,Math.round((e.clientX-r.left)/r.width*4)+1)));}}>
-                <div style={{position:"absolute",left:0,top:0,height:"100%",width:((evPriority-1)/4*100)+"%",background:`linear-gradient(90deg,#5FCBA8,${PRIORITY_COLORS[evPriority]})`,borderRadius:3,transition:"width 0.2s"}} />
-                <div style={{position:"absolute",top:"50%",left:((evPriority-1)/4*100)+"%",transform:"translate(-50%,-50%)",width:18,height:18,borderRadius:"50%",background:PRIORITY_COLORS[evPriority],border:"3px solid "+T.card,boxShadow:"0 2px 8px rgba(0,0,0,0.3)",transition:"left 0.2s",cursor:"grab"}} />
-              </div>
-            </div>
-          </Field>
-          <Field label={"Difficulty"}>
-            <div style={{background:T.card2,borderRadius:10,padding:"12px 14px",border:`1px solid ${T.border}`}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <span style={{fontSize:11,color:T.muted}}>Easy</span>
-                <span style={{fontSize:12,fontWeight:600,color:DIFFICULTY_COLORS[evDifficulty]}}>{DIFFICULTY_LABELS[evDifficulty]}</span>
-                <span style={{fontSize:11,color:T.muted}}>Hard</span>
-              </div>
-              <div style={{position:"relative",height:6,background:T.border,borderRadius:3,cursor:"pointer"}} onClick={e=>{const r=e.currentTarget.getBoundingClientRect();setEvDifficulty(Math.max(1,Math.min(5,Math.round((e.clientX-r.left)/r.width*4)+1)));}}>
-                <div style={{position:"absolute",left:0,top:0,height:"100%",width:((evDifficulty-1)/4*100)+"%",background:`linear-gradient(90deg,#5FCBA8,${DIFFICULTY_COLORS[evDifficulty]})`,borderRadius:3,transition:"width 0.2s"}} />
-                <div style={{position:"absolute",top:"50%",left:((evDifficulty-1)/4*100)+"%",transform:"translate(-50%,-50%)",width:18,height:18,borderRadius:"50%",background:DIFFICULTY_COLORS[evDifficulty],border:"3px solid "+T.card,boxShadow:"0 2px 8px rgba(0,0,0,0.3)",transition:"left 0.2s",cursor:"grab"}} />
-              </div>
-            </div>
-          </Field>
-        </div>
+        <Field label={"Priority · "+PRIORITY_LABELS[evPriority]}>
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <span style={{fontSize:11,color:T.muted,width:24}}>Low</span>
+            <input type="range" min={1} max={5} value={evPriority} onChange={ev=>setEvPriority(+ev.target.value)} style={{flex:1,accentColor:PRIORITY_COLORS[evPriority]}} />
+            <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Urgent</span>
+          </div>
+        </Field>
         <Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field>
         {evSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Drivers ed, SAT prep, club..." value={evCustom} onChange={ev=>setEvCustom(ev.target.value)} /></Field>}
         <Field label="Type"><SelectChip options={["deadline","exam","class","study block","reminder"]} value={evKind} onChange={setEvKind} /></Field>
@@ -2473,98 +2365,6 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 }
 
 
-// ─── COLLECTION ──────────────────────────────────────────────────────────────
-function Collection() {
-  const [selectedChar,setSelectedChar]=useState(null);
-  const data=getCharacterData();
-  const unlocked=new Set(data.unlocked);
-  const streak=getStreak();const lvl=levelInfo();
-  const streakChars=CHARACTERS.filter(c=>c.type==="streak");
-  const levelChars=CHARACTERS.filter(c=>c.type==="level");
-  const totalUnlocked=CHARACTERS.filter(c=>unlocked.has(c.id)).length;
-
-  useEffect(()=>{
-    const d=getCharacterData();
-    const unseen=d.unlocked.filter(id=>!d.seen.includes(id));
-    if(unseen.length>0){saveCharacterData({...d,seen:[...new Set([...d.seen,...unseen])]});}
-  },[]);
-
-  const nextStreak=streakChars.find(c=>!unlocked.has(c.id));
-  const nextLevel=levelChars.find(c=>!unlocked.has(c.id));
-
-  const CharCard=({c})=>{
-    const isUnlocked=unlocked.has(c.id);
-    const progress=c.type==="streak"?Math.min(100,Math.round(streak/c.threshold*100)):Math.min(100,Math.round(lvl.level/c.threshold*100));
-    return(
-      <div onClick={()=>isUnlocked&&setSelectedChar(c)} style={{background:isUnlocked?T.card:T.card2,border:`1px solid ${isUnlocked?T.lime+"44":T.border}`,borderRadius:16,padding:18,cursor:isUnlocked?"pointer":"default",opacity:isUnlocked?1:0.5,transition:"all 0.2s",position:"relative"}}>
-        {isUnlocked&&data.unlockedAt[c.id]&&Date.now()-data.unlockedAt[c.id]<86400000*7&&<span style={{position:"absolute",top:8,right:10,fontSize:9,fontWeight:700,background:T.lime,color:T.ink,padding:"2px 6px",borderRadius:99}}>NEW</span>}
-        <div style={{fontSize:36,marginBottom:10,filter:isUnlocked?"none":"grayscale(1)"}}>{c.emoji}</div>
-        <div style={{fontSize:13,fontWeight:700,color:isUnlocked?T.white:T.muted,marginBottom:2}}>{c.name}</div>
-        <div style={{fontSize:10,color:T.muted,marginBottom:8}}>{c.type==="streak"?c.threshold+"-day streak":"Level "+c.threshold}</div>
-        {!isUnlocked&&<Prog pct={progress} color={T.faint} height={3} />}
-        {isUnlocked&&<div style={{fontSize:10,color:T.lime,fontWeight:600}}>Unlocked</div>}
-      </div>
-    );
-  };
-
-  return(
-    <div>
-      <PH title="Collection" sub={totalUnlocked+" / "+CHARACTERS.length+" characters collected"} />
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:24}}>
-        {nextStreak&&(
-          <Card style={{borderLeft:"3px solid "+T.amber}}>
-            <Label>Next streak unlock</Label>
-            <div style={{display:"flex",alignItems:"center",gap:12}}>
-              <span style={{fontSize:28,filter:"grayscale(1)",opacity:0.5}}>{nextStreak.emoji}</span>
-              <div>
-                <div style={{fontSize:14,fontWeight:600,color:T.white}}>{nextStreak.name}</div>
-                <div style={{fontSize:11,color:T.muted}}>{nextStreak.threshold}-day streak · you're at {streak} days</div>
-                <Prog pct={Math.min(100,Math.round(streak/nextStreak.threshold*100))} color={T.amber} height={4} />
-              </div>
-            </div>
-          </Card>
-        )}
-        {nextLevel&&(
-          <Card style={{borderLeft:"3px solid "+T.purple}}>
-            <Label>Next level unlock</Label>
-            <div style={{display:"flex",alignItems:"center",gap:12}}>
-              <span style={{fontSize:28,filter:"grayscale(1)",opacity:0.5}}>{nextLevel.emoji}</span>
-              <div>
-                <div style={{fontSize:14,fontWeight:600,color:T.white}}>{nextLevel.name}</div>
-                <div style={{fontSize:11,color:T.muted}}>Level {nextLevel.threshold} · you're at {lvl.level}</div>
-                <Prog pct={Math.min(100,Math.round(lvl.level/nextLevel.threshold*100))} color={T.purple} height={4} />
-              </div>
-            </div>
-          </Card>
-        )}
-      </div>
-      <div style={{marginBottom:20}}>
-        <Label>Streak Characters</Label>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10}}>
-          {streakChars.map(c=><CharCard key={c.id} c={c} />)}
-        </div>
-      </div>
-      <div>
-        <Label>Level Characters</Label>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
-          {levelChars.map(c=><CharCard key={c.id} c={c} />)}
-        </div>
-      </div>
-      <Modal open={!!selectedChar} onClose={()=>setSelectedChar(null)} title={selectedChar?.name} width={400}>
-        {selectedChar&&(
-          <div style={{textAlign:"center",padding:"20px 0"}}>
-            <div style={{fontSize:72,marginBottom:16}}>{selectedChar.emoji}</div>
-            <h2 style={{fontSize:24,fontWeight:700,color:T.white,margin:"0 0 8px"}}>{selectedChar.name}</h2>
-            <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",color:T.lime,textTransform:"uppercase",marginBottom:16}}>{selectedChar.type==="streak"?selectedChar.threshold+"-day streak":"Level "+selectedChar.threshold}</div>
-            <p style={{fontSize:15,color:T.muted,lineHeight:1.6,fontStyle:"italic",margin:0}}>"{selectedChar.desc}"</p>
-            {data.unlockedAt[selectedChar.id]&&<div style={{fontSize:11,color:T.faint,marginTop:16}}>Unlocked {new Date(data.unlockedAt[selectedChar.id]).toLocaleDateString()}</div>}
-          </div>
-        )}
-      </Modal>
-    </div>
-  );
-}
-
 // ─── PROFILE ──────────────────────────────────────────────────────────────────
 function Profile() {
   const prof=getProfile();
@@ -2613,17 +2413,14 @@ function Profile() {
           </Card>
         ))}
       </div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-        <div style={{fontSize:12,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase"}}>Characters · {getCharacterData().unlocked.length} / {CHARACTERS.length}</div>
-        <span style={{fontSize:11,color:T.lime,fontWeight:600}}>View all in Collection tab →</span>
-      </div>
+      <div style={{fontSize:12,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:10}}>Achievements</div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,marginBottom:16}}>
-        {(()=>{const data=getCharacterData();const unlocked=CHARACTERS.filter(c=>data.unlocked.includes(c.id)).slice(-5);const locked=CHARACTERS.filter(c=>!data.unlocked.includes(c.id)).slice(0,Math.max(0,5-unlocked.length));return [...unlocked,...locked].map((c,i)=>{const isUnlocked=data.unlocked.includes(c.id);return(
-          <Card key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,padding:14,opacity:isUnlocked?1:0.4}}>
-            <div style={{fontSize:28,filter:isUnlocked?"none":"grayscale(1)"}}>{c.emoji}</div>
-            <div style={{fontSize:10,color:isUnlocked?T.white:T.muted,textAlign:"center",lineHeight:1.3,fontWeight:600}}>{c.name}</div>
+        {badges.map((b,i)=>(
+          <Card key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:8,padding:14,cursor:"pointer"}}>
+            <div style={{width:36,height:36,borderRadius:8,background:b.color+"14",border:`1px solid ${b.color}33`,display:"flex",alignItems:"center",justifyContent:"center",color:b.color}}>{b.icon}</div>
+            <div style={{fontSize:10,color:T.muted,textAlign:"center",lineHeight:1.3}}>{b.name}</div>
           </Card>
-        );});})()}
+        ))}
       </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
         <Card>
@@ -2756,11 +2553,8 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
             <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(14,31,24,0.6)",fontWeight:600}}>Day Streak</span>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={T.ink} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{opacity:0.6}}><path d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
           </div>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.ink,margin:"10px 0 2px"}}>{realStreak}<span style={{fontSize:20,color:"rgba(14,31,24,0.55)",marginLeft:6}}>days</span></div>
-            {(()=>{const sc=CHARACTERS.filter(c=>c.type==="streak"&&realStreak>=c.threshold).pop();return sc?<span style={{fontSize:28}}>{sc.emoji}</span>:null;})()}
-          </div>
-          <div style={{fontSize:12,color:"rgba(14,31,24,0.7)"}}>{(()=>{const next=CHARACTERS.filter(c=>c.type==="streak"&&realStreak<c.threshold)[0];return next?(next.threshold-realStreak)+"d to unlock "+next.name+" "+next.emoji:"All streak characters unlocked";})()}</div>
+          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.ink,margin:"10px 0 2px"}}>{realStreak}<span style={{fontSize:20,color:"rgba(14,31,24,0.55)",marginLeft:6}}>days</span></div>
+          <div style={{fontSize:12,color:"rgba(14,31,24,0.7)"}}>Longest: 31 · +10 credits unlocked</div>
           <div style={{display:"flex",gap:5,marginTop:"auto",paddingTop:14}}>
             {wk.map((d,i)=>{
               const today=d.today, on=d.on;
@@ -2897,31 +2691,24 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
         </div>
 
         <div style={{background:T.forest,color:T.cream,borderRadius:22,padding:22}}>
-          <CardHead title="Weekly Wrapped" label={"WEEK "+weekNo()} light />
+          <CardHead title="Weekly Wrapped" label="WEEK 20" more="View full" light />
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:14}}>
-            {[{l:"Focus time",v:fmtH(wkStats.weekMin),d:wkStats.weekCount+" sessions"},{l:"Streak",v:realStreak+"d",d:realStreak>=7?"On fire":"Keep going"},{l:"Level",v:"Lvl "+lvl.level,d:lvl.toNext+" XP to next"}].map((s,i)=>(
+            {[{l:"Focus hours",v:"14h 22m",d:"+3.2h"},{l:"Cards mastered",v:"142",d:"+38"},{l:"Words written",v:"3,840",d:"+1,200"}].map((s,i)=>(
               <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:12,padding:"12px 14px"}}>
                 <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.06em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)"}}>{s.l}</div>
                 <div style={{fontFamily:T.hand,fontSize:28,fontWeight:700,color:T.lime,lineHeight:1,marginTop:4}}>{s.v}</div>
-                <div style={{fontSize:11,color:T.lime,fontWeight:600,marginTop:2,opacity:0.85}}>{s.d}</div>
+                <div style={{fontSize:11,color:T.lime,fontWeight:600,marginTop:2,opacity:0.85}}>{s.d} vs last wk</div>
               </div>
             ))}
           </div>
-          {(()=>{const data=getCharacterData();const recent=CHARACTERS.filter(c=>data.unlocked.includes(c.id)&&data.unlockedAt[c.id]&&Date.now()-data.unlockedAt[c.id]<7*86400000);return recent.length>0?(
-            <div style={{marginBottom:12}}>
-              <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",color:"rgba(246,241,230,0.5)",textTransform:"uppercase",marginBottom:8}}>Unlocked this week</div>
-              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                {recent.map(c=>(
-                  <span key={c.id} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.12)",borderRadius:99,fontSize:11.5,color:T.cream}}>
-                    <span style={{fontSize:16}}>{c.emoji}</span>{c.name}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ):null;})()}
-          <button onClick={()=>{const txt="This week on Studlin: "+fmtH(wkStats.weekMin)+" focused, "+realStreak+"-day streak, Level "+lvl.level+". "+lvl.xp.toLocaleString()+" XP.";navigator.clipboard?.writeText(txt);}} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,width:"100%",padding:"10px 16px",borderRadius:10,border:"1px solid rgba(246,241,230,0.15)",background:"rgba(246,241,230,0.06)",color:T.cream,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,marginTop:8}}>
-            {Icon.copy} Share your Wrapped
-          </button>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {["12-day streak","Bio top 1%","Early bird"].map((b,i)=>(
+              <span key={i} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.12)",borderRadius:99,fontSize:11.5,color:T.cream}}>
+                <span style={{width:18,height:18,borderRadius:"50%",background:T.lime,display:"grid",placeItems:"center",color:T.ink,fontSize:10,fontWeight:700,flex:"none"}}>{["12","*","4"][i]}</span>
+                {b}
+              </span>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -3099,8 +2886,6 @@ function App() {
   const [focusMode,setFocusMode]=useState("Focus");
   const [focusTotal,setFocusTotal]=useState(25*60);
   const [timerTask,setTimerTask]=useState(null);
-  const [newUnlock,setNewUnlock]=useState(null);
-  useEffect(()=>{const u=checkNewUnlocks();if(u.length>0)setNewUnlock(u[0]);},[]);
   window._setTimerTask=setTimerTask;
   const [creditsOpen,setCreditsOpen]=useState(false);
   const [pricingOpen,setPricingOpen]=useState(false);
@@ -3184,13 +2969,12 @@ function App() {
   const navSections=[
     {label:"Workspace",items:[
       {id:"dashboard",label:"Dashboard"},
-      {id:"calendar",label:"Calendar"},
       {id:"aichat",label:"Chat"},
       {id:"essays",label:"Essays",badge:"3"},
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
       {id:"focustimer",label:"Focus timer"},
-      {id:"collection",label:"Collection"},
+      {id:"calendar",label:"Calendar"},
     ]},
     {label:"Tools",items:[
       {id:"aitutor",label:"Tutor"},
@@ -3200,7 +2984,7 @@ function App() {
 
   ];
   const bottomItems=[{id:"settings",label:"Settings"},{id:"profile",label:"Profile"}];
-  const pages={aichat:AiChat,essays:Essays,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,aitutor:AiTutor,grammar:GrammarPolish,humanizer:AiHumanizer,collection:Collection,profile:Profile};
+  const pages={aichat:AiChat,essays:Essays,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,aitutor:AiTutor,grammar:GrammarPolish,humanizer:AiHumanizer,profile:Profile};
   const labelOf={dashboard:"Dashboard",aichat:"AI Chat",essays:"Essays",flashcards:"Flashcards",notes:"Notes",focustimer:"Focus Timer",calendar:"Calendar",aitutor:"AI Tutor",grammar:"Grammar & Polish",humanizer:"Rewrite",settings:"Settings",profile:"Profile"};
   const sectionOf={dashboard:"Workspace",aichat:"Workspace",essays:"Workspace",flashcards:"Workspace",notes:"Workspace",focustimer:"Workspace",calendar:"Workspace",aitutor:"Tools",grammar:"Tools",humanizer:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
@@ -3474,24 +3258,7 @@ function App() {
         const next=lsGet("events",[]).map(ev=>ev.id===timerTask.id?{...ev,status:"done",timeSpent:mins,completedAt:Date.now()}:ev);
         lsSet("events",next);
         setTimerTask(null);
-        setTimeout(()=>{const u=checkNewUnlocks();if(u.length>0)setNewUnlock(u[0]);},500);
       }} />}
-
-      {newUnlock&&(
-        <div onClick={()=>setNewUnlock(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",backdropFilter:"blur(12px)",zIndex:1100,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.3s ease"}}>
-          <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:400,background:T.card,borderRadius:24,border:`2px solid ${T.lime}`,padding:"48px 36px",textAlign:"center",animation:"studlinPop 0.5s cubic-bezier(.2,.85,.3,1)"}}>
-            <div style={{fontSize:12,fontWeight:700,letterSpacing:"0.12em",color:T.lime,textTransform:"uppercase",marginBottom:16}}>Character unlocked</div>
-            <div style={{fontSize:80,marginBottom:16,animation:"studlinPop 0.6s cubic-bezier(.2,.85,.3,1.2) 0.2s both"}}>{newUnlock.emoji}</div>
-            <h2 style={{fontSize:28,fontWeight:700,color:T.white,margin:"0 0 6px"}}>{newUnlock.name}</h2>
-            <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",color:T.lime,textTransform:"uppercase",marginBottom:16}}>{newUnlock.type==="streak"?newUnlock.threshold+"-day streak":"Level "+newUnlock.threshold}</div>
-            <p style={{fontSize:15,color:T.muted,lineHeight:1.6,fontStyle:"italic",margin:"0 0 28px"}}>"{newUnlock.desc}"</p>
-            <div style={{display:"flex",gap:10,justifyContent:"center"}}>
-              <Btn onClick={()=>{setNewUnlock(null);setActive("collection");}}>View collection</Btn>
-              <Btn variant="ghost" onClick={()=>setNewUnlock(null)}>Nice</Btn>
-            </div>
-          </div>
-        </div>
-      )}
 
       <style>{`
         @keyframes studlinPulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.7)} }
