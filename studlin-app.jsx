@@ -892,14 +892,19 @@ function Flashcards() {
   const aiGenCards=async(content,context)=>{
     setAiLoading(true);
     try{
-      const prompt="Generate flashcards from this "+context+". Return ONLY a JSON array of objects with \"q\" (question) and \"a\" (answer) keys. Generate 8-15 cards. No markdown, no explanation, just the JSON array:\n\n"+content.slice(0,20000);
-      const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
+      const prompt="You are a flashcard generator. Your ONLY job is to output a JSON array.\n\nCreate 10 study flashcards from this "+context+".\n\nRULES:\n- Output ONLY a raw JSON array. Nothing else.\n- Each object has exactly two keys: \"q\" and \"a\"\n- \"q\" = the question (front of card)\n- \"a\" = the answer (back of card)\n- No markdown. No explanation. No intro text. Just the array.\n\nExample output:\n[{\"q\":\"What is photosynthesis?\",\"a\":\"The process by which plants convert light energy into chemical energy\"}]\n\nContent to make flashcards from:\n"+content.slice(0,15000);
+      const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
       const data=await res.json();
-      const raw=data.reply.replace(/```json?|```/g,"").trim();
-      const parsed=JSON.parse(raw);
-      setAiLoading(false);
-      return Array.isArray(parsed)?parsed:[];
-    }catch(e){setAiLoading(false);return [];}
+      var raw=(data.reply||"").replace(/```json?|```/g,"").trim();
+      var jsonStart=raw.indexOf("[");var jsonEnd=raw.lastIndexOf("]");
+      if(jsonStart>=0&&jsonEnd>jsonStart){raw=raw.slice(jsonStart,jsonEnd+1);}
+      try{var parsed=JSON.parse(raw);setAiLoading(false);return Array.isArray(parsed)?parsed:[];}
+      catch(pe){
+        var cards=[];var qMatches=raw.match(/"q"\s*:\s*"([^"]+)"/g)||[];var aMatches=raw.match(/"a"\s*:\s*"([^"]+)"/g)||[];
+        for(var i=0;i<Math.min(qMatches.length,aMatches.length);i++){cards.push({q:qMatches[i].replace(/"q"\s*:\s*"/,"").replace(/"$/,""),a:aMatches[i].replace(/"a"\s*:\s*"/,"").replace(/"$/,"")});}
+        setAiLoading(false);return cards;
+      }
+    }catch(e){setAiLoading(false);return [{q:"Error generating cards",a:e.message||"Try again"}];}
   };
 
   const createDeck=async()=>{
@@ -909,7 +914,7 @@ function Flashcards() {
     else if(dSource==="file"&&fileText){cards=await aiGenCards(fileText,"document/notes");}
     else if(dSource==="youtube"&&ytInfo){cards=await aiGenCards("Create flashcards about this topic from a YouTube video titled: "+ytInfo,"YouTube video");}
     else if(dSource==="record"&&recText){cards=await aiGenCards(recText,"lecture transcription");}
-    if(cards.length===0&&dSource!=="manual"){cards=[{q:"No cards generated",a:"Try again with more content"}];}
+    if(cards.length===0){cards=[{q:"No cards were generated",a:"Try again — make sure you uploaded a file, pasted a link, or recorded audio"}];}
     const nd={id:String(Date.now()),name:name,count:cards.length,done:0,color:T.lime,cards:cards};
     const next=[nd,...deckList];setDeckList(next);lsSet("decks",next);
     setNewOpen(false);setDName("");setDraft([]);setFileText("");setYtUrl("");setYtInfo("");stopRec();setRecText("");setDSource("manual");
