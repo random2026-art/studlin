@@ -1027,18 +1027,12 @@ function Flashcards() {
 // ─── NOTES ────────────────────────────────────────────────────────────────────
 function Notes(){
   const MicIcon=<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0,display:"block"}}><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg>;
-  const seedNotes=[
-    {title:"Macbeth Act III · Key Themes",body:"Guilt and paranoia dominate the third act. Macbeth's hallucination of Banquo's ghost at the banquet is a direct parallel to the dagger soliloquy in Act II · Shakespeare uses recurring motifs of blood and vision to chart his protagonist's psychological disintegration. Lady Macbeth's attempts to contain the situation reveal the limits of her control.",tag:"English",date:"May 15"},
-    {title:"Cell Respiration · Krebs Cycle",body:"The Krebs cycle comprises eight enzymatic reactions. Beginning with Acetyl-CoA entering the cycle, each complete turn yields: 3 NADH, 1 FADH2, 1 ATP (or GTP), and 2 CO2 molecules. The cycle occurs in the mitochondrial matrix and is essential for the subsequent electron transport chain.",tag:"Biology",date:"May 14"},
-    {title:"Differentiation · Rule Summary",body:"Power rule: d/dx[xⁿ] = nxⁿ⁻¹. Product rule: d/dx[uv] = u'v + uv'. Chain rule: dy/dx = (dy/du)(du/dx). Quotient rule: d/dx[u/v] = (u'v − uv')/v². Trig: d/dx[sin x] = cos x, d/dx[cos x] = −sin x.",tag:"Calculus",date:"May 13"},
-    {title:"Spanish Subjunctive · Triggers",body:"The WEIRDO mnemonic: Wishes (querer que), Emotion (estar contento de que), Impersonal expressions (es importante que), Recommendations (recomendar que), Doubt/Denial (dudar que), Ojalá. Contrast with indicative in relative clauses when the antecedent is definite.",tag:"Spanish",date:"May 12"},
-  ];
   const tagColor={Biology:T.teal,English:T.purple,Calculus:T.blue,Spanish:T.amber,Chemistry:T.red,History:T.muted};
   const colorOf=(tg)=>tagColor[tg]||T.lime;
-  const [notes,setNotes]=useState(()=>lsGet("notes",seedNotes));
+  const [notes,setNotes]=useState(()=>{const n=lsGet("notes",null);return(n&&Array.isArray(n))?n.filter(x=>x&&x.title):[];});
   const [sel,setSel]=useState(null);
   const [search,setSearch]=useState("");
-  const filtered=notes.filter(n=>n.title.toLowerCase().includes(search.toLowerCase()));
+  const filtered=notes.filter(n=>n.title.toLowerCase().includes(search.toLowerCase())||n.body.toLowerCase().includes(search.toLowerCase()));
   const [newOpen,setNewOpen]=useState(false);
   const [src,setSrc]=useState("write");
   const [newTitle,setNewTitle]=useState("");
@@ -1048,6 +1042,11 @@ function Notes(){
   const [yt,setYt]=useState("");
   const [rec,setRec]=useState(false);
   const [recSecs,setRecSecs]=useState(0);
+  const [recText,setRecText]=useState("");
+  const recognitionRef=useRef(null);
+  const [aiLoading,setAiLoading]=useState(false);
+  const [fileText,setFileText]=useState("");
+  const fileRef=useRef(null);
   useEffect(()=>{if(!rec)return;const id=setInterval(()=>setRecSecs(x=>x+1),1000);return ()=>clearInterval(id);},[rec]);
   const fmtRec=(x)=>String(Math.floor(x/60)).padStart(2,"0")+":"+String(x%60).padStart(2,"0");
   const tagOptions=[{value:"Biology",label:"Biology",color:T.teal},{value:"English",label:"English",color:T.purple},{value:"Calculus",label:"Calculus",color:T.blue},{value:"Spanish",label:"Spanish",color:T.amber},{value:"Chemistry",label:"Chemistry",color:T.red},{value:"History",label:"History",color:T.muted},{value:"Other",label:"Other",color:T.lime}];
@@ -1057,19 +1056,73 @@ function Notes(){
     {id:"record",label:"Record lecture",desc:"Live transcription + summary",icon:MicIcon,cost:"3 credits"},
     {id:"youtube",label:"YouTube link",desc:"Transcribes and summarises a video",icon:Icon.link,cost:"3 credits"},
   ];
-  const saveNote=()=>{
-    const tag=newTag==="Other"&&customTag.trim()?customTag.trim():newTag;
-    const title=newTitle.trim()||(src==="youtube"&&yt?"Notes from video":src==="record"?"Lecture · "+fmtRec(recSecs):"Untitled note");
-    const body=src==="write"?(newBody.trim()||"…"):src==="file"?"Scanned summary will appear here once processing finishes.":src==="record"?"Transcription processing · "+fmtRec(recSecs)+" of audio captured.":"Video transcript + AI summary processing: "+yt;
-    const next=[{title,body,tag,date:"Today"}].concat(notes);
-    setNotes(next);lsSet("notes",next);
-    setNewOpen(false);setNewTitle("");setNewBody("");setYt("");setRec(false);setRecSecs(0);setSrc("write");setSel(0);setSearch("");
+
+  const startRec=()=>{
+    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    if(!SR){setRecText("Speech recognition not supported. Try Chrome.");return;}
+    const r=new SR();r.continuous=true;r.interimResults=true;r.lang="en-US";
+    r.onresult=(e)=>{let t="";for(let i=0;i<e.results.length;i++)t+=e.results[i][0].transcript;setRecText(t);};
+    r.onerror=()=>{setRec(false);};
+    r.onend=()=>{setRec(false);};
+    recognitionRef.current=r;r.start();setRec(true);setRecSecs(0);setRecText("");
   };
+  const stopRec=()=>{if(recognitionRef.current)recognitionRef.current.stop();setRec(false);};
+
+  const handleFile=async(e)=>{
+    const file=e.target.files&&e.target.files[0];if(!file)return;
+    e.target.value="";
+    const ext=file.name.split(".").pop().toLowerCase();
+    if(ext==="pdf"){
+      try{const pdfjsLib=await window._pdfjs;const buf=await file.arrayBuffer();const pdf=await pdfjsLib.getDocument({data:buf}).promise;let text="";for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();text+=tc.items.map(it=>it.str).join(" ")+"\n\n";}setFileText(text);if(!newTitle)setNewTitle("Notes from "+file.name);}catch(err){setFileText("Could not read PDF: "+err.message);}
+    }else{
+      const reader=new FileReader();reader.onload=()=>{setFileText(reader.result);if(!newTitle)setNewTitle("Notes from "+file.name);};reader.readAsText(file);
+    }
+  };
+
+  const aiSummarize=async(text,context)=>{
+    setAiLoading(true);
+    try{
+      const prompt="Summarize the following "+context+" into well-structured study notes. Use headings, bullet points, and key terms. Be thorough but concise:\n\n"+text.slice(0,30000);
+      const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
+      const data=await res.json();
+      setAiLoading(false);
+      return data.reply||text;
+    }catch(e){setAiLoading(false);return text;}
+  };
+
+  const saveNote=async()=>{
+    const tag=newTag==="Other"&&customTag.trim()?customTag.trim():newTag;
+    let title=newTitle.trim();
+    let body="";
+
+    if(src==="write"){
+      body=newBody.trim()||"Empty note";
+      if(!title)title="Untitled note";
+    }else if(src==="file"){
+      if(!title)title="Scanned notes";
+      if(fileText.trim()){body=await aiSummarize(fileText,"document/file");}else{body="No file content to process.";}
+    }else if(src==="record"){
+      if(!title)title="Lecture notes - "+fmtRec(recSecs);
+      if(recText.trim()){body=await aiSummarize(recText,"lecture transcription");}else{body="No audio was captured. Try recording again.";}
+    }else if(src==="youtube"){
+      if(!title)title="Notes from video";
+      if(yt.trim()){body=await aiSummarize("Summarize this YouTube video for study notes. URL: "+yt,"YouTube video");}else{body="No YouTube link provided.";}
+    }
+
+    const next=[{id:String(Date.now()),title:title,body:body,tag:tag,date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now()}].concat(notes);
+    setNotes(next);lsSet("notes",next);
+    setNewOpen(false);setNewTitle("");setNewBody("");setYt("");setRec(false);setRecSecs(0);setRecText("");setSrc("write");setFileText("");setSel(0);setSearch("");
+  };
+
+  const updateNote=(idx,updates)=>{const next=notes.map((n,i)=>i===idx?Object.assign({},n,updates):n);setNotes(next);lsSet("notes",next);};
+  const deleteNote=(idx)=>{const next=notes.filter((_,i)=>i!==idx);setNotes(next);lsSet("notes",next);if(sel===idx)setSel(null);else if(sel>idx)setSel(sel-1);};
+  const exportNote=(n)=>{navigator.clipboard&&navigator.clipboard.writeText(n.title+"\n\n"+n.body);};
+
   return (
     <div>
-      <PH title="Notes" sub="Write, scan, record, or import · organised by class" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New note")}</Btn>} />
-      <Modal open={newOpen} onClose={()=>{setNewOpen(false);setRec(false);}} title="Create a new note" sub="Pick a source · Studlin structures everything into clean, searchable notes." width={580}
-        footer={<><Btn variant="subtle" onClick={()=>{setNewOpen(false);setRec(false);}}>Cancel</Btn><Btn onClick={saveNote}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.check,src==="write"?"Save note":"Create note")}</Btn></>}>
+      <PH title="Notes" sub="Write, scan, record, or import" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New note")}</Btn>} />
+      <Modal open={newOpen} onClose={()=>{setNewOpen(false);stopRec();}} title="Create a new note" sub="Pick a source. Studlin structures everything into clean, searchable notes." width={580}
+        footer={<><Btn variant="subtle" onClick={()=>{setNewOpen(false);stopRec();}}>Cancel</Btn><Btn onClick={saveNote} disabled={aiLoading}>{aiLoading?"Processing...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.check,src==="write"?"Save note":"Create note")}</Btn></>}>
         <Field label="Source">
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
             {sources.map(o=>(
@@ -1081,34 +1134,36 @@ function Notes(){
             ))}
           </div>
         </Field>
-        <Field label="Title"><Input placeholder="e.g. Macbeth Act IV · guilt motif" value={newTitle} onChange={ev=>setNewTitle(ev.target.value)} /></Field>
+        <Field label="Title"><Input placeholder="e.g. Macbeth Act IV notes" value={newTitle} onChange={ev=>setNewTitle(ev.target.value)} /></Field>
         <Field label="Class"><SelectChip options={tagOptions} value={newTag} onChange={setNewTag} /></Field>
         {newTag==="Other"&&<Field label="Custom class"><Input placeholder="e.g. Physics, SAT prep..." value={customTag} onChange={ev=>setCustomTag(ev.target.value)} /></Field>}
         {src==="write"&&(
-          <Field label="Body" hint="Markdown supported.">
+          <Field label="Body">
             <Textarea placeholder="Start writing or paste your notes here..." value={newBody} onChange={ev=>setNewBody(ev.target.value)} style={{minHeight:130}} />
           </Field>
         )}
         {src==="file"&&(
-          <Field label="Upload" hint="Studlin reads it and writes structured notes with headings, key terms, and a summary.">
-            <div style={{border:"1px dashed "+T.borderHover,borderRadius:10,padding:26,textAlign:"center",background:T.card2,cursor:"pointer"}}>
+          <Field label="Upload" hint="Studlin reads the file and writes structured notes with AI.">
+            <input type="file" ref={fileRef} onChange={handleFile} accept=".txt,.md,.csv,.pdf,.doc,.docx,.rtf" style={{display:"none"}} />
+            <div onClick={()=>fileRef.current&&fileRef.current.click()} style={{border:"1px dashed "+T.borderHover,borderRadius:10,padding:26,textAlign:"center",background:T.card2,cursor:"pointer"}}>
               <div style={{color:T.muted,marginBottom:6,display:"flex",justifyContent:"center"}}>{Icon.file}</div>
-              <div style={{fontSize:13,color:T.text,fontWeight:500}}>Drop a PDF, slides, or photos here</div>
-              <div style={{fontSize:11,color:T.muted,marginTop:4}}>Up to 25MB · 2 credits per scan</div>
+              <div style={{fontSize:13,color:T.text,fontWeight:500}}>{fileText?"File loaded - "+fileText.length+" chars":"Click to browse or drop a file"}</div>
+              <div style={{fontSize:11,color:T.muted,marginTop:4}}>PDF, TXT, MD, CSV, DOCX</div>
             </div>
           </Field>
         )}
         {src==="record"&&(
-          <Field label="Lecture recording" hint="Recording is transcribed live · you get clean notes plus the full transcript.">
+          <Field label="Lecture recording" hint="Records your microphone and transcribes live.">
             <div style={{border:"1px solid "+(rec?T.red+"55":T.border),borderRadius:10,padding:22,textAlign:"center",background:rec?T.red+"0a":T.card2}}>
-              <button type="button" onClick={()=>setRec(r=>!r)} style={{width:54,height:54,borderRadius:"50%",border:"none",background:rec?T.red:T.lime,color:rec?"#fff":T.ink,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:10}}>{rec?<span style={{width:16,height:16,background:"#fff",borderRadius:3,display:"block"}} />:MicIcon}</button>
+              <button type="button" onClick={rec?stopRec:startRec} style={{width:54,height:54,borderRadius:"50%",border:"none",background:rec?T.red:T.lime,color:rec?"#fff":T.ink,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:10}}>{rec?<span style={{width:16,height:16,background:"#fff",borderRadius:3,display:"block"}} />:MicIcon}</button>
               <div style={{fontSize:15,fontWeight:700,color:rec?T.red:T.white,fontVariantNumeric:"tabular-nums"}}>{fmtRec(recSecs)}</div>
-              <div style={{fontSize:11.5,color:T.muted,marginTop:3}}>{rec?"Recording · tap to stop":"Tap to start recording your lecture"}</div>
+              <div style={{fontSize:11.5,color:T.muted,marginTop:3}}>{rec?"Recording... tap to stop":"Tap to start recording"}</div>
+              {recText&&<div style={{fontSize:12,color:T.text,marginTop:12,padding:"10px 12px",background:T.card,borderRadius:8,textAlign:"left",maxHeight:120,overflowY:"auto",lineHeight:1.5}}>{recText}</div>}
             </div>
           </Field>
         )}
         {src==="youtube"&&(
-          <Field label="YouTube link" hint="Paste any lecture or explainer video · Studlin transcribes it and writes the notes.">
+          <Field label="YouTube link" hint="Studlin uses AI to generate notes from the video topic.">
             <Input placeholder="https://youtube.com/watch?v=..." value={yt} onChange={ev=>setYt(ev.target.value)} />
           </Field>
         )}
@@ -1116,28 +1171,32 @@ function Notes(){
       <div style={{display:"grid",gridTemplateColumns:"250px 1fr",gap:14}}>
         <div>
           <input style={{width:"100%",background:T.card2,border:"1px solid "+T.border,borderRadius:7,padding:"8px 12px",color:T.text,fontSize:12,fontFamily:T.font,outline:"none",marginBottom:10,boxSizing:"border-box"}} placeholder="Search notes..." value={search} onChange={ev=>setSearch(ev.target.value)} />
+          {filtered.length===0&&<div style={{padding:"20px 0",textAlign:"center",fontSize:12,color:T.muted}}>No notes yet. Create your first one.</div>}
           {filtered.map((n,i)=>(
-            <div key={i} onClick={()=>setSel(i)} style={{background:sel===i?T.card2:T.card,borderRadius:8,padding:"12px 14px",marginBottom:6,border:"1px solid "+(sel===i?colorOf(n.tag)+"44":T.border),cursor:"pointer",transition:"all 0.15s"}}>
+            <div key={n.id||i} onClick={()=>setSel(notes.indexOf(n))} style={{background:notes.indexOf(n)===sel?T.card2:T.card,borderRadius:8,padding:"12px 14px",marginBottom:6,border:"1px solid "+(notes.indexOf(n)===sel?colorOf(n.tag)+"44":T.border),cursor:"pointer",transition:"all 0.15s"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:5}}>
                 <div style={{fontSize:12,fontWeight:600,color:T.white,flex:1,marginRight:8,lineHeight:1.3}}>{n.title}</div>
                 <Badge color={colorOf(n.tag)}>{n.tag}</Badge>
               </div>
-              <div style={{fontSize:11,color:T.muted,lineHeight:1.5,maxHeight:40,overflow:"hidden"}}>{n.body}</div>
+              <div style={{fontSize:11,color:T.muted,lineHeight:1.5,maxHeight:40,overflow:"hidden"}}>{n.body.slice(0,100)}</div>
               <div style={{fontSize:10,color:T.faint,marginTop:8}}>{n.date}</div>
             </div>
           ))}
         </div>
         <Card style={{minHeight:380,padding:24}}>
-          {sel!==null&&filtered[sel]
+          {sel!==null&&notes[sel]
             ?<>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20}}>
-                  <div>
-                    <div style={{fontSize:17,fontWeight:700,color:T.white,letterSpacing:"-0.01em",marginBottom:4}}>{filtered[sel].title}</div>
-                    <div style={{display:"flex",gap:8,alignItems:"center"}}><Badge color={colorOf(filtered[sel].tag)}>{filtered[sel].tag}</Badge><span style={{fontSize:11,color:T.muted}}>{filtered[sel].date}</span></div>
+                  <div style={{flex:1}}>
+                    <input value={notes[sel].title} onChange={e=>updateNote(sel,{title:e.target.value})} style={{fontSize:17,fontWeight:700,color:T.white,letterSpacing:"-0.01em",marginBottom:4,background:"transparent",border:"none",outline:"none",fontFamily:T.font,width:"100%",padding:0}} />
+                    <div style={{display:"flex",gap:8,alignItems:"center"}}><Badge color={colorOf(notes[sel].tag)}>{notes[sel].tag}</Badge><span style={{fontSize:11,color:T.muted}}>{notes[sel].date}</span></div>
                   </div>
-                  <div style={{display:"flex",gap:6}}><BtnSm variant="subtle">Summarise</BtnSm><BtnSm variant="subtle">Make flashcards</BtnSm><BtnSm variant="subtle">Export</BtnSm></div>
+                  <div style={{display:"flex",gap:6}}>
+                    <BtnSm variant="subtle" onClick={()=>exportNote(notes[sel])}>{Icon.copy} Copy</BtnSm>
+                    <BtnSm variant="danger" onClick={()=>deleteNote(sel)}>Delete</BtnSm>
+                  </div>
                 </div>
-                <div style={{fontSize:14,color:T.text,lineHeight:1.9}}>{filtered[sel].body}</div>
+                <textarea value={notes[sel].body} onChange={e=>updateNote(sel,{body:e.target.value})} style={{width:"100%",minHeight:280,fontSize:14,color:T.text,lineHeight:1.9,background:"transparent",border:"none",outline:"none",fontFamily:T.font,resize:"vertical",boxSizing:"border-box"}} />
               </>
             :<div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:300,gap:12}}>
                 <div style={{color:T.faint,opacity:0.5}}>{Icon.file}</div>
