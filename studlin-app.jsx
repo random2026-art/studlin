@@ -1105,11 +1105,11 @@ function Notes(){
       if(!title)title="Lecture notes - "+fmtRec(recSecs);
       if(recText.trim()){body=await aiSummarize(recText,"lecture transcription");}else{body="No audio was captured. Try recording again.";}
     }else if(src==="youtube"){
-      if(!title)title="Notes from video";
-      if(yt.trim()){
-        var ytPrompt="A student is studying and shared this YouTube link: "+yt+"\n\nBased on the video title and topic that the URL suggests, create comprehensive study notes on that subject. Write detailed, well-structured notes with:\n- Clear headings for each section\n- Bullet points for key concepts\n- Important definitions and terms\n- Examples where helpful\n\nDo NOT say you cannot access the video. Just create excellent study notes on whatever topic the URL is about. If you can identify the topic from the URL, use it. If not, ask what the video is about. Write the notes directly.";
-        body=await aiSummarize(ytPrompt,"YouTube video study notes");
-      }else{body="No YouTube link provided.";}
+      var topic=newBody.trim();
+      if(!title)title=topic?"Notes: "+topic:"Notes from video";
+      if(topic){
+        body=await aiSummarize("Create comprehensive study notes on this topic: "+topic+". Include clear headings, bullet points, key definitions, examples, and a summary.","topic for study notes");
+      }else{body="Please describe the video topic so Studlin can generate notes.";}
     }
 
     const next=[{id:String(Date.now()),title:title,body:body,tag:tag,date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now()}].concat(notes);
@@ -1165,11 +1165,14 @@ function Notes(){
             </div>
           </Field>
         )}
-        {src==="youtube"&&(
-          <Field label="YouTube link" hint="Studlin uses AI to generate notes from the video topic.">
+        {src==="youtube"&&(<>
+          <Field label="YouTube link (optional)" hint="For your reference — paste the link so you can find it later.">
             <Input placeholder="https://youtube.com/watch?v=..." value={yt} onChange={ev=>setYt(ev.target.value)} />
           </Field>
-        )}
+          <Field label="What's the video about?" hint="Tell Studlin the topic and it'll generate detailed study notes.">
+            <Input placeholder="e.g. Photosynthesis, World War 2 causes, Calculus derivatives..." value={newBody} onChange={ev=>setNewBody(ev.target.value)} />
+          </Field>
+        </>)}
       </Modal>
       <div style={{display:"grid",gridTemplateColumns:"250px 1fr",gap:14}}>
         <div>
