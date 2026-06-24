@@ -893,7 +893,7 @@ function Flashcards() {
   const aiGenCards=async(content,context)=>{
     setAiLoading(true);
     try{
-      const prompt="You are a flashcard generator. Your ONLY job is to output a JSON array.\n\nCreate 10 study flashcards from this "+context+".\n\nRULES:\n- Output ONLY a raw JSON array. Nothing else.\n- Each object has exactly two keys: \"q\" and \"a\"\n- \"q\" = the question (front of card)\n- \"a\" = the answer (back of card)\n- No markdown. No explanation. No intro text. Just the array.\n\nExample output:\n[{\"q\":\"What is photosynthesis?\",\"a\":\"The process by which plants convert light energy into chemical energy\"}]\n\nContent to make flashcards from:\n"+content.slice(0,15000);
+      const prompt="Hey Studlin, I need you to help me make flashcards for studying. Can you create 10 flashcards from this "+context+"? Please format them as a JSON array where each card has a \"q\" key for the question and an \"a\" key for the answer. Just give me the JSON array directly so I can import them into my deck. Here's the material:\n\n"+content.slice(0,15000);
       const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
       const data=await res.json();
       var raw=(data.reply||"").replace(/```json?|```/g,"").trim();
