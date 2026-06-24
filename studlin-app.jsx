@@ -1911,128 +1911,93 @@ function Solve(){
   const [result,setResult]=useState("");
   const [textInput,setTextInput]=useState("");
   const fileRef=useRef(null);
-  const subjects=["Math","Chemistry","Physics","Biology","History","Economics","Psychology","English","Spanish","Computer Science","Other"];
+  const scrollRef=useRef(null);
+  const subjects=[
+    {id:"Psychology",emoji:"🧠"},{id:"Physics",emoji:"⚛️"},{id:"Biology",emoji:"🧬"},{id:"Math",emoji:"📐"},
+    {id:"General",emoji:"📝"},{id:"Chemistry",emoji:"🧪"},{id:"History",emoji:"📜"},{id:"Economics",emoji:"📊"},
+    {id:"English",emoji:"📖"},{id:"Spanish",emoji:"🇪🇸"},{id:"Computer Science",emoji:"💻"},{id:"Other",emoji:"🔍"},
+  ];
 
-  const handleFile=function(e){
-    var file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
-    if(!file.type.startsWith("image/")){return;}
-    setImage(file);
-    var reader=new FileReader();
-    reader.onload=function(){setImagePreview(reader.result);};
-    reader.readAsDataURL(file);
-  };
+  var handleFile=function(e){var file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";if(!file.type.startsWith("image/"))return;setImage(file);var reader=new FileReader();reader.onload=function(){setImagePreview(reader.result);};reader.readAsDataURL(file);};
+  var handleDrop=function(e){e.preventDefault();e.stopPropagation();var file=e.dataTransfer.files&&e.dataTransfer.files[0];if(file&&file.type.startsWith("image/")){setImage(file);var reader=new FileReader();reader.onload=function(){setImagePreview(reader.result);};reader.readAsDataURL(file);}};
 
-  const handleDrop=function(e){
-    e.preventDefault();e.stopPropagation();
-    var file=e.dataTransfer.files&&e.dataTransfer.files[0];
-    if(file&&file.type.startsWith("image/")){
-      setImage(file);
-      var reader=new FileReader();reader.onload=function(){setImagePreview(reader.result);};reader.readAsDataURL(file);
-    }
-  };
-
-  const solve=async function(){
+  var solve=async function(){
     if(!textInput.trim()&&!image)return;
     setLoading(true);setResult("");
     try{
-      var prompt="Hey Studlin, I need help solving this "+subject+" problem."+(deepThink?" Please show your full step-by-step thinking process and reasoning before giving the answer. Be very thorough — explain WHY each step works, not just what to do.":"")+" Here's the problem:\n\n";
+      var prompt="Hey Studlin, I need help solving this "+subject+" problem."+(deepThink?" Please show your full step-by-step thinking process and reasoning before giving the answer. Be very thorough.":"")+" Here's the problem:\n\n";
       if(textInput.trim())prompt+=textInput;
-      if(image&&imagePreview){
-        prompt+="\n\n[The student uploaded an image of the problem. Since you can't see images directly, please ask them to describe what's in the image, OR if they also typed the problem above, solve that.]";
-      }
-      if(!textInput.trim()&&image){
-        prompt="Hey Studlin, I uploaded an image of a "+subject+" problem but since you can't see images, can you help me if I describe it? Ask me to type out what the problem says.";
-      }
-      var res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:deepThink?"standard":"standard"})});
+      if(!textInput.trim()&&image)prompt="Hey Studlin, I uploaded an image of a "+subject+" problem but since you can't see images, can you help me if I describe it? Ask me to type out what the problem says.";
+      var res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
       var data=await res.json();
       setResult(data.reply||"No response.");
     }catch(e){setResult("Error: "+e.message);}
     setLoading(false);
   };
 
+  var scrollSubjects=function(dir){if(scrollRef.current)scrollRef.current.scrollBy({left:dir*150,behavior:"smooth"});};
+
   return(
-    <div>
-      <PH title="Solve" sub="Drop a photo or type any problem — Studlin solves it step by step" />
-      <div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:16}}>
-        <div>
-          <Card style={{marginBottom:14}}>
-            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14}}>
-              {subjects.map(function(s){return(
-                <button key={s} onClick={function(){setSubject(s);}} style={{padding:"6px 14px",borderRadius:99,fontSize:12,fontWeight:subject===s?600:400,cursor:"pointer",border:"1px solid "+(subject===s?T.lime+"66":T.border),background:subject===s?T.lime+"14":"transparent",color:subject===s?T.lime:T.muted,fontFamily:T.font}}>{s}</button>
-              );})}
-            </div>
+    <div style={{maxWidth:720,margin:"0 auto"}}>
+      <div style={{textAlign:"center",marginBottom:28}}>
+        <h1 style={{fontSize:28,fontWeight:700,color:T.white,letterSpacing:"-0.02em",margin:"0 0 8px"}}>What do you want to solve?</h1>
+      </div>
 
-            <div onDragOver={function(e){e.preventDefault();}} onDrop={handleDrop} onClick={function(){if(!imagePreview)fileRef.current&&fileRef.current.click();}} style={{border:"2px dashed "+(imagePreview?T.lime+"55":T.border),borderRadius:14,padding:imagePreview?0:32,textAlign:"center",background:imagePreview?"transparent":T.card2,cursor:imagePreview?"default":"pointer",marginBottom:14,overflow:"hidden",position:"relative"}}>
-              <input type="file" ref={fileRef} onChange={handleFile} accept="image/*" style={{display:"none"}} />
-              {imagePreview?(
-                <div style={{position:"relative"}}>
-                  <img src={imagePreview} alt="Problem" style={{width:"100%",maxHeight:300,objectFit:"contain",display:"block"}} />
-                  <button onClick={function(e){e.stopPropagation();setImage(null);setImagePreview(null);}} style={{position:"absolute",top:8,right:8,width:28,height:28,borderRadius:"50%",background:"rgba(0,0,0,0.7)",color:"#fff",border:"none",cursor:"pointer",fontSize:14,display:"grid",placeItems:"center"}}>x</button>
-                </div>
-              ):(
-                <div>
-                  <div style={{fontSize:32,marginBottom:8,opacity:0.4}}>📸</div>
-                  <div style={{fontSize:14,fontWeight:600,color:T.text,marginBottom:4}}>Drop an image or click to upload</div>
-                  <div style={{fontSize:12,color:T.muted}}>Photo of a textbook, worksheet, whiteboard, or handwritten problem</div>
-                </div>
-              )}
-            </div>
-
-            <div style={{marginBottom:14}}>
-              <Label>Or type the problem</Label>
-              <Textarea placeholder={"e.g. Solve for x: 2x² + 5x - 3 = 0\nor: Explain the causes of the French Revolution\nor: Balance this equation: Fe + O₂ → Fe₂O₃"} value={textInput} onChange={function(e){setTextInput(e.target.value);}} style={{minHeight:100}} />
-            </div>
-
-            <div style={{display:"flex",gap:10,alignItems:"center"}}>
-              <Btn onClick={solve} disabled={loading||(!textInput.trim()&&!image)}>{loading?"Solving...":"Solve it"}</Btn>
-              <div onClick={function(){setDeepThink(function(d){return!d;});}} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",padding:"8px 14px",borderRadius:8,border:"1px solid "+(deepThink?T.purple+"55":T.border),background:deepThink?T.purple+"10":"transparent"}}>
-                <div style={{width:36,height:20,borderRadius:10,background:deepThink?T.purple:T.faint,position:"relative",transition:"background 0.2s"}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:deepThink?18:2,transition:"left 0.2s"}} /></div>
-                <div>
-                  <div style={{fontSize:12,fontWeight:600,color:deepThink?T.purple:T.muted}}>Deep thinking</div>
-                  <div style={{fontSize:10,color:T.muted}}>Show full reasoning process</div>
-                </div>
-              </div>
-            </div>
-          </Card>
-
-          {result&&(
-            <Card style={{borderLeft:"3px solid "+T.lime}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-                <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                  <div style={{width:28,height:28,borderRadius:7,background:T.lime,display:"grid",placeItems:"center",fontWeight:800,color:T.ink,fontSize:13,fontFamily:T.font}}>S</div>
-                  <div><div style={{fontSize:13,fontWeight:700,color:T.white}}>Studlin</div><div style={{fontSize:10,color:T.muted}}>{subject}{deepThink?" · Deep thinking":""}</div></div>
-                </div>
-                <BtnSm variant="ghost" onClick={function(){navigator.clipboard&&navigator.clipboard.writeText(result);}}>{Icon.copy} Copy</BtnSm>
-              </div>
-              <div style={{fontSize:14,color:T.text,lineHeight:1.8,whiteSpace:"pre-wrap"}}>{result}</div>
-            </Card>
-          )}
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:24}}>
+        <button onClick={function(){scrollSubjects(-1);}} style={{width:32,height:32,borderRadius:"50%",border:"1px solid "+T.border,background:T.card,color:T.muted,cursor:"pointer",display:"grid",placeItems:"center",flexShrink:0,fontSize:14}}>‹</button>
+        <div ref={scrollRef} style={{display:"flex",gap:8,overflowX:"auto",scrollbarWidth:"none",flex:1,WebkitOverflowScrolling:"touch",msOverflowStyle:"none"}}>
+          {subjects.map(function(s){return(
+            <button key={s.id} onClick={function(){setSubject(s.id);}} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"8px 16px",borderRadius:99,fontSize:13,fontWeight:subject===s.id?600:400,cursor:"pointer",border:"1px solid "+(subject===s.id?T.lime+"66":T.border),background:subject===s.id?T.lime+"14":T.card,color:subject===s.id?T.lime:T.text,fontFamily:T.font,whiteSpace:"nowrap",flexShrink:0,transition:"all 0.15s"}}>
+              <span style={{fontSize:15}}>{s.emoji}</span> {s.id}
+            </button>
+          );})}
         </div>
+        <button onClick={function(){scrollSubjects(1);}} style={{width:32,height:32,borderRadius:"50%",border:"1px solid "+T.border,background:T.card,color:T.muted,cursor:"pointer",display:"grid",placeItems:"center",flexShrink:0,fontSize:14}}>›</button>
+      </div>
 
-        <div style={{display:"flex",flexDirection:"column",gap:12}}>
-          <Card style={{background:"linear-gradient(135deg,"+T.forest+",#0B201A)",border:"1px solid "+T.lime+"22"}}>
-            <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.lime,textTransform:"uppercase",marginBottom:10}}>How it works</div>
-            {["Upload a photo or type the problem","Select the subject for better results","Toggle deep thinking for step-by-step reasoning","Get a detailed solution with explanations"].map(function(s,i){return(
-              <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start",marginBottom:10}}>
-                <span style={{width:20,height:20,borderRadius:"50%",background:T.lime+"22",color:T.lime,display:"grid",placeItems:"center",fontSize:10,fontWeight:700,flexShrink:0}}>{i+1}</span>
-                <span style={{fontSize:12,color:"rgba(246,241,230,0.75)",lineHeight:1.4}}>{s}</span>
-              </div>
-            );})}
-          </Card>
-          <Card>
-            <Label>Supported subjects</Label>
-            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-              {subjects.map(function(s){return <span key={s} style={{fontSize:11,padding:"4px 10px",borderRadius:6,background:T.card2,border:"1px solid "+T.border,color:T.muted}}>{s}</span>;})}
+      <div onDragOver={function(e){e.preventDefault();}} onDrop={handleDrop} onClick={function(){if(!imagePreview)fileRef.current&&fileRef.current.click();}} style={{border:"2px dashed "+(imagePreview?T.lime+"44":T.border),borderRadius:16,padding:imagePreview?0:36,textAlign:"center",background:imagePreview?"transparent":T.card,cursor:imagePreview?"default":"pointer",marginBottom:16,overflow:"hidden",position:"relative",transition:"border-color 0.2s"}}>
+        <input type="file" ref={fileRef} onChange={handleFile} accept="image/*" style={{display:"none"}} />
+        {imagePreview?(
+          <div style={{position:"relative"}}>
+            <img src={imagePreview} alt="Problem" style={{width:"100%",maxHeight:300,objectFit:"contain",display:"block"}} />
+            <button onClick={function(e){e.stopPropagation();setImage(null);setImagePreview(null);}} style={{position:"absolute",top:10,right:10,width:30,height:30,borderRadius:"50%",background:"rgba(0,0,0,0.7)",color:"#fff",border:"none",cursor:"pointer",fontSize:16,display:"grid",placeItems:"center"}}>×</button>
+          </div>
+        ):(
+          <div>
+            <div style={{width:44,height:44,borderRadius:12,background:T.card2,border:"1px solid "+T.border,display:"grid",placeItems:"center",margin:"0 auto 12px",color:T.muted}}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
             </div>
-          </Card>
-          {deepThink&&(
-            <Card style={{borderLeft:"3px solid "+T.purple}}>
-              <Label>Deep thinking mode</Label>
-              <div style={{fontSize:12,color:T.muted,lineHeight:1.5}}>Shows the AI's full reasoning process — every step explained with WHY it works. Great for understanding concepts, not just getting answers.</div>
-            </Card>
-          )}
+            <div style={{fontSize:14,fontWeight:500,color:T.text}}>Drag & drop or click to add an image</div>
+          </div>
+        )}
+      </div>
+
+      <div style={{position:"relative",marginBottom:16}}>
+        <input value={textInput} onChange={function(e){setTextInput(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();solve();}}} placeholder="Type your question here..." style={{width:"100%",padding:"14px 52px 14px 16px",borderRadius:12,border:"1px solid "+T.border,background:T.card,color:T.text,fontSize:14,fontFamily:T.font,outline:"none",boxSizing:"border-box"}} />
+        <button onClick={solve} disabled={loading||(!textInput.trim()&&!image)} style={{position:"absolute",right:6,top:"50%",transform:"translateY(-50%)",width:36,height:36,borderRadius:10,background:(!textInput.trim()&&!image)?T.card2:T.lime,color:(!textInput.trim()&&!image)?T.muted:T.ink,border:"none",cursor:"pointer",display:"grid",placeItems:"center",transition:"all 0.15s"}}>
+          {loading?<span style={{width:14,height:14,border:"2px solid "+T.muted,borderTopColor:T.text,borderRadius:"50%",animation:"studlinSpin 0.7s linear infinite",display:"block"}} />:<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>}
+        </button>
+      </div>
+
+      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:24}}>
+        <div onClick={function(){setDeepThink(function(d){return!d;});}} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
+          <div style={{width:36,height:20,borderRadius:10,background:deepThink?T.purple:T.faint,position:"relative",transition:"background 0.2s"}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:deepThink?18:2,transition:"left 0.2s"}} /></div>
+          <span style={{fontSize:13,color:deepThink?T.purple:T.muted,fontWeight:500}}>Thinking</span>
         </div>
       </div>
+
+      {result&&(
+        <Card style={{borderLeft:"3px solid "+T.lime,marginBottom:20}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <div style={{width:28,height:28,borderRadius:7,background:T.lime,display:"grid",placeItems:"center",fontWeight:800,color:T.ink,fontSize:13,fontFamily:T.font}}>S</div>
+              <div><div style={{fontSize:13,fontWeight:700,color:T.white}}>Studlin</div><div style={{fontSize:10,color:T.muted}}>{subject}{deepThink?" · Deep thinking":""}</div></div>
+            </div>
+            <BtnSm variant="ghost" onClick={function(){navigator.clipboard&&navigator.clipboard.writeText(result);}}>{Icon.copy} Copy</BtnSm>
+          </div>
+          <div style={{fontSize:14,color:T.text,lineHeight:1.8,whiteSpace:"pre-wrap"}}>{result}</div>
+        </Card>
+      )}
     </div>
   );
 }
