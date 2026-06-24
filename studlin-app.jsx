@@ -189,6 +189,37 @@ const BREAK_IDEAS=[
 ];
 const PRIORITY_LABELS=["","Low","Medium-Low","Medium","High","Urgent"];
 const PRIORITY_COLORS=["","#5FCBA8","#7BACDF","#DCA64A","#E8946B","#D9806B"];
+const DIFFICULTY_LABELS=["","Easy","Moderate","Challenging","Hard","Very Hard"];
+const DIFFICULTY_COLORS=["","#5FCBA8","#7BACDF","#DCA64A","#E8946B","#D9806B"];
+
+const CHARACTERS=[
+  {id:"spark",name:"Spark",emoji:"⚡",desc:"Just getting started. Three days in — most people don't even make it this far.",type:"streak",threshold:3},
+  {id:"ember",name:"Ember",emoji:"🔥",desc:"One week locked in. The habit is forming. Don't stop now.",type:"streak",threshold:7},
+  {id:"flicker",name:"Flicker",emoji:"🕯",desc:"Two weeks of showing up. You're building something real.",type:"streak",threshold:14},
+  {id:"blaze",name:"Blaze",emoji:"🌟",desc:"30 days. A full month of discipline. You're not the same person who started.",type:"streak",threshold:30},
+  {id:"torch",name:"Torch",emoji:"🔦",desc:"50 days. Most people dream about consistency like this.",type:"streak",threshold:50},
+  {id:"inferno",name:"Inferno",emoji:"💎",desc:"100 days. You've outlasted 99% of students. This is elite.",type:"streak",threshold:100},
+  {id:"phoenix",name:"Phoenix",emoji:"🦅",desc:"200 days. You rose from nothing and built an empire of knowledge.",type:"streak",threshold:200},
+  {id:"titan",name:"Titan",emoji:"👑",desc:"One full year. 365 days of relentless dedication. You are legendary.",type:"streak",threshold:365},
+  {id:"eternal",name:"Eternal",emoji:"🌌",desc:"Two years. Studying isn't something you do — it's who you are.",type:"streak",threshold:730},
+  {id:"ascended",name:"Ascended",emoji:"✨",desc:"1,000 days. There are no words. You have transcended.",type:"streak",threshold:1000},
+  {id:"seedling",name:"Seedling",emoji:"🌱",desc:"Level 5. You planted the seed. Now water it.",type:"level",threshold:5},
+  {id:"sprout",name:"Sprout",emoji:"🌿",desc:"Level 10. Growing stronger every session.",type:"level",threshold:10},
+  {id:"sapling",name:"Sapling",emoji:"🌳",desc:"Level 15. Your roots run deep now.",type:"level",threshold:15},
+  {id:"scholar2",name:"Scholar",emoji:"📚",desc:"Level 20. Knowledge is becoming your superpower.",type:"level",threshold:20},
+  {id:"sage",name:"Sage",emoji:"🧠",desc:"Level 30. You don't just study — you understand.",type:"level",threshold:30},
+  {id:"architect",name:"Architect",emoji:"🏛",desc:"Level 40. Building a cathedral of knowledge, one brick at a time.",type:"level",threshold:40},
+  {id:"maestro",name:"Maestro",emoji:"🎯",desc:"Level 50. Precision. Discipline. Mastery.",type:"level",threshold:50},
+  {id:"oracle",name:"Oracle",emoji:"🔮",desc:"Level 75. You see connections others miss.",type:"level",threshold:75},
+  {id:"luminary",name:"Luminary",emoji:"⭐",desc:"Level 100. A beacon for everyone around you.",type:"level",threshold:100},
+  {id:"sovereign",name:"Sovereign",emoji:"🏔",desc:"Level 150. You stand at the peak. The view is earned.",type:"level",threshold:150},
+  {id:"mythic",name:"Mythic",emoji:"🐉",desc:"Level 200. They'll tell stories about your grind.",type:"level",threshold:200},
+  {id:"infinite",name:"Infinite",emoji:"♾",desc:"Level 300. Beyond measure. Beyond limits. Beyond.",type:"level",threshold:300},
+];
+function getCharacterData(){return lsGet("characters",{unlocked:[],unlockedAt:{},seen:[]});}
+function saveCharacterData(d){lsSet("characters",d);}
+function getUnlockedCharacterIds(){var streak=getStreak();var lvl=levelInfo().level;return CHARACTERS.filter(function(c){return(c.type==="streak"&&streak>=c.threshold)||(c.type==="level"&&lvl>=c.threshold);}).map(function(c){return c.id;});}
+function checkNewUnlocks(){var data=getCharacterData();var should=getUnlockedCharacterIds();var fresh=should.filter(function(id){return data.unlocked.indexOf(id)===-1;});if(fresh.length>0){fresh.forEach(function(id){data.unlocked.push(id);data.unlockedAt[id]=Date.now();});saveCharacterData(data);}return fresh.map(function(id){return CHARACTERS.find(function(c){return c.id===id;});});}
 
 // ─── SHARED PRIMITIVES ────────────────────────────────────────────────────────
 const Btn = ({children,onClick,style={},variant="lime"}) => {
@@ -333,8 +364,19 @@ const DOW_FULL=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Sat
 const MON_SHORT=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 function todayLabel(){const d=new Date();return DOW_FULL[d.getDay()]+" · "+MON_SHORT[d.getMonth()]+" "+d.getDate();}
 function weekNo(){const d=new Date();const start=new Date(d.getFullYear(),0,1);return Math.ceil((((d-start)/86400000)+start.getDay()+1)/7);}
-function getXP(){const s=lsGet("sessions",[]);const focusMin=s.reduce((a,x)=>a+(x.m||0),0);const base=lsGet("xpBase",1850);return base+focusMin*4+getStreak()*25+lsGet("xpBonus",0);}
-function levelInfo(){const xp=getXP();const per=250;const level=Math.floor(xp/per)+1;const into=xp-(level-1)*per;return {xp,level,into,per,toNext:per-into,pct:Math.round(into/per*100)};}
+function getXP(){
+  const s=lsGet("sessions",[]);const totalMin=s.reduce((a,x)=>a+(x.m||0),0);
+  const base=lsGet("xpBase",1850);
+  const first60=Math.min(totalMin,60)*5;
+  const next60=Math.min(Math.max(totalMin-60,0),60)*4;
+  const rest=Math.max(totalMin-120,0)*3;
+  const focusXP=first60+next60+rest;
+  const streakXP=getStreak()*30;
+  const loginXP=lsGet("days",[]).length*15;
+  const taskXP=Object.values(lsGet("planDone",{})).filter(Boolean).length*20;
+  return base+focusXP+streakXP+loginXP+taskXP+lsGet("xpBonus",0);
+}
+function levelInfo(){const xp=getXP();const per=300;const level=Math.floor(xp/per)+1;const into=xp-(level-1)*per;return {xp,level,into,per,toNext:per-into,pct:Math.round(into/per*100)};}
 function weekStreak(){const days=new Set(lsGet("days",[]));const now=new Date();const dow=(now.getDay()+6)%7;const mon=new Date(now);mon.setDate(now.getDate()-dow);return ["M","T","W","T","F","S","S"].map((lab,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);const k=dayKey(d);const today=k===dayKey(now);return {lab,on:days.has(k),today,future:d>now&&!today};});}
 function todaysPlan(){const events=lsGet("events",[]);const tk=dayKey();const done=lsGet("planDone",{});return events.filter(e=>e.date===tk).sort((a,b)=>(a.time||"")<(b.time||"")?-1:1).map(e=>({...e,done:!!done[e.id]}));}
 function togglePlanDone(id){const done=lsGet("planDone",{});done[id]=!done[id];lsSet("planDone",done);return done;}
@@ -415,7 +457,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
 }
 
 // ─── NAV ICONS MAP ────────────────────────────────────────────────────────────
-const navIcon = {dashboard:Icon.grid,aichat:Icon.chat,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,focustimer:Icon.clock,calendar:Icon.cal,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,music:Icon.music,settings:Icon.settings,profile:Icon.user};
+const navIcon = {dashboard:Icon.grid,aichat:Icon.chat,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,focustimer:Icon.clock,calendar:Icon.cal,collection:Icon.award,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,music:Icon.music,settings:Icon.settings,profile:Icon.user};
 
 // ─── AI CHAT ──────────────────────────────────────────────────────────────────
 function AiChat() {
@@ -2365,6 +2407,96 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 }
 
 
+// ─── COLLECTION ──────────────────────────────────────────────────────────────
+function Collection() {
+  const [sel,setSel]=useState(null);
+  const data=getCharacterData();
+  const streak=getStreak();
+  const lvl=levelInfo();
+  const isUnlocked=function(id){return data.unlocked.indexOf(id)!==-1;};
+  const streakChars=CHARACTERS.filter(function(c){return c.type==="streak";});
+  const levelChars=CHARACTERS.filter(function(c){return c.type==="level";});
+  const totalU=CHARACTERS.filter(function(c){return isUnlocked(c.id);}).length;
+  const nextStreak=streakChars.find(function(c){return !isUnlocked(c.id);});
+  const nextLevel=levelChars.find(function(c){return !isUnlocked(c.id);});
+
+  useEffect(function(){
+    var d=getCharacterData();
+    var unseen=d.unlocked.filter(function(id){return d.seen.indexOf(id)===-1;});
+    if(unseen.length>0){d.seen=d.seen.concat(unseen);saveCharacterData(d);}
+  },[]);
+
+  var CharCard=function(props){
+    var c=props.c;
+    var u=isUnlocked(c.id);
+    var prog=c.type==="streak"?Math.min(100,Math.round(streak/c.threshold*100)):Math.min(100,Math.round(lvl.level/c.threshold*100));
+    var isNew=u&&data.unlockedAt[c.id]&&(Date.now()-data.unlockedAt[c.id])<7*86400000;
+    return(
+      <div onClick={function(){if(u)setSel(c);}} style={{background:u?T.card:T.card2,border:"1px solid "+(u?T.lime+"44":T.border),borderRadius:16,padding:18,cursor:u?"pointer":"default",opacity:u?1:0.5,transition:"all 0.2s",position:"relative"}}>
+        {isNew&&<span style={{position:"absolute",top:8,right:10,fontSize:9,fontWeight:700,background:T.lime,color:T.ink,padding:"2px 6px",borderRadius:99}}>NEW</span>}
+        <div style={{fontSize:36,marginBottom:10,filter:u?"none":"grayscale(1)"}}>{c.emoji}</div>
+        <div style={{fontSize:13,fontWeight:700,color:u?T.white:T.muted,marginBottom:2}}>{c.name}</div>
+        <div style={{fontSize:10,color:T.muted,marginBottom:8}}>{c.type==="streak"?c.threshold+"-day streak":"Level "+c.threshold}</div>
+        {!u&&<Prog pct={prog} color={T.faint} height={3} />}
+        {u&&<div style={{fontSize:10,color:T.lime,fontWeight:600}}>Unlocked</div>}
+      </div>
+    );
+  };
+
+  return(
+    <div>
+      <PH title="Collection" sub={totalU+" / "+CHARACTERS.length+" characters collected"} />
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:24}}>
+        {nextStreak&&(
+          <Card style={{borderLeft:"3px solid "+T.amber}}>
+            <Label>Next streak unlock</Label>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <span style={{fontSize:28,filter:"grayscale(1)",opacity:0.5}}>{nextStreak.emoji}</span>
+              <div style={{flex:1}}>
+                <div style={{fontSize:14,fontWeight:600,color:T.white}}>{nextStreak.name}</div>
+                <div style={{fontSize:11,color:T.muted}}>{nextStreak.threshold}-day streak — you are at {streak} days</div>
+                <Prog pct={Math.min(100,Math.round(streak/nextStreak.threshold*100))} color={T.amber} height={4} />
+              </div>
+            </div>
+          </Card>
+        )}
+        {nextLevel&&(
+          <Card style={{borderLeft:"3px solid "+T.purple}}>
+            <Label>Next level unlock</Label>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <span style={{fontSize:28,filter:"grayscale(1)",opacity:0.5}}>{nextLevel.emoji}</span>
+              <div style={{flex:1}}>
+                <div style={{fontSize:14,fontWeight:600,color:T.white}}>{nextLevel.name}</div>
+                <div style={{fontSize:11,color:T.muted}}>Level {nextLevel.threshold} — you are at {lvl.level}</div>
+                <Prog pct={Math.min(100,Math.round(lvl.level/nextLevel.threshold*100))} color={T.purple} height={4} />
+              </div>
+            </div>
+          </Card>
+        )}
+      </div>
+      <div style={{marginBottom:20}}>
+        <Label>Streak Characters</Label>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10}}>{streakChars.map(function(c){return <CharCard key={c.id} c={c} />;})}</div>
+      </div>
+      <div>
+        <Label>Level Characters</Label>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>{levelChars.map(function(c){return <CharCard key={c.id} c={c} />;})}</div>
+      </div>
+      <Modal open={!!sel} onClose={function(){setSel(null);}} title={sel?sel.name:""} width={400}>
+        {sel&&(
+          <div style={{textAlign:"center",padding:"20px 0"}}>
+            <div style={{fontSize:72,marginBottom:16}}>{sel.emoji}</div>
+            <h2 style={{fontSize:24,fontWeight:700,color:T.white,margin:"0 0 8px"}}>{sel.name}</h2>
+            <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",color:T.lime,textTransform:"uppercase",marginBottom:16}}>{sel.type==="streak"?sel.threshold+"-day streak":"Level "+sel.threshold}</div>
+            <p style={{fontSize:15,color:T.muted,lineHeight:1.6,fontStyle:"italic",margin:0}}>"{sel.desc}"</p>
+            {data.unlockedAt[sel.id]&&<div style={{fontSize:11,color:T.faint,marginTop:16}}>Unlocked {new Date(data.unlockedAt[sel.id]).toLocaleDateString()}</div>}
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
 // ─── PROFILE ──────────────────────────────────────────────────────────────────
 function Profile() {
   const prof=getProfile();
@@ -2886,6 +3018,8 @@ function App() {
   const [focusMode,setFocusMode]=useState("Focus");
   const [focusTotal,setFocusTotal]=useState(25*60);
   const [timerTask,setTimerTask]=useState(null);
+  const [newUnlock,setNewUnlock]=useState(null);
+  useEffect(function(){var u=checkNewUnlocks();if(u.length>0)setNewUnlock(u[0]);},[]);
   window._setTimerTask=setTimerTask;
   const [creditsOpen,setCreditsOpen]=useState(false);
   const [pricingOpen,setPricingOpen]=useState(false);
@@ -2975,6 +3109,7 @@ function App() {
       {id:"notes",label:"Notes"},
       {id:"focustimer",label:"Focus timer"},
       {id:"calendar",label:"Calendar"},
+      {id:"collection",label:"Collection"},
     ]},
     {label:"Tools",items:[
       {id:"aitutor",label:"Tutor"},
@@ -2984,7 +3119,7 @@ function App() {
 
   ];
   const bottomItems=[{id:"settings",label:"Settings"},{id:"profile",label:"Profile"}];
-  const pages={aichat:AiChat,essays:Essays,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,aitutor:AiTutor,grammar:GrammarPolish,humanizer:AiHumanizer,profile:Profile};
+  const pages={aichat:AiChat,essays:Essays,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,collection:Collection,aitutor:AiTutor,grammar:GrammarPolish,humanizer:AiHumanizer,profile:Profile};
   const labelOf={dashboard:"Dashboard",aichat:"AI Chat",essays:"Essays",flashcards:"Flashcards",notes:"Notes",focustimer:"Focus Timer",calendar:"Calendar",aitutor:"AI Tutor",grammar:"Grammar & Polish",humanizer:"Rewrite",settings:"Settings",profile:"Profile"};
   const sectionOf={dashboard:"Workspace",aichat:"Workspace",essays:"Workspace",flashcards:"Workspace",notes:"Workspace",focustimer:"Workspace",calendar:"Workspace",aitutor:"Tools",grammar:"Tools",humanizer:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
@@ -3258,7 +3393,24 @@ function App() {
         const next=lsGet("events",[]).map(ev=>ev.id===timerTask.id?{...ev,status:"done",timeSpent:mins,completedAt:Date.now()}:ev);
         lsSet("events",next);
         setTimerTask(null);
+        setTimeout(()=>{const u=checkNewUnlocks();if(u.length>0)setNewUnlock(u[0]);},500);
       }} />}
+
+      {newUnlock&&(
+        <div onClick={()=>setNewUnlock(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",backdropFilter:"blur(12px)",zIndex:1100,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.3s ease"}}>
+          <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:400,background:T.card,borderRadius:24,border:"2px solid "+T.lime,padding:"48px 36px",textAlign:"center",animation:"studlinPop 0.5s cubic-bezier(.2,.85,.3,1)"}}>
+            <div style={{fontSize:12,fontWeight:700,letterSpacing:"0.12em",color:T.lime,textTransform:"uppercase",marginBottom:16}}>Character unlocked</div>
+            <div style={{fontSize:80,marginBottom:16}}>{newUnlock.emoji}</div>
+            <h2 style={{fontSize:28,fontWeight:700,color:T.white,margin:"0 0 6px"}}>{newUnlock.name}</h2>
+            <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",color:T.lime,textTransform:"uppercase",marginBottom:16}}>{newUnlock.type==="streak"?newUnlock.threshold+"-day streak":"Level "+newUnlock.threshold}</div>
+            <p style={{fontSize:15,color:T.muted,lineHeight:1.6,fontStyle:"italic",margin:"0 0 28px"}}>"{newUnlock.desc}"</p>
+            <div style={{display:"flex",gap:10,justifyContent:"center"}}>
+              <Btn onClick={()=>{setNewUnlock(null);setActive("collection");}}>View collection</Btn>
+              <Btn variant="ghost" onClick={()=>setNewUnlock(null)}>Nice</Btn>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style>{`
         @keyframes studlinPulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.7)} }
