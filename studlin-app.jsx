@@ -1754,7 +1754,7 @@ function AiTutor(){
   const VideoCard=({v})=>{
     const thumb=v.thumbnail||("https://img.youtube.com/vi/"+v.id+"/mqdefault.jpg");
     return (
-      <div onClick={()=>setPlaying(v)} style={{borderRadius:12,overflow:"hidden",background:T.card2,border:"1px solid "+T.border,cursor:"pointer",transition:"all 0.15s"}}>
+      <div onClick={()=>{setPlaying(v);setPlayInline(false);}} style={{borderRadius:12,overflow:"hidden",background:T.card2,border:"1px solid "+T.border,cursor:"pointer",transition:"all 0.15s"}}>
         <div style={{position:"relative",paddingBottom:"56.25%",height:0,background:"#000"}}>
           <img src={thumb} alt={v.title} loading="lazy"
             style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",objectFit:"cover"}} />
@@ -1776,18 +1776,27 @@ function AiTutor(){
     );
   };
 
+  const [playInline,setPlayInline]=useState(false);
   const VideoPlayer=()=>{
     if(!playing)return null;
     return (
       <Card style={{padding:0,overflow:"hidden",marginBottom:14,border:"1px solid "+T.lime+"44"}}>
-        <a href={"https://www.youtube.com/watch?v="+playing.id} target="_blank" rel="noopener noreferrer" style={{display:"block",position:"relative",paddingBottom:"56.25%",height:0,background:"#111",textDecoration:"none"}}>
-          <img src={"https://img.youtube.com/vi/"+playing.id+"/hqdefault.jpg"} alt={playing.title} style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",objectFit:"cover"}} />
-          <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.25)"}}>
-            <div style={{width:68,height:48,borderRadius:12,background:"rgba(255,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="#fff"><polygon points="8 5 20 12 8 19"/></svg>
+        <div style={{position:"relative",paddingBottom:"56.25%",height:0,background:"#111"}}>
+          {playInline?(
+            <iframe key={playing.id} src={"https://www.youtube.com/embed/"+playing.id+"?autoplay=1&rel=0&modestbranding=1&playsinline=1"}
+              title={playing.title} style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:"none"}}
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen />
+          ):(
+            <div onClick={()=>setPlayInline(true)} style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",cursor:"pointer"}}>
+              <img src={"https://img.youtube.com/vi/"+playing.id+"/hqdefault.jpg"} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />
+              <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.3)"}}>
+                <div style={{width:68,height:48,borderRadius:12,background:"rgba(255,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="#fff"><polygon points="8 5 20 12 8 19"/></svg>
+                </div>
+              </div>
             </div>
-          </div>
-        </a>
+          )}
+        </div>
         <div style={{padding:"14px 18px",display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:15,fontWeight:700,color:T.white,lineHeight:1.4,marginBottom:4}}>{playing.title}</div>
@@ -1798,8 +1807,9 @@ function AiTutor(){
             </div>
           </div>
           <div style={{display:"flex",gap:6}}>
-            <a href={"https://www.youtube.com/watch?v="+playing.id} target="_blank" rel="noopener noreferrer" style={{background:T.lime,color:T.ink,border:"none",borderRadius:8,padding:"8px 14px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"none",display:"inline-flex",alignItems:"center",gap:6}}>▶ Watch on YouTube</a>
-            <button onClick={()=>setPlaying(null)} style={{background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"8px 14px",color:T.text,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>✕ Close</button>
+            {!playInline&&<button onClick={()=>setPlayInline(true)} style={{background:T.lime,color:T.ink,border:"none",borderRadius:8,padding:"8px 14px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Play here</button>}
+            <a href={"https://www.youtube.com/watch?v="+playing.id} target="_blank" rel="noopener noreferrer" style={{background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"8px 14px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"none",color:T.text}}>Open on YouTube</a>
+            <button onClick={()=>{setPlaying(null);setPlayInline(false);}} style={{background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"8px 14px",color:T.text,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>✕</button>
           </div>
         </div>
       </Card>
