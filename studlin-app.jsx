@@ -1040,6 +1040,8 @@ function Notes(){
   const [newTag,setNewTag]=useState("Biology");
   const [customTag,setCustomTag]=useState("");
   const [yt,setYt]=useState("");
+  const [ytInfo,setYtInfo]=useState("");
+  const [ytLoading,setYtLoading]=useState(false);
   const [rec,setRec]=useState(false);
   const [recSecs,setRecSecs]=useState(0);
   const [recText,setRecText]=useState("");
@@ -1105,16 +1107,16 @@ function Notes(){
       if(!title)title="Lecture notes - "+fmtRec(recSecs);
       if(recText.trim()){body=await aiSummarize(recText,"lecture transcription");}else{body="No audio was captured. Try recording again.";}
     }else if(src==="youtube"){
-      var topic=newBody.trim();
-      if(!title)title=topic?"Notes: "+topic:"Notes from video";
-      if(topic){
-        body=await aiSummarize("Create comprehensive study notes on this topic: "+topic+". Include clear headings, bullet points, key definitions, examples, and a summary.","topic for study notes");
-      }else{body="Please describe the video topic so Studlin can generate notes.";}
+      var videoTitle=ytInfo||yt.trim();
+      if(!title)title=ytInfo?ytInfo:"Notes from video";
+      if(videoTitle){
+        body=await aiSummarize("Create comprehensive study notes on this topic from a YouTube video titled: \""+videoTitle+"\". Include clear headings, bullet points, key definitions, examples, and a summary. Write the notes directly — do not say you cannot access the video.","YouTube video study notes");
+      }else{body="Paste a YouTube link to auto-detect the topic.";}
     }
 
     const next=[{id:String(Date.now()),title:title,body:body,tag:tag,date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now()}].concat(notes);
     setNotes(next);lsSet("notes",next);
-    setNewOpen(false);setNewTitle("");setNewBody("");setYt("");setRec(false);setRecSecs(0);setRecText("");setSrc("write");setFileText("");setSel(0);setSearch("");
+    setNewOpen(false);setNewTitle("");setNewBody("");setYt("");setYtInfo("");setRec(false);setRecSecs(0);setRecText("");setSrc("write");setFileText("");setSel(0);setSearch("");
   };
 
   const updateNote=(idx,updates)=>{const next=notes.map((n,i)=>i===idx?Object.assign({},n,updates):n);setNotes(next);lsSet("notes",next);};
@@ -1165,14 +1167,12 @@ function Notes(){
             </div>
           </Field>
         )}
-        {src==="youtube"&&(<>
-          <Field label="YouTube link (optional)" hint="For your reference — paste the link so you can find it later.">
-            <Input placeholder="https://youtube.com/watch?v=..." value={yt} onChange={ev=>setYt(ev.target.value)} />
+        {src==="youtube"&&(
+          <Field label="YouTube link" hint={ytInfo?"Found: "+ytInfo:"Paste any YouTube video link. Studlin will detect the topic and generate notes."}>
+            <Input placeholder="https://youtube.com/watch?v=..." value={yt} onChange={ev=>{setYt(ev.target.value);var v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtLoading(true);fetch("/api/youtube-info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(r=>r.json()).then(d=>{if(d.title){setYtInfo(d.title+(d.author?" by "+d.author:""));if(!newTitle)setNewTitle(d.title);}setYtLoading(false);}).catch(()=>setYtLoading(false));}}} />
+            {ytLoading&&<div style={{fontSize:11,color:T.lime,marginTop:4}}>Detecting video...</div>}
           </Field>
-          <Field label="What's the video about?" hint="Tell Studlin the topic and it'll generate detailed study notes.">
-            <Input placeholder="e.g. Photosynthesis, World War 2 causes, Calculus derivatives..." value={newBody} onChange={ev=>setNewBody(ev.target.value)} />
-          </Field>
-        </>)}
+        )}
       </Modal>
       <div style={{display:"grid",gridTemplateColumns:"250px 1fr",gap:14}}>
         <div>
