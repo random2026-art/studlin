@@ -858,167 +858,164 @@ function Essays() {
 
 // ─── FLASHCARDS ───────────────────────────────────────────────────────────────
 function Flashcards() {
+  const MicIcon=<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0,display:"block"}}><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg>;
+  const [deckList,setDeckList]=useState(()=>{const d=lsGet("decks",null);return(d&&Array.isArray(d))?d:[];});
+  const [studyDeck,setStudyDeck]=useState(null);
   const [flipped,setFlipped]=useState(false);
   const [idx,setIdx]=useState(0);
+  const [tab,setTab]=useState("decks");
   const [newOpen,setNewOpen]=useState(false);
   const [dName,setDName]=useState("");
-  const [dSubject,setDSubject]=useState("Biology");
   const [dSource,setDSource]=useState("manual");
-  const dSubjects=[{value:"Biology",label:"Biology",color:T.teal},{value:"English IV",label:"English IV",color:T.purple},{value:"Calculus",label:"Calculus",color:T.blue},{value:"Spanish",label:"Spanish",color:T.amber},{value:"Chemistry",label:"Chemistry",color:T.red},{value:"Other",label:"Other",color:T.lime}];
-  const [dCustom,setDCustom]=useState("");
-  const [tab,setTab]=useState("study");
-  const cards=[
-    {q:"What does ATP stand for and what is its primary cellular function?",a:"Adenosine Triphosphate. It is the primary energy currency of the cell, providing the energy required to drive cellular processes including muscle contraction, nerve impulse propagation, and chemical synthesis."},
-    {q:"Describe the location and primary function of the mitochondria.",a:"The mitochondrion is a membrane-bound organelle found in the cytoplasm of eukaryotic cells. Its primary function is the production of ATP through the process of cellular respiration, specifically oxidative phosphorylation."},
-    {q:"State the principle of natural selection in one concise sentence.",a:"Natural selection is the process by which heritable traits that increase an organism's fitness in its environment become more common in a population over successive generations."},
-  ];
-  const seedDecks=[
-    {name:"Cell respiration",course:"Biology",count:30,done:24,color:T.teal},
-    {name:"Macbeth · themes & quotes",course:"English IV",count:45,done:12,color:T.purple},
-    {name:"Differentiation rules",course:"Calculus",count:20,done:20,color:T.lime},
-    {name:"Subjunctive mood",course:"Spanish",count:28,done:8,color:T.amber},
-  ];
-  const [deckList,setDeckList]=useState(()=>lsGet("decks",seedDecks));
-  const colorMap={Biology:T.teal,"English IV":T.purple,Calculus:T.blue,Spanish:T.amber,Chemistry:T.red,History:T.muted};
-  const createDeck=()=>{
-    const subj=dSubject==="Other"&&dCustom.trim()?dCustom.trim():dSubject;
-    const name=dName.trim()||(subj+" deck");
-    const nd={name,course:subj,count:0,done:0,color:colorMap[subj]||T.lime,cards:[]};
-    const next=[nd,...deckList];setDeckList(next);lsSet("decks",next);
-    setNewOpen(false);setDName("");setDCustom("");setDSubject("Biology");setTab("decks");
-  };
-  const [cName,setCName]=useState("");
-  const [cSubj,setCSubj]=useState("");
+  const [aiLoading,setAiLoading]=useState(false);
+  const [fileText,setFileText]=useState("");
+  const fileRef=useRef(null);
+  const [ytUrl,setYtUrl]=useState("");
+  const [ytInfo,setYtInfo]=useState("");
+  const [recOn,setRecOn]=useState(false);
+  const [recSecs,setRecSecs]=useState(0);
+  const [recText,setRecText]=useState("");
+  const recRef=useRef(null);
   const [cQ,setCQ]=useState("");
   const [cA,setCA]=useState("");
   const [draft,setDraft]=useState([]);
-  const addCard=()=>{if(!cQ.trim()&&!cA.trim())return;setDraft(d=>[...d,{q:cQ.trim()||"(no question)",a:cA.trim()||"(no answer)"}]);setCQ("");setCA("");};
-  const saveDraftDeck=()=>{const subj=cSubj.trim()||"General";const nd={name:cName.trim()||"New deck",course:subj,count:draft.length,done:0,color:colorMap[subj]||T.lime,cards:draft};const next=[nd,...deckList];setDeckList(next);lsSet("decks",next);setDraft([]);setCName("");setCSubj("");setCQ("");setCA("");setTab("decks");};
-  const next=()=>{setFlipped(false);setIdx(i=>(i+1)%cards.length);};
-  const prev=()=>{setFlipped(false);setIdx(i=>Math.max(0,i-1));};
+  const colorMap={Biology:T.teal,"English IV":T.purple,Calculus:T.blue,Spanish:T.amber,Chemistry:T.red};
+
+  useEffect(()=>{if(!recOn)return;const id=setInterval(()=>setRecSecs(x=>x+1),1000);return()=>clearInterval(id);},[recOn]);
+  const fmtRec=(x)=>String(Math.floor(x/60)).padStart(2,"0")+":"+String(x%60).padStart(2,"0");
+
+  const startRec=()=>{const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR)return;const r=new SR();r.continuous=true;r.interimResults=true;r.lang="en-US";r.onresult=(e)=>{let t="";for(let i=0;i<e.results.length;i++)t+=e.results[i][0].transcript;setRecText(t);};r.onend=()=>setRecOn(false);recRef.current=r;r.start();setRecOn(true);setRecSecs(0);setRecText("");};
+  const stopRec=()=>{if(recRef.current)recRef.current.stop();setRecOn(false);};
+
+  const handleFile=async(e)=>{const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";const ext=file.name.split(".").pop().toLowerCase();if(ext==="pdf"){try{const pdfjsLib=await window._pdfjs;const buf=await file.arrayBuffer();const pdf=await pdfjsLib.getDocument({data:buf}).promise;let text="";for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();text+=tc.items.map(it=>it.str).join(" ")+"\n\n";}setFileText(text);if(!dName)setDName("Cards from "+file.name);}catch(err){setFileText("Could not read PDF.");}}else{const reader=new FileReader();reader.onload=()=>{setFileText(reader.result);if(!dName)setDName("Cards from "+file.name);};reader.readAsText(file);}};
+
+  const aiGenCards=async(content,context)=>{
+    setAiLoading(true);
+    try{
+      const prompt="Generate flashcards from this "+context+". Return ONLY a JSON array of objects with \"q\" (question) and \"a\" (answer) keys. Generate 8-15 cards. No markdown, no explanation, just the JSON array:\n\n"+content.slice(0,20000);
+      const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
+      const data=await res.json();
+      const raw=data.reply.replace(/```json?|```/g,"").trim();
+      const parsed=JSON.parse(raw);
+      setAiLoading(false);
+      return Array.isArray(parsed)?parsed:[];
+    }catch(e){setAiLoading(false);return [];}
+  };
+
+  const createDeck=async()=>{
+    const name=dName.trim()||"New deck";
+    let cards=[];
+    if(dSource==="manual"){cards=[...draft];}
+    else if(dSource==="file"&&fileText){cards=await aiGenCards(fileText,"document/notes");}
+    else if(dSource==="youtube"&&ytInfo){cards=await aiGenCards("Create flashcards about this topic from a YouTube video titled: "+ytInfo,"YouTube video");}
+    else if(dSource==="record"&&recText){cards=await aiGenCards(recText,"lecture transcription");}
+    if(cards.length===0&&dSource!=="manual"){cards=[{q:"No cards generated",a:"Try again with more content"}];}
+    const nd={id:String(Date.now()),name:name,count:cards.length,done:0,color:T.lime,cards:cards};
+    const next=[nd,...deckList];setDeckList(next);lsSet("decks",next);
+    setNewOpen(false);setDName("");setDraft([]);setFileText("");setYtUrl("");setYtInfo("");stopRec();setRecText("");setDSource("manual");
+    setStudyDeck(nd);setTab("study");setIdx(0);setFlipped(false);
+  };
+
+  const addCard=()=>{if(!cQ.trim())return;setDraft(d=>[...d,{q:cQ.trim(),a:cA.trim()||"(no answer)"}]);setCQ("");setCA("");};
+  const deleteDeck=(id)=>{const next=deckList.filter(d=>d.id!==id);setDeckList(next);lsSet("decks",next);if(studyDeck&&studyDeck.id===id){setStudyDeck(null);setTab("decks");}};
+
+  const studyCards=studyDeck?studyDeck.cards:[];
+  const curCard=studyCards[idx];
+
   return (
     <div>
-      <PH title="Flashcards" sub="Spaced-repetition study system" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New deck")}</Btn>} />
-      <Modal open={newOpen} onClose={()=>setNewOpen(false)} title="Create a flashcard deck" sub="Build manually or drop a file and Studlin will generate spaced-repetition cards for you."
-        footer={<><Btn variant="subtle" onClick={()=>setNewOpen(false)}>Cancel</Btn><Btn onClick={createDeck}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.layers,"Create deck")}</Btn></>}>
-        <Field label="Deck name"><Input placeholder="e.g. Chem 14B · Periodic trends" value={dName} onChange={e=>setDName(e.target.value)} autoFocus /></Field>
-        <Field label="Subject"><SelectChip options={dSubjects} value={dSubject} onChange={setDSubject} /></Field>
-        {dSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Physics, AP Gov, driving theory..." value={dCustom} onChange={ev=>setDCustom(ev.target.value)} /></Field>}
+      <PH title="Flashcards" sub="Study with spaced repetition" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New deck")}</Btn>} />
+      <Modal open={newOpen} onClose={()=>{setNewOpen(false);stopRec();}} title="Create a flashcard deck" sub="Build manually, from a file, YouTube video, or recorded lecture." width={580}
+        footer={<><Btn variant="subtle" onClick={()=>{setNewOpen(false);stopRec();}}>Cancel</Btn><Btn onClick={createDeck} disabled={aiLoading}>{aiLoading?"Generating...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.layers,"Create deck")}</Btn></>}>
+        <Field label="Deck name"><Input placeholder="e.g. Bio chapter 4 cards" value={dName} onChange={e=>setDName(e.target.value)} autoFocus /></Field>
         <Field label="Source">
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            <button type="button" onClick={()=>setDSource("manual")} style={{padding:14,borderRadius:10,border:`1px solid ${dSource==="manual"?T.lime+"66":T.border}`,background:dSource==="manual"?T.lime+"10":T.card2,color:T.text,cursor:"pointer",textAlign:"left",fontFamily:T.font}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}><span style={{color:dSource==="manual"?T.lime:T.muted}}>{Icon.pen}</span><span style={{fontSize:13,fontWeight:600}}>Build manually</span></div>
-              <div style={{fontSize:11.5,color:T.muted}}>Type each question and answer yourself.</div>
-            </button>
-            <button type="button" onClick={()=>setDSource("file")} style={{padding:14,borderRadius:10,border:`1px solid ${dSource==="file"?T.lime+"66":T.border}`,background:dSource==="file"?T.lime+"10":T.card2,color:T.text,cursor:"pointer",textAlign:"left",fontFamily:T.font}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}><span style={{color:dSource==="file"?T.lime:T.muted}}>{Icon.file}</span><span style={{fontSize:13,fontWeight:600}}>Generate from file</span></div>
-              <div style={{fontSize:11.5,color:T.muted}}>Drop a PDF or notes. Costs 2 credits.</div>
-            </button>
+            {[{id:"manual",label:"Build manually",desc:"Type Q&A cards yourself",icon:Icon.pen},{id:"file",label:"From file",desc:"PDF or notes — AI generates cards",icon:Icon.file},{id:"youtube",label:"From YouTube",desc:"Video topic — AI generates cards",icon:Icon.link},{id:"record",label:"From lecture",desc:"Record audio — AI generates cards",icon:MicIcon}].map(o=>(
+              <button key={o.id} type="button" onClick={()=>setDSource(o.id)} style={{padding:12,borderRadius:10,border:"1px solid "+(dSource===o.id?T.lime+"66":T.border),background:dSource===o.id?T.lime+"10":T.card2,color:T.text,cursor:"pointer",textAlign:"left",fontFamily:T.font}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}><span style={{color:dSource===o.id?T.lime:T.muted,display:"flex"}}>{o.icon}</span><span style={{fontSize:12.5,fontWeight:600}}>{o.label}</span></div>
+                <div style={{fontSize:11,color:T.muted}}>{o.desc}</div>
+              </button>
+            ))}
           </div>
         </Field>
-        {dSource==="file" && (
-          <Field label="Upload" hint="Accepts PDF, DOCX, images, or audio recordings.">
-            <div style={{border:`1px dashed ${T.borderHover}`,borderRadius:10,padding:24,textAlign:"center",background:T.card2,cursor:"pointer"}}>
+        {dSource==="manual"&&(<>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+            <Field label="Question"><Input placeholder="Front of card..." value={cQ} onChange={e=>setCQ(e.target.value)} /></Field>
+            <Field label="Answer"><Input placeholder="Back of card..." value={cA} onChange={e=>setCA(e.target.value)} /></Field>
+          </div>
+          <div style={{display:"flex",gap:8,marginBottom:8}}><BtnSm onClick={addCard}>+ Add card</BtnSm><span style={{fontSize:11,color:T.muted,lineHeight:"28px"}}>{draft.length} card{draft.length===1?"":"s"}</span></div>
+          {draft.length>0&&<div style={{maxHeight:120,overflowY:"auto",display:"flex",flexDirection:"column",gap:4}}>{draft.map((c,i)=>(<div key={i} style={{display:"flex",gap:8,padding:"6px 10px",background:T.card2,borderRadius:6,fontSize:11,alignItems:"center"}}><span style={{color:T.text,flex:1}}>{c.q}</span><span style={{color:T.muted,flex:1}}>{c.a}</span><button onClick={()=>setDraft(d=>d.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:T.faint,cursor:"pointer"}}>{Icon.xmark}</button></div>))}</div>}
+        </>)}
+        {dSource==="file"&&(
+          <Field label="Upload a file" hint="AI reads the content and generates Q&A flashcards.">
+            <input type="file" ref={fileRef} onChange={handleFile} accept=".txt,.md,.csv,.pdf,.doc,.docx" style={{display:"none"}} />
+            <div onClick={()=>fileRef.current&&fileRef.current.click()} style={{border:"1px dashed "+T.borderHover,borderRadius:10,padding:22,textAlign:"center",background:T.card2,cursor:"pointer"}}>
               <div style={{color:T.muted,marginBottom:6,display:"flex",justifyContent:"center"}}>{Icon.file}</div>
-              <div style={{fontSize:13,color:T.text,fontWeight:500}}>Drop a file here or click to browse</div>
-              <div style={{fontSize:11,color:T.muted,marginTop:4}}>Up to 25MB</div>
+              <div style={{fontSize:13,color:T.text,fontWeight:500}}>{fileText?"File loaded ("+fileText.length+" chars)":"Click to browse"}</div>
+            </div>
+          </Field>
+        )}
+        {dSource==="youtube"&&(
+          <Field label="YouTube link" hint={ytInfo?"Found: "+ytInfo:"Paste a link — Studlin detects the topic and generates cards."}>
+            <Input placeholder="https://youtube.com/watch?v=..." value={ytUrl} onChange={ev=>{setYtUrl(ev.target.value);var v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){fetch("/api/youtube-info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(r=>r.json()).then(d=>{if(d.title){setYtInfo(d.title+(d.author?" by "+d.author:""));if(!dName)setDName(d.title+" cards");}}).catch(()=>{});}}} />
+          </Field>
+        )}
+        {dSource==="record"&&(
+          <Field label="Record lecture" hint="Speak or play audio — AI generates flashcards from what it hears.">
+            <div style={{border:"1px solid "+(recOn?T.red+"55":T.border),borderRadius:10,padding:18,textAlign:"center",background:recOn?T.red+"0a":T.card2}}>
+              <button type="button" onClick={recOn?stopRec:startRec} style={{width:48,height:48,borderRadius:"50%",border:"none",background:recOn?T.red:T.lime,color:recOn?"#fff":T.ink,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:8}}>{recOn?<span style={{width:14,height:14,background:"#fff",borderRadius:3}} />:MicIcon}</button>
+              <div style={{fontSize:14,fontWeight:700,color:recOn?T.red:T.white}}>{fmtRec(recSecs)}</div>
+              <div style={{fontSize:11,color:T.muted,marginTop:2}}>{recOn?"Recording... tap to stop":"Tap to start"}</div>
+              {recText&&<div style={{fontSize:11,color:T.text,marginTop:10,padding:"8px 10px",background:T.card,borderRadius:6,textAlign:"left",maxHeight:80,overflowY:"auto"}}>{recText}</div>}
             </div>
           </Field>
         )}
       </Modal>
-      <Pills tabs={["study","decks","create"]} active={tab} onChange={setTab} />
+      <Pills tabs={["study","decks"]} active={tab} onChange={setTab} />
       {tab==="study"&&(
-        <div style={{display:"grid",gridTemplateColumns:"1fr 260px",gap:16}}>
-          <div>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-              <div style={{fontSize:12,color:T.muted}}>Biology · Cell respiration</div>
-              <div style={{fontSize:12,color:T.muted}}>Card {idx+1} of {cards.length}</div>
-            </div>
-            <div onClick={()=>setFlipped(f=>!f)} style={{cursor:"pointer",userSelect:"none"}}>
-              {!flipped
-                ?<Card style={{minHeight:200,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textAlign:"center",padding:32,background:T.card2}}>
-                    <div style={{fontSize:15,fontWeight:600,color:T.white,lineHeight:1.6,marginBottom:12}}>{cards[idx].q}</div>
-                    <div style={{fontSize:11,color:T.faint,letterSpacing:"0.03em"}}>CLICK TO REVEAL</div>
-                  </Card>
-                :<div style={{background:T.lime,borderRadius:10,minHeight:200,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textAlign:"center",padding:32}}>
-                    <div style={{fontSize:14,fontWeight:600,color:T.bg,lineHeight:1.7,marginBottom:10}}>{cards[idx].a}</div>
-                    <div style={{fontSize:11,color:T.bg,opacity:0.5,letterSpacing:"0.03em"}}>RATE YOUR RECALL</div>
-                  </div>
-              }
-            </div>
-            <div style={{display:"flex",gap:8,marginTop:14,justifyContent:"center"}}>
-              {flipped
-                ?[["Missed",T.red],["Hard",T.amber],["Good",T.teal],["Mastered",T.lime]].map(([l,c])=>(
-                    <button key={l} onClick={next} style={{flex:1,padding:"9px 0",borderRadius:7,background:c+"14",color:c,border:`1px solid ${c}33`,cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:T.font}}>{l}</button>
-                  ))
-                :<><Btn variant="ghost" onClick={prev}>← Prev</Btn><Btn onClick={()=>setFlipped(true)}>Reveal answer</Btn><Btn variant="ghost" onClick={next}>Next →</Btn></>
-              }
-            </div>
+        studyDeck&&studyCards.length>0?
+        <div style={{maxWidth:600,margin:"0 auto"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <div style={{fontSize:13,fontWeight:600,color:T.white}}>{studyDeck.name}</div>
+            <div style={{fontSize:12,color:T.muted}}>Card {idx+1} of {studyCards.length}</div>
           </div>
-          <div style={{display:"flex",flexDirection:"column",gap:12}}>
-            <Card>
-              <Label>Session progress</Label>
-              <div style={{fontSize:32,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:10}}>24<span style={{fontSize:18,color:T.muted}}>/30</span></div>
-              <Prog pct={80} />
-              <div style={{fontSize:12,color:T.muted,marginTop:8}}>Recall accuracy: 86%</div>
-            </Card>
-            <Card>
-              <Label>Due today</Label>
-              {deckList.map((d,i)=>(
-                <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:i<deckList.length-1?`1px solid ${T.border}`:"none"}}>
-                  <div style={{width:6,height:6,borderRadius:"50%",background:d.color,flexShrink:0}} />
-                  <span style={{fontSize:12,flex:1,color:T.text}}>{d.name}</span>
-                  <span style={{fontSize:11,color:T.muted}}>{d.done}/{d.count}</span>
+          <div onClick={()=>setFlipped(f=>!f)} style={{cursor:"pointer",userSelect:"none"}}>
+            {!flipped
+              ?<Card style={{minHeight:200,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textAlign:"center",padding:32,background:T.card2}}>
+                  <div style={{fontSize:15,fontWeight:600,color:T.white,lineHeight:1.6,marginBottom:12}}>{curCard?curCard.q:"No question"}</div>
+                  <div style={{fontSize:11,color:T.faint,letterSpacing:"0.03em"}}>CLICK TO REVEAL</div>
+                </Card>
+              :<div style={{background:T.lime,borderRadius:10,minHeight:200,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textAlign:"center",padding:32}}>
+                  <div style={{fontSize:14,fontWeight:600,color:T.bg,lineHeight:1.7,marginBottom:10}}>{curCard?curCard.a:"No answer"}</div>
+                  <div style={{fontSize:11,color:T.bg,opacity:0.5}}>RATE YOUR RECALL</div>
                 </div>
-              ))}
-            </Card>
+            }
+          </div>
+          <div style={{display:"flex",gap:8,marginTop:14,justifyContent:"center"}}>
+            {flipped
+              ?[["Missed",T.red],["Hard",T.amber],["Good",T.teal],["Mastered",T.lime]].map(([l,c])=>(
+                  <button key={l} onClick={()=>{setFlipped(false);setIdx(i=>(i+1)%studyCards.length);}} style={{flex:1,padding:"9px 0",borderRadius:7,background:c+"14",color:c,border:"1px solid "+c+"33",cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:T.font}}>{l}</button>
+                ))
+              :<><Btn variant="ghost" onClick={()=>{setFlipped(false);setIdx(i=>Math.max(0,i-1));}}>Prev</Btn><Btn onClick={()=>setFlipped(true)}>Reveal answer</Btn><Btn variant="ghost" onClick={()=>{setFlipped(false);setIdx(i=>(i+1)%studyCards.length);}}>Next</Btn></>
+            }
           </div>
         </div>
+        :<Card style={{padding:32,textAlign:"center"}}><div style={{fontSize:14,color:T.muted,marginBottom:16}}>Select a deck to study or create a new one.</div><div style={{display:"flex",gap:8,justifyContent:"center"}}><Btn onClick={()=>setNewOpen(true)}>{Icon.plus} New deck</Btn><Btn variant="ghost" onClick={()=>setTab("decks")}>Browse decks</Btn></div></Card>
       )}
       {tab==="decks"&&(
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          {deckList.map((d,i)=>(
-            <Card key={i} style={{cursor:"pointer"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
-                <div style={{fontSize:13,fontWeight:700,color:T.white}}>{d.name}</div>
-                <span style={{fontSize:11,color:T.muted}}>{d.count}</span>
-              </div>
-              <div style={{fontSize:11,color:T.muted,marginBottom:14}}>{d.course}</div>
-              <Prog pct={d.count?Math.round((d.done/d.count)*100):0} color={d.color} />
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10}}>
-                <span style={{fontSize:11,color:T.muted}}>{d.done} mastered</span>
-                <BtnSm onClick={()=>setTab("study")}>Study now</BtnSm>
-              </div>
-            </Card>
-          ))}
+        <div>
+          {deckList.length===0&&<Card style={{padding:24,textAlign:"center"}}><div style={{fontSize:13,color:T.muted,marginBottom:12}}>No decks yet. Create your first one.</div><Btn onClick={()=>setNewOpen(true)}>{Icon.plus} New deck</Btn></Card>}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            {deckList.map((d,i)=>(
+              <Card key={d.id||i} style={{cursor:"pointer",position:"relative"}}>
+                <button onClick={(e)=>{e.stopPropagation();deleteDeck(d.id);}} style={{position:"absolute",top:12,right:12,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14}}>x</button>
+                <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>{d.name}</div>
+                <div style={{fontSize:11,color:T.muted,marginBottom:14}}>{d.cards?d.cards.length:d.count} cards</div>
+                <BtnSm onClick={()=>{setStudyDeck(d);setTab("study");setIdx(0);setFlipped(false);}}>Study now</BtnSm>
+              </Card>
+            ))}
+          </div>
         </div>
-      )}
-      {tab==="create"&&(
-        <Card>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
-            <div><Label>Deck name</Label><input value={cName} onChange={e=>setCName(e.target.value)} style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",boxSizing:"border-box"}} placeholder="e.g. Chem · Periodic table" /></div>
-            <div><Label>Subject</Label><input value={cSubj} onChange={e=>setCSubj(e.target.value)} style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",boxSizing:"border-box"}} placeholder="e.g. Chemistry" /></div>
-          </div>
-          <div style={{marginBottom:14}}><Label>Question (front)</Label><textarea value={cQ} onChange={e=>setCQ(e.target.value)} style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",minHeight:80,boxSizing:"border-box"}} placeholder="Enter question..." /></div>
-          <div style={{marginBottom:16}}><Label>Answer (back)</Label><textarea value={cA} onChange={e=>setCA(e.target.value)} style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",minHeight:100,boxSizing:"border-box"}} placeholder="Enter answer..." /></div>
-          <div style={{display:"flex",gap:8,alignItems:"center"}}>
-            <Btn onClick={addCard}>Add card</Btn>
-            {draft.length>0&&<Btn variant="subtle" onClick={saveDraftDeck}>Save deck · {draft.length} card{draft.length===1?"":"s"}</Btn>}
-            <span style={{marginLeft:"auto",fontSize:11.5,color:T.muted}}>{draft.length} card{draft.length===1?"":"s"} added</span>
-          </div>
-          {draft.length>0&&(
-            <div style={{marginTop:16,display:"flex",flexDirection:"column",gap:6}}>
-              {draft.map((c,i)=>(
-                <div key={i} style={{display:"flex",gap:12,padding:"9px 12px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`,fontSize:12,alignItems:"center"}}>
-                  <span style={{fontFamily:T.mono,fontSize:10,color:T.muted,flexShrink:0}}>{String(i+1).padStart(2,"0")}</span>
-                  <span style={{color:T.text,flex:1,minWidth:0}}>{c.q}</span>
-                  <span style={{color:T.muted,flex:1,minWidth:0}}>{c.a}</span>
-                  <button onClick={()=>setDraft(d=>d.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",flexShrink:0,display:"flex"}}>{Icon.xmark}</button>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
       )}
     </div>
   );
