@@ -1903,76 +1903,147 @@ function AiTutor(){
 
 // ─── GRAMMAR & POLISH ─────────────────────────────────────────────────────────
 function GrammarPolish() {
-  const [text,setText]=useState("Shakespeare use of metaphors in Macbeth is very important for showing themes. The play have many example of this. Lady Macbeth she is a complex character who influence her husband decisions greatly.");
-  const [checked,setChecked]=useState(false);
-  const issues=[
-    {type:"Grammar",orig:"Shakespeare use",fix:"Shakespeare's use",color:T.red,desc:"Missing possessive apostrophe"},
-    {type:"Grammar",orig:"The play have",fix:"The play has",color:T.red,desc:"Subject-verb agreement"},
-    {type:"Style",orig:"very important",fix:"crucial / significant",color:T.amber,desc:"Weak intensifier · use stronger vocabulary"},
-    {type:"Grammar",orig:"Lady Macbeth she",fix:"Lady Macbeth",color:T.red,desc:"Pronoun redundancy"},
-    {type:"Grammar",orig:"influence her husband decisions",fix:"influences her husband's decisions",color:T.red,desc:"Tense error and missing possessive"},
-  ];
+  const [text,setText]=useState("");
+  const [issues,setIssues]=useState([]);
+  const [loading,setLoading]=useState(false);
+  const [grade,setGrade]=useState(null);
+  const [stats,setStats]=useState(null);
+  const [rewriteResult,setRewriteResult]=useState("");
+  const [rewriteLoading,setRewriteLoading]=useState(false);
+  const [activeMode,setActiveMode]=useState(null);
+
+  const wordCount=text.trim()?text.trim().split(/\s+/).length:0;
+  const sentenceCount=text.trim()?text.split(/[.!?]+/).filter(Boolean).length:0;
+  const avgWords=sentenceCount?Math.round(wordCount/sentenceCount):0;
+
+  const runCheck=async()=>{
+    if(!text.trim()||text.trim().length<10)return;
+    setLoading(true);setIssues([]);setGrade(null);setStats(null);setRewriteResult("");
+    try{
+      const prompt="Hey Studlin, I need you to check my writing for grammar, spelling, style, and clarity issues. Analyze this text and return a JSON object with this exact format:\n{\"grade\":\"B+\",\"readingLevel\":\"Grade 11\",\"issues\":[{\"type\":\"Grammar\",\"orig\":\"the exact wrong text\",\"fix\":\"corrected version\",\"desc\":\"brief explanation\"}],\"grammarCount\":2,\"styleCount\":1,\"clarityCount\":0,\"summary\":\"one sentence overall feedback\"}\n\nTypes can be: Grammar, Spelling, Style, Clarity, Punctuation\n\nMy text:\n"+text;
+      const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+      const data=await res.json();
+      var raw=(data.reply||"").replace(/```json?|```/g,"").trim();
+      var jsonStart=raw.indexOf("{");var jsonEnd=raw.lastIndexOf("}");
+      if(jsonStart>=0&&jsonEnd>jsonStart){raw=raw.slice(jsonStart,jsonEnd+1);}
+      try{
+        var parsed=JSON.parse(raw);
+        setGrade(parsed.grade||"—");
+        setStats({grammar:parsed.grammarCount||0,style:parsed.styleCount||0,clarity:parsed.clarityCount||0,reading:parsed.readingLevel||"",summary:parsed.summary||""});
+        setIssues(Array.isArray(parsed.issues)?parsed.issues:[]);
+      }catch(pe){setGrade("?");setStats({grammar:0,style:0,clarity:0,reading:"",summary:"Could not parse results. Try again."});setIssues([]);}
+    }catch(e){setGrade("?");setStats({grammar:0,style:0,clarity:0,summary:"Error: "+e.message});}
+    setLoading(false);
+  };
+
+  const rewriteTool=async(mode)=>{
+    if(!text.trim())return;
+    setActiveMode(mode);setRewriteLoading(true);setRewriteResult("");
+    try{
+      var prompts={"clarity":"Rewrite this text for maximum clarity. Keep the meaning but make every sentence easy to understand on first read.","academic":"Elevate this text to a formal academic register. Use sophisticated vocabulary and complex sentence structures while maintaining clarity.","simplify":"Simplify this text. Use shorter sentences, simpler words, and break down complex ideas. Aim for a Grade 8 reading level.","transitions":"Add transitional phrases between sentences and paragraphs to improve flow. Keep the original content but weave in connectors.","vary":"Rewrite this to vary sentence length and structure. Mix short punchy sentences with longer complex ones for rhythm."};
+      var p="Hey Studlin, "+prompts[mode]+"\n\nOriginal text:\n"+text+"\n\nJust give me the rewritten text directly, nothing else.";
+      var res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:p}],model:"standard"})});
+      var data=await res.json();
+      setRewriteResult(data.reply||"No result.");
+    }catch(e){setRewriteResult("Error: "+e.message);}
+    setRewriteLoading(false);
+  };
+
+  var acceptFix=function(issue){setText(function(t){return t.replace(issue.orig,issue.fix);});setIssues(function(arr){return arr.filter(function(x){return x!==issue;});});};
+  var acceptAll=function(){var t=text;issues.forEach(function(issue){t=t.replace(issue.orig,issue.fix);});setText(t);setIssues([]);};
+  var typeColor={"Grammar":T.red,"Spelling":T.red,"Punctuation":T.amber,"Style":T.amber,"Clarity":T.teal};
+
   return (
     <div>
-      <PH title="Grammar &amp; Polish" sub="Identify errors and elevate your academic writing" />
-      <div style={{display:"grid",gridTemplateColumns:"1fr 270px",gap:16}}>
+      <PH title="Grammar & Polish" sub="AI-powered writing analysis — fix errors, elevate your prose" />
+      <div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:16}}>
         <div>
-          <Card>
-            <Label>Your text</Label>
-            <textarea style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"12px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",minHeight:140,lineHeight:1.75,boxSizing:"border-box",marginBottom:12}} value={text} onChange={e=>setText(e.target.value)} />
-            <div style={{display:"flex",gap:8}}>
-              <Btn onClick={()=>setChecked(true)}>Run grammar check</Btn>
-              <Btn variant="subtle">Elevate prose</Btn>
-              <Btn variant="subtle">Tone analysis</Btn>
+          <Card style={{marginBottom:14}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <Label>Your text</Label>
+              <div style={{fontSize:11,color:T.muted}}>{wordCount} words · {sentenceCount} sentences · avg {avgWords} words/sentence</div>
+            </div>
+            <textarea style={{width:"100%",background:T.card2,border:"1px solid "+T.border,borderRadius:10,padding:"14px 16px",color:T.text,fontSize:14,fontFamily:T.font,outline:"none",resize:"vertical",minHeight:180,lineHeight:1.8,boxSizing:"border-box",marginBottom:14}} value={text} onChange={function(e){setText(e.target.value);}} placeholder="Paste your essay, paragraph, or any text here..." />
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              <Btn onClick={runCheck} disabled={loading||!text.trim()}>{loading?"Analyzing...":"Run grammar check"}</Btn>
+              <Btn variant="subtle" onClick={function(){rewriteTool("clarity");}} disabled={rewriteLoading}>{Icon.wand} Clarity</Btn>
+              <Btn variant="subtle" onClick={function(){rewriteTool("academic");}} disabled={rewriteLoading}>{Icon.wand} Academic</Btn>
+              <Btn variant="subtle" onClick={function(){rewriteTool("simplify");}} disabled={rewriteLoading}>{Icon.wand} Simplify</Btn>
             </div>
           </Card>
-          {checked&&(
-            <div style={{marginTop:14}}>
+          {issues.length>0&&(
+            <div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-                <div style={{fontSize:13,fontWeight:600,color:T.white}}>{issues.length} issues found</div>
-                <BtnSm variant="subtle">Accept all</BtnSm>
+                <div style={{fontSize:14,fontWeight:700,color:T.white}}>{issues.length} issue{issues.length===1?"":"s"} found</div>
+                <BtnSm onClick={acceptAll}>Accept all fixes</BtnSm>
               </div>
-              {issues.map((issue,i)=>(
-                <Card key={i} style={{borderLeft:`2px solid ${issue.color}`,marginBottom:8,padding:14}}>
-                  <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:8}}>
-                    <Badge color={issue.color}>{issue.type}</Badge>
-                    <span style={{fontSize:12,color:T.muted}}>{issue.desc}</span>
+              {issues.map(function(issue,i){return(
+                <Card key={i} style={{borderLeft:"3px solid "+(typeColor[issue.type]||T.amber),marginBottom:8,padding:16}}>
+                  <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10}}>
+                    <Badge color={typeColor[issue.type]||T.amber}>{issue.type}</Badge>
+                    <span style={{fontSize:12,color:T.muted,flex:1}}>{issue.desc}</span>
                   </div>
-                  <div style={{display:"flex",gap:10,alignItems:"center",fontSize:13}}>
-                    <span style={{color:T.red,textDecoration:"line-through",opacity:0.8}}>{issue.orig}</span>
-                    <span style={{color:T.muted}}>→</span>
-                    <span style={{color:T.lime,fontWeight:600}}>{issue.fix}</span>
-                    <BtnSm style={{marginLeft:"auto"}}>Accept</BtnSm>
-                    <BtnSm variant="ghost">Dismiss</BtnSm>
+                  <div style={{display:"flex",gap:10,alignItems:"center",fontSize:13.5,flexWrap:"wrap"}}>
+                    <span style={{color:T.red,textDecoration:"line-through",opacity:0.7,background:T.red+"10",padding:"2px 8px",borderRadius:4}}>{issue.orig}</span>
+                    <span style={{color:T.faint,fontSize:16}}>→</span>
+                    <span style={{color:T.lime,fontWeight:600,background:T.lime+"10",padding:"2px 8px",borderRadius:4}}>{issue.fix}</span>
+                    <div style={{marginLeft:"auto",display:"flex",gap:6}}>
+                      <BtnSm onClick={function(){acceptFix(issue);}}>Accept</BtnSm>
+                      <BtnSm variant="ghost" onClick={function(){setIssues(function(arr){return arr.filter(function(x){return x!==issue;});});}}>Dismiss</BtnSm>
+                    </div>
                   </div>
                 </Card>
-              ))}
+              );})}
             </div>
+          )}
+          {rewriteResult&&(
+            <Card style={{marginTop:14,borderLeft:"3px solid "+T.purple}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                <div style={{display:"flex",gap:8,alignItems:"center"}}><Badge color={T.purple}>Rewrite</Badge><span style={{fontSize:12,color:T.muted,textTransform:"capitalize"}}>{activeMode}</span></div>
+                <div style={{display:"flex",gap:6}}>
+                  <BtnSm onClick={function(){setText(rewriteResult);setRewriteResult("");}}>Use this version</BtnSm>
+                  <BtnSm variant="ghost" onClick={function(){navigator.clipboard&&navigator.clipboard.writeText(rewriteResult);}}>Copy</BtnSm>
+                </div>
+              </div>
+              <div style={{fontSize:14,color:T.text,lineHeight:1.8,whiteSpace:"pre-wrap"}}>{rewriteResult}</div>
+            </Card>
           )}
         </div>
         <div style={{display:"flex",flexDirection:"column",gap:12}}>
-          <Card style={{background:T.lime,border:"none"}}>
-            <Label>Overall grade</Label>
-            <div style={{fontSize:40,fontWeight:700,color:T.bg,letterSpacing:"-0.03em",lineHeight:1}}>{checked?"B+":"—"}</div>
-            <div style={{fontSize:12,color:T.bg,opacity:0.65,marginTop:5}}>Grade 11 reading level</div>
+          <Card style={{background:grade?T.lime:T.card,border:grade?"none":"1px solid "+T.border}}>
+            <Label style={grade?{color:T.bg}:{}}>Overall grade</Label>
+            <div style={{fontSize:48,fontWeight:800,color:grade?T.bg:T.faint,letterSpacing:"-0.04em",lineHeight:1}}>{grade||"—"}</div>
+            <div style={{fontSize:12,color:grade?T.bg:T.muted,opacity:grade?0.7:1,marginTop:6}}>{stats?stats.reading:"Paste text and run check"}</div>
+            {stats&&stats.summary&&<div style={{fontSize:11.5,color:grade?T.bg:T.muted,opacity:0.8,marginTop:8,lineHeight:1.5,borderTop:"1px solid "+(grade?"rgba(0,0,0,0.1)":T.border),paddingTop:8}}>{stats.summary}</div>}
           </Card>
-          <Card>
-            <Label>Rewrite tools</Label>
-            {["Rephrase for clarity","Elevate to academic register","Simplify sentence structure","Add transitional phrases","Vary sentence length"].map((a,i)=>(
-              <button key={i} style={{display:"flex",alignItems:"center",gap:8,width:"100%",textAlign:"left",padding:"9px 10px",borderRadius:6,marginBottom:4,fontSize:12,cursor:"pointer",border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontFamily:T.font,transition:"all 0.15s"}}>{Icon.wand} {a}</button>
-            ))}
-          </Card>
-          {checked&&(
+          {stats&&(
             <Card>
               <Label>Error breakdown</Label>
-              {[["Grammar errors",3,T.red],["Style issues",2,T.amber],["Clarity flags",0,T.teal]].map(([k,v,c],i)=>(
-                <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<2?`1px solid ${T.border}`:"none",fontSize:12}}>
-                  <span style={{color:T.muted}}>{k}</span>
-                  <span style={{color:c,fontWeight:600}}>{v}</span>
+              {[["Grammar & spelling",stats.grammar,T.red],["Style issues",stats.style,T.amber],["Clarity flags",stats.clarity,T.teal]].map(function(arr,i){return(
+                <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:i<2?"1px solid "+T.border:"none"}}>
+                  <span style={{fontSize:12,color:T.muted}}>{arr[0]}</span>
+                  <span style={{fontSize:14,fontWeight:700,color:arr[1]>0?arr[2]:T.faint}}>{arr[1]}</span>
                 </div>
-              ))}
+              );})}
             </Card>
           )}
+          <Card>
+            <Label>Rewrite tools</Label>
+            {[["clarity","Rephrase for clarity"],["academic","Elevate to academic register"],["simplify","Simplify sentence structure"],["transitions","Add transitional phrases"],["vary","Vary sentence length"]].map(function(arr,i){return(
+              <button key={i} onClick={function(){rewriteTool(arr[0]);}} disabled={rewriteLoading||!text.trim()} style={{display:"flex",alignItems:"center",gap:8,width:"100%",textAlign:"left",padding:"10px 12px",borderRadius:8,marginBottom:4,fontSize:12.5,cursor:"pointer",border:"1px solid "+(activeMode===arr[0]?T.purple+"55":T.border),background:activeMode===arr[0]?T.purple+"10":"transparent",color:activeMode===arr[0]?T.purple:T.muted,fontFamily:T.font,fontWeight:activeMode===arr[0]?600:400,transition:"all 0.15s"}}>{Icon.wand} {arr[1]}</button>
+            );})}
+          </Card>
+          <Card>
+            <Label>Quick stats</Label>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              {[[wordCount,"Words"],[sentenceCount,"Sentences"],[avgWords,"Avg words/sent"],[text.length,"Characters"]].map(function(arr,i){return(
+                <div key={i} style={{background:T.card2,borderRadius:8,padding:"10px 12px",border:"1px solid "+T.border}}>
+                  <div style={{fontSize:20,fontWeight:700,color:T.white}}>{arr[0]}</div>
+                  <div style={{fontSize:10,color:T.muted,marginTop:2}}>{arr[1]}</div>
+                </div>
+              );})}
+            </div>
+          </Card>
         </div>
       </div>
     </div>
@@ -3200,7 +3271,7 @@ function App() {
     {label:"Workspace",items:[
       {id:"dashboard",label:"Dashboard"},
       {id:"aichat",label:"Chat"},
-      {id:"essays",label:"Essays",badge:"3"},
+      {id:"essays",label:"Essays",badge:String(lsGet("essays",[]).length||"")},
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
       {id:"focustimer",label:"Focus timer"},
