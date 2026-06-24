@@ -912,8 +912,8 @@ function Flashcards() {
     let cards=[];
     if(dSource==="manual"){cards=[...draft];}
     else if(dSource==="file"&&fileText){cards=await aiGenCards(fileText,"document/notes");}
-    else if(dSource==="youtube"&&ytInfo){cards=await aiGenCards("Create flashcards about this topic from a YouTube video titled: "+ytInfo,"YouTube video");}
-    else if(dSource==="record"&&recText){cards=await aiGenCards(recText,"lecture transcription");}
+    else if(dSource==="youtube"&&ytInfo){cards=await aiGenCards("The topic is: "+ytInfo+". Create 10 detailed study flashcards covering the key concepts, definitions, and important facts about this topic. Each card should test a specific piece of knowledge.","topic");}
+    else if(dSource==="record"&&recText){cards=await aiGenCards("This is a transcription from a lecture recording. Create flashcards testing the key concepts mentioned:\n\n"+recText,"lecture transcription");}
     if(cards.length===0){cards=[{q:"No cards were generated",a:"Try again — make sure you uploaded a file, pasted a link, or recorded audio"}];}
     const nd={id:String(Date.now()),name:name,count:cards.length,done:0,color:T.lime,cards:cards};
     const next=[nd,...deckList];setDeckList(next);lsSet("decks",next);
