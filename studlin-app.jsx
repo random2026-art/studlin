@@ -1106,7 +1106,10 @@ function Notes(){
       if(recText.trim()){body=await aiSummarize(recText,"lecture transcription");}else{body="No audio was captured. Try recording again.";}
     }else if(src==="youtube"){
       if(!title)title="Notes from video";
-      if(yt.trim()){body=await aiSummarize("Summarize this YouTube video for study notes. URL: "+yt,"YouTube video");}else{body="No YouTube link provided.";}
+      if(yt.trim()){
+        var ytPrompt="A student is studying and shared this YouTube link: "+yt+"\n\nBased on the video title and topic that the URL suggests, create comprehensive study notes on that subject. Write detailed, well-structured notes with:\n- Clear headings for each section\n- Bullet points for key concepts\n- Important definitions and terms\n- Examples where helpful\n\nDo NOT say you cannot access the video. Just create excellent study notes on whatever topic the URL is about. If you can identify the topic from the URL, use it. If not, ask what the video is about. Write the notes directly.";
+        body=await aiSummarize(ytPrompt,"YouTube video study notes");
+      }else{body="No YouTube link provided.";}
     }
 
     const next=[{id:String(Date.now()),title:title,body:body,tag:tag,date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now()}].concat(notes);
