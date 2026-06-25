@@ -192,29 +192,24 @@ const PRIORITY_COLORS=["","#5FCBA8","#7BACDF","#DCA64A","#E8946B","#D9806B"];
 const DIFFICULTY_LABELS=["","Easy","Moderate","Challenging","Hard","Very Hard"];
 const DIFFICULTY_COLORS=["","#5FCBA8","#7BACDF","#DCA64A","#E8946B","#D9806B"];
 
+// ─── THE ASCENDED ORDER ──────────────────────────────────────────────────────
 const CHARACTERS=[
-  {id:"spark",name:"Spark",emoji:"⚡",desc:"Just getting started. Three days in — most people don't even make it this far.",type:"streak",threshold:3},
-  {id:"ember",name:"Ember",emoji:"🔥",desc:"One week locked in. The habit is forming. Don't stop now.",type:"streak",threshold:7},
-  {id:"flicker",name:"Flicker",emoji:"🕯",desc:"Two weeks of showing up. You're building something real.",type:"streak",threshold:14},
-  {id:"blaze",name:"Blaze",emoji:"🌟",desc:"30 days. A full month of discipline. You're not the same person who started.",type:"streak",threshold:30},
-  {id:"torch",name:"Torch",emoji:"🔦",desc:"50 days. Most people dream about consistency like this.",type:"streak",threshold:50},
-  {id:"inferno",name:"Inferno",emoji:"💎",desc:"100 days. You've outlasted 99% of students. This is elite.",type:"streak",threshold:100},
-  {id:"phoenix",name:"Phoenix",emoji:"🦅",desc:"200 days. You rose from nothing and built an empire of knowledge.",type:"streak",threshold:200},
-  {id:"titan",name:"Titan",emoji:"👑",desc:"One full year. 365 days of relentless dedication. You are legendary.",type:"streak",threshold:365},
-  {id:"eternal",name:"Eternal",emoji:"🌌",desc:"Two years. Studying isn't something you do — it's who you are.",type:"streak",threshold:730},
-  {id:"ascended",name:"Ascended",emoji:"✨",desc:"1,000 days. There are no words. You have transcended.",type:"streak",threshold:1000},
-  {id:"seedling",name:"Seedling",emoji:"🌱",desc:"Level 5. You planted the seed. Now water it.",type:"level",threshold:5},
-  {id:"sprout",name:"Sprout",emoji:"🌿",desc:"Level 10. Growing stronger every session.",type:"level",threshold:10},
-  {id:"sapling",name:"Sapling",emoji:"🌳",desc:"Level 15. Your roots run deep now.",type:"level",threshold:15},
-  {id:"scholar2",name:"Scholar",emoji:"📚",desc:"Level 20. Knowledge is becoming your superpower.",type:"level",threshold:20},
-  {id:"sage",name:"Sage",emoji:"🧠",desc:"Level 30. You don't just study — you understand.",type:"level",threshold:30},
-  {id:"architect",name:"Architect",emoji:"🏛",desc:"Level 40. Building a cathedral of knowledge, one brick at a time.",type:"level",threshold:40},
-  {id:"maestro",name:"Maestro",emoji:"🎯",desc:"Level 50. Precision. Discipline. Mastery.",type:"level",threshold:50},
-  {id:"oracle",name:"Oracle",emoji:"🔮",desc:"Level 75. You see connections others miss.",type:"level",threshold:75},
-  {id:"luminary",name:"Luminary",emoji:"⭐",desc:"Level 100. A beacon for everyone around you.",type:"level",threshold:100},
-  {id:"sovereign",name:"Sovereign",emoji:"🏔",desc:"Level 150. You stand at the peak. The view is earned.",type:"level",threshold:150},
-  {id:"mythic",name:"Mythic",emoji:"🐉",desc:"Level 200. They'll tell stories about your grind.",type:"level",threshold:200},
-  {id:"infinite",name:"Infinite",emoji:"♾",desc:"Level 300. Beyond measure. Beyond limits. Beyond.",type:"level",threshold:300},
+  {id:"initiate",name:"The Initiate",sigil:"I",tier:"I",type:"streak",threshold:3,lore:"You crossed the threshold. Most never do. Three days of discipline is more than most manage in a year. The Order sees you.",hint:"Three sunrises. That is all the threshold demands.",visual:"A dark hooded figure at the edge of a stone threshold. Faint ember light beneath the hood."},
+  {id:"vigilant",name:"The Vigilant",sigil:"V",tier:"II",type:"streak",threshold:7,lore:"Seven days. The noise didn't stop you. The doubt didn't break you. You stood watch over your own potential, and you didn't blink.",hint:"A full cycle of days, unbroken. The watchtower awaits its sentinel.",visual:"A sentinel atop a watchtower silhouette against a dark sky. Eyes glow faint amber."},
+  {id:"ironclad",name:"The Ironclad",sigil:"R",tier:"III",type:"streak",threshold:14,lore:"Fourteen days of showing up forged something inside you that can't be undone. Your discipline is becoming armor. Wear it.",hint:"Fourteen fires, each lit without fail. Only then does the armor form.",visual:"A figure in dark cracked armor with veins of molten gold. Forged from consistency."},
+  {id:"forgemaster",name:"The Forgemaster",sigil:"F",tier:"IV",type:"streak",threshold:30,lore:"Thirty days. You took raw intention and hammered it into habit. The blade you're forging? It's you. And you're getting sharper.",hint:"A moon's full turn at the anvil. The blade is patient.",visual:"A towering blacksmith before a massive anvil, hammering a blade of pure light."},
+  {id:"hollowking",name:"The Hollow King",sigil:"H",tier:"V",type:"streak",threshold:50,lore:"Fifty days. You emptied yourself of every excuse, every shortcut, every 'I'll do it tomorrow.' What remains is hollow, unbreakable, and sovereign.",hint:"Empty yourself of fifty excuses. The throne appears when they're gone.",visual:"A skeletal throne of abandoned excuses. A dark crown of smoke floats above it."},
+  {id:"obsidianwarden",name:"The Obsidian Warden",sigil:"O",tier:"VI",type:"streak",threshold:100,lore:"One hundred days. You are no longer building a habit. You ARE the habit. The Obsidian Warden guards the gate between those who try and those who become.",hint:"One hundred marks upon the gate. Not one can be missed.",visual:"A monolithic figure carved from black glass, before a gate of pure shadow."},
+  {id:"abyssalarchitect",name:"The Abyssal Architect",sigil:"A",tier:"VII",type:"streak",threshold:200,lore:"Two hundred days. You're not studying anymore — you're constructing something celestial. The Abyssal Architect doesn't build for today. It builds for forever.",hint:"Two hundred stars must be placed before the blueprint reveals itself.",visual:"A cosmic figure drawing constellations with bare hands. Each star is a session."},
+  {id:"epochsovereign",name:"The Epoch Sovereign",sigil:"E",tier:"VIII",type:"streak",threshold:365,lore:"One year. Three hundred and sixty-five days of choosing discipline over comfort. The Epoch Sovereign doesn't manage time — time answers to them.",hint:"A full revolution of the sun. Not a single day yielded.",visual:"A deity seated on a throne of orbiting calendars and shattered clocks."},
+  {id:"eternalmeridian",name:"The Eternal Meridian",sigil:"M",tier:"IX",type:"streak",threshold:730,lore:"Two years. You've crossed the meridian between who you were and who you're becoming. The Eternal Meridian is the point of no return. You passed it.",hint:"Two revolutions. The rift between who you were and who you'll be.",visual:"Two mirrored figures reaching across a rift of pure energy."},
+  {id:"voidascendant",name:"The Void Ascendant",sigil:"V",tier:"X",type:"streak",threshold:1825,lore:"Five years. Half a decade of relentless, daily discipline. The Void Ascendant has transcended the need for motivation. Discipline is its atmosphere.",hint:"Five revolutions. Half a decade of daily proof.",visual:"A being of pure negative space. Stars orbit its silhouette."},
+  {id:"apexabsolute",name:"The Apex Absolute",sigil:"X",tier:"XI",type:"streak",threshold:3650,lore:"Ten years. A decade. The Apex Absolute is not a character. It is a monument to the fact that a human being chose, every single day, for ten years, to show up. There is nothing above this. You are the ceiling.",hint:"A decade of unbroken will. This entity has never been summoned.",visual:"An incomprehensible entity — part cathedral, part god, part universe."},
+  {id:"kindled",name:"The Kindled",sigil:"K",tier:"I",type:"level",threshold:5,lore:"Level 5. The flame is small, but it exists. Most people never even strike the match.",hint:"Reach Level 5. Strike the match.",visual:"A small flame cupped in two dark hands. Simple. Fragile. But alive."},
+  {id:"tempered",name:"The Tempered",sigil:"T",tier:"II",type:"level",threshold:10,lore:"Level 10. You've been through heat and pressure. Instead of breaking, you hardened.",hint:"Reach Level 10. Survive the quenching.",visual:"A blade being quenched in dark water. Steam rises. The metal holds."},
+  {id:"monolith",name:"The Monolith",sigil:"M",tier:"III",type:"level",threshold:25,lore:"Level 25. You don't need to be flashy. You just need to be unremovable.",hint:"Reach Level 25. Become unremovable.",visual:"A single towering stone pillar in an empty desert. No decoration. Just presence."},
+  {id:"celestialscribe",name:"The Celestial Scribe",sigil:"S",tier:"IV",type:"level",threshold:50,lore:"Level 50. Every session, every question, every late night — it's all recorded. The Celestial Scribe is the living archive of your effort.",hint:"Reach Level 50. Fill the infinite page.",visual:"A figure writing in a book that hovers in space. Pages stack infinitely upward."},
+  {id:"omegathesis",name:"The Omega Thesis",sigil:"O",tier:"V",type:"level",threshold:100,lore:"Level 100. You've reached the point where knowledge isn't something you acquire — it's something you emit. The Omega Thesis is the final argument. And it's yours.",hint:"Reach Level 100. Become the final argument.",visual:"A singularity. All knowledge compressed into a single radiant point."},
 ];
 function getCharacterData(){return lsGet("characters",{unlocked:[],unlockedAt:{},seen:[]});}
 function saveCharacterData(d){lsSet("characters",d);}
@@ -364,19 +359,23 @@ const DOW_FULL=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Sat
 const MON_SHORT=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 function todayLabel(){const d=new Date();return DOW_FULL[d.getDay()]+" · "+MON_SHORT[d.getMonth()]+" "+d.getDate();}
 function weekNo(){const d=new Date();const start=new Date(d.getFullYear(),0,1);return Math.ceil((((d-start)/86400000)+start.getDay()+1)/7);}
-function getXP(){
-  const s=lsGet("sessions",[]);const totalMin=s.reduce((a,x)=>a+(x.m||0),0);
-  const base=lsGet("xpBase",1850);
-  const first60=Math.min(totalMin,60)*5;
-  const next60=Math.min(Math.max(totalMin-60,0),60)*4;
-  const rest=Math.max(totalMin-120,0)*3;
-  const focusXP=first60+next60+rest;
-  const streakXP=getStreak()*30;
-  const loginXP=lsGet("days",[]).length*15;
-  const taskXP=Object.values(lsGet("planDone",{})).filter(Boolean).length*20;
-  return base+focusXP+streakXP+loginXP+taskXP+lsGet("xpBonus",0);
+function getStreakMultiplier(){var s=getStreak();if(s>=100)return 1.75;if(s>=50)return 1.5;if(s>=30)return 1.35;if(s>=14)return 1.25;if(s>=7)return 1.15;return 1.0;}
+function calcSessionXP(mins){
+  if(mins<=30)return mins*6;
+  if(mins<=60)return 180+(mins-30)*5;
+  if(mins<=120)return 330+(mins-60)*3.5;
+  return 540+(mins-120)*1.5;
 }
-function levelInfo(){const xp=getXP();const per=300;const level=Math.floor(xp/per)+1;const into=xp-(level-1)*per;return {xp,level,into,per,toNext:per-into,pct:Math.round(into/per*100)};}
+function getXP(){
+  var s=lsGet("sessions",[]);var base=lsGet("xpBase",0);
+  var focusXP=0;
+  for(var i=0;i<s.length;i++){focusXP+=Math.floor(calcSessionXP(s[i].m||0));}
+  var mult=getStreakMultiplier();focusXP=Math.floor(focusXP*mult);
+  var loginXP=lsGet("days",[]).length*20;
+  var taskXP=Object.values(lsGet("planDone",{})).filter(Boolean).length*25;
+  return base+focusXP+loginXP+taskXP+lsGet("xpBonus",0);
+}
+function levelInfo(){var xp=getXP();var per=400;var level=Math.floor(xp/per)+1;var into=xp-(level-1)*per;return {xp:xp,level:level,into:into,per:per,toNext:per-into,pct:Math.round(into/per*100)};}
 function weekStreak(){const days=new Set(lsGet("days",[]));const now=new Date();const dow=(now.getDay()+6)%7;const mon=new Date(now);mon.setDate(now.getDate()-dow);return ["M","T","W","T","F","S","S"].map((lab,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);const k=dayKey(d);const today=k===dayKey(now);return {lab,on:days.has(k),today,future:d>now&&!today};});}
 function todaysPlan(){const events=lsGet("events",[]);const tk=dayKey();const done=lsGet("planDone",{});return events.filter(e=>e.date===tk).sort((a,b)=>(a.time||"")<(b.time||"")?-1:1).map(e=>({...e,done:!!done[e.id]}));}
 function togglePlanDone(id){const done=lsGet("planDone",{});done[id]=!done[id];lsSet("planDone",done);return done;}
@@ -2671,89 +2670,99 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 }
 
 
-// ─── COLLECTION ──────────────────────────────────────────────────────────────
+// ─── COLLECTION — THE ASCENDED ORDER ─────────────────────────────────────────
 function Collection() {
-  const [sel,setSel]=useState(null);
-  const data=getCharacterData();
-  const streak=getStreak();
-  const lvl=levelInfo();
-  const isUnlocked=function(id){return data.unlocked.indexOf(id)!==-1;};
-  const streakChars=CHARACTERS.filter(function(c){return c.type==="streak";});
-  const levelChars=CHARACTERS.filter(function(c){return c.type==="level";});
-  const totalU=CHARACTERS.filter(function(c){return isUnlocked(c.id);}).length;
-  const nextStreak=streakChars.find(function(c){return !isUnlocked(c.id);});
-  const nextLevel=levelChars.find(function(c){return !isUnlocked(c.id);});
+  var sel=useState(null),selChar=sel[0],setSelChar=sel[1];
+  var data=getCharacterData();
+  var streak=getStreak();
+  var lvl=levelInfo();
+  var isU=function(id){return data.unlocked.indexOf(id)!==-1;};
+  var streakEnts=CHARACTERS.filter(function(c){return c.type==="streak";});
+  var levelEnts=CHARACTERS.filter(function(c){return c.type==="level";});
+  var totalU=CHARACTERS.filter(function(c){return isU(c.id);}).length;
+  var nextStreak=streakEnts.find(function(c){return !isU(c.id);});
+  var nextLevel=levelEnts.find(function(c){return !isU(c.id);});
 
-  useEffect(function(){
-    var d=getCharacterData();
-    var unseen=d.unlocked.filter(function(id){return d.seen.indexOf(id)===-1;});
-    if(unseen.length>0){d.seen=d.seen.concat(unseen);saveCharacterData(d);}
-  },[]);
+  useEffect(function(){var d=getCharacterData();var unseen=d.unlocked.filter(function(id){return d.seen.indexOf(id)===-1;});if(unseen.length>0){d.seen=d.seen.concat(unseen);saveCharacterData(d);}},[]);
 
-  var CharCard=function(props){
-    var c=props.c;
-    var u=isUnlocked(c.id);
+  var EntityCard=function(props){
+    var c=props.c;var u=isU(c.id);
     var prog=c.type==="streak"?Math.min(100,Math.round(streak/c.threshold*100)):Math.min(100,Math.round(lvl.level/c.threshold*100));
     var isNew=u&&data.unlockedAt[c.id]&&(Date.now()-data.unlockedAt[c.id])<7*86400000;
     return(
-      <div onClick={function(){if(u)setSel(c);}} style={{background:u?T.card:T.card2,border:"1px solid "+(u?T.lime+"44":T.border),borderRadius:16,padding:18,cursor:u?"pointer":"default",opacity:u?1:0.5,transition:"all 0.2s",position:"relative"}}>
-        {isNew&&<span style={{position:"absolute",top:8,right:10,fontSize:9,fontWeight:700,background:T.lime,color:T.ink,padding:"2px 6px",borderRadius:99}}>NEW</span>}
-        <div style={{fontSize:36,marginBottom:10,filter:u?"none":"grayscale(1)"}}>{c.emoji}</div>
-        <div style={{fontSize:13,fontWeight:700,color:u?T.white:T.muted,marginBottom:2}}>{c.name}</div>
-        <div style={{fontSize:10,color:T.muted,marginBottom:8}}>{c.type==="streak"?c.threshold+"-day streak":"Level "+c.threshold}</div>
-        {!u&&<Prog pct={prog} color={T.faint} height={3} />}
-        {u&&<div style={{fontSize:10,color:T.lime,fontWeight:600}}>Unlocked</div>}
+      <div onClick={function(){if(u)setSelChar(c);}} style={{background:u?"linear-gradient(180deg,#141A16 0%,#0B100D 100%)":"linear-gradient(180deg,#0E1210 0%,#080A09 100%)",border:"1px solid "+(u?T.lime+"33":"rgba(255,255,255,0.04)"),borderRadius:14,padding:"22px 18px",cursor:u?"pointer":"default",transition:"all 0.3s",position:"relative",overflow:"hidden"}}>
+        {u&&<div style={{position:"absolute",top:0,left:0,right:0,height:1,background:"linear-gradient(90deg,transparent,"+T.lime+"66,transparent)"}} />}
+        {isNew&&<span style={{position:"absolute",top:10,right:10,fontSize:8,fontWeight:700,letterSpacing:"0.1em",background:T.lime,color:T.ink,padding:"2px 8px",borderRadius:99,textTransform:"uppercase"}}>New</span>}
+        <div style={{width:48,height:48,borderRadius:12,background:u?"rgba(174,206,94,0.08)":"rgba(255,255,255,0.02)",border:"1px solid "+(u?T.lime+"22":"rgba(255,255,255,0.04)"),display:"grid",placeItems:"center",marginBottom:14}}>
+          <span style={{fontSize:22,fontWeight:800,fontFamily:T.serif||T.font,color:u?T.lime:"rgba(255,255,255,0.08)",letterSpacing:"-0.02em"}}>{c.sigil}</span>
+        </div>
+        <div style={{fontSize:9,fontWeight:700,letterSpacing:"0.14em",color:u?T.lime+"99":"rgba(255,255,255,0.08)",textTransform:"uppercase",marginBottom:6}}>Tier {c.tier}</div>
+        <div style={{fontSize:14,fontWeight:700,color:u?T.white:"rgba(255,255,255,0.15)",marginBottom:6,letterSpacing:"-0.01em"}}>{c.name}</div>
+        {u?(
+          <div style={{fontSize:11,color:T.muted,lineHeight:1.5}}>{c.lore.slice(0,80)}...</div>
+        ):(
+          <div>
+            <div style={{fontSize:11,color:"rgba(255,255,255,0.12)",lineHeight:1.5,fontStyle:"italic",marginBottom:10}}>{c.hint}</div>
+            <Prog pct={prog} color={"rgba(255,255,255,0.08)"} height={2} />
+            <div style={{fontSize:9,color:"rgba(255,255,255,0.1)",marginTop:4}}>{prog}%</div>
+          </div>
+        )}
       </div>
     );
   };
 
   return(
     <div>
-      <PH title="Collection" sub={totalU+" / "+CHARACTERS.length+" characters collected"} />
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:24}}>
+      <div style={{marginBottom:32}}>
+        <div style={{fontSize:9,fontWeight:700,letterSpacing:"0.2em",color:T.lime,textTransform:"uppercase",marginBottom:8}}>The Ascended Order</div>
+        <h1 style={{fontSize:26,fontWeight:700,color:T.white,margin:"0 0 6px",letterSpacing:"-0.02em"}}>Collection</h1>
+        <p style={{fontSize:13,color:T.muted,margin:0}}>{totalU} of {CHARACTERS.length} entities summoned</p>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:28}}>
         {nextStreak&&(
-          <Card style={{borderLeft:"3px solid "+T.amber}}>
-            <Label>Next streak unlock</Label>
-            <div style={{display:"flex",alignItems:"center",gap:12}}>
-              <span style={{fontSize:28,filter:"grayscale(1)",opacity:0.5}}>{nextStreak.emoji}</span>
+          <div style={{background:"linear-gradient(135deg,#141A16,#0B100D)",border:"1px solid "+T.lime+"15",borderRadius:14,padding:"18px 20px"}}>
+            <div style={{fontSize:9,fontWeight:700,letterSpacing:"0.12em",color:T.amber,textTransform:"uppercase",marginBottom:10}}>Next Streak Entity</div>
+            <div style={{display:"flex",alignItems:"center",gap:14}}>
+              <div style={{width:40,height:40,borderRadius:10,background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",display:"grid",placeItems:"center"}}><span style={{fontSize:18,fontWeight:800,color:"rgba(255,255,255,0.12)",fontFamily:T.serif||T.font}}>{nextStreak.sigil}</span></div>
               <div style={{flex:1}}>
-                <div style={{fontSize:14,fontWeight:600,color:T.white}}>{nextStreak.name}</div>
-                <div style={{fontSize:11,color:T.muted}}>{nextStreak.threshold}-day streak — you are at {streak} days</div>
-                <Prog pct={Math.min(100,Math.round(streak/nextStreak.threshold*100))} color={T.amber} height={4} />
+                <div style={{fontSize:13,fontWeight:600,color:T.white}}>{nextStreak.name}</div>
+                <div style={{fontSize:11,color:T.muted,marginBottom:6}}>{streak} / {nextStreak.threshold} days</div>
+                <Prog pct={Math.min(100,Math.round(streak/nextStreak.threshold*100))} color={T.amber} height={3} />
               </div>
             </div>
-          </Card>
+          </div>
         )}
         {nextLevel&&(
-          <Card style={{borderLeft:"3px solid "+T.purple}}>
-            <Label>Next level unlock</Label>
-            <div style={{display:"flex",alignItems:"center",gap:12}}>
-              <span style={{fontSize:28,filter:"grayscale(1)",opacity:0.5}}>{nextLevel.emoji}</span>
+          <div style={{background:"linear-gradient(135deg,#141A16,#0B100D)",border:"1px solid "+T.purple+"15",borderRadius:14,padding:"18px 20px"}}>
+            <div style={{fontSize:9,fontWeight:700,letterSpacing:"0.12em",color:T.purple,textTransform:"uppercase",marginBottom:10}}>Next Level Entity</div>
+            <div style={{display:"flex",alignItems:"center",gap:14}}>
+              <div style={{width:40,height:40,borderRadius:10,background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",display:"grid",placeItems:"center"}}><span style={{fontSize:18,fontWeight:800,color:"rgba(255,255,255,0.12)",fontFamily:T.serif||T.font}}>{nextLevel.sigil}</span></div>
               <div style={{flex:1}}>
-                <div style={{fontSize:14,fontWeight:600,color:T.white}}>{nextLevel.name}</div>
-                <div style={{fontSize:11,color:T.muted}}>Level {nextLevel.threshold} — you are at {lvl.level}</div>
-                <Prog pct={Math.min(100,Math.round(lvl.level/nextLevel.threshold*100))} color={T.purple} height={4} />
+                <div style={{fontSize:13,fontWeight:600,color:T.white}}>{nextLevel.name}</div>
+                <div style={{fontSize:11,color:T.muted,marginBottom:6}}>Level {lvl.level} / {nextLevel.threshold}</div>
+                <Prog pct={Math.min(100,Math.round(lvl.level/nextLevel.threshold*100))} color={T.purple} height={3} />
               </div>
             </div>
-          </Card>
+          </div>
         )}
       </div>
-      <div style={{marginBottom:20}}>
-        <Label>Streak Characters</Label>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10}}>{streakChars.map(function(c){return <CharCard key={c.id} c={c} />;})}</div>
+      <div style={{marginBottom:24}}>
+        <div style={{fontSize:9,fontWeight:700,letterSpacing:"0.14em",color:T.muted,textTransform:"uppercase",marginBottom:12}}>Streak Entities</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>{streakEnts.map(function(c){return <EntityCard key={c.id} c={c} />;})}</div>
       </div>
       <div>
-        <Label>Level Characters</Label>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>{levelChars.map(function(c){return <CharCard key={c.id} c={c} />;})}</div>
+        <div style={{fontSize:9,fontWeight:700,letterSpacing:"0.14em",color:T.muted,textTransform:"uppercase",marginBottom:12}}>Level Entities</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10}}>{levelEnts.map(function(c){return <EntityCard key={c.id} c={c} />;})}</div>
       </div>
-      <Modal open={!!sel} onClose={function(){setSel(null);}} title={sel?sel.name:""} width={400}>
-        {sel&&(
-          <div style={{textAlign:"center",padding:"20px 0"}}>
-            <div style={{fontSize:72,marginBottom:16}}>{sel.emoji}</div>
-            <h2 style={{fontSize:24,fontWeight:700,color:T.white,margin:"0 0 8px"}}>{sel.name}</h2>
-            <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",color:T.lime,textTransform:"uppercase",marginBottom:16}}>{sel.type==="streak"?sel.threshold+"-day streak":"Level "+sel.threshold}</div>
-            <p style={{fontSize:15,color:T.muted,lineHeight:1.6,fontStyle:"italic",margin:0}}>"{sel.desc}"</p>
-            {data.unlockedAt[sel.id]&&<div style={{fontSize:11,color:T.faint,marginTop:16}}>Unlocked {new Date(data.unlockedAt[sel.id]).toLocaleDateString()}</div>}
+      <Modal open={!!selChar} onClose={function(){setSelChar(null);}} title="" width={480}>
+        {selChar&&(
+          <div style={{textAlign:"center",padding:"28px 0"}}>
+            <div style={{width:72,height:72,borderRadius:18,background:"rgba(174,206,94,0.06)",border:"1px solid "+T.lime+"22",display:"grid",placeItems:"center",margin:"0 auto 20px"}}><span style={{fontSize:34,fontWeight:800,color:T.lime,fontFamily:T.serif||T.font}}>{selChar.sigil}</span></div>
+            <div style={{fontSize:9,fontWeight:700,letterSpacing:"0.16em",color:T.lime+"88",textTransform:"uppercase",marginBottom:8}}>Tier {selChar.tier} {selChar.type==="streak"?selChar.threshold+"-day streak":"Level "+selChar.threshold}</div>
+            <h2 style={{fontSize:26,fontWeight:700,color:T.white,margin:"0 0 16px",letterSpacing:"-0.02em"}}>{selChar.name}</h2>
+            <p style={{fontSize:14,color:T.muted,lineHeight:1.7,margin:"0 0 16px",maxWidth:380,marginLeft:"auto",marginRight:"auto"}}>{selChar.lore}</p>
+            <div style={{fontSize:11,color:T.faint,fontStyle:"italic",marginBottom:8}}>{selChar.visual}</div>
+            {data.unlockedAt[selChar.id]&&<div style={{fontSize:10,color:T.faint,marginTop:12}}>Summoned {new Date(data.unlockedAt[selChar.id]).toLocaleDateString()}</div>}
           </div>
         )}
       </Modal>
@@ -2950,7 +2959,7 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={T.ink} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{opacity:0.6}}><path d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
           </div>
           <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.ink,margin:"10px 0 2px"}}>{realStreak}<span style={{fontSize:20,color:"rgba(14,31,24,0.55)",marginLeft:6}}>days</span></div>
-          <div style={{fontSize:12,color:"rgba(14,31,24,0.7)"}}>Longest: 31 · +10 credits unlocked</div>
+          <div style={{fontSize:12,color:"rgba(14,31,24,0.7)"}}>{(function(){var cur=CHARACTERS.filter(function(c){return c.type==="streak"&&realStreak>=c.threshold;}).pop();var nxt=CHARACTERS.filter(function(c){return c.type==="streak"&&realStreak<c.threshold;})[0];if(nxt)return(nxt.threshold-realStreak)+"d to summon "+nxt.name;if(cur)return cur.name+" — all streak entities summoned";return "Begin your streak";})()}</div>
           <div style={{display:"flex",gap:5,marginTop:"auto",paddingTop:14}}>
             {wk.map((d,i)=>{
               const today=d.today, on=d.on;
@@ -3086,25 +3095,28 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
           </div>
         </div>
 
-        <div style={{background:T.forest,color:T.cream,borderRadius:22,padding:22}}>
-          <CardHead title="Weekly Wrapped" label="WEEK 20" more="View full" light />
+        <div style={{background:"linear-gradient(180deg,"+T.forest+",#070D0A)",color:T.cream,borderRadius:22,padding:22}}>
+          <CardHead title="Weekly Wrapped" label={"WEEK "+weekNo()} light />
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:14}}>
-            {[{l:"Focus hours",v:"14h 22m",d:"+3.2h"},{l:"Cards mastered",v:"142",d:"+38"},{l:"Words written",v:"3,840",d:"+1,200"}].map((s,i)=>(
-              <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:12,padding:"12px 14px"}}>
-                <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.06em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)"}}>{s.l}</div>
-                <div style={{fontFamily:T.hand,fontSize:28,fontWeight:700,color:T.lime,lineHeight:1,marginTop:4}}>{s.v}</div>
-                <div style={{fontSize:11,color:T.lime,fontWeight:600,marginTop:2,opacity:0.85}}>{s.d} vs last wk</div>
+            {[{l:"Focus time",v:fmtH(wkStats.weekMin),d:wkStats.weekCount+" sessions"},{l:"Streak",v:realStreak+"d",d:getStreakMultiplier()+"x multiplier"},{l:"Level",v:"Lv "+lvl.level,d:lvl.toNext+" XP to next"}].map(function(s,i){return(
+              <div key={i} style={{background:"rgba(246,241,230,0.04)",borderRadius:12,padding:"12px 14px",border:"1px solid rgba(246,241,230,0.06)"}}>
+                <div style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(246,241,230,0.45)"}}>{s.l}</div>
+                <div style={{fontFamily:T.hand,fontSize:28,fontWeight:700,color:T.lime,lineHeight:1,marginTop:6}}>{s.v}</div>
+                <div style={{fontSize:10,color:"rgba(246,241,230,0.45)",marginTop:4}}>{s.d}</div>
               </div>
-            ))}
+            );})}
           </div>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            {["12-day streak","Bio top 1%","Early bird"].map((b,i)=>(
-              <span key={i} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.12)",borderRadius:99,fontSize:11.5,color:T.cream}}>
-                <span style={{width:18,height:18,borderRadius:"50%",background:T.lime,display:"grid",placeItems:"center",color:T.ink,fontSize:10,fontWeight:700,flex:"none"}}>{["12","*","4"][i]}</span>
-                {b}
-              </span>
-            ))}
-          </div>
+          {(function(){var nxt=CHARACTERS.filter(function(c){return c.type==="streak"&&realStreak<c.threshold;})[0]||CHARACTERS.filter(function(c){return c.type==="level"&&lvl.level<c.threshold;})[0];if(!nxt)return null;var prog=nxt.type==="streak"?Math.min(100,Math.round(realStreak/nxt.threshold*100)):Math.min(100,Math.round(lvl.level/nxt.threshold*100));return(
+            <div style={{background:"rgba(246,241,230,0.03)",borderRadius:12,padding:"14px 16px",border:"1px solid rgba(246,241,230,0.06)",marginBottom:14}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <div style={{fontSize:9,fontWeight:700,letterSpacing:"0.12em",color:T.lime+"88",textTransform:"uppercase"}}>Closest Entity</div>
+                <span style={{fontSize:10,color:"rgba(246,241,230,0.35)"}}>{prog}%</span>
+              </div>
+              <div style={{fontSize:14,fontWeight:700,color:T.cream,marginBottom:6}}>{nxt.name}</div>
+              <Prog pct={prog} color={T.lime} height={3} />
+            </div>
+          );})()}
+          <button onClick={function(){var nxt=CHARACTERS.filter(function(c){return c.type==="streak"&&realStreak<c.threshold;})[0];var nxtName=nxt?nxt.name:"all entities summoned";var nxtProg=nxt?Math.round(realStreak/nxt.threshold*100):100;var txt="STUDLIN WEEKLY WRAPPED\n\n"+fmtH(wkStats.weekMin)+" locked in\n"+realStreak+"-day streak | Level "+lvl.level+"\n"+lvl.xp.toLocaleString()+" XP total\n\nClosest entity: "+nxtName+"\n"+nxtProg+"% toward summoning\n\nstudlin.app";navigator.clipboard&&navigator.clipboard.writeText(txt);}} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,width:"100%",padding:"10px 16px",borderRadius:10,border:"1px solid rgba(246,241,230,0.12)",background:"rgba(246,241,230,0.04)",color:T.cream,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>{Icon.copy} Share your Wrapped</button>
         </div>
       </div>
 
@@ -3662,16 +3674,17 @@ function App() {
       }} />}
 
       {newUnlock&&(
-        <div onClick={()=>setNewUnlock(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",backdropFilter:"blur(12px)",zIndex:1100,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.3s ease"}}>
-          <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:400,background:T.card,borderRadius:24,border:"2px solid "+T.lime,padding:"48px 36px",textAlign:"center",animation:"studlinPop 0.5s cubic-bezier(.2,.85,.3,1)"}}>
-            <div style={{fontSize:12,fontWeight:700,letterSpacing:"0.12em",color:T.lime,textTransform:"uppercase",marginBottom:16}}>Character unlocked</div>
-            <div style={{fontSize:80,marginBottom:16}}>{newUnlock.emoji}</div>
-            <h2 style={{fontSize:28,fontWeight:700,color:T.white,margin:"0 0 6px"}}>{newUnlock.name}</h2>
-            <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",color:T.lime,textTransform:"uppercase",marginBottom:16}}>{newUnlock.type==="streak"?newUnlock.threshold+"-day streak":"Level "+newUnlock.threshold}</div>
-            <p style={{fontSize:15,color:T.muted,lineHeight:1.6,fontStyle:"italic",margin:"0 0 28px"}}>"{newUnlock.desc}"</p>
+        <div onClick={()=>setNewUnlock(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.92)",backdropFilter:"blur(20px)",zIndex:1100,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.4s ease"}}>
+          <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:440,background:"linear-gradient(180deg,#111614 0%,#080A09 100%)",borderRadius:20,border:"1px solid "+T.lime+"22",padding:"52px 40px",textAlign:"center",animation:"studlinPop 0.6s cubic-bezier(.2,.85,.3,1)",position:"relative",overflow:"hidden"}}>
+            <div style={{position:"absolute",top:0,left:0,right:0,height:1,background:"linear-gradient(90deg,transparent,"+T.lime+"55,transparent)"}} />
+            <div style={{fontSize:9,fontWeight:700,letterSpacing:"0.2em",color:T.lime,textTransform:"uppercase",marginBottom:24}}>Entity Summoned</div>
+            <div style={{width:80,height:80,borderRadius:20,background:"rgba(174,206,94,0.06)",border:"1px solid "+T.lime+"22",display:"grid",placeItems:"center",margin:"0 auto 24px",animation:"studlinPop 0.7s cubic-bezier(.2,.85,.3,1.2) 0.15s both"}}><span style={{fontSize:38,fontWeight:800,color:T.lime,fontFamily:T.serif||T.font}}>{newUnlock.sigil}</span></div>
+            <div style={{fontSize:9,fontWeight:700,letterSpacing:"0.14em",color:T.lime+"77",textTransform:"uppercase",marginBottom:8}}>Tier {newUnlock.tier} {newUnlock.type==="streak"?newUnlock.threshold+"-day streak":"Level "+newUnlock.threshold}</div>
+            <h2 style={{fontSize:26,fontWeight:700,color:T.white,margin:"0 0 20px",letterSpacing:"-0.02em"}}>{newUnlock.name}</h2>
+            <p style={{fontSize:14,color:"rgba(232,239,231,0.6)",lineHeight:1.7,margin:"0 0 32px",maxWidth:340,marginLeft:"auto",marginRight:"auto"}}>{newUnlock.lore}</p>
             <div style={{display:"flex",gap:10,justifyContent:"center"}}>
-              <Btn onClick={()=>{setNewUnlock(null);setActive("collection");}}>View collection</Btn>
-              <Btn variant="ghost" onClick={()=>setNewUnlock(null)}>Nice</Btn>
+              <Btn onClick={()=>{setNewUnlock(null);setActive("collection");}}>View the Order</Btn>
+              <Btn variant="ghost" onClick={()=>setNewUnlock(null)}>Dismiss</Btn>
             </div>
           </div>
         </div>
