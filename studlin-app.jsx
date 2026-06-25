@@ -73,7 +73,7 @@ const lightT = {
 };
 const T = {...darkT}; // mutable · applyTheme() swaps in place so all components re-read on render
 const hexA=(hex,a)=>{const h=hex.replace('#','');const r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16);return `rgba(${r},${g},${b},${a})`;};
-// accent palettes — override the lime family per user choice
+// accent palettes  --  override the lime family per user choice
 const ACCENTS={
   Lime:  {dk:{lime:"#AECE5E",limeDk:"#8BAE3C",limeLt:"#CBDF92"}, lt:{lime:"#9EC83D",limeDk:"#7FA82A",limeLt:"#CBDF92"}},
   Forest:{dk:{lime:"#6FC1A0",limeDk:"#4E9C7B",limeLt:"#A9E0CB"}, lt:{lime:"#2E8E6E",limeDk:"#22705680".slice(0,7),limeLt:"#A9E0CB"}},
@@ -200,16 +200,16 @@ const CHARACTERS=[
   {id:"forgemaster",name:"The Forgemaster",sigil:"F",tier:"IV",type:"streak",threshold:30,lore:"Thirty days. You took raw intention and hammered it into habit. The blade you're forging? It's you. And you're getting sharper.",hint:"A moon's full turn at the anvil. The blade is patient.",visual:"A towering blacksmith before a massive anvil, hammering a blade of pure light."},
   {id:"hollowking",name:"The Hollow King",sigil:"H",tier:"V",type:"streak",threshold:50,lore:"Fifty days. You emptied yourself of every excuse, every shortcut, every 'I'll do it tomorrow.' What remains is hollow, unbreakable, and sovereign.",hint:"Empty yourself of fifty excuses. The throne appears when they're gone.",visual:"A skeletal throne of abandoned excuses. A dark crown of smoke floats above it."},
   {id:"obsidianwarden",name:"The Obsidian Warden",sigil:"O",tier:"VI",type:"streak",threshold:100,lore:"One hundred days. You are no longer building a habit. You ARE the habit. The Obsidian Warden guards the gate between those who try and those who become.",hint:"One hundred marks upon the gate. Not one can be missed.",visual:"A monolithic figure carved from black glass, before a gate of pure shadow."},
-  {id:"abyssalarchitect",name:"The Abyssal Architect",sigil:"A",tier:"VII",type:"streak",threshold:200,lore:"Two hundred days. You're not studying anymore — you're constructing something celestial. The Abyssal Architect doesn't build for today. It builds for forever.",hint:"Two hundred stars must be placed before the blueprint reveals itself.",visual:"A cosmic figure drawing constellations with bare hands. Each star is a session."},
-  {id:"epochsovereign",name:"The Epoch Sovereign",sigil:"E",tier:"VIII",type:"streak",threshold:365,lore:"One year. Three hundred and sixty-five days of choosing discipline over comfort. The Epoch Sovereign doesn't manage time — time answers to them.",hint:"A full revolution of the sun. Not a single day yielded.",visual:"A deity seated on a throne of orbiting calendars and shattered clocks."},
+  {id:"abyssalarchitect",name:"The Abyssal Architect",sigil:"A",tier:"VII",type:"streak",threshold:200,lore:"Two hundred days. You're not studying anymore  --  you're constructing something celestial. The Abyssal Architect doesn't build for today. It builds for forever.",hint:"Two hundred stars must be placed before the blueprint reveals itself.",visual:"A cosmic figure drawing constellations with bare hands. Each star is a session."},
+  {id:"epochsovereign",name:"The Epoch Sovereign",sigil:"E",tier:"VIII",type:"streak",threshold:365,lore:"One year. Three hundred and sixty-five days of choosing discipline over comfort. The Epoch Sovereign doesn't manage time  --  time answers to them.",hint:"A full revolution of the sun. Not a single day yielded.",visual:"A deity seated on a throne of orbiting calendars and shattered clocks."},
   {id:"eternalmeridian",name:"The Eternal Meridian",sigil:"M",tier:"IX",type:"streak",threshold:730,lore:"Two years. You've crossed the meridian between who you were and who you're becoming. The Eternal Meridian is the point of no return. You passed it.",hint:"Two revolutions. The rift between who you were and who you'll be.",visual:"Two mirrored figures reaching across a rift of pure energy."},
   {id:"voidascendant",name:"The Void Ascendant",sigil:"V",tier:"X",type:"streak",threshold:1825,lore:"Five years. Half a decade of relentless, daily discipline. The Void Ascendant has transcended the need for motivation. Discipline is its atmosphere.",hint:"Five revolutions. Half a decade of daily proof.",visual:"A being of pure negative space. Stars orbit its silhouette."},
-  {id:"apexabsolute",name:"The Apex Absolute",sigil:"X",tier:"XI",type:"streak",threshold:3650,lore:"Ten years. A decade. The Apex Absolute is not a character. It is a monument to the fact that a human being chose, every single day, for ten years, to show up. There is nothing above this. You are the ceiling.",hint:"A decade of unbroken will. This entity has never been summoned.",visual:"An incomprehensible entity — part cathedral, part god, part universe."},
+  {id:"apexabsolute",name:"The Apex Absolute",sigil:"X",tier:"XI",type:"streak",threshold:3650,lore:"Ten years. A decade. The Apex Absolute is not a character. It is a monument to the fact that a human being chose, every single day, for ten years, to show up. There is nothing above this. You are the ceiling.",hint:"A decade of unbroken will. This entity has never been summoned.",visual:"An incomprehensible entity  --  part cathedral, part god, part universe."},
   {id:"kindled",name:"The Kindled",sigil:"K",tier:"I",type:"level",threshold:5,lore:"Level 5. The flame is small, but it exists. Most people never even strike the match.",hint:"Reach Level 5. Strike the match.",visual:"A small flame cupped in two dark hands. Simple. Fragile. But alive."},
   {id:"tempered",name:"The Tempered",sigil:"T",tier:"II",type:"level",threshold:10,lore:"Level 10. You've been through heat and pressure. Instead of breaking, you hardened.",hint:"Reach Level 10. Survive the quenching.",visual:"A blade being quenched in dark water. Steam rises. The metal holds."},
   {id:"monolith",name:"The Monolith",sigil:"M",tier:"III",type:"level",threshold:25,lore:"Level 25. You don't need to be flashy. You just need to be unremovable.",hint:"Reach Level 25. Become unremovable.",visual:"A single towering stone pillar in an empty desert. No decoration. Just presence."},
-  {id:"celestialscribe",name:"The Celestial Scribe",sigil:"S",tier:"IV",type:"level",threshold:50,lore:"Level 50. Every session, every question, every late night — it's all recorded. The Celestial Scribe is the living archive of your effort.",hint:"Reach Level 50. Fill the infinite page.",visual:"A figure writing in a book that hovers in space. Pages stack infinitely upward."},
-  {id:"omegathesis",name:"The Omega Thesis",sigil:"O",tier:"V",type:"level",threshold:100,lore:"Level 100. You've reached the point where knowledge isn't something you acquire — it's something you emit. The Omega Thesis is the final argument. And it's yours.",hint:"Reach Level 100. Become the final argument.",visual:"A singularity. All knowledge compressed into a single radiant point."},
+  {id:"celestialscribe",name:"The Celestial Scribe",sigil:"S",tier:"IV",type:"level",threshold:50,lore:"Level 50. Every session, every question, every late night  --  it's all recorded. The Celestial Scribe is the living archive of your effort.",hint:"Reach Level 50. Fill the infinite page.",visual:"A figure writing in a book that hovers in space. Pages stack infinitely upward."},
+  {id:"omegathesis",name:"The Omega Thesis",sigil:"O",tier:"V",type:"level",threshold:100,lore:"Level 100. You've reached the point where knowledge isn't something you acquire  --  it's something you emit. The Omega Thesis is the final argument. And it's yours.",hint:"Reach Level 100. Become the final argument.",visual:"A singularity. All knowledge compressed into a single radiant point."},
 ];
 function getCharacterData(){return lsGet("characters",{unlocked:[],unlockedAt:{},seen:[]});}
 function saveCharacterData(d){lsSet("characters",d);}
@@ -610,7 +610,7 @@ function AiChat() {
       )}
       <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,overflow:"hidden",boxShadow:compact?"none":"0 8px 32px -8px rgba(0,0,0,0.2)"}}>
         <div style={{display:"flex",alignItems:"center",padding:"4px 8px 4px 16px",gap:4}}>
-          <input ref={inputRef} style={{flex:1,background:"transparent",border:"none",padding:"14px 0",color:T.text,fontSize:14.5,fontFamily:T.font,outline:"none"}} placeholder={recording?"Listening — tap mic to stop...":loading?"Thinking...":"How can I help you today?"} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}} disabled={loading} />
+          <input ref={inputRef} style={{flex:1,background:"transparent",border:"none",padding:"14px 0",color:T.text,fontSize:14.5,fontFamily:T.font,outline:"none"}} placeholder={recording?"Listening  --  tap mic to stop...":loading?"Thinking...":"How can I help you today?"} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}} disabled={loading} />
           <Btn onClick={()=>send()} style={{padding:"8px 12px",borderRadius:10,opacity:loading||(!input.trim()&&!attachedFile)?0.4:1}} disabled={loading||(!input.trim()&&!attachedFile)}>{Icon.send}</Btn>
         </div>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 8px 6px 8px",gap:8}}>
@@ -945,7 +945,7 @@ function Flashcards() {
         <Field label="Deck name"><Input placeholder="e.g. Bio chapter 4 cards" value={dName} onChange={e=>setDName(e.target.value)} autoFocus /></Field>
         <Field label="Source">
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            {[{id:"manual",label:"Build manually",desc:"Type Q&A cards yourself",icon:Icon.pen},{id:"file",label:"From file",desc:"PDF or notes — AI generates cards",icon:Icon.file},{id:"youtube",label:"From YouTube",desc:"Video topic — AI generates cards",icon:Icon.link},{id:"record",label:"From lecture",desc:"Record audio — AI generates cards",icon:MicIcon}].map(o=>(
+            {[{id:"manual",label:"Build manually",desc:"Type Q&A cards yourself",icon:Icon.pen},{id:"file",label:"From file",desc:"PDF or notes  --  AI generates cards",icon:Icon.file},{id:"youtube",label:"From YouTube",desc:"Video topic  --  AI generates cards",icon:Icon.link},{id:"record",label:"From lecture",desc:"Record audio  --  AI generates cards",icon:MicIcon}].map(o=>(
               <button key={o.id} type="button" onClick={()=>setDSource(o.id)} style={{padding:12,borderRadius:10,border:"1px solid "+(dSource===o.id?T.lime+"66":T.border),background:dSource===o.id?T.lime+"10":T.card2,color:T.text,cursor:"pointer",textAlign:"left",fontFamily:T.font}}>
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}><span style={{color:dSource===o.id?T.lime:T.muted,display:"flex"}}>{o.icon}</span><span style={{fontSize:12.5,fontWeight:600}}>{o.label}</span></div>
                 <div style={{fontSize:11,color:T.muted}}>{o.desc}</div>
@@ -971,14 +971,14 @@ function Flashcards() {
           </Field>
         )}
         {dSource==="youtube"&&(
-          <Field label="YouTube link" hint={ytInfo?"Found: "+ytInfo:"Paste a link — Studlin detects the topic and generates cards."}>
+          <Field label="YouTube link" hint={ytInfo?"Found: "+ytInfo:"Paste a link  --  Studlin detects the topic and generates cards."}>
             <Input placeholder="https://youtube.com/watch?v=..." value={ytUrl} onChange={ev=>{setYtUrl(ev.target.value);var v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtFetching(true);setYtInfo("");fetch("/api/youtube-info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(function(r){return r.json();}).then(function(d){if(d.title){setYtInfo(d.title+(d.author?" by "+d.author:""));setDName(d.title+" cards");}setYtFetching(false);}).catch(function(){setYtFetching(false);});}}} />
             {ytFetching&&<div style={{fontSize:11,color:T.lime,marginTop:6}}>Detecting video title...</div>}
             {ytInfo&&!ytFetching&&<div style={{fontSize:11,color:T.lime,fontWeight:600,marginTop:6}}>Found: {ytInfo}</div>}
           </Field>
         )}
         {dSource==="record"&&(
-          <Field label="Record lecture" hint="Speak or play audio — AI generates flashcards from what it hears.">
+          <Field label="Record lecture" hint="Speak or play audio  --  AI generates flashcards from what it hears.">
             <div style={{border:"1px solid "+(recOn?T.red+"55":T.border),borderRadius:10,padding:18,textAlign:"center",background:recOn?T.red+"0a":T.card2}}>
               <button type="button" onClick={recOn?stopRec:startRec} style={{width:48,height:48,borderRadius:"50%",border:"none",background:recOn?T.red:T.lime,color:recOn?"#fff":T.ink,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:8}}>{recOn?<span style={{width:14,height:14,background:"#fff",borderRadius:3}} />:MicIcon}</button>
               <div style={{fontSize:14,fontWeight:700,color:recOn?T.red:T.white}}>{fmtRec(recSecs)}</div>
@@ -1124,7 +1124,7 @@ function Notes(){
       var videoTitle=ytInfo||yt.trim();
       if(!title)title=ytInfo?ytInfo:"Notes from video";
       if(videoTitle){
-        body=await aiSummarize("Create comprehensive study notes on this topic from a YouTube video titled: \""+videoTitle+"\". Include clear headings, bullet points, key definitions, examples, and a summary. Write the notes directly — do not say you cannot access the video.","YouTube video study notes");
+        body=await aiSummarize("Create comprehensive study notes on this topic from a YouTube video titled: \""+videoTitle+"\". Include clear headings, bullet points, key definitions, examples, and a summary. Write the notes directly  --  do not say you cannot access the video.","YouTube video study notes");
       }else{body="Paste a YouTube link to auto-detect the topic.";}
     }
 
@@ -1393,7 +1393,7 @@ function TaskTimerModal({task,onClose,onComplete}){
       <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:480,background:T.card,borderRadius:20,border:`1px solid ${T.border}`,padding:"40px 36px",textAlign:"center"}}>
         <div style={{fontSize:48,marginBottom:20}}>✨</div>
         <div style={{fontSize:18,fontStyle:"italic",color:T.text,lineHeight:1.6,marginBottom:8,fontFamily:T.serif}}>"{quote.text}"</div>
-        <div style={{fontSize:13,color:T.muted,marginBottom:28}}>— {quote.author}</div>
+        <div style={{fontSize:13,color:T.muted,marginBottom:28}}> --  {quote.author}</div>
         <div style={{fontSize:14,fontWeight:600,color:T.white,marginBottom:6}}>{task.title}</div>
         <div style={{fontSize:12,color:T.muted,marginBottom:24}}>{task.duration||25} minutes · {task.subject||"Study session"}</div>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 16px",background:T.card2,borderRadius:10,marginBottom:20,border:`1px solid ${T.border}`}}>
@@ -2024,7 +2024,7 @@ function GrammarPolish() {
       if(jsonStart>=0&&jsonEnd>jsonStart){raw=raw.slice(jsonStart,jsonEnd+1);}
       try{
         var parsed=JSON.parse(raw);
-        setGrade(parsed.grade||"—");
+        setGrade(parsed.grade||" -- ");
         setStats({grammar:parsed.grammarCount||0,style:parsed.styleCount||0,clarity:parsed.clarityCount||0,reading:parsed.readingLevel||"",summary:parsed.summary||""});
         setIssues(Array.isArray(parsed.issues)?parsed.issues:[]);
       }catch(pe){setGrade("?");setStats({grammar:0,style:0,clarity:0,reading:"",summary:"Could not parse results. Try again."});setIssues([]);}
@@ -2051,7 +2051,7 @@ function GrammarPolish() {
 
   return (
     <div>
-      <PH title="Grammar & Polish" sub="AI-powered writing analysis — fix errors, elevate your prose" />
+      <PH title="Grammar & Polish" sub="AI-powered writing analysis  --  fix errors, elevate your prose" />
       <div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:16}}>
         <div>
           <Card style={{marginBottom:14}}>
@@ -2108,7 +2108,7 @@ function GrammarPolish() {
         <div style={{display:"flex",flexDirection:"column",gap:12}}>
           <Card style={{background:grade?T.lime:T.card,border:grade?"none":"1px solid "+T.border}}>
             <Label style={grade?{color:T.bg}:{}}>Overall grade</Label>
-            <div style={{fontSize:48,fontWeight:800,color:grade?T.bg:T.faint,letterSpacing:"-0.04em",lineHeight:1}}>{grade||"—"}</div>
+            <div style={{fontSize:48,fontWeight:800,color:grade?T.bg:T.faint,letterSpacing:"-0.04em",lineHeight:1}}>{grade||" -- "}</div>
             <div style={{fontSize:12,color:grade?T.bg:T.muted,opacity:grade?0.7:1,marginTop:6}}>{stats?stats.reading:"Paste text and run check"}</div>
             {stats&&stats.summary&&<div style={{fontSize:11.5,color:grade?T.bg:T.muted,opacity:0.8,marginTop:8,lineHeight:1.5,borderTop:"1px solid "+(grade?"rgba(0,0,0,0.1)":T.border),paddingTop:8}}>{stats.summary}</div>}
           </Card>
@@ -2622,7 +2622,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             <Card style={{marginBottom:12}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                 <div style={{fontSize:14,fontWeight:700,color:T.white}}>Payment methods</div>
-                <BtnSm variant="subtle" onClick={()=>alert("To add a new card, make any purchase — your card will be saved automatically.")}>+ Add card</BtnSm>
+                <BtnSm variant="subtle" onClick={()=>alert("To add a new card, make any purchase  --  your card will be saved automatically.")}>+ Add card</BtnSm>
               </div>
               <div style={{display:"flex",alignItems:"center",gap:12,padding:14,background:T.card2,borderRadius:10,border:`1px solid ${T.lime}33`,marginBottom:8}}>
                 <div style={{width:40,height:28,borderRadius:4,background:"linear-gradient(135deg,#1A1F36,#3F4865)",display:"grid",placeItems:"center",color:"#fff",fontSize:9,fontWeight:700,letterSpacing:"0.06em",fontFamily:T.mono}}>VISA</div>
@@ -2631,7 +2631,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 <div style={{fontSize:11.5,color:T.muted,marginLeft:"auto"}}>Exp 08/27</div>
                 <BtnSm variant="subtle">Update</BtnSm>
               </div>
-              <div style={{fontSize:11.5,color:T.muted,lineHeight:1.5}}>Your default card is used for subscription renewals and credit purchases. Add more cards by making a purchase — we'll save it securely via Stripe.</div>
+              <div style={{fontSize:11.5,color:T.muted,lineHeight:1.5}}>Your default card is used for subscription renewals and credit purchases. Add more cards by making a purchase  --  we'll save it securely via Stripe.</div>
             </Card>
             <Card>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:10}}>Billing history</div>
@@ -2670,7 +2670,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 }
 
 
-// ─── COLLECTION — THE ASCENDED ORDER ─────────────────────────────────────────
+// ─── COLLECTION  --  THE ASCENDED ORDER ─────────────────────────────────────────
 function Collection() {
   var sel=useState(null),selChar=sel[0],setSelChar=sel[1];
   var data=getCharacterData();
@@ -2959,7 +2959,7 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={T.ink} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{opacity:0.6}}><path d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
           </div>
           <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.ink,margin:"10px 0 2px"}}>{realStreak}<span style={{fontSize:20,color:"rgba(14,31,24,0.55)",marginLeft:6}}>days</span></div>
-          <div style={{fontSize:12,color:"rgba(14,31,24,0.7)"}}>{(function(){var cur=CHARACTERS.filter(function(c){return c.type==="streak"&&realStreak>=c.threshold;}).pop();var nxt=CHARACTERS.filter(function(c){return c.type==="streak"&&realStreak<c.threshold;})[0];if(nxt)return(nxt.threshold-realStreak)+"d to summon "+nxt.name;if(cur)return cur.name+" — all streak entities summoned";return "Begin your streak";})()}</div>
+          <div style={{fontSize:12,color:"rgba(14,31,24,0.7)"}}>{(function(){var cur=CHARACTERS.filter(function(c){return c.type==="streak"&&realStreak>=c.threshold;}).pop();var nxt=CHARACTERS.filter(function(c){return c.type==="streak"&&realStreak<c.threshold;})[0];if(nxt)return(nxt.threshold-realStreak)+"d to summon "+nxt.name;if(cur)return cur.name+"  --  all streak entities summoned";return "Begin your streak";})()}</div>
           <div style={{display:"flex",gap:5,marginTop:"auto",paddingTop:14}}>
             {wk.map((d,i)=>{
               const today=d.today, on=d.on;
@@ -3190,7 +3190,7 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
           <CardHead title="Pre-session" label="DAILY" />
           <span style={{fontFamily:T.serif,fontSize:140,lineHeight:0.7,color:"rgba(14,31,24,0.12)",position:"absolute",top:0,left:12,fontStyle:"italic"}}>"</span>
           <div style={{fontFamily:T.serif,fontStyle:"italic",fontSize:22,lineHeight:1.25,color:T.ink,margin:"14px 0 14px",position:"relative",zIndex:1}}>It is not that I'm so smart. It's just that I stay with problems longer.</div>
-          <div style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.12em",textTransform:"uppercase",color:"rgba(14,31,24,0.55)"}}>— Albert Einstein</div>
+          <div style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.12em",textTransform:"uppercase",color:"rgba(14,31,24,0.55)"}}> --  Albert Einstein</div>
         </div>
 
         {/* Pick up where you left off */}
@@ -3245,7 +3245,7 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
   );
 }
 
-// ─── AUTH SCREEN — minimal gate, links to designed pages ────────────────────
+// ─── AUTH SCREEN  --  minimal gate, links to designed pages ────────────────────
 function AuthScreen(){
   return(
     <div style={{minHeight:"100vh",background:"#0D120F",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20}}>
@@ -3517,19 +3517,19 @@ function App() {
             {
               name:"Free",price:"$0",per:"forever",tag:null,
               desc:"Get organized. No credit card needed.",
-              features:["30 AI credits / month","AI tutor — Standard model","Manual flashcards & notes","Focus timer, calendar & planner","Streaks, XP & basic stats"],
+              features:["30 AI credits / month","AI tutor  --  Standard model","Manual flashcards & notes","Focus timer, calendar & planner","Streaks, XP & basic stats"],
               cta:"Get started free",variant:"subtle",
             },
             {
               name:"Pro",price:"$9.99",per:"/mo",tag:"7 DAYS FREE",
               desc:"The full study OS. Built for serious students.",
-              features:["200 AI credits / month","AI tutor — all models + 4 study modes","Full essay suite + plagiarism check","AI flashcards from notes, PDFs & YouTube","Google Docs sync + AI Rewrite (Humanizer)","Unlimited grammar + readability scores","Squad leaderboards + 2× focus XP"],
+              features:["200 AI credits / month","AI tutor  --  all models + 4 study modes","Full essay suite + plagiarism check","AI flashcards from notes, PDFs & YouTube","Google Docs sync + AI Rewrite (Humanizer)","Unlimited grammar + readability scores","Squad leaderboards + 2× focus XP"],
               cta:"Start free trial",variant:"lime",featured:true,
             },
             {
               name:"Max",price:"$24.99",per:"/mo",tag:null,
               desc:"Maximum firepower. No limits, ever.",
-              features:["500 AI credits / month","Everything in Pro, unlimited","Bulk ops — 100 flashcards at once","Advanced analytics & learning paths","Cosmetics shop + monthly tournaments","Priority support + 3× focus XP"],
+              features:["500 AI credits / month","Everything in Pro, unlimited","Bulk ops  --  100 flashcards at once","Advanced analytics & learning paths","Cosmetics shop + monthly tournaments","Priority support + 3× focus XP"],
               cta:"Upgrade to Max",variant:"ink",
             },
           ].map((plan,i)=>(
@@ -3642,7 +3642,7 @@ function App() {
               <button onClick={buyCustom} style={{background:T.lime,color:T.ink,border:"none",borderRadius:10,padding:"0 24px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Buy now</button>
             </div>
             {boughtMsg&&<div style={{fontSize:12.5,color:boughtMsg.startsWith("✓")?T.lime:T.red,fontWeight:600,marginBottom:8}}>{boughtMsg}</div>}
-            <div style={{fontSize:11,color:T.muted,marginBottom:18}}>Buy any amount you want — $5 minimum, $100,000 max. Roughly 30 credits per $1.</div>
+            <div style={{fontSize:11,color:T.muted,marginBottom:18}}>Buy any amount you want  --  $5 minimum, $100,000 max. Roughly 30 credits per $1.</div>
 
             <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.muted,textTransform:"uppercase",marginBottom:10}}>What costs what</div>
             <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"4px 14px"}}>
