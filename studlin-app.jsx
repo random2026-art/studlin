@@ -1553,16 +1553,7 @@ function CalendarTab(){
   const nav=(d)=>setYm(c=>{const m2=c.m+d;return {y:c.y+Math.floor(m2/12),m:((m2%12)+12)%12};});
   return (
     <div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-        <h1 style={{fontSize:28,fontWeight:700,color:T.white,margin:0,letterSpacing:"-0.02em"}}>{monthNames[ym.m]} <span style={{color:T.muted,fontWeight:400}}>{ym.y}</span></h1>
-        <div style={{display:"flex",gap:6,alignItems:"center"}}>
-          <button onClick={()=>nav(-1)} style={{width:32,height:32,borderRadius:8,border:"1px solid "+T.border,background:T.card,color:T.muted,cursor:"pointer",display:"grid",placeItems:"center",fontSize:16,fontFamily:T.font}}>{"<"}</button>
-          <button onClick={()=>{setYm({y:now.getFullYear(),m:now.getMonth()});setSelDay(todayK);}} style={{padding:"6px 14px",borderRadius:8,border:"1px solid "+T.border,background:T.card,color:T.text,cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:T.font}}>Today</button>
-          <button onClick={()=>nav(1)} style={{width:32,height:32,borderRadius:8,border:"1px solid "+T.border,background:T.card,color:T.muted,cursor:"pointer",display:"grid",placeItems:"center",fontSize:16,fontFamily:T.font}}>{">"}</button>
-          <div style={{width:1,height:20,background:T.border,margin:"0 4px"}} />
-          <Btn onClick={()=>openNew(selDay)} style={{padding:"6px 14px",fontSize:12}}>{Icon.plus} Add task</Btn>
-        </div>
-      </div>
+      <PH title="Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn>} />
       {toast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} Task added</div>
       )}
@@ -1601,40 +1592,61 @@ function CalendarTab(){
         </div>
         <Field label="Notes (optional)"><Textarea placeholder="e.g. Bring calculator, covers chapters 4 to 6." value={evNotes} onChange={ev=>setEvNotes(ev.target.value)} /></Field>
       </Modal>
-      <div style={{border:"1px solid "+T.border,borderRadius:12,overflow:"hidden",background:T.card,marginBottom:16}}>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",borderBottom:"1px solid "+T.border}}>
-          {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d,i)=><div key={i} style={{padding:"10px 0",textAlign:"center",fontSize:11,fontWeight:600,color:T.muted,letterSpacing:"0.03em"}}>{d}</div>)}
-        </div>
-        {(()=>{const sunCells=[];const sunLead=new Date(ym.y,ym.m,1).getDay();for(let i=sunLead-1;i>=0;i--)sunCells.push({d:dimPrev-i,out:true,key:dayKey(new Date(ym.y,ym.m-1,dimPrev-i))});for(let d=1;d<=dim;d++)sunCells.push({d,out:false,key:dayKey(new Date(ym.y,ym.m,d))});let nx2=1;while(sunCells.length%7!==0){sunCells.push({d:nx2,out:true,key:dayKey(new Date(ym.y,ym.m+1,nx2))});nx2++;}const rows=[];for(let r=0;r<sunCells.length;r+=7)rows.push(sunCells.slice(r,r+7));return rows.map((row,ri)=>(
-          <div key={ri} style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",borderBottom:ri<rows.length-1?"1px solid "+T.border:"none"}}>
-            {row.map((c,ci)=>{
-              const evs=byDay[c.key]||[];const isToday=c.key===todayK;const isSel=c.key===selDay;
-              return(
-                <div key={ci} onClick={()=>setSelDay(c.key)} onDoubleClick={()=>openNew(c.key)}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:16}}>
+        <Card style={{padding:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,padding:"4px 6px"}}>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <select value={ym.m} onChange={e=>setYm(c=>({...c,m:+e.target.value}))} style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 10px",color:T.white,fontSize:15,fontWeight:700,fontFamily:T.font,outline:"none",cursor:"pointer",letterSpacing:"-0.01em"}}>
+                {monthNames.map((mn,i)=><option key={i} value={i}>{mn}</option>)}
+              </select>
+              <select value={ym.y} onChange={e=>setYm(c=>({...c,y:+e.target.value}))} style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 10px",color:T.muted,fontSize:15,fontFamily:T.font,outline:"none",cursor:"pointer"}}>
+                {Array.from({length:31},(_,i)=>2015+i).map(y=><option key={y} value={y}>{y}</option>)}
+              </select>
+            </div>
+            <div style={{display:"flex",gap:6}}>
+              <BtnSm variant="ghost" onClick={()=>nav(-1)}>←</BtnSm>
+              <BtnSm variant="ghost" onClick={()=>{setYm({y:now.getFullYear(),m:now.getMonth()});setSelDay(todayK);}}>Today</BtnSm>
+              <BtnSm variant="ghost" onClick={()=>nav(1)}>→</BtnSm>
+            </div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
+            {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((d,i)=><div key={i} style={{fontSize:10,fontWeight:600,color:T.muted,textAlign:"center",padding:"6px 0",letterSpacing:"0.05em"}}>{d}</div>)}
+            {cells.map((c,i)=>{
+              const evs=byDay[c.key]||[];
+              const isToday=c.key===todayK;
+              const isSel=c.key===selDay;
+              return (
+                <div key={i} onClick={()=>{setSelDay(c.key);}} onDoubleClick={()=>openNew(c.key)}
                   onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(dragId){moveEvent(dragId,c.key);setDragId(null);}}}
-                  style={{minHeight:100,padding:"6px 6px",cursor:"pointer",background:isSel?T.lime+"06":"transparent",borderRight:ci<6?"1px solid "+T.border:"none",transition:"background 0.1s"}}>
-                  <div style={{textAlign:"right",marginBottom:4}}>
-                    <span style={{width:26,height:26,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:isToday?700:400,background:isToday?"#E8453C":"transparent",color:isToday?"#fff":c.out?T.faint:T.text}}>{c.d}</span>
+                  style={{minHeight:64,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.card2:"transparent",border:"1px solid "+(isSel?T.lime+"55":"transparent"),transition:"all 0.12s",opacity:c.out?0.35:1}}>
+                  <div style={{display:"flex",justifyContent:"flex-start"}}>
+                    <span style={{width:22,height:22,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:isToday?700:500,background:isToday?T.lime:"transparent",color:isToday?T.ink:c.out?T.faint:T.text}}>{c.d}</span>
                   </div>
-                  <div style={{display:"flex",flexDirection:"column",gap:2}}>
-                    {evs.slice(0,3).map((ev,j)=><div key={j} style={{fontSize:10,fontWeight:500,color:"#fff",background:colorOf(ev.subject),borderRadius:4,padding:"2px 6px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",lineHeight:1.4}}>{ev.title}</div>)}
-                    {evs.length>3&&<div style={{fontSize:9,color:T.muted,paddingLeft:4}}>+{evs.length-3} more</div>}
+                  <div style={{display:"flex",flexDirection:"column",gap:2,marginTop:3}}>
+                    {evs.slice(0,2).map((ev,j)=>{
+                      const over=daysOverdue(ev);
+                      return <div key={j} style={{fontSize:9,fontWeight:600,color:over>0?T.red:colorOf(ev.subject),background:(over>0?T.red:colorOf(ev.subject))+"16",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",display:"flex",alignItems:"center",gap:3}}>
+                        {ev.priority&&ev.priority>=4&&<span style={{width:5,height:5,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority],flexShrink:0}} />}
+                        {ev.title}
+                      </div>;
+                    })}
+                    {evs.length>2&&<div style={{fontSize:9,color:T.muted,paddingLeft:5}}>+{evs.length-2} more</div>}
                   </div>
                 </div>
               );
             })}
           </div>
-        ));})()}
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
-        <Card style={{padding:16}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-            <div>
-              <div style={{fontSize:14,fontWeight:700,color:T.white}}>{relDay(selDay)}</div>
-              <div style={{fontSize:11,color:T.muted,marginTop:2}}>{niceDate(selDay)}</div>
+          <div style={{fontSize:10.5,color:T.faint,marginTop:10,paddingLeft:6}}>Click a day to see its schedule · double-click to add a task · drag tasks between days</div>
+        </Card>
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          <Card style={{padding:16}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <div>
+                <div style={{fontSize:13,fontWeight:700,color:T.white}}>{relDay(selDay)}</div>
+                <div style={{fontSize:10.5,color:T.muted,marginTop:1}}>{niceDate(selDay)}</div>
+              </div>
+              <BtnSm variant="subtle" onClick={()=>openNew(selDay)}>+ Add</BtnSm>
             </div>
-            <BtnSm variant="subtle" onClick={()=>openNew(selDay)}>+ Add</BtnSm>
-          </div>
             {dayEvents.length===0
               ?<div style={{fontSize:12,color:T.muted,padding:"14px 0 6px",textAlign:"center"}}>Nothing scheduled</div>
               :dayEvents.map(ev=>{
@@ -1662,9 +1674,9 @@ function CalendarTab(){
                   </div>
                 </div>
               );})}
-        </Card>
-        <div>
-          <div style={{fontSize:12,fontWeight:600,color:T.muted,letterSpacing:"0.05em",textTransform:"uppercase",marginBottom:10}}>Upcoming</div>
+          </Card>
+          <div>
+            <div style={{fontSize:12,fontWeight:600,color:T.muted,letterSpacing:"0.05em",textTransform:"uppercase",marginBottom:10}}>Upcoming</div>
             {upcoming.length===0&&<Card style={{padding:14,fontSize:12,color:T.muted,textAlign:"center"}}>No upcoming events</Card>}
             {upcoming.map(ev=>{
               const dl=daysUntilDeadline(ev);
@@ -1687,6 +1699,7 @@ function CalendarTab(){
                 </div>
               </Card>
             );})}
+          </div>
         </div>
       </div>
     </div>
@@ -1741,7 +1754,7 @@ function AiTutor(){
   const VideoCard=({v})=>{
     const thumb=v.thumbnail||("https://img.youtube.com/vi/"+v.id+"/mqdefault.jpg");
     return (
-      <div onClick={()=>setPlaying(v)} style={{borderRadius:12,overflow:"hidden",background:T.card2,border:"1px solid "+T.border,cursor:"pointer",transition:"all 0.15s"}}>
+      <div onClick={()=>{setPlaying(v);setPlayInline(false);}} style={{borderRadius:12,overflow:"hidden",background:T.card2,border:"1px solid "+T.border,cursor:"pointer",transition:"all 0.15s"}}>
         <div style={{position:"relative",paddingBottom:"56.25%",height:0,background:"#000"}}>
           <img src={thumb} alt={v.title} loading="lazy"
             style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",objectFit:"cover"}} />
@@ -1763,31 +1776,40 @@ function AiTutor(){
     );
   };
 
+  const [playInline,setPlayInline]=useState(false);
   const VideoPlayer=()=>{
     if(!playing)return null;
     return (
       <Card style={{padding:0,overflow:"hidden",marginBottom:14,border:"1px solid "+T.lime+"44"}}>
-        <div style={{position:"relative",paddingBottom:"56.25%",height:0,background:"#000"}}>
-          <iframe key={playing.id}
-            src={"https://www.youtube.com/embed/"+playing.id+"?rel=0&modestbranding=1"}
-            title={playing.title}
-            style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:"none"}}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            referrerPolicy="no-referrer-when-downgrade"
-            allowFullScreen />
+        <div style={{position:"relative",paddingBottom:"56.25%",height:0,background:"#111"}}>
+          {playInline?(
+            <iframe key={playing.id} src={"https://www.youtube.com/embed/"+playing.id+"?autoplay=1&rel=0&modestbranding=1&playsinline=1"}
+              title={playing.title} style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:"none"}}
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen />
+          ):(
+            <div onClick={()=>setPlayInline(true)} style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",cursor:"pointer"}}>
+              <img src={"https://img.youtube.com/vi/"+playing.id+"/hqdefault.jpg"} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />
+              <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.3)"}}>
+                <div style={{width:68,height:48,borderRadius:12,background:"rgba(255,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="#fff"><polygon points="8 5 20 12 8 19"/></svg>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
         <div style={{padding:"14px 18px",display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:15,fontWeight:700,color:T.white,lineHeight:1.4,marginBottom:4}}>{playing.title}</div>
             <div style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:T.muted}}>
               <span>{playing.channel}</span>
-              {playing.views>0&&<><span>.</span><span>{fmtViews(playing.views)}</span></>}
-              {playing.duration>0&&<><span>.</span><span>{fmtDur(playing.duration)}</span></>}
+              {playing.views>0&&<><span>·</span><span>{fmtViews(playing.views)}</span></>}
+              {playing.duration>0&&<><span>·</span><span>{fmtDur(playing.duration)}</span></>}
             </div>
           </div>
           <div style={{display:"flex",gap:6}}>
-            <a href={"https://www.youtube.com/watch?v="+playing.id} target="_blank" rel="noopener noreferrer" style={{background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"8px 14px",fontSize:12,fontWeight:600,fontFamily:T.font,textDecoration:"none",color:T.text}}>YouTube</a>
-            <button onClick={()=>setPlaying(null)} style={{background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"8px 14px",color:T.text,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Close</button>
+            {!playInline&&<button onClick={()=>setPlayInline(true)} style={{background:T.lime,color:T.ink,border:"none",borderRadius:8,padding:"8px 14px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Play here</button>}
+            <a href={"https://www.youtube.com/watch?v="+playing.id} target="_blank" rel="noopener noreferrer" style={{background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"8px 14px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"none",color:T.text}}>Open on YouTube</a>
+            <button onClick={()=>{setPlaying(null);setPlayInline(false);}} style={{background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"8px 14px",color:T.text,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>✕</button>
           </div>
         </div>
       </Card>
