@@ -1550,9 +1550,14 @@ function CalendarTab(){
   const moveEvent=(id,newDate)=>{const next=events.map(ev=>ev.id===id?{...ev,date:newDate}:ev);setEvents(next);lsSet("events",next);};
   const markDone=(id)=>{const next=events.map(ev=>ev.id===id?{...ev,status:"done",completedAt:Date.now()}:ev);setEvents(next);lsSet("events",next);};
   const nav=(d)=>setYm(c=>{const m2=c.m+d;return {y:c.y+Math.floor(m2/12),m:((m2%12)+12)%12};});
+  const DOW=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const appleLead=new Date(ym.y,ym.m,1).getDay();
+  const appleCells=[];
+  for(var pi=appleLead-1;pi>=0;pi--)appleCells.push({d:dimPrev-pi,out:true,key:dayKey(new Date(ym.y,ym.m-1,dimPrev-pi))});
+  for(var di=1;di<=dim;di++)appleCells.push({d:di,out:false,key:dayKey(new Date(ym.y,ym.m,di))});
+  var ani=1;while(appleCells.length%7!==0){appleCells.push({d:ani,out:true,key:dayKey(new Date(ym.y,ym.m+1,ani))});ani++;}
   return (
     <div>
-      <PH title="Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn>} />
       {toast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} Task added</div>
       )}
@@ -1591,116 +1596,111 @@ function CalendarTab(){
         </div>
         <Field label="Notes (optional)"><Textarea placeholder="e.g. Bring calculator, covers chapters 4 to 6." value={evNotes} onChange={ev=>setEvNotes(ev.target.value)} /></Field>
       </Modal>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:16}}>
-        <Card style={{padding:16}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,padding:"4px 6px"}}>
-            <div style={{display:"flex",gap:8,alignItems:"center"}}>
-              <select value={ym.m} onChange={e=>setYm(c=>({...c,m:+e.target.value}))} style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 10px",color:T.white,fontSize:15,fontWeight:700,fontFamily:T.font,outline:"none",cursor:"pointer",letterSpacing:"-0.01em"}}>
-                {monthNames.map((mn,i)=><option key={i} value={i}>{mn}</option>)}
-              </select>
-              <select value={ym.y} onChange={e=>setYm(c=>({...c,y:+e.target.value}))} style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 10px",color:T.muted,fontSize:15,fontFamily:T.font,outline:"none",cursor:"pointer"}}>
-                {Array.from({length:31},(_,i)=>2015+i).map(y=><option key={y} value={y}>{y}</option>)}
-              </select>
-            </div>
-            <div style={{display:"flex",gap:6}}>
-              <BtnSm variant="ghost" onClick={()=>nav(-1)}>←</BtnSm>
-              <BtnSm variant="ghost" onClick={()=>{setYm({y:now.getFullYear(),m:now.getMonth()});setSelDay(todayK);}}>Today</BtnSm>
-              <BtnSm variant="ghost" onClick={()=>nav(1)}>→</BtnSm>
-            </div>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
-            {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((d,i)=><div key={i} style={{fontSize:10,fontWeight:600,color:T.muted,textAlign:"center",padding:"6px 0",letterSpacing:"0.05em"}}>{d}</div>)}
-            {cells.map((c,i)=>{
-              const evs=byDay[c.key]||[];
-              const isToday=c.key===todayK;
-              const isSel=c.key===selDay;
-              return (
-                <div key={i} onClick={()=>{setSelDay(c.key);}} onDoubleClick={()=>openNew(c.key)}
-                  onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(dragId){moveEvent(dragId,c.key);setDragId(null);}}}
-                  style={{minHeight:64,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.card2:"transparent",border:"1px solid "+(isSel?T.lime+"55":"transparent"),transition:"all 0.12s",opacity:c.out?0.35:1}}>
-                  <div style={{display:"flex",justifyContent:"flex-start"}}>
-                    <span style={{width:22,height:22,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:isToday?700:500,background:isToday?T.lime:"transparent",color:isToday?T.ink:c.out?T.faint:T.text}}>{c.d}</span>
+      {/* Apple Calendar-style header */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+        <div>
+          <h1 style={{fontSize:28,fontWeight:700,color:T.white,margin:0,letterSpacing:"-0.02em"}}>{monthNames[ym.m]} <span style={{color:T.muted,fontWeight:400}}>{ym.y}</span></h1>
+        </div>
+        <div style={{display:"flex",gap:6,alignItems:"center"}}>
+          <button onClick={()=>nav(-1)} style={{width:32,height:32,borderRadius:8,border:"1px solid "+T.border,background:T.card,color:T.muted,cursor:"pointer",display:"grid",placeItems:"center",fontSize:14}}>‹</button>
+          <button onClick={()=>{setYm({y:now.getFullYear(),m:now.getMonth()});setSelDay(todayK);}} style={{padding:"6px 14px",borderRadius:8,border:"1px solid "+T.border,background:T.card,color:T.text,cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:T.font}}>Today</button>
+          <button onClick={()=>nav(1)} style={{width:32,height:32,borderRadius:8,border:"1px solid "+T.border,background:T.card,color:T.muted,cursor:"pointer",display:"grid",placeItems:"center",fontSize:14}}>›</button>
+          <div style={{width:1,height:20,background:T.border,margin:"0 6px"}} />
+          <Btn onClick={()=>openNew(selDay)} style={{padding:"6px 14px",fontSize:12}}>{Icon.plus} Add task</Btn>
+        </div>
+      </div>
+
+      {/* Apple Calendar grid */}
+      <div style={{border:"1px solid "+T.border,borderRadius:12,overflow:"hidden",background:T.card}}>
+        {/* Day-of-week headers */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",borderBottom:"1px solid "+T.border}}>
+          {DOW.map(function(d,i){return <div key={i} style={{padding:"10px 0",textAlign:"center",fontSize:11,fontWeight:600,color:T.muted,letterSpacing:"0.03em"}}>{d}</div>;})}
+        </div>
+        {/* Calendar rows */}
+        {(function(){var rows=[];for(var r=0;r<appleCells.length;r+=7){rows.push(appleCells.slice(r,r+7));}return rows.map(function(row,ri){return(
+          <div key={ri} style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",borderBottom:ri<rows.length-1?"1px solid "+T.border:"none"}}>
+            {row.map(function(c,ci){
+              var evs=byDay[c.key]||[];
+              var isToday=c.key===todayK;
+              var isSel=c.key===selDay;
+              return(
+                <div key={ci} onClick={function(){setSelDay(c.key);}} onDoubleClick={function(){openNew(c.key);}}
+                  onDragOver={function(e){e.preventDefault();}} onDrop={function(e){e.preventDefault();if(dragId){moveEvent(dragId,c.key);setDragId(null);}}}
+                  style={{minHeight:90,padding:"6px 8px",cursor:"pointer",background:isSel?T.lime+"08":"transparent",borderRight:ci<6?"1px solid "+T.border:"none",transition:"background 0.15s"}}>
+                  <div style={{display:"flex",justifyContent:"center",marginBottom:4}}>
+                    <span style={{width:26,height:26,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:isToday?700:400,background:isToday?"#E8453C":"transparent",color:isToday?"#fff":c.out?T.faint:T.text}}>{c.d}</span>
                   </div>
-                  <div style={{display:"flex",flexDirection:"column",gap:2,marginTop:3}}>
-                    {evs.slice(0,2).map((ev,j)=>{
-                      const over=daysOverdue(ev);
-                      return <div key={j} style={{fontSize:9,fontWeight:600,color:over>0?T.red:colorOf(ev.subject),background:(over>0?T.red:colorOf(ev.subject))+"16",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",display:"flex",alignItems:"center",gap:3}}>
-                        {ev.priority&&ev.priority>=4&&<span style={{width:5,height:5,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority],flexShrink:0}} />}
-                        {ev.title}
-                      </div>;
+                  <div style={{display:"flex",flexDirection:"column",gap:2}}>
+                    {evs.slice(0,3).map(function(ev,j){
+                      var clr=colorOf(ev.subject);
+                      return <div key={j} style={{fontSize:9.5,fontWeight:500,color:"#fff",background:clr,borderRadius:3,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",lineHeight:1.3}}>{ev.title}</div>;
                     })}
-                    {evs.length>2&&<div style={{fontSize:9,color:T.muted,paddingLeft:5}}>+{evs.length-2} more</div>}
+                    {evs.length>3&&<div style={{fontSize:9,color:T.muted,paddingLeft:4}}>+{evs.length-3} more</div>}
                   </div>
                 </div>
               );
             })}
           </div>
-          <div style={{fontSize:10.5,color:T.faint,marginTop:10,paddingLeft:6}}>Click a day to see its schedule · double-click to add a task · drag tasks between days</div>
-        </Card>
-        <div style={{display:"flex",flexDirection:"column",gap:14}}>
-          <Card style={{padding:16}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        );});})()}
+      </div>
+
+      {/* Selected day detail panel */}
+      {selDay&&(
+        <div style={{marginTop:16,display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+          <Card style={{padding:18}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
               <div>
-                <div style={{fontSize:13,fontWeight:700,color:T.white}}>{relDay(selDay)}</div>
-                <div style={{fontSize:10.5,color:T.muted,marginTop:1}}>{niceDate(selDay)}</div>
+                <div style={{fontSize:15,fontWeight:700,color:T.white}}>{relDay(selDay)}</div>
+                <div style={{fontSize:11,color:T.muted,marginTop:2}}>{niceDate(selDay)}</div>
               </div>
-              <BtnSm variant="subtle" onClick={()=>openNew(selDay)}>+ Add</BtnSm>
+              <BtnSm variant="subtle" onClick={function(){openNew(selDay);}}>+ Add</BtnSm>
             </div>
             {dayEvents.length===0
-              ?<div style={{fontSize:12,color:T.muted,padding:"14px 0 6px",textAlign:"center"}}>Nothing scheduled</div>
-              :dayEvents.map(ev=>{
-                const over=daysOverdue(ev);
-                const isDone=ev.status==="done";
+              ?<div style={{fontSize:12,color:T.muted,padding:"18px 0",textAlign:"center"}}>Nothing scheduled</div>
+              :dayEvents.map(function(ev){
+                var over=daysOverdue(ev);
+                var isDone=ev.status==="done";
                 return(
-                <div key={ev.id} draggable onDragStart={()=>setDragId(ev.id)} style={{display:"flex",gap:10,padding:"9px 0",borderBottom:"1px solid "+T.border,alignItems:"flex-start",opacity:isDone?0.5:1,cursor:"grab"}}>
+                <div key={ev.id} draggable onDragStart={function(){setDragId(ev.id);}} style={{display:"flex",gap:10,padding:"10px 0",borderBottom:"1px solid "+T.border,alignItems:"flex-start",opacity:isDone?0.5:1,cursor:"grab"}}>
                   <div style={{width:3,alignSelf:"stretch",borderRadius:2,background:over>0?T.red:colorOf(ev.subject),flexShrink:0}} />
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{display:"flex",alignItems:"center",gap:6}}>
-                      {ev.priority&&<span style={{width:7,height:7,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority||3],flexShrink:0}} />}
-                      <span style={{fontSize:12.5,fontWeight:600,color:isDone?T.muted:T.white,lineHeight:1.35,textDecoration:isDone?"line-through":"none"}}>{ev.title}</span>
+                      {ev.priority>0&&<span style={{width:7,height:7,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority||3],flexShrink:0}} />}
+                      <span style={{fontSize:13,fontWeight:600,color:isDone?T.muted:T.white,textDecoration:isDone?"line-through":"none"}}>{ev.title}</span>
                     </div>
-                    <div style={{fontSize:11,color:T.muted,marginTop:2,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                    <div style={{fontSize:11,color:T.muted,marginTop:3,display:"flex",gap:6,flexWrap:"wrap"}}>
                       <span>{fmtTime(ev.time)}</span>
-                      {ev.duration&&<span style={{background:T.card2,padding:"1px 6px",borderRadius:4,fontSize:10,fontWeight:600}}>{ev.duration>=60?Math.floor(ev.duration/60)+"h"+(ev.duration%60?" "+ev.duration%60+"m":""):ev.duration+"m"}</span>}
+                      {ev.duration>0&&<span style={{background:T.card2,padding:"1px 6px",borderRadius:4,fontSize:10,fontWeight:600}}>{ev.duration>=60?Math.floor(ev.duration/60)+"h"+(ev.duration%60?" "+ev.duration%60+"m":""):ev.duration+"m"}</span>}
                       <span>{ev.subject}</span>
                       {over>0&&<span style={{color:T.red,fontWeight:600}}>{over}d overdue</span>}
                     </div>
                   </div>
                   <div style={{display:"flex",gap:4,flexShrink:0,alignItems:"center"}}>
-                    {!isDone&&ev.duration&&<button onClick={()=>{if(window._setTimerTask)window._setTimerTask(ev);}} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.lime}44`,background:T.lime+"12",color:T.lime,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Begin</button>}
-                    {!isDone&&<button onClick={()=>markDone(ev.id)} title="Mark done" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",display:"flex"}}>{Icon.check}</button>}
-                    <button onClick={()=>removeEvent(ev.id)} title="Delete" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,padding:2}}>×</button>
+                    {!isDone&&ev.duration>0&&<button onClick={function(){if(window._setTimerTask)window._setTimerTask(ev);}} style={{padding:"4px 8px",borderRadius:6,border:"1px solid "+T.lime+"44",background:T.lime+"12",color:T.lime,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Begin</button>}
+                    {!isDone&&<button onClick={function(){markDone(ev.id);}} title="Done" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",display:"flex"}}>{Icon.check}</button>}
+                    <button onClick={function(){removeEvent(ev.id);}} title="Delete" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:14,padding:2}}>x</button>
                   </div>
                 </div>
               );})}
           </Card>
-          <div>
-            <div style={{fontSize:12,fontWeight:600,color:T.muted,letterSpacing:"0.05em",textTransform:"uppercase",marginBottom:10}}>Upcoming</div>
-            {upcoming.length===0&&<Card style={{padding:14,fontSize:12,color:T.muted,textAlign:"center"}}>No upcoming events</Card>}
-            {upcoming.map(ev=>{
-              const dl=daysUntilDeadline(ev);
-              const over=daysOverdue(ev);
+          <Card style={{padding:18}}>
+            <div style={{fontSize:12,fontWeight:600,color:T.muted,letterSpacing:"0.05em",textTransform:"uppercase",marginBottom:12}}>Upcoming</div>
+            {upcoming.length===0&&<div style={{fontSize:12,color:T.muted,padding:"14px 0",textAlign:"center"}}>No upcoming tasks</div>}
+            {upcoming.map(function(ev){
+              var dl=daysUntilDeadline(ev);var over=daysOverdue(ev);
               return(
-              <Card key={ev.id} onClick={()=>{setSelDay(ev.date);const p=ev.date.split("-");setYm({y:+p[0],m:+p[1]-1});}} style={{borderLeft:"2px solid "+(over>0?T.red:colorOf(ev.subject)),marginBottom:8,cursor:"pointer",padding:14}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
-                  <div style={{fontSize:11,color:T.muted}}>{relDay(ev.date)}</div>
-                  <Badge color={over>0?T.red:colorOf(ev.subject)}>{ev.subject}</Badge>
+              <div key={ev.id} onClick={function(){setSelDay(ev.date);var p=ev.date.split("-");setYm({y:+p[0],m:+p[1]-1});}} style={{display:"flex",gap:10,padding:"10px 0",borderBottom:"1px solid "+T.border,cursor:"pointer",alignItems:"flex-start"}}>
+                <div style={{width:3,alignSelf:"stretch",borderRadius:2,background:over>0?T.red:colorOf(ev.subject),flexShrink:0}} />
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:12.5,fontWeight:600,color:T.white}}>{ev.title}</div>
+                  <div style={{fontSize:11,color:T.muted,marginTop:2}}>{relDay(ev.date)} · {fmtTime(ev.time)}{dl!==null&&dl>=0&&dl<=3?" · "+(dl===0?"Due today":"Due in "+dl+"d"):""}</div>
                 </div>
-                <div style={{display:"flex",alignItems:"center",gap:6}}>
-                  {ev.priority&&<span style={{width:6,height:6,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority||3]}} />}
-                  <span style={{fontSize:13,fontWeight:600,color:T.white}}>{ev.title}</span>
-                </div>
-                <div style={{fontSize:11,color:T.muted,marginTop:4,display:"flex",gap:8}}>
-                  <span>{fmtTime(ev.time)}</span>
-                  {ev.duration&&<span>{ev.duration}m</span>}
-                  {dl!==null&&dl>=0&&dl<=3&&<span style={{color:dl===0?T.red:T.amber,fontWeight:600}}>Due {dl===0?"today":"in "+dl+"d"}</span>}
-                  {over>0&&<span style={{color:T.red,fontWeight:600}}>{over}d overdue</span>}
-                </div>
-              </Card>
+                <Badge color={over>0?T.red:colorOf(ev.subject)}>{ev.subject}</Badge>
+              </div>
             );})}
-          </div>
+          </Card>
         </div>
-      </div>
+      )}
     </div>
   );
 }
