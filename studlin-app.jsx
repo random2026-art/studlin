@@ -1601,10 +1601,10 @@ function CalendarTab(){
         </div>
         <Field label="Notes (optional)"><Textarea placeholder="e.g. Bring calculator, covers chapters 4 to 6." value={evNotes} onChange={ev=>setEvNotes(ev.target.value)} /></Field>
       </Modal>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:16}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 260px",gap:14}}>
         <div style={{border:"1px solid "+T.border,borderRadius:12,overflow:"hidden",background:T.card}}>
           <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",borderBottom:"1px solid "+T.border}}>
-            {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d,i)=><div key={i} style={{padding:"10px 0",textAlign:"center",fontSize:11,fontWeight:600,color:T.muted}}>{d}</div>)}
+            {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d,i)=><div key={i} style={{padding:"8px 0",textAlign:"center",fontSize:10,fontWeight:600,color:T.muted,letterSpacing:"0.04em"}}>{d}</div>)}
           </div>
           {(()=>{const sunCells=[];const sunLead=new Date(ym.y,ym.m,1).getDay();for(let i=sunLead-1;i>=0;i--)sunCells.push({d:dimPrev-i,out:true,key:dayKey(new Date(ym.y,ym.m-1,dimPrev-i))});for(let d=1;d<=dim;d++)sunCells.push({d,out:false,key:dayKey(new Date(ym.y,ym.m,d))});let nx2=1;while(sunCells.length%7!==0){sunCells.push({d:nx2,out:true,key:dayKey(new Date(ym.y,ym.m+1,nx2))});nx2++;}const rows=[];for(let r=0;r<sunCells.length;r+=7)rows.push(sunCells.slice(r,r+7));return rows.map((row,ri)=>(
             <div key={ri} style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",borderBottom:ri<rows.length-1?"1px solid "+T.border:"none"}}>
@@ -1613,13 +1613,13 @@ function CalendarTab(){
                 return(
                   <div key={ci} onClick={()=>setSelDay(c.key)} onDoubleClick={()=>openNew(c.key)}
                     onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(dragId){moveEvent(dragId,c.key);setDragId(null);}}}
-                    style={{minHeight:88,padding:"6px 8px",cursor:"pointer",background:isSel?T.lime+"08":"transparent",borderRight:ci<6?"1px solid "+T.border:"none"}}>
-                    <div style={{display:"flex",justifyContent:"center",marginBottom:4}}>
-                      <span style={{width:26,height:26,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:isToday?700:400,background:isToday?"#E8453C":"transparent",color:isToday?"#fff":c.out?T.faint:T.text}}>{c.d}</span>
+                    style={{minHeight:80,padding:"4px 4px",cursor:"pointer",background:isSel?T.lime+"08":"transparent",borderRight:ci<6?"1px solid "+T.border:"none",transition:"background 0.1s"}}>
+                    <div style={{textAlign:"center",marginBottom:3}}>
+                      <span style={{width:24,height:24,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:isToday?700:400,background:isToday?"#E8453C":"transparent",color:isToday?"#fff":c.out?T.faint:T.text}}>{c.d}</span>
                     </div>
-                    <div style={{display:"flex",flexDirection:"column",gap:2}}>
-                      {evs.slice(0,3).map((ev,j)=><div key={j} style={{fontSize:9.5,fontWeight:500,color:"#fff",background:colorOf(ev.subject),borderRadius:3,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ev.title}</div>)}
-                      {evs.length>3&&<div style={{fontSize:9,color:T.muted,paddingLeft:4}}>+{evs.length-3} more</div>}
+                    <div style={{display:"flex",flexDirection:"column",gap:1}}>
+                      {evs.slice(0,2).map((ev,j)=><div key={j} style={{fontSize:9,fontWeight:500,color:"#fff",background:colorOf(ev.subject),borderRadius:3,padding:"1px 4px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",lineHeight:1.3}}>{ev.title}</div>)}
+                      {evs.length>2&&<div style={{fontSize:8,color:T.muted,textAlign:"center"}}>+{evs.length-2}</div>}
                     </div>
                   </div>
                 );
