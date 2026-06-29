@@ -40,9 +40,9 @@ const lightT = {
   bg:     "#FAF6EC",
   surface:"#14342A",
   card:   "#ffffff",
-  card2:  "#F3EEE2",
-  border: "rgba(14,31,24,0.09)",
-  borderHover: "rgba(14,31,24,0.16)",
+  card2:  "#F0EBE0",
+  border: "rgba(14,31,24,0.18)",
+  borderHover: "rgba(14,31,24,0.32)",
   lime:   "#9EC83D",
   limeDk: "#7FA82A",
   limeLt: "#CBDF92",
@@ -92,10 +92,11 @@ function applyTheme(name, accent, density) {
     document.body.style.color = T.text;
     document.body.style.fontFamily = T.font;
     document.body.setAttribute('data-density', density||'Comfortable');
+    document.body.setAttribute('data-theme', name==='light'?'light':'dark');
   }
 }
 applyTheme(
-  (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-theme')) || 'dark',
+  (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-theme')) || 'light',
   (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-accent')) || 'Lime',
   (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-density')) || 'Comfortable'
 );
@@ -230,9 +231,11 @@ const Divider = ({style={}}) => <div style={{height:"1px",background:T.border,..
 
 const Label = ({children}) => <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.muted,marginBottom:6}}>{children}</div>;
 
-const Av = ({initials,color=T.lime,size=36}) => (
-  <div style={{width:size,height:size,borderRadius:"50%",background:color+"22",border:`1.5px solid ${color}44`,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,color,fontSize:Math.round(size*0.33),flexShrink:0,letterSpacing:"0.02em"}}>{initials}</div>
-);
+const Av = ({initials,color=T.lime,size=36,picUrl}) => {
+  const pic = picUrl !== undefined ? picUrl : getUserPicUrl();
+  if (pic) return <img src={pic} style={{width:size,height:size,borderRadius:"50%",objectFit:"cover",flexShrink:0,border:`1.5px solid ${color}44`}} alt="Profile" />;
+  return <div style={{width:size,height:size,borderRadius:"50%",background:color+"22",border:`1.5px solid ${color}44`,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,color,fontSize:Math.round(size*0.33),flexShrink:0,letterSpacing:"0.02em"}}>{initials}</div>;
+};
 
 const Card = ({children,style={},onClick}) => (
   <div data-card onClick={onClick} style={{background:T.card,borderRadius:10,padding:20,border:`1px solid ${T.border}`,cursor:onClick?"pointer":"default",...style}}>{children}</div>
@@ -684,10 +687,11 @@ function profileStats(){const s=lsGet("sessions",[]);const totalMin=s.reduce((a,
 function getProfile(){
   try{
     const u=typeof firebase!=="undefined"?firebase.auth().currentUser:null;
-    const def={name:(u&&u.displayName)||"Student",email:(u&&u.email)||"you@studlin.app",school:"",tz:"America/New_York"};
+    const def={name:(u&&u.displayName)||"Student",email:(u&&u.email)||"you@studlin.app",school:"",tz:"America/New_York",status:"",affiliation:""};
     return lsGet("profile",def);
-  }catch(e){return{name:"Student",email:"you@studlin.app",school:"",tz:"America/New_York"};}
+  }catch(e){return{name:"Student",email:"you@studlin.app",school:"",tz:"America/New_York",status:"",affiliation:""};}
 }
+function getUserPicUrl(){return lsGet("profilePic","");}
 function getUserInitials(){
   try{
     const u=typeof firebase!=="undefined"?firebase.auth().currentUser:null;
@@ -1971,7 +1975,14 @@ const WK_PX_HR = 64; // pixels per hour in weekly grid
 
 function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit}) {
   const wkColRefs = useRef({});
+  const weekScrollRef = useRef(null);
   const [wkDragId, setWkDragId] = useState(null);
+  useEffect(()=>{
+    if(weekScrollRef.current){
+      const hour = new Date().getHours();
+      weekScrollRef.current.scrollTop = Math.max(0, hour - 1) * WK_PX_HR;
+    }
+  },[]);
   const [wkDragDeadline, setWkDragDeadline] = useState(null);
   const [wkDragOverDay, setWkDragOverDay] = useState(null);
   const [wkDropTime, setWkDropTime] = useState(null);
@@ -2040,7 +2051,7 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
           );
         })}
       </div>
-      <div style={{display:"flex",overflowY:"auto",maxHeight:"calc(100vh - 330px)"}} onDragEnd={handleDragEnd}>
+      <div ref={weekScrollRef} style={{display:"flex",overflowY:"auto",maxHeight:"calc(100vh - 330px)"}} onDragEnd={handleDragEnd}>
         <div style={{width:52,flexShrink:0,background:T.card,borderRight:`1px solid ${T.border}`,zIndex:2}}>
           {Array.from({length:24}, (_, h) => (
             <div key={h} style={{height:WK_PX_HR,display:"flex",alignItems:"flex-start",justifyContent:"flex-end",paddingRight:8,paddingTop:3,borderTop:`1px solid ${T.border}44`,boxSizing:"border-box"}}>
@@ -3237,12 +3248,18 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 
           {active==="Appearance" && (<>
             <Card style={{marginBottom:12}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18,gap:12}}>
                 <div>
-                  <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Theme</div>
+                  <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:3}}>Theme</div>
                   <div style={{fontSize:12,color:T.muted}}>Switch between light and dark. Your choice persists across sessions.</div>
                 </div>
-                <Badge color={T.lime}>{theme==="light"?"Light mode":"Dark mode"}</Badge>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <span style={{fontSize:12,color:T.muted}}>Light</span>
+                  <div onClick={()=>setTheme(theme==="dark"?"light":"dark")} style={{width:46,height:24,borderRadius:12,background:theme==="dark"?T.lime:T.card2,border:`1.5px solid ${theme==="dark"?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+                    <div style={{width:18,height:18,borderRadius:"50%",background:theme==="dark"?T.ink:"#ffffff",border:`1px solid ${theme==="dark"?"transparent":T.border}`,position:"absolute",top:2,left:theme==="dark"?24:2,transition:"left 0.2s",boxShadow:"0 1px 4px rgba(0,0,0,0.2)"}} />
+                  </div>
+                  <span style={{fontSize:12,color:T.muted}}>Dark</span>
+                </div>
               </div>
               <div style={{display:"flex",gap:10}}>
                 <ThemeCard mode="light" label="Light" sub="Cream paper · sage accents" />
@@ -3412,11 +3429,50 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 
 // ─── PROFILE ──────────────────────────────────────────────────────────────────
 function Profile() {
-  const prof=getProfile();
+  const [prof,setProfState]=useState(()=>getProfile());
+  const [picUrl,setPicUrl]=useState(()=>getUserPicUrl());
+  const [status,setStatus]=useState(prof.status||"");
+  const [affiliation,setAffiliation]=useState(prof.affiliation||prof.school||"");
+  const [picSaved,setPicSaved]=useState(false);
+  const fileInputRef=useRef(null);
+  const camInputRef=useRef(null);
+  const prefs=getSchedulePreferences();
+  const [workStart,setWorkStart]=useState(prefs.workStartTime||"09:00");
+  const [bedtime,setBedtime]=useState(prefs.bedtime||"23:00");
+  const [difficulty,setDifficulty]=useState(prefs.difficultyPreference||"balanced");
+  const [prefSaved,setPrefSaved]=useState(false);
   const lvl=levelInfo();
   const streak=Math.max(1,getStreak());
   const ps=profileStats();
   const initials=((prof.name||"").split(" ").map(x=>x[0]).join("").slice(0,2).toUpperCase())||"S";
+
+  const handlePicFile=(e)=>{
+    const file=e.target.files&&e.target.files[0];
+    if(!file)return;
+    const reader=new FileReader();
+    reader.onload=(ev)=>{
+      const url=ev.target.result;
+      lsSet("profilePic",url);
+      setPicUrl(url);
+      setPicSaved(true);
+      setTimeout(()=>setPicSaved(false),2200);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const saveOnboarding=()=>{
+    const updated={...getProfile(),status,affiliation,school:affiliation};
+    lsSet("profile",updated);
+    setProfState(updated);
+    const updatedPrefs={...getSchedulePreferences(),workStartTime:workStart,bedtime,difficultyPreference:difficulty};
+    setSchedulePreferences(updatedPrefs);
+    setPrefSaved(true);
+    setTimeout(()=>setPrefSaved(false),2200);
+  };
+
+  const affiliationLabel = status==="highschool"?"School name":status==="college"?"University":status==="working"?"Company":"School / affiliation";
+  const affiliationPlaceholder = status==="highschool"?"e.g. Lincoln High School":status==="college"?"e.g. UCLA, NYU...":status==="working"?"e.g. Google, startup...":"Your school or company";
+
   const badges=[
     {icon:Icon.flame,name:streak+"-Day streak",color:T.amber},
     {icon:Icon.trophy,name:"Goal crusher",color:T.lime},
@@ -3430,18 +3486,42 @@ function Profile() {
     {icon:Icon.check,name:"Consistent",color:T.blue},
   ];
   const activityData=[40,70,55,90,100,30,20];
+
+  const StatusChip=({value,label,active})=>(
+    <button type="button" onClick={()=>setStatus(value)} style={{padding:"8px 16px",borderRadius:8,fontSize:12,fontWeight:active?600:400,cursor:"pointer",border:`1.5px solid ${active?T.lime+"66":T.border}`,background:active?T.lime+"14":"transparent",color:active?T.lime:T.muted,fontFamily:T.font,transition:"all 0.15s"}}>{label}</button>
+  );
+
   return (
     <div>
+      {/* ── Header card */}
       <Card style={{display:"flex",alignItems:"center",gap:24,marginBottom:16,padding:28}}>
-        <Av initials={initials} color={T.lime} size={80} />
+        {/* Profile picture module */}
+        <div style={{position:"relative",flexShrink:0}}>
+          {picUrl
+            ? <img src={picUrl} style={{width:80,height:80,borderRadius:"50%",objectFit:"cover",border:`2px solid ${T.lime}44`}} alt="Profile" />
+            : <Av initials={initials} color={T.lime} size={80} picUrl="" />
+          }
+          <div style={{position:"absolute",bottom:0,right:0,display:"flex",gap:3}}>
+            <button title="Upload photo" onClick={()=>fileInputRef.current&&fileInputRef.current.click()} style={{width:24,height:24,borderRadius:"50%",background:T.lime,border:"none",cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 2px 8px rgba(0,0,0,0.2)"}}>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.ink} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            </button>
+            <button title="Take photo" onClick={()=>camInputRef.current&&camInputRef.current.click()} style={{width:24,height:24,borderRadius:"50%",background:T.card2,border:`1px solid ${T.border}`,cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 2px 8px rgba(0,0,0,0.15)"}}>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.muted} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+            </button>
+          </div>
+          <input ref={fileInputRef} type="file" accept="image/*" style={{display:"none"}} onChange={handlePicFile} />
+          <input ref={camInputRef} type="file" accept="image/*" capture="user" style={{display:"none"}} onChange={handlePicFile} />
+        </div>
         <div style={{flex:1}}>
           <div style={{fontSize:22,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:3}}>{prof.name}</div>
-          <div style={{fontSize:13,color:T.muted,marginBottom:12}}>{prof.school}</div>
+          <div style={{fontSize:13,color:T.muted,marginBottom:12}}>{affiliation||prof.school||"No affiliation set"}</div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             <Badge color={T.lime}>Pro</Badge>
             <Badge color={T.amber}>{streak}-day streak</Badge>
             <Badge color={T.blue}>{lvl.title}</Badge>
+            {status&&<Badge color={T.teal}>{status==="highschool"?"High School":status==="college"?"College":"Working"}</Badge>}
           </div>
+          {picSaved&&<div style={{marginTop:8,fontSize:11.5,color:T.lime,fontWeight:600}}>Profile picture updated.</div>}
         </div>
         <div style={{textAlign:"right"}}>
           <div style={{fontSize:42,fontWeight:700,color:T.lime,letterSpacing:"-0.04em",lineHeight:1}}>{lvl.xp.toLocaleString()}</div>
@@ -3450,6 +3530,50 @@ function Profile() {
           <div style={{fontSize:11,color:T.muted,marginTop:4}}>{lvl.nextTier?`${(lvl.nextTier.minXP-lvl.xp).toLocaleString()} XP to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
         </div>
       </Card>
+
+      {/* ── Onboarding preferences hub */}
+      <Card style={{marginBottom:16}}>
+        <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Your profile & schedule preferences</div>
+        <div style={{fontSize:12,color:T.muted,marginBottom:18}}>Update your answers from setup anytime. These train your scheduling algorithm.</div>
+
+        <Field label="Status">
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            <StatusChip value="highschool" label="High School" active={status==="highschool"} />
+            <StatusChip value="college" label="College" active={status==="college"} />
+            <StatusChip value="working" label="Working" active={status==="working"} />
+          </div>
+        </Field>
+
+        {status&&(
+          <Field label={affiliationLabel} hint="Visible to classmates on leaderboards.">
+            <Input value={affiliation} onChange={e=>setAffiliation(e.target.value)} placeholder={affiliationPlaceholder} />
+          </Field>
+        )}
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Field label="Study start time" hint="Tasks are scheduled from this hour.">
+            <Input type="time" value={workStart} onChange={e=>setWorkStart(e.target.value)} />
+          </Field>
+          <Field label="Bedtime" hint="Tasks end 2 hours before this.">
+            <Input type="time" value={bedtime} onChange={e=>setBedtime(e.target.value)} />
+          </Field>
+        </div>
+
+        <Field label="Task difficulty order">
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {[{v:"easyFirst",l:"Easy first"},{v:"balanced",l:"Balanced"},{v:"hardFirst",l:"Hard first"}].map(o=>(
+              <button key={o.v} type="button" onClick={()=>setDifficulty(o.v)} style={{padding:"8px 14px",borderRadius:8,fontSize:12,fontWeight:difficulty===o.v?600:400,cursor:"pointer",border:`1.5px solid ${difficulty===o.v?T.lime+"66":T.border}`,background:difficulty===o.v?T.lime+"14":"transparent",color:difficulty===o.v?T.lime:T.muted,fontFamily:T.font,transition:"all 0.15s"}}>{o.l}</button>
+            ))}
+          </div>
+        </Field>
+
+        <div style={{display:"flex",alignItems:"center",gap:12,marginTop:4}}>
+          <Btn onClick={saveOnboarding}>Save preferences</Btn>
+          {prefSaved&&<span style={{fontSize:12,color:T.lime,fontWeight:600}}>Saved.</span>}
+        </div>
+      </Card>
+
+      {/* ── Stats */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
         {[["Total study time",fmtH(ps.totalMin),T.lime],["Essays submitted","8",T.purple],["Cards mastered","147",T.teal],["Quizzes completed","23",T.amber],["Chat sessions","89",T.blue],["Focus sessions",String(ps.focusSessions),T.red]].map(([l,v,c],i)=>(
           <Card key={i} style={{textAlign:"center",padding:16}}>
@@ -3458,6 +3582,8 @@ function Profile() {
           </Card>
         ))}
       </div>
+
+      {/* ── Achievements */}
       <div style={{fontSize:12,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:10}}>Achievements</div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,marginBottom:16}}>
         {badges.map((b,i)=>(
@@ -3467,6 +3593,8 @@ function Profile() {
           </Card>
         ))}
       </div>
+
+      {/* ── Activity charts */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
         <Card>
           <Label>Weekly activity</Label>
@@ -3883,6 +4011,163 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
   );
 }
 
+// ─── INIT WIZARD ─────────────────────────────────────────────────────────────
+function InitWizard({onComplete}){
+  const prefs = getSchedulePreferences();
+  const prof = getProfile();
+  const [step, setStep] = useState(0);
+  const [status, setStatus] = useState(prof.status||"");
+  const [affiliation, setAffiliation] = useState(prof.affiliation||prof.school||"");
+  const [workStart, setWorkStart] = useState(prefs.workStartTime||"09:00");
+  const [bedtime, setBedtime] = useState(prefs.bedtime||"23:00");
+  const [difficulty, setDifficulty] = useState(prefs.difficultyPreference||"balanced");
+
+  const affiliationLabel = status==="highschool" ? "School name" : status==="college" ? "University name" : status==="working" ? "Company name" : "Affiliation";
+  const affiliationPlaceholder = status==="highschool" ? "e.g. Lincoln High School" : status==="college" ? "e.g. UCLA, NYU..." : status==="working" ? "e.g. Google, startup..." : "Your school or company";
+
+  const save = () => {
+    const updatedPrefs = {...prefs, workStartTime:workStart, bedtime, difficultyPreference:difficulty};
+    setSchedulePreferences(updatedPrefs);
+    const updatedProf = {...getProfile(), status, affiliation, school:affiliation};
+    lsSet("profile", updatedProf);
+    lsSet("onboarded", true);
+    onComplete();
+  };
+
+  const skip = () => {
+    lsSet("onboarded", true);
+    onComplete();
+  };
+
+  const STEPS = [
+    {key:"status"},
+    {key:"workStart"},
+    {key:"bedtime"},
+    {key:"difficulty"},
+  ];
+  const isLast = step === STEPS.length - 1;
+
+  const next = () => {
+    if (isLast) { save(); return; }
+    setStep(s => s + 1);
+  };
+
+  const bg = "#FAF6EC";
+  const forest = "#14342A";
+  const lime = "#9EC83D";
+  const ink = "#0E1F18";
+  const muted = "rgba(14,31,24,0.5)";
+  const border = "rgba(14,31,24,0.18)";
+  const card = "#ffffff";
+
+  const ChipOpt = ({value, active, onClick, children}) => (
+    <button type="button" onClick={onClick} style={{padding:"12px 20px",borderRadius:10,fontSize:13,fontWeight:active?700:500,cursor:"pointer",border:`2px solid ${active?lime:border}`,background:active?lime+"18":"transparent",color:active?ink:muted,fontFamily:`"Geist",system-ui,sans-serif`,transition:"all 0.15s",textAlign:"center",minWidth:120}}>
+      {children}
+    </button>
+  );
+
+  return (
+    <div style={{minHeight:"100vh",background:bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 16px",fontFamily:`"Geist",system-ui,sans-serif`}}>
+      {/* Logo */}
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:40}}>
+        <div style={{width:36,height:36,borderRadius:10,background:lime,display:"grid",placeItems:"center",fontSize:18,fontWeight:800,color:ink}}>S</div>
+        <span style={{fontSize:22,fontWeight:700,color:ink,letterSpacing:"-0.02em"}}>Studlin</span>
+      </div>
+
+      {/* Card */}
+      <div style={{width:"100%",maxWidth:520,background:card,borderRadius:20,padding:"36px 40px",border:`1.5px solid ${border}`,boxShadow:"0 24px 60px -24px rgba(14,31,24,0.18)"}}>
+        {/* Pre-question header (shown on all steps) */}
+        <div style={{background:"rgba(158,200,61,0.10)",border:`1px solid ${lime}44`,borderRadius:10,padding:"10px 14px",marginBottom:28,fontSize:12.5,color:ink,lineHeight:1.5,fontWeight:500}}>
+          The following questions are used to customize and train your calendar scheduling algorithm.
+        </div>
+
+        {/* Progress dots */}
+        <div style={{display:"flex",gap:6,marginBottom:28}}>
+          {STEPS.map((_,i) => (
+            <div key={i} style={{height:4,flex:1,borderRadius:99,background:i<=step?lime:"rgba(14,31,24,0.12)",transition:"background 0.3s"}} />
+          ))}
+        </div>
+
+        {/* Step content */}
+        {step===0 && (
+          <div>
+            <div style={{fontSize:20,fontWeight:700,color:ink,marginBottom:6,letterSpacing:"-0.01em"}}>What best describes you?</div>
+            <div style={{fontSize:13,color:muted,marginBottom:24}}>This helps us tailor deadlines, schedules, and peer matching.</div>
+            <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:20}}>
+              <ChipOpt value="highschool" active={status==="highschool"} onClick={()=>setStatus("highschool")}>High School</ChipOpt>
+              <ChipOpt value="college" active={status==="college"} onClick={()=>setStatus("college")}>College</ChipOpt>
+              <ChipOpt value="working" active={status==="working"} onClick={()=>setStatus("working")}>Working</ChipOpt>
+            </div>
+            {status && (
+              <div style={{marginTop:4}}>
+                <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:muted,marginBottom:8}}>{affiliationLabel}</label>
+                <input value={affiliation} onChange={e=>setAffiliation(e.target.value)} placeholder={affiliationPlaceholder} style={{width:"100%",background:"#F5F0E8",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:13.5,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",boxSizing:"border-box"}} />
+                <div style={{fontSize:11,color:muted,marginTop:6}}>Visible to classmates on leaderboards.</div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {step===1 && (
+          <div>
+            <div style={{fontSize:20,fontWeight:700,color:ink,marginBottom:6,letterSpacing:"-0.01em"}}>When do you prefer to study?</div>
+            <div style={{fontSize:13,color:muted,marginBottom:24}}>Tasks are scheduled inside this window so your time is protected.</div>
+            <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:muted,marginBottom:8}}>Peak study start time</label>
+            <input type="time" value={workStart} onChange={e=>setWorkStart(e.target.value)} style={{background:"#F5F0E8",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",maxWidth:200}} />
+          </div>
+        )}
+
+        {step===2 && (
+          <div>
+            <div style={{fontSize:20,fontWeight:700,color:ink,marginBottom:6,letterSpacing:"-0.01em"}}>What time do you go to bed?</div>
+            <div style={{fontSize:13,color:muted,marginBottom:24}}>We won't schedule tasks within 2 hours of your bedtime.</div>
+            <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:muted,marginBottom:8}}>Bedtime</label>
+            <input type="time" value={bedtime} onChange={e=>setBedtime(e.target.value)} style={{background:"#F5F0E8",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",maxWidth:200}} />
+          </div>
+        )}
+
+        {step===3 && (
+          <div>
+            <div style={{fontSize:20,fontWeight:700,color:ink,marginBottom:6,letterSpacing:"-0.01em"}}>How do you like to tackle tasks?</div>
+            <div style={{fontSize:13,color:muted,marginBottom:24}}>Studlin will order your schedule accordingly.</div>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              {[
+                {v:"easyFirst",l:"Easy first",d:"Build momentum with quick wins before harder tasks."},
+                {v:"balanced",l:"Balanced",d:"Mix easy and hard tasks naturally throughout the day."},
+                {v:"hardFirst",l:"Hard first",d:"Tackle demanding work during peak focus, then coast."},
+              ].map(opt=>(
+                <button key={opt.v} type="button" onClick={()=>setDifficulty(opt.v)} style={{padding:"14px 16px",borderRadius:10,border:`2px solid ${difficulty===opt.v?lime:border}`,background:difficulty===opt.v?lime+"14":"transparent",color:ink,textAlign:"left",cursor:"pointer",fontFamily:`"Geist",system-ui,sans-serif`,transition:"all 0.15s"}}>
+                  <div style={{fontSize:13.5,fontWeight:difficulty===opt.v?700:600,color:difficulty===opt.v?ink:ink}}>{opt.l}</div>
+                  <div style={{fontSize:12,color:muted,marginTop:3}}>{opt.d}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Actions */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:32}}>
+          <button onClick={skip} style={{fontSize:13,color:muted,background:"none",border:"none",cursor:"pointer",fontFamily:`"Geist",system-ui,sans-serif`,fontWeight:500,padding:"8px 0"}}>
+            Skip all
+          </button>
+          <div style={{display:"flex",gap:10,alignItems:"center"}}>
+            {step > 0 && (
+              <button onClick={()=>setStep(s=>s-1)} style={{padding:"11px 22px",borderRadius:99,border:`1.5px solid ${border}`,background:"transparent",color:ink,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:`"Geist",system-ui,sans-serif`}}>
+                Back
+              </button>
+            )}
+            <button onClick={next} style={{padding:"11px 28px",borderRadius:99,border:"none",background:lime,color:ink,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:`"Geist",system-ui,sans-serif`}}>
+              {isLast ? "Finish" : (step===0&&!status ? "Skip" : "Continue")}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div style={{marginTop:20,fontSize:12,color:muted}}>All questions are optional. You can update these in Settings anytime.</div>
+    </div>
+  );
+}
+
 // ─── AUTH SCREEN — minimal gate, links to designed pages ────────────────────
 function AuthScreen(){
   return(
@@ -3913,8 +4198,9 @@ function AuthGate(){
 // ─── APP SHELL ────────────────────────────────────────────────────────────────
 function App() {
   seedEventsIfStale();
+  const [onboarded,setOnboarded]=useState(()=>!!lsGet("onboarded",false));
   const [active,setActive]=useState("dashboard");
-  const [theme,setThemeState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-theme"))||"dark");
+  const [theme,setThemeState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-theme"))||"light");
   const [accent,setAccentState]=useState(()=>{
     if(typeof localStorage!=="undefined"){
       if(!localStorage.getItem("studlin-accent-reset3")){localStorage.setItem("studlin-accent","Lime");localStorage.setItem("studlin-accent-reset3","1");}
@@ -4035,6 +4321,7 @@ function App() {
   const sectionOf={dashboard:"Workspace",aichat:"Workspace",essays:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",aitutor:"Tools",grammar:"Tools",humanizer:"Tools",solve:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
+  if (!onboarded) return <InitWizard onComplete={()=>setOnboarded(true)} />;
   const sidebarText=isLight?"#F6F1E6":T.text;
   const sidebarMuted=isLight?"rgba(246,241,230,0.55)":T.muted;
   const sidebarFaint=isLight?"rgba(246,241,230,0.35)":T.faint;
@@ -4337,6 +4624,38 @@ function App() {
         }
         body[data-density="Compact"] [data-page] { padding: 14px 22px !important; }
         body[data-density="Spacious"] [data-page] { padding: 38px 50px !important; }
+
+        /* ── Light mode contrast overrides ── */
+        body[data-theme="light"] input[type="range"] {
+          -webkit-appearance: none; appearance: none;
+          height: 6px; border-radius: 3px; outline: none; cursor: pointer;
+          background: rgba(14,31,24,0.14);
+        }
+        body[data-theme="light"] input[type="range"]::-webkit-slider-runnable-track {
+          height: 6px; border-radius: 3px; background: rgba(14,31,24,0.14);
+        }
+        body[data-theme="light"] input[type="range"]::-moz-range-track {
+          height: 6px; border-radius: 3px; background: rgba(14,31,24,0.14);
+        }
+        body[data-theme="light"] input[type="range"]::-webkit-slider-thumb {
+          -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%;
+          background: #ffffff; border: 2px solid rgba(14,31,24,0.30);
+          box-shadow: 0 1px 4px rgba(14,31,24,0.18); margin-top: -5px; cursor: pointer;
+        }
+        body[data-theme="light"] input[type="range"]::-moz-range-thumb {
+          width: 16px; height: 16px; border-radius: 50%;
+          background: #ffffff; border: 2px solid rgba(14,31,24,0.30);
+          box-shadow: 0 1px 4px rgba(14,31,24,0.18); cursor: pointer;
+        }
+        body[data-theme="light"] input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):focus,
+        body[data-theme="light"] textarea:focus,
+        body[data-theme="light"] select:focus {
+          border-color: rgba(14,31,24,0.45) !important;
+          box-shadow: 0 0 0 3px rgba(158,200,61,0.18);
+        }
+        body[data-theme="light"] [data-card]:hover {
+          box-shadow: 0 8px 24px -10px rgba(14,31,24,0.14);
+        }
       `}</style>
     </div>
   );
