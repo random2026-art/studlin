@@ -192,34 +192,22 @@ const PRIORITY_COLORS=["","#5FCBA8","#7BACDF","#DCA64A","#E8946B","#D9806B"];
 const DIFFICULTY_LABELS=["","Easy","Moderate","Challenging","Hard","Very Hard"];
 const DIFFICULTY_COLORS=["","#5FCBA8","#7BACDF","#DCA64A","#E8946B","#D9806B"];
 
-const CHARACTERS=[
-  {id:"spark",name:"Spark",emoji:"⚡",desc:"Just getting started. Three days in — most people don't even make it this far.",type:"streak",threshold:3},
-  {id:"ember",name:"Ember",emoji:"🔥",desc:"One week locked in. The habit is forming. Don't stop now.",type:"streak",threshold:7},
-  {id:"flicker",name:"Flicker",emoji:"🕯",desc:"Two weeks of showing up. You're building something real.",type:"streak",threshold:14},
-  {id:"blaze",name:"Blaze",emoji:"🌟",desc:"30 days. A full month of discipline. You're not the same person who started.",type:"streak",threshold:30},
-  {id:"torch",name:"Torch",emoji:"🔦",desc:"50 days. Most people dream about consistency like this.",type:"streak",threshold:50},
-  {id:"inferno",name:"Inferno",emoji:"💎",desc:"100 days. You've outlasted 99% of students. This is elite.",type:"streak",threshold:100},
-  {id:"phoenix",name:"Phoenix",emoji:"🦅",desc:"200 days. You rose from nothing and built an empire of knowledge.",type:"streak",threshold:200},
-  {id:"titan",name:"Titan",emoji:"👑",desc:"One full year. 365 days of relentless dedication. You are legendary.",type:"streak",threshold:365},
-  {id:"eternal",name:"Eternal",emoji:"🌌",desc:"Two years. Studying isn't something you do — it's who you are.",type:"streak",threshold:730},
-  {id:"ascended",name:"Ascended",emoji:"✨",desc:"1,000 days. There are no words. You have transcended.",type:"streak",threshold:1000},
-  {id:"seedling",name:"Seedling",emoji:"🌱",desc:"Level 5. You planted the seed. Now water it.",type:"level",threshold:5},
-  {id:"sprout",name:"Sprout",emoji:"🌿",desc:"Level 10. Growing stronger every session.",type:"level",threshold:10},
-  {id:"sapling",name:"Sapling",emoji:"🌳",desc:"Level 15. Your roots run deep now.",type:"level",threshold:15},
-  {id:"scholar2",name:"Scholar",emoji:"📚",desc:"Level 20. Knowledge is becoming your superpower.",type:"level",threshold:20},
-  {id:"sage",name:"Sage",emoji:"🧠",desc:"Level 30. You don't just study — you understand.",type:"level",threshold:30},
-  {id:"architect",name:"Architect",emoji:"🏛",desc:"Level 40. Building a cathedral of knowledge, one brick at a time.",type:"level",threshold:40},
-  {id:"maestro",name:"Maestro",emoji:"🎯",desc:"Level 50. Precision. Discipline. Mastery.",type:"level",threshold:50},
-  {id:"oracle",name:"Oracle",emoji:"🔮",desc:"Level 75. You see connections others miss.",type:"level",threshold:75},
-  {id:"luminary",name:"Luminary",emoji:"⭐",desc:"Level 100. A beacon for everyone around you.",type:"level",threshold:100},
-  {id:"sovereign",name:"Sovereign",emoji:"🏔",desc:"Level 150. You stand at the peak. The view is earned.",type:"level",threshold:150},
-  {id:"mythic",name:"Mythic",emoji:"🐉",desc:"Level 200. They'll tell stories about your grind.",type:"level",threshold:200},
-  {id:"infinite",name:"Infinite",emoji:"♾",desc:"Level 300. Beyond measure. Beyond limits. Beyond.",type:"level",threshold:300},
+// ─── PROFESSIONAL TIER SYSTEM ─────────────────────────────────────────────────
+const PROF_TIERS=[
+  {title:"Intern",        minXP:0},
+  {title:"Associate",     minXP:1000},
+  {title:"Analyst",       minXP:3000},
+  {title:"Senior Analyst",minXP:7500},
+  {title:"Manager",       minXP:15000},
+  {title:"Senior Manager",minXP:30000},
+  {title:"Director",      minXP:55000},
+  {title:"VP",            minXP:90000},
+  {title:"SVP",           minXP:140000},
+  {title:"C-Suite",       minXP:200000},
+  {title:"CEO",           minXP:300000},
 ];
-function getCharacterData(){return lsGet("characters",{unlocked:[],unlockedAt:{},seen:[]});}
-function saveCharacterData(d){lsSet("characters",d);}
-function getUnlockedCharacterIds(){var streak=getStreak();var lvl=levelInfo().level;return CHARACTERS.filter(function(c){return(c.type==="streak"&&streak>=c.threshold)||(c.type==="level"&&lvl>=c.threshold);}).map(function(c){return c.id;});}
-function checkNewUnlocks(){var data=getCharacterData();var should=getUnlockedCharacterIds();var fresh=should.filter(function(id){return data.unlocked.indexOf(id)===-1;});if(fresh.length>0){fresh.forEach(function(id){data.unlocked.push(id);data.unlockedAt[id]=Date.now();});saveCharacterData(data);}return fresh.map(function(id){return CHARACTERS.find(function(c){return c.id===id;});});}
+function getProfTitle(xp){let t=PROF_TIERS[0];for(const r of PROF_TIERS){if(xp>=r.minXP)t=r;else break;}return t.title;}
+function calcSessionXP(mins){return Math.round(mins*(1+Math.floor(mins/30)*0.1));}
 
 // ─── SHARED PRIMITIVES ────────────────────────────────────────────────────────
 const Btn = ({children,onClick,style={},variant="lime"}) => {
@@ -365,18 +353,15 @@ const MON_SHORT=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","No
 function todayLabel(){const d=new Date();return DOW_FULL[d.getDay()]+" · "+MON_SHORT[d.getMonth()]+" "+d.getDate();}
 function weekNo(){const d=new Date();const start=new Date(d.getFullYear(),0,1);return Math.ceil((((d-start)/86400000)+start.getDay()+1)/7);}
 function getXP(){
-  const s=lsGet("sessions",[]);const totalMin=s.reduce((a,x)=>a+(x.m||0),0);
+  const s=lsGet("sessions",[]);
   const base=lsGet("xpBase",1850);
-  const first60=Math.min(totalMin,60)*5;
-  const next60=Math.min(Math.max(totalMin-60,0),60)*4;
-  const rest=Math.max(totalMin-120,0)*3;
-  const focusXP=first60+next60+rest;
+  const focusXP=s.reduce((acc,x)=>acc+calcSessionXP(x.m||0),0);
   const streakXP=getStreak()*30;
   const loginXP=lsGet("days",[]).length*15;
   const taskXP=Object.values(lsGet("planDone",{})).filter(Boolean).length*20;
   return base+focusXP+streakXP+loginXP+taskXP+lsGet("xpBonus",0);
 }
-function levelInfo(){const xp=getXP();const per=300;const level=Math.floor(xp/per)+1;const into=xp-(level-1)*per;return {xp,level,into,per,toNext:per-into,pct:Math.round(into/per*100)};}
+function levelInfo(){const xp=getXP();const per=300;const level=Math.floor(xp/per)+1;const into=xp-(level-1)*per;const title=getProfTitle(xp);const nextTier=PROF_TIERS.find(t=>t.minXP>xp)||null;const curTierXP=(PROF_TIERS.slice().reverse().find(t=>xp>=t.minXP)||PROF_TIERS[0]).minXP;const tierPct=nextTier?Math.round(Math.max(0,Math.min(100,(xp-curTierXP)/(nextTier.minXP-curTierXP)*100))):100;return {xp,level,into,per,toNext:per-into,pct:Math.round(into/per*100),title,nextTier,tierPct};}
 function weekStreak(){const days=new Set(lsGet("days",[]));const now=new Date();const dow=(now.getDay()+6)%7;const mon=new Date(now);mon.setDate(now.getDate()-dow);return ["M","T","W","T","F","S","S"].map((lab,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);const k=dayKey(d);const today=k===dayKey(now);return {lab,on:days.has(k),today,future:d>now&&!today};});}
 // ─── ADVANCED SCHEDULING SYSTEM (5 features integrated) ──────────────────────
 // Feature 1: User preference storage + getters/setters (complete with all onboarding preferences)
@@ -867,7 +852,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
 }
 
 // ─── NAV ICONS MAP ────────────────────────────────────────────────────────────
-const navIcon = {dashboard:Icon.grid,aichat:Icon.chat,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,focustimer:Icon.clock,calendar:Icon.cal,collection:Icon.award,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,music:Icon.music,settings:Icon.settings,profile:Icon.user};
+const navIcon = {dashboard:Icon.grid,aichat:Icon.chat,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,focustimer:Icon.clock,calendar:Icon.cal,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,music:Icon.music,settings:Icon.settings,profile:Icon.user};
 
 // ─── AI CHAT ──────────────────────────────────────────────────────────────────
 function AiChat() {
@@ -1755,103 +1740,227 @@ function FocusTimer({focusSecs,setFocusSecs,focusRunning,setFocusRunning,focusMo
 // ─── CALENDAR ─────────────────────────────────────────────────────────────────
 // ─── TASK TIMER MODAL ────────────────────────────────────────────────────────
 function TaskTimerModal({task,onClose,onComplete}){
+  const totalMins=task.duration||25;
+  const quoteRef=useRef(QUOTES[Math.floor(Math.random()*QUOTES.length)]);
+  const breakIdeaRef=useRef(BREAK_IDEAS[Math.floor(Math.random()*BREAK_IDEAS.length)]);
+  const focusElapsed=useRef(0);
+  const barRef=useRef(null);
+
+  const initBreakMins=totalMins>=120?15:totalMins>=60?10:5;
+  const initBreakPos=Math.max(1,Math.floor((totalMins-initBreakMins)/2));
+
+  const [breakOn,setBreakOn]=useState(totalMins>=15);
+  const [breakMins,setBreakMins]=useState(initBreakMins);
+  const [breakPos,setBreakPos]=useState(initBreakPos);
+  const [breakEditOpen,setBreakEditOpen]=useState(false);
+  const [breakEditVal,setBreakEditVal]=useState(String(initBreakMins));
+
   const [phase,setPhase]=useState("quote");
-  const [breakOn,setBreakOn]=useState(true);
-  const [breakMins,setBreakMins]=useState(5);
-  const [secs,setSecs]=useState((task.duration||25)*60);
+  const [secs,setSecs]=useState(0);
   const [running,setRunning]=useState(false);
-  const [breakSecs,setBreakSecs]=useState(0);
-  const [breakIdea,setBreakIdea]=useState("");
-  const [elapsed,setElapsed]=useState(0);
-  const totalSecs=(task.duration||25)*60;
-  const quote=QUOTES[Math.floor(Math.random()*QUOTES.length)];
-  const breakInterval=breakOn?Math.min(25*60,totalSecs):totalSecs;
+
+  const focus2Mins=Math.max(1,totalMins-breakPos-breakMins);
+  const fmt=s=>String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0");
+  const circumference=2*Math.PI*52;
 
   useEffect(()=>{
     if(!running)return;
     const id=setInterval(()=>{
-      if(phase==="focus"){
-        setSecs(s=>{
-          if(s<=1){
-            if(breakOn&&elapsed+totalSecs-0<totalSecs){
-              setPhase("break");setBreakSecs(breakMins*60);setBreakIdea(BREAK_IDEAS[Math.floor(Math.random()*BREAK_IDEAS.length)]);setRunning(true);
-              return 0;
-            }
-            setPhase("done");setRunning(false);
-            if(onComplete)onComplete(Math.round(totalSecs/60));
-            return 0;
-          }
+      setSecs(s=>{
+        if(s>1){
+          if(phase!=="break")focusElapsed.current+=1;
           return s-1;
-        });
-        setElapsed(e=>e+1);
-      }else if(phase==="break"){
-        setBreakSecs(s=>{
-          if(s<=1){setPhase("focus");setSecs(Math.max(0,totalSecs-elapsed-1));return 0;}
-          return s-1;
-        });
-      }
+        }
+        if(phase==="focus1"){setPhase("break");setRunning(false);}
+        else if(phase==="break"){setPhase("breakDone");setRunning(false);}
+        else if(phase==="focus2"){
+          focusElapsed.current+=1;
+          setPhase("done");setRunning(false);
+          if(onComplete)onComplete(totalMins);
+        }
+        return 0;
+      });
     },1000);
     return()=>clearInterval(id);
-  },[running,phase,breakOn,breakMins,elapsed,totalSecs]);
+  },[running,phase,totalMins,onComplete]);
 
-  const fm=String(Math.floor(secs/60)).padStart(2,"0"),fs=String(secs%60).padStart(2,"0");
-  const bm=String(Math.floor(breakSecs/60)).padStart(2,"0"),bs=String(breakSecs%60).padStart(2,"0");
-  const pct=totalSecs>0?Math.round(((totalSecs-secs)/totalSecs)*100):0;
-  const circumference=2*Math.PI*52;
+  useEffect(()=>{
+    if(phase==="break"){setSecs(breakMins*60);setRunning(true);}
+  },[phase,breakMins]);
 
-  if(phase==="quote")return(
-    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(10px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:480,background:T.card,borderRadius:20,border:`1px solid ${T.border}`,padding:"40px 36px",textAlign:"center"}}>
-        <div style={{fontSize:48,marginBottom:20}}>✨</div>
-        <div style={{fontSize:18,fontStyle:"italic",color:T.text,lineHeight:1.6,marginBottom:8,fontFamily:T.serif}}>"{quote.text}"</div>
-        <div style={{fontSize:13,color:T.muted,marginBottom:28}}>— {quote.author}</div>
-        <div style={{fontSize:14,fontWeight:600,color:T.white,marginBottom:6}}>{task.title}</div>
-        <div style={{fontSize:12,color:T.muted,marginBottom:24}}>{task.duration||25} minutes · {task.subject||"Study session"}</div>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 16px",background:T.card2,borderRadius:10,marginBottom:20,border:`1px solid ${T.border}`}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}} onClick={()=>setBreakOn(b=>!b)}>
-            <div style={{width:32,height:18,borderRadius:9,background:breakOn?T.lime:T.faint,position:"relative",transition:"background 0.2s"}}><div style={{width:14,height:14,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:breakOn?16:2,transition:"left 0.2s"}} /></div>
-            <span style={{fontSize:12,color:T.text}}>Breaks</span>
+  const startLockIn=()=>{
+    focusElapsed.current=0;
+    if(breakOn&&totalMins>=15&&focus2Mins>0){
+      setPhase("focus1");setSecs(breakPos*60);setRunning(true);
+    }else{
+      setPhase("focus2");setSecs(totalMins*60);setRunning(true);
+    }
+  };
+
+  const resume=()=>{setPhase("focus2");setSecs(focus2Mins*60);setRunning(true);};
+
+  const finishEarly=()=>{
+    const m=Math.max(1,Math.round(focusElapsed.current/60));
+    setPhase("done");setRunning(false);
+    if(onComplete)onComplete(m);
+  };
+
+  const updateBreakPos=(e)=>{
+    const bar=barRef.current;if(!bar)return;
+    const rect=bar.getBoundingClientRect();
+    const pctX=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width));
+    const mins=Math.round(pctX*totalMins);
+    setBreakPos(Math.max(1,Math.min(totalMins-breakMins-1,mins-Math.floor(breakMins/2))));
+  };
+  const handleBarPointerDown=(e)=>{
+    if(!breakOn)return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    updateBreakPos(e);
+  };
+  const handleBarPointerMove=(e)=>{
+    if(!(e.buttons&1)||!breakOn)return;
+    updateBreakPos(e);
+  };
+  const handleBreakDblClick=(e)=>{
+    e.stopPropagation();
+    setBreakEditOpen(true);
+    setBreakEditVal(String(breakMins));
+  };
+  const applyBreakEdit=()=>{
+    const n=Math.max(1,Math.min(30,parseInt(breakEditVal,10)||breakMins));
+    setBreakMins(n);
+    setBreakPos(p=>Math.max(1,Math.min(totalMins-n-1,p)));
+    setBreakEditOpen(false);
+  };
+
+  // ── QUOTE / SETUP SCREEN ──────────────────────────────────────────────────
+  if(phase==="quote"){
+    const q=quoteRef.current;
+    return(
+      <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(10px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+        <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:520,background:T.card,borderRadius:20,border:`1px solid ${T.border}`,padding:"40px 36px",textAlign:"center"}}>
+          <div style={{fontSize:16,fontStyle:"italic",color:T.text,lineHeight:1.7,marginBottom:8,fontFamily:T.serif}}>"{q.text}"</div>
+          <div style={{fontSize:12,color:T.muted,marginBottom:28}}>— {q.author}</div>
+          <div style={{fontSize:15,fontWeight:600,color:T.white,marginBottom:4}}>{task.title}</div>
+          <div style={{fontSize:12,color:T.muted,marginBottom:28}}>{totalMins} minutes · {task.subject||"Study session"}</div>
+
+          {/* Interactive timeline */}
+          <div style={{marginBottom:24,textAlign:"left"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <span style={{fontSize:11,fontWeight:600,color:T.muted,letterSpacing:"0.06em",textTransform:"uppercase"}}>Break schedule</span>
+              <div onClick={()=>setBreakOn(b=>!b)} style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+                <div style={{width:30,height:17,borderRadius:99,background:breakOn?T.lime:T.faint,position:"relative",transition:"background 0.2s"}}>
+                  <div style={{width:13,height:13,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:breakOn?15:2,transition:"left 0.2s"}}/>
+                </div>
+                <span style={{fontSize:11,color:T.text}}>{breakOn?"On":"Off"}</span>
+              </div>
+            </div>
+
+            <div ref={barRef}
+              style={{height:32,background:T.card2,borderRadius:8,position:"relative",cursor:"pointer",userSelect:"none",border:`1px solid ${T.border}`,overflow:"hidden"}}
+              onPointerDown={handleBarPointerDown}
+              onPointerMove={handleBarPointerMove}>
+              <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",padding:"0 7px",pointerEvents:"none",justifyContent:"space-between"}}>
+                <span style={{fontSize:9,color:T.faint,fontWeight:600}}>0m</span>
+                <span style={{fontSize:9,color:T.faint,fontWeight:600}}>{totalMins}m</span>
+              </div>
+              {breakOn&&(
+                <div
+                  onDoubleClick={handleBreakDblClick}
+                  style={{position:"absolute",left:`${(breakPos/totalMins)*100}%`,width:`${Math.max(4,(breakMins/totalMins)*100)}%`,top:2,bottom:2,background:T.amber,borderRadius:5,cursor:"grab",display:"flex",alignItems:"center",justifyContent:"center",minWidth:28}}>
+                  <span style={{fontSize:9,fontWeight:700,color:T.ink,letterSpacing:"0.04em",whiteSpace:"nowrap",pointerEvents:"none"}}>{breakMins}m</span>
+                </div>
+              )}
+            </div>
+
+            {breakOn&&(
+              <div style={{fontSize:11,color:T.muted,marginTop:8,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+                <span>Break at <strong style={{color:T.amber}}>{breakPos}m</strong> · {breakMins}m · <strong style={{color:T.lime}}>{focus2Mins}m</strong> after</span>
+                <span style={{fontSize:10,color:T.faint}}>Drag to reposition · double-click to edit duration</span>
+              </div>
+            )}
+
+            {breakEditOpen&&(
+              <div style={{marginTop:12,display:"flex",alignItems:"center",gap:8,background:T.card2,borderRadius:8,padding:"10px 14px",border:`1px solid ${T.border}`}}>
+                <span style={{fontSize:12,color:T.muted,flex:"none"}}>Break duration:</span>
+                <input type="number" min={1} max={30} value={breakEditVal}
+                  onChange={e=>setBreakEditVal(e.target.value)}
+                  onKeyDown={e=>{if(e.key==="Enter")applyBreakEdit();if(e.key==="Escape")setBreakEditOpen(false);}}
+                  autoFocus
+                  style={{width:52,padding:"5px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontSize:13,fontFamily:T.font,textAlign:"center"}}/>
+                <span style={{fontSize:12,color:T.muted,flex:"none"}}>min</span>
+                <BtnSm onClick={applyBreakEdit}>Apply</BtnSm>
+                <BtnSm variant="ghost" onClick={()=>setBreakEditOpen(false)}>Cancel</BtnSm>
+              </div>
+            )}
           </div>
-          {breakOn&&<div style={{display:"flex",alignItems:"center",gap:6}}><input type="number" min={1} max={30} value={breakMins} onChange={e=>setBreakMins(Math.max(1,+e.target.value||5))} style={{width:48,padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontSize:12,fontFamily:T.font,textAlign:"center"}} /><span style={{fontSize:11,color:T.muted}}>min break</span></div>}
-        </div>
-        <Btn onClick={()=>{setPhase("focus");setRunning(true);}} style={{width:"100%",justifyContent:"center",padding:"14px 24px",fontSize:15}}>Lock in</Btn>
-      </div>
-    </div>
-  );
 
+          <Btn onClick={startLockIn} style={{width:"100%",justifyContent:"center",padding:"14px 24px",fontSize:15}}>Lock in</Btn>
+        </div>
+      </div>
+    );
+  }
+
+  // ── DONE SCREEN ───────────────────────────────────────────────────────────
   if(phase==="done")return(
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(10px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
       <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:420,background:T.card,borderRadius:20,border:`1px solid ${T.border}`,padding:"40px 36px",textAlign:"center"}}>
-        <div style={{fontSize:48,marginBottom:16}}>🎉</div>
         <h2 style={{fontSize:24,fontWeight:700,color:T.white,margin:"0 0 8px"}}>Session complete</h2>
         <p style={{fontSize:14,color:T.muted,margin:"0 0 8px"}}>{task.title}</p>
-        <div style={{fontSize:28,fontWeight:700,color:T.lime,fontFamily:T.mono,marginBottom:20}}>{Math.round(elapsed/60)} min focused</div>
+        <div style={{fontSize:28,fontWeight:700,color:T.lime,fontFamily:T.mono,marginBottom:20}}>{Math.max(1,Math.round(focusElapsed.current/60))} min focused</div>
         <Btn onClick={onClose} style={{width:"100%",justifyContent:"center"}}>Done</Btn>
       </div>
     </div>
   );
 
-  const isBreak=phase==="break";
+  // ── ACTIVE TIMER (focus1 | break | breakDone | focus2) ───────────────────
+  const isBreak=phase==="break"||phase==="breakDone";
+  const timerColor=isBreak?T.amber:T.lime;
+  const phaseLabel=phase==="focus1"?"Time until break":phase==="break"?"Break time":phase==="breakDone"?"Break complete":"Time remaining";
+  const phaseDuration=phase==="focus1"?breakPos*60:phase==="break"?breakMins*60:focus2Mins*60;
+  const phasePct=Math.max(0,Math.min(1,phaseDuration>0?1-secs/phaseDuration:1));
+
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",backdropFilter:"blur(12px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
       <div style={{width:"100%",maxWidth:400,textAlign:"center"}}>
-        <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:isBreak?T.amber:T.lime,marginBottom:16}}>{isBreak?"Break time":"Focused"}</div>
+        <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:timerColor,marginBottom:16}}>{phaseLabel}</div>
+
         <div style={{position:"relative",width:180,height:180,margin:"0 auto 20px"}}>
           <svg viewBox="0 0 120 120" style={{width:180,height:180,transform:"rotate(-90deg)"}}>
-            <circle cx="60" cy="60" r="52" fill="none" stroke={T.card2} strokeWidth="6" />
-            <circle cx="60" cy="60" r="52" fill="none" stroke={isBreak?T.amber:T.lime} strokeWidth="6" strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={isBreak?circumference*(1-breakSecs/(breakMins*60)):circumference*(1-pct/100)} style={{transition:"stroke-dashoffset 0.5s"}} />
+            <circle cx="60" cy="60" r="52" fill="none" stroke={T.card2} strokeWidth="6"/>
+            <circle cx="60" cy="60" r="52" fill="none" stroke={timerColor} strokeWidth="6" strokeLinecap="round"
+              strokeDasharray={circumference}
+              strokeDashoffset={circumference*(1-phasePct)}
+              style={{transition:"stroke-dashoffset 0.5s"}}/>
           </svg>
           <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
-            <div style={{fontSize:42,fontWeight:700,color:T.white,fontFamily:T.mono,letterSpacing:"-0.02em"}}>{isBreak?bm+":"+bs:fm+":"+fs}</div>
-            <div style={{fontSize:11,color:T.muted,marginTop:4}}>{isBreak?"break":"remaining"}</div>
+            <div style={{fontSize:42,fontWeight:700,color:T.white,fontFamily:T.mono,letterSpacing:"-0.02em"}}>{fmt(secs)}</div>
+            <div style={{fontSize:11,color:T.muted,marginTop:4,letterSpacing:"0.08em",textTransform:"uppercase"}}>
+              {phase==="focus1"?"until break":isBreak?"break":"remaining"}
+            </div>
           </div>
         </div>
-        <div style={{fontSize:15,fontWeight:600,color:T.white,marginBottom:4}}>{task.title}</div>
-        {isBreak&&<div style={{fontSize:13,color:T.amber,marginTop:12,padding:"12px 16px",background:T.amber+"12",borderRadius:10,lineHeight:1.5}}>{breakIdea}</div>}
-        <div style={{display:"flex",gap:10,justifyContent:"center",marginTop:24}}>
-          <Btn variant="ghost" onClick={()=>setRunning(r=>!r)}>{running?"Pause":"Resume"}</Btn>
-          <Btn variant="danger" onClick={()=>{setPhase("done");setRunning(false);if(onComplete)onComplete(Math.round(elapsed/60));}}>Finish early</Btn>
-        </div>
+
+        <div style={{fontSize:15,fontWeight:600,color:T.white,marginBottom:8}}>{task.title}</div>
+
+        {isBreak&&(
+          <div style={{fontSize:13,color:T.amber,margin:"0 auto 20px",padding:"12px 16px",background:T.amber+"12",borderRadius:10,lineHeight:1.5,maxWidth:320}}>
+            {breakIdeaRef.current}
+          </div>
+        )}
+
+        {phase==="breakDone"&&(
+          <button onClick={resume} style={{display:"block",width:"100%",maxWidth:240,margin:"0 auto 16px",padding:"16px 24px",background:T.lime,color:T.ink,border:"none",borderRadius:12,fontSize:16,fontWeight:700,cursor:"pointer",fontFamily:T.font,letterSpacing:"-0.01em"}}>
+            Resume
+          </button>
+        )}
+
+        {phase!=="breakDone"&&(
+          <div style={{display:"flex",gap:10,justifyContent:"center",marginTop:phase==="break"?8:24}}>
+            {phase!=="break"&&<Btn variant="ghost" onClick={()=>setRunning(r=>!r)}>{running?"Pause":"Resume"}</Btn>}
+            <Btn variant="danger" onClick={finishEarly}>Finish early</Btn>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -3301,96 +3410,6 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 }
 
 
-// ─── COLLECTION ──────────────────────────────────────────────────────────────
-function Collection() {
-  const [sel,setSel]=useState(null);
-  const data=getCharacterData();
-  const streak=getStreak();
-  const lvl=levelInfo();
-  const isUnlocked=function(id){return data.unlocked.indexOf(id)!==-1;};
-  const streakChars=CHARACTERS.filter(function(c){return c.type==="streak";});
-  const levelChars=CHARACTERS.filter(function(c){return c.type==="level";});
-  const totalU=CHARACTERS.filter(function(c){return isUnlocked(c.id);}).length;
-  const nextStreak=streakChars.find(function(c){return !isUnlocked(c.id);});
-  const nextLevel=levelChars.find(function(c){return !isUnlocked(c.id);});
-
-  useEffect(function(){
-    var d=getCharacterData();
-    var unseen=d.unlocked.filter(function(id){return d.seen.indexOf(id)===-1;});
-    if(unseen.length>0){d.seen=d.seen.concat(unseen);saveCharacterData(d);}
-  },[]);
-
-  var CharCard=function(props){
-    var c=props.c;
-    var u=isUnlocked(c.id);
-    var prog=c.type==="streak"?Math.min(100,Math.round(streak/c.threshold*100)):Math.min(100,Math.round(lvl.level/c.threshold*100));
-    var isNew=u&&data.unlockedAt[c.id]&&(Date.now()-data.unlockedAt[c.id])<7*86400000;
-    return(
-      <div onClick={function(){if(u)setSel(c);}} style={{background:u?T.card:T.card2,border:"1px solid "+(u?T.lime+"44":T.border),borderRadius:16,padding:18,cursor:u?"pointer":"default",opacity:u?1:0.5,transition:"all 0.2s",position:"relative"}}>
-        {isNew&&<span style={{position:"absolute",top:8,right:10,fontSize:9,fontWeight:700,background:T.lime,color:T.ink,padding:"2px 6px",borderRadius:99}}>NEW</span>}
-        <div style={{fontSize:36,marginBottom:10,filter:u?"none":"grayscale(1)"}}>{c.emoji}</div>
-        <div style={{fontSize:13,fontWeight:700,color:u?T.white:T.muted,marginBottom:2}}>{c.name}</div>
-        <div style={{fontSize:10,color:T.muted,marginBottom:8}}>{c.type==="streak"?c.threshold+"-day streak":"Level "+c.threshold}</div>
-        {!u&&<Prog pct={prog} color={T.faint} height={3} />}
-        {u&&<div style={{fontSize:10,color:T.lime,fontWeight:600}}>Unlocked</div>}
-      </div>
-    );
-  };
-
-  return(
-    <div>
-      <PH title="Collection" sub={totalU+" / "+CHARACTERS.length+" characters collected"} />
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:24}}>
-        {nextStreak&&(
-          <Card style={{borderLeft:"3px solid "+T.amber}}>
-            <Label>Next streak unlock</Label>
-            <div style={{display:"flex",alignItems:"center",gap:12}}>
-              <span style={{fontSize:28,filter:"grayscale(1)",opacity:0.5}}>{nextStreak.emoji}</span>
-              <div style={{flex:1}}>
-                <div style={{fontSize:14,fontWeight:600,color:T.white}}>{nextStreak.name}</div>
-                <div style={{fontSize:11,color:T.muted}}>{nextStreak.threshold}-day streak — you are at {streak} days</div>
-                <Prog pct={Math.min(100,Math.round(streak/nextStreak.threshold*100))} color={T.amber} height={4} />
-              </div>
-            </div>
-          </Card>
-        )}
-        {nextLevel&&(
-          <Card style={{borderLeft:"3px solid "+T.purple}}>
-            <Label>Next level unlock</Label>
-            <div style={{display:"flex",alignItems:"center",gap:12}}>
-              <span style={{fontSize:28,filter:"grayscale(1)",opacity:0.5}}>{nextLevel.emoji}</span>
-              <div style={{flex:1}}>
-                <div style={{fontSize:14,fontWeight:600,color:T.white}}>{nextLevel.name}</div>
-                <div style={{fontSize:11,color:T.muted}}>Level {nextLevel.threshold} — you are at {lvl.level}</div>
-                <Prog pct={Math.min(100,Math.round(lvl.level/nextLevel.threshold*100))} color={T.purple} height={4} />
-              </div>
-            </div>
-          </Card>
-        )}
-      </div>
-      <div style={{marginBottom:20}}>
-        <Label>Streak Characters</Label>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10}}>{streakChars.map(function(c){return <CharCard key={c.id} c={c} />;})}</div>
-      </div>
-      <div>
-        <Label>Level Characters</Label>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>{levelChars.map(function(c){return <CharCard key={c.id} c={c} />;})}</div>
-      </div>
-      <Modal open={!!sel} onClose={function(){setSel(null);}} title={sel?sel.name:""} width={400}>
-        {sel&&(
-          <div style={{textAlign:"center",padding:"20px 0"}}>
-            <div style={{fontSize:72,marginBottom:16}}>{sel.emoji}</div>
-            <h2 style={{fontSize:24,fontWeight:700,color:T.white,margin:"0 0 8px"}}>{sel.name}</h2>
-            <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",color:T.lime,textTransform:"uppercase",marginBottom:16}}>{sel.type==="streak"?sel.threshold+"-day streak":"Level "+sel.threshold}</div>
-            <p style={{fontSize:15,color:T.muted,lineHeight:1.6,fontStyle:"italic",margin:0}}>"{sel.desc}"</p>
-            {data.unlockedAt[sel.id]&&<div style={{fontSize:11,color:T.faint,marginTop:16}}>Unlocked {new Date(data.unlockedAt[sel.id]).toLocaleDateString()}</div>}
-          </div>
-        )}
-      </Modal>
-    </div>
-  );
-}
-
 // ─── PROFILE ──────────────────────────────────────────────────────────────────
 function Profile() {
   const prof=getProfile();
@@ -3421,14 +3440,14 @@ function Profile() {
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             <Badge color={T.lime}>Pro</Badge>
             <Badge color={T.amber}>{streak}-day streak</Badge>
-            <Badge color={T.blue}>Level {lvl.level}</Badge>
+            <Badge color={T.blue}>{lvl.title}</Badge>
           </div>
         </div>
         <div style={{textAlign:"right"}}>
           <div style={{fontSize:42,fontWeight:700,color:T.lime,letterSpacing:"-0.04em",lineHeight:1}}>{lvl.xp.toLocaleString()}</div>
-          <div style={{fontSize:12,color:T.muted,marginTop:3}}>XP · Level {lvl.level}</div>
-          <div style={{marginTop:10,width:160}}><Prog pct={lvl.pct} /></div>
-          <div style={{fontSize:11,color:T.muted,marginTop:4}}>{lvl.toNext} XP to Level {lvl.level+1}</div>
+          <div style={{fontSize:12,color:T.muted,marginTop:3}}>XP · {lvl.title}</div>
+          <div style={{marginTop:10,width:160}}><Prog pct={lvl.tierPct} /></div>
+          <div style={{fontSize:11,color:T.muted,marginTop:4}}>{lvl.nextTier?`${(lvl.nextTier.minXP-lvl.xp).toLocaleString()} XP to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
         </div>
       </Card>
       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
@@ -3594,12 +3613,12 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
         <div onClick={()=>setActive("profile")} style={{background:T.card,borderRadius:22,padding:22,cursor:"pointer",border:`1px solid ${T.border}`,display:"flex",flexDirection:"column"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,fontWeight:600}}>XP &amp; Level</span>
-            <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.12em",background:T.card2,padding:"3px 8px",borderRadius:99,color:T.text}}>LVL {lvl.level}</span>
+            <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.12em",background:T.card2,padding:"3px 8px",borderRadius:99,color:T.text}}>{lvl.title.toUpperCase()}</span>
           </div>
           <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.text,margin:"10px 0 2px"}}>{lvl.xp.toLocaleString()}<span style={{fontSize:20,color:T.muted,marginLeft:6}}>xp</span></div>
-          <div style={{fontSize:12,color:T.muted}}>{lvl.toNext} XP to Level {lvl.level+1}</div>
+          <div style={{fontSize:12,color:T.muted}}>{lvl.nextTier?`${(lvl.nextTier.minXP-lvl.xp).toLocaleString()} XP to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
           <div style={{height:6,background:T.card2,borderRadius:99,marginTop:"auto",overflow:"hidden"}}>
-            <div style={{height:"100%",width:lvl.pct+"%",background:T.lime}} />
+            <div style={{height:"100%",width:lvl.tierPct+"%",background:T.lime}} />
           </div>
         </div>
       </div>
@@ -3913,9 +3932,7 @@ function App() {
   const [focusMode,setFocusMode]=useState("Focus");
   const [focusTotal,setFocusTotal]=useState(25*60);
   const [timerTask,setTimerTask]=useState(null);
-  const [newUnlock,setNewUnlock]=useState(null);
   const [scheduleSettingsOpen,setScheduleSettingsOpen]=useState(false);
-  useEffect(function(){var u=checkNewUnlocks();if(u.length>0)setNewUnlock(u[0]);},[]);
   window._setTimerTask=setTimerTask;
   const [creditsOpen,setCreditsOpen]=useState(false);
   const [pricingOpen,setPricingOpen]=useState(false);
@@ -4287,24 +4304,7 @@ function App() {
         const next=lsGet("events",[]).map(ev=>ev.id===timerTask.id?{...ev,status:"done",timeSpent:mins,completedAt:Date.now()}:ev);
         lsSet("events",next);
         setTimerTask(null);
-        setTimeout(()=>{const u=checkNewUnlocks();if(u.length>0)setNewUnlock(u[0]);},500);
       }} />}
-
-      {newUnlock&&(
-        <div onClick={()=>setNewUnlock(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",backdropFilter:"blur(12px)",zIndex:1100,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.3s ease"}}>
-          <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:400,background:T.card,borderRadius:24,border:"2px solid "+T.lime,padding:"48px 36px",textAlign:"center",animation:"studlinPop 0.5s cubic-bezier(.2,.85,.3,1)"}}>
-            <div style={{fontSize:12,fontWeight:700,letterSpacing:"0.12em",color:T.lime,textTransform:"uppercase",marginBottom:16}}>Character unlocked</div>
-            <div style={{fontSize:80,marginBottom:16}}>{newUnlock.emoji}</div>
-            <h2 style={{fontSize:28,fontWeight:700,color:T.white,margin:"0 0 6px"}}>{newUnlock.name}</h2>
-            <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",color:T.lime,textTransform:"uppercase",marginBottom:16}}>{newUnlock.type==="streak"?newUnlock.threshold+"-day streak":"Level "+newUnlock.threshold}</div>
-            <p style={{fontSize:15,color:T.muted,lineHeight:1.6,fontStyle:"italic",margin:"0 0 28px"}}>"{newUnlock.desc}"</p>
-            <div style={{display:"flex",gap:10,justifyContent:"center"}}>
-              <Btn onClick={()=>{setNewUnlock(null);setActive("collection");}}>View collection</Btn>
-              <Btn variant="ghost" onClick={()=>setNewUnlock(null)}>Nice</Btn>
-            </div>
-          </div>
-        </div>
-      )}
 
       <ScheduleSettingsPanel open={scheduleSettingsOpen} onClose={()=>setScheduleSettingsOpen(false)} onSave={()=>{}} />
 
