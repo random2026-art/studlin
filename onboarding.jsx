@@ -76,7 +76,7 @@ function SelectField({ label, value, onChange, options, hint }) {
 
 const STEPS = [
   { name: "Sign up" },{ name: "Basic information" },{ name: "About you" },
-  { name: "Goals" },{ name: "Study load" },{ name: "Workspace preview" },
+  { name: "Goals" },{ name: "Schedule preferences" },{ name: "Workspace preview" },
   { name: "Choose plan" },{ name: "Welcome" },
 ];
 
@@ -280,13 +280,63 @@ function StepGoals({ state, set }) {
   );
 }
 
-function StepLoad({ state, set }) {
-  const opts = [{id:"under1",label:"Less than 1 hour",desc:"Light review, weekend study"},{id:"1to3",label:"1 to 3 hours",desc:"Steady daily routine"},{id:"3to5",label:"3 to 5 hours",desc:"Serious student mode"},{id:"over5",label:"5+ hours",desc:"Cramming, prepping, deep work"}];
+function StepSchedulePrefs({ state, set }) {
+  const handleDiffPref = (val) => set({...state, taskDifficultyPreference: val});
+  const handleWorkStart = (val) => set({...state, workStartTime: val});
+  const handleWorkEnd = (val) => set({...state, workEndTime: val});
+  const handleBedtime = (val) => set({...state, bedtime: val});
+  const handleBufferMargin = (val) => set({...state, bufferMarginStrategy: val});
+
+  const diffOptions = [
+    {id:"FIRST",label:"Tackle hard tasks first",desc:"Crush the most challenging work when you're fresh"},
+    {id:"LAST",label:"Save hard tasks for later",desc:"Build momentum with easier wins first"},
+    {id:"NONE",label:"No preference",desc:"Let Studlin decide based on deadlines"},
+  ];
+  
+  const bufferOptions = [
+    {id:"NONE",label:"No buffer",desc:"Back-to-back tasks, no padding"},
+    {id:"15_MIN",label:"15 min buffer",desc:"Breathing room between tasks"},
+    {id:"30_MIN",label:"30 min buffer",desc:"Stretch, grab water, reset focus"},
+  ];
+
   return (
     <div className="frame">
-      <div className="frame-head"><h2>How long do you study <em>daily?</em></h2><p>Sets your Pomodoro defaults and daily focus target.</p></div>
-      <div className="opt-grid full">
-        {opts.map(o=><button key={o.id} className={"opt"+(state.load===o.id?" is-selected":"")} onClick={()=>set({...state, load:o.id})}><span className="ic">{Ic.clock}</span><span className="body"><span className="lbl">{o.label}</span><span className="desc">{o.desc}</span></span><span className="check">{Ic.check}</span></button>)}
+      <div className="frame-head"><h2>How do you study <em>best?</em></h2><p>Let's tune your schedule around how you actually work.</p></div>
+      
+      <div style={{marginBottom:24}}>
+        <div style={{fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:10}}>Task difficulty preference</div>
+        <div className="opt-grid" style={{gap:10}}>
+          {diffOptions.map(o=><button key={o.id} className={"opt small"+(state.taskDifficultyPreference===o.id?" is-selected":"")} onClick={()=>handleDiffPref(o.id)} style={{padding:"12px 14px",textAlign:"left"}}><span className="body" style={{display:"block"}}><span className="lbl" style={{display:"block",fontSize:13,fontWeight:600,marginBottom:3}}>{o.label}</span><span className="desc" style={{display:"block",fontSize:11,color:"var(--muted)"}}>{o.desc}</span></span><span className="check" style={{position:"absolute",right:14,top:"50%",transform:"translateY(-50%)"}}>{Ic.check}</span></button>)}
+        </div>
+      </div>
+
+      <div style={{marginBottom:24}}>
+        <div style={{fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:10}}>Peak productivity window</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <div>
+            <label style={{fontSize:11,fontWeight:600,textTransform:"uppercase",color:"var(--muted)",display:"block",marginBottom:6}}>Start time</label>
+            <input type="time" value={state.workStartTime||"10:00"} onChange={e=>handleWorkStart(e.target.value)} style={{width:"100%",padding:"10px 12px",background:"var(--card2)",border:"1px solid var(--border)",borderRadius:8,color:"var(--text)",fontSize:13,fontFamily:"inherit",outline:"none",boxSizing:"border-box"}} />
+          </div>
+          <div>
+            <label style={{fontSize:11,fontWeight:600,textTransform:"uppercase",color:"var(--muted)",display:"block",marginBottom:6}}>End time</label>
+            <input type="time" value={state.workEndTime||"18:00"} onChange={e=>handleWorkEnd(e.target.value)} style={{width:"100%",padding:"10px 12px",background:"var(--card2)",border:"1px solid var(--border)",borderRadius:8,color:"var(--text)",fontSize:13,fontFamily:"inherit",outline:"none",boxSizing:"border-box"}} />
+          </div>
+        </div>
+      </div>
+
+      <div style={{marginBottom:24}}>
+        <div style={{fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:10}}>Sleep schedule</div>
+        <div>
+          <label style={{fontSize:11,fontWeight:600,textTransform:"uppercase",color:"var(--muted)",display:"block",marginBottom:6}}>Bedtime</label>
+          <input type="time" value={state.bedtime||"23:00"} onChange={e=>handleBedtime(e.target.value)} style={{width:"100%",maxWidth:180,padding:"10px 12px",background:"var(--card2)",border:"1px solid var(--border)",borderRadius:8,color:"var(--text)",fontSize:13,fontFamily:"inherit",outline:"none",boxSizing:"border-box"}} />
+        </div>
+      </div>
+
+      <div>
+        <div style={{fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:10}}>Buffer margin strategy</div>
+        <div className="opt-grid" style={{gap:10}}>
+          {bufferOptions.map(o=><button key={o.id} className={"opt small"+(state.bufferMarginStrategy===o.id?" is-selected":"")} onClick={()=>handleBufferMargin(o.id)} style={{padding:"12px 14px",textAlign:"left"}}><span className="body" style={{display:"block"}}><span className="lbl" style={{display:"block",fontSize:13,fontWeight:600,marginBottom:3}}>{o.label}</span><span className="desc" style={{display:"block",fontSize:11,color:"var(--muted)"}}>{o.desc}</span></span><span className="check" style={{position:"absolute",right:14,top:"50%",transform:"translateY(-50%)"}}>{Ic.check}</span></button>)}
+        </div>
       </div>
     </div>
   );
@@ -465,7 +515,7 @@ function App() {
     if (step === 1) return !!(state.preferredName && state.language && state.descriptor && state.terms);
     if (step === 2) return !!state.role;
     if (step === 3) return (state.goals||[]).length > 0;
-    if (step === 4) return !!state.load;
+    if (step === 4) return !!(state.taskDifficultyPreference && state.workStartTime && state.workEndTime && state.bedtime && state.bufferMarginStrategy);
     if (step === 5) return true;
     if (step === 6) return !!state.plan;
     return true;
@@ -515,7 +565,7 @@ function App() {
           {step === 1 && <StepBasic state={state} set={setState} />}
           {step === 2 && <StepRole state={state} set={setState} />}
           {step === 3 && <StepGoals state={state} set={setState} />}
-          {step === 4 && <StepLoad state={state} set={setState} />}
+          {step === 4 && <StepSchedulePrefs state={state} set={setState} />}
           {step === 5 && <StepPreview state={state} />}
           {step === 6 && <StepPlan state={state} set={setState} />}
           {step === 7 && <StepWelcome state={state} />}
