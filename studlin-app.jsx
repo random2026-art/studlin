@@ -378,7 +378,322 @@ function getXP(){
 }
 function levelInfo(){const xp=getXP();const per=300;const level=Math.floor(xp/per)+1;const into=xp-(level-1)*per;return {xp,level,into,per,toNext:per-into,pct:Math.round(into/per*100)};}
 function weekStreak(){const days=new Set(lsGet("days",[]));const now=new Date();const dow=(now.getDay()+6)%7;const mon=new Date(now);mon.setDate(now.getDate()-dow);return ["M","T","W","T","F","S","S"].map((lab,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);const k=dayKey(d);const today=k===dayKey(now);return {lab,on:days.has(k),today,future:d>now&&!today};});}
-function todaysPlan(){const events=lsGet("events",[]);const tk=dayKey();const done=lsGet("planDone",{});return events.filter(e=>e.date===tk).sort((a,b)=>(a.time||"")<(b.time||"")?-1:1).map(e=>({...e,done:!!done[e.id]}));}
+// ─── ADVANCED SCHEDULING SYSTEM (5 features integrated) ──────────────────────
+// Feature 1: User preference storage + getters/setters (complete with all onboarding preferences)
+function getSchedulePreferences(){
+  const def={
+    workStartTime:"10:00",
+    workEndTime:"18:00",
+    bedtime:"23:00",
+    taskDifficultyPreference:"NONE",
+    bufferMarginStrategy:"15_MIN"
+  };
+  const stored=lsGet("schedulePrefs",def);
+  return {...def,...stored};
+}
+function setSchedulePreferences(prefs){
+  lsSet("schedulePrefs",prefs);
+}
+
+// Helper: convert "HH:MM" to minutes since midnight
+function timeToMinutes(timeStr){
+  if(!timeStr)return 0;
+  const [h,m]=timeStr.split(":").map(Number);
+  return h*60+m;
+}
+
+// Helper: convert minutes since midnight back to "HH:MM"
+function minutesToTime(mins){
+  const h=Math.floor(mins/60);
+  const m=mins%60;
+  return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
+}
+
+// Feature 3: Task priority scoring (0-1000 scale with exponential deadline urgency)
+function calculateTaskPriority(task,allTasks){
+  let score=0;
+  const prefs=getSchedulePreferences();
+  const now=new Date();
+  
+  // Base priority (user-set)
+  const basePriority=task.priority||3;
+  score+=basePriority*100;
+  
+  // Deadline urgency (exponential scaling as due date approaches)
+  if(task.deadline){
+    const dueDate=new Date(task.deadline);
+    const hoursDue=(dueDate-now)/(1000*60*60);
+    if(hoursDue<=0){
+      score+=300;
+    }else if(hoursDue<=6){
+      score+=250;
+    }else if(hoursDue<=24){
+      score+=200;
+    }else if(hoursDue<=72){
+      score+=120;
+    }else{
+      score+=Math.max(0,100-hoursDue/24);
+    }
+  }
+  
+  // Difficulty preference weighting
+  const diff=task.difficulty||2;
+  if(prefs.difficultyPreference==="hardFirst"&&diff>=3){
+    score+=150;
+  }else if(prefs.difficultyPreference==="easyFirst"&&diff<=2){
+    score+=100;
+  }
+  
+  // Duration penalty (longer tasks score lower to prioritize quick wins)
+  const dur=task.duration||30;
+  if(dur>90)score-=50;
+  else if(dur>60)score-=25;
+  
+  return Math.min(1000,Math.max(0,score));
+}
+
+// Feature 4: Duration-aware chunking & auto-inject breaks
+function chunkTasksWithBreaks(tasks){
+  const chunked=[];
+  tasks.forEach(task=>{
+    if(!task.isFlexible||(task.duration||0)<=90){
+      chunked.push(task);
+      return;
+    }
+    const dur=task.duration;
+    const chunks=Math.ceil(dur/45);
+    for(let i=0;i<chunks;i++){
+      const chunkDur=Math.min(45,dur-(i*45));
+      chunked.push({
+        ...task,
+        id:task.id+"-chunk-"+i,
+        title:task.title+(chunks>1?` (Part ${i+1}/${chunks})`:""),
+        duration:chunkDur,
+        parentId:task.id,
+        isChunk:true,
+      });
+      if(i<chunks-1){
+        chunked.push({
+          id:"break-"+task.id+"-"+i,
+          title:"Break",
+          duration:15,
+          isBreak:true,
+          subject:"Rest",
+          priority:1,
+        });
+      }
+    }
+  });
+  return chunked;
+}
+
+// Feature 5: Conflict detection (detect overlaps with hard events)
+function detectConflicts(task,allTasks,startMins){
+  const prefs=getSchedulePreferences();
+  const taskDur=task.duration||30;
+  const taskEnd=startMins+taskDur;
+  
+  // Check for collisions with hard events (non-flexible tasks)
+  return allTasks.some(other=>{
+    if(other.id===task.id||!other.time||other.isFlexible)return false;
+    const otherStart=timeToMinutes(other.time);
+    const otherEnd=otherStart+(other.duration||30);
+    return!(taskEnd<=otherStart||startMins>=otherEnd);
+  });
+}
+
+// Feature 2+Features 1,3,4,5: Integrated advanced scheduler
+function advancedSchedulePlanner(baseEvents){
+  const prefs=getSchedulePreferences();
+  const tk=dayKey();
+  const done=lsGet("planDone",{});
+  
+  // Get all events for today
+  const events=baseEvents.filter(e=>e.date===tk);
+  const now=new Date();
+  const nowMins=timeToMinutes(String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0"));
+  
+  // Time window constraints
+  const workStart=timeToMinutes(prefs.workStartTime);
+  const workEnd=timeToMinutes(prefs.workEndTime);
+  const bedtime=timeToMinutes(prefs.bedtime);
+  const softBedtimeBuffer=120; // 2 hours before bedtime
+  
+  // Separate hard events (fixed time) and flexible tasks
+  const hardEvents=events.filter(e=>!e.isFlexible&&e.time);
+  const flexibleTasks=events.filter(e=>e.isFlexible||!e.time).sort((a,b)=>calculateTaskPriority(b,events)-calculateTaskPriority(a,events));
+  
+  // Chunk long flexible tasks and add breaks
+  const flexibleChunked=chunkTasksWithBreaks(flexibleTasks);
+  
+  // Sort hard events by time
+  hardEvents.sort((a,b)=>(a.time||"")<(b.time||"")?-1:1);
+  
+  const scheduled=[];
+  const occupiedSlots=hardEvents.map(e=>({
+    start:timeToMinutes(e.time),
+    end:timeToMinutes(e.time)+(e.duration||30),
+    event:e,
+  }));
+  
+  // Place hard events
+  hardEvents.forEach(e=>{
+    scheduled.push({...e,done:!!done[e.id],scheduled:true});
+  });
+  
+  // Place flexible tasks in available windows
+  flexibleChunked.forEach(task=>{
+    if(task.isBreak){
+      scheduled.push(task);
+      return;
+    }
+    
+    const dur=task.duration||30;
+    let placed=false;
+    
+    // Try to find first available slot within work window
+    for(let timeSlot=workStart;timeSlot+dur<=Math.min(workEnd,bedtime-softBedtimeBuffer);timeSlot+=15){
+      if(!detectConflicts(task,occupiedSlots,timeSlot)){
+        occupiedSlots.push({start:timeSlot,end:timeSlot+dur,task:task});
+        scheduled.push({
+          ...task,
+          time:minutesToTime(timeSlot),
+          done:!!done[task.id],
+          scheduled:true,
+        });
+        placed=true;
+        break;
+      }
+    }
+    
+    if(!placed){
+      scheduled.push({
+        ...task,
+        done:!!done[task.id],
+        scheduled:false,
+        reason:"No available window within preferred hours",
+      });
+    }
+  });
+  
+  return scheduled;
+}
+
+function todaysPlan(){
+  const events=lsGet("events",[]);
+  return advancedSchedulePlanner(events);
+}
+
+// Comprehensive task rearrangement function (Feature 3 advanced implementation)
+function rearrangeUserTasks(tasks, userPrefs){
+  if(!tasks||!Array.isArray(tasks)||tasks.length===0)return tasks;
+  const prefs=userPrefs||getSchedulePreferences();
+  
+  // Parse time values
+  const parseTime=(t)=>{const [h,m]=(t||"10:00").split(":").map(Number);return h*60+m;};
+  const workStart=parseTime(prefs.workStartTime);
+  const workEnd=parseTime(prefs.workEndTime);
+  const bedtimeMin=parseTime(prefs.bedtime);
+  const bedtimeSoftLimit=bedtimeMin-120; // 2-hour buffer before actual bedtime
+  
+  // Calculate baseline score (0-1000) with exponential deadline urgency
+  const calcScore=(task)=>{
+    let score=0;
+    const now=Date.now();
+    const deadline=task.deadline?new Date(task.deadline).getTime():null;
+    
+    // Base: priority level × 100
+    score+=Math.min(500,(task.priority||3)*100);
+    
+    // Exponential deadline urgency
+    if(deadline){
+      const hoursUntil=(deadline-now)/(1000*60*60);
+      if(hoursUntil<=0)score+=300; // overdue = critical
+      else if(hoursUntil<=6)score+=250;
+      else if(hoursUntil<=24)score+=200;
+      else if(hoursUntil<=72)score+=120;
+      else score+=Math.max(50,100-(hoursUntil/24)*5);
+    }
+    
+    // Difficulty weighting based on preference
+    const difficulty=task.difficulty||3;
+    if(prefs.taskDifficultyPreference==="FIRST"&&difficulty>=3)score+=150;
+    else if(prefs.taskDifficultyPreference==="LAST"&&difficulty<=2)score+=100;
+    
+    // Duration penalty (long tasks score lower to prioritize quick wins)
+    const duration=task.duration||60;
+    if(duration>90)score-=50;
+    else if(duration>60)score-=25;
+    
+    return Math.max(0,Math.min(1000,Math.round(score)));
+  };
+  
+  // Separate hard events from flexible tasks
+  const hardEvents=tasks.filter(t=>t.kind==="class"||t.kind==="exam"||!t.isFlexible);
+  const flexibleTasks=tasks.filter(t=>t.isFlexible);
+  
+  // Calculate occupied time slots from hard events
+  const occupiedSlots=[];
+  hardEvents.forEach(ev=>{
+    if(ev.time){
+      const [h,m]=(ev.time.split(":")).map(Number);
+      const startMins=h*60+m;
+      const endMins=startMins+(ev.duration||60);
+      occupiedSlots.push({start:startMins,end:endMins,title:ev.title});
+    }
+  });
+  
+  // Sort flexible tasks by calculated score (highest first)
+  const sorted=[...flexibleTasks].sort((a,b)=>calcScore(b)-calcScore(a));
+  
+  // Try to place each task, apply "LAST" preference by pushing to later slots
+  const scheduled=[];
+  sorted.forEach(task=>{
+    let placed=false;
+    const duration=task.duration||60;
+    
+    // Scan for first available 15-minute window within work constraints
+    for(let mins=workStart;mins<=workEnd-duration;mins+=15){
+      const endMins=mins+duration;
+      
+      // Check bedtime constraints
+      if(prefs.taskDifficultyPreference==="LAST"&&(difficulty=>3||task.priority<=2)){
+        // For LAST preference low-priority tasks, scan from workStart
+        if(endMins>bedtimeSoftLimit)continue;
+      }else{
+        // Default: hard limit before bedtime
+        if(endMins>bedtimeSoftLimit)continue;
+      }
+      
+      // Check no conflict with occupied slots
+      const hasConflict=occupiedSlots.some(slot=>
+        (mins<slot.end&&endMins>slot.start)
+      );
+      if(!hasConflict){
+        const h=Math.floor(mins/60);
+        const m=mins%60;
+        const time=String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
+        scheduled.push({...task,scheduledTime:time,score:calcScore(task)});
+        placed=true;
+        break;
+      }
+    }
+    
+    if(!placed){
+      scheduled.push({...task,score:calcScore(task),unschedulable:true,reason:"No available window within preferred work hours"});
+    }
+  });
+  
+  // Add back hard events
+  const final=[...hardEvents,...scheduled].sort((a,b)=>{
+    if(a.date!==b.date)return a.date.localeCompare(b.date);
+    return (a.time||"00:00").localeCompare(b.time||"00:00");
+  });
+  
+  return final;
+}
+
+
 function togglePlanDone(id){const done=lsGet("planDone",{});done[id]=!done[id];lsSet("planDone",done);return done;}
 function profileStats(){const s=lsGet("sessions",[]);const totalMin=s.reduce((a,x)=>a+(x.m||0),0);const st=sessionStats();return {totalMin,focusSessions:s.length,weekMin:st.weekMin,avg:st.avg};}
 function getProfile(){
@@ -417,6 +732,101 @@ function seedEventsIfStale(){
     mk(3,"09:00","Macbeth essay · first draft","English IV","deadline"),
     mk(5,"10:00","Calculus test · Derivatives","Calculus","exam"),
   ]);
+}
+
+// ─── SCHEDULE SETTINGS PANEL (Feature 2: Editable Preferences) ─────────────────
+function ScheduleSettingsPanel({open,onClose,onSave}){
+  const prefs=getSchedulePreferences();
+  const [workStart,setWorkStart]=useState(prefs.workStartTime);
+  const [workEnd,setWorkEnd]=useState(prefs.workEndTime);
+  const [bedtime,setBedtime]=useState(prefs.bedtime);
+  const [difficulty,setDifficulty]=useState(prefs.difficultyPreference);
+  const [saved,setSaved]=useState(false);
+  
+  const handleSave=()=>{
+    const newPrefs={
+      workStartTime:workStart,
+      workEndTime:workEnd,
+      bedtime:bedtime,
+      difficultyPreference:difficulty,
+    };
+    setSchedulePreferences(newPrefs);
+    setSaved(true);
+    setTimeout(()=>setSaved(false),2000);
+    if(onSave)onSave();
+  };
+  
+  if(!open)return null;
+  
+  return (
+    <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:95,background:"rgba(8,12,10,0.72)",backdropFilter:"blur(7px)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:520,maxWidth:"100%",background:T.surface,border:"1px solid "+T.border,borderRadius:16,padding:28,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)",maxHeight:"90vh",overflowY:"auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:24}}>
+          <span style={{display:"inline-flex",width:34,height:34,borderRadius:10,background:T.lime+"20",border:"1px solid "+T.lime+"44",alignItems:"center",justifyContent:"center",color:T.lime,fontSize:16}}>⚙️</span>
+          <div style={{fontSize:18,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Study Schedule Preferences</div>
+        </div>
+        
+        <div style={{marginBottom:22}}>
+          <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>Peak Work Hours</label>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <div>
+              <label style={{fontSize:12,color:T.text,marginBottom:4,display:"block"}}>Start time</label>
+              <input type="time" value={workStart} onChange={e=>setWorkStart(e.target.value)} style={{width:"100%",background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.mono}} />
+            </div>
+            <div>
+              <label style={{fontSize:12,color:T.text,marginBottom:4,display:"block"}}>End time</label>
+              <input type="time" value={workEnd} onChange={e=>setWorkEnd(e.target.value)} style={{width:"100%",background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.mono}} />
+            </div>
+          </div>
+          <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>Tasks will be scheduled within this window. Your study schedule respects these hours.</div>
+        </div>
+        
+        <div style={{marginBottom:22}}>
+          <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>Bedtime (Soft Limit)</label>
+          <input type="time" value={bedtime} onChange={e=>setBedtime(e.target.value)} style={{width:"100%",background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.mono,maxWidth:200}} />
+          <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>Tasks won't be scheduled in the 2 hours before bedtime. This keeps your evening protected.</div>
+        </div>
+        
+        <div style={{marginBottom:22}}>
+          <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>Difficulty Preference</label>
+          <div style={{display:"flex",gap:8}}>
+            {[
+              {value:"easyFirst",label:"Easy First",desc:"Tackle quick wins before hard tasks"},
+              {value:"balanced",label:"Balanced",desc:"Mix easy and hard throughout"},
+              {value:"hardFirst",label:"Hard First",desc:"Hit hard tasks during peak focus"},
+            ].map(opt=>(
+              <button
+                key={opt.value}
+                onClick={()=>setDifficulty(opt.value)}
+                style={{
+                  flex:1,padding:12,borderRadius:8,border:"1px solid "+(difficulty===opt.value?T.lime+"66":T.border),
+                  background:difficulty===opt.value?T.lime+"14":"transparent",
+                  color:difficulty===opt.value?T.lime:T.muted,
+                  fontSize:12,fontWeight:difficulty===opt.value?600:500,
+                  cursor:"pointer",
+                  transition:"all 0.15s",
+                  textAlign:"left",
+                }}
+              >
+                <div style={{fontWeight:600}}>{opt.label}</div>
+                <div style={{fontSize:10.5,opacity:0.8,marginTop:2}}>{opt.desc}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+        
+        {saved&&<div style={{background:T.lime+"20",border:"1px solid "+T.lime+"44",borderRadius:8,padding:12,fontSize:12,color:T.lime,marginBottom:16,display:"flex",alignItems:"center",gap:8}}>
+          <span style={{display:"inline-flex"}}>✓</span>
+          Preferences saved! Your schedule will instantly re-sort.
+        </div>}
+        
+        <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+          <button onClick={onClose} style={{padding:"10px 18px",borderRadius:8,border:"1px solid "+T.border,background:"transparent",color:T.muted,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Cancel</button>
+          <button onClick={handleSave} style={{padding:"10px 18px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Save Preferences</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ─── UPGRADE MODAL (shared paywall) ───────────────────────────────────────────
@@ -1447,6 +1857,148 @@ function TaskTimerModal({task,onClose,onComplete}){
   );
 }
 
+// ─── WEEKLY PLANNER ───────────────────────────────────────────────────────────
+const WK_PX_HR = 64; // pixels per hour in weekly grid
+
+function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit}) {
+  const wkColRefs = useRef({});
+  const [wkDragId, setWkDragId] = useState(null);
+  const [wkDragDeadline, setWkDragDeadline] = useState(null);
+  const [wkDragOverDay, setWkDragOverDay] = useState(null);
+  const [wkDropTime, setWkDropTime] = useState(null);
+
+  const weekDays = (() => {
+    const d = new Date();
+    const day = d.getDay();
+    const diff = day === 0 ? -6 : 1 - day;
+    d.setDate(d.getDate() + diff + weekOffset * 7);
+    d.setHours(0, 0, 0, 0);
+    return Array.from({length: 7}, (_, i) => { const x = new Date(d); x.setDate(x.getDate() + i); return x; });
+  })();
+
+  const byDay = {};
+  events.forEach(ev => { (byDay[ev.date] = byDay[ev.date] || []).push(ev); });
+
+  const handleDragOver = (e, dk) => {
+    e.preventDefault();
+    setWkDragOverDay(dk);
+    const col = wkColRefs.current[dk];
+    if (col) {
+      const rect = col.getBoundingClientRect();
+      const relY = Math.max(0, e.clientY - rect.top);
+      const totalMins = Math.round(relY / WK_PX_HR * 60);
+      const hrs = Math.min(23, Math.floor(totalMins / 60));
+      const rawMins = totalMins % 60;
+      const snappedMins = Math.min(45, Math.round(rawMins / 15) * 15);
+      setWkDropTime(String(hrs).padStart(2,'0') + ':' + String(snappedMins).padStart(2,'0'));
+    }
+  };
+
+  const handleDrop = (e, dk) => {
+    e.preventDefault();
+    if (!wkDragId) return;
+    const time = wkDropTime || '09:00';
+    const next = events.map(ev => ev.id === wkDragId ? {...ev, date: dk, time} : ev);
+    setEvents(next); lsSet("events", next);
+    setWkDragId(null); setWkDragDeadline(null); setWkDragOverDay(null); setWkDropTime(null);
+  };
+
+  const handleDragEnd = () => { setWkDragId(null); setWkDragDeadline(null); setWkDragOverDay(null); setWkDropTime(null); };
+
+  const rangeLabel = weekDays[0].toLocaleDateString("en-US",{month:"short",day:"numeric"}) + " – " + weekDays[6].toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+  const DAY_NAMES = ["MON","TUE","WED","THU","FRI","SAT","SUN"];
+
+  return (
+    <Card style={{padding:0,overflow:"hidden"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 16px",borderBottom:`1px solid ${T.border}`}}>
+        <span style={{fontSize:14,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>{rangeLabel}</span>
+        <div style={{display:"flex",gap:6}}>
+          <BtnSm variant="ghost" onClick={()=>setWeekOffset(o=>o-1)}>←</BtnSm>
+          <BtnSm variant="ghost" onClick={()=>setWeekOffset(0)}>This week</BtnSm>
+          <BtnSm variant="ghost" onClick={()=>setWeekOffset(o=>o+1)}>→</BtnSm>
+        </div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"52px repeat(7,1fr)",borderBottom:`1px solid ${T.border}`,background:T.card}}>
+        <div style={{height:48}} />
+        {weekDays.map((d, i) => {
+          const dk = dayKey(d);
+          const isToday = dk === todayK;
+          return (
+            <div key={i} style={{textAlign:"center",padding:"7px 4px 9px",borderLeft:`1px solid ${T.border}`}}>
+              <div style={{fontSize:9,fontWeight:700,letterSpacing:"0.1em",color:T.muted,marginBottom:4}}>{DAY_NAMES[i]}</div>
+              <div onDoubleClick={()=>openNew(dk)} style={{width:28,height:28,borderRadius:"50%",background:isToday?T.lime:"transparent",color:isToday?T.ink:T.white,fontSize:13,fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>{d.getDate()}</div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{display:"flex",overflowY:"auto",maxHeight:"calc(100vh - 330px)"}} onDragEnd={handleDragEnd}>
+        <div style={{width:52,flexShrink:0,background:T.card,borderRight:`1px solid ${T.border}`,zIndex:2}}>
+          {Array.from({length:24}, (_, h) => (
+            <div key={h} style={{height:WK_PX_HR,display:"flex",alignItems:"flex-start",justifyContent:"flex-end",paddingRight:8,paddingTop:3,borderTop:`1px solid ${T.border}44`,boxSizing:"border-box"}}>
+              <span style={{fontSize:9,color:T.muted,whiteSpace:"nowrap"}}>{h===0?"12 AM":h<12?h+" AM":h===12?"12 PM":(h-12)+" PM"}</span>
+            </div>
+          ))}
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",flex:1,minWidth:0}}>
+          {weekDays.map((day, colIdx) => {
+            const dk = dayKey(day);
+            const colEvs = (byDay[dk] || []).filter(ev => ev.time);
+            const isPastDeadline = !!(wkDragDeadline && dk > wkDragDeadline);
+            let ghostEl = null;
+            if (wkDragOverDay === dk && wkDropTime) {
+              const parts = wkDropTime.split(":").map(Number);
+              const gh = parts[0]; const gm = parts[1];
+              const dragEv = events.find(e => e.id === wkDragId);
+              const dur = dragEv ? (dragEv.duration || 30) : 30;
+              ghostEl = <div style={{position:"absolute",top:(gh*60+gm)*(WK_PX_HR/60),left:2,right:2,height:Math.max(22,dur*(WK_PX_HR/60)),borderRadius:5,background:T.lime+"14",border:`1.5px dashed ${T.lime}`,zIndex:4,pointerEvents:"none",boxSizing:"border-box"}} />;
+            }
+            return (
+              <div key={colIdx} style={{position:"relative",borderLeft:`1px solid ${T.border}`,height:24*WK_PX_HR,boxSizing:"border-box"}}
+                ref={el => { wkColRefs.current[dk] = el; }}
+                onDragOver={e=>handleDragOver(e,dk)}
+                onDrop={e=>handleDrop(e,dk)}>
+                {Array.from({length:24}, (_, h) => (
+                  <div key={h} style={{position:"absolute",top:h*WK_PX_HR,left:0,right:0,height:WK_PX_HR,borderTop:`1px solid ${T.border}44`,boxSizing:"border-box"}} />
+                ))}
+                {Array.from({length:24}, (_, h) => (
+                  <div key={"hh"+h} style={{position:"absolute",top:h*WK_PX_HR+WK_PX_HR/2,left:0,right:0,borderTop:`1px dashed ${T.border}22`}} />
+                ))}
+                {isPastDeadline && (
+                  <div style={{position:"absolute",inset:0,background:"rgba(217,128,107,0.07)",borderLeft:"2px solid rgba(217,128,107,0.35)",zIndex:5,pointerEvents:"none"}}>
+                    <div style={{position:"sticky",top:6,textAlign:"center",fontSize:8,fontWeight:800,letterSpacing:"0.08em",color:"rgba(217,128,107,0.65)",padding:3}}>PAST DUE</div>
+                  </div>
+                )}
+                {colEvs.map(ev => {
+                  const timeParts = ev.time.split(":").map(Number);
+                  const hh = timeParts[0]; const mm = timeParts[1];
+                  const topPx = (hh * 60 + mm) * (WK_PX_HR / 60);
+                  const dur = ev.duration || 30;
+                  const heightPx = Math.max(22, dur * (WK_PX_HR / 60));
+                  const isDone = ev.status === "done";
+                  const over = daysOverdue(ev);
+                  const color = over > 0 ? T.red : colorOf(ev.subject);
+                  return (
+                    <div key={ev.id}
+                      draggable
+                      onDragStart={()=>{ setWkDragId(ev.id); setWkDragDeadline(ev.deadline||null); }}
+                      onDoubleClick={()=>openEdit(ev)}
+                      title="Double-click to edit · Drag to reschedule"
+                      style={{position:"absolute",top:topPx,left:2,right:2,height:heightPx,borderRadius:5,background:color+"1E",borderLeft:`3px solid ${color}`,padding:"2px 5px",cursor:"grab",overflow:"hidden",zIndex:3,opacity:isDone?0.4:1,boxSizing:"border-box",userSelect:"none"}}>
+                      <div style={{fontSize:9.5,fontWeight:700,color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</div>
+                      {heightPx > 34 && <div style={{fontSize:8.5,color:T.muted,marginTop:1}}>{fmtTime(ev.time)}{dur ? " · "+dur+"m" : ""}</div>}
+                    </div>
+                  );
+                })}
+                {ghostEl}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function CalendarTab(){
   const SUBJ=[
     {value:"Chemistry",label:"Chemistry",color:T.red},
@@ -1477,7 +2029,8 @@ function CalendarTab(){
   const [evCustom,setEvCustom]=useState("");
   const [evKind,setEvKind]=useState("deadline");
   const [evNotes,setEvNotes]=useState("");
-  const [evPriority,setEvPriority]=useState(3);
+  const [evPriority,setEvPriority]=useState(500); // 0-1000 continuous scale
+  const [evDifficulty,setEvDifficulty]=useState(500); // 0-1000 continuous scale for difficulty
   const [evDeadline,setEvDeadline]=useState("");
   const [evDuration,setEvDuration]=useState(60);
   const [evSplitEnabled,setEvSplitEnabled]=useState(false);
@@ -1485,6 +2038,20 @@ function CalendarTab(){
   const [aiLoading,setAiLoading]=useState(false);
   const [toast,setToast]=useState(false);
   const [dragId,setDragId]=useState(null);
+  const [calView,setCalView]=useState("monthly");
+  const [weekOffset,setWeekOffset]=useState(0);
+  const [editOpen,setEditOpen]=useState(false);
+  const [editEv,setEditEv]=useState(null);
+  const [editTitle,setEditTitle]=useState("");
+  const [editDate,setEditDate]=useState("");
+  const [editTime,setEditTime]=useState("14:30");
+  const [editDuration,setEditDuration]=useState(60);
+  const [editDeadline,setEditDeadline]=useState("");
+  const [editPriority,setEditPriority]=useState(500);
+  const [editDifficulty,setEditDifficulty]=useState(500);
+  const [editSubject,setEditSubject]=useState("Chemistry");
+  const [editKind,setEditKind]=useState("deadline");
+  const [editNotes,setEditNotes]=useState("");
   const monthNames=["January","February","March","April","May","June","July","August","September","October","November","December"];
   const lead=(new Date(ym.y,ym.m,1).getDay()+6)%7;
   const dim=new Date(ym.y,ym.m+1,0).getDate();
@@ -1500,11 +2067,11 @@ function CalendarTab(){
   const relDay=(k)=>{if(k===todayK)return "Today";const t=new Date();t.setDate(t.getDate()+1);if(k===dayKey(t))return "Tomorrow";const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{month:"short",day:"numeric"});};
   const upcoming=events.filter(ev=>ev.date>=todayK).sort((a,b)=>a.date===b.date?(a.time<b.time?-1:1):(a.date<b.date?-1:1)).slice(0,6);
   const dayEvents=(byDay[selDay]||[]).slice().sort((a,b)=>a.time<b.time?-1:1);
-  const openNew=(dateK)=>{setEvDate(dateK||selDay);setEvDeadline("");setEvPriority(3);setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setNewOpen(true);};
-  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvPriority(3);setEvDeadline("");setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);};
+  const openNew=(dateK)=>{setEvDate(dateK||selDay);setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setNewOpen(true);};
+  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvPriority(500);setEvDifficulty(500);setEvDeadline("");setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);};
   const buildTask=(date,time,titleSuffix,splitInfo)=>{
     const subj=evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject;
-    return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,kind:evKind,notes:evNotes,priority:evPriority,deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,...(splitInfo||{})};
+    return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,kind:evKind,notes:evNotes,priority:Math.round(evPriority/100),difficulty:Math.round(evDifficulty/100),deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,...(splitInfo||{})};
   };
   const commitTasks=(newTasks)=>{
     const next=events.concat(newTasks);
@@ -1533,7 +2100,8 @@ function CalendarTab(){
     const existing=events.filter(ev=>ev.date>=tk).map(ev=>({title:ev.title,date:ev.date,time:ev.time,duration:ev.duration||60}));
     const splitCount=evSplitEnabled?evSplitCount:1;
     const perSession=Math.round(evDuration/splitCount);
-    const prompt="You are a scheduling AI. Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+PRIORITY_LABELS[evPriority]+(evDeadline?". Deadline: "+evDeadline:"")+". Today is "+tk+". Existing schedule: "+JSON.stringify(existing)+". RULES: Higher priority = earlier slots. Must be before deadline. Avoid conflicts. Hours 8:00-22:00. Spread splits across days. Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
+    const priorityLabel=evPriority<200?"Low":evPriority<400?"Medium-Low":evPriority<600?"Medium":evPriority<800?"High":"Urgent";
+    const prompt="You are a scheduling AI. Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+priorityLabel+(evDeadline?". Deadline: "+evDeadline:"")+". Today is "+tk+". Existing schedule: "+JSON.stringify(existing)+". RULES: Higher priority = earlier slots. Must be before deadline. Avoid conflicts. Hours 8:00-22:00. Spread splits across days. Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
     try{
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
       const data=await res.json();
@@ -1551,48 +2119,109 @@ function CalendarTab(){
   const moveEvent=(id,newDate)=>{const next=events.map(ev=>ev.id===id?{...ev,date:newDate}:ev);setEvents(next);lsSet("events",next);};
   const markDone=(id)=>{const next=events.map(ev=>ev.id===id?{...ev,status:"done",completedAt:Date.now()}:ev);setEvents(next);lsSet("events",next);};
   const nav=(d)=>setYm(c=>{const m2=c.m+d;return {y:c.y+Math.floor(m2/12),m:((m2%12)+12)%12};});
+  const openEdit=(ev)=>{setEditEv(ev);setEditTitle(ev.title||"");setEditDate(ev.date||dayKey());setEditTime(ev.time||"14:30");setEditDuration(ev.duration||60);setEditDeadline(ev.deadline||"");setEditPriority((ev.priority||5)*100);setEditDifficulty((ev.difficulty||5)*100);setEditSubject(ev.subject||"Chemistry");setEditKind(ev.kind||"deadline");setEditNotes(ev.notes||"");setEditOpen(true);};
+  const closeEdit=()=>{setEditOpen(false);setEditEv(null);};
+  const saveEdit=()=>{if(!editEv||!editTitle.trim())return;const next=events.map(e=>e.id===editEv.id?{...e,title:editTitle.trim(),date:editDate,time:editTime,duration:editDuration,deadline:editDeadline||null,priority:Math.round(editPriority/100),difficulty:Math.round(editDifficulty/100),subject:editSubject,kind:editKind,notes:editNotes}:e);setEvents(next);lsSet("events",next);closeEdit();};
   return (
     <div>
       <PH title="Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn>} />
+      <div style={{display:"flex",gap:6,marginBottom:20}}>
+        {["monthly","weekly"].map(v=>(
+          <button key={v} onClick={()=>setCalView(v)} style={{padding:"6px 14px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",background:calView===v?T.lime+"14":"transparent",color:calView===v?T.lime:T.muted,border:`1px solid ${calView===v?T.lime+"44":T.border}`,fontFamily:T.font,transition:"all 0.15s",textTransform:"capitalize"}}>{v}</button>
+        ))}
+      </div>
       {toast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} Task added</div>
       )}
       <Modal open={newOpen} onClose={resetForm} title="New task" sub="Add details and let Studlin schedule it, or place it manually." width={580}
-        footer={<><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn variant="ghost" onClick={saveManual} style={{opacity:evTitle.trim()?1:0.45}}>Save manually</Btn><Btn onClick={aiArrange} style={{opacity:evTitle.trim()?1:0.45}} disabled={aiLoading}>{aiLoading?"Scheduling...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.wand,"AI arrange")}</Btn></>}>
+        footer={(evKind==="reminder")?<><Btn variant="subtle" onClick={resetForm}>Cancel</Btn></>:<><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn variant="ghost" onClick={saveManual} style={{opacity:evTitle.trim()?1:0.45}}>Save manually</Btn><Btn onClick={aiArrange} style={{opacity:evTitle.trim()?1:0.45}} disabled={aiLoading}>{aiLoading?"Scheduling...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.wand,"AI arrange")}</Btn></>}>
         <Field label="Title"><Input placeholder="e.g. Study Bio chapter 4-6" value={evTitle} onChange={ev=>setEvTitle(ev.target.value)} autoFocus /></Field>
+        
+        <Field label="Type" hint="Choose the task type to determine scheduling behavior">
+          <SelectChip options={["deadline","exam","class","study block","reminder"]} value={evKind} onChange={setEvKind} />
+        </Field>
+
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
           <Field label="Scheduled date"><Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} /></Field>
-          <Field label="Start time"><Input type="time" value={evTime} onChange={ev=>setEvTime(ev.target.value)} /></Field>
+          {evKind!=="reminder"&&<Field label="Start time"><Input type="time" value={evTime} onChange={ev=>setEvTime(ev.target.value)} /></Field>}
+          {evKind==="reminder"&&<Field label="Reminder time"><Input type="time" value={evTime} onChange={ev=>setEvTime(ev.target.value)} /></Field>}
+        </div>
+
+        {evKind!=="reminder"&&(
+          <>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <Field label="Deadline" hint="When this must be done by"><Input type="date" value={evDeadline} onChange={ev=>setEvDeadline(ev.target.value)} /></Field>
+              <Field label="Duration (minutes)" hint="How long you plan to spend"><Input type="number" min={5} max={480} value={evDuration} onChange={ev=>setEvDuration(Math.max(5,+ev.target.value||5))} /></Field>
+            </div>
+
+            <Field label={`Priority: ${Math.round(evPriority/10)}%`} hint="Higher priority tasks are scheduled earlier">
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                <span style={{fontSize:11,color:T.muted,width:28}}>Low</span>
+                <input type="range" min={0} max={1000} value={evPriority} onChange={ev=>setEvPriority(+ev.target.value)} style={{flex:1,accentColor:T.lime,height:6,borderRadius:3,appearance:"slider-horizontal"}} />
+                <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Urgent</span>
+              </div>
+            </Field>
+
+            <Field label={`Difficulty: ${Math.round(evDifficulty/10)}%`} hint="Very Easy to Very Difficult">
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                <span style={{fontSize:11,color:T.muted,width:28}}>Easy</span>
+                <input type="range" min={0} max={1000} value={evDifficulty} onChange={ev=>setEvDifficulty(+ev.target.value)} style={{flex:1,accentColor:T.purple,height:6,borderRadius:3,appearance:"slider-horizontal"}} />
+                <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Hard</span>
+              </div>
+            </Field>
+          </>
+        )}
+
+        <Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field>
+        {evSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Drivers ed, SAT prep, club..." value={evCustom} onChange={ev=>setEvCustom(ev.target.value)} /></Field>}
+
+        {evKind!=="reminder"&&(
+          <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14}}>
+            <div onClick={()=>setEvSplitEnabled(s=>!s)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+              <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Split into sessions</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Spread this task across multiple days</div></div>
+              <div style={{width:36,height:20,borderRadius:10,background:evSplitEnabled?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer"}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:evSplitEnabled?18:2,transition:"left 0.2s"}} /></div>
+            </div>
+            {evSplitEnabled&&(
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
+                <Field label="Number of sessions"><Input type="number" min={2} max={10} value={evSplitCount} onChange={ev=>setEvSplitCount(Math.max(2,Math.min(10,+ev.target.value||2)))} /></Field>
+                <Field label="Per session"><div style={{fontSize:14,fontWeight:600,color:T.lime,padding:"10px 0"}}>{Math.round(evDuration/evSplitCount)} min each</div></Field>
+              </div>
+            )}
+          </div>
+        )}
+
+        <Field label="Notes (optional)"><Textarea placeholder="e.g. Bring calculator, covers chapters 4 to 6." value={evNotes} onChange={ev=>setEvNotes(ev.target.value)} /></Field>
+      </Modal>
+      <Modal open={editOpen} onClose={closeEdit} title="Edit task" sub="Update this task's details." width={580}
+        footer={<><Btn variant="subtle" onClick={closeEdit}>Cancel</Btn><Btn onClick={saveEdit} style={{opacity:editTitle.trim()?1:0.45}}>Save changes</Btn></>}>
+        <Field label="Title"><Input value={editTitle} onChange={e=>setEditTitle(e.target.value)} autoFocus /></Field>
+        <Field label="Type"><SelectChip options={["deadline","exam","class","study block","reminder"]} value={editKind} onChange={setEditKind} /></Field>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Field label="Scheduled date"><Input type="date" value={editDate} onChange={e=>setEditDate(e.target.value)} /></Field>
+          <Field label="Start time"><Input type="time" value={editTime} onChange={e=>setEditTime(e.target.value)} /></Field>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <Field label="Deadline" hint="When this must be done by"><Input type="date" value={evDeadline} onChange={ev=>setEvDeadline(ev.target.value)} /></Field>
-          <Field label="Duration (minutes)" hint="How long you plan to spend"><Input type="number" min={5} max={480} value={evDuration} onChange={ev=>setEvDuration(Math.max(5,+ev.target.value||5))} /></Field>
+          <Field label="Deadline" hint="When this must be done by"><Input type="date" value={editDeadline} onChange={e=>setEditDeadline(e.target.value)} /></Field>
+          <Field label="Duration (minutes)"><Input type="number" min={5} max={480} value={editDuration} onChange={e=>setEditDuration(Math.max(5,+e.target.value||5))} /></Field>
         </div>
-        <Field label={"Priority · "+PRIORITY_LABELS[evPriority]}>
+        <Field label={`Priority: ${Math.round(editPriority/10)}%`} hint="Higher priority tasks are scheduled earlier">
           <div style={{display:"flex",alignItems:"center",gap:12}}>
-            <span style={{fontSize:11,color:T.muted,width:24}}>Low</span>
-            <input type="range" min={1} max={5} value={evPriority} onChange={ev=>setEvPriority(+ev.target.value)} style={{flex:1,accentColor:PRIORITY_COLORS[evPriority]}} />
+            <span style={{fontSize:11,color:T.muted,width:28}}>Low</span>
+            <input type="range" min={0} max={1000} value={editPriority} onChange={e=>setEditPriority(+e.target.value)} style={{flex:1,accentColor:T.lime,height:6,borderRadius:3}} />
             <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Urgent</span>
           </div>
         </Field>
-        <Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field>
-        {evSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Drivers ed, SAT prep, club..." value={evCustom} onChange={ev=>setEvCustom(ev.target.value)} /></Field>}
-        <Field label="Type"><SelectChip options={["deadline","exam","class","study block","reminder"]} value={evKind} onChange={setEvKind} /></Field>
-        <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14}}>
-          <div onClick={()=>setEvSplitEnabled(s=>!s)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
-            <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Split into sessions</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Spread this task across multiple days</div></div>
-            <div style={{width:36,height:20,borderRadius:10,background:evSplitEnabled?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer"}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:evSplitEnabled?18:2,transition:"left 0.2s"}} /></div>
+        <Field label={`Difficulty: ${Math.round(editDifficulty/10)}%`} hint="Very Easy to Very Difficult">
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <span style={{fontSize:11,color:T.muted,width:28}}>Easy</span>
+            <input type="range" min={0} max={1000} value={editDifficulty} onChange={e=>setEditDifficulty(+e.target.value)} style={{flex:1,accentColor:T.purple,height:6,borderRadius:3}} />
+            <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Hard</span>
           </div>
-          {evSplitEnabled&&(
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
-              <Field label="Number of sessions"><Input type="number" min={2} max={10} value={evSplitCount} onChange={ev=>setEvSplitCount(Math.max(2,Math.min(10,+ev.target.value||2)))} /></Field>
-              <Field label="Per session"><div style={{fontSize:14,fontWeight:600,color:T.lime,padding:"10px 0"}}>{Math.round(evDuration/evSplitCount)} min each</div></Field>
-            </div>
-          )}
-        </div>
-        <Field label="Notes (optional)"><Textarea placeholder="e.g. Bring calculator, covers chapters 4 to 6." value={evNotes} onChange={ev=>setEvNotes(ev.target.value)} /></Field>
+        </Field>
+        <Field label="Subject"><SelectChip options={SUBJ} value={editSubject} onChange={setEditSubject} /></Field>
+        <Field label="Notes (optional)"><Textarea value={editNotes} onChange={e=>setEditNotes(e.target.value)} /></Field>
       </Modal>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:16}}>
+      {calView==="monthly"&&(<div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:16}}>
         <Card style={{padding:16}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,padding:"4px 6px"}}>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
@@ -1701,7 +2330,8 @@ function CalendarTab(){
             );})}
           </div>
         </div>
-      </div>
+      </div>)}
+      {calView==="weekly"&&<WeeklyPlanner events={events} setEvents={setEvents} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openNew={openNew} openEdit={openEdit} />}
     </div>
   );
 }
@@ -2848,7 +3478,7 @@ function Profile() {
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRunning=()=>{}}) {
+function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRunning=()=>{}, setScheduleSettingsOpen=()=>{}}) {
   const realStats=sessionStats();
   const realStreak=Math.max(1,getStreak());
   const lvl=levelInfo();
@@ -2939,6 +3569,7 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
                 {focusRunning?"Pause focus session":"Resume focus session"}
               </button>
               <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",color:T.cream,border:"1px solid rgba(246,241,230,0.18)",background:"transparent",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>View today's plan</button>
+              <button onClick={()=>setScheduleSettingsOpen(true)} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",color:T.cream,border:"1px solid rgba(246,241,230,0.18)",background:"transparent",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>⚙️ Customize schedule</button>
             </div>
           </div>
         </div>
@@ -3283,6 +3914,7 @@ function App() {
   const [focusTotal,setFocusTotal]=useState(25*60);
   const [timerTask,setTimerTask]=useState(null);
   const [newUnlock,setNewUnlock]=useState(null);
+  const [scheduleSettingsOpen,setScheduleSettingsOpen]=useState(false);
   useEffect(function(){var u=checkNewUnlocks();if(u.length>0)setNewUnlock(u[0]);},[]);
   window._setTimerTask=setTimerTask;
   const [creditsOpen,setCreditsOpen]=useState(false);
@@ -3488,7 +4120,7 @@ function App() {
 
         {/* CONTENT */}
         <div key={active} data-page style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both"}}>
-          {active==="dashboard"?<Dashboard setActive={setActive} focusSecs={focusSecs} focusRunning={focusRunning} setFocusRunning={setFocusRunning} />:
+          {active==="dashboard"?<Dashboard setActive={setActive} focusSecs={focusSecs} focusRunning={focusRunning} setFocusRunning={setFocusRunning} setScheduleSettingsOpen={setScheduleSettingsOpen} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} />:
            active==="focustimer"?<FocusTimer focusSecs={focusSecs} setFocusSecs={setFocusSecs} focusRunning={focusRunning} setFocusRunning={setFocusRunning} focusMode={focusMode} setFocusMode={setFocusMode} focusTotal={focusTotal} setFocusTotal={setFocusTotal} />:
            ActivePage?<ActivePage />:null}
@@ -3673,6 +4305,8 @@ function App() {
           </div>
         </div>
       )}
+
+      <ScheduleSettingsPanel open={scheduleSettingsOpen} onClose={()=>setScheduleSettingsOpen(false)} onSave={()=>{}} />
 
       <style>{`
         @keyframes studlinPulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.7)} }
