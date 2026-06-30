@@ -4145,8 +4145,43 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
   const weeklyXP=getWeeklyXP();
   const weeklyFocusMin=realStats.weekMin;
   const lbRank=1;
-  // streak heatmap data
-  const seed=[0,1,2,0,3,4,2,1,0,3,2,4,1,0,2,3,1,4,2,3,0,1,2,4,3,2,1,3,4,2,3,1,4,3,2,4,3,2,1,2,3,4,3,2,3,4,2,3,2,4,3,2,3,4,3,4,2,3,4,3,4,3,2,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4];
+  // Real cards mastered + words written totals
+  const cardsMasteredTotal=rawDecks.reduce((a,d)=>a+(d.done||0),0);
+  const stripHtml=(html)=>(html||"").replace(/<[^>]*>/g," ");
+  const rawEssays=lsGet("essays",[]);
+  const wordsWrittenTotal=rawEssays.reduce((a,e)=>{
+    if(typeof e.words==="number")return a+e.words;
+    const txt=stripHtml(e.content).trim();
+    return a+(txt?txt.split(/\s+/).length:0);
+  },0);
+  // Real session activity for the last 7 days, bucketed by inferred category
+  const allSessions=lsGet("sessions",[]);
+  const catOf=(mode)=>{
+    const m=(mode||"").toLowerCase();
+    if(m.includes("flashcard")||m.includes("deck")||m.includes("card"))return"flash";
+    if(m.includes("essay")||m.includes("writ"))return"write";
+    return"read";
+  };
+  const weekDays7=(()=>{const arr=[];const now=new Date();const dow=(now.getDay()+6)%7;const mon=new Date(now);mon.setDate(now.getDate()-dow);for(let i=0;i<7;i++){const d=new Date(mon);d.setDate(mon.getDate()+i);arr.push(d);}return arr;})();
+  const weekBars=weekDays7.map((d,di)=>{
+    const k=dayKey(d);
+    const daySessions=allSessions.filter(s=>s.d===k);
+    const read=daySessions.filter(s=>catOf(s.mode)==="read").reduce((a,s)=>a+(s.m||0),0);
+    const flash=daySessions.filter(s=>catOf(s.mode)==="flash").reduce((a,s)=>a+(s.m||0),0);
+    const write=daySessions.filter(s=>catOf(s.mode)==="write").reduce((a,s)=>a+(s.m||0),0);
+    return {lab:["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][di],read,flash,write,total:read+flash+write,future:k>dayKey(),isToday:k===dayKey()};
+  });
+  const weekBarMax=Math.max(60,...weekBars.map(b=>b.total));
+  // Top subject this week — from completed plan tasks' subject field
+  const subjCounts={};
+  allEvents.filter(ev=>ev.status==="done"&&ev.date>=dayKey(weekDays7[0])).forEach(ev=>{subjCounts[ev.subject]=(subjCounts[ev.subject]||0)+1;});
+  const topSubjectEntry=Object.entries(subjCounts).sort((a,b)=>b[1]-a[1])[0];
+  const topSubjectThisWeek=topSubjectEntry?topSubjectEntry[0]:null;
+  // Real 91-day streak heatmap from login days + session minutes
+  const loginDaysSet=new Set(lsGet("days",[]));
+  const minsByDay={};
+  allSessions.forEach(s=>{minsByDay[s.d]=(minsByDay[s.d]||0)+(s.m||0);});
+  const heatmapCells=(()=>{const cells=[];const now=new Date();for(let i=90;i>=0;i--){const d=new Date(now);d.setDate(now.getDate()-i);const k=dayKey(d);const mins=minsByDay[k]||0;let lvl=0;if(loginDaysSet.has(k)||mins>0){lvl=mins>=120?4:mins>=60?3:mins>=30?2:1;}cells.push(lvl);}return cells;})();
   const cellColor=(lvl)=>{
     if(!lvl) return T.mode==="light"?"rgba(8,12,40,0.06)":"rgba(255,255,255,0.06)";
     return [null,T.lime+"40",T.lime+"80",T.limeDk,T.forest][lvl];
@@ -4366,6 +4401,132 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
           </div>
         </div>
       </div>
+
+      {/* ROW: This week's focus (bar chart) + compact Weekly Wrapped — hidden in Serious Mode */}
+      {!seriousMode && <div style={{display:"grid",gridTemplateColumns:"8fr 4fr",gap:16}}>
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+          <CardHead title="This week's focus" label={fmtH(weeklyFocusMin)+" this week · tracked live"} />
+          <div style={{display:"flex",alignItems:"flex-end",gap:14,height:150,marginTop:4}}>
+            {weekBars.map((b,i)=>(
+              <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:8,height:"100%",justifyContent:"flex-end",opacity:b.future?0.35:1}}>
+                <div style={{width:"100%",maxWidth:38,display:"flex",flexDirection:"column-reverse",borderRadius:6,overflow:"hidden"}}>
+                  {b.write>0&&<div style={{height:Math.max(4,b.write/weekBarMax*130),background:T.butter}} />}
+                  {b.flash>0&&<div style={{height:Math.max(4,b.flash/weekBarMax*130),background:T.lime}} />}
+                  {b.read>0&&<div style={{height:Math.max(4,b.read/weekBarMax*130),background:T.forest}} />}
+                  {b.total===0&&<div style={{height:4,background:T.card2,width:"100%"}} />}
+                </div>
+                <span style={{fontSize:10.5,fontFamily:T.mono,color:b.isToday?T.lime:T.muted,fontWeight:600}}>{b.lab}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:16,flexWrap:"wrap",gap:10}}>
+            <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
+              {[{c:T.forest,l:"Reading & notes"},{c:T.lime,l:"Flashcards"},{c:T.butter,l:"Writing"}].map((it,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:T.muted}}><span style={{width:9,height:9,borderRadius:2,background:it.c}}/>{it.l}</div>
+              ))}
+            </div>
+            {topSubjectThisWeek&&<div style={{fontSize:11.5,color:T.muted,fontFamily:T.mono}}>Top subject: <span style={{color:T.lime,fontWeight:700}}>{topSubjectThisWeek.slice(0,4).toUpperCase()}</span></div>}
+          </div>
+        </div>
+        <div style={{background:T.forest,color:T.cream,borderRadius:22,padding:20}}>
+          <CardHead title="Weekly Wrapped" label={"WEEK "+weekNo()} more="View full" light />
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {[
+              {ln:"Focus hours",vn:fmtH(weeklyFocusMin)||"0m"},
+              {ln:"Cards mastered",vn:cardsMasteredTotal},
+              {ln:"Words written",vn:wordsWrittenTotal.toLocaleString()},
+            ].map((ins,i)=>(
+              <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:10,padding:"9px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:11,color:"rgba(246,241,230,0.55)",fontFamily:T.mono,letterSpacing:"0.04em",textTransform:"uppercase"}}>{ins.ln}</span>
+                <span style={{fontFamily:T.hand,fontSize:20,fontWeight:600,color:T.lime}}>{ins.vn}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:12}}>
+            <span style={{fontSize:10.5,padding:"5px 10px",background:"rgba(246,241,230,0.08)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:T.cream,fontWeight:600}}>{realStreak}-day streak</span>
+            {topSubjectThisWeek&&<span style={{fontSize:10.5,padding:"5px 10px",background:"rgba(246,241,230,0.08)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:T.cream,fontWeight:600}}>{topSubjectThisWeek} focus</span>}
+          </div>
+        </div>
+      </div>}
+
+      {/* ROW: Quick tools + Study streak heatmap — hidden in Serious Mode */}
+      {!seriousMode && <div style={{display:"grid",gridTemplateColumns:"8fr 4fr",gap:16}}>
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+          <CardHead title="Quick tools" label="JUMP RIGHT IN" more="Browse all" />
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
+            {[
+              {icon:Icon.pen,title:"Essay Writer",desc:"Draft, outline, intro & conclusion from a prompt",go:"essays"},
+              {icon:Icon.layers,title:"Flashcards from file",desc:"Drop a PDF · spaced-rep deck in 10s",go:"flashcards"},
+              {icon:Icon.scan,title:"Plagiarism check",desc:"Scan against academic databases",go:"grammar"},
+              {icon:Icon.link,title:"Citation generator",desc:"MLA · APA · Chicago · from a URL",go:"essays"},
+              {icon:Icon.wand,title:"AI Humanizer",desc:"Rewrite in your voice · beat detectors",go:"humanizer",badge:"SCHOLAR"},
+              {icon:Icon.zap,title:"Equation solver",desc:"Step-by-step math with explanations",go:"solve",badge:null},
+              {icon:Icon.msgSquare,title:"YouTube summarizer",desc:"Paste a lecture URL · get key points",go:"notes",badge:"ELITE"},
+              {icon:Icon.brain,title:"Exam prep mode",desc:"Practice tests & MCQs from your notes",go:"aitutor",badge:"ELITE"},
+            ].map((tool,i)=>(
+              <div key={i} onClick={()=>setActive(tool.go)} style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:14,padding:14,cursor:"pointer",position:"relative"}}>
+                {tool.badge&&<span style={{position:"absolute",top:10,right:10,fontSize:8.5,fontWeight:700,letterSpacing:"0.06em",padding:"2px 7px",borderRadius:99,background:T.purple+"22",color:T.purple,border:`1px solid ${T.purple}44`}}>{tool.badge}</span>}
+                <div style={{width:30,height:30,borderRadius:8,background:T.card,display:"grid",placeItems:"center",color:T.lime,marginBottom:10}}>{tool.icon}</div>
+                <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>{tool.title}</div>
+                <div style={{fontSize:11,color:T.muted,lineHeight:1.4}}>{tool.desc}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+          <CardHead title="Study streak" label="LAST 91 DAYS" />
+          <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:14}}>
+            <span style={{fontFamily:T.hand,fontSize:44,fontWeight:600,color:T.text}}>{realStreak}</span>
+            <span style={{fontSize:13,color:T.muted}}>day streak</span>
+            <span style={{marginLeft:"auto",fontSize:11,color:T.faint,fontFamily:T.mono}}>LONGEST<br/><span style={{fontSize:16,color:T.text,fontWeight:700}}>{Math.max(realStreak,getStreak())}</span></span>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(13,1fr)",gap:3}}>
+            {heatmapCells.map((lvl,i)=>(
+              <div key={i} style={{aspectRatio:"1",borderRadius:3,background:cellColor(lvl)}} />
+            ))}
+          </div>
+        </div>
+      </div>}
+
+      {/* ROW: Upcoming + Pick up where you left off — hidden in Serious Mode */}
+      {!seriousMode && <div style={{display:"grid",gridTemplateColumns:"5fr 7fr",gap:16}}>
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+          <CardHead title="Upcoming" label="NEXT 14 DAYS" more="Calendar" />
+          {upcomingEvents.length===0
+            ?<div style={{fontSize:13,color:T.muted,padding:"18px 0",textAlign:"center"}}>Nothing on the horizon. Add deadlines to your calendar.</div>
+            :upcomingEvents.map((ev,i)=>(
+              <div key={ev.id} onClick={()=>setActive("calendar")} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 0",borderBottom:i<upcomingEvents.length-1?`1px solid ${T.border}`:"none",cursor:"pointer"}}>
+                <div style={{width:44,height:44,borderRadius:10,background:ev.urgent?T.lime:T.card2,color:ev.urgent?T.ink:T.text,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                  <span style={{fontSize:15,fontWeight:800,lineHeight:1}}>{ev.d}</span>
+                  <span style={{fontSize:8.5,fontWeight:700,letterSpacing:"0.04em"}}>{ev.mo}</span>
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:600,color:T.text}}>{ev.t}</div>
+                  <div style={{fontSize:11,color:T.muted,marginTop:1}}>{ev.sub}</div>
+                </div>
+                <span style={{fontSize:10.5,fontWeight:700,padding:"4px 9px",borderRadius:99,background:ev.urgent?T.red+"18":T.card2,color:ev.urgent?T.red:T.muted,flexShrink:0}}>{ev.cd}</span>
+              </div>
+            ))}
+        </div>
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+          <CardHead title="Pick up where you left off" label="FLASHCARDS · NOTES · ESSAYS" />
+          {pickUpItems.length===0
+            ?<div style={{fontSize:13,color:T.muted,padding:"18px 0",textAlign:"center"}}>Create a deck, note, or essay and it'll show up here.</div>
+            :<div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
+              {pickUpItems.slice(0,4).map((it,i)=>{
+                const bgColors=[T.mint,T.peach,T.sky,T.lilac];
+                return (
+                  <div key={i} style={{background:bgColors[i%4],borderRadius:14,padding:14,cursor:"pointer"}}>
+                    <div style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.06em",color:"rgba(8,12,40,0.55)",marginBottom:8}}>{it.subj}</div>
+                    <div style={{fontSize:13,fontWeight:700,color:"#0E1F18",marginBottom:10,lineHeight:1.3}}>{it.title}</div>
+                    <div style={{height:4,background:"rgba(8,12,40,0.12)",borderRadius:99,marginBottom:8,overflow:"hidden"}}><div style={{height:"100%",width:it.pct+"%",background:"#0E1F18",borderRadius:99}}/></div>
+                    <div style={{fontSize:10.5,color:"rgba(8,12,40,0.6)",display:"flex",justifyContent:"space-between"}}><span>{it.a}</span><span>{it.b}</span></div>
+                  </div>
+                );
+              })}
+            </div>}
+        </div>
+      </div>}
 
       {/* ROW 4: GLOBAL LEADERBOARD — hidden in Serious Mode */}
       {!seriousMode && <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
