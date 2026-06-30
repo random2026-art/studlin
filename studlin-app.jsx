@@ -2,19 +2,19 @@ const { useState, useEffect, useRef } = React;
 
 // ─── DESIGN TOKENS · dark + light themes ──────────────────────────────────────
 const darkT = {
-  bg:     "#080B18",
-  surface:"#0D1124",
-  card:   "#111530",
-  card2:  "#181D38",
+  bg:     "#0D120F",
+  surface:"#141A16",
+  card:   "#19211C",
+  card2:  "#212A24",
   border: "rgba(255,255,255,0.07)",
   borderHover: "rgba(255,255,255,0.14)",
-  lime:   "#4F7FE8",
-  limeDk: "#3462D4",
-  limeLt: "#A695F5",
-  glow:   "rgba(79,127,232,0.22)",
-  text:   "#E8EEFF",
-  muted:  "#8B95C0",
-  faint:  "#2A3060",
+  lime:   "#AECE5E",
+  limeDk: "#8BAE3C",
+  limeLt: "#CBDF92",
+  glow:   "rgba(174,206,94,0.22)",
+  text:   "#E8EFE7",
+  muted:  "#849389",
+  faint:  "#3F5147",
   white:  "#ffffff",
   red:    "#D9806B",
   blue:   "#7BACDF",
@@ -27,8 +27,8 @@ const darkT = {
   lilac:  "#E2D0FF",
   sky:    "#BFE3FF",
   rose:   "#FFC9D2",
-  forest: "#0D1640",
-  ink:    "#080C28",
+  forest: "#14342A",
+  ink:    "#0E1F18",
   cream:  "#F6F1E6",
   font:   `"Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`,
   hand:   `"Bricolage Grotesque", "Geist", sans-serif`,
@@ -37,20 +37,20 @@ const darkT = {
   mode:   "dark",
 };
 const lightT = {
-  bg:     "#F5F6FF",
-  surface:"#1B2457",
+  bg:     "#FAF6EC",
+  surface:"#14342A",
   card:   "#ffffff",
-  card2:  "#EBEEFF",
-  border: "rgba(11,14,42,0.18)",
-  borderHover: "rgba(11,14,42,0.32)",
-  lime:   "#3A5FCA",
-  limeDk: "#2646B0",
-  limeLt: "#9A88F2",
-  glow:   "rgba(58,95,202,0.20)",
-  text:   "#0B0E2A",
-  muted:  "rgba(11,14,42,0.55)",
-  faint:  "rgba(11,14,42,0.30)",
-  white:  "#1B2457",
+  card2:  "#F0EBE0",
+  border: "rgba(14,31,24,0.18)",
+  borderHover: "rgba(14,31,24,0.32)",
+  lime:   "#9EC83D",
+  limeDk: "#7FA82A",
+  limeLt: "#CBDF92",
+  glow:   "rgba(158,200,61,0.20)",
+  text:   "#0E1F18",
+  muted:  "rgba(14,31,24,0.55)",
+  faint:  "rgba(14,31,24,0.30)",
+  white:  "#14342A",
   red:    "#A8412C",
   blue:   "#2D6FB8",
   amber:  "#A6700C",
@@ -62,8 +62,8 @@ const lightT = {
   lilac:  "#E2D0FF",
   sky:    "#BFE3FF",
   rose:   "#FFC9D2",
-  forest: "#1B2457",
-  ink:    "#080C28",
+  forest: "#14342A",
+  ink:    "#0E1F18",
   cream:  "#F6F1E6",
   font:   `"Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`,
   hand:   `"Bricolage Grotesque", "Geist", sans-serif`,
@@ -75,7 +75,7 @@ const T = {...darkT}; // mutable · applyTheme() swaps in place so all component
 const hexA=(hex,a)=>{const h=hex.replace('#','');const r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16);return `rgba(${r},${g},${b},${a})`;};
 // accent palettes — override the lime family per user choice
 const ACCENTS={
-  Indigo:{dk:{lime:"#4F7FE8",limeDk:"#3462D4",limeLt:"#A695F5"}, lt:{lime:"#3A5FCA",limeDk:"#2646B0",limeLt:"#9A88F2"}},
+  Lime:  {dk:{lime:"#AECE5E",limeDk:"#8BAE3C",limeLt:"#CBDF92"}, lt:{lime:"#9EC83D",limeDk:"#7FA82A",limeLt:"#CBDF92"}},
   Forest:{dk:{lime:"#6FC1A0",limeDk:"#4E9C7B",limeLt:"#A9E0CB"}, lt:{lime:"#2E8E6E",limeDk:"#22705680".slice(0,7),limeLt:"#A9E0CB"}},
   Sky:   {dk:{lime:"#84BBEA",limeDk:"#5A93C9",limeLt:"#BFE0FA"}, lt:{lime:"#2D74BC",limeDk:"#225A98",limeLt:"#BFE0FA"}},
   Lilac: {dk:{lime:"#B89BE0",limeDk:"#9474C9",limeLt:"#DCCBF5"}, lt:{lime:"#7E5BC0",limeDk:"#634599",limeLt:"#DCCBF5"}},
@@ -83,7 +83,7 @@ const ACCENTS={
 };
 function applyTheme(name, accent, density) {
   Object.assign(T, name === 'light' ? lightT : darkT);
-  const acc=ACCENTS[accent]||ACCENTS.Indigo;
+  const acc=ACCENTS[accent]||ACCENTS.Lime;
   const a=name==='light'?acc.lt:acc.dk;
   T.lime=a.lime; T.limeDk=a.limeDk; T.limeLt=a.limeLt;
   T.glow=hexA(a.lime, name==='light'?0.18:0.22);
@@ -97,7 +97,7 @@ function applyTheme(name, accent, density) {
 }
 applyTheme(
   (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-theme')) || 'light',
-  (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-accent')) || 'Indigo',
+  (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-accent')) || 'Lime',
   (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-density')) || 'Comfortable'
 );
 
@@ -3448,22 +3448,22 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     const isLight=mode==="light";
     return (
       <div onClick={()=>setTheme(mode)} style={{flex:1,cursor:"pointer",borderRadius:12,padding:16,border:`2px solid ${sel?T.lime:T.border}`,background:sel?T.lime+"08":T.card2,transition:"all 0.15s"}}>
-        <div style={{height:90,borderRadius:8,overflow:"hidden",background:isLight?"#F5F6FF":"#0B0E20",border:`1px solid ${isLight?"rgba(11,14,42,0.08)":"rgba(255,255,255,0.06)"}`,marginBottom:12,display:"flex"}}>
-          <div style={{width:24,background:"#1B2457",display:"flex",flexDirection:"column",alignItems:"center",padding:"6px 0",gap:4}}>
-            <div style={{width:10,height:10,background:"#4F7FE8",borderRadius:2}} />
+        <div style={{height:90,borderRadius:8,overflow:"hidden",background:isLight?"#FAF6EC":"#0D120F",border:`1px solid ${isLight?"rgba(14,31,24,0.08)":"rgba(255,255,255,0.06)"}`,marginBottom:12,display:"flex"}}>
+          <div style={{width:24,background:"#14342A",display:"flex",flexDirection:"column",alignItems:"center",padding:"6px 0",gap:4}}>
+            <div style={{width:10,height:10,background:"#AECE5E",borderRadius:2}} />
             <div style={{width:14,height:3,background:"rgba(255,255,255,0.2)",borderRadius:1,marginTop:4}} />
             <div style={{width:14,height:3,background:"rgba(255,255,255,0.12)",borderRadius:1}} />
             <div style={{width:14,height:3,background:"rgba(255,255,255,0.12)",borderRadius:1}} />
           </div>
           <div style={{flex:1,padding:8,display:"flex",flexDirection:"column",gap:5}}>
             <div style={{display:"flex",gap:4}}>
-              <div style={{flex:1,height:18,background:isLight?"#1B2457":"#181D38",borderRadius:3}} />
-              <div style={{width:24,height:18,background:"#4F7FE8",borderRadius:3}} />
-              <div style={{width:24,height:18,background:isLight?"#fff":"#181D38",borderRadius:3,border:isLight?"1px solid rgba(11,14,42,0.08)":"none"}} />
+              <div style={{flex:1,height:18,background:isLight?"#14342A":"#212A24",borderRadius:3}} />
+              <div style={{width:24,height:18,background:"#AECE5E",borderRadius:3}} />
+              <div style={{width:24,height:18,background:isLight?"#fff":"#212A24",borderRadius:3,border:isLight?"1px solid rgba(14,31,24,0.08)":"none"}} />
             </div>
             <div style={{display:"flex",gap:4}}>
-              <div style={{flex:1,height:14,background:isLight?"#fff":"#181D38",borderRadius:3,border:isLight?"1px solid rgba(11,14,42,0.08)":"none"}} />
-              <div style={{flex:1,height:14,background:isLight?"#fff":"#181D38",borderRadius:3,border:isLight?"1px solid rgba(11,14,42,0.08)":"none"}} />
+              <div style={{flex:1,height:14,background:isLight?"#fff":"#212A24",borderRadius:3,border:isLight?"1px solid rgba(14,31,24,0.08)":"none"}} />
+              <div style={{flex:1,height:14,background:isLight?"#fff":"#212A24",borderRadius:3,border:isLight?"1px solid rgba(14,31,24,0.08)":"none"}} />
             </div>
           </div>
         </div>
@@ -3486,7 +3486,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const [pom,setPom]=useState(()=>lsGet("pref-pom","25 min"));
   const [verb,setVerb]=useState(()=>lsGet("pref-verb","Balanced"));
   const [brk,setBrk]=useState(()=>lsGet("pref-brk","15 min"));
-  const accents=[{n:"Indigo",c:"#4F7FE8"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"}];
+  const accents=[{n:"Lime",c:"#AECE5E"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"}];
 
   return (
     <div>
@@ -4423,12 +4423,12 @@ function InitWizard({onComplete}){
     setStep(s => s + 1);
   };
 
-  const bg = "#F5F6FF";
-  const forest = "#1B2457";
-  const lime = "#3A5FCA";
-  const ink = "#0B0E2A";
-  const muted = "rgba(11,14,42,0.5)";
-  const border = "rgba(11,14,42,0.18)";
+  const bg = "#FAF6EC";
+  const forest = "#14342A";
+  const lime = "#9EC83D";
+  const ink = "#0E1F18";
+  const muted = "rgba(14,31,24,0.5)";
+  const border = "rgba(14,31,24,0.18)";
   const card = "#ffffff";
 
   const ChipOpt = ({value, active, onClick, children}) => (
@@ -4441,23 +4441,23 @@ function InitWizard({onComplete}){
     <div style={{minHeight:"100vh",background:bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 16px",fontFamily:`"Geist",system-ui,sans-serif`}}>
       {/* Logo */}
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:40}}>
-        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#1C2250,#0E1238)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(58,95,202,0.35)"}}>
-            <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #9A88F2, #3A5FCA)",boxShadow:"0 0 10px 3px rgba(58,95,202,0.6)"}} />
+        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#14342A,#0E1F18)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(158,200,61,0.35)"}}>
+            <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #CBDF92, #9EC83D)",boxShadow:"0 0 10px 3px rgba(158,200,61,0.6)"}} />
           </div>
         <span style={{fontSize:22,fontWeight:700,color:ink,letterSpacing:"-0.02em"}}>Studlin</span>
       </div>
 
       {/* Card */}
-      <div style={{width:"100%",maxWidth:520,background:card,borderRadius:20,padding:"36px 40px",border:`1.5px solid ${border}`,boxShadow:"0 24px 60px -24px rgba(11,14,42,0.18)"}}>
+      <div style={{width:"100%",maxWidth:520,background:card,borderRadius:20,padding:"36px 40px",border:`1.5px solid ${border}`,boxShadow:"0 24px 60px -24px rgba(14,31,24,0.18)"}}>
         {/* Pre-question header (shown on all steps) */}
-        <div style={{background:"rgba(79,127,232,0.10)",border:`1px solid ${lime}44`,borderRadius:10,padding:"10px 14px",marginBottom:28,fontSize:12.5,color:ink,lineHeight:1.5,fontWeight:500}}>
+        <div style={{background:"rgba(158,200,61,0.10)",border:`1px solid ${lime}44`,borderRadius:10,padding:"10px 14px",marginBottom:28,fontSize:12.5,color:ink,lineHeight:1.5,fontWeight:500}}>
           The following questions are used to customize and train your calendar scheduling algorithm.
         </div>
 
         {/* Progress dots */}
         <div style={{display:"flex",gap:6,marginBottom:28}}>
           {STEPS.map((_,i) => (
-            <div key={i} style={{height:4,flex:1,borderRadius:99,background:i<=step?lime:"rgba(11,14,42,0.12)",transition:"background 0.3s"}} />
+            <div key={i} style={{height:4,flex:1,borderRadius:99,background:i<=step?lime:"rgba(14,31,24,0.12)",transition:"background 0.3s"}} />
           ))}
         </div>
 
@@ -4474,7 +4474,7 @@ function InitWizard({onComplete}){
             {status && (
               <div style={{marginTop:4}}>
                 <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:muted,marginBottom:8}}>{affiliationLabel}</label>
-                <input value={affiliation} onChange={e=>setAffiliation(e.target.value)} placeholder={affiliationPlaceholder} style={{width:"100%",background:"#EBEEFF",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:13.5,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",boxSizing:"border-box"}} />
+                <input value={affiliation} onChange={e=>setAffiliation(e.target.value)} placeholder={affiliationPlaceholder} style={{width:"100%",background:"#F0EBE0",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:13.5,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",boxSizing:"border-box"}} />
                 <div style={{fontSize:11,color:muted,marginTop:6}}>Visible to classmates on leaderboards.</div>
               </div>
             )}
@@ -4486,7 +4486,7 @@ function InitWizard({onComplete}){
             <div style={{fontSize:20,fontWeight:700,color:ink,marginBottom:6,letterSpacing:"-0.01em"}}>When do you prefer to study?</div>
             <div style={{fontSize:13,color:muted,marginBottom:24}}>Tasks are scheduled inside this window so your time is protected.</div>
             <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:muted,marginBottom:8}}>Peak study start time</label>
-            <input type="time" value={workStart} onChange={e=>setWorkStart(e.target.value)} style={{background:"#EBEEFF",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",maxWidth:200}} />
+            <input type="time" value={workStart} onChange={e=>setWorkStart(e.target.value)} style={{background:"#F0EBE0",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",maxWidth:200}} />
           </div>
         )}
 
@@ -4495,7 +4495,7 @@ function InitWizard({onComplete}){
             <div style={{fontSize:20,fontWeight:700,color:ink,marginBottom:6,letterSpacing:"-0.01em"}}>What time do you go to bed?</div>
             <div style={{fontSize:13,color:muted,marginBottom:24}}>We won't schedule tasks within 2 hours of your bedtime.</div>
             <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:muted,marginBottom:8}}>Bedtime</label>
-            <input type="time" value={bedtime} onChange={e=>setBedtime(e.target.value)} style={{background:"#EBEEFF",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",maxWidth:200}} />
+            <input type="time" value={bedtime} onChange={e=>setBedtime(e.target.value)} style={{background:"#F0EBE0",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",maxWidth:200}} />
           </div>
         )}
 
@@ -4544,17 +4544,17 @@ function InitWizard({onComplete}){
 // ─── AUTH SCREEN — minimal gate, links to designed pages ────────────────────
 function AuthScreen(){
   return(
-    <div style={{minHeight:"100vh",background:"#080B18",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20}}>
+    <div style={{minHeight:"100vh",background:"#0D120F",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20}}>
       <div style={{display:"flex",alignItems:"center",gap:10}}>
-        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#1C2250,#0E1238)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(79,127,232,0.38)"}}>
-          <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #A695F5, #4F7FE8)",boxShadow:"0 0 10px 3px rgba(79,127,232,0.65)"}} />
+        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#14342A,#0E1F18)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(174,206,94,0.38)"}}>
+          <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #CBDF92, #AECE5E)",boxShadow:"0 0 10px 3px rgba(174,206,94,0.65)"}} />
         </div>
-        <span style={{fontSize:22,fontWeight:700,color:"#E8EEFF"}}>Studlin</span>
+        <span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span>
       </div>
-      <p style={{fontSize:15,color:"rgba(232,238,255,0.6)",margin:0}}>Sign in to access your workspace.</p>
+      <p style={{fontSize:15,color:"rgba(232,239,231,0.6)",margin:0}}>Sign in to access your workspace.</p>
       <div style={{display:"flex",gap:12,marginTop:8}}>
-        <a href="Studlin Sign In.html" style={{padding:"12px 28px",borderRadius:10,background:"#4F7FE8",color:"#080C28",fontSize:14,fontWeight:600,textDecoration:"none"}}>Sign in</a>
-        <a href="Studlin Onboarding.html" style={{padding:"12px 28px",borderRadius:10,border:"1px solid rgba(79,127,232,0.3)",background:"transparent",color:"#4F7FE8",fontSize:14,fontWeight:600,textDecoration:"none"}}>Create account</a>
+        <a href="Studlin Sign In.html" style={{padding:"12px 28px",borderRadius:10,background:"#AECE5E",color:"#0E1F18",fontSize:14,fontWeight:600,textDecoration:"none"}}>Sign in</a>
+        <a href="Studlin Onboarding.html" style={{padding:"12px 28px",borderRadius:10,border:"1px solid rgba(174,206,94,0.3)",background:"transparent",color:"#AECE5E",fontSize:14,fontWeight:600,textDecoration:"none"}}>Create account</a>
       </div>
     </div>
   );
@@ -4565,7 +4565,7 @@ function AuthScreen(){
 function AuthGate(){
   const [user,setUser]=useState(undefined);
   useEffect(()=>{return firebase.auth().onAuthStateChanged(u=>{setUser(u||null);if(u)fetchUserProfile();});},[]);
-  if(user===undefined)return(<div style={{minHeight:"100vh",background:"#080B18",display:"grid",placeItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#1C2250,#0E1238)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(79,127,232,0.38)"}}><div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #A695F5, #4F7FE8)",boxShadow:"0 0 10px 3px rgba(79,127,232,0.65)"}}/></div><span style={{fontSize:22,fontWeight:700,color:"#E8EEFF"}}>Studlin</span></div></div>);
+  if(user===undefined)return(<div style={{minHeight:"100vh",background:"#0D120F",display:"grid",placeItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#14342A,#0E1F18)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(174,206,94,0.38)"}}><div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #CBDF92, #AECE5E)",boxShadow:"0 0 10px 3px rgba(174,206,94,0.65)"}}/></div><span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span></div></div>);
   if(!user)return <AuthScreen />;
   return <App />;
 }
@@ -4595,10 +4595,10 @@ function App() {
   const [theme,setThemeState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-theme"))||"light");
   const [accent,setAccentState]=useState(()=>{
     if(typeof localStorage!=="undefined"){
-      if(!localStorage.getItem("studlin-accent-reset4")){localStorage.setItem("studlin-accent","Indigo");localStorage.setItem("studlin-accent-reset4","1");}
-      return localStorage.getItem("studlin-accent")||"Indigo";
+      if(!localStorage.getItem("studlin-accent-reset5")){localStorage.setItem("studlin-accent","Lime");localStorage.setItem("studlin-accent-reset5","1");}
+      return localStorage.getItem("studlin-accent")||"Lime";
     }
-    return "Indigo";
+    return "Lime";
   });
   const [density,setDensityState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-density"))||"Comfortable");
   applyTheme(theme, accent, density); // mutate T on every render so all child components re-read
@@ -4759,9 +4759,9 @@ function App() {
   return (
     <div style={{display:"flex",height:"100vh",overflow:"hidden",background:isLight?T.bg:`radial-gradient(1200px 600px at 78% -8%, ${T.glow}, transparent 60%), ${T.bg}`,fontFamily:T.font,color:T.text}}>
       {/* SIDEBAR */}
-      <div style={{width:230,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #131840 0%, #0E133000 60%)",backgroundColor:isLight?T.surface:T.surface,display:"flex",flexDirection:"column",padding:"20px 12px",borderRight:`1px solid ${isLight?"transparent":T.border}`,overflowY:"auto"}}>
+      <div style={{width:230,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #18241D 0%, #0D120F00 60%)",backgroundColor:isLight?T.surface:T.surface,display:"flex",flexDirection:"column",padding:"20px 12px",borderRight:`1px solid ${isLight?"transparent":T.border}`,overflowY:"auto"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 6px",marginBottom:20}}>
-          <div style={{width:28,height:28,background:"linear-gradient(135deg,#1C2250,#0E1238)",borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 0 14px 3px ${T.lime}38`,flexShrink:0,position:"relative"}}>
+          <div style={{width:28,height:28,background:"linear-gradient(135deg,#14342A,#0E1F18)",borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 0 14px 3px ${T.lime}38`,flexShrink:0,position:"relative"}}>
             <div style={{width:9,height:9,borderRadius:"50%",background:`radial-gradient(circle at 35% 35%, ${T.limeLt}, ${T.lime})`,boxShadow:`0 0 10px 3px ${T.lime}65`}} />
           </div>
           <span style={{fontSize:16,fontWeight:700,color:sidebarText,letterSpacing:"-0.02em",fontFamily:T.font}}>Studlin</span>
@@ -5104,11 +5104,11 @@ function App() {
         body[data-theme="light"] input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):focus,
         body[data-theme="light"] textarea:focus,
         body[data-theme="light"] select:focus {
-          border-color: rgba(8,12,40,0.45) !important;
-          box-shadow: 0 0 0 3px rgba(79,127,232,0.18);
+          border-color: rgba(14,31,24,0.45) !important;
+          box-shadow: 0 0 0 3px rgba(158,200,61,0.18);
         }
         body[data-theme="light"] [data-card]:hover {
-          box-shadow: 0 8px 24px -10px rgba(8,12,40,0.14);
+          box-shadow: 0 8px 24px -10px rgba(14,31,24,0.14);
         }
       `}</style>
       {notifPermModal && <NotifPermModal onAllow={handleNotifAllow} onDeny={handleNotifDeny} />}
