@@ -1,4 +1,7 @@
 {
+  "rewrites": [
+    { "source": "/", "destination": "/Studlin Web App.html" }
+  ],
   "functions": {
     "api/checkout.js": { "memory": 256, "maxDuration": 10 },
     "api/create-intent.js": { "memory": 256, "maxDuration": 10 },
@@ -9,6 +12,10 @@
     "api/send-welcome.js": { "memory": 256, "maxDuration": 10 }
   },
   "headers": [
+    {
+      "source": "/",
+      "headers": [{ "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }]
+    },
     {
       "source": "/checkout.html",
       "headers": [{ "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }]

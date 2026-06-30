@@ -18,12 +18,16 @@ module.exports = async (req, res) => {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) return res.status(503).json({ error: 'Email service not configured' });
 
+  // RESEND_TEST_EMAIL overrides the recipient — required while account is in sandbox mode.
+  // Remove this env var once a sending domain is verified in the Resend dashboard.
+  const deliverTo = process.env.RESEND_TEST_EMAIL || toEmail;
+
   const resend = new Resend(apiKey);
 
   try {
     const { data, error } = await resend.emails.send({
-      from: 'Studlin <welcome@studlin.app>',
-      to: [toEmail],
+      from: 'Studlin <onboarding@resend.dev>',
+      to: [deliverTo],
       subject: 'Welcome to Studlin 🎓',
       html: `
 <!DOCTYPE html>
