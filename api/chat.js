@@ -3,7 +3,7 @@ const { setCors, verifyAuth } = require('./_lib/auth');
 
 const MODEL_MAP = {
   standard: 'claude-sonnet-4-6',
-  flash: 'claude-haiku-4-5',
+  flash: 'claude-haiku-4-5-20251001',
 };
 
 const MAX_TOKENS = { standard: 2048, flash: 512 };

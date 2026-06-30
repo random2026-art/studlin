@@ -1945,43 +1945,65 @@ function Notes(){
     const all=lsGet("tutor-flags",[]);
     all.push({...f,noteTitle:notes[sel].title,noteId,from:"notes"});
     lsSet("tutor-flags",all);
-    // Open split-screen tutor sidebar seeded with flagged text
-    const preview=selText.length>120?selText.slice(0,120)+"…":selText;
-    setTutorCtx(selText);
-    setTutorMsgs([{role:"ai",text:"I can see you flagged:\n\n\""+preview+"\"\n\nWhat would you like me to explain about this?"}]);
-    setTutorOpen(true);
     setPopover(null);setPendingSel(null);
+    openTutorWithContext(selText);
+  };
+
+  // Immediately analyze the flagged text via the API and open the sidebar
+  const openTutorWithContext=async(selText)=>{
+    setTutorCtx(selText);
+    setTutorOpen(true);
+    setTutorMsgs([{role:"ai",text:"…",loading:true}]);
+    const analysisPrompt=
+      `A student flagged this passage from their study notes:\n\n"${selText.slice(0,600)}"\n\n`+
+      `Respond as their AI tutor. Follow these rules:\n`+
+      `- If the passage contains a question (has words like why, how, what, explain, define, or ends with "?"), answer it directly with a clear, engaging explanation. Use an analogy if it helps.\n`+
+      `- If the passage is a concept, formula, term, or statement, give a concise 2-sentence explanation of what it means, then ask ONE sharp follow-up question to test whether the student actually understands it.\n`+
+      `Be direct. Sound like a smart tutor, not a textbook. Keep it under 150 words.`;
+    try{
+      const res=await authFetch("/api/chat",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({messages:[{r:"user",t:analysisPrompt}],model:"standard"})
+      });
+      if(!res.ok){
+        const errData=await res.json().catch(()=>({}));
+        throw new Error(errData.error||"HTTP "+res.status);
+      }
+      const data=await res.json();
+      setTutorMsgs([{role:"ai",text:data.reply||"I'm here to help. What would you like to know about this passage?"}]);
+    }catch(e){
+      console.error("[openTutorWithContext] error:",e);
+      setTutorMsgs([{role:"ai",text:"I'm here to help with \""+selText.slice(0,60)+(selText.length>60?"…":"")+"\". What would you like me to explain?"}]);
+    }
   };
 
   const sendTutorMsg=async()=>{
     const txt=tutorInput.trim();
     if(!txt||tutorSending)return;
-    // Optimistically append user message to display
     setTutorMsgs(m=>[...m,{role:"user",text:txt}]);
     setTutorInput("");
     setTutorSending(true);
     try{
-      // tutorMsgs[0] is always the synthetic AI greeting — skip it when building the API call.
-      // The API uses {r:"user"|"ai", t:"..."} — "ai" maps to assistant on the Claude side.
-      // Context is injected as a prefix on the first real user turn so it persists across rounds.
-      const ctxPrefix=tutorCtx?`[Student's note excerpt: "${tutorCtx.slice(0,400)}"]\n\n`:"";
-      const realHistory=tutorMsgs.slice(1); // drop synthetic greeting
-      let apiMsgs;
-      if(realHistory.length===0){
-        // First user message — inject context directly into it so we get one clean user msg
-        apiMsgs=[{r:"user",t:ctxPrefix+txt}];
-      }else{
-        // Rebuild history, re-injecting context into the first stored user message
-        apiMsgs=realHistory.map((m,i)=>{
-          const r=m.role==="user"?"user":"ai";
-          const t=(i===0&&m.role==="user"&&ctxPrefix)?ctxPrefix+m.text:m.text;
-          return {r,t};
-        });
-        apiMsgs.push({r:"user",t:txt});
-      }
-      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:apiMsgs,model:"flash"})});
+      // Reconstruct conversation for the API. The conversation always starts with
+      // the analysis prompt (user) → initial AI response, then the real turns after.
+      // api/chat expects {r:"user"|"ai", t:"..."} — "ai" maps to assistant inside the API.
+      const ctx=tutorCtx?`[Note excerpt: "${tutorCtx.slice(0,400)}"]\n\n`:"";
+      const realMsgs=tutorMsgs.filter(m=>!m.loading);
+      // Synthetic opener restores the initial user→ai exchange so the model has context
+      const opener={r:"user",t:ctx+"Analyze this passage from my notes and help me understand it."};
+      // Map existing display messages into API format
+      const history=realMsgs.map(m=>({r:m.role==="user"?"user":"ai",t:m.text}));
+      // Full sequence: opener → initial AI response → subsequent turns → new user msg
+      const apiMsgs=[opener,...history,{r:"user",t:txt}];
+      const res=await authFetch("/api/chat",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({messages:apiMsgs,model:"standard"})
+      });
       if(!res.ok){
         const errData=await res.json().catch(()=>({}));
+        console.error("[sendTutorMsg] API error response:",res.status,errData);
         throw new Error(errData.error||"HTTP "+res.status);
       }
       const data=await res.json();
@@ -2360,8 +2382,8 @@ function Notes(){
               <div style={{flex:1,overflowY:"auto",padding:"14px 14px 8px",display:"flex",flexDirection:"column",gap:10}}>
                 {tutorMsgs.map((m,i)=>(
                   <div key={i} style={{display:"flex",flexDirection:"column",alignItems:m.role==="user"?"flex-end":"flex-start"}}>
-                    <div style={{maxWidth:"88%",padding:"9px 12px",borderRadius:m.role==="user"?"10px 10px 3px 10px":"10px 10px 10px 3px",background:m.role==="user"?T.lime+"22":T.card2,border:`1px solid ${m.role==="user"?T.lime+"33":T.border}`,fontSize:12.5,color:T.text,lineHeight:1.6,whiteSpace:"pre-wrap"}}>
-                      {m.text}
+                    <div style={{maxWidth:"88%",padding:"9px 12px",borderRadius:m.role==="user"?"10px 10px 3px 10px":"10px 10px 10px 3px",background:m.role==="user"?T.lime+"22":T.card2,border:`1px solid ${m.role==="user"?T.lime+"33":T.border}`,fontSize:12.5,color:m.loading?T.muted:T.text,lineHeight:1.6,whiteSpace:"pre-wrap"}}>
+                      {m.loading?<span style={{animation:"studlinPulse 1.2s ease infinite",display:"inline-block"}}>Analyzing…</span>:m.text}
                     </div>
                   </div>
                 ))}
@@ -2399,7 +2421,7 @@ function Notes(){
                   <div style={{fontSize:11,color:T.muted,lineHeight:1.5,fontStyle:"italic"}}>"{(f.selectedText||"").slice(0,60)}{f.selectedText&&f.selectedText.length>60?"…":""}"</div>
                   <div style={{display:"flex",gap:8,marginTop:8,alignItems:"center"}}>
                     <div style={{fontSize:10,color:T.faint}}>{f.date}</div>
-                    <button onMouseDown={e=>{e.preventDefault();setTutorCtx(f.selectedText);setTutorMsgs([{role:"ai",text:"Let's look at:\n\n\""+f.selectedText.slice(0,120)+(f.selectedText.length>120?"…":"")+"\"\n\nWhat would you like me to explain?"}]);setTutorOpen(true);}} style={{fontSize:10,color:T.amber,background:"none",border:"none",cursor:"pointer",padding:0,fontFamily:T.font,fontWeight:600}}>Open tutor →</button>
+                    <button onMouseDown={e=>{e.preventDefault();openTutorWithContext(f.selectedText);}} style={{fontSize:10,color:T.amber,background:"none",border:"none",cursor:"pointer",padding:0,fontFamily:T.font,fontWeight:600}}>Open tutor →</button>
                   </div>
                   <button onClick={()=>removeFlag(nid,f.id)} style={{position:"absolute",top:6,right:6,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:13,lineHeight:1,padding:2}}>×</button>
                 </div>
