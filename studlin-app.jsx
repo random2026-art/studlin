@@ -5671,6 +5671,12 @@ function InitWizard({onComplete}){
     const updatedProf = {...getProfile(), status, affiliation, school:affiliation};
     lsSet("profile", updatedProf);
     lsSet("onboarded", true);
+    // Fire welcome email — best-effort, non-blocking
+    authFetch("/api/send-welcome", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({name:updatedProf.name||"", email:updatedProf.email||""})
+    }).catch(()=>{});
     onComplete();
   };
 

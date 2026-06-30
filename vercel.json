@@ -5,7 +5,8 @@
     "api/search-videos.js": { "memory": 128, "maxDuration": 10 },
     "api/chat.js": { "memory": 256, "maxDuration": 30 },
     "api/me.js": { "memory": 256, "maxDuration": 10 },
-    "api/stripe-webhook.js": { "memory": 256, "maxDuration": 15 }
+    "api/stripe-webhook.js": { "memory": 256, "maxDuration": 15 },
+    "api/send-welcome.js": { "memory": 256, "maxDuration": 10 }
   },
   "headers": [
     {

@@ -2,6 +2,7 @@
   "private": true,
   "dependencies": {
     "firebase-admin": "^13.0.0",
+    "resend": "^4.8.0",
     "stripe": "^17.7.0"
   }
 }
