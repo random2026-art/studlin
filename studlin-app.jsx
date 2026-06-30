@@ -875,7 +875,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
 }
 
 // ─── NAV ICONS MAP ────────────────────────────────────────────────────────────
-const navIcon = {dashboard:Icon.grid,aichat:Icon.chat,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,focustimer:Icon.clock,calendar:Icon.cal,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,music:Icon.music,settings:Icon.settings,profile:Icon.user};
+const navIcon = {dashboard:Icon.grid,aichat:Icon.chat,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,music:Icon.music,settings:Icon.settings,profile:Icon.user};
 
 // ─── AI CHAT ──────────────────────────────────────────────────────────────────
 function AiChat() {
@@ -1648,117 +1648,7 @@ function Notes(){
   );
 }
 
-// ─── FOCUS TIMER ──────────────────────────────────────────────────────────────
-function FocusTimer({focusSecs,setFocusSecs,focusRunning,setFocusRunning,focusMode,setFocusMode,focusTotal,setFocusTotal}){
-  const time=focusSecs??25*60;
-  const setTime=setFocusSecs||(()=>{});
-  const running=focusRunning??false;
-  const setRunning=setFocusRunning||(()=>{});
-  const mode=focusMode||"Focus";
-  const setMode=setFocusMode||(()=>{});
-  const total=focusTotal||25*60;
-  const setTotal=setFocusTotal||(()=>{});
-  const modeMap={"Focus":25*60,"Short break":5*60,"Long break":15*60};
-  const [customOpen,setCustomOpen]=useState(false);
-  const [customMin,setCustomMin]=useState(45);
-  const [target,setTarget]=useState(()=>lsGet("sessionTarget",4));
-  const [warnOpen,setWarnOpen]=useState(false);
-  const [pendingTarget,setPendingTarget]=useState(5);
-  const [,bump]=useState(0);
-  const stats=sessionStats();
-  const streak=getStreak();
-  const fmt=s=>String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0");
-  const pct=Math.min(100,Math.round(((total-time)/total)*100));
-  const r=88;const circ=2*Math.PI*r;
-  const isCustom=!Object.values(modeMap).includes(total)&&mode==="Focus";
-  const pick=(m)=>{setMode(m);setTime(modeMap[m]);setTotal(modeMap[m]);setRunning(false);setCustomOpen(false);};
-  const applyCustom=()=>{const m=Math.max(1,Math.min(180,Math.round(+customMin)||25));setMode("Focus");setTotal(m*60);setTime(m*60);setRunning(false);setCustomOpen(false);};
-  const requestTarget=(n)=>{if(n<1||n>8)return;if(n>4){setPendingTarget(n);setWarnOpen(true);}else{setTarget(n);lsSet("sessionTarget",n);}};
-  const finishEarly=()=>{const elapsed=Math.round((total-time)/60);if(mode==="Focus"&&elapsed>=1)logSession(elapsed,"Focus");setTime(total);setRunning(false);bump(x=>x+1);};
-  const doneToday=stats.todayCount;
-  return (
-    <div>
-      <PH title="Focus Timer" sub={"Pomodoro · session "+Math.min(doneToday+1,target)+" of "+target+" today"} />
-      <Modal open={warnOpen} onClose={()=>setWarnOpen(false)} title="That is a lot of focus" sub="More than 4 deep-work sessions a day raises burnout risk. Research favours fewer, fully-rested blocks."
-        footer={<><Btn variant="subtle" onClick={()=>setWarnOpen(false)}>Keep it at 4</Btn><Btn onClick={()=>{setTarget(pendingTarget);lsSet("sessionTarget",pendingTarget);setWarnOpen(false);}}>Set {pendingTarget} anyway</Btn></>}>
-        <div style={{fontSize:13,color:T.text,lineHeight:1.7,background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"12px 14px"}}>Studlin will space your sessions with longer breaks and watch your average session quality if you go above four. You can change this anytime.</div>
-      </Modal>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 280px",gap:16}}>
-        <Card style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"40px 24px"}}>
-          <div style={{display:"flex",gap:4,marginBottom:14,background:T.card2,padding:4,borderRadius:8,border:"1px solid "+T.border}}>
-            {Object.keys(modeMap).map(m=>(
-              <button key={m} onClick={()=>pick(m)} style={{padding:"6px 16px",borderRadius:5,fontSize:12,cursor:"pointer",border:"none",background:mode===m&&!isCustom?T.lime+"1f":"transparent",color:mode===m&&!isCustom?T.lime:T.muted,fontFamily:T.font,fontWeight:mode===m&&!isCustom?600:400,transition:"all 0.15s"}}>{m}</button>
-            ))}
-            <button onClick={()=>setCustomOpen(o=>!o)} style={{padding:"6px 16px",borderRadius:5,fontSize:12,cursor:"pointer",border:"none",background:isCustom?T.lime+"1f":"transparent",color:isCustom?T.lime:T.muted,fontFamily:T.font,fontWeight:isCustom?600:400,transition:"all 0.15s"}}>{isCustom?Math.round(total/60)+" min":"Custom"}</button>
-          </div>
-          {customOpen&&(
-            <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:16,background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"8px 10px"}}>
-              <input type="number" min="1" max="180" value={customMin} onChange={e=>setCustomMin(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")applyCustom();}} style={{width:64,background:T.card2,border:"1px solid "+T.border,borderRadius:6,padding:"7px 9px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",textAlign:"center"}} autoFocus />
-              <span style={{fontSize:12,color:T.muted}}>minutes</span>
-              <BtnSm onClick={applyCustom}>Set</BtnSm>
-            </div>
-          )}
-          <div style={{position:"relative",width:200,height:200,margin:"14px 0 32px"}}>
-            <svg width="200" height="200" style={{position:"absolute",top:0,left:0,transform:"rotate(-90deg)"}}>
-              <circle cx="100" cy="100" r={r} fill="none" stroke={T.card2} strokeWidth="6"/>
-              <circle cx="100" cy="100" r={r} fill="none" stroke={T.lime} strokeWidth="6" strokeDasharray={circ} strokeDashoffset={circ*(1-pct/100)} strokeLinecap="round" style={{transition:"stroke-dashoffset 1s linear"}}/>
-            </svg>
-            <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
-              <div style={{fontSize:52,fontWeight:700,color:T.white,letterSpacing:"-3px",lineHeight:1,fontVariantNumeric:"tabular-nums"}}>{fmt(time)}</div>
-              <div style={{fontSize:11,color:T.muted,marginTop:8,letterSpacing:"0.08em",textTransform:"uppercase"}}>{mode==="Focus"?"Focused":"Rest"}</div>
-            </div>
-          </div>
-          <div style={{display:"flex",gap:14,alignItems:"center",marginBottom:24}}>
-            <button onClick={()=>{setTime(total);setRunning(false);}} title="Reset" style={{width:40,height:40,borderRadius:"50%",border:"1px solid "+T.border,background:T.card2,color:T.muted,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{Icon.refresh}</button>
-            <button onClick={()=>setRunning(r2=>!r2)} style={{width:56,height:56,borderRadius:"50%",border:"none",background:T.lime,color:T.bg,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{running?Icon.pause:Icon.play}</button>
-            <button onClick={finishEarly} title="Finish session now" style={{width:40,height:40,borderRadius:"50%",border:"1px solid "+T.border,background:T.card2,color:T.muted,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{Icon.skip}</button>
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:T.muted}}>
-            <div style={{width:6,height:6,borderRadius:"50%",background:T.teal}} />
-            This timer stays live in the top bar wherever you go
-          </div>
-        </Card>
-        <div style={{display:"flex",flexDirection:"column",gap:12}}>
-          <Card style={{background:T.lime,border:"none"}}>
-            <Label>Today&apos;s focus</Label>
-            <div style={{fontSize:32,fontWeight:700,color:T.bg,letterSpacing:"-0.02em",lineHeight:1}}>{fmtH(stats.todayMin)}</div>
-            <div style={{fontSize:12,color:T.bg,opacity:0.65,marginTop:5}}>{doneToday} session{doneToday===1?"":"s"} logged today</div>
-          </Card>
-          <Card>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-              <Label>Sessions</Label>
-              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <button onClick={()=>requestTarget(target-1)} style={{width:22,height:22,borderRadius:6,border:"1px solid "+T.border,background:T.card2,color:T.muted,cursor:"pointer",fontSize:13,lineHeight:1}}>−</button>
-                <span style={{fontSize:12,color:T.white,fontWeight:600,minWidth:12,textAlign:"center"}}>{target}</span>
-                <button onClick={()=>requestTarget(target+1)} style={{width:22,height:22,borderRadius:6,border:"1px solid "+T.border,background:T.card2,color:T.muted,cursor:"pointer",fontSize:13,lineHeight:1}}>+</button>
-              </div>
-            </div>
-            {Array.from({length:target}).map((_,i)=>{
-              const st=i<doneToday?"done":(i===doneToday&&running?"active":"pending");
-              return (
-                <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:i<target-1?"1px solid "+T.border:"none"}}>
-                  <div style={{width:6,height:6,borderRadius:"50%",background:st==="done"?T.lime:st==="active"?T.teal:T.faint,flexShrink:0}} />
-                  <span style={{fontSize:12,flex:1,color:st==="pending"?T.muted:T.text}}>Session {i+1}</span>
-                  <span style={{fontSize:11,color:st==="active"?T.teal:T.muted}}>{st==="done"?"Done":st==="active"?"Running":Math.round(total/60)+":00"}</span>
-                </div>
-              );
-            })}
-          </Card>
-          <Card>
-            <Label>This week</Label>
-            {[["Streak",streak+(streak===1?" day":" days")],["Weekly total",fmtH(stats.weekMin)],["Average session",stats.avg+" min"],["Sessions completed",String(stats.weekCount)]].map(([k,v],i)=>(
-              <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<3?"1px solid "+T.border:"none",fontSize:12}}>
-                <span style={{color:T.muted}}>{k}</span>
-                <span style={{color:T.white,fontWeight:500}}>{v}</span>
-              </div>
-            ))}
-            <div style={{fontSize:10.5,color:T.faint,marginTop:10,lineHeight:1.5}}>Tracked automatically from finished sessions and daily logins.</div>
-          </Card>
-        </div>
-      </div>
-    </div>
-  );
-}
+
 
 // ─── CALENDAR ─────────────────────────────────────────────────────────────────
 // ─── TASK TIMER MODAL ────────────────────────────────────────────────────────
@@ -3137,9 +3027,9 @@ function FocusMusic(){
 
 
 // ─── SETTINGS ─────────────────────────────────────────────────────────────────
-function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}}) {
+function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}}) {
   const [active,setActive]=useState("General");
-  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,sr:true,auto:true,analytics:false,sync:true,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false},...lsGet("settings",{})}));
+  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,sr:true,auto:true,analytics:false,sync:true,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true},...lsGet("settings",{})}));
   const tog=k=>setToggles(t=>{const n={...t,[k]:!t[k]};lsSet("settings",n);return n;});
   const [profile,setProfileState]=useState(()=>getProfile());
   const updProfile=(patch)=>{const n={...profile,...patch};setProfileState(n);saveProfile(n);};
@@ -3331,6 +3221,11 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 
           {active==="Notifications" && (<>
             <Card style={{marginBottom:12}}>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Task &amp; App Notifications</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Master switch for all Studlin alerts. Smart reminders fire before study blocks begin.</div>
+              <Row label="Task & App Notifications" sub="Smart alerts before study blocks, deadline reminders, and streak nudges." k="notifMaster" />
+            </Card>
+            <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Reminders</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Choose what wakes you up.</div>
               <Row label="Push notifications" sub="Deadline reminders, streak alerts, squad activity." k="push" />
@@ -3348,6 +3243,15 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
           </>)}
 
           {active==="Privacy" && (<>
+            <Card style={{marginBottom:12}}>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Private Account · Serious Mode</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Strip gamification and go heads-down. XP, levels, and Weekly Wrapped are hidden. Chat, calendar sharing, and notes stay fully accessible.</div>
+              <Row label="Private Account / Serious Mode" sub="Hides XP, tiers, leaderboard, and Weekly Wrapped. Dashboard shows clean calendar + task grid only." k="_" right={
+                <div onClick={()=>{const next=!seriousMode;setSeriousMode(next);const s=lsGet("settings",{});lsSet("settings",{...s,seriousMode:next});}} style={{width:38,height:20,borderRadius:10,background:seriousMode?T.purple:T.card2,border:`1px solid ${seriousMode?T.purple:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+                  <div style={{width:14,height:14,borderRadius:"50%",background:seriousMode?T.bg:"#fff",position:"absolute",top:2,left:seriousMode?21:2,transition:"left 0.2s"}} />
+                </div>
+              } />
+            </Card>
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Visibility</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Control what others can see.</div>
@@ -3768,8 +3672,27 @@ function LeaderboardModal({open,onClose,currentXP}){
   );
 }
 
+// ─── LEADERBOARD BUILDER ─────────────────────────────────────────────────────
+// Seed profiles fill the board until real users displace them by gaining XP.
+// In production, fetch the real roster from /api/leaderboard and merge below.
+const LB_SEED=[
+  {n:"Devon K.",xp:1840,streak:8,tier:"Associate",grad:"linear-gradient(135deg,#BFE3FF,#E2D0FF)"},
+  {n:"Priya S.",xp:1602,streak:5,tier:"Associate",grad:"linear-gradient(135deg,#C4F0D8,#FFE99A)"},
+  {n:"Jordan T.",xp:1088,streak:0,tier:"Intern",grad:"linear-gradient(135deg,#E2D0FF,#FFD7B5)"},
+  {n:"Alex W.",xp:980,streak:3,tier:"Intern",grad:"linear-gradient(135deg,#FFE99A,#C4F0D8)"},
+  {n:"Sam L.",xp:870,streak:1,tier:"Intern",grad:"linear-gradient(135deg,#BFE3FF,#FFD7B5)"},
+  {n:"Riley M.",xp:640,streak:0,tier:"Intern",grad:"linear-gradient(135deg,#C4F0D8,#E2D0FF)"},
+];
+function buildLeaderboard(realName, realXP, realStreak) {
+  const you={n:realName||"You",xp:Math.max(0,realXP||0),streak:realStreak||0,tier:getProfTitle(realXP||0),you:true,grad:"linear-gradient(135deg,#FFD7B5,#FFC9D2)"};
+  const sorted=[...LB_SEED,you].sort((a,b)=>b.xp-a.xp).map((u,i)=>({...u,r:i+1}));
+  const top5=sorted.slice(0,5);
+  if(top5.some(u=>u.you))return top5;
+  return [...sorted.slice(0,4),sorted.find(u=>u.you)];
+}
+
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRunning=()=>{}, setScheduleSettingsOpen=()=>{}}) {
+function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRunning=()=>{}, setScheduleSettingsOpen=()=>{}, seriousMode=false}) {
   const realStats=sessionStats();
   const realStreak=Math.max(1,getStreak());
   const lvl=levelInfo();
@@ -3859,10 +3782,32 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
     </div>
   );
   const isLight=T.mode==="light";
+  // Daily unique quote — deterministic from today's date
+  const qHash=today.split("").reduce((a,c)=>a+c.charCodeAt(0),0);
+  const todayQuote=QUOTES[qHash%QUOTES.length];
+  const [quoteCopied,setQuoteCopied]=useState(false);
+  // Dynamic leaderboard — real user ranked among seed profiles by actual XP
+  const lbUsers=buildLeaderboard(firstName, lvl.xp, realStreak);
+  const lbRankColor=(r)=>r===1?"#FFD700":r===2?"#C0C0C0":r===3?"#CD7F32":T.muted;
+  const lbRankBg=(r)=>r===1?"rgba(255,215,0,0.10)":r===2?"rgba(192,192,192,0.07)":r===3?"rgba(205,127,50,0.07)":"transparent";
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16,paddingBottom:40}}>
 
-      {/* GREETING STRIP · greet + streak + xp */}
+      {/* GREETING STRIP — full 3-col in normal mode, single card in Serious Mode */}
+      {seriousMode ? (
+        <div style={{background:`linear-gradient(135deg, ${T.forest} 0%, #1B4536 100%)`,color:T.cream,borderRadius:22,padding:"28px 34px",position:"relative",overflow:"hidden"}}>
+          <div style={{position:"absolute",right:-40,top:-40,width:240,height:240,background:"radial-gradient(circle,rgba(200,255,90,0.18),transparent 70%)",pointerEvents:"none"}} />
+          <div style={{position:"relative"}}>
+            <div style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.45)",marginBottom:6}}>{todayLabel()} · Week {weekNo()} · <span style={{color:T.purple,letterSpacing:"0.12em"}}>SERIOUS MODE</span></div>
+            <div style={{fontFamily:T.hand,fontSize:50,lineHeight:0.95,fontWeight:600,color:T.cream,margin:"0 0 10px"}}>{greet}, <span style={{color:T.lime}}>{firstName}.</span></div>
+            <p style={{fontSize:13.5,color:"rgba(246,241,230,0.7)",margin:"0 0 18px",lineHeight:1.5,maxWidth:560}}>{planLeft>0?<>You have <strong style={{color:T.cream}}>{planLeft} task{planLeft===1?"":"s"} left</strong> today. No distractions — just get it done.</>:plan.length>0?<>All <strong style={{color:T.cream}}>{plan.length} tasks complete</strong> today. Outstanding focus.</>:<>Nothing scheduled yet. Add tasks to your calendar to get started.</>}</p>
+            <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+              <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"10px 18px",background:T.lime,color:T.ink,borderRadius:99,fontSize:13,fontWeight:600,border:"none",cursor:"pointer",fontFamily:T.font}}>Open calendar</button>
+              <button onClick={()=>setScheduleSettingsOpen(true)} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"10px 18px",color:T.cream,border:"1px solid rgba(246,241,230,0.18)",background:"transparent",borderRadius:99,fontSize:13,fontWeight:500,cursor:"pointer",fontFamily:T.font}}>Customize schedule</button>
+            </div>
+          </div>
+        </div>
+      ) : (
       <div style={{display:"grid",gridTemplateColumns:"1.5fr 1fr 1fr",gap:16}}>
         {/* Greeting */}
         <div style={{background:`linear-gradient(135deg, ${T.forest} 0%, #1B4536 100%)`,color:T.cream,borderRadius:22,padding:"26px 30px",position:"relative",overflow:"hidden",minHeight:200}}>
@@ -3928,213 +3873,89 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
           </div>
         </div>
       </div>
+      )} {/* end seriousMode ternary */}
 
-      {/* ROW 2: Today's plan + Chat */}
-      <div style={{display:"grid",gridTemplateColumns:"6fr 5fr",gap:16}}>
-        {/* Today's plan */}
-        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
-          <CardHead title="Today's plan" label={planDoneCount+" / "+plan.length+" DONE"} more="Calendar" />
-          {plan.length===0
-            ? <div style={{padding:"22px 8px",textAlign:"center"}}>
-                <div style={{fontSize:13,color:T.muted,marginBottom:14,lineHeight:1.5}}>Nothing scheduled for today. Add events to your calendar and they appear here automatically.</div>
-                <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 16px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Open calendar</button>
-              </div>
-            : plan.map((t)=>{
-              const c=scOf(t.subject);
-              return (
-              <div key={t.id} onClick={()=>{togglePlanDone(t.id);forcePlan(x=>x+1);}} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer"}}>
-                <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${t.done?T.forest:T.faint}`,background:t.done?T.forest:"transparent",flex:"none",display:"grid",placeItems:"center"}}>
-                  {t.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
-                </div>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{display:"flex",alignItems:"center",gap:6}}>
-                    {t.priority&&<span style={{width:6,height:6,borderRadius:"50%",background:PRIORITY_COLORS[t.priority||3],flexShrink:0}} />}
-                    <span style={{fontSize:13.5,color:t.done?T.muted:T.text,textDecoration:t.done?"line-through":"none",fontWeight:500}}>{t.title}</span>
-                  </div>
-                  <div style={{fontSize:11.5,color:T.muted,marginTop:1,display:"flex",gap:6,alignItems:"center"}}>
-                    <span style={{textTransform:"capitalize"}}>{t.subject}{t.kind?" · "+t.kind:""}</span>
-                    {t.duration&&<span style={{background:T.card2,padding:"0 5px",borderRadius:3,fontSize:10,fontWeight:600}}>{t.duration}m</span>}
-                  </div>
-                </div>
-                <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.06em",padding:"3px 8px",borderRadius:6,background:c+"22",color:c,textTransform:"uppercase",fontWeight:600,flex:"none"}}>{t.subject.slice(0,4)}</span>
-                <span style={{fontFamily:T.mono,fontSize:11,color:T.muted}}>{fmtClock(t.time)}</span>
-              </div>
-            );})}
-        </div>
-
-        {/* Ask Studlin */}
-        <div style={{background:T.ink,color:T.cream,borderRadius:22,padding:22,display:"flex",flexDirection:"column"}}>
-          <CardHead title="Ask Studlin" label="AI TUTOR" more="Open" light />
-          <div style={{fontSize:13,color:"rgba(246,241,230,0.7)",marginBottom:14,lineHeight:1.5}}>I noticed you're stuck on Macbeth Act III · want me to walk through the dagger soliloquy or pull quotes for your essay?</div>
-          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>
-            {["Explain dagger soliloquy","Find quotes for essay","Quiz me on Act III"].map(s=>(
-              <button key={s} onClick={()=>setActive("aichat")} style={{fontSize:11.5,padding:"6px 11px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:"rgba(246,241,230,0.85)",cursor:"pointer",fontFamily:T.font}}>{s}</button>
-            ))}
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:10,background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:14,padding:"10px 12px",marginTop:"auto"}}>
-            <input placeholder="Ask anything · paste a problem" style={{flex:1,background:"none",border:"none",outline:"none",color:T.cream,fontSize:13,fontFamily:T.font,minWidth:0}}/>
-            <button onClick={()=>setActive("aichat")} style={{display:"grid",placeItems:"center",width:30,height:30,borderRadius:8,background:T.lime,color:T.ink,border:"none",cursor:"pointer",flex:"none"}}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="22 2 15 22 11 13 2 9"/></svg>
-            </button>
-          </div>
-          <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(246,241,230,0.45)",marginTop:10,display:"flex",justifyContent:"space-between"}}>
-            <span>1 credit per message</span>
-            <span>{getCredits()} credits left</span>
-          </div>
-        </div>
-      </div>
-
-      {/* ROW 3: Weekly chart (7) + Wrapped (5) */}
-      <div style={{display:"grid",gridTemplateColumns:"7fr 5fr",gap:16}}>
-        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
-          <CardHead title="This week's focus" label={(fmtH(realStats.weekMin)||"0m").toUpperCase()+" THIS WEEK · TRACKED LIVE"} more="View Wrapped" />
-          <div style={{display:"flex",alignItems:"flex-end",gap:10,height:140,padding:"0 4px"}}>
-            {[
-              {segs:[{c:T.limeDk,h:18},{c:T.forest,h:32}],d:"Mon"},
-              {segs:[{c:T.butter,h:10},{c:T.limeDk,h:25},{c:T.forest,h:40}],d:"Tue"},
-              {segs:[{c:T.limeDk,h:20},{c:T.forest,h:35}],d:"Wed"},
-              {segs:[{c:T.butter,h:15},{c:T.limeDk,h:30},{c:T.forest,h:45}],d:"Thu"},
-              {segs:[{c:T.butter,h:8},{c:T.limeDk,h:22},{c:T.forest,h:38}],d:"Fri",today:true},
-              {segs:[],d:"Sat"},
-              {segs:[],d:"Sun"},
-            ].map((bar,i)=>(
-              <div key={i} style={{flex:1,display:"flex",flexDirection:"column-reverse",gap:2,height:"100%",position:"relative"}}>
-                {bar.segs.map((s,j)=><div key={j} style={{width:"100%",height:s.h+"%",background:s.c,borderRadius:j===bar.segs.length-1?"4px 4px 0 0":0}}/>)}
-                <div style={{position:"absolute",bottom:-22,left:0,right:0,textAlign:"center",fontFamily:T.mono,fontSize:10,color:bar.today?T.text:T.faint,fontWeight:bar.today?700:400}}>{bar.d}</div>
-              </div>
-            ))}
-          </div>
-          <div style={{display:"flex",gap:14,fontSize:11,color:T.muted,marginTop:36}}>
-            <span><span style={{width:10,height:10,borderRadius:3,background:T.forest,display:"inline-block",verticalAlign:"middle",marginRight:5}}/>Reading &amp; notes</span>
-            <span><span style={{width:10,height:10,borderRadius:3,background:T.limeDk,display:"inline-block",verticalAlign:"middle",marginRight:5}}/>Flashcards</span>
-            <span><span style={{width:10,height:10,borderRadius:3,background:T.butter,display:"inline-block",verticalAlign:"middle",marginRight:5}}/>Writing</span>
-            <span style={{marginLeft:"auto",color:T.text,fontWeight:500}}>Top subject: <span style={{fontFamily:T.mono}}>BIO</span></span>
-          </div>
-        </div>
-
-        <div style={{background:T.forest,color:T.cream,borderRadius:22,padding:22}}>
-          <CardHead title="Weekly Wrapped" label={"WEEK "+weekNo()} more="View full" light />
-          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:14}}>
-            {[
-              {l:"Focus hours",v:fmtH(weeklyFocusMin)||"0m"},
-              {l:"XP earned",v:weeklyXP.toLocaleString()+" xp"},
-              {l:"Leaderboard",v:"#"+lbRank},
-            ].map((s,i)=>(
-              <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:12,padding:"12px 14px"}}>
-                <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.06em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)"}}>{s.l}</div>
-                <div style={{fontFamily:T.hand,fontSize:26,fontWeight:700,color:T.lime,lineHeight:1.1,marginTop:4}}>{s.v}</div>
-              </div>
-            ))}
-          </div>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-            <span style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.12)",borderRadius:99,fontSize:11.5,color:T.cream}}>
-              <span style={{width:18,height:18,borderRadius:"50%",background:T.lime,display:"grid",placeItems:"center",color:T.ink,fontSize:10,fontWeight:700,flex:"none"}}>{realStreak}</span>
-              {realStreak}-day streak
-            </span>
-            <button onClick={()=>setLeaderboardOpen(true)} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.12)",borderRadius:99,fontSize:11.5,color:T.cream,cursor:"pointer",fontFamily:T.font}}>
-              Leaderboard →
+      {/* ROW 2: QUOTE OF THE DAY */}
+      <div style={{background:T.butter,borderRadius:22,padding:"28px 32px",position:"relative",overflow:"hidden"}}>
+        <span style={{fontFamily:T.serif,fontSize:160,lineHeight:0.65,color:"rgba(14,31,24,0.10)",position:"absolute",top:-8,left:18,fontStyle:"italic",pointerEvents:"none"}}>"</span>
+        <div style={{position:"relative",display:"flex",flexDirection:"column",gap:14}}>
+          <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.16em",textTransform:"uppercase",color:"rgba(14,31,24,0.45)"}}>Quote of the Day</div>
+          <div style={{fontFamily:T.serif,fontStyle:"italic",fontSize:26,lineHeight:1.3,color:T.ink,maxWidth:780}}>{todayQuote.text}</div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
+            <div style={{fontFamily:T.mono,fontSize:12,letterSpacing:"0.10em",textTransform:"uppercase",color:"rgba(14,31,24,0.55)"}}>— {todayQuote.author}</div>
+            <button onClick={()=>{
+              const txt=`"${todayQuote.text}" — ${todayQuote.author}`;
+              navigator.clipboard&&navigator.clipboard.writeText(txt).then(()=>{setQuoteCopied(true);setTimeout(()=>setQuoteCopied(false),2500);});
+            }} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",background:quoteCopied?T.forest:T.ink,color:T.cream,border:"none",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font,transition:"background 0.2s",flexShrink:0}}>
+              {quoteCopied
+                ?<><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Copied!</>
+                :<><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg> Share Quote</>
+              }
             </button>
           </div>
         </div>
       </div>
 
-      {/* ROW 4: Quick tools (8) + Streak heatmap (4) */}
-      <div style={{display:"grid",gridTemplateColumns:"8fr 4fr",gap:16}}>
-        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
-          <CardHead title="Quick tools" label="JUMP RIGHT IN" more="Browse all" />
-          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
-            {[
-              {ic:Icon.pen,h:"Essay Writer",p:"Draft, outline, intro & conclusion from a prompt",pg:"essays"},
-              {ic:Icon.layers,h:"Flashcards from file",p:"Drop a PDF · spaced-rep deck in 10s",pg:"flashcards"},
-              {ic:Icon.scan,h:"Plagiarism check",p:"Scan against academic databases",pg:"grammar"},
-              {ic:Icon.quote,h:"Citation generator",p:"MLA · APA · Chicago · from a URL",pg:"grammar"},
-              {ic:Icon.wand,h:"AI Humanizer",p:"Rewrite in your voice · beat detectors",lock:"SCHOLAR",pg:"humanizer"},
-              {ic:Icon.zap,h:"Equation solver",p:"Step-by-step math with explanations",pg:"aitutor"},
-              {ic:Icon.chat,h:"YouTube summarizer",p:"Paste a lecture URL · get key points",lock:"ELITE",pg:"aichat"},
-              {ic:Icon.brain,h:"Exam prep mode",p:"Practice tests & MCQs from your notes",lock:"ELITE",pg:"aitutor"},
-            ].map((tool,i)=>(
-              <div key={i} onClick={()=>setActive(tool.pg)} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:14,padding:16,display:"flex",flexDirection:"column",gap:4,cursor:"pointer",position:"relative",overflow:"hidden",transition:"transform 0.18s"}}>
-                <div style={{width:32,height:32,borderRadius:9,background:T.card,display:"grid",placeItems:"center",color:T.forest,marginBottom:6,border:`1px solid ${T.border}`}}>{tool.ic}</div>
-                <div style={{fontSize:13,fontWeight:600,color:T.text,letterSpacing:"-0.01em"}}>{tool.h}</div>
-                <div style={{fontSize:11.5,color:T.muted,lineHeight:1.4}}>{tool.p}</div>
-                {tool.lock&&<span style={{position:"absolute",top:12,right:12,fontFamily:T.mono,fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",background:T.ink,color:T.lime,padding:"2px 6px",borderRadius:4,fontWeight:600}}>{tool.lock}</span>}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
-          <CardHead title="Study streak" label="LAST 91 DAYS" />
-          <div style={{display:"flex",gap:14,alignItems:"flex-end",marginBottom:14}}>
-            <div>
-              <div style={{fontFamily:T.hand,fontSize:54,lineHeight:0.85,fontWeight:700,color:T.text}}>{realStreak}</div>
-              <div style={{fontSize:11.5,color:T.muted,fontFamily:T.mono,letterSpacing:"0.06em",textTransform:"uppercase"}}>day streak</div>
+      {/* ROW 3: TODAY'S PLAN — full width */}
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+        <CardHead title="Today's plan" label={planDoneCount+" / "+plan.length+" DONE"} more="Calendar" />
+        {plan.length===0
+          ? <div style={{padding:"22px 8px",textAlign:"center"}}>
+              <div style={{fontSize:13,color:T.muted,marginBottom:14,lineHeight:1.5}}>Nothing scheduled for today. Add events to your calendar and they appear here automatically.</div>
+              <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 16px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Open calendar</button>
             </div>
-            <div style={{marginLeft:"auto",textAlign:"right"}}>
-              <div style={{fontSize:11.5,color:T.muted,fontFamily:T.mono,letterSpacing:"0.06em",textTransform:"uppercase"}}>longest</div>
-              <div style={{fontFamily:T.hand,fontSize:30,lineHeight:0.9,color:T.muted}}>31</div>
-            </div>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(13,1fr)",gap:4}}>
-            {seed.map((lvl,i)=>(
-              <div key={i} style={{aspectRatio:"1",background:cellColor(lvl),borderRadius:4,boxShadow:i===seed.length-1?`0 0 0 1.5px ${T.ink}`:"none"}}/>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* ROW 5: Upcoming + Quote + Decks rows split */}
-      <div style={{display:"grid",gridTemplateColumns:"4fr 4fr 8fr",gap:16}}>
-        {/* Upcoming — real calendar events */}
-        {upcomingEvents.length>0&&(
-        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
-          <CardHead title="Upcoming" label="NEXT 14 DAYS" more="Calendar" />
-          {upcomingEvents.map((d,i)=>(
-            <div key={d.id||i} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0",borderBottom:i<upcomingEvents.length-1?`1px solid ${T.border}`:"none"}}>
-              <div style={{width:44,flex:"none",textAlign:"center",padding:"6px 0",background:d.urgent?T.lime:T.card2,borderRadius:8}}>
-                <div style={{fontFamily:T.hand,fontSize:22,fontWeight:700,lineHeight:1,color:d.urgent?T.ink:T.text}}>{d.d}</div>
-                <div style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",color:d.urgent?"rgba(14,31,24,0.6)":T.muted}}>{d.mo}</div>
+          : plan.map((t)=>{
+            const c=scOf(t.subject);
+            return (
+            <div key={t.id} onClick={()=>{togglePlanDone(t.id);forcePlan(x=>x+1);}} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer"}}>
+              <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${t.done?T.forest:T.faint}`,background:t.done?T.forest:"transparent",flex:"none",display:"grid",placeItems:"center"}}>
+                {t.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
               </div>
               <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:13,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.t}</div>
-                <div style={{fontSize:11.5,color:T.muted}}>{d.sub}</div>
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  {t.priority&&<span style={{width:6,height:6,borderRadius:"50%",background:PRIORITY_COLORS[t.priority||3],flexShrink:0}} />}
+                  <span style={{fontSize:13.5,color:t.done?T.muted:T.text,textDecoration:t.done?"line-through":"none",fontWeight:500}}>{t.title}</span>
+                </div>
+                <div style={{fontSize:11.5,color:T.muted,marginTop:1,display:"flex",gap:6,alignItems:"center"}}>
+                  <span style={{textTransform:"capitalize"}}>{t.subject}{t.kind?" · "+t.kind:""}</span>
+                  {t.duration&&<span style={{background:T.card2,padding:"0 5px",borderRadius:3,fontSize:10,fontWeight:600}}>{t.duration}m</span>}
+                </div>
               </div>
-              <span style={{fontFamily:T.mono,fontSize:11,padding:"3px 8px",background:d.urgent?T.butter:T.bg,borderRadius:6,color:T.text,border:d.urgent?"none":`1px solid ${T.border}`,fontWeight:d.urgent?600:400,flexShrink:0}}>{d.cd}</span>
+              <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.06em",padding:"3px 8px",borderRadius:6,background:c+"22",color:c,textTransform:"uppercase",fontWeight:600,flex:"none"}}>{t.subject.slice(0,4)}</span>
+              <span style={{fontFamily:T.mono,fontSize:11,color:T.muted}}>{fmtClock(t.time)}</span>
+            </div>
+          );})}
+      </div>
+
+      {/* ROW 4: GLOBAL LEADERBOARD — hidden in Serious Mode */}
+      {!seriousMode && <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18,gap:12,flexWrap:"wrap"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <Hand>Global Leaderboard</Hand>
+            <Eye>RESETS WEEKLY</Eye>
+          </div>
+          <button onClick={()=>setLeaderboardOpen(true)} style={{fontSize:12,color:T.muted,display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",background:"none",border:"none"}}>View all <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:0}}>
+          {lbUsers.map((u,i)=>(
+            <div key={u.r} style={{display:"flex",alignItems:"center",gap:14,padding:"13px 16px",borderRadius:12,background:u.you?T.lime+"0c":lbRankBg(u.r),marginBottom:4,border:`1px solid ${u.you?T.lime+"33":"transparent"}`}}>
+              <div style={{width:30,height:30,borderRadius:"50%",background:lbRankBg(u.r)||T.card2,border:`2px solid ${lbRankColor(u.r)}`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:T.mono,fontSize:12,fontWeight:700,color:lbRankColor(u.r),flexShrink:0}}>{u.r}</div>
+              <div style={{width:36,height:36,borderRadius:"50%",background:u.grad,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:13,color:T.ink,flexShrink:0}}>{u.n.slice(0,1)}</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13.5,fontWeight:u.you?700:600,color:u.you?T.lime:T.text}}>{u.n}{u.you&&<span style={{marginLeft:8,fontFamily:T.mono,fontSize:10,letterSpacing:"0.08em",background:T.lime+"22",color:T.lime,padding:"2px 7px",borderRadius:4,fontWeight:700}}>YOU</span>}</div>
+                <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{u.tier} · {u.streak>0?u.streak+"-day streak":"No active streak"}</div>
+              </div>
+              <div style={{textAlign:"right",flexShrink:0}}>
+                <div style={{fontFamily:T.mono,fontSize:14,fontWeight:700,color:lbRankColor(u.r)||T.text}}>{u.xp.toLocaleString()}</div>
+                <div style={{fontSize:10,color:T.faint,marginTop:2}}>XP</div>
+              </div>
             </div>
           ))}
         </div>
-        )}
+      </div>}
 
-        {/* Pre-session quote */}
-        <div style={{background:T.butter,borderRadius:22,padding:22,position:"relative",overflow:"hidden",border:"none"}}>
-          <CardHead title="Pre-session" label="DAILY" />
-          <span style={{fontFamily:T.serif,fontSize:140,lineHeight:0.7,color:"rgba(14,31,24,0.12)",position:"absolute",top:0,left:12,fontStyle:"italic"}}>"</span>
-          <div style={{fontFamily:T.serif,fontStyle:"italic",fontSize:22,lineHeight:1.25,color:T.ink,margin:"14px 0 14px",position:"relative",zIndex:1}}>It is not that I'm so smart. It's just that I stay with problems longer.</div>
-          <div style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.12em",textTransform:"uppercase",color:"rgba(14,31,24,0.55)"}}>— Albert Einstein</div>
-        </div>
-
-        {/* Pick up where you left off — real deck + note data */}
-        {pickUpItems.length>0&&(
-        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
-          <CardHead title="Pick up where you left off" more="All library" />
-          <div style={{display:"flex",gap:10,overflowX:"auto",padding:"0 4px 4px"}}>
-            {pickUpItems.map((d,i)=>(
-              <div key={d.id||i} onClick={()=>setActive("flashcards")} style={{flex:"none",width:160,background:T.card2,border:`1px solid ${T.border}`,borderRadius:14,padding:14,cursor:"pointer",transition:"border-color 0.15s"}}>
-                <div style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.10em",textTransform:"uppercase",color:T.muted,marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.subj}</div>
-                <div style={{fontSize:13.5,margin:"4px 0 12px",lineHeight:1.25,color:T.text,minHeight:32,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical"}}>{d.title}</div>
-                <div style={{height:4,background:T.border,borderRadius:99,overflow:"hidden"}}><div style={{height:"100%",width:d.pct+"%",background:T.lime,borderRadius:99}}/></div>
-                <div style={{display:"flex",justifyContent:"space-between",marginTop:6,fontSize:10.5,color:T.muted,fontFamily:T.mono}}>
-                  <span>{d.a}</span><span>{d.b}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-        )}
-      </div>
-
-      {/* ROW 6: Wrapped (full) */}
-      <div style={{background:T.forest,color:T.cream,borderRadius:22,padding:22}}>
+      {/* ROW 5: WEEKLY WRAPPED — hidden in Serious Mode */}
+      {!seriousMode && <div style={{background:T.forest,color:T.cream,borderRadius:22,padding:22}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:12,flexWrap:"wrap"}}>
           <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
             <Hand style={{color:T.cream}}>This week, you…</Hand>
@@ -4171,7 +3992,7 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
             Global leaderboard
           </button>
         </div>
-      </div>
+      </div>}
 
       {/* Modals */}
       <LevelRoadmapModal open={levelRoadmapOpen} onClose={()=>setLevelRoadmapOpen(false)} currentXP={lvl.xp} />
@@ -4364,6 +4185,23 @@ function AuthGate(){
   return <App />;
 }
 
+// ─── NOTIFICATION PERMISSION MODAL ────────────────────────────────────────────
+function NotifPermModal({onAllow=()=>{},onDeny=()=>{}}) {
+  return (
+    <div style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{background:T.bg,borderRadius:24,padding:"36px 32px 28px",maxWidth:360,width:"100%",boxShadow:"0 24px 80px rgba(0,0,0,0.35)",border:`1px solid ${T.border}`,textAlign:"center"}}>
+        <div style={{width:64,height:64,borderRadius:18,background:`linear-gradient(135deg,${T.lime}30,${T.lime}10)`,border:`1px solid ${T.lime}40`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 20px",fontSize:28}}>🔔</div>
+        <div style={{fontFamily:T.sans,fontWeight:700,fontSize:20,color:T.text,marginBottom:8,letterSpacing:"-0.3px"}}>Stay on track</div>
+        <div style={{fontFamily:T.sans,fontSize:14,color:T.muted,lineHeight:1.6,marginBottom:28}}>
+          Allow Studlin to send you smart alerts before study blocks begin — so you never miss a lock-in session.
+        </div>
+        <button onClick={onAllow} style={{width:"100%",padding:"13px 0",borderRadius:12,background:T.lime,color:T.ink,border:"none",fontFamily:T.sans,fontWeight:700,fontSize:15,cursor:"pointer",marginBottom:10,letterSpacing:"-0.2px"}}>Allow notifications</button>
+        <button onClick={onDeny} style={{width:"100%",padding:"11px 0",borderRadius:12,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,fontFamily:T.sans,fontWeight:500,fontSize:14,cursor:"pointer"}}>Not now</button>
+      </div>
+    </div>
+  );
+}
+
 // ─── APP SHELL ────────────────────────────────────────────────────────────────
 function App() {
   seedEventsIfStale();
@@ -4394,6 +4232,16 @@ function App() {
   const [creditsOpen,setCreditsOpen]=useState(false);
   const [pricingOpen,setPricingOpen]=useState(false);
   const [notifOpen,setNotifOpen]=useState(false);
+  const [seriousMode,setSeriousMode]=useState(()=>lsGet("settings",{}).seriousMode||false);
+  const [notifPermModal,setNotifPermModal]=useState(false);
+  const handleNotifAllow=()=>{
+    if(Notification&&Notification.requestPermission)Notification.requestPermission();
+    const s=lsGet("settings",{});lsSet("settings",{...s,notifMaster:true});
+    lsSet("notifAsked",true);setNotifPermModal(false);
+  };
+  const handleNotifDeny=()=>{
+    lsSet("notifAsked",true);setNotifPermModal(false);
+  };
   const [notifSeen,setNotifSeen]=useState(false);
   const [customDollars,setCustomDollars]=useState("");
   const [boughtMsg,setBoughtMsg]=useState("");
@@ -4484,7 +4332,6 @@ function App() {
       setFocusSecs(focusTotal);
     }
   },[focusSecs,focusRunning,focusMode,focusTotal]);
-  const fm=String(Math.floor(focusSecs/60)).padStart(2,"0"), fs=String(focusSecs%60).padStart(2,"0");
   const navSections=[
     {label:"Workspace",items:[
       {id:"dashboard",label:"Dashboard"},
@@ -4507,7 +4354,7 @@ function App() {
   const sectionOf={dashboard:"Workspace",aichat:"Workspace",essays:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",aitutor:"Tools",grammar:"Tools",humanizer:"Tools",solve:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
-  if (!onboarded) return <InitWizard onComplete={()=>setOnboarded(true)} />;
+  if (!onboarded) return <InitWizard onComplete={()=>{setOnboarded(true);if(!lsGet("notifAsked",false))setTimeout(()=>setNotifPermModal(true),500);}} />;
   const sidebarText=isLight?"#F6F1E6":T.text;
   const sidebarMuted=isLight?"rgba(246,241,230,0.55)":T.muted;
   const sidebarFaint=isLight?"rgba(246,241,230,0.35)":T.faint;
@@ -4569,10 +4416,6 @@ function App() {
             <input placeholder="Search notes, flashcards, essays, or ask AI…" style={{flex:1,background:"none",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}} />
             <span style={{fontFamily:T.mono,fontSize:10,background:T.bg,color:T.muted,padding:"2px 7px",borderRadius:5,border:`1px solid ${T.border}`}}>⌘ K</span>
           </div>
-          <div onClick={()=>setFocusRunning(r=>!r)} title={focusRunning?"Focus active · click to pause":"Focus paused · click to resume"} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"7px 13px",background:isLight?T.ink:T.card,color:isLight?T.cream:T.text,border:`1px solid ${T.border}`,borderRadius:99,fontSize:12.5,fontWeight:500,flexShrink:0,cursor:"pointer"}}>
-            <span style={{width:6,height:6,borderRadius:"50%",background:focusRunning?T.lime:T.muted,boxShadow:focusRunning?`0 0 8px ${T.lime}`:"none",animation:focusRunning?"studlinPulse 1.6s infinite":"none"}} />
-            {focusRunning?"Focus active · ":"Focus paused · "}<span style={{fontFamily:T.mono,fontVariantNumeric:"tabular-nums"}}>{fm}:{fs}</span>
-          </div>
           {/* See Pricing button */}
           <button onClick={()=>setPricingOpen(true)} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"8px 16px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:13,fontWeight:700,cursor:"pointer",flexShrink:0,fontFamily:T.font,letterSpacing:"-0.005em",boxShadow:`0 4px 14px -4px ${T.lime}80`}}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
@@ -4610,8 +4453,8 @@ function App() {
 
         {/* CONTENT */}
         <div key={active} data-page style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both"}}>
-          {active==="dashboard"?<Dashboard setActive={setActive} focusSecs={focusSecs} focusRunning={focusRunning} setFocusRunning={setFocusRunning} setScheduleSettingsOpen={setScheduleSettingsOpen} />:
-           active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} />:
+          {active==="dashboard"?<Dashboard setActive={setActive} focusSecs={focusSecs} focusRunning={focusRunning} setFocusRunning={setFocusRunning} setScheduleSettingsOpen={setScheduleSettingsOpen} seriousMode={seriousMode} />:
+           active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} />:
            ActivePage?<ActivePage />:null}
         </div>
       </div>
@@ -4880,6 +4723,7 @@ function App() {
           box-shadow: 0 8px 24px -10px rgba(14,31,24,0.14);
         }
       `}</style>
+      {notifPermModal && <NotifPermModal onAllow={handleNotifAllow} onDeny={handleNotifDeny} />}
     </div>
   );
 }
