@@ -2186,9 +2186,6 @@ function FriendsChat(){
   const [searchFilter,setSearchFilter]=useState("All");
   const [inviteEmail,setInviteEmail]=useState("");
   const [emailSent,setEmailSent]=useState(false);
-  const [calGoogleLinked,setCalGoogleLinked]=useState(()=>lsGet("cal-google",false));
-  const [calAppleLinked,setCalAppleLinked]=useState(()=>lsGet("cal-apple",false));
-  const [googleSyncing,setGoogleSyncing]=useState(false);
   const [copied,setCopied]=useState(false);
   const [inviteOpen,setInviteOpen]=useState(false);
   const [friendReqs,setFriendReqs]=useState([
@@ -2212,11 +2209,6 @@ function FriendsChat(){
     {n:"Riya Mehta",h:"@riyam",s:"Lehigh University",online:true},
   ];
   const makeFutureDay=(n)=>{const d=new Date();d.setDate(d.getDate()+n);return d;};
-  const MOCK_GCAL=[
-    {id:"gcal-1",date:dayKey(makeFutureDay(1)),time:"10:00",title:"CS301 Lecture [Google Cal]",subject:"None",kind:"deadline"},
-    {id:"gcal-2",date:dayKey(makeFutureDay(2)),time:"14:00",title:"Study Group [Google Cal]",subject:"None",kind:"deadline"},
-    {id:"gcal-3",date:dayKey(makeFutureDay(3)),time:"09:00",title:"Office Hours [Google Cal]",subject:"None",kind:"deadline"},
-  ];
   const SYNC_SLOTS=[
     {day:"Wednesday, Jul 2",time:"3:00 – 5:00 PM",match:"4/4 free",best:true},
     {day:"Friday, Jul 4",time:"10:00 AM – 12:00 PM",match:"4/4 free",best:false},
@@ -2238,20 +2230,6 @@ function FriendsChat(){
 
   const sendEmailInvite=()=>{if(!inviteEmail.trim())return;setEmailSent(true);setTimeout(()=>{setEmailSent(false);setInviteEmail("");},2500);};
   const copyLink=()=>{navigator.clipboard&&navigator.clipboard.writeText(inviteLink);setCopied(true);setTimeout(()=>setCopied(false),2200);};
-
-  const linkCalGoogle=()=>{
-    if(calGoogleLinked){
-      const ev=lsGet("events",[]).filter(e=>!e.id.startsWith("gcal-"));
-      lsSet("events",ev);setCalGoogleLinked(false);lsSet("cal-google",false);return;
-    }
-    setGoogleSyncing(true);
-    setTimeout(()=>{
-      const ev=lsGet("events",[]).filter(e=>!e.id.startsWith("gcal-"));
-      lsSet("events",[...ev,...MOCK_GCAL]);
-      setCalGoogleLinked(true);lsSet("cal-google",true);setGoogleSyncing(false);
-    },1800);
-  };
-  const linkCalApple=()=>{const n=!calAppleLinked;setCalAppleLinked(n);lsSet("cal-apple",n);};
 
   const acceptReq=(id)=>{
     const req=friendReqs.find(r=>r.id===id);
@@ -2564,44 +2542,6 @@ function FriendsChat(){
           </Card>
         </div>
       </div>
-
-      {/* ── CALENDAR SYNC ── */}
-      <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8}}>Sync External Calendar</div>
-      <Card style={{padding:20}}>
-        <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>Connect your existing calendar</div>
-        <div style={{fontSize:12,color:T.muted,marginBottom:16,lineHeight:1.6}}>Pull your existing events into Studlin without altering or deleting anything. Studlin-created blocks sync right back to your primary calendar.</div>
-        <div style={{display:"flex",flexDirection:"column",gap:10}}>
-          <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${calGoogleLinked?T.teal+"44":T.border}`,transition:"border-color 0.2s"}}>
-            <div style={{width:38,height:38,borderRadius:10,background:"rgba(66,133,244,0.12)",border:"1px solid rgba(66,133,244,0.25)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
-            </div>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:13,fontWeight:600,color:T.white}}>Google Calendar</div>
-              <div style={{fontSize:11,color:calGoogleLinked?T.teal:(googleSyncing?"#DCA64A":T.muted),marginTop:2}}>
-                {googleSyncing?"Fetching events from Google…":calGoogleLinked?"Synced · 3 events imported · bi-directional":"Connect to import your existing events"}
-              </div>
-            </div>
-            <BtnSm variant={calGoogleLinked?"subtle":"lime"} onClick={linkCalGoogle} style={{flexShrink:0,opacity:googleSyncing?0.55:1}}>
-              {googleSyncing?"Syncing…":calGoogleLinked?"Disconnect":"Connect"}
-            </BtnSm>
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${calAppleLinked?T.teal+"44":T.border}`,transition:"border-color 0.2s"}}>
-            <div style={{width:38,height:38,borderRadius:10,background:"rgba(255,255,255,0.07)",border:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill={T.text}><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
-            </div>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:13,fontWeight:600,color:T.white}}>Apple Calendar</div>
-              <div style={{fontSize:11,color:calAppleLinked?T.teal:T.muted,marginTop:2}}>{calAppleLinked?"Synced · bi-directional · events flowing in":"Import iCloud events and push Studlin blocks back"}</div>
-            </div>
-            <BtnSm variant={calAppleLinked?"subtle":"lime"} onClick={linkCalApple}>{calAppleLinked?"Disconnect":"Connect"}</BtnSm>
-          </div>
-        </div>
-        {(calGoogleLinked||calAppleLinked)&&(
-          <div style={{marginTop:14,padding:"10px 14px",borderRadius:8,background:T.teal+"10",border:`1px solid ${T.teal}25`,fontSize:12,color:T.teal,lineHeight:1.6}}>
-            Calendar sync active. External events appear on your Studlin calendar in read-only mode. Studlin study blocks push back to your connected account automatically.
-          </div>
-        )}
-      </Card>
 
       {/* ── INVITE MODAL ── */}
       {inviteOpen&&(
@@ -4279,6 +4219,69 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const [friends,setFriends]=useState(()=>lsGet("friends",[]));
   const toggleFriend=(h)=>{const n=friends.includes(h)?friends.filter(x=>x!==h):[...friends,h];setFriends(n);lsSet("friends",n);};
   const friendResults=friendQ.trim()?allUsers.filter(u=>(u.n+" "+u.h+" "+u.s).toLowerCase().includes(friendQ.toLowerCase())):allUsers.slice(0,3);
+  const [calGoogleLinked,setCalGoogleLinked]=useState(()=>lsGet("cal-google",false));
+  const [calAppleLinked,setCalAppleLinked]=useState(()=>lsGet("cal-apple",false));
+  const [googleSyncing,setGoogleSyncing]=useState(false);
+  const [integrationToast,setIntegrationToast]=useState(null);
+
+  const showToast=(msg,type="success")=>{
+    setIntegrationToast({msg,type});
+    setTimeout(()=>setIntegrationToast(null),3500);
+  };
+
+  const connectGoogle=()=>{
+    if(typeof google==="undefined"||!google.accounts||!google.accounts.oauth2){
+      showToast("Google sign-in not ready. Try refreshing the page.","error");return;
+    }
+    const tokenClient=google.accounts.oauth2.initTokenClient({
+      client_id:"16831354472-e2vauavtunm3ot771cg7pgline10i9rk.apps.googleusercontent.com",
+      scope:"https://www.googleapis.com/auth/calendar.readonly",
+      callback:async(resp)=>{
+        if(resp.error){showToast("Google Calendar connection failed.","error");return;}
+        setGoogleSyncing(true);
+        try{
+          const now=new Date().toISOString();
+          const res=await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=50&orderBy=startTime&singleEvents=true&timeMin=${encodeURIComponent(now)}`,{headers:{Authorization:`Bearer ${resp.access_token}`}});
+          const data=await res.json();
+          if(data.error) throw new Error(data.error.message);
+          const gcalEvents=(data.items||[]).map(item=>({
+            id:"gcal-"+item.id,
+            date:(item.start.dateTime||item.start.date).slice(0,10),
+            time:item.start.dateTime?item.start.dateTime.slice(11,16):"",
+            title:item.summary||"Untitled",
+            subject:"General",
+            kind:"deadline"
+          }));
+          const existing=lsGet("events",[]).filter(e=>!e.id.startsWith("gcal-"));
+          lsSet("events",[...existing,...gcalEvents]);
+          lsSet("cal-google",true);
+          setCalGoogleLinked(true);
+          showToast(`Google Calendar connected · ${gcalEvents.length} event${gcalEvents.length===1?"":"s"} imported`);
+        }catch(e){
+          showToast("Failed to fetch calendar events. Check permissions and try again.","error");
+        }finally{
+          setGoogleSyncing(false);
+        }
+      }
+    });
+    tokenClient.requestAccessToken();
+  };
+
+  const disconnectGoogle=()=>{
+    const ev=lsGet("events",[]).filter(e=>!e.id.startsWith("gcal-"));
+    lsSet("events",ev);
+    lsSet("cal-google",false);
+    setCalGoogleLinked(false);
+    showToast("Google Calendar disconnected.");
+  };
+
+  const toggleApple=()=>{
+    const n=!calAppleLinked;
+    setCalAppleLinked(n);
+    lsSet("cal-apple",n);
+    showToast(n?"Apple Calendar connected.":"Apple Calendar disconnected.");
+  };
+
   const sections=[
     {id:"General",icon:Icon.settings},
     {id:"Appearance",icon:Icon.wand},
@@ -4286,6 +4289,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     {id:"Privacy",icon:Icon.shield},
     {id:"Study preferences",icon:Icon.brain},
     {id:"Subjects & Labels",icon:Icon.layers},
+    {id:"Integrations",icon:Icon.link},
     {id:"Subscription",icon:Icon.zap},
     {id:"Danger zone",icon:Icon.xmark},
   ];
@@ -4600,6 +4604,53 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 <Btn variant="subtle" onClick={()=>setMgmtSubjs(DEFAULT_SUBJECTS.map(s=>({...s})))}>Reset to defaults</Btn>
                 {mgmtSaved&&<span style={{fontSize:12,color:T.lime,fontWeight:600}}>✓ Saved</span>}
               </div>
+            </Card>
+          </>)}
+
+          {active==="Integrations" && (<>
+            {integrationToast&&(
+              <div style={{position:"fixed",top:20,right:20,zIndex:999,padding:"11px 18px",borderRadius:10,background:integrationToast.type==="error"?T.red:T.teal,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+                {integrationToast.msg}
+              </div>
+            )}
+            <Card style={{marginBottom:12}}>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Calendar Integrations</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:16,lineHeight:1.6}}>Pull your existing events into Studlin. Your data is never stored on our servers — events are cached locally on this device only.</div>
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${calGoogleLinked?T.teal+"44":T.border}`,transition:"border-color 0.2s"}}>
+                  <div style={{width:40,height:40,borderRadius:10,background:"rgba(66,133,244,0.10)",border:"1px solid rgba(66,133,244,0.22)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:600,color:T.white}}>Google Calendar</div>
+                    <div style={{fontSize:11,color:calGoogleLinked?T.teal:(googleSyncing?T.amber:T.muted),marginTop:2}}>
+                      {googleSyncing?"Importing events from Google…":calGoogleLinked?"Connected · events synced to your calendar":"Read-only · imports your upcoming events"}
+                    </div>
+                  </div>
+                  <BtnSm variant={calGoogleLinked?"subtle":"lime"} onClick={calGoogleLinked?disconnectGoogle:connectGoogle} style={{flexShrink:0,opacity:googleSyncing?0.55:1}}>
+                    {googleSyncing?"Syncing…":calGoogleLinked?"Disconnect":"Connect"}
+                  </BtnSm>
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${calAppleLinked?T.teal+"44":T.border}`,transition:"border-color 0.2s"}}>
+                  <div style={{width:40,height:40,borderRadius:10,background:"rgba(255,255,255,0.06)",border:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill={T.text}><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:600,color:T.white}}>Apple Calendar</div>
+                    <div style={{fontSize:11,color:calAppleLinked?T.teal:T.muted,marginTop:2}}>{calAppleLinked?"Connected · iCloud events flowing in":"Import iCloud events into Studlin"}</div>
+                  </div>
+                  <BtnSm variant={calAppleLinked?"subtle":"lime"} onClick={toggleApple}>{calAppleLinked?"Disconnect":"Connect"}</BtnSm>
+                </div>
+              </div>
+              {(calGoogleLinked||calAppleLinked)&&(
+                <div style={{marginTop:14,padding:"10px 14px",borderRadius:8,background:T.teal+"10",border:`1px solid ${T.teal}25`,fontSize:12,color:T.teal,lineHeight:1.6}}>
+                  Calendar sync active. Events appear in read-only mode on your Studlin calendar and are stored locally on this device.
+                </div>
+              )}
+            </Card>
+            <Card>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Coming soon</div>
+              <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>Notion, Canvas LMS, and Outlook integrations are in development. They'll appear here when ready.</div>
             </Card>
           </>)}
 
@@ -5758,6 +5809,10 @@ function App() {
   const [pricingOpen,setPricingOpen]=useState(false);
   const [notifOpen,setNotifOpen]=useState(false);
   const [seriousMode,setSeriousMode]=useState(()=>lsGet("settings",{}).seriousMode||false);
+  const [calOnboardDone,setCalOnboardDone]=useState(()=>!!lsGet("cal-onboard-done",false));
+  const [calOnboardGoogleSyncing,setCalOnboardGoogleSyncing]=useState(false);
+  const [obGoogleLinked,setObGoogleLinked]=useState(()=>!!lsGet("cal-google",false));
+  const [obAppleLinked,setObAppleLinked]=useState(()=>!!lsGet("cal-apple",false));
   const [notifPermModal,setNotifPermModal]=useState(false);
   const handleNotifAllow=()=>{
     if(Notification&&Notification.requestPermission)Notification.requestPermission();
@@ -6252,6 +6307,76 @@ function App() {
         }
       `}</style>
       {notifPermModal && <NotifPermModal onAllow={handleNotifAllow} onDeny={handleNotifDeny} />}
+      {!calOnboardDone&&(
+        <div style={{position:"fixed",inset:0,zIndex:200,background:"rgba(8,12,10,0.82)",backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px"}}>
+          <div style={{width:"100%",maxWidth:480,background:T.surface,border:`1px solid ${T.border}`,borderRadius:20,padding:"36px 36px 28px",boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease"}}>
+            <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:6}}>
+              <div style={{width:44,height:44,borderRadius:12,background:T.lime+"18",border:`1px solid ${T.lime}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,fontSize:20}}>{Icon.cal}</div>
+              <div>
+                <div style={{fontSize:19,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>Connect your calendar</div>
+                <div style={{fontSize:12,color:T.muted}}>Pull existing events into Studlin · takes 10 seconds</div>
+              </div>
+            </div>
+            <p style={{fontSize:13,color:T.muted,lineHeight:1.7,margin:"18px 0 20px"}}>
+              Studlin can read your upcoming events so you never double-book a study block. Your calendar data is cached locally — we never store it on our servers.
+            </p>
+            <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:24}}>
+              <div style={{display:"flex",alignItems:"center",gap:14,padding:"13px 16px",borderRadius:10,background:T.card2,border:`1px solid ${obGoogleLinked?T.teal+"44":T.border}`}}>
+                <div style={{width:36,height:36,borderRadius:9,background:"rgba(66,133,244,0.10)",border:"1px solid rgba(66,133,244,0.22)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:600,color:T.white}}>Google Calendar</div>
+                  <div style={{fontSize:11,color:obGoogleLinked?T.teal:(calOnboardGoogleSyncing?T.amber:T.muted),marginTop:1}}>{calOnboardGoogleSyncing?"Importing events…":obGoogleLinked?"Connected · events imported":"Read-only · your events, no editing"}</div>
+                </div>
+                {obGoogleLinked
+                  ?<div style={{display:"flex",alignItems:"center",gap:6,color:T.teal,fontSize:12,fontWeight:600}}>{Icon.check} Connected</div>
+                  :<BtnSm variant="lime" style={{flexShrink:0,opacity:calOnboardGoogleSyncing?0.55:1}} onClick={()=>{
+                    if(typeof google==="undefined"||!google.accounts||!google.accounts.oauth2){alert("Google sign-in not ready. Try refreshing.");return;}
+                    const tc=google.accounts.oauth2.initTokenClient({
+                      client_id:"16831354472-e2vauavtunm3ot771cg7pgline10i9rk.apps.googleusercontent.com",
+                      scope:"https://www.googleapis.com/auth/calendar.readonly",
+                      callback:async(resp)=>{
+                        if(resp.error)return;
+                        setCalOnboardGoogleSyncing(true);
+                        try{
+                          const now=new Date().toISOString();
+                          const res=await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=50&orderBy=startTime&singleEvents=true&timeMin=${encodeURIComponent(now)}`,{headers:{Authorization:`Bearer ${resp.access_token}`}});
+                          const data=await res.json();
+                          const gcalEvents=(data.items||[]).map(item=>({id:"gcal-"+item.id,date:(item.start.dateTime||item.start.date).slice(0,10),time:item.start.dateTime?item.start.dateTime.slice(11,16):"",title:item.summary||"Untitled",subject:"General",kind:"deadline"}));
+                          const existing=lsGet("events",[]).filter(e=>!e.id.startsWith("gcal-"));
+                          lsSet("events",[...existing,...gcalEvents]);
+                          lsSet("cal-google",true);
+                          setObGoogleLinked(true);
+                        }catch(e){}finally{setCalOnboardGoogleSyncing(false);}
+                      }
+                    });
+                    tc.requestAccessToken();
+                  }}>{calOnboardGoogleSyncing?"Syncing…":"Connect"}</BtnSm>
+                }
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:14,padding:"13px 16px",borderRadius:10,background:T.card2,border:`1px solid ${obAppleLinked?T.teal+"44":T.border}`}}>
+                <div style={{width:36,height:36,borderRadius:9,background:"rgba(255,255,255,0.06)",border:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill={T.text}><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:600,color:T.white}}>Apple Calendar</div>
+                  <div style={{fontSize:11,color:obAppleLinked?T.teal:T.muted,marginTop:1}}>{obAppleLinked?"Connected":"Import iCloud events"}</div>
+                </div>
+                {obAppleLinked
+                  ?<div style={{display:"flex",alignItems:"center",gap:6,color:T.teal,fontSize:12,fontWeight:600}}>{Icon.check} Connected</div>
+                  :<BtnSm variant="subtle" onClick={()=>{lsSet("cal-apple",true);setObAppleLinked(true);}}>Connect</BtnSm>
+                }
+              </div>
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <Btn style={{flex:1,justifyContent:"center"}} onClick={()=>{lsSet("cal-onboard-done",true);setCalOnboardDone(true);}}>Done</Btn>
+              <Btn variant="subtle" style={{flex:1,justifyContent:"center"}} onClick={()=>{lsSet("cal-onboard-done",true);setCalOnboardDone(true);}}>Skip for now</Btn>
+            </div>
+            <div style={{fontSize:11,color:T.faint,textAlign:"center",marginTop:14,lineHeight:1.5}}>You can connect or disconnect calendars anytime in Settings → Integrations.</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
