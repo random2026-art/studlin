@@ -362,7 +362,24 @@ function getXP(){
   const streakXP=getStreak()*30;
   const loginXP=lsGet("days",[]).length*15;
   const taskXP=Object.values(lsGet("planDone",{})).filter(Boolean).length*20;
-  return base+focusXP+streakXP+loginXP+taskXP+lsGet("xpBonus",0);
+  const penaltyXP=lsGet("xpPenaltyTotal",0);
+  return Math.max(0,base+focusXP+streakXP+loginXP+taskXP+lsGet("xpBonus",0)-penaltyXP);
+}
+function applyOverduePenalties(){
+  const today=dayKey();
+  const events=lsGet("events",[]);
+  const penalized=lsGet("penalizedTasks",{});
+  let added=0;
+  events.forEach(ev=>{
+    if(penalized[ev.id])return;
+    if(ev.status!=="pending")return;
+    if(ev.date>=today)return;
+    if(ev.deadline&&ev.deadline<today)return;
+    const pen=Math.round((ev.duration||25)*(ev.priority||1)*(ev.difficulty||1));
+    added+=pen;
+    penalized[ev.id]=true;
+  });
+  if(added>0){lsSet("xpPenaltyTotal",(lsGet("xpPenaltyTotal",0)+added));lsSet("penalizedTasks",penalized);}
 }
 function levelInfo(){const xp=getXP();const per=300;const level=Math.floor(xp/per)+1;const into=xp-(level-1)*per;const title=getProfTitle(xp);const nextTier=PROF_TIERS.find(t=>t.minXP>xp)||null;const curTierXP=(PROF_TIERS.slice().reverse().find(t=>xp>=t.minXP)||PROF_TIERS[0]).minXP;const tierPct=nextTier?Math.round(Math.max(0,Math.min(100,(xp-curTierXP)/(nextTier.minXP-curTierXP)*100))):100;return {xp,level,into,per,toNext:per-into,pct:Math.round(into/per*100),title,nextTier,tierPct};}
 function weekStreak(){const days=new Set(lsGet("days",[]));const now=new Date();const dow=(now.getDay()+6)%7;const mon=new Date(now);mon.setDate(now.getDate()-dow);return ["M","T","W","T","F","S","S"].map((lab,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);const k=dayKey(d);const today=k===dayKey(now);return {lab,on:days.has(k),today,future:d>now&&!today};});}
@@ -1749,6 +1766,8 @@ function TaskTimerModal({task,onClose,onComplete}){
   const breakIdeaRef=useRef(BREAK_IDEAS[Math.floor(Math.random()*BREAK_IDEAS.length)]);
   const focusElapsed=useRef(0);
   const barRef=useRef(null);
+  const endTimeRef=useRef(null);
+  const focusStartRef=useRef(null);
 
   const initBreakMins=totalMins>=120?15:totalMins>=60?10:5;
   const initBreakPos=Math.max(1,Math.floor((totalMins-initBreakMins)/2));
@@ -1769,23 +1788,27 @@ function TaskTimerModal({task,onClose,onComplete}){
 
   useEffect(()=>{
     if(!running)return;
+    endTimeRef.current=Date.now()+secs*1000;
+    if(phase!=="break")focusStartRef.current=Date.now();
     const id=setInterval(()=>{
-      setSecs(s=>{
-        if(s>1){
-          if(phase!=="break")focusElapsed.current+=1;
-          return s-1;
-        }
+      const remaining=Math.max(0,Math.round((endTimeRef.current-Date.now())/1000));
+      setSecs(remaining);
+      if(remaining<=0){
         if(phase==="focus1"){setPhase("break");setRunning(false);}
         else if(phase==="break"){setPhase("breakDone");setRunning(false);}
         else if(phase==="focus2"){
-          focusElapsed.current+=1;
           setPhase("done");setRunning(false);
-          if(onComplete)onComplete(totalMins);
+          if(onComplete)onComplete(Math.max(1,Math.round(focusElapsed.current/60)));
         }
-        return 0;
-      });
-    },1000);
-    return()=>clearInterval(id);
+      }
+    },250);
+    return()=>{
+      clearInterval(id);
+      if(phase!=="break"&&focusStartRef.current){
+        focusElapsed.current+=(Date.now()-focusStartRef.current)/1000;
+        focusStartRef.current=null;
+      }
+    };
   },[running,phase,totalMins,onComplete]);
 
   useEffect(()=>{
@@ -1804,6 +1827,10 @@ function TaskTimerModal({task,onClose,onComplete}){
   const resume=()=>{setPhase("focus2");setSecs(focus2Mins*60);setRunning(true);};
 
   const finishEarly=()=>{
+    if(phase!=="break"&&focusStartRef.current){
+      focusElapsed.current+=(Date.now()-focusStartRef.current)/1000;
+      focusStartRef.current=null;
+    }
     const m=Math.max(1,Math.round(focusElapsed.current/60));
     setPhase("done");setRunning(false);
     if(onComplete)onComplete(m);
@@ -1825,8 +1852,19 @@ function TaskTimerModal({task,onClose,onComplete}){
     if(!(e.buttons&1)||!breakOn)return;
     updateBreakPos(e);
   };
+  const handleSegmentPointerDown=(e)=>{
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    updateBreakPos(e);
+  };
+  const handleSegmentPointerMove=(e)=>{
+    if(!(e.buttons&1))return;
+    e.stopPropagation();
+    updateBreakPos(e);
+  };
   const handleBreakDblClick=(e)=>{
     e.stopPropagation();
+    e.preventDefault();
     setBreakEditOpen(true);
     setBreakEditVal(String(breakMins));
   };
@@ -1871,7 +1909,9 @@ function TaskTimerModal({task,onClose,onComplete}){
               {breakOn&&(
                 <div
                   onDoubleClick={handleBreakDblClick}
-                  style={{position:"absolute",left:`${(breakPos/totalMins)*100}%`,width:`${Math.max(4,(breakMins/totalMins)*100)}%`,top:2,bottom:2,background:T.amber,borderRadius:5,cursor:"grab",display:"flex",alignItems:"center",justifyContent:"center",minWidth:28}}>
+                  onPointerDown={handleSegmentPointerDown}
+                  onPointerMove={handleSegmentPointerMove}
+                  style={{position:"absolute",left:`${(breakPos/totalMins)*100}%`,width:`${Math.max(4,(breakMins/totalMins)*100)}%`,top:2,bottom:2,background:T.amber,borderRadius:5,cursor:"grab",display:"flex",alignItems:"center",justifyContent:"center",minWidth:28,userSelect:"none"}}>
                   <span style={{fontSize:9,fontWeight:700,color:T.ink,letterSpacing:"0.04em",whiteSpace:"nowrap",pointerEvents:"none"}}>{breakMins}m</span>
                 </div>
               )}
@@ -1931,15 +1971,15 @@ function TaskTimerModal({task,onClose,onComplete}){
 
         <div style={{position:"relative",width:180,height:180,margin:"0 auto 20px"}}>
           <svg viewBox="0 0 120 120" style={{width:180,height:180,transform:"rotate(-90deg)"}}>
-            <circle cx="60" cy="60" r="52" fill="none" stroke={T.card2} strokeWidth="6"/>
+            <circle cx="60" cy="60" r="52" fill="rgba(0,0,0,0.6)" stroke="rgba(255,255,255,0.08)" strokeWidth="6"/>
             <circle cx="60" cy="60" r="52" fill="none" stroke={timerColor} strokeWidth="6" strokeLinecap="round"
               strokeDasharray={circumference}
               strokeDashoffset={circumference*(1-phasePct)}
-              style={{transition:"stroke-dashoffset 0.5s"}}/>
+              style={{transition:"stroke-dashoffset 0.5s",filter:`drop-shadow(0 0 6px ${timerColor}88)`}}/>
           </svg>
           <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
-            <div style={{fontSize:42,fontWeight:700,color:T.white,fontFamily:T.mono,letterSpacing:"-0.02em"}}>{fmt(secs)}</div>
-            <div style={{fontSize:11,color:T.muted,marginTop:4,letterSpacing:"0.08em",textTransform:"uppercase"}}>
+            <div style={{fontSize:44,fontWeight:800,color:"#FFFFFF",fontFamily:T.mono,letterSpacing:"-0.03em",textShadow:"0 2px 12px rgba(0,0,0,0.6),0 0 30px rgba(255,255,255,0.15)"}}>{fmt(secs)}</div>
+            <div style={{fontSize:10,color:"rgba(255,255,255,0.55)",marginTop:4,letterSpacing:"0.1em",textTransform:"uppercase"}}>
               {phase==="focus1"?"until break":isBreak?"break":"remaining"}
             </div>
           </div>
@@ -1961,7 +2001,7 @@ function TaskTimerModal({task,onClose,onComplete}){
 
         {phase!=="breakDone"&&(
           <div style={{display:"flex",gap:10,justifyContent:"center",marginTop:phase==="break"?8:24}}>
-            {phase!=="break"&&<Btn variant="ghost" onClick={()=>setRunning(r=>!r)}>{running?"Pause":"Resume"}</Btn>}
+            {phase!=="break"&&<Btn variant="ghost" onClick={()=>setRunning(r=>!r)} style={{background:"rgba(255,255,255,0.13)",borderColor:"rgba(255,255,255,0.38)",color:"#ffffff",fontWeight:700}}>{running?"Pause":"Resume"}</Btn>}
             <Btn variant="danger" onClick={finishEarly}>Finish early</Btn>
           </div>
         )}
@@ -4218,6 +4258,8 @@ function App() {
   const [focusMode,setFocusMode]=useState("Focus");
   const [focusTotal,setFocusTotal]=useState(25*60);
   const [timerTask,setTimerTask]=useState(null);
+  const [newDayModal,setNewDayModal]=useState(false);
+  const [overdueForModal,setOverdueForModal]=useState([]);
   const [scheduleSettingsOpen,setScheduleSettingsOpen]=useState(false);
   window._setTimerTask=setTimerTask;
   const [creditsOpen,setCreditsOpen]=useState(false);
@@ -4287,10 +4329,25 @@ function App() {
   })();
   useEffect(()=>{
     if(!focusRunning) return;
-    const id=setInterval(()=>setFocusSecs(s=>s>0?s-1:0),1000);
+    const endTime=Date.now()+focusSecs*1000;
+    const id=setInterval(()=>{
+      setFocusSecs(Math.max(0,Math.round((endTime-Date.now())/1000)));
+    },250);
     return ()=>clearInterval(id);
   },[focusRunning]);
   useEffect(()=>{ touchStreak(); },[]);
+  useEffect(()=>{
+    const lastDay=lsGet("lastLoginDay","");
+    const today=dayKey();
+    if(lastDay===today)return;
+    lsSet("lastLoginDay",today);
+    applyOverduePenalties();
+    const evs=lsGet("events",[]);
+    const cleaned=evs.filter(ev=>!(ev.status==="pending"&&ev.deadline&&ev.deadline<today));
+    if(cleaned.length!==evs.length)lsSet("events",cleaned);
+    const od=cleaned.filter(ev=>ev.status==="pending"&&ev.date<today&&!(ev.deadline&&ev.deadline<today));
+    if(od.length>0){setOverdueForModal(od);setNewDayModal(true);}
+  },[]);
   useEffect(()=>{
     if(focusSecs===0&&focusRunning){
       setFocusRunning(false);
@@ -4592,6 +4649,44 @@ function App() {
         lsSet("events",next);
         setTimerTask(null);
       }} />}
+
+      {newDayModal&&(
+        <div onClick={()=>setNewDayModal(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.2s ease"}}>
+          <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:500,background:T.card,borderRadius:18,border:`1px solid ${T.border}`,padding:"32px 28px",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)",boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)"}}>
+            <div style={{fontSize:22,fontWeight:700,color:T.white,marginBottom:6,letterSpacing:"-0.02em"}}>Welcome back</div>
+            <div style={{fontSize:13.5,color:T.muted,marginBottom:20,lineHeight:1.6}}>You have <strong style={{color:T.amber}}>{overdueForModal.length} unfinished task{overdueForModal.length!==1?"s":""}</strong> from a previous day. Reschedule them into open slots today?</div>
+            <div style={{display:"flex",flexDirection:"column",gap:7,marginBottom:22,maxHeight:220,overflowY:"auto"}}>
+              {overdueForModal.map(ev=>(
+                <div key={ev.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`}}>
+                  <div style={{width:6,height:6,borderRadius:"50%",background:T.amber,flexShrink:0}}/>
+                  <div style={{flex:1,fontSize:13,color:T.text,fontWeight:500}}>{ev.title}</div>
+                  <div style={{fontSize:11,color:T.muted,flexShrink:0}}>{ev.duration||25}m · {ev.subject||"Study"}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <Btn onClick={()=>{
+                const today=dayKey();
+                const now=new Date();
+                let slotMins=now.getHours()*60+now.getMinutes()+15;
+                const evs=lsGet("events",[]);
+                const rescheduled=evs.map(ev=>{
+                  const od=overdueForModal.find(o=>o.id===ev.id);
+                  if(!od)return ev;
+                  const h=Math.floor(slotMins/60)%24;
+                  const m=slotMins%60;
+                  const timeStr=String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
+                  slotMins+=((od.duration||25)+10);
+                  return {...ev,date:today,time:timeStr,status:"pending"};
+                });
+                lsSet("events",rescheduled);
+                setNewDayModal(false);
+              }} style={{flex:1,justifyContent:"center",padding:"12px 0"}}>Reschedule all</Btn>
+              <Btn variant="ghost" onClick={()=>setNewDayModal(false)} style={{flex:1,justifyContent:"center",padding:"12px 0"}}>Skip for now</Btn>
+            </div>
+          </div>
+        </div>
+      )}
 
       <ScheduleSettingsPanel open={scheduleSettingsOpen} onClose={()=>setScheduleSettingsOpen(false)} onSave={()=>{}} />
 
