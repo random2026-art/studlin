@@ -1764,17 +1764,22 @@ function Flashcards() {
 // ─── NOTES ────────────────────────────────────────────────────────────────────
 function Notes(){
   const MicIcon=<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0,display:"block"}}><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg>;
-  const tagColor={Biology:T.teal,English:T.purple,Calculus:T.blue,Spanish:T.amber,Chemistry:T.red,History:T.muted};
-  const colorOf=(tg)=>tagColor[tg]||T.lime;
+
+  // Dynamic class sync from user subjects
+  const userSubjects=getSubjects();
+  const tagOptions=[...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
+  const colorOf=(tg)=>{const s=userSubjects.find(x=>x.label===tg);return s?s.color:T.lime;};
+
   const [notes,setNotes]=useState(()=>{const n=lsGet("notes",null);return(n&&Array.isArray(n))?n.filter(x=>x&&x.title):[];});
   const [sel,setSel]=useState(null);
   const [search,setSearch]=useState("");
-  const filtered=notes.filter(n=>n.title.toLowerCase().includes(search.toLowerCase())||n.body.toLowerCase().includes(search.toLowerCase()));
+  const filtered=notes.filter(n=>n.title.toLowerCase().includes(search.toLowerCase())||(n.body||"").replace(/<[^>]+>/g," ").toLowerCase().includes(search.toLowerCase()));
+
+  // Modal state — metadata only, no body field
   const [newOpen,setNewOpen]=useState(false);
   const [src,setSrc]=useState("write");
   const [newTitle,setNewTitle]=useState("");
-  const [newBody,setNewBody]=useState("");
-  const [newTag,setNewTag]=useState("Biology");
+  const [newTag,setNewTag]=useState(()=>tagOptions[0]?.value||"Biology");
   const [customTag,setCustomTag]=useState("");
   const [yt,setYt]=useState("");
   const [ytInfo,setYtInfo]=useState("");
@@ -1786,11 +1791,105 @@ function Notes(){
   const [aiLoading,setAiLoading]=useState(false);
   const [fileText,setFileText]=useState("");
   const fileRef=useRef(null);
-  useEffect(()=>{if(!rec)return;const id=setInterval(()=>setRecSecs(x=>x+1),1000);return ()=>clearInterval(id);},[rec]);
+
+  // Canvas / editor state
+  const editorRef=useRef(null);
+  const activeSel=useRef(sel); // tracks last sel without re-render side-effects
+  const [popover,setPopover]=useState(null); // {x,y,selText}
+  const [noteComments,setNoteComments]=useState(()=>lsGet("note-comments",{}));
+  const [noteFlags,setNoteFlags]=useState(()=>lsGet("note-flags",{}));
+  const [commentDraft,setCommentDraft]=useState("");
+  const [commentInputOpen,setCommentInputOpen]=useState(false);
+  const [pendingSel,setPendingSel]=useState(null);
+  const [cleaning,setCleaning]=useState(false);
+
+  // Send note state
+  const [sendNoteOpen,setSendNoteOpen]=useState(false);
+  const [sendNoteTarget,setSendNoteTarget]=useState("");
+  const [sendNoteStatus,setSendNoteStatus]=useState("");
+
+  useEffect(()=>{if(!rec)return;const id=setInterval(()=>setRecSecs(x=>x+1),1000);return()=>clearInterval(id);},[rec]);
   const fmtRec=(x)=>String(Math.floor(x/60)).padStart(2,"0")+":"+String(x%60).padStart(2,"0");
-  const tagOptions=[{value:"Biology",label:"Biology",color:T.teal},{value:"English",label:"English",color:T.purple},{value:"Calculus",label:"Calculus",color:T.blue},{value:"Spanish",label:"Spanish",color:T.amber},{value:"Chemistry",label:"Chemistry",color:T.red},{value:"History",label:"History",color:T.muted},{value:"Other",label:"Other",color:T.lime}];
+
+  // Sync editor DOM whenever the selected note changes
+  useEffect(()=>{
+    activeSel.current=sel;
+    if(sel===null||!editorRef.current||!notes[sel])return;
+    const body=notes[sel].body||"";
+    const isHtml=body.trim().startsWith("<");
+    editorRef.current.innerHTML=isHtml?body:body?body.split("\n\n").map(p=>"<p>"+(p||"<br>")+"</p>").join(""):"<p><br></p>";
+  },[sel]); // intentionally omit notes — only fire on note switch
+
+  const onEditorInput=()=>{
+    const idx=activeSel.current;
+    if(idx===null||!editorRef.current)return;
+    const html=editorRef.current.innerHTML;
+    setNotes(prev=>{const next=prev.map((n,i)=>i===idx?Object.assign({},n,{body:html}):n);lsSet("notes",next);return next;});
+  };
+
+  const execFmt=(cmd,arg=null)=>{if(editorRef.current)editorRef.current.focus();document.execCommand(cmd,false,arg);};
+
+  const handleEditorMouseUp=()=>{
+    const s=window.getSelection();
+    const text=s?s.toString().trim():"";
+    if(text.length<2){setPopover(null);return;}
+    if(s.rangeCount>0){
+      const range=s.getRangeAt(0);
+      const rect=range.getBoundingClientRect();
+      const wrap=editorRef.current.parentElement.getBoundingClientRect();
+      setPopover({x:rect.left-wrap.left+rect.width/2,y:rect.top-wrap.top-46,selText:text});
+    }
+  };
+
+  const doAddComment=()=>{
+    if(!pendingSel||!commentDraft.trim()||sel===null)return;
+    const noteId=notes[sel].id;
+    const c={id:String(Date.now()),selectedText:pendingSel,text:commentDraft.trim(),date:new Date().toLocaleDateString()};
+    const updated={...noteComments,[noteId]:[...(noteComments[noteId]||[]),c]};
+    setNoteComments(updated);lsSet("note-comments",updated);
+    setCommentDraft("");setCommentInputOpen(false);setPendingSel(null);setPopover(null);
+  };
+
+  const doAddFlag=(selText)=>{
+    if(!selText||sel===null)return;
+    const noteId=notes[sel].id;
+    const f={id:String(Date.now()),selectedText:selText,date:new Date().toLocaleDateString()};
+    const updated={...noteFlags,[noteId]:[...(noteFlags[noteId]||[]),f]};
+    setNoteFlags(updated);lsSet("note-flags",updated);
+    // Cross-tool integration: persist to tutor-flags for Solve/Tutor panels
+    const all=lsGet("tutor-flags",[]);
+    all.push({...f,noteTitle:notes[sel].title,noteId,from:"notes"});
+    lsSet("tutor-flags",all);
+    setPopover(null);setPendingSel(null);
+  };
+
+  const cleanNotes=async()=>{
+    if(sel===null||cleaning||!editorRef.current)return;
+    const html=editorRef.current.innerHTML;
+    const tmp=document.createElement("div");tmp.innerHTML=html;
+    const plain=(tmp.textContent||tmp.innerText||"").trim();
+    if(!plain)return;
+    setCleaning(true);
+    try{
+      const prompt="You are a study note formatter. Fix spelling, grammar, and structure. Organise into scannable sections using <h3>, <p>, <ul>, <li>, <strong>, <em> HTML tags. Do not change any facts. Return only the HTML, no markdown fences.\n\nRaw notes:\n"+plain.slice(0,15000);
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
+      const data=await res.json();
+      if(data.reply){
+        const cleaned=data.reply.replace(/```html?\n?/gi,"").replace(/```/g,"").trim();
+        editorRef.current.innerHTML=cleaned;
+        onEditorInput();
+      }
+    }catch(e){
+      // Fallback: paragraph-wrap lines
+      const fallback=plain.split("\n").filter(l=>l.trim()).map(l=>"<p>"+l+"</p>").join("");
+      editorRef.current.innerHTML=fallback;
+      onEditorInput();
+    }
+    setCleaning(false);
+  };
+
   const sources=[
-    {id:"write",label:"Write",desc:"Type or paste notes yourself",icon:Icon.pen,cost:null},
+    {id:"write",label:"Write",desc:"Type directly on the canvas",icon:Icon.pen,cost:null},
     {id:"file",label:"Scan a file",desc:"PDF, slides, or photos of the board",icon:Icon.file,cost:"2 credits"},
     {id:"record",label:"Record lecture",desc:"Live transcription + summary",icon:MicIcon,cost:"3 credits"},
     {id:"youtube",label:"YouTube link",desc:"Transcribes and summarises a video",icon:Icon.link,cost:"3 credits"},
@@ -1801,80 +1900,85 @@ function Notes(){
     if(!SR){setRecText("Speech recognition not supported. Try Chrome.");return;}
     const r=new SR();r.continuous=true;r.interimResults=true;r.lang="en-US";
     r.onresult=(e)=>{let t="";for(let i=0;i<e.results.length;i++)t+=e.results[i][0].transcript;setRecText(t);};
-    r.onerror=()=>{setRec(false);};
-    r.onend=()=>{setRec(false);};
+    r.onerror=()=>setRec(false);r.onend=()=>setRec(false);
     recognitionRef.current=r;r.start();setRec(true);setRecSecs(0);setRecText("");
   };
   const stopRec=()=>{if(recognitionRef.current)recognitionRef.current.stop();setRec(false);};
 
   const handleFile=async(e)=>{
-    const file=e.target.files&&e.target.files[0];if(!file)return;
-    e.target.value="";
+    const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
     const ext=file.name.split(".").pop().toLowerCase();
     if(ext==="pdf"){
       try{const pdfjsLib=await window._pdfjs;const buf=await file.arrayBuffer();const pdf=await pdfjsLib.getDocument({data:buf}).promise;let text="";for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();text+=tc.items.map(it=>it.str).join(" ")+"\n\n";}setFileText(text);if(!newTitle)setNewTitle("Notes from "+file.name);}catch(err){setFileText("Could not read PDF: "+err.message);}
-    }else{
-      const reader=new FileReader();reader.onload=()=>{setFileText(reader.result);if(!newTitle)setNewTitle("Notes from "+file.name);};reader.readAsText(file);
-    }
+    }else{const reader=new FileReader();reader.onload=()=>{setFileText(reader.result);if(!newTitle)setNewTitle("Notes from "+file.name);};reader.readAsText(file);}
   };
 
   const aiSummarize=async(text,context)=>{
     setAiLoading(true);
     try{
-      const prompt="Summarize the following "+context+" into well-structured study notes. Use headings, bullet points, and key terms. Be thorough but concise:\n\n"+text.slice(0,30000);
+      const prompt="Summarize the following "+context+" into well-structured study notes. Use <h3>, <p>, <ul>, <li>, <strong> tags. Be thorough but concise. Return HTML only.\n\n"+text.slice(0,30000);
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
-      const data=await res.json();
-      setAiLoading(false);
-      return data.reply||text;
+      const data=await res.json();setAiLoading(false);
+      return (data.reply||text).replace(/```html?\n?/gi,"").replace(/```/g,"").trim();
     }catch(e){setAiLoading(false);return text;}
   };
 
-  const saveNote=async()=>{
+  // "Continue to Canvas" — creates note and enters canvas immediately
+  const continueToCanvas=async()=>{
     const tag=newTag==="Other"&&customTag.trim()?customTag.trim():newTag;
     let title=newTitle.trim();
-    let body="";
-
+    let body="<p><br></p>";
     if(src==="write"){
-      body=newBody.trim()||"Empty note";
       if(!title)title="Untitled note";
     }else if(src==="file"){
       if(!title)title="Scanned notes";
-      if(fileText.trim()){body=await aiSummarize(fileText,"document/file");}else{body="No file content to process.";}
+      body=fileText.trim()?await aiSummarize(fileText,"document/file"):"<p>No file content.</p>";
     }else if(src==="record"){
-      if(!title)title="Lecture notes - "+fmtRec(recSecs);
-      if(recText.trim()){body=await aiSummarize(recText,"lecture transcription");}else{body="No audio was captured. Try recording again.";}
+      if(!title)title="Lecture notes – "+fmtRec(recSecs);
+      body=recText.trim()?await aiSummarize(recText,"lecture transcription"):"<p>No audio captured.</p>";
     }else if(src==="youtube"){
-      var videoTitle=ytInfo||yt.trim();
-      if(!title)title=ytInfo?ytInfo:"Notes from video";
-      if(videoTitle){
-        body=await aiSummarize("Create comprehensive study notes on this topic from a YouTube video titled: \""+videoTitle+"\". Include clear headings, bullet points, key definitions, examples, and a summary. Write the notes directly — do not say you cannot access the video.","YouTube video study notes");
-      }else{body="Paste a YouTube link to auto-detect the topic.";}
+      if(!title)title=ytInfo?"Notes: "+ytInfo:"Notes from video";
+      const topic=ytInfo||yt.trim();
+      body=topic?await aiSummarize("Create comprehensive study notes on a YouTube video titled: \""+topic+"\". Include headings, definitions, bullet points, summary.","YouTube study notes"):"<p>Paste a YouTube link.</p>";
     }
-
-    const next=[{id:String(Date.now()),title:title,body:body,tag:tag,date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now()}].concat(notes);
+    const newNote={id:String(Date.now()),title,body,tag,date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now()};
+    const next=[newNote,...notes];
     setNotes(next);lsSet("notes",next);
-    setNewOpen(false);setNewTitle("");setNewBody("");setYt("");setYtInfo("");setRec(false);setRecSecs(0);setRecText("");setSrc("write");setFileText("");setSel(0);setSearch("");
+    setNewOpen(false);setNewTitle("");setYt("");setYtInfo("");setRec(false);setRecSecs(0);setRecText("");setSrc("write");setFileText("");setSearch("");
+    setSel(0);
+    setPopover(null);
   };
 
   const updateNote=(idx,updates)=>{const next=notes.map((n,i)=>i===idx?Object.assign({},n,updates):n);setNotes(next);lsSet("notes",next);};
-  const deleteNote=(idx)=>{const next=notes.filter((_,i)=>i!==idx);setNotes(next);lsSet("notes",next);if(sel===idx)setSel(null);else if(sel>idx)setSel(sel-1);};
-  const exportNote=(n)=>{navigator.clipboard&&navigator.clipboard.writeText(n.title+"\n\n"+n.body);};
-  const [sendNoteOpen,setSendNoteOpen]=useState(false);
-  const [sendNoteTarget,setSendNoteTarget]=useState("");
-  const [sendNoteStatus,setSendNoteStatus]=useState("");
+  const deleteNote=(idx)=>{const next=notes.filter((_,i)=>i!==idx);setNotes(next);lsSet("notes",next);setSel(s=>s===idx?null:s>idx?s-1:s);};
+  const exportNote=(n)=>{const t=document.createElement("div");t.innerHTML=n.body;navigator.clipboard&&navigator.clipboard.writeText(n.title+"\n\n"+(t.textContent||t.innerText));};
   const sendNote=()=>{
-    const t=sendNoteTarget.trim();
-    if(!t||sel===null)return;
+    const t=sendNoteTarget.trim();if(!t||sel===null)return;
     const pending=lsGet("pendingShares",[]);
     pending.push({type:"note",title:notes[sel].title,body:notes[sel].body,tag:notes[sel].tag,to:t,from:getUserName(),date:dayKey()});
-    lsSet("pendingShares",pending);
-    setSendNoteStatus("sent");
+    lsSet("pendingShares",pending);setSendNoteStatus("sent");
     setTimeout(()=>{setSendNoteOpen(false);setSendNoteTarget("");setSendNoteStatus("");},1800);
   };
+  const removeComment=(nid,cid)=>{const u={...noteComments,[nid]:(noteComments[nid]||[]).filter(c=>c.id!==cid)};setNoteComments(u);lsSet("note-comments",u);};
+  const removeFlag=(nid,fid)=>{
+    const u={...noteFlags,[nid]:(noteFlags[nid]||[]).filter(f=>f.id!==fid)};setNoteFlags(u);lsSet("note-flags",u);
+    lsSet("tutor-flags",lsGet("tutor-flags",[]).filter(f=>f.id!==fid));
+  };
+
+  const activeNote=sel!==null?notes[sel]:null;
+  const nid=activeNote?.id;
+  const activeComments=nid?noteComments[nid]||[]:[];
+  const activeFlags=nid?noteFlags[nid]||[]:[];
+  const hasMargin=activeComments.length>0||activeFlags.length>0;
+
+  // Toolbar button style helper
+  const tbBtn=(active=false)=>({padding:"5px 9px",borderRadius:5,border:`1px solid ${active?T.lime+"55":T.border}`,background:active?T.lime+"14":"transparent",color:active?T.lime:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:600,display:"inline-flex",alignItems:"center",gap:4,transition:"all 0.12s"});
 
   return (
     <div>
       <PH title="Notes" sub="Write, scan, record, or import" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New note")}</Btn>} />
+
+      {/* ── SEND NOTE MODAL ── */}
       <Modal open={sendNoteOpen} onClose={()=>{setSendNoteOpen(false);setSendNoteTarget("");setSendNoteStatus("");}} title="Send note to a friend" sub="Drop a copy of this note directly into a friend's Studlin workspace." width={440}
         footer={sendNoteStatus==="sent"?null:<><Btn variant="subtle" onClick={()=>{setSendNoteOpen(false);setSendNoteTarget("");setSendNoteStatus("");}}>Cancel</Btn><Btn onClick={sendNote} style={{opacity:sendNoteTarget.trim()?1:0.45}}>{Icon.send} Send note</Btn></>}>
         {sendNoteStatus==="sent"
@@ -1886,16 +1990,15 @@ function Notes(){
           :<>
               <div style={{padding:"12px 14px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`,marginBottom:14}}>
                 <div style={{fontSize:12,fontWeight:600,color:T.white,marginBottom:2}}>{sel!==null&&notes[sel]?notes[sel].title:"Selected note"}</div>
-                <div style={{fontSize:11,color:T.muted}}>{sel!==null&&notes[sel]?notes[sel].body.slice(0,80)+"…":""}</div>
               </div>
-              <Field label="Friend's Studlin username or email">
-                <Input placeholder="e.g. @alex or alex@school.edu" value={sendNoteTarget} onChange={e=>setSendNoteTarget(e.target.value)} autoFocus />
-              </Field>
+              <Field label="Friend's Studlin username or email"><Input placeholder="e.g. @alex or alex@school.edu" value={sendNoteTarget} onChange={e=>setSendNoteTarget(e.target.value)} autoFocus /></Field>
             </>
         }
       </Modal>
-      <Modal open={newOpen} onClose={()=>{setNewOpen(false);stopRec();}} title="Create a new note" sub="Pick a source. Studlin structures everything into clean, searchable notes." width={580}
-        footer={<><Btn variant="subtle" onClick={()=>{setNewOpen(false);stopRec();}}>Cancel</Btn><Btn onClick={saveNote} disabled={aiLoading}>{aiLoading?"Processing...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.check,src==="write"?"Save note":"Create note")}</Btn></>}>
+
+      {/* ── NEW NOTE MODAL — metadata only, no body field ── */}
+      <Modal open={newOpen} onClose={()=>{setNewOpen(false);stopRec();}} title="New note" sub="Configure your note. You'll write on the canvas next." width={560}
+        footer={<><Btn variant="subtle" onClick={()=>{setNewOpen(false);stopRec();}}>Cancel</Btn><Btn onClick={continueToCanvas} disabled={aiLoading}>{aiLoading?"Processing…":"Continue to Canvas →"}</Btn></>}>
         <Field label="Source">
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
             {sources.map(o=>(
@@ -1907,20 +2010,16 @@ function Notes(){
             ))}
           </div>
         </Field>
-        <Field label="Title"><Input placeholder="e.g. Macbeth Act IV notes" value={newTitle} onChange={ev=>setNewTitle(ev.target.value)} /></Field>
+        <Field label="Title"><Input placeholder="e.g. Macbeth Act IV notes" value={newTitle} onChange={ev=>setNewTitle(ev.target.value)} autoFocus /></Field>
         <Field label="Class"><SelectChip options={tagOptions} value={newTag} onChange={setNewTag} /></Field>
         {newTag==="Other"&&<Field label="Custom class"><Input placeholder="e.g. Physics, SAT prep..." value={customTag} onChange={ev=>setCustomTag(ev.target.value)} /></Field>}
-        {src==="write"&&(
-          <Field label="Body">
-            <Textarea placeholder="Start writing or paste your notes here..." value={newBody} onChange={ev=>setNewBody(ev.target.value)} style={{minHeight:130}} />
-          </Field>
-        )}
+        {/* No body textarea for "write" — canvas is the editor */}
         {src==="file"&&(
-          <Field label="Upload" hint="Studlin reads the file and writes structured notes with AI.">
+          <Field label="Upload" hint="AI reads your file and builds structured notes.">
             <input type="file" ref={fileRef} onChange={handleFile} accept=".txt,.md,.csv,.pdf,.doc,.docx,.rtf" style={{display:"none"}} />
             <div onClick={()=>fileRef.current&&fileRef.current.click()} style={{border:"1px dashed "+T.borderHover,borderRadius:10,padding:26,textAlign:"center",background:T.card2,cursor:"pointer"}}>
               <div style={{color:T.muted,marginBottom:6,display:"flex",justifyContent:"center"}}>{Icon.file}</div>
-              <div style={{fontSize:13,color:T.text,fontWeight:500}}>{fileText?"File loaded - "+fileText.length+" chars":"Click to browse or drop a file"}</div>
+              <div style={{fontSize:13,color:T.text,fontWeight:500}}>{fileText?"File loaded — "+fileText.length+" chars":"Click to browse or drop a file"}</div>
               <div style={{fontSize:11,color:T.muted,marginTop:4}}>PDF, TXT, MD, CSV, DOCX</div>
             </div>
           </Field>
@@ -1930,55 +2029,147 @@ function Notes(){
             <div style={{border:"1px solid "+(rec?T.red+"55":T.border),borderRadius:10,padding:22,textAlign:"center",background:rec?T.red+"0a":T.card2}}>
               <button type="button" onClick={rec?stopRec:startRec} style={{width:54,height:54,borderRadius:"50%",border:"none",background:rec?T.red:T.lime,color:rec?"#fff":T.ink,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:10}}>{rec?<span style={{width:16,height:16,background:"#fff",borderRadius:3,display:"block"}} />:MicIcon}</button>
               <div style={{fontSize:15,fontWeight:700,color:rec?T.red:T.white,fontVariantNumeric:"tabular-nums"}}>{fmtRec(recSecs)}</div>
-              <div style={{fontSize:11.5,color:T.muted,marginTop:3}}>{rec?"Recording... tap to stop":"Tap to start recording"}</div>
+              <div style={{fontSize:11.5,color:T.muted,marginTop:3}}>{rec?"Recording… tap to stop":"Tap to start recording"}</div>
               {recText&&<div style={{fontSize:12,color:T.text,marginTop:12,padding:"10px 12px",background:T.card,borderRadius:8,textAlign:"left",maxHeight:120,overflowY:"auto",lineHeight:1.5}}>{recText}</div>}
             </div>
           </Field>
         )}
         {src==="youtube"&&(
           <Field label="YouTube link" hint={ytInfo?"Found: "+ytInfo:"Paste any YouTube video link. Studlin will detect the topic and generate notes."}>
-            <Input placeholder="https://youtube.com/watch?v=..." value={yt} onChange={ev=>{setYt(ev.target.value);var v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtLoading(true);fetch("/api/youtube-info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(r=>r.json()).then(d=>{if(d.title){setYtInfo(d.title+(d.author?" by "+d.author:""));if(!newTitle)setNewTitle(d.title);}setYtLoading(false);}).catch(()=>setYtLoading(false));}}} />
-            {ytLoading&&<div style={{fontSize:11,color:T.lime,marginTop:4}}>Detecting video...</div>}
+            <Input placeholder="https://youtube.com/watch?v=..." value={yt} onChange={ev=>{setYt(ev.target.value);const v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtLoading(true);fetch("/api/youtube-info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(r=>r.json()).then(d=>{if(d.title){setYtInfo(d.title+(d.author?" by "+d.author:""));if(!newTitle)setNewTitle(d.title);}setYtLoading(false);}).catch(()=>setYtLoading(false));}}} />
+            {ytLoading&&<div style={{fontSize:11,color:T.lime,marginTop:4}}>Detecting video…</div>}
           </Field>
         )}
       </Modal>
-      <div style={{display:"grid",gridTemplateColumns:"250px 1fr",gap:14}}>
+
+      {/* ── MAIN WORKSPACE LAYOUT ── */}
+      <div style={{display:"grid",gridTemplateColumns:"240px 1fr",gap:14,alignItems:"start"}}>
+
+        {/* Sidebar — note history */}
         <div>
-          <input style={{width:"100%",background:T.card2,border:"1px solid "+T.border,borderRadius:7,padding:"8px 12px",color:T.text,fontSize:12,fontFamily:T.font,outline:"none",marginBottom:10,boxSizing:"border-box"}} placeholder="Search notes..." value={search} onChange={ev=>setSearch(ev.target.value)} />
+          <input style={{width:"100%",background:T.card2,border:"1px solid "+T.border,borderRadius:7,padding:"8px 12px",color:T.text,fontSize:12,fontFamily:T.font,outline:"none",marginBottom:10,boxSizing:"border-box"}} placeholder="Search notes…" value={search} onChange={ev=>setSearch(ev.target.value)} />
           {filtered.length===0&&<div style={{padding:"20px 0",textAlign:"center",fontSize:12,color:T.muted}}>No notes yet. Create your first one.</div>}
-          {filtered.map((n,i)=>(
-            <div key={n.id||i} onClick={()=>setSel(notes.indexOf(n))} style={{background:notes.indexOf(n)===sel?T.card2:T.card,borderRadius:8,padding:"12px 14px",marginBottom:6,border:"1px solid "+(notes.indexOf(n)===sel?colorOf(n.tag)+"44":T.border),cursor:"pointer",transition:"all 0.15s"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:5}}>
-                <div style={{fontSize:12,fontWeight:600,color:T.white,flex:1,marginRight:8,lineHeight:1.3}}>{n.title}</div>
-                <Badge color={colorOf(n.tag)}>{n.tag}</Badge>
+          {filtered.map((n,i)=>{
+            const idx=notes.indexOf(n);
+            return (
+              <div key={n.id||i} onClick={()=>{setSel(idx);setPopover(null);}} style={{background:idx===sel?T.card2:T.card,borderRadius:8,padding:"11px 13px",marginBottom:6,border:"1px solid "+(idx===sel?colorOf(n.tag)+"55":T.border),cursor:"pointer",transition:"all 0.15s"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+                  <div style={{fontSize:12,fontWeight:600,color:T.white,flex:1,marginRight:8,lineHeight:1.3}}>{n.title}</div>
+                  <Badge color={colorOf(n.tag)}>{n.tag}</Badge>
+                </div>
+                <div style={{fontSize:10.5,color:T.muted,lineHeight:1.5,maxHeight:36,overflow:"hidden"}}>{(n.body||"").replace(/<[^>]+>/g," ").trim().slice(0,90)}</div>
+                <div style={{fontSize:10,color:T.faint,marginTop:6}}>{n.date}</div>
               </div>
-              <div style={{fontSize:11,color:T.muted,lineHeight:1.5,maxHeight:40,overflow:"hidden"}}>{n.body.slice(0,100)}</div>
-              <div style={{fontSize:10,color:T.faint,marginTop:8}}>{n.date}</div>
-            </div>
-          ))}
+            );
+          })}
         </div>
-        <Card style={{minHeight:380,padding:24}}>
-          {sel!==null&&notes[sel]
-            ?<>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20}}>
-                  <div style={{flex:1}}>
-                    <input value={notes[sel].title} onChange={e=>updateNote(sel,{title:e.target.value})} style={{fontSize:17,fontWeight:700,color:T.white,letterSpacing:"-0.01em",marginBottom:4,background:"transparent",border:"none",outline:"none",fontFamily:T.font,width:"100%",padding:0}} />
-                    <div style={{display:"flex",gap:8,alignItems:"center"}}><Badge color={colorOf(notes[sel].tag)}>{notes[sel].tag}</Badge><span style={{fontSize:11,color:T.muted}}>{notes[sel].date}</span></div>
-                  </div>
-                  <div style={{display:"flex",gap:6}}>
-                    <BtnSm variant="subtle" onClick={()=>exportNote(notes[sel])}>{Icon.copy} Copy</BtnSm>
-                    <BtnSm variant="ghost" onClick={()=>setSendNoteOpen(true)}>{Icon.send} Send</BtnSm>
-                    <BtnSm variant="danger" onClick={()=>deleteNote(sel)}>Delete</BtnSm>
+
+        {/* Canvas area: editor + optional margin panel */}
+        <div style={{display:"grid",gridTemplateColumns:hasMargin?"1fr 220px":"1fr",gap:12,alignItems:"start"}}>
+
+          {/* ── RICH TEXT EDITOR CARD ── */}
+          <Card style={{padding:0,overflow:"hidden",minHeight:480}}>
+            {activeNote?(
+              <>
+                {/* Formatting toolbar */}
+                <div style={{display:"flex",alignItems:"center",gap:4,padding:"8px 14px",borderBottom:`1px solid ${T.border}`,background:T.card2,flexWrap:"wrap"}}>
+                  <button style={tbBtn()} onMouseDown={e=>{e.preventDefault();execFmt("bold");}} title="Bold"><strong style={{fontSize:13}}>B</strong></button>
+                  <button style={tbBtn()} onMouseDown={e=>{e.preventDefault();execFmt("insertUnorderedList");}} title="Bullet list">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="9" y1="6" x2="20" y2="6"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="18" x2="20" y2="18"/><circle cx="4" cy="6" r="2" fill="currentColor"/><circle cx="4" cy="12" r="2" fill="currentColor"/><circle cx="4" cy="18" r="2" fill="currentColor"/></svg>
+                  </button>
+                  <button style={tbBtn()} onMouseDown={e=>{e.preventDefault();execFmt("insertOrderedList");}} title="Numbered list">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/></svg>
+                  </button>
+                  <button style={tbBtn()} onMouseDown={e=>{e.preventDefault();execFmt("hiliteColor",T.amber+"44");}} title="Highlight">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m9 11-6 6v3h3l6-6"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
+                  </button>
+                  <div style={{width:1,height:18,background:T.border,margin:"0 4px"}} />
+                  <BtnSm variant="subtle" onClick={()=>exportNote(activeNote)}>{Icon.copy} Copy</BtnSm>
+                  <BtnSm variant="subtle" onClick={()=>setSendNoteOpen(true)}>{Icon.send} Send</BtnSm>
+                  <div style={{flex:1}} />
+                  <button onClick={cleanNotes} disabled={cleaning} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${T.lime}44`,background:cleaning?T.card2:T.lime+"14",color:cleaning?T.muted:T.lime,cursor:cleaning?"default":"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
+                    {cleaning?"Cleaning…":"🪄 Clean Notes"}
+                  </button>
+                  <BtnSm variant="danger" onClick={()=>deleteNote(sel)}>Delete</BtnSm>
+                </div>
+
+                {/* Title row */}
+                <div style={{padding:"16px 24px 10px",borderBottom:`1px solid ${T.border}`}}>
+                  <input value={activeNote.title} onChange={e=>updateNote(sel,{title:e.target.value})} style={{fontSize:20,fontWeight:700,color:T.white,letterSpacing:"-0.02em",background:"transparent",border:"none",outline:"none",fontFamily:T.font,width:"100%",padding:0,marginBottom:8}} placeholder="Note title…" />
+                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                    <Badge color={colorOf(activeNote.tag)}>{activeNote.tag}</Badge>
+                    <span style={{fontSize:11,color:T.muted}}>{activeNote.date}</span>
+                    {activeFlags.length>0&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600}}>{activeFlags.length} tutor flag{activeFlags.length!==1?"s":""}</span>}
+                    {activeComments.length>0&&<span style={{fontSize:10.5,color:T.blue,fontWeight:600}}>{activeComments.length} comment{activeComments.length!==1?"s":""}</span>}
                   </div>
                 </div>
-                <textarea value={notes[sel].body} onChange={e=>updateNote(sel,{body:e.target.value})} style={{width:"100%",minHeight:280,fontSize:14,color:T.text,lineHeight:1.9,background:"transparent",border:"none",outline:"none",fontFamily:T.font,resize:"vertical",boxSizing:"border-box"}} />
+
+                {/* Contextual selection popover */}
+                {popover&&(
+                  <div style={{position:"absolute",top:popover.y,left:popover.x,transform:"translateX(-50%)",zIndex:30,display:"flex",gap:4,background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:"4px 6px",boxShadow:"0 8px 24px rgba(0,0,0,0.4)",whiteSpace:"nowrap"}}>
+                    <button onMouseDown={e=>{e.preventDefault();setPendingSel(popover.selText);setCommentInputOpen(true);}} style={{padding:"5px 10px",borderRadius:5,border:"none",background:"transparent",color:T.blue,cursor:"pointer",fontSize:12,fontFamily:T.font,fontWeight:600}}>💬 Add Comment</button>
+                    <div style={{width:1,background:T.border}} />
+                    <button onMouseDown={e=>{e.preventDefault();doAddFlag(popover.selText);}} style={{padding:"5px 10px",borderRadius:5,border:"none",background:"transparent",color:T.amber,cursor:"pointer",fontSize:12,fontFamily:T.font,fontWeight:600}}>🚨 Flag for Tutor</button>
+                  </div>
+                )}
+
+                {/* Comment input strip */}
+                {commentInputOpen&&(
+                  <div style={{padding:"10px 20px",background:T.blue+"0A",borderBottom:`1px solid ${T.blue}22`,display:"flex",gap:8,alignItems:"center"}}>
+                    <span style={{fontSize:11,color:T.blue,fontWeight:600,flexShrink:0}}>💬</span>
+                    <input value={commentDraft} onChange={e=>setCommentDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")doAddComment();if(e.key==="Escape"){setCommentInputOpen(false);setPendingSel(null);}}} placeholder={`Comment on "${(pendingSel||"").slice(0,30)}…"`} autoFocus style={{flex:1,background:"transparent",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}} />
+                    <BtnSm onClick={doAddComment} style={{opacity:commentDraft.trim()?1:0.4}}>Save</BtnSm>
+                    <BtnSm variant="subtle" onClick={()=>{setCommentInputOpen(false);setPendingSel(null);}}>✕</BtnSm>
+                  </div>
+                )}
+
+                {/* contenteditable rich text canvas */}
+                <div style={{position:"relative"}}
+                  onMouseUp={handleEditorMouseUp}
+                  onKeyDown={()=>setPopover(null)}
+                  onClick={e=>{if(e.target===e.currentTarget)editorRef.current&&editorRef.current.focus();}}>
+                  <div
+                    ref={editorRef}
+                    contentEditable={true}
+                    suppressContentEditableWarning={true}
+                    onInput={onEditorInput}
+                    style={{minHeight:380,padding:"20px 28px 40px",fontSize:14.5,lineHeight:1.85,color:T.text,outline:"none",fontFamily:T.font,boxSizing:"border-box"}}
+                  />
+                  {/* Placeholder hint when empty */}
+                </div>
               </>
-            :<div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:300,gap:12}}>
-                <div style={{color:T.faint,opacity:0.5}}>{Icon.file}</div>
-                <div style={{fontSize:13,color:T.muted}}>Select a note to read or edit it</div>
+            ):(
+              <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:380,gap:12}}>
+                <div style={{color:T.faint,opacity:0.4}}>{Icon.file}</div>
+                <div style={{fontSize:13,color:T.muted,textAlign:"center"}}>Select a note from the sidebar<br/>or create a new one to start writing.</div>
+                <Btn onClick={()=>setNewOpen(true)}>{Icon.plus} New note</Btn>
               </div>
-          }
-        </Card>
+            )}
+          </Card>
+
+          {/* ── MARGIN PANEL — comments & flags ── */}
+          {hasMargin&&(
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:2}}>Annotations</div>
+              {activeComments.map(c=>(
+                <div key={c.id} style={{background:T.card,border:`1px solid ${T.blue}33`,borderLeft:`3px solid ${T.blue}`,borderRadius:8,padding:"10px 12px",position:"relative"}}>
+                  <div style={{fontSize:10,color:T.blue,fontWeight:600,marginBottom:4,lineHeight:1.4}}>💬 "{(c.selectedText||"").slice(0,48)}{c.selectedText&&c.selectedText.length>48?"…":""}"</div>
+                  <div style={{fontSize:12,color:T.text,lineHeight:1.5}}>{c.text}</div>
+                  <div style={{fontSize:10,color:T.faint,marginTop:6}}>{c.date}</div>
+                  <button onClick={()=>removeComment(nid,c.id)} style={{position:"absolute",top:6,right:6,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:13,lineHeight:1,padding:2}}>×</button>
+                </div>
+              ))}
+              {activeFlags.map(f=>(
+                <div key={f.id} style={{background:T.card,border:`1px solid ${T.amber}44`,borderLeft:`3px solid ${T.amber}`,borderRadius:8,padding:"10px 12px",position:"relative"}}>
+                  <div style={{fontSize:11,color:T.amber,fontWeight:700,marginBottom:4}}>🚨 Tutor Flag</div>
+                  <div style={{fontSize:11,color:T.muted,lineHeight:1.5,fontStyle:"italic"}}>"{(f.selectedText||"").slice(0,60)}{f.selectedText&&f.selectedText.length>60?"…":""}"</div>
+                  <div style={{fontSize:10,color:T.faint,marginTop:6}}>{f.date} · synced to Tutor</div>
+                  <button onClick={()=>removeFlag(nid,f.id)} style={{position:"absolute",top:6,right:6,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:13,lineHeight:1,padding:2}}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1988,18 +2179,26 @@ function Notes(){
 
 // ─── FRIENDS & CHAT ──────────────────────────────────────────────────────────
 function FriendsChat(){
+  const [slide,setSlide]=useState(0);
+  const [syncStep,setSyncStep]=useState(-1);
+  const [syncRunning,setSyncRunning]=useState(false);
   const [searchQ,setSearchQ]=useState("");
   const [searchFilter,setSearchFilter]=useState("All");
   const [inviteEmail,setInviteEmail]=useState("");
   const [emailSent,setEmailSent]=useState(false);
   const [calGoogleLinked,setCalGoogleLinked]=useState(()=>lsGet("cal-google",false));
   const [calAppleLinked,setCalAppleLinked]=useState(()=>lsGet("cal-apple",false));
+  const [googleSyncing,setGoogleSyncing]=useState(false);
   const [copied,setCopied]=useState(false);
+  const [inviteOpen,setInviteOpen]=useState(false);
+  const [friendReqs,setFriendReqs]=useState([
+    {id:1,n:"Zoe Martinez",h:"@zoem",s:"Lehigh University"},
+    {id:2,n:"Ethan Woo",h:"@ethanw",s:"Penn State"},
+  ]);
   const me=getUserName()||"You";
-  const refCode=(me).toLowerCase().replace(/\s+/g,"");
-  const inviteLink="https://studlin.vercel.app?ref="+refCode;
-  const smsText="Hey! I'm using Studlin to lock into my schedule. It has a built-in AI calendar that automatically coordinates group schedules, lets us share notes/flashcards, and tells us exactly when we're all free. Create an account here so we can sync up our projects: "+inviteLink;
-  const qrUrl="https://api.qrserver.com/v1/create-qr-code/?data="+encodeURIComponent(smsText)+"&size=180x180&color=AECE5E&bgcolor=19211C&margin=12";
+  const refCode=me.toLowerCase().replace(/\s+/g,"");
+  const inviteLink="https://studlin.app?ref="+refCode;
+  const qrUrl="https://api.qrserver.com/v1/create-qr-code/?data="+encodeURIComponent(inviteLink)+"&size=150x150&color=AECE5E&bgcolor=0D120F&margin=10";
 
   const DIRECTORY=[
     {n:"Devon Karu",h:"@devonk",s:"Lehigh University",online:true},
@@ -2011,6 +2210,17 @@ function FriendsChat(){
     {n:"Marcus Webb",h:"@marcusw",s:"UCLA",online:true},
     {n:"Chloe Park",h:"@chloep",s:"MIT",online:false},
     {n:"Riya Mehta",h:"@riyam",s:"Lehigh University",online:true},
+  ];
+  const makeFutureDay=(n)=>{const d=new Date();d.setDate(d.getDate()+n);return d;};
+  const MOCK_GCAL=[
+    {id:"gcal-1",date:dayKey(makeFutureDay(1)),time:"10:00",title:"CS301 Lecture [Google Cal]",subject:"None",kind:"deadline"},
+    {id:"gcal-2",date:dayKey(makeFutureDay(2)),time:"14:00",title:"Study Group [Google Cal]",subject:"None",kind:"deadline"},
+    {id:"gcal-3",date:dayKey(makeFutureDay(3)),time:"09:00",title:"Office Hours [Google Cal]",subject:"None",kind:"deadline"},
+  ];
+  const SYNC_SLOTS=[
+    {day:"Wednesday, Jul 2",time:"3:00 – 5:00 PM",match:"4/4 free",best:true},
+    {day:"Friday, Jul 4",time:"10:00 AM – 12:00 PM",match:"4/4 free",best:false},
+    {day:"Thursday, Jul 3",time:"2:00 – 4:00 PM",match:"3/4 free",best:false},
   ];
 
   const [addedUsers,setAddedUsers]=useState(()=>lsGet("network-added",[]));
@@ -2026,73 +2236,252 @@ function FriendsChat(){
   });
   const noResults=searchQ.trim()&&filtered.length===0;
 
-  const sendEmailInvite=()=>{
-    if(!inviteEmail.trim())return;
-    setEmailSent(true);
-    setTimeout(()=>{setEmailSent(false);setInviteEmail("");},2500);
+  const sendEmailInvite=()=>{if(!inviteEmail.trim())return;setEmailSent(true);setTimeout(()=>{setEmailSent(false);setInviteEmail("");},2500);};
+  const copyLink=()=>{navigator.clipboard&&navigator.clipboard.writeText(inviteLink);setCopied(true);setTimeout(()=>setCopied(false),2200);};
+
+  const linkCalGoogle=()=>{
+    if(calGoogleLinked){
+      const ev=lsGet("events",[]).filter(e=>!e.id.startsWith("gcal-"));
+      lsSet("events",ev);setCalGoogleLinked(false);lsSet("cal-google",false);return;
+    }
+    setGoogleSyncing(true);
+    setTimeout(()=>{
+      const ev=lsGet("events",[]).filter(e=>!e.id.startsWith("gcal-"));
+      lsSet("events",[...ev,...MOCK_GCAL]);
+      setCalGoogleLinked(true);lsSet("cal-google",true);setGoogleSyncing(false);
+    },1800);
   };
-
-  const copyMsg=()=>{navigator.clipboard&&navigator.clipboard.writeText(smsText);setCopied(true);setTimeout(()=>setCopied(false),2200);};
-
-  const linkCalGoogle=()=>{const n=!calGoogleLinked;setCalGoogleLinked(n);lsSet("cal-google",n);};
   const linkCalApple=()=>{const n=!calAppleLinked;setCalAppleLinked(n);lsSet("cal-apple",n);};
+
+  const acceptReq=(id)=>{
+    const req=friendReqs.find(r=>r.id===id);
+    setFriendReqs(p=>p.filter(r=>r.id!==id));
+    if(req){const n=[...addedUsers,req.h];setAddedUsers(n);lsSet("network-added",n);}
+  };
+  const declineReq=(id)=>setFriendReqs(p=>p.filter(r=>r.id!==id));
+
+  const runSyncDemo=()=>{
+    setSyncStep(0);setSyncRunning(true);
+    [1,2,3].forEach((s,i)=>setTimeout(()=>setSyncStep(s),(i+1)*1200));
+    setTimeout(()=>setSyncRunning(false),4*1200);
+  };
 
   return (
     <div>
       <PH title="Studlin Network" sub="Study together. Share notes. Stay in sync." />
 
-      {/* ── SCENARIO CARDS ── */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14,marginBottom:16}}>
+      {/* ── INTERACTIVE WALKTHROUGH ── */}
+      <Card style={{marginBottom:16,padding:0,overflow:"hidden"}}>
+        {/* Tab strip */}
+        <div style={{display:"flex",borderBottom:`1px solid ${T.border}`,padding:"0 20px",overflowX:"auto"}}>
+          {[{label:"Add Friends",icon:Icon.heart},{label:"Sync Schedule",icon:Icon.cal},{label:"Share Decks",icon:Icon.layers}].map((tab,i)=>(
+            <button key={i} onClick={()=>setSlide(i)} style={{padding:"13px 16px",fontSize:12,fontWeight:slide===i?700:500,color:slide===i?T.lime:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,borderBottom:`2px solid ${slide===i?T.lime:"transparent"}`,marginBottom:-1,transition:"all 0.15s",display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>
+              <span style={{opacity:slide===i?1:0.6}}>{tab.icon}</span>{tab.label}
+            </button>
+          ))}
+        </div>
 
-        <Card style={{padding:20,position:"relative",overflow:"hidden"}}>
-          <div style={{position:"absolute",top:-24,right:-24,width:90,height:90,borderRadius:"50%",background:T.amber+"12",pointerEvents:"none"}} />
-          <div style={{width:36,height:36,borderRadius:10,background:T.amber+"18",border:`1px solid ${T.amber}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.amber,marginBottom:12}}>{Icon.file}</div>
-          <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:6,letterSpacing:"-0.01em"}}>Missed a Class?</div>
-          <div style={{fontSize:12.5,color:T.muted,lineHeight:1.6,marginBottom:14}}>Get class notes from a friend instantly. They share their markdown notes directly into your repository — one click.</div>
-          <div style={{display:"flex",gap:8}}>
-            <div style={{flex:1,padding:"9px 12px",borderRadius:8,background:T.card2,border:`1px solid ${T.border}`,fontSize:11,color:T.amber,display:"flex",alignItems:"center",gap:6,cursor:"default"}}>{Icon.arrowR}<span>Request notes</span></div>
-            <div style={{padding:"9px 12px",borderRadius:8,background:T.card2,border:`1px solid ${T.border}`,fontSize:11,color:T.teal,display:"flex",alignItems:"center",gap:6,cursor:"default"}}>{Icon.send}<span>Share yours</span></div>
+        {/* Slide 0 – Add Friends + Notes */}
+        {slide===0&&(
+          <div style={{padding:"26px 30px"}}>
+            <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:18}}>
+              <div style={{width:44,height:44,borderRadius:12,background:T.lime+"18",border:`1px solid ${T.lime}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,flexShrink:0}}>{Icon.heart}</div>
+              <div>
+                <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:3}}>Build your study squad.</div>
+                <div style={{fontSize:12.5,color:T.muted}}>Start by adding classmates from your courses.</div>
+              </div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:18}}>
+              {[{n:"Devon Karu",h:"@devonk"},{n:"Priya Shah",h:"@priyas"}].map(u=>(
+                <div key={u.h} style={{display:"flex",alignItems:"center",gap:10,padding:"11px 13px",background:T.card2,borderRadius:10,border:`1px solid ${T.border}`}}>
+                  <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={30} picUrl="" />
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:12,fontWeight:600,color:T.white}}>{u.n}</div>
+                    <div style={{fontSize:10.5,color:T.muted}}>{u.h}</div>
+                  </div>
+                  <BtnSm variant="lime">Add</BtnSm>
+                </div>
+              ))}
+            </div>
+            <div style={{padding:"14px 16px",background:T.amber+"0D",border:`1px solid ${T.amber}25`,borderRadius:10}}>
+              <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+                <span style={{color:T.amber,flexShrink:0,marginTop:2}}>{Icon.file}</span>
+                <div>
+                  <div style={{fontSize:12.5,fontWeight:600,color:T.white,marginBottom:4}}>Once a request is accepted, open Notes.</div>
+                  <div style={{fontSize:12,color:T.muted,lineHeight:1.65}}>Missed a lecture? Go to <strong style={{color:T.amber}}>Notes</strong>, tap a friend's name, and request their markdown class notes directly into your workspace — one click, instant delivery.</div>
+                </div>
+              </div>
+            </div>
           </div>
-        </Card>
+        )}
 
-        <Card style={{padding:20,border:`1px solid ${T.lime}22`,position:"relative",overflow:"hidden",background:`linear-gradient(135deg,${T.lime}07,transparent)`}}>
-          <div style={{position:"absolute",top:-24,right:-24,width:90,height:90,borderRadius:"50%",background:T.lime+"10",pointerEvents:"none"}} />
-          <div style={{width:36,height:36,borderRadius:10,background:T.lime+"18",border:`1px solid ${T.lime}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,marginBottom:12}}>{Icon.layers}</div>
-          <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:6,letterSpacing:"-0.01em"}}>Study Together?</div>
-          <div style={{fontSize:12.5,color:T.muted,lineHeight:1.6,marginBottom:14}}>Beam entire flashcard decks to a friend's workspace instantly. They get your full study set — ready to review.</div>
-          <div style={{display:"flex",gap:8}}>
-            <div style={{flex:1,padding:"9px 12px",borderRadius:8,background:T.lime+"12",border:`1px solid ${T.lime}30`,fontSize:11,color:T.lime,display:"flex",alignItems:"center",gap:6,cursor:"default"}}>{Icon.zap}<span>Share a deck</span></div>
-            <div style={{padding:"9px 12px",borderRadius:8,background:T.card2,border:`1px solid ${T.border}`,fontSize:11,color:T.blue,display:"flex",alignItems:"center",gap:6,cursor:"default"}}>{Icon.arrowR}<span>Browse shared</span></div>
+        {/* Slide 1 – Sync Schedule animated Show & Tell */}
+        {slide===1&&(
+          <div style={{padding:"26px 30px"}}>
+            <div style={{marginBottom:16}}>
+              <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:4}}>Group project due but can't find a day?</div>
+              <div style={{fontSize:12.5,color:T.muted,lineHeight:1.5}}>Studlin's <strong style={{color:T.purple}}>Sync Schedule</strong> scans everyone's calendars and finds the perfect window automatically.</div>
+            </div>
+            {/* Simulated app window */}
+            <div style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",marginBottom:14}}>
+              <div style={{display:"flex",alignItems:"center",gap:7,padding:"7px 12px",borderBottom:`1px solid ${T.border}`,background:T.surface}}>
+                <div style={{display:"flex",gap:4}}><div style={{width:8,height:8,borderRadius:"50%",background:"#FF5F57"}}/><div style={{width:8,height:8,borderRadius:"50%",background:"#FEBC2E"}}/><div style={{width:8,height:8,borderRadius:"50%",background:"#28C840"}}/></div>
+                <div style={{flex:1,background:T.card2,borderRadius:4,padding:"3px 9px",fontSize:9.5,color:T.muted}}>studlin.app › Calendar › Group Sync</div>
+              </div>
+              <div style={{padding:"14px 16px",minHeight:148}}>
+                {syncStep===-1&&(
+                  <div style={{textAlign:"center",paddingTop:18}}>
+                    <div style={{fontSize:12,color:T.muted,marginBottom:12}}>Watch a live demo of how it works.</div>
+                    <button onClick={runSyncDemo} style={{padding:"9px 22px",borderRadius:8,background:T.purple,color:"#fff",border:"none",fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,display:"inline-flex",alignItems:"center",gap:7}}>{Icon.zap} Run demo</button>
+                  </div>
+                )}
+                {syncStep>=0&&(
+                  <div>
+                    <div style={{display:"flex",gap:5,marginBottom:12}}>
+                      {["Open Calendar","Select Group","Run Sync","Results"].map((label,i)=>(
+                        <div key={i} style={{flex:1,padding:"4px 4px",borderRadius:5,fontSize:9,fontWeight:600,textAlign:"center",background:syncStep>i?T.purple:syncStep===i?T.purple+"22":"transparent",color:syncStep>i?"#fff":syncStep===i?T.purple:T.faint,border:`1px solid ${syncStep>=i?T.purple+"55":T.border}`,transition:"all 0.3s"}}>{label}</div>
+                      ))}
+                    </div>
+                    {syncStep===0&&(
+                      <div style={{textAlign:"center",paddingTop:8}}>
+                        <div style={{display:"inline-flex",alignItems:"center",gap:8,padding:"8px 14px",background:T.card2,borderRadius:8,border:`1px solid ${T.purple}44`}}>
+                          <span style={{color:T.purple}}>{Icon.cal}</span>
+                          <span style={{color:T.text,fontSize:12}}>Navigating to Calendar tab…</span>
+                          <span style={{color:T.purple}}>●</span>
+                        </div>
+                      </div>
+                    )}
+                    {syncStep===1&&(
+                      <div>
+                        <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:8}}>
+                          {["Devon K.","Priya S.","Jordan T.","You"].map((n,i)=>(
+                            <div key={i} style={{padding:"5px 10px",borderRadius:6,background:i===3?T.purple+"22":T.card2,border:`1px solid ${i===3?T.purple+"55":T.border}`,fontSize:11,color:i===3?T.purple:T.text,fontWeight:i===3?700:400}}>{n}{i<3?" ✓":""}</div>
+                          ))}
+                        </div>
+                        <div style={{fontSize:10.5,color:T.muted}}>Group selected — 4 members</div>
+                      </div>
+                    )}
+                    {syncStep===2&&(
+                      <div style={{paddingTop:6}}>
+                        <div style={{fontSize:11,color:T.muted,marginBottom:9,textAlign:"center"}}>Scanning 4 calendars for overlap…</div>
+                        <div style={{height:4,background:T.card2,borderRadius:2,overflow:"hidden"}}>
+                          <div style={{height:"100%",background:`linear-gradient(90deg,${T.purple},${T.lime})`,borderRadius:2,animation:"gwBar 1.1s ease-out forwards",transform:"scaleX(0)",transformOrigin:"left"}}/>
+                        </div>
+                        <style>{`@keyframes gwBar{to{transform:scaleX(1)}}`}</style>
+                      </div>
+                    )}
+                    {syncStep>=3&&(
+                      <div>
+                        <div style={{fontSize:11,color:T.lime,fontWeight:600,marginBottom:8}}>✓ Best windows found!</div>
+                        {SYNC_SLOTS.map((slot,i)=>(
+                          <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 10px",background:slot.best?T.lime+"0E":T.card2,border:`1px solid ${slot.best?T.lime+"44":T.border}`,borderRadius:7,marginBottom:5}}>
+                            <div style={{flex:1}}>
+                              <div style={{fontSize:11,fontWeight:600,color:slot.best?T.lime:T.text}}>{slot.day}</div>
+                              <div style={{fontSize:10,color:T.muted}}>{slot.time}</div>
+                            </div>
+                            <div style={{fontSize:10,fontWeight:700,color:slot.best?T.lime:T.muted,padding:"2px 7px",borderRadius:4,background:slot.best?T.lime+"18":T.card2,border:`1px solid ${slot.best?T.lime+"33":T.border}`}}>{slot.match}</div>
+                            {slot.best&&<div style={{fontSize:10,color:T.lime}}>★ Best</div>}
+                          </div>
+                        ))}
+                        <button onClick={()=>{setSyncStep(-1);setSyncRunning(false);}} style={{marginTop:6,fontSize:10.5,color:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>↺ Watch again</button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div style={{fontSize:11.5,color:T.muted,textAlign:"center"}}>Find <strong style={{color:T.purple}}>Group Sync</strong> in Calendar → top-right button.</div>
           </div>
-        </Card>
+        )}
 
-        <Card style={{padding:20,position:"relative",overflow:"hidden"}}>
-          <div style={{position:"absolute",top:-24,right:-24,width:90,height:90,borderRadius:"50%",background:T.purple+"10",pointerEvents:"none"}} />
-          <div style={{width:36,height:36,borderRadius:10,background:T.purple+"18",border:`1px solid ${T.purple}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.purple,marginBottom:12}}>{Icon.cal}</div>
-          <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:6,letterSpacing:"-0.01em"}}>Struggling to Make Plans?</div>
-          <div style={{fontSize:12.5,color:T.muted,lineHeight:1.6,marginBottom:14}}>Studlin syncs calendars across your whole group and automatically finds when everyone is free for a project meeting.</div>
-          <div style={{display:"flex",gap:8}}>
-            <div style={{flex:1,padding:"9px 12px",borderRadius:8,background:T.purple+"12",border:`1px solid ${T.purple}30`,fontSize:11,color:T.purple,display:"flex",alignItems:"center",gap:6,cursor:"default"}}>{Icon.users}<span>Find a time</span></div>
-            <div style={{padding:"9px 12px",borderRadius:8,background:T.card2,border:`1px solid ${T.border}`,fontSize:11,color:T.teal,display:"flex",alignItems:"center",gap:6,cursor:"default"}}>{Icon.cal}<span>View group</span></div>
+        {/* Slide 2 – Flashcard sharing */}
+        {slide===2&&(
+          <div style={{padding:"26px 30px"}}>
+            <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:18}}>
+              <div style={{width:44,height:44,borderRadius:12,background:T.teal+"18",border:`1px solid ${T.teal}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.teal,flexShrink:0}}>{Icon.layers}</div>
+              <div>
+                <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:3}}>Beam a deck to your study group.</div>
+                <div style={{fontSize:12.5,color:T.muted}}>Push your entire flashcard set into a friend's Studlin workspace instantly.</div>
+              </div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:18}}>
+              <div style={{flex:1,padding:"14px",background:T.card2,borderRadius:10,border:`1px solid ${T.border}`,textAlign:"center"}}>
+                <Av initials="ME" color={T.lime} size={32} picUrl="" />
+                <div style={{fontSize:11,color:T.text,marginTop:6,fontWeight:600}}>You</div>
+                <div style={{marginTop:8,padding:"8px 10px",background:T.surface,borderRadius:7,border:`1px solid ${T.teal}33`,fontSize:10.5,color:T.teal}}>
+                  <div style={{fontWeight:600,marginBottom:2}}>Bio Final Prep</div>
+                  <div style={{color:T.muted}}>48 cards</div>
+                </div>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,flexShrink:0}}>
+                <div style={{width:44,height:2,background:`linear-gradient(90deg,${T.teal},${T.lime})`,borderRadius:1,position:"relative"}}>
+                  <div style={{position:"absolute",right:-3,top:-4,width:9,height:9,borderTop:`2px solid ${T.lime}`,borderRight:`2px solid ${T.lime}`,transform:"rotate(45deg)"}}/>
+                </div>
+                <div style={{fontSize:9.5,color:T.muted,fontWeight:700,letterSpacing:"0.06em"}}>BEAM</div>
+              </div>
+              <div style={{flex:1,padding:"14px",background:T.card2,borderRadius:10,border:`1px solid ${T.teal}44`,textAlign:"center"}}>
+                <Av initials="PS" color={T.purple} size={32} picUrl="" />
+                <div style={{fontSize:11,color:T.text,marginTop:6,fontWeight:600}}>Priya Shah</div>
+                <div style={{marginTop:8,padding:"8px 10px",background:T.teal+"12",borderRadius:7,border:`1px solid ${T.teal}44`,fontSize:10.5,color:T.teal}}>
+                  <div style={{fontWeight:600,marginBottom:2}}>Bio Final Prep</div>
+                  <div style={{color:T.muted}}>Received ✓</div>
+                </div>
+              </div>
+            </div>
+            <div style={{padding:"12px 16px",background:T.teal+"0C",border:`1px solid ${T.teal}25`,borderRadius:10}}>
+              <div style={{fontSize:12,color:T.muted,lineHeight:1.65}}>Go to <strong style={{color:T.teal}}>Flashcards</strong>, open any deck, hit <strong style={{color:T.teal}}>Send</strong>, and type a friend's username. Their workspace updates instantly — no copy-paste, no exporting.</div>
+            </div>
           </div>
-        </Card>
-      </div>
+        )}
 
-      {/* ── GROWTH INCENTIVE BANNER ── */}
+        {/* Dot nav */}
+        <div style={{display:"flex",justifyContent:"center",alignItems:"center",gap:7,padding:"10px 0 14px",borderTop:`1px solid ${T.border}`}}>
+          {[0,1,2].map(i=>(
+            <button key={i} onClick={()=>setSlide(i)} style={{width:i===slide?22:7,height:7,borderRadius:4,background:i===slide?T.lime:T.faint,border:"none",cursor:"pointer",padding:0,transition:"all 0.2s"}}/>
+          ))}
+        </div>
+      </Card>
+
+      {/* ── INCOMING FRIEND REQUESTS ── */}
+      {friendReqs.length>0&&(
+        <div style={{marginBottom:16}}>
+          <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8,display:"flex",alignItems:"center",gap:8}}>
+            Incoming Requests
+            <span style={{background:T.amber,color:T.ink,fontSize:9,fontWeight:800,borderRadius:4,padding:"1px 6px"}}>{friendReqs.length}</span>
+          </div>
+          <Card style={{padding:0,overflow:"hidden"}}>
+            {friendReqs.map((req,i)=>(
+              <div key={req.id} style={{display:"flex",alignItems:"center",gap:12,padding:"13px 16px",borderBottom:i<friendReqs.length-1?`1px solid ${T.border}`:"none",transition:"background 0.15s"}}>
+                <Av initials={req.n.split(" ").map(x=>x[0]).join("")} color={T.amber} size={36} picUrl="" />
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:600,color:T.white}}>{req.n}</div>
+                  <div style={{fontSize:11,color:T.muted}}>{req.h} · <span style={{color:T.blue}}>{req.s}</span></div>
+                </div>
+                <div style={{display:"flex",gap:7,flexShrink:0}}>
+                  <button onClick={()=>acceptReq(req.id)} style={{padding:"6px 14px",borderRadius:7,background:T.lime,color:T.ink,border:"none",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Accept</button>
+                  <button onClick={()=>declineReq(req.id)} style={{padding:"6px 13px",borderRadius:7,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Decline</button>
+                </div>
+              </div>
+            ))}
+          </Card>
+        </div>
+      )}
+
+      {/* ── GROWTH BANNER ── */}
       <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderRadius:10,background:T.lime+"0C",border:`1px solid ${T.lime}22`,marginBottom:16}}>
         <div style={{width:28,height:28,borderRadius:8,background:T.lime+"1A",border:`1px solid ${T.lime}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,flexShrink:0}}>{Icon.zap}</div>
         <div style={{flex:1,fontSize:12.5,color:T.muted,lineHeight:1.5}}>
-          <span style={{color:T.text,fontWeight:600}}>Grow your network together.</span>{" "}For every friend who signs up via your link, you both unlock <span style={{color:T.lime,fontWeight:600}}>50 bonus AI scheduling credits</span>.
+          <span style={{color:T.text,fontWeight:600}}>Invite classmates to unlock collective scheduling.</span>{" "}For every friend who joins, you <strong style={{color:T.lime}}>both</strong> get <span style={{color:T.lime,fontWeight:600}}>50 bonus AI credits</span>.
         </div>
-        <button onClick={copyMsg} style={{flexShrink:0,padding:"7px 14px",borderRadius:7,background:T.lime,color:T.ink,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>
-          {copied?"Copied!":"Copy invite link"}
+        <button onClick={()=>setInviteOpen(true)} style={{flexShrink:0,padding:"7px 16px",borderRadius:7,background:T.lime,color:T.ink,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>
+          Invite friends
         </button>
       </div>
 
       {/* ── DIRECTORY + QR ── */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 296px",gap:14,marginBottom:16}}>
 
-        {/* Directory Search */}
+        {/* Directory */}
         <div>
           <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8}}>Find People</div>
           <div style={{display:"flex",gap:6,marginBottom:10}}>
@@ -2107,7 +2496,7 @@ function FriendsChat(){
           </div>
           <Card style={{padding:0,overflow:"hidden"}}>
             {!noResults
-              ? (searchQ.trim()?filtered:DIRECTORY.slice(0,6)).map((u,i,arr)=>{
+              ?(searchQ.trim()?filtered:DIRECTORY.slice(0,6)).map((u,i,arr)=>{
                   const added=addedUsers.includes(u.h);
                   return (
                     <div key={u.h} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
@@ -2123,7 +2512,7 @@ function FriendsChat(){
                     </div>
                   );
                 })
-              : <div style={{padding:20}}>
+              :<div style={{padding:20}}>
                   <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
                     <div style={{width:34,height:34,borderRadius:9,background:T.blue+"18",border:`1px solid ${T.blue}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.blue,flexShrink:0}}>{Icon.mail}</div>
                     <div>
@@ -2139,19 +2528,39 @@ function FriendsChat(){
           </Card>
         </div>
 
-        {/* QR Invite via Text */}
-        <div style={{display:"flex",flexDirection:"column",gap:0}}>
-          <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8}}>Invite via Text</div>
+        {/* QR Column */}
+        <div style={{display:"flex",flexDirection:"column"}}>
+          <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8}}>Invite via QR</div>
           <Card style={{padding:18,textAlign:"center",flex:1}}>
             <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>Scan with your phone</div>
-            <div style={{fontSize:11,color:T.muted,marginBottom:14,lineHeight:1.55}}>Opens a pre-written iMessage or SMS ready to send to friends or group chats.</div>
-            <div style={{display:"inline-block",padding:8,background:"#111530",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:12}}>
-              <img src={qrUrl} width={150} height={150} alt="Scan to invite via text" style={{display:"block",borderRadius:6}} onError={e=>{e.target.style.display="none";}} />
+            <div style={{fontSize:11,color:T.muted,marginBottom:14,lineHeight:1.55}}>Opens Studlin invite for instant sign-up.</div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"center",marginBottom:12}}>
+              <div style={{padding:10,background:T.card2,borderRadius:12,border:`1px solid ${T.border}`}}>
+                <img src={qrUrl} width={130} height={130} alt="Scan to invite" style={{display:"block",borderRadius:6}}
+                  onError={e=>{
+                    e.target.style.display="none";
+                    if(e.target.nextSibling)e.target.nextSibling.style.display="flex";
+                  }}
+                />
+                {/* SVG fallback QR */}
+                <div style={{display:"none",width:130,height:130,alignItems:"center",justifyContent:"center",flexDirection:"column",gap:6}}>
+                  <svg width="100" height="100" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="6" y="6" width="28" height="28" rx="3" fill="none" stroke={T.lime} strokeWidth="3"/>
+                    <rect x="11" y="11" width="18" height="18" rx="2" fill={T.lime}/>
+                    <rect x="66" y="6" width="28" height="28" rx="3" fill="none" stroke={T.lime} strokeWidth="3"/>
+                    <rect x="71" y="11" width="18" height="18" rx="2" fill={T.lime}/>
+                    <rect x="6" y="66" width="28" height="28" rx="3" fill="none" stroke={T.lime} strokeWidth="3"/>
+                    <rect x="11" y="71" width="18" height="18" rx="2" fill={T.lime}/>
+                    {[[40,6],[46,6],[52,6],[58,6],[40,12],[58,12],[40,18],[46,18],[52,18],[58,18],[40,24],[52,24],[40,30],[46,30],[52,30],[58,30],[6,40],[12,40],[18,40],[24,40],[30,40],[40,40],[52,40],[58,40],[64,40],[70,40],[76,40],[82,40],[88,40],[94,40],[6,46],[18,46],[30,46],[40,46],[52,46],[64,46],[76,46],[88,46],[6,52],[12,52],[18,52],[24,52],[30,52],[40,52],[46,52],[52,52],[58,52],[64,52],[76,52],[88,52],[94,52],[6,58],[18,58],[30,58],[40,58],[52,58],[58,58],[64,58],[76,58],[88,58],[40,66],[46,66],[52,66],[58,66],[64,66],[76,66],[82,66],[88,66],[94,66],[40,72],[52,72],[58,72],[64,72],[76,72],[88,72],[40,78],[46,78],[52,78],[58,78],[70,78],[82,78],[94,78],[40,84],[52,84],[64,84],[76,84],[88,84],[40,90],[46,90],[58,90],[70,90],[82,90],[94,90]].map(([x,y],i)=>(
+                      <rect key={i} x={x} y={y} width="5" height="5" rx="1" fill={T.lime} opacity="0.78"/>
+                    ))}
+                  </svg>
+                  <div style={{fontSize:8.5,color:T.muted,letterSpacing:"0.04em"}}>studlin.app</div>
+                </div>
+              </div>
             </div>
-            <div style={{fontSize:10,color:T.faint,lineHeight:1.5,wordBreak:"break-all",padding:"0 4px",marginBottom:14,textAlign:"left",background:T.card2,borderRadius:7,padding:"9px 10px",border:`1px solid ${T.border}`}}>
-              "{smsText.slice(0,100)}…"
-            </div>
-            <Btn onClick={copyMsg} style={{width:"100%",justifyContent:"center"}}>{copied?Icon.check:Icon.copy} {copied?"Copied!":"Copy message"}</Btn>
+            <div style={{fontSize:10,color:T.faint,marginBottom:12,fontFamily:T.mono,padding:"6px 9px",background:T.card2,borderRadius:6,border:`1px solid ${T.border}`,wordBreak:"break-all",textAlign:"left"}}>{inviteLink}</div>
+            <Btn onClick={copyLink} style={{width:"100%",justifyContent:"center"}}>{copied?Icon.check:Icon.copy} {copied?"Copied!":"Copy invite link"}</Btn>
           </Card>
         </div>
       </div>
@@ -2162,18 +2571,20 @@ function FriendsChat(){
         <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>Connect your existing calendar</div>
         <div style={{fontSize:12,color:T.muted,marginBottom:16,lineHeight:1.6}}>Pull your existing events into Studlin without altering or deleting anything. Studlin-created blocks sync right back to your primary calendar.</div>
         <div style={{display:"flex",flexDirection:"column",gap:10}}>
-
           <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${calGoogleLinked?T.teal+"44":T.border}`,transition:"border-color 0.2s"}}>
             <div style={{width:38,height:38,borderRadius:10,background:"rgba(66,133,244,0.12)",border:"1px solid rgba(66,133,244,0.25)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
             </div>
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontSize:13,fontWeight:600,color:T.white}}>Google Calendar</div>
-              <div style={{fontSize:11,color:calGoogleLinked?T.teal:T.muted,marginTop:2}}>{calGoogleLinked?"Synced · bi-directional · events flowing in":"Connect to import your existing events"}</div>
+              <div style={{fontSize:11,color:calGoogleLinked?T.teal:(googleSyncing?"#DCA64A":T.muted),marginTop:2}}>
+                {googleSyncing?"Fetching events from Google…":calGoogleLinked?"Synced · 3 events imported · bi-directional":"Connect to import your existing events"}
+              </div>
             </div>
-            <BtnSm variant={calGoogleLinked?"subtle":"lime"} onClick={linkCalGoogle}>{calGoogleLinked?"Disconnect":"Connect"}</BtnSm>
+            <BtnSm variant={calGoogleLinked?"subtle":"lime"} onClick={linkCalGoogle} style={{flexShrink:0,opacity:googleSyncing?0.55:1}}>
+              {googleSyncing?"Syncing…":calGoogleLinked?"Disconnect":"Connect"}
+            </BtnSm>
           </div>
-
           <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${calAppleLinked?T.teal+"44":T.border}`,transition:"border-color 0.2s"}}>
             <div style={{width:38,height:38,borderRadius:10,background:"rgba(255,255,255,0.07)",border:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill={T.text}><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
@@ -2185,13 +2596,43 @@ function FriendsChat(){
             <BtnSm variant={calAppleLinked?"subtle":"lime"} onClick={linkCalApple}>{calAppleLinked?"Disconnect":"Connect"}</BtnSm>
           </div>
         </div>
-
         {(calGoogleLinked||calAppleLinked)&&(
           <div style={{marginTop:14,padding:"10px 14px",borderRadius:8,background:T.teal+"10",border:`1px solid ${T.teal}25`,fontSize:12,color:T.teal,lineHeight:1.6}}>
             Calendar sync active. External events appear on your Studlin calendar in read-only mode. Studlin study blocks push back to your connected account automatically.
           </div>
         )}
       </Card>
+
+      {/* ── INVITE MODAL ── */}
+      {inviteOpen&&(
+        <div onClick={()=>setInviteOpen(false)} style={{position:"fixed",inset:0,zIndex:90,background:"rgba(8,12,10,0.78)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div onClick={e=>e.stopPropagation()} style={{width:460,maxWidth:"92vw",background:T.surface,border:`1px solid ${T.border}`,borderRadius:18,padding:32,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)"}}>
+            <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
+              <div style={{width:42,height:42,borderRadius:12,background:T.lime+"18",border:`1px solid ${T.lime}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,flexShrink:0}}>{Icon.users}</div>
+              <div>
+                <div style={{fontSize:18,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>Invite your classmates</div>
+                <div style={{fontSize:12,color:T.muted}}>Unlock collective calendar syncing.</div>
+              </div>
+            </div>
+            <div style={{fontSize:13,color:T.muted,lineHeight:1.7,marginBottom:20}}>
+              When your whole class is on Studlin, <strong style={{color:T.lime}}>Sync Schedule</strong> can automatically find when <em>everyone</em> is free — no more "when can everyone meet?" texts.
+            </div>
+            <div style={{padding:"11px 14px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,marginBottom:14,display:"flex",alignItems:"center",gap:10}}>
+              <div style={{flex:1,fontSize:12,color:T.text,fontFamily:T.mono,wordBreak:"break-all"}}>{inviteLink}</div>
+              <button onClick={copyLink} style={{flexShrink:0,padding:"7px 13px",borderRadius:7,background:copied?T.teal:T.lime,color:T.ink,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font,transition:"background 0.2s",whiteSpace:"nowrap"}}>
+                {copied?"✓ Copied!":"Copy"}
+              </button>
+            </div>
+            <div style={{padding:"10px 14px",background:T.lime+"0A",border:`1px solid ${T.lime}22`,borderRadius:8,fontSize:12,color:T.muted,marginBottom:20,lineHeight:1.6}}>
+              For every friend who joins via your link, you <strong style={{color:T.lime}}>both</strong> unlock <strong style={{color:T.lime}}>50 bonus AI scheduling credits</strong>.
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <Btn onClick={()=>setInviteOpen(false)} variant="subtle" style={{flex:1,justifyContent:"center"}}>Close</Btn>
+              <Btn onClick={copyLink} style={{flex:1,justifyContent:"center"}}>{copied?<>{Icon.check} Copied!</>:<>{Icon.copy} Copy link</>}</Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
