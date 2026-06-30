@@ -1970,8 +1970,16 @@ function TaskTimerModal({task,onClose,onComplete}){
   const [secs,setSecs]=useState(0);
   const [running,setRunning]=useState(false);
   const [soundOn,setSoundOn]=useState(true);
+  const [pausedByViolation,setPausedByViolation]=useState(false);
+  const [violationCount,setViolationCount]=useState(0);
+  const violatedRef=useRef(false);
 
   const playBeep=()=>{try{const ctx=new(window.AudioContext||window.webkitAudioContext)();const osc=ctx.createOscillator();const gain=ctx.createGain();osc.connect(gain);gain.connect(ctx.destination);osc.frequency.setValueAtTime(880,ctx.currentTime);osc.frequency.exponentialRampToValueAtTime(440,ctx.currentTime+0.3);gain.gain.setValueAtTime(0.3,ctx.currentTime);gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.35);osc.start(ctx.currentTime);osc.stop(ctx.currentTime+0.35);}catch(e){}};
+
+  const enterFullscreen=()=>{try{const el=document.documentElement;const req=el.requestFullscreen||el.webkitRequestFullscreen||el.msRequestFullscreen;if(req)req.call(el).catch(()=>{});}catch(e){}};
+  const exitFullscreenSafe=()=>{try{if(document.fullscreenElement||document.webkitFullscreenElement){const ex=document.exitFullscreen||document.webkitExitFullscreen;if(ex)ex.call(document).catch(()=>{});}}catch(e){}};
+  const isActiveFocusPhase=(p)=>p==="focus1"||p==="focus2";
+  const applyPenalty=(mins)=>violatedRef.current?Math.max(1,Math.floor(mins*0.75)):mins;
 
   const focus2Mins=Math.max(1,totalMins-breakPos-breakMins);
   const fmt=s=>String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0");
@@ -1989,7 +1997,7 @@ function TaskTimerModal({task,onClose,onComplete}){
         else if(phase==="break"){setPhase("breakDone");setRunning(false);if(soundOn)playBeep();}
         else if(phase==="focus2"){
           setPhase("done");setRunning(false);
-          if(onComplete)onComplete(Math.max(1,Math.round(focusElapsed.current/60)));
+          if(onComplete)onComplete(applyPenalty(Math.max(1,Math.round(focusElapsed.current/60))));
         }
       }
     },250);
@@ -2006,8 +2014,54 @@ function TaskTimerModal({task,onClose,onComplete}){
     if(phase==="break"){setSecs(breakMins*60);setRunning(true);}
   },[phase,breakMins]);
 
+  // ── FOCUS LOCKDOWN: detect tab-switch / fullscreen exit, pause + flag ─────
+  useEffect(()=>{
+    const onViolation=()=>{
+      if(running&&isActiveFocusPhase(phase)){
+        setRunning(false);
+        setPausedByViolation(true);
+        violatedRef.current=true;
+        setViolationCount(c=>c+1);
+      }
+    };
+    const onVisibility=()=>{if(document.hidden)onViolation();};
+    const onFullscreenChange=()=>{
+      const inFs=!!(document.fullscreenElement||document.webkitFullscreenElement);
+      if(!inFs)onViolation();
+    };
+    document.addEventListener("visibilitychange",onVisibility);
+    document.addEventListener("fullscreenchange",onFullscreenChange);
+    document.addEventListener("webkitfullscreenchange",onFullscreenChange);
+    return()=>{
+      document.removeEventListener("visibilitychange",onVisibility);
+      document.removeEventListener("fullscreenchange",onFullscreenChange);
+      document.removeEventListener("webkitfullscreenchange",onFullscreenChange);
+    };
+  },[running,phase]);
+
+  // ── FOCUS LOCKDOWN: warn before closing the tab mid-session ───────────────
+  useEffect(()=>{
+    const sessionLive=phase==="focus1"||phase==="break"||phase==="breakDone"||phase==="focus2";
+    if(!sessionLive)return;
+    const onBeforeUnload=(e)=>{e.preventDefault();e.returnValue="";return"";};
+    window.addEventListener("beforeunload",onBeforeUnload);
+    return()=>window.removeEventListener("beforeunload",onBeforeUnload);
+  },[phase]);
+
+  const resumeFromViolation=()=>{
+    setPausedByViolation(false);
+    enterFullscreen();
+    setRunning(true);
+  };
+
+  useEffect(()=>{if(phase==="done")exitFullscreenSafe();},[phase]);
+  useEffect(()=>()=>{exitFullscreenSafe();},[]);
+
   const startLockIn=()=>{
     focusElapsed.current=0;
+    violatedRef.current=false;
+    setViolationCount(0);
+    enterFullscreen();
     if(breakOn&&totalMins>=15&&focus2Mins>0){
       setPhase("focus1");setSecs(breakPos*60);setRunning(true);
     }else{
@@ -2015,14 +2069,14 @@ function TaskTimerModal({task,onClose,onComplete}){
     }
   };
 
-  const resume=()=>{setPhase("focus2");setSecs(focus2Mins*60);setRunning(true);};
+  const resume=()=>{enterFullscreen();setPhase("focus2");setSecs(focus2Mins*60);setRunning(true);};
 
   const finishEarly=()=>{
     if(phase!=="break"&&focusStartRef.current){
       focusElapsed.current+=(Date.now()-focusStartRef.current)/1000;
       focusStartRef.current=null;
     }
-    const m=Math.max(1,Math.round(focusElapsed.current/60));
+    const m=applyPenalty(Math.max(1,Math.round(focusElapsed.current/60)));
     setPhase("done");setRunning(false);
     if(onComplete)onComplete(m);
   };
@@ -2161,6 +2215,19 @@ function TaskTimerModal({task,onClose,onComplete}){
         {soundOn?Icon.volume:Icon.volOff}
         <span>{soundOn?"Sound on":"Sound off"}</span>
       </button>
+      {pausedByViolation&&isActiveFocusPhase(phase)&&(
+        <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.92)",zIndex:1001,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+          <div style={{width:"100%",maxWidth:400,textAlign:"center"}}>
+            <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:T.red,marginBottom:14}}>Focus broken</div>
+            <h2 style={{fontSize:22,fontWeight:700,color:"#fff",margin:"0 0 10px"}}>You left focus mode</h2>
+            <p style={{fontSize:13.5,color:"rgba(255,255,255,0.65)",lineHeight:1.6,margin:"0 0 28px",maxWidth:340,marginLeft:"auto",marginRight:"auto"}}>
+              Your timer is paused. Leaving early reduces the XP you earn for this session. Come back and lock back in, or finish now with what you've got.
+            </p>
+            <Btn onClick={resumeFromViolation} style={{width:"100%",justifyContent:"center",padding:"14px 24px",fontSize:15,marginBottom:10}}>Resume focus</Btn>
+            <Btn variant="ghost" onClick={finishEarly} style={{background:"rgba(255,255,255,0.08)",borderColor:"rgba(255,255,255,0.2)",color:"#fff"}}>End session now</Btn>
+          </div>
+        </div>
+      )}
       <div style={{width:"100%",maxWidth:400,textAlign:"center"}}>
         <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:timerColor,marginBottom:16}}>{phaseLabel}</div>
 
