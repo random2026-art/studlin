@@ -1738,175 +1738,210 @@ function Notes(){
 
 // ─── FRIENDS & CHAT ──────────────────────────────────────────────────────────
 function FriendsChat(){
-  const [friends,setFriends]=useState(()=>lsGet("friends",[]));
-  const [activeFriend,setActiveFriend]=useState(null);
-  const [dms,setDms]=useState(()=>lsGet("dms",{}));
-  const [dmInput,setDmInput]=useState("");
-  const [addTab,setAddTab]=useState("link");
-  const [inviteInput,setInviteInput]=useState("");
-  const [inviteStatus,setInviteStatus]=useState("");
+  const [searchQ,setSearchQ]=useState("");
+  const [searchFilter,setSearchFilter]=useState("All");
+  const [inviteEmail,setInviteEmail]=useState("");
+  const [emailSent,setEmailSent]=useState(false);
+  const [calGoogleLinked,setCalGoogleLinked]=useState(()=>lsGet("cal-google",false));
+  const [calAppleLinked,setCalAppleLinked]=useState(()=>lsGet("cal-apple",false));
   const [copied,setCopied]=useState(false);
-  const chatEndRef=useRef(null);
   const me=getUserName()||"You";
   const refCode=(me).toLowerCase().replace(/\s+/g,"");
   const inviteLink="https://studlin.vercel.app?ref="+refCode;
-  const inviteMsg="Hey! I'm using Studlin to lock into my schedule. It has an AI calendar that automatically plans our study/work slots and lets us share notes or see when we're both free. Grab an account here so we can sync up: "+inviteLink;
+  const smsText="Hey! I'm using Studlin to lock into my schedule. It has a built-in AI calendar that automatically coordinates group schedules, lets us share notes/flashcards, and tells us exactly when we're all free. Create an account here so we can sync up our projects: "+inviteLink;
+  const qrUrl="https://api.qrserver.com/v1/create-qr-code/?data="+encodeURIComponent(smsText)+"&size=180x180&color=AECE5E&bgcolor=19211C&margin=12";
 
-  useEffect(()=>{if(chatEndRef.current)chatEndRef.current.scrollIntoView({behavior:"smooth"});},[activeFriend,dms]);
-
-  const copyInvite=()=>{navigator.clipboard&&navigator.clipboard.writeText(inviteMsg);setCopied(true);setTimeout(()=>setCopied(false),2200);};
-
-  const sendInvite=()=>{
-    const v=inviteInput.trim();if(!v)return;
-    const isEmail=v.includes("@")&&v.includes(".");
-    const isUser=v.startsWith("@")||(!isEmail&&v.length>1);
-    if(isEmail){
-      setInviteStatus("email_sent");
-      setTimeout(()=>{setInviteStatus("");setInviteInput("");},2000);
-    } else if(isUser){
-      const username=v.startsWith("@")?v.slice(1):v;
-      if(friends.find(f=>f.name.toLowerCase()===username.toLowerCase())){setInviteStatus("already");return;}
-      const newFriend={id:String(Date.now()),name:username,status:"pending",online:false,initials:username.slice(0,2).toUpperCase()};
-      const next=[...friends,newFriend];setFriends(next);lsSet("friends",next);
-      setInviteStatus("request_sent");
-      setTimeout(()=>{setInviteStatus("");setInviteInput("");},2000);
-    }
-  };
-
-  const sendDm=()=>{
-    const msg=dmInput.trim();if(!msg||!activeFriend)return;
-    const key=activeFriend.id;
-    const thread=dms[key]||[];
-    const next={...dms,[key]:[...thread,{from:"me",text:msg,ts:Date.now()}]};
-    setDms(next);lsSet("dms",next);setDmInput("");
-  };
-
-  const DEMO_FRIENDS=[
-    {id:"d1",name:"Alex Rivera",status:"active",online:true,initials:"AR"},
-    {id:"d2",name:"Sam Chen",status:"active",online:false,initials:"SC"},
-    {id:"d3",name:"Jordan Lee",status:"active",online:true,initials:"JL"},
+  const DIRECTORY=[
+    {n:"Devon Karu",h:"@devonk",s:"Lehigh University",online:true},
+    {n:"Priya Shah",h:"@priyas",s:"UC Berkeley",online:false},
+    {n:"Jordan Tran",h:"@jtran",s:"Lehigh University",online:true},
+    {n:"Amara Okafor",h:"@amarao",s:"NYU",online:false},
+    {n:"Liam Chen",h:"@liamc",s:"Stanford University",online:true},
+    {n:"Sofia Diaz",h:"@sofiad",s:"Lehigh University",online:false},
+    {n:"Marcus Webb",h:"@marcusw",s:"UCLA",online:true},
+    {n:"Chloe Park",h:"@chloep",s:"MIT",online:false},
+    {n:"Riya Mehta",h:"@riyam",s:"Lehigh University",online:true},
   ];
-  const allFriends=[...DEMO_FRIENDS,...friends.filter(f=>!DEMO_FRIENDS.find(d=>d.id===f.id))];
-  const thread=activeFriend?(dms[activeFriend.id]||[]):[];
 
-  const qrUrl="https://api.qrserver.com/v1/create-qr-code/?data="+encodeURIComponent(inviteLink)+"&size=180x180&color=AECE5E&bgcolor=19211C&margin=12";
+  const [addedUsers,setAddedUsers]=useState(()=>lsGet("network-added",[]));
+  const toggleAdd=(h)=>{const n=addedUsers.includes(h)?addedUsers.filter(x=>x!==h):[...addedUsers,h];setAddedUsers(n);lsSet("network-added",n);};
+
+  const filtered=DIRECTORY.filter(u=>{
+    const q=searchQ.toLowerCase().trim();
+    if(!q)return true;
+    if(searchFilter==="@username")return u.h.toLowerCase().includes(q);
+    if(searchFilter==="Name")return u.n.toLowerCase().includes(q);
+    if(searchFilter==="School")return u.s.toLowerCase().includes(q);
+    return u.n.toLowerCase().includes(q)||u.h.toLowerCase().includes(q)||u.s.toLowerCase().includes(q);
+  });
+  const noResults=searchQ.trim()&&filtered.length===0;
+
+  const sendEmailInvite=()=>{
+    if(!inviteEmail.trim())return;
+    setEmailSent(true);
+    setTimeout(()=>{setEmailSent(false);setInviteEmail("");},2500);
+  };
+
+  const copyMsg=()=>{navigator.clipboard&&navigator.clipboard.writeText(smsText);setCopied(true);setTimeout(()=>setCopied(false),2200);};
+
+  const linkCalGoogle=()=>{const n=!calGoogleLinked;setCalGoogleLinked(n);lsSet("cal-google",n);};
+  const linkCalApple=()=>{const n=!calAppleLinked;setCalAppleLinked(n);lsSet("cal-apple",n);};
 
   return (
     <div>
-      <PH title="Friends & Chat" sub="Study together. Share notes. Stay in sync." />
-      <div style={{display:"grid",gridTemplateColumns:"220px 1fr 300px",gap:14,minHeight:520}}>
+      <PH title="Studlin Network" sub="Study together. Share notes. Stay in sync." />
 
-        {/* ── FRIEND LIST ── */}
-        <div>
-          <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8}}>Friends</div>
-          {allFriends.length===0&&<div style={{fontSize:12,color:T.muted,padding:"10px 0"}}>No friends yet. Invite someone below.</div>}
-          {allFriends.map(f=>(
-            <div key={f.id} onClick={()=>setActiveFriend(f)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:9,marginBottom:4,cursor:"pointer",background:activeFriend?.id===f.id?T.card2:"transparent",border:`1px solid ${activeFriend?.id===f.id?T.lime+"33":"transparent"}`,transition:"all 0.15s"}}>
-              <div style={{position:"relative",flexShrink:0}}>
-                <Av initials={f.initials||f.name.slice(0,2).toUpperCase()} color={T.lime} size={32} picUrl="" />
-                <div style={{position:"absolute",bottom:0,right:0,width:9,height:9,borderRadius:"50%",background:f.online?T.teal:T.faint,border:`2px solid ${T.surface}`}} />
-              </div>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:12.5,fontWeight:600,color:T.white,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{f.name}</div>
-                <div style={{fontSize:10,color:f.online?T.teal:T.muted}}>{f.status==="pending"?"Request sent":f.online?"Online":"Offline"}</div>
-              </div>
-            </div>
-          ))}
-        </div>
+      {/* ── SCENARIO CARDS ── */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14,marginBottom:16}}>
 
-        {/* ── DM PANE ── */}
-        <Card style={{display:"flex",flexDirection:"column",padding:0,overflow:"hidden"}}>
-          {activeFriend
-            ?<>
-                <div style={{padding:"12px 16px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",gap:10}}>
-                  <div style={{position:"relative",flexShrink:0}}>
-                    <Av initials={activeFriend.initials||activeFriend.name.slice(0,2).toUpperCase()} color={T.lime} size={30} picUrl="" />
-                    <div style={{position:"absolute",bottom:0,right:0,width:8,height:8,borderRadius:"50%",background:activeFriend.online?T.teal:T.faint,border:`2px solid ${T.card}`}} />
-                  </div>
-                  <div>
-                    <div style={{fontSize:13,fontWeight:700,color:T.white}}>{activeFriend.name}</div>
-                    <div style={{fontSize:10,color:activeFriend.online?T.teal:T.muted}}>{activeFriend.online?"Online":"Offline"}</div>
-                  </div>
-                </div>
-                <div style={{flex:1,overflowY:"auto",padding:16,display:"flex",flexDirection:"column",gap:8,minHeight:200}}>
-                  {thread.length===0&&<div style={{textAlign:"center",fontSize:12,color:T.muted,marginTop:40}}>No messages yet. Say hi!</div>}
-                  {thread.map((m,i)=>(
-                    <div key={i} style={{display:"flex",justifyContent:m.from==="me"?"flex-end":"flex-start"}}>
-                      <div style={{maxWidth:"72%",padding:"9px 13px",borderRadius:12,background:m.from==="me"?T.lime:T.card2,color:m.from==="me"?T.ink:T.text,fontSize:13,lineHeight:1.5}}>
-                        {m.text}
-                      </div>
-                    </div>
-                  ))}
-                  <div ref={chatEndRef} />
-                </div>
-                <div style={{padding:"10px 12px",borderTop:`1px solid ${T.border}`,display:"flex",gap:8}}>
-                  <input value={dmInput} onChange={e=>setDmInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendDm();}}} placeholder={`Message ${activeFriend.name.split(" ")[0]}…`} style={{flex:1,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none"}} />
-                  <BtnSm onClick={sendDm} style={{flexShrink:0}}>{Icon.send}</BtnSm>
-                </div>
-              </>
-            :<div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:12,padding:32}}>
-                <div style={{color:T.faint,opacity:0.5}}>{Icon.msgSquare}</div>
-                <div style={{fontSize:13,color:T.muted,textAlign:"center"}}>Select a friend to start chatting</div>
-              </div>
-          }
+        <Card style={{padding:20,position:"relative",overflow:"hidden"}}>
+          <div style={{position:"absolute",top:-24,right:-24,width:90,height:90,borderRadius:"50%",background:T.amber+"12",pointerEvents:"none"}} />
+          <div style={{width:36,height:36,borderRadius:10,background:T.amber+"18",border:`1px solid ${T.amber}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.amber,marginBottom:12}}>{Icon.file}</div>
+          <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:6,letterSpacing:"-0.01em"}}>Missed a Class?</div>
+          <div style={{fontSize:12.5,color:T.muted,lineHeight:1.6,marginBottom:14}}>Get class notes from a friend instantly. They share their markdown notes directly into your repository — one click.</div>
+          <div style={{display:"flex",gap:8}}>
+            <div style={{flex:1,padding:"9px 12px",borderRadius:8,background:T.card2,border:`1px solid ${T.border}`,fontSize:11,color:T.amber,display:"flex",alignItems:"center",gap:6,cursor:"default"}}>{Icon.arrowR}<span>Request notes</span></div>
+            <div style={{padding:"9px 12px",borderRadius:8,background:T.card2,border:`1px solid ${T.border}`,fontSize:11,color:T.teal,display:"flex",alignItems:"center",gap:6,cursor:"default"}}>{Icon.send}<span>Share yours</span></div>
+          </div>
         </Card>
 
-        {/* ── ADD & INVITE ── */}
-        <div style={{display:"flex",flexDirection:"column",gap:12}}>
-          <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:4}}>Add &amp; Invite Friends</div>
+        <Card style={{padding:20,border:`1px solid ${T.lime}22`,position:"relative",overflow:"hidden",background:`linear-gradient(135deg,${T.lime}07,transparent)`}}>
+          <div style={{position:"absolute",top:-24,right:-24,width:90,height:90,borderRadius:"50%",background:T.lime+"10",pointerEvents:"none"}} />
+          <div style={{width:36,height:36,borderRadius:10,background:T.lime+"18",border:`1px solid ${T.lime}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,marginBottom:12}}>{Icon.layers}</div>
+          <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:6,letterSpacing:"-0.01em"}}>Study Together?</div>
+          <div style={{fontSize:12.5,color:T.muted,lineHeight:1.6,marginBottom:14}}>Beam entire flashcard decks to a friend's workspace instantly. They get your full study set — ready to review.</div>
+          <div style={{display:"flex",gap:8}}>
+            <div style={{flex:1,padding:"9px 12px",borderRadius:8,background:T.lime+"12",border:`1px solid ${T.lime}30`,fontSize:11,color:T.lime,display:"flex",alignItems:"center",gap:6,cursor:"default"}}>{Icon.zap}<span>Share a deck</span></div>
+            <div style={{padding:"9px 12px",borderRadius:8,background:T.card2,border:`1px solid ${T.border}`,fontSize:11,color:T.blue,display:"flex",alignItems:"center",gap:6,cursor:"default"}}>{Icon.arrowR}<span>Browse shared</span></div>
+          </div>
+        </Card>
 
-          {/* Tab switcher */}
-          <div style={{display:"flex",gap:4}}>
-            {["link","email","qr"].map(t=>(
-              <button key={t} onClick={()=>setAddTab(t)} style={{flex:1,padding:"6px 0",borderRadius:6,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font,border:`1px solid ${addTab===t?T.lime+"44":T.border}`,background:addTab===t?T.lime+"14":"transparent",color:addTab===t?T.lime:T.muted,textTransform:"capitalize",transition:"all 0.15s"}}>
-                {t==="link"?"Link":t==="email"?"Search":"QR Code"}
-              </button>
+        <Card style={{padding:20,position:"relative",overflow:"hidden"}}>
+          <div style={{position:"absolute",top:-24,right:-24,width:90,height:90,borderRadius:"50%",background:T.purple+"10",pointerEvents:"none"}} />
+          <div style={{width:36,height:36,borderRadius:10,background:T.purple+"18",border:`1px solid ${T.purple}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.purple,marginBottom:12}}>{Icon.cal}</div>
+          <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:6,letterSpacing:"-0.01em"}}>Struggling to Make Plans?</div>
+          <div style={{fontSize:12.5,color:T.muted,lineHeight:1.6,marginBottom:14}}>Studlin syncs calendars across your whole group and automatically finds when everyone is free for a project meeting.</div>
+          <div style={{display:"flex",gap:8}}>
+            <div style={{flex:1,padding:"9px 12px",borderRadius:8,background:T.purple+"12",border:`1px solid ${T.purple}30`,fontSize:11,color:T.purple,display:"flex",alignItems:"center",gap:6,cursor:"default"}}>{Icon.users}<span>Find a time</span></div>
+            <div style={{padding:"9px 12px",borderRadius:8,background:T.card2,border:`1px solid ${T.border}`,fontSize:11,color:T.teal,display:"flex",alignItems:"center",gap:6,cursor:"default"}}>{Icon.cal}<span>View group</span></div>
+          </div>
+        </Card>
+      </div>
+
+      {/* ── GROWTH INCENTIVE BANNER ── */}
+      <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderRadius:10,background:T.lime+"0C",border:`1px solid ${T.lime}22`,marginBottom:16}}>
+        <div style={{width:28,height:28,borderRadius:8,background:T.lime+"1A",border:`1px solid ${T.lime}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,flexShrink:0}}>{Icon.zap}</div>
+        <div style={{flex:1,fontSize:12.5,color:T.muted,lineHeight:1.5}}>
+          <span style={{color:T.text,fontWeight:600}}>Grow your network together.</span>{" "}For every friend who signs up via your link, you both unlock <span style={{color:T.lime,fontWeight:600}}>50 bonus AI scheduling credits</span>.
+        </div>
+        <button onClick={copyMsg} style={{flexShrink:0,padding:"7px 14px",borderRadius:7,background:T.lime,color:T.ink,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>
+          {copied?"Copied!":"Copy invite link"}
+        </button>
+      </div>
+
+      {/* ── DIRECTORY + QR ── */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 296px",gap:14,marginBottom:16}}>
+
+        {/* Directory Search */}
+        <div>
+          <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8}}>Find People</div>
+          <div style={{display:"flex",gap:6,marginBottom:10}}>
+            {["All","@username","Name","School"].map(f=>(
+              <button key={f} onClick={()=>setSearchFilter(f)} style={{padding:"5px 11px",borderRadius:6,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font,border:`1px solid ${searchFilter===f?T.lime+"44":T.border}`,background:searchFilter===f?T.lime+"14":"transparent",color:searchFilter===f?T.lime:T.muted,transition:"all 0.12s"}}>{f}</button>
             ))}
           </div>
-
-          {addTab==="link"&&(
-            <Card style={{padding:16}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-                <div style={{width:32,height:32,borderRadius:8,background:T.lime+"18",border:`1px solid ${T.lime}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,flexShrink:0}}>{Icon.link}</div>
-                <div>
-                  <div style={{fontSize:12.5,fontWeight:700,color:T.white}}>One-click invite link</div>
-                  <div style={{fontSize:11,color:T.muted}}>Copies a message + your link</div>
+          <div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 13px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:9,marginBottom:12}}>
+            <span style={{color:T.muted,display:"flex",flexShrink:0}}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+            <input value={searchQ} onChange={e=>{setSearchQ(e.target.value);setEmailSent(false);}} placeholder={searchFilter==="@username"?"Search by @username…":searchFilter==="School"?"Search by university or college…":searchFilter==="Name"?"Search by first or last name…":"Search by name, @username, or school…"} style={{flex:1,background:"none",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}} />
+            {searchQ&&<button onClick={()=>setSearchQ("")} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:0,display:"flex",lineHeight:1,flexShrink:0}}>{Icon.xmark}</button>}
+          </div>
+          <Card style={{padding:0,overflow:"hidden"}}>
+            {!noResults
+              ? (searchQ.trim()?filtered:DIRECTORY.slice(0,6)).map((u,i,arr)=>{
+                  const added=addedUsers.includes(u.h);
+                  return (
+                    <div key={u.h} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
+                      <div style={{position:"relative",flexShrink:0}}>
+                        <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={34} picUrl="" />
+                        <div style={{position:"absolute",bottom:0,right:0,width:9,height:9,borderRadius:"50%",background:u.online?T.teal:T.faint,border:`2px solid ${T.card}`}} />
+                      </div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:600,color:T.white}}>{u.n}</div>
+                        <div style={{fontSize:11,color:T.muted}}>{u.h} · <span style={{color:T.blue}}>{u.s}</span></div>
+                      </div>
+                      <BtnSm variant={added?"subtle":"lime"} onClick={()=>toggleAdd(u.h)} style={{flexShrink:0}}>{added?"Following":"Add"}</BtnSm>
+                    </div>
+                  );
+                })
+              : <div style={{padding:20}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+                    <div style={{width:34,height:34,borderRadius:9,background:T.blue+"18",border:`1px solid ${T.blue}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.blue,flexShrink:0}}>{Icon.mail}</div>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:700,color:T.white}}>No one found for "{searchQ}"</div>
+                      <div style={{fontSize:11,color:T.muted}}>Invite them to join Studlin via email.</div>
+                    </div>
+                  </div>
+                  <input value={inviteEmail} onChange={e=>setInviteEmail(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")sendEmailInvite();}} placeholder="friend@university.edu" style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",boxSizing:"border-box",marginBottom:10}} />
+                  {emailSent&&<div style={{fontSize:12,color:T.teal,marginBottom:8}}>Invite sent!</div>}
+                  <Btn onClick={sendEmailInvite} style={{width:"100%",justifyContent:"center",opacity:inviteEmail.trim()?1:0.45}}>{Icon.mail} Send invite</Btn>
                 </div>
-              </div>
-              <div style={{fontSize:11,color:T.muted,padding:"10px 12px",background:T.card2,borderRadius:7,border:`1px solid ${T.border}`,lineHeight:1.6,marginBottom:12,wordBreak:"break-all"}}>{inviteLink}</div>
-              <Btn onClick={copyInvite} style={{width:"100%",justifyContent:"center"}}>{copied?Icon.check:Icon.copy} {copied?"Copied!":"Copy invite message"}</Btn>
-            </Card>
-          )}
+            }
+          </Card>
+        </div>
 
-          {addTab==="email"&&(
-            <Card style={{padding:16}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-                <div style={{width:32,height:32,borderRadius:8,background:T.blue+"18",border:`1px solid ${T.blue}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.blue,flexShrink:0}}>{Icon.userPlus}</div>
-                <div>
-                  <div style={{fontSize:12.5,fontWeight:700,color:T.white}}>Find or invite</div>
-                  <div style={{fontSize:11,color:T.muted}}>Username sends request · email invites</div>
-                </div>
-              </div>
-              <input value={inviteInput} onChange={e=>{setInviteInput(e.target.value);setInviteStatus("");}} onKeyDown={e=>{if(e.key==="Enter")sendInvite();}} placeholder="@username or email@school.edu" style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",boxSizing:"border-box",marginBottom:10}} />
-              {inviteStatus==="email_sent"&&<div style={{fontSize:12,color:T.teal,marginBottom:8}}>Invite email sent!</div>}
-              {inviteStatus==="request_sent"&&<div style={{fontSize:12,color:T.lime,marginBottom:8}}>Friend request sent!</div>}
-              {inviteStatus==="already"&&<div style={{fontSize:12,color:T.amber,marginBottom:8}}>Already a friend.</div>}
-              <Btn onClick={sendInvite} style={{width:"100%",justifyContent:"center",opacity:inviteInput.trim()?1:0.45}}>{Icon.send} Send</Btn>
-            </Card>
-          )}
-
-          {addTab==="qr"&&(
-            <Card style={{padding:16,textAlign:"center"}}>
-              <div style={{fontSize:12.5,fontWeight:700,color:T.white,marginBottom:4}}>Scan to join Studlin</div>
-              <div style={{fontSize:11,color:T.muted,marginBottom:12}}>Show this to a friend nearby</div>
-              <div style={{display:"inline-block",padding:8,background:"#111530",borderRadius:10,border:`1px solid ${T.border}`}}>
-                <img src={qrUrl} width={160} height={160} alt="Studlin invite QR code" style={{display:"block",borderRadius:6}} onError={e=>{e.target.style.display="none";}} />
-              </div>
-              <div style={{fontSize:10,color:T.faint,marginTop:10,wordBreak:"break-all"}}>{inviteLink}</div>
-            </Card>
-          )}
+        {/* QR Invite via Text */}
+        <div style={{display:"flex",flexDirection:"column",gap:0}}>
+          <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8}}>Invite via Text</div>
+          <Card style={{padding:18,textAlign:"center",flex:1}}>
+            <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>Scan with your phone</div>
+            <div style={{fontSize:11,color:T.muted,marginBottom:14,lineHeight:1.55}}>Opens a pre-written iMessage or SMS ready to send to friends or group chats.</div>
+            <div style={{display:"inline-block",padding:8,background:"#111530",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:12}}>
+              <img src={qrUrl} width={150} height={150} alt="Scan to invite via text" style={{display:"block",borderRadius:6}} onError={e=>{e.target.style.display="none";}} />
+            </div>
+            <div style={{fontSize:10,color:T.faint,lineHeight:1.5,wordBreak:"break-all",padding:"0 4px",marginBottom:14,textAlign:"left",background:T.card2,borderRadius:7,padding:"9px 10px",border:`1px solid ${T.border}`}}>
+              "{smsText.slice(0,100)}…"
+            </div>
+            <Btn onClick={copyMsg} style={{width:"100%",justifyContent:"center"}}>{copied?Icon.check:Icon.copy} {copied?"Copied!":"Copy message"}</Btn>
+          </Card>
         </div>
       </div>
+
+      {/* ── CALENDAR SYNC ── */}
+      <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8}}>Sync External Calendar</div>
+      <Card style={{padding:20}}>
+        <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>Connect your existing calendar</div>
+        <div style={{fontSize:12,color:T.muted,marginBottom:16,lineHeight:1.6}}>Pull your existing events into Studlin without altering or deleting anything. Studlin-created blocks sync right back to your primary calendar.</div>
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+
+          <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${calGoogleLinked?T.teal+"44":T.border}`,transition:"border-color 0.2s"}}>
+            <div style={{width:38,height:38,borderRadius:10,background:"rgba(66,133,244,0.12)",border:"1px solid rgba(66,133,244,0.25)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:600,color:T.white}}>Google Calendar</div>
+              <div style={{fontSize:11,color:calGoogleLinked?T.teal:T.muted,marginTop:2}}>{calGoogleLinked?"Synced · bi-directional · events flowing in":"Connect to import your existing events"}</div>
+            </div>
+            <BtnSm variant={calGoogleLinked?"subtle":"lime"} onClick={linkCalGoogle}>{calGoogleLinked?"Disconnect":"Connect"}</BtnSm>
+          </div>
+
+          <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${calAppleLinked?T.teal+"44":T.border}`,transition:"border-color 0.2s"}}>
+            <div style={{width:38,height:38,borderRadius:10,background:"rgba(255,255,255,0.07)",border:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill={T.text}><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:600,color:T.white}}>Apple Calendar</div>
+              <div style={{fontSize:11,color:calAppleLinked?T.teal:T.muted,marginTop:2}}>{calAppleLinked?"Synced · bi-directional · events flowing in":"Import iCloud events and push Studlin blocks back"}</div>
+            </div>
+            <BtnSm variant={calAppleLinked?"subtle":"lime"} onClick={linkCalApple}>{calAppleLinked?"Disconnect":"Connect"}</BtnSm>
+          </div>
+        </div>
+
+        {(calGoogleLinked||calAppleLinked)&&(
+          <div style={{marginTop:14,padding:"10px 14px",borderRadius:8,background:T.teal+"10",border:`1px solid ${T.teal}25`,fontSize:12,color:T.teal,lineHeight:1.6}}>
+            Calendar sync active. External events appear on your Studlin calendar in read-only mode. Studlin study blocks push back to your connected account automatically.
+          </div>
+        )}
+      </Card>
     </div>
   );
 }
@@ -3455,8 +3490,30 @@ function FocusMusic(){
 // ─── SETTINGS ─────────────────────────────────────────────────────────────────
 function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}}) {
   const [active,setActive]=useState("General");
-  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,sr:true,auto:true,analytics:false,sync:true,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true},...lsGet("settings",{})}));
+  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,sr:true,auto:true,analytics:false,sync:true,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false},...lsGet("settings",{})}));
   const tog=k=>setToggles(t=>{const n={...t,[k]:!t[k]};lsSet("settings",n);return n;});
+  const [sysPushStatus,setSysPushStatus]=useState(()=>{
+    if(typeof Notification==="undefined")return "unsupported";
+    if(Notification.permission==="granted")return "granted";
+    if(Notification.permission==="denied")return "denied";
+    return "default";
+  });
+  const handleSysPushToggle=()=>{
+    if(toggles.sysPush){
+      tog("sysPush");return;
+    }
+    if(typeof Notification==="undefined"){return;}
+    if(Notification.permission==="granted"){
+      tog("sysPush");setSysPushStatus("granted");
+      new Notification("Studlin",{body:"Desktop notifications are on. We'll keep you in sync."});
+      return;
+    }
+    if(Notification.permission==="denied"){setSysPushStatus("denied");return;}
+    Notification.requestPermission().then(perm=>{
+      setSysPushStatus(perm);
+      if(perm==="granted"){tog("sysPush");new Notification("Studlin",{body:"Desktop notifications are on. We'll keep you in sync."});}
+    });
+  };
   const [profile,setProfileState]=useState(()=>getProfile());
   const updProfile=(patch)=>{const n={...profile,...patch};setProfileState(n);saveProfile(n);};
   const allUsers=[{n:"Devon Karu",h:"@devonk",s:"UCLA"},{n:"Priya Shah",h:"@priyas",s:"Berkeley"},{n:"Jordan Tran",h:"@jtran",s:"UCLA"},{n:"Amara Okafor",h:"@amarao",s:"NYU"},{n:"Liam Chen",h:"@liamc",s:"Stanford"},{n:"Sofia Diaz",h:"@sofiad",s:"UCLA"}];
@@ -3650,6 +3707,30 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
           </>)}
 
           {active==="Notifications" && (<>
+            <Card style={{marginBottom:12}}>
+              <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:14,marginBottom:14}}>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:3}}>System Notifications</div>
+                  <div style={{fontSize:12,color:T.muted,lineHeight:1.5}}>Deliver Studlin alerts directly to your desktop — even when the tab is closed or running in the background.</div>
+                </div>
+                <div onClick={handleSysPushToggle} style={{width:38,height:20,borderRadius:10,background:toggles.sysPush?T.lime:T.card2,border:`1px solid ${toggles.sysPush?T.lime:T.border}`,position:"relative",cursor:sysPushStatus==="denied"?"not-allowed":"pointer",transition:"all 0.2s",flexShrink:0,opacity:sysPushStatus==="unsupported"?0.45:1}}>
+                  <div style={{width:14,height:14,borderRadius:"50%",background:toggles.sysPush?T.bg:"#fff",position:"absolute",top:2,left:toggles.sysPush?21:2,transition:"left 0.2s"}} />
+                </div>
+              </div>
+              {sysPushStatus==="denied"&&(
+                <div style={{fontSize:11.5,color:T.amber,background:T.amber+"10",border:`1px solid ${T.amber}22`,borderRadius:7,padding:"9px 12px",lineHeight:1.5}}>
+                  Notifications are blocked in your browser. Open browser site settings and allow notifications for this site, then refresh.
+                </div>
+              )}
+              {sysPushStatus==="unsupported"&&(
+                <div style={{fontSize:11.5,color:T.muted,lineHeight:1.5}}>Your browser does not support desktop push notifications.</div>
+              )}
+              {sysPushStatus==="granted"&&toggles.sysPush&&(
+                <div style={{fontSize:11.5,color:T.teal,background:T.teal+"10",border:`1px solid ${T.teal}22`,borderRadius:7,padding:"9px 12px",lineHeight:1.5}}>
+                  Active · Studlin will send alerts to your desktop even when this tab is in the background.
+                </div>
+              )}
+            </Card>
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Task &amp; App Notifications</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Master switch for all Studlin alerts. Smart reminders fire before study blocks begin.</div>
@@ -5026,7 +5107,7 @@ function App() {
       {id:"essays",label:"Essays",badge:String(lsGet("essays",[]).length||"")},
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
-      {id:"friends",label:"Friends & Chat"},
+      {id:"friends",label:"Studlin Network"},
     ]},
     {label:"Tools",items:[
       {id:"solve",label:"Solve"},
@@ -5037,7 +5118,7 @@ function App() {
   ];
   const bottomItems=[{id:"settings",label:"Settings"},{id:"profile",label:"Profile"}];
   const pages={aichat:AiChat,essays:Essays,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,aitutor:AiTutor,grammar:GrammarPolish,humanizer:AiHumanizer,profile:Profile};
-  const labelOf={dashboard:"Dashboard",aichat:"AI Chat",essays:"Essays",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Friends & Chat",aitutor:"AI Tutor",grammar:"Grammar & Polish",humanizer:"Rewrite",settings:"Settings",profile:"Profile",solve:"Solve"};
+  const labelOf={dashboard:"Dashboard",aichat:"AI Chat",essays:"Essays",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",aitutor:"AI Tutor",grammar:"Grammar & Polish",humanizer:"Rewrite",settings:"Settings",profile:"Profile",solve:"Solve"};
   const sectionOf={dashboard:"Workspace",aichat:"Workspace",essays:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",friends:"Workspace",aitutor:"Tools",grammar:"Tools",humanizer:"Tools",solve:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
