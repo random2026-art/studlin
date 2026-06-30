@@ -1312,7 +1312,7 @@ function Flashcards() {
     setAiLoading(true);
     try{
       const prompt="Hey Studlin, I need you to help me make flashcards for studying. Can you create 10 flashcards from this "+context+"? Please format them as a JSON array where each card has a \"q\" key for the question and an \"a\" key for the answer. Just give me the JSON array directly so I can import them into my deck. Here's the material:\n\n"+content.slice(0,15000);
-      const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
       const data=await res.json();
       var raw=(data.reply||"").replace(/```json?|```/g,"").trim();
       var jsonStart=raw.indexOf("[");var jsonEnd=raw.lastIndexOf("]");
@@ -1518,7 +1518,7 @@ function Notes(){
     setAiLoading(true);
     try{
       const prompt="Summarize the following "+context+" into well-structured study notes. Use headings, bullet points, and key terms. Be thorough but concise:\n\n"+text.slice(0,30000);
-      const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
       const data=await res.json();
       setAiLoading(false);
       return data.reply||text;
@@ -2606,7 +2606,7 @@ function Solve(){
       var prompt="Hey Studlin, I need help solving this "+subject+" problem."+(deepThink?" Please show your full step-by-step thinking process and reasoning before giving the answer. Be very thorough.":"")+" Here's the problem:\n\n";
       if(textInput.trim())prompt+=textInput;
       if(!textInput.trim()&&image)prompt="Hey Studlin, I uploaded an image of a "+subject+" problem but since you can't see images, can you help me if I describe it? Ask me to type out what the problem says.";
-      var res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+      var res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
       var data=await res.json();
       setResult(data.reply||"No response.");
     }catch(e){setResult("Error: "+e.message);}
@@ -2700,7 +2700,7 @@ function GrammarPolish() {
     setLoading(true);setIssues([]);setGrade(null);setStats(null);setRewriteResult("");
     try{
       const prompt="Hey Studlin, I need you to check my writing for grammar, spelling, style, and clarity issues. Analyze this text and return a JSON object with this exact format:\n{\"grade\":\"B+\",\"readingLevel\":\"Grade 11\",\"issues\":[{\"type\":\"Grammar\",\"orig\":\"the exact wrong text\",\"fix\":\"corrected version\",\"desc\":\"brief explanation\"}],\"grammarCount\":2,\"styleCount\":1,\"clarityCount\":0,\"summary\":\"one sentence overall feedback\"}\n\nTypes can be: Grammar, Spelling, Style, Clarity, Punctuation\n\nMy text:\n"+text;
-      const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
       const data=await res.json();
       var raw=(data.reply||"").replace(/```json?|```/g,"").trim();
       var jsonStart=raw.indexOf("{");var jsonEnd=raw.lastIndexOf("}");
@@ -2721,7 +2721,7 @@ function GrammarPolish() {
     try{
       var prompts={"clarity":"Rewrite this text for maximum clarity. Keep the meaning but make every sentence easy to understand on first read.","academic":"Elevate this text to a formal academic register. Use sophisticated vocabulary and complex sentence structures while maintaining clarity.","simplify":"Simplify this text. Use shorter sentences, simpler words, and break down complex ideas. Aim for a Grade 8 reading level.","transitions":"Add transitional phrases between sentences and paragraphs to improve flow. Keep the original content but weave in connectors.","vary":"Rewrite this to vary sentence length and structure. Mix short punchy sentences with longer complex ones for rhythm."};
       var p="Hey Studlin, "+prompts[mode]+"\n\nOriginal text:\n"+text+"\n\nJust give me the rewritten text directly, nothing else.";
-      var res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:p}],model:"standard"})});
+      var res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:p}],model:"standard"})});
       var data=await res.json();
       setRewriteResult(data.reply||"No result.");
     }catch(e){setRewriteResult("Error: "+e.message);}
