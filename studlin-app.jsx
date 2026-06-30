@@ -329,6 +329,19 @@ const StatNum = ({label,value,sub,accent,style={}}) => (
 // ─── PERSISTENCE + MONETIZATION HELPERS ──────────────────────────────────────
 const lsGet=(k,d)=>{try{const v=localStorage.getItem("studlin-"+k);return v===null?d:JSON.parse(v);}catch(e){return d;}};
 const lsSet=(k,v)=>{try{localStorage.setItem("studlin-"+k,JSON.stringify(v));}catch(e){}};
+const SUBJECT_COLORS=["#D9806B","#7BACDF","#A691DB","#5FCBA8","#DCA64A","#7880A8","#3ECF8E","#FF8A80","#81C784","#CE93D8"];
+const DEFAULT_SUBJECTS=[
+  {id:"chem",label:"Chemistry",color:"#D9806B"},
+  {id:"bio", label:"Biology",  color:"#5FCBA8"},
+  {id:"calc",label:"Calculus", color:"#7BACDF"},
+  {id:"eng", label:"English",  color:"#A691DB"},
+  {id:"hist",label:"History",  color:"#7880A8"},
+  {id:"span",label:"Spanish",  color:"#DCA64A"},
+];
+const getSubjects=()=>lsGet("user-subjects",DEFAULT_SUBJECTS);
+const saveSubjects=(s)=>lsSet("user-subjects",s);
+const diffLabel=(v)=>{const p=v/10;return p<=20?"Easy":p<=40?"Moderately Easy":p<=60?"Medium":p<=80?"Moderately Hard":"Hard";};
+const prioLabel=(v)=>{const p=v/10;return p<=20?"Low":p<=40?"Low–Medium":p<=60?"Medium":p<=80?"High":"Urgent";};
 async function getAuthToken(){try{const u=firebase.auth().currentUser;if(!u)return null;return await u.getIdToken();}catch(e){return null;}}
 async function authFetch(url,opts={}){try{const token=await getAuthToken();const h=Object.assign({},opts.headers||{});if(token)h["Authorization"]="Bearer "+token;return fetch(url,Object.assign({},opts,{headers:h}));}catch(e){return fetch(url,opts);}}
 async function fetchUserProfile(){try{const res=await authFetch("/api/me");if(!res.ok)return null;const d=await res.json();lsSet("credits",d.credits);lsSet("plan",d.plan||"Free");return d;}catch(e){return null;}}
@@ -2379,16 +2392,11 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
 }
 
 function CalendarTab(){
-  const SUBJ=[
-    {value:"Chemistry",label:"Chemistry",color:T.red},
-    {value:"English IV",label:"English IV",color:T.purple},
-    {value:"Biology",label:"Biology",color:T.teal},
-    {value:"Calculus",label:"Calculus",color:T.blue},
-    {value:"Spanish",label:"Spanish",color:T.amber},
-    {value:"History",label:"History",color:T.muted},
-    {value:"Other",label:"Other",color:T.lime},
-  ];
-  const colorOf=(sub)=>{const x=SUBJ.find(o=>o.value===sub);return x?x.color:T.lime;};
+  const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
+  const SUBJ=[{value:"None",label:"None",color:T.muted},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
+  const colorOf=(sub)=>{if(!sub||sub==="None"||sub==="")return T.muted;const x=userSubjects.find(s=>s.label===sub);return x?x.color:T.lime;};
+  const [subjOnboardOpen,setSubjOnboardOpen]=useState(()=>!lsGet("subjects-configured",false));
+  const [onbSubjs,setOnbSubjs]=useState(()=>getSubjects().map(s=>({...s})));
   const mk=(off,time,title,subject,kind)=>{const d=new Date();d.setDate(d.getDate()+off);return {id:"seed-"+off+"-"+time,date:dayKey(d),time,title,subject,kind};};
   const seed=[
     mk(0,"14:30","Chem quiz · Periodic trends","Chemistry","exam"),
@@ -2403,8 +2411,8 @@ function CalendarTab(){
   const [newOpen,setNewOpen]=useState(false);
   const [evTitle,setEvTitle]=useState("");
   const [evDate,setEvDate]=useState(dayKey());
-  const [evTime,setEvTime]=useState("14:30");
-  const [evSubject,setEvSubject]=useState("Chemistry");
+  const [evTime,setEvTime]=useState(()=>{const n=new Date();return String(n.getHours()).padStart(2,"0")+":"+String(n.getMinutes()).padStart(2,"0");});
+  const [evSubject,setEvSubject]=useState("None");
   const [evCustom,setEvCustom]=useState("");
   const [evKind,setEvKind]=useState("deadline");
   const [evNotes,setEvNotes]=useState("");
@@ -2454,10 +2462,10 @@ function CalendarTab(){
   const relDay=(k)=>{if(k===todayK)return "Today";const t=new Date();t.setDate(t.getDate()+1);if(k===dayKey(t))return "Tomorrow";const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{month:"short",day:"numeric"});};
   const upcoming=events.filter(ev=>ev.date>=todayK).sort((a,b)=>a.date===b.date?(a.time<b.time?-1:1):(a.date<b.date?-1:1)).slice(0,6);
   const dayEvents=(byDay[selDay]||[]).slice().sort((a,b)=>a.time<b.time?-1:1);
-  const openNew=(dateK)=>{setEvDate(dateK||selDay);setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setNewOpen(true);};
+  const openNew=(dateK)=>{const n=new Date();setEvTime(String(n.getHours()).padStart(2,"0")+":"+String(n.getMinutes()).padStart(2,"0"));setEvSubject("None");setEvDate(dateK||selDay);setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setNewOpen(true);};
   const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvPriority(500);setEvDifficulty(500);setEvDeadline("");setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);};
   const buildTask=(date,time,titleSuffix,splitInfo)=>{
-    const subj=evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject;
+    const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
     return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,kind:evKind,notes:evNotes,priority:Math.round(evPriority/100),difficulty:Math.round(evDifficulty/100),deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,...(splitInfo||{})};
   };
   const commitTasks=(newTasks)=>{
@@ -2569,6 +2577,31 @@ function CalendarTab(){
   const saveEdit=()=>{if(!editEv||!editTitle.trim())return;const next=events.map(e=>e.id===editEv.id?{...e,title:editTitle.trim(),date:editDate,time:editTime,duration:editDuration,deadline:editDeadline||null,priority:Math.round(editPriority/100),difficulty:Math.round(editDifficulty/100),subject:editSubject,kind:editKind,notes:editNotes}:e);setEvents(next);lsSet("events",next);closeEdit();};
   return (
     <div>
+      {subjOnboardOpen&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:20,padding:28,width:520,maxWidth:"90vw",maxHeight:"82vh",overflowY:"auto",boxShadow:"0 32px 64px -16px rgba(0,0,0,0.6)"}}>
+            <div style={{fontSize:20,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:4}}>Set up your subjects</div>
+            <div style={{fontSize:13,color:T.muted,marginBottom:20}}>Add your classes and pick a color for each. You can always manage these in Settings.</div>
+            {onbSubjs.map((s,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+                <div style={{display:"flex",gap:4,flexShrink:0,flexWrap:"wrap",maxWidth:120}}>
+                  {SUBJECT_COLORS.map(c=>(
+                    <div key={c} onClick={()=>setOnbSubjs(a=>a.map((x,j)=>j===i?{...x,color:c}:x))} title={c} style={{width:14,height:14,borderRadius:"50%",background:c,cursor:"pointer",border:s.color===c?`2.5px solid ${T.white}`:`2px solid transparent`,boxSizing:"border-box",flexShrink:0,transition:"transform 0.12s",transform:s.color===c?"scale(1.25)":"scale(1)"}} />
+                  ))}
+                </div>
+                <div style={{width:10,height:10,borderRadius:"50%",background:s.color,flexShrink:0}} />
+                <input value={s.label} onChange={e=>setOnbSubjs(a=>a.map((x,j)=>j===i?{...x,label:e.target.value}:x))} placeholder={`Class ${i+1} (e.g. Calculus)`} style={{flex:1,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none"}} />
+                <button onClick={()=>setOnbSubjs(a=>a.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:18,padding:"2px 6px",fontFamily:T.font,lineHeight:1}}>×</button>
+              </div>
+            ))}
+            <button onClick={()=>setOnbSubjs(a=>[...a,{id:String(Date.now()),label:"",color:SUBJECT_COLORS[a.length%SUBJECT_COLORS.length]}])} style={{background:"none",border:`1px dashed ${T.border}`,color:T.muted,cursor:"pointer",borderRadius:8,padding:"8px 14px",fontSize:12,fontFamily:T.font,marginTop:4,width:"100%"}}>+ Add another class</button>
+            <div style={{display:"flex",gap:10,marginTop:20}}>
+              <Btn onClick={()=>{const valid=onbSubjs.filter(s=>s.label.trim());if(valid.length>0)saveSubjects(valid);lsSet("subjects-configured",true);setUserSubjectsState(getSubjects());setSubjOnboardOpen(false);}}>Save my classes</Btn>
+              <Btn variant="subtle" onClick={()=>{lsSet("subjects-configured",true);setSubjOnboardOpen(false);}}>Skip / I'm not a student</Btn>
+            </div>
+          </div>
+        </div>
+      )}
       <PH title="Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><Btn variant="ghost" onClick={()=>{setGroupSyncOpen(true);setGsStep(1);setGsResults(null);}}>{Icon.users} Group Sync</Btn><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></div>} />
       <div style={{display:"flex",gap:6,marginBottom:20}}>
         {["monthly","weekly"].map(v=>(
@@ -2587,7 +2620,7 @@ function CalendarTab(){
         </Field>
 
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <Field label="Scheduled date"><Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} /></Field>
+          <Field label="Do on Date"><Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} /></Field>
           {evKind!=="reminder"&&<Field label="Start time"><Input type="time" value={evTime} onChange={ev=>setEvTime(ev.target.value)} /></Field>}
           {evKind==="reminder"&&<Field label="Reminder time"><Input type="time" value={evTime} onChange={ev=>setEvTime(ev.target.value)} /></Field>}
         </div>
@@ -2602,7 +2635,10 @@ function CalendarTab(){
             <Field label={`Priority: ${Math.round(evPriority/10)}%`} hint="Higher priority tasks are scheduled earlier">
               <div style={{display:"flex",alignItems:"center",gap:12}}>
                 <span style={{fontSize:11,color:T.muted,width:28}}>Low</span>
-                <input type="range" min={0} max={1000} value={evPriority} onChange={ev=>setEvPriority(+ev.target.value)} style={{flex:1,accentColor:T.lime,height:6,borderRadius:3,appearance:"slider-horizontal"}} />
+                <div style={{flex:1,position:"relative",paddingTop:24}}>
+                  <div style={{position:"absolute",top:0,left:`${evPriority/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{prioLabel(evPriority)}</div>
+                  <input type="range" min={0} max={1000} value={evPriority} onChange={ev=>setEvPriority(+ev.target.value)} style={{width:"100%",accentColor:T.lime,height:6,borderRadius:3,cursor:"pointer"}} />
+                </div>
                 <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Urgent</span>
               </div>
             </Field>
@@ -2610,7 +2646,10 @@ function CalendarTab(){
             <Field label={`Difficulty: ${Math.round(evDifficulty/10)}%`} hint="Very Easy to Very Difficult">
               <div style={{display:"flex",alignItems:"center",gap:12}}>
                 <span style={{fontSize:11,color:T.muted,width:28}}>Easy</span>
-                <input type="range" min={0} max={1000} value={evDifficulty} onChange={ev=>setEvDifficulty(+ev.target.value)} style={{flex:1,accentColor:T.purple,height:6,borderRadius:3,appearance:"slider-horizontal"}} />
+                <div style={{flex:1,position:"relative",paddingTop:24}}>
+                  <div style={{position:"absolute",top:0,left:`${evDifficulty/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.purple,background:T.purple+"18",border:`1px solid ${T.purple}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{diffLabel(evDifficulty)}</div>
+                  <input type="range" min={0} max={1000} value={evDifficulty} onChange={ev=>setEvDifficulty(+ev.target.value)} style={{width:"100%",accentColor:T.purple,height:6,borderRadius:3,cursor:"pointer"}} />
+                </div>
                 <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Hard</span>
               </div>
             </Field>
@@ -2652,14 +2691,20 @@ function CalendarTab(){
         <Field label={`Priority: ${Math.round(editPriority/10)}%`} hint="Higher priority tasks are scheduled earlier">
           <div style={{display:"flex",alignItems:"center",gap:12}}>
             <span style={{fontSize:11,color:T.muted,width:28}}>Low</span>
-            <input type="range" min={0} max={1000} value={editPriority} onChange={e=>setEditPriority(+e.target.value)} style={{flex:1,accentColor:T.lime,height:6,borderRadius:3}} />
+            <div style={{flex:1,position:"relative",paddingTop:24}}>
+              <div style={{position:"absolute",top:0,left:`${editPriority/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{prioLabel(editPriority)}</div>
+              <input type="range" min={0} max={1000} value={editPriority} onChange={e=>setEditPriority(+e.target.value)} style={{width:"100%",accentColor:T.lime,height:6,borderRadius:3,cursor:"pointer"}} />
+            </div>
             <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Urgent</span>
           </div>
         </Field>
         <Field label={`Difficulty: ${Math.round(editDifficulty/10)}%`} hint="Very Easy to Very Difficult">
           <div style={{display:"flex",alignItems:"center",gap:12}}>
             <span style={{fontSize:11,color:T.muted,width:28}}>Easy</span>
-            <input type="range" min={0} max={1000} value={editDifficulty} onChange={e=>setEditDifficulty(+e.target.value)} style={{flex:1,accentColor:T.purple,height:6,borderRadius:3}} />
+            <div style={{flex:1,position:"relative",paddingTop:24}}>
+              <div style={{position:"absolute",top:0,left:`${editDifficulty/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.purple,background:T.purple+"18",border:`1px solid ${T.purple}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{diffLabel(editDifficulty)}</div>
+              <input type="range" min={0} max={1000} value={editDifficulty} onChange={e=>setEditDifficulty(+e.target.value)} style={{width:"100%",accentColor:T.purple,height:6,borderRadius:3,cursor:"pointer"}} />
+            </div>
             <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Hard</span>
           </div>
         </Field>
@@ -3492,6 +3537,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     {id:"Notifications",icon:Icon.send},
     {id:"Privacy",icon:Icon.shield},
     {id:"Study preferences",icon:Icon.brain},
+    {id:"Subjects & Labels",icon:Icon.layers},
     {id:"Subscription",icon:Icon.zap},
     {id:"Danger zone",icon:Icon.xmark},
   ];
@@ -3554,6 +3600,9 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const [verb,setVerb]=useState(()=>lsGet("pref-verb","Balanced"));
   const [brk,setBrk]=useState(()=>lsGet("pref-brk","15 min"));
   const accents=[{n:"Lime",c:"#AECE5E"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"}];
+  const [mgmtSubjs,setMgmtSubjs]=useState(()=>getSubjects().map(s=>({...s})));
+  const [mgmtSaved,setMgmtSaved]=useState(false);
+  const saveMgmtSubjs=()=>{const valid=mgmtSubjs.filter(s=>s.label.trim());saveSubjects(valid);lsSet("subjects-configured",true);setMgmtSaved(true);setTimeout(()=>setMgmtSaved(false),2500);};
 
   return (
     <div>
@@ -3747,6 +3796,38 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>Daily targets</div>
               <Field label="Daily focus target (minutes)"><Input type="number" defaultValue="180" /></Field>
               <Field label="Daily flashcard target"><Input type="number" defaultValue="30" /></Field>
+            </Card>
+          </>)}
+
+          {active==="Subjects & Labels" && (<>
+            <Card>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
+                <div>
+                  <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:3}}>Manage Subjects & Labels</div>
+                  <div style={{fontSize:12,color:T.muted}}>Color-code your classes. These labels appear on your calendar and tasks globally.</div>
+                </div>
+                <Btn onClick={()=>setMgmtSubjs(s=>[...s,{id:String(Date.now()),label:"",color:SUBJECT_COLORS[s.length%SUBJECT_COLORS.length]}])}>+ Add</Btn>
+              </div>
+              {mgmtSubjs.length===0&&(
+                <div style={{fontSize:12.5,color:T.muted,padding:"20px 0",textAlign:"center",borderTop:`1px solid ${T.border}`}}>No subjects yet. Click "+ Add" to create your first label.</div>
+              )}
+              {mgmtSubjs.map((sub,i)=>(
+                <div key={sub.id||i} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 0",borderBottom:`1px solid ${T.border}`}}>
+                  <div style={{display:"flex",gap:4,flexWrap:"wrap",flexShrink:0,maxWidth:120}}>
+                    {SUBJECT_COLORS.map(c=>(
+                      <div key={c} onClick={()=>setMgmtSubjs(s=>s.map((x,j)=>j===i?{...x,color:c}:x))} title={c} style={{width:14,height:14,borderRadius:"50%",background:c,cursor:"pointer",boxSizing:"border-box",border:sub.color===c?`2.5px solid ${T.white}`:`2px solid transparent`,transition:"transform 0.12s",transform:sub.color===c?"scale(1.25)":"scale(1)",flexShrink:0}} />
+                    ))}
+                  </div>
+                  <div style={{width:10,height:10,borderRadius:"50%",background:sub.color,flexShrink:0}} />
+                  <input value={sub.label} onChange={e=>setMgmtSubjs(s=>s.map((x,j)=>j===i?{...x,label:e.target.value}:x))} placeholder="Subject name..." style={{flex:1,background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"7px 10px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none"}} />
+                  <button onClick={()=>setMgmtSubjs(s=>s.filter((_,j)=>j!==i))} style={{background:"none",border:`1px solid ${T.border}`,color:T.muted,cursor:"pointer",borderRadius:6,padding:"4px 10px",fontSize:12,fontFamily:T.font}}>Remove</button>
+                </div>
+              ))}
+              <div style={{display:"flex",gap:10,marginTop:16,alignItems:"center"}}>
+                <Btn onClick={saveMgmtSubjs}>Save changes</Btn>
+                <Btn variant="subtle" onClick={()=>setMgmtSubjs(DEFAULT_SUBJECTS.map(s=>({...s})))}>Reset to defaults</Btn>
+                {mgmtSaved&&<span style={{fontSize:12,color:T.lime,fontWeight:600}}>✓ Saved</span>}
+              </div>
             </Card>
           </>)}
 
