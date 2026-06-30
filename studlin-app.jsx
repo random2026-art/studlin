@@ -2,19 +2,19 @@ const { useState, useEffect, useRef } = React;
 
 // ─── DESIGN TOKENS · dark + light themes ──────────────────────────────────────
 const darkT = {
-  bg:     "#080B18",
-  surface:"#0D1124",
-  card:   "#111530",
-  card2:  "#181D38",
-  border: "rgba(255,255,255,0.07)",
-  borderHover: "rgba(255,255,255,0.14)",
-  lime:   "#4F7FE8",
-  limeDk: "#3462D4",
-  limeLt: "#A695F5",
-  glow:   "rgba(79,127,232,0.22)",
-  text:   "#E8EEFF",
-  muted:  "#8B95C0",
-  faint:  "#2A3060",
+  bg:     "#101522",
+  surface:"#141929",
+  card:   "#1B2235",
+  card2:  "#1F2842",
+  border: "rgba(255,255,255,0.065)",
+  borderHover: "rgba(255,255,255,0.12)",
+  lime:   "#7B90C4",
+  limeDk: "#5E73A8",
+  limeLt: "#A5B3D8",
+  glow:   "rgba(123,144,196,0.18)",
+  text:   "#D8DCF0",
+  muted:  "#7880A8",
+  faint:  "#333B5A",
   white:  "#ffffff",
   red:    "#D9806B",
   blue:   "#7BACDF",
@@ -27,7 +27,7 @@ const darkT = {
   lilac:  "#E2D0FF",
   sky:    "#BFE3FF",
   rose:   "#FFC9D2",
-  forest: "#0D1640",
+  forest: "#0F1428",
   ink:    "#080C28",
   cream:  "#F6F1E6",
   font:   `"Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`,
@@ -37,22 +37,22 @@ const darkT = {
   mode:   "dark",
 };
 const lightT = {
-  bg:     "#F5F6FF",
-  surface:"#1B2457",
-  card:   "#ffffff",
-  card2:  "#EBEEFF",
-  border: "rgba(11,14,42,0.18)",
-  borderHover: "rgba(11,14,42,0.32)",
-  lime:   "#3A5FCA",
-  limeDk: "#2646B0",
-  limeLt: "#9A88F2",
-  glow:   "rgba(58,95,202,0.20)",
-  text:   "#0B0E2A",
-  muted:  "rgba(11,14,42,0.55)",
-  faint:  "rgba(11,14,42,0.30)",
-  white:  "#1B2457",
-  red:    "#A8412C",
-  blue:   "#2D6FB8",
+  bg:     "#ECEDF2",
+  surface:"#252D52",
+  card:   "#F6F7FA",
+  card2:  "#E7E9EF",
+  border: "rgba(46,52,80,0.09)",
+  borderHover: "rgba(46,52,80,0.18)",
+  lime:   "#4D6888",
+  limeDk: "#3B5270",
+  limeLt: "#7A98B8",
+  glow:   "rgba(77,104,136,0.12)",
+  text:   "#1B1E30",
+  muted:  "rgba(27,30,48,0.50)",
+  faint:  "rgba(27,30,48,0.22)",
+  white:  "#111728",
+  red:    "#A84230",
+  blue:   "#2E6EB5",
   amber:  "#A6700C",
   purple: "#5E45A8",
   teal:   "#1A8770",
@@ -62,7 +62,7 @@ const lightT = {
   lilac:  "#E2D0FF",
   sky:    "#BFE3FF",
   rose:   "#FFC9D2",
-  forest: "#1B2457",
+  forest: "#252D52",
   ink:    "#080C28",
   cream:  "#F6F1E6",
   font:   `"Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`,
@@ -75,7 +75,7 @@ const T = {...darkT}; // mutable · applyTheme() swaps in place so all component
 const hexA=(hex,a)=>{const h=hex.replace('#','');const r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16);return `rgba(${r},${g},${b},${a})`;};
 // accent palettes — override the lime family per user choice
 const ACCENTS={
-  Indigo:{dk:{lime:"#4F7FE8",limeDk:"#3462D4",limeLt:"#A695F5"}, lt:{lime:"#3A5FCA",limeDk:"#2646B0",limeLt:"#9A88F2"}},
+  Indigo:{dk:{lime:"#7B90C4",limeDk:"#5E73A8",limeLt:"#A5B3D8"}, lt:{lime:"#4D6888",limeDk:"#3B5270",limeLt:"#7A98B8"}},
   Forest:{dk:{lime:"#6FC1A0",limeDk:"#4E9C7B",limeLt:"#A9E0CB"}, lt:{lime:"#2E8E6E",limeDk:"#22705680".slice(0,7),limeLt:"#A9E0CB"}},
   Sky:   {dk:{lime:"#84BBEA",limeDk:"#5A93C9",limeLt:"#BFE0FA"}, lt:{lime:"#2D74BC",limeDk:"#225A98",limeLt:"#BFE0FA"}},
   Lilac: {dk:{lime:"#B89BE0",limeDk:"#9474C9",limeLt:"#DCCBF5"}, lt:{lime:"#7E5BC0",limeDk:"#634599",limeLt:"#DCCBF5"}},
@@ -3448,22 +3448,22 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     const isLight=mode==="light";
     return (
       <div onClick={()=>setTheme(mode)} style={{flex:1,cursor:"pointer",borderRadius:12,padding:16,border:`2px solid ${sel?T.lime:T.border}`,background:sel?T.lime+"08":T.card2,transition:"all 0.15s"}}>
-        <div style={{height:90,borderRadius:8,overflow:"hidden",background:isLight?"#F5F6FF":"#0B0E20",border:`1px solid ${isLight?"rgba(11,14,42,0.08)":"rgba(255,255,255,0.06)"}`,marginBottom:12,display:"flex"}}>
-          <div style={{width:24,background:"#1B2457",display:"flex",flexDirection:"column",alignItems:"center",padding:"6px 0",gap:4}}>
-            <div style={{width:10,height:10,background:"#4F7FE8",borderRadius:2}} />
-            <div style={{width:14,height:3,background:"rgba(255,255,255,0.2)",borderRadius:1,marginTop:4}} />
-            <div style={{width:14,height:3,background:"rgba(255,255,255,0.12)",borderRadius:1}} />
-            <div style={{width:14,height:3,background:"rgba(255,255,255,0.12)",borderRadius:1}} />
+        <div style={{height:90,borderRadius:8,overflow:"hidden",background:isLight?"#ECEDF2":"#101522",border:`1px solid ${isLight?"rgba(46,52,80,0.08)":"rgba(255,255,255,0.05)"}`,marginBottom:12,display:"flex"}}>
+          <div style={{width:24,background:"#252D52",display:"flex",flexDirection:"column",alignItems:"center",padding:"6px 0",gap:4}}>
+            <div style={{width:10,height:10,background:"#7B90C4",borderRadius:2}} />
+            <div style={{width:14,height:3,background:"rgba(255,255,255,0.18)",borderRadius:1,marginTop:4}} />
+            <div style={{width:14,height:3,background:"rgba(255,255,255,0.10)",borderRadius:1}} />
+            <div style={{width:14,height:3,background:"rgba(255,255,255,0.10)",borderRadius:1}} />
           </div>
           <div style={{flex:1,padding:8,display:"flex",flexDirection:"column",gap:5}}>
             <div style={{display:"flex",gap:4}}>
-              <div style={{flex:1,height:18,background:isLight?"#1B2457":"#181D38",borderRadius:3}} />
-              <div style={{width:24,height:18,background:"#4F7FE8",borderRadius:3}} />
-              <div style={{width:24,height:18,background:isLight?"#fff":"#181D38",borderRadius:3,border:isLight?"1px solid rgba(11,14,42,0.08)":"none"}} />
+              <div style={{flex:1,height:18,background:isLight?"#252D52":"#1F2842",borderRadius:3}} />
+              <div style={{width:24,height:18,background:isLight?"#4D6888":"#7B90C4",borderRadius:3}} />
+              <div style={{width:24,height:18,background:isLight?"#F6F7FA":"#1F2842",borderRadius:3,border:isLight?"1px solid rgba(46,52,80,0.09)":"none"}} />
             </div>
             <div style={{display:"flex",gap:4}}>
-              <div style={{flex:1,height:14,background:isLight?"#fff":"#181D38",borderRadius:3,border:isLight?"1px solid rgba(11,14,42,0.08)":"none"}} />
-              <div style={{flex:1,height:14,background:isLight?"#fff":"#181D38",borderRadius:3,border:isLight?"1px solid rgba(11,14,42,0.08)":"none"}} />
+              <div style={{flex:1,height:14,background:isLight?"#F6F7FA":"#1F2842",borderRadius:3,border:isLight?"1px solid rgba(46,52,80,0.09)":"none"}} />
+              <div style={{flex:1,height:14,background:isLight?"#F6F7FA":"#1F2842",borderRadius:3,border:isLight?"1px solid rgba(46,52,80,0.09)":"none"}} />
             </div>
           </div>
         </div>
@@ -3567,16 +3567,16 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   <div style={{fontSize:12,color:T.muted}}>Switch between light and dark. Your choice persists across sessions.</div>
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <span style={{fontSize:12,color:T.muted}}>Light</span>
+                  <span style={{fontSize:12,color:theme==="light"?T.lime:T.muted,fontWeight:theme==="light"?600:400}}>Light</span>
                   <div onClick={()=>setTheme(theme==="dark"?"light":"dark")} style={{width:46,height:24,borderRadius:12,background:theme==="dark"?T.lime:T.card2,border:`1.5px solid ${theme==="dark"?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
-                    <div style={{width:18,height:18,borderRadius:"50%",background:theme==="dark"?T.ink:"#ffffff",border:`1px solid ${theme==="dark"?"transparent":T.border}`,position:"absolute",top:2,left:theme==="dark"?24:2,transition:"left 0.2s",boxShadow:"0 1px 4px rgba(0,0,0,0.2)"}} />
+                    <div style={{width:18,height:18,borderRadius:"50%",background:"#ffffff",border:`1px solid rgba(0,0,0,0.10)`,position:"absolute",top:2,left:theme==="dark"?24:2,transition:"left 0.2s",boxShadow:"0 1px 4px rgba(0,0,0,0.18)"}} />
                   </div>
-                  <span style={{fontSize:12,color:T.muted}}>Dark</span>
+                  <span style={{fontSize:12,color:theme==="dark"?T.lime:T.muted,fontWeight:theme==="dark"?600:400}}>Dark</span>
                 </div>
               </div>
               <div style={{display:"flex",gap:10}}>
-                <ThemeCard mode="light" label="Light" sub="Cream paper · sage accents" />
-                <ThemeCard mode="dark"  label="Dark"  sub="Forest matte · refined" />
+                <ThemeCard mode="light" label="Light" sub="Bone white · muted slate" />
+                <ThemeCard mode="dark"  label="Dark"  sub="Midnight matte · slate blue" />
               </div>
             </Card>
             <Card style={{marginBottom:12}}>
@@ -4423,13 +4423,13 @@ function InitWizard({onComplete}){
     setStep(s => s + 1);
   };
 
-  const bg = "#F5F6FF";
-  const forest = "#1B2457";
-  const lime = "#3A5FCA";
-  const ink = "#0B0E2A";
-  const muted = "rgba(11,14,42,0.5)";
-  const border = "rgba(11,14,42,0.18)";
-  const card = "#ffffff";
+  const bg = "#ECEDF2";
+  const forest = "#252D52";
+  const lime = "#4D6888";
+  const ink = "#1B1E30";
+  const muted = "rgba(27,30,48,0.50)";
+  const border = "rgba(46,52,80,0.09)";
+  const card = "#F6F7FA";
 
   const ChipOpt = ({value, active, onClick, children}) => (
     <button type="button" onClick={onClick} style={{padding:"12px 20px",borderRadius:10,fontSize:13,fontWeight:active?700:500,cursor:"pointer",border:`2px solid ${active?lime:border}`,background:active?lime+"18":"transparent",color:active?ink:muted,fontFamily:`"Geist",system-ui,sans-serif`,transition:"all 0.15s",textAlign:"center",minWidth:120}}>
@@ -4441,8 +4441,8 @@ function InitWizard({onComplete}){
     <div style={{minHeight:"100vh",background:bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 16px",fontFamily:`"Geist",system-ui,sans-serif`}}>
       {/* Logo */}
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:40}}>
-        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#1C2250,#0E1238)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(58,95,202,0.35)"}}>
-            <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #9A88F2, #3A5FCA)",boxShadow:"0 0 10px 3px rgba(58,95,202,0.6)"}} />
+        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#2E3560,#1E2448)",display:"grid",placeItems:"center",boxShadow:`0 0 12px 3px ${lime}28`}}>
+            <div style={{width:11,height:11,borderRadius:"50%",background:`radial-gradient(circle at 35% 35%, #7A98B8, ${lime})`,boxShadow:`0 0 8px 2px ${lime}50`}} />
           </div>
         <span style={{fontSize:22,fontWeight:700,color:ink,letterSpacing:"-0.02em"}}>Studlin</span>
       </div>
@@ -4450,14 +4450,14 @@ function InitWizard({onComplete}){
       {/* Card */}
       <div style={{width:"100%",maxWidth:520,background:card,borderRadius:20,padding:"36px 40px",border:`1.5px solid ${border}`,boxShadow:"0 24px 60px -24px rgba(11,14,42,0.18)"}}>
         {/* Pre-question header (shown on all steps) */}
-        <div style={{background:"rgba(79,127,232,0.10)",border:`1px solid ${lime}44`,borderRadius:10,padding:"10px 14px",marginBottom:28,fontSize:12.5,color:ink,lineHeight:1.5,fontWeight:500}}>
+        <div style={{background:`${lime}12`,border:`1px solid ${lime}40`,borderRadius:10,padding:"10px 14px",marginBottom:28,fontSize:12.5,color:ink,lineHeight:1.5,fontWeight:500}}>
           The following questions are used to customize and train your calendar scheduling algorithm.
         </div>
 
         {/* Progress dots */}
         <div style={{display:"flex",gap:6,marginBottom:28}}>
           {STEPS.map((_,i) => (
-            <div key={i} style={{height:4,flex:1,borderRadius:99,background:i<=step?lime:"rgba(11,14,42,0.12)",transition:"background 0.3s"}} />
+            <div key={i} style={{height:4,flex:1,borderRadius:99,background:i<=step?lime:"rgba(46,52,80,0.12)",transition:"background 0.3s"}} />
           ))}
         </div>
 
@@ -4474,7 +4474,7 @@ function InitWizard({onComplete}){
             {status && (
               <div style={{marginTop:4}}>
                 <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:muted,marginBottom:8}}>{affiliationLabel}</label>
-                <input value={affiliation} onChange={e=>setAffiliation(e.target.value)} placeholder={affiliationPlaceholder} style={{width:"100%",background:"#EBEEFF",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:13.5,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",boxSizing:"border-box"}} />
+                <input value={affiliation} onChange={e=>setAffiliation(e.target.value)} placeholder={affiliationPlaceholder} style={{width:"100%",background:"#E7E9EF",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:13.5,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",boxSizing:"border-box"}} />
                 <div style={{fontSize:11,color:muted,marginTop:6}}>Visible to classmates on leaderboards.</div>
               </div>
             )}
@@ -4486,7 +4486,7 @@ function InitWizard({onComplete}){
             <div style={{fontSize:20,fontWeight:700,color:ink,marginBottom:6,letterSpacing:"-0.01em"}}>When do you prefer to study?</div>
             <div style={{fontSize:13,color:muted,marginBottom:24}}>Tasks are scheduled inside this window so your time is protected.</div>
             <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:muted,marginBottom:8}}>Peak study start time</label>
-            <input type="time" value={workStart} onChange={e=>setWorkStart(e.target.value)} style={{background:"#EBEEFF",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",maxWidth:200}} />
+            <input type="time" value={workStart} onChange={e=>setWorkStart(e.target.value)} style={{background:"#E7E9EF",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",maxWidth:200}} />
           </div>
         )}
 
@@ -4495,7 +4495,7 @@ function InitWizard({onComplete}){
             <div style={{fontSize:20,fontWeight:700,color:ink,marginBottom:6,letterSpacing:"-0.01em"}}>What time do you go to bed?</div>
             <div style={{fontSize:13,color:muted,marginBottom:24}}>We won't schedule tasks within 2 hours of your bedtime.</div>
             <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:muted,marginBottom:8}}>Bedtime</label>
-            <input type="time" value={bedtime} onChange={e=>setBedtime(e.target.value)} style={{background:"#EBEEFF",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",maxWidth:200}} />
+            <input type="time" value={bedtime} onChange={e=>setBedtime(e.target.value)} style={{background:"#E7E9EF",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",maxWidth:200}} />
           </div>
         )}
 
@@ -4761,8 +4761,8 @@ function App() {
       {/* SIDEBAR */}
       <div style={{width:230,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #131840 0%, #0E133000 60%)",backgroundColor:isLight?T.surface:T.surface,display:"flex",flexDirection:"column",padding:"20px 12px",borderRight:`1px solid ${isLight?"transparent":T.border}`,overflowY:"auto"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 6px",marginBottom:20}}>
-          <div style={{width:28,height:28,background:"linear-gradient(135deg,#1C2250,#0E1238)",borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 0 14px 3px ${T.lime}38`,flexShrink:0,position:"relative"}}>
-            <div style={{width:9,height:9,borderRadius:"50%",background:`radial-gradient(circle at 35% 35%, ${T.limeLt}, ${T.lime})`,boxShadow:`0 0 10px 3px ${T.lime}65`}} />
+          <div style={{width:28,height:28,background:isLight?"linear-gradient(135deg,#2E3560,#1E2448)":"linear-gradient(135deg,#1A2046,#0E1236)",borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 0 10px 2px ${T.lime}30`,flexShrink:0,position:"relative"}}>
+            <div style={{width:9,height:9,borderRadius:"50%",background:`radial-gradient(circle at 35% 35%, ${T.limeLt}, ${T.lime})`,boxShadow:`0 0 6px 2px ${T.lime}50`}} />
           </div>
           <span style={{fontSize:16,fontWeight:700,color:sidebarText,letterSpacing:"-0.02em",fontFamily:T.font}}>Studlin</span>
         </div>
