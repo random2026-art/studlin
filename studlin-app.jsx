@@ -350,6 +350,25 @@ function daysOverdue(ev){if(!ev.deadline)return 0;if(ev.date<=ev.deadline)return
 function daysUntilDeadline(ev){if(!ev.deadline)return null;const d1=new Date(ev.deadline),d2=new Date(dayKey());return Math.ceil((d1-d2)/86400000);}
 function scheduleTaskNotif(task){try{if(!("Notification" in window)||Notification.permission!=="granted")return;const t=new Date(task.date+"T"+task.time);const delay=t.getTime()-10*60*1000-Date.now();if(delay<=0)return;setTimeout(()=>{new Notification("Studlin",{body:task.title+" starts in 10 minutes"});},delay);}catch(e){}}
 function requestNotifPermission(){if(!("Notification" in window))return;Notification.requestPermission();}
+function stripHtml(html){return(html||"").replace(/<[^>]*>/g," ");}
+function wordCountOf(html){var txt=stripHtml(html).trim();return txt?txt.split(/\s+/).length:0;}
+function readabilityOf(html){
+  var txt=stripHtml(html).trim();
+  if(!txt)return{grade:"—",level:""};
+  var words=txt.split(/\s+/).filter(Boolean);
+  var sentences=txt.split(/[.!?]+/).filter(function(s){return s.trim().length>0;});
+  var syllables=words.reduce(function(acc,w){
+    var clean=w.toLowerCase().replace(/[^a-z]/g,"");
+    var m=clean.match(/[aeiouy]+/g);
+    return acc+Math.max(1,m?m.length:1);
+  },0);
+  var wc=words.length,sc=Math.max(1,sentences.length);
+  var ease=206.835-1.015*(wc/sc)-84.6*(syllables/wc);
+  var gradeNum=0.39*(wc/sc)+11.8*(syllables/wc)-15.59;
+  var letter=ease>=90?"A+":ease>=80?"A":ease>=70?"B+":ease>=60?"B":ease>=50?"C+":ease>=30?"C":"D";
+  var lvl=gradeNum<=6?"Grade 6 or below":gradeNum>=16?"College level":"Grade "+Math.max(1,Math.round(gradeNum));
+  return{grade:letter,level:lvl};
+}
 function touchStreak(){const days=lsGet("days",[]);const t=dayKey();if(!days.includes(t)){days.push(t);lsSet("days",days);}}
 function getStreak(){const days=new Set(lsGet("days",[]));let n=0;const d=new Date();while(days.has(dayKey(d))){n++;d.setDate(d.getDate()-1);}return n;}
 function logSession(mins,mode){const s=lsGet("sessions",[]);s.push({d:dayKey(),m:mins,t:Date.now(),mode:mode||"Focus"});lsSet("sessions",s);}
@@ -1162,8 +1181,21 @@ function AiChat() {
 }
 
 // ─── ESSAYS ───────────────────────────────────────────────────────────────────
+const ESSAY_TEMPLATES={
+  "Five-paragraph essay":{target:800,content:"<p><strong>Introduction</strong></p><p><em>Hook, background, and your thesis statement.</em></p><p><strong>Body Paragraph 1</strong></p><p><em>Topic sentence, evidence, analysis.</em></p><p><strong>Body Paragraph 2</strong></p><p><em>Topic sentence, evidence, analysis.</em></p><p><strong>Body Paragraph 3</strong></p><p><em>Topic sentence, evidence, analysis.</em></p><p><strong>Conclusion</strong></p><p><em>Restate thesis, summarize key points, closing thought.</em></p>"},
+  "Literary analysis":{target:1200,content:"<p><strong>Introduction</strong></p><p><em>Introduce the text and author, state your interpretive thesis.</em></p><p><strong>Textual Evidence &amp; Analysis</strong></p><p><em>Quote and analyze key passages that support your thesis.</em></p><p><strong>Counterargument</strong></p><p><em>Address an alternate reading and explain why your interpretation holds.</em></p><p><strong>Conclusion</strong></p><p><em>Tie the analysis back to the larger meaning of the work.</em></p>"},
+  "Scientific lab report":{target:1000,content:"<p><strong>Objective</strong></p><p><em>What were you testing and why?</em></p><p><strong>Hypothesis</strong></p><p><em>Your prediction before running the experiment.</em></p><p><strong>Materials &amp; Methods</strong></p><p><em>What you used and the steps you followed.</em></p><p><strong>Results</strong></p><p><em>Data and observations, no interpretation yet.</em></p><p><strong>Discussion</strong></p><p><em>What the results mean, sources of error.</em></p><p><strong>Conclusion</strong></p><p><em>Did the results support your hypothesis?</em></p>"},
+  "Argumentative essay":{target:1200,content:"<p><strong>Introduction &amp; Claim</strong></p><p><em>Introduce the issue and state your position clearly.</em></p><p><strong>Supporting Argument 1</strong></p><p><em>Evidence and reasoning.</em></p><p><strong>Supporting Argument 2</strong></p><p><em>Evidence and reasoning.</em></p><p><strong>Counterargument &amp; Rebuttal</strong></p><p><em>Acknowledge the opposing view, then refute it.</em></p><p><strong>Conclusion</strong></p><p><em>Reaffirm your claim and its significance.</em></p>"},
+  "Compare & contrast":{target:1000,content:"<p><strong>Introduction</strong></p><p><em>Introduce both subjects and your basis for comparison.</em></p><p><strong>Similarities</strong></p><p><em>Key points the two share.</em></p><p><strong>Differences</strong></p><p><em>Key points where they diverge.</em></p><p><strong>Conclusion</strong></p><p><em>What the comparison reveals.</em></p>"},
+  "Research paper":{target:2000,content:"<p><strong>Introduction</strong></p><p><em>Research question and why it matters.</em></p><p><strong>Literature Review</strong></p><p><em>What existing sources say.</em></p><p><strong>Methodology</strong></p><p><em>How you investigated the question.</em></p><p><strong>Findings</strong></p><p><em>What you discovered.</em></p><p><strong>Conclusion</strong></p><p><em>Implications and next steps.</em></p><p><strong>References</strong></p><p><em>List your sources here.</em></p>"},
+  "Personal statement":{target:650,content:"<p><strong>Opening Hook</strong></p><p><em>A vivid moment that draws the reader in.</em></p><p><strong>Formative Experience</strong></p><p><em>What happened and why it mattered to you.</em></p><p><strong>Growth &amp; Reflection</strong></p><p><em>How it changed your thinking or values.</em></p><p><strong>Why This Path</strong></p><p><em>Connect the experience to your goals.</em></p><p><strong>Closing</strong></p><p><em>Leave the reader with a clear sense of who you are.</em></p>"},
+  "Reflective journal":{target:500,content:"<p><strong>What Happened</strong></p><p><em>Describe the experience.</em></p><p><strong>How I Felt</strong></p><p><em>Your honest reaction.</em></p><p><strong>What I Learned</strong></p><p><em>The insight you're taking away.</em></p><p><strong>What's Next</strong></p><p><em>How this changes what you'll do going forward.</em></p>"},
+};
+
 function Essays() {
-  const [tab,setTab]=useState("active");
+  const [tab,setTab]=useState("library");
+  const [essays,setEssays]=useState(()=>lsGet("essays",[]));
+  const [activeId,setActiveId]=useState(null);
   const [newOpen,setNewOpen]=useState(false);
   const [eTitle,setETitle]=useState("");
   const [eSubject,setESubject]=useState("English IV");
@@ -1171,23 +1203,187 @@ function Essays() {
   const [ePrompt,setEPrompt]=useState("");
   const [eCustom,setECustom]=useState("");
   const [eMode,setEMode]=useState("self");
-  const [gdocs,setGdocs]=useState(()=>lsGet("gdocs",false));
+  const [aiCreating,setAiCreating]=useState(false);
+  const [feedbackLoading,setFeedbackLoading]=useState(false);
+  const [feedbackIssues,setFeedbackIssues]=useState(null);
+  const [toolLoading,setToolLoading]=useState(null);
+  const [toolResult,setToolResult]=useState(null);
+  const [citeOpen,setCiteOpen]=useState(false);
+  const [citeSource,setCiteSource]=useState("");
+  const [citeStyle,setCiteStyle]=useState("MLA");
+  const [citeLoading,setCiteLoading]=useState(false);
+  const [citeResult,setCiteResult]=useState("");
+  const [exportOpen,setExportOpen]=useState(false);
+  const [copiedMsg,setCopiedMsg]=useState("");
+  const editorRef=useRef(null);
   const subjects=[{value:"English IV",label:"English IV",color:T.purple},{value:"Biology",label:"Biology",color:T.teal},{value:"History",label:"History",color:T.muted},{value:"Chemistry",label:"Chemistry",color:T.red},{value:"Calculus",label:"Calculus",color:T.blue},{value:"Other",label:"Other",color:T.lime}];
-  const essays=[
-    {title:"Power & Corruption in Macbeth",subject:"English IV",words:1247,target:1500,status:"In progress",grade:null},
-    {title:"Photosynthesis Lab Report",subject:"Biology",words:800,target:800,status:"Submitted",grade:"A−"},
-    {title:"Causes of World War I",subject:"History",words:450,target:1200,status:"Outline",grade:null},
-  ];
-  const subjectColor = {
-    "English IV":T.purple,
-    "Biology":T.teal,
-    "History":T.blue,
+  const subjectColor={"English IV":T.purple,"Biology":T.teal,"History":T.muted,"Chemistry":T.red,"Calculus":T.blue};
+  const colorOf=(s)=>subjectColor[s]||T.lime;
+
+  const persist=(next)=>{setEssays(next);lsSet("essays",next);};
+  const activeEssay=essays.find(e=>e.id===activeId)||null;
+  const statusOf=(e)=>{if(e.submitted)return"Submitted";const wc=wordCountOf(e.content);if(wc===0)return"Outline";return"In progress";};
+
+  const resetNewForm=()=>{setETitle("");setEPrompt("");setECustom("");setEMode("self");setETarget("1500");setNewOpen(false);};
+
+  const createEssay=(prefillTitle,prefillContent,prefillTarget,prefillSubject)=>{
+    const subj=eSubject==="Other"&&eCustom.trim()?eCustom.trim():(prefillSubject||eSubject);
+    const id=String(Date.now()+Math.random()*1000);
+    const essay={
+      id,
+      title:prefillTitle||eTitle.trim()||"Untitled essay",
+      subject:subj,
+      target:Math.max(50,+(prefillTarget||eTarget)||1500),
+      prompt:ePrompt.trim(),
+      content:prefillContent!==undefined?prefillContent:"",
+      submitted:false,
+      createdAt:Date.now(),
+      updatedAt:Date.now(),
+    };
+    const next=essays.concat([essay]);
+    persist(next);
+    setActiveId(id);
+    setTab("active");
+    resetNewForm();
+    return essay;
   };
+
+  const aiDraftEssay=async()=>{
+    if(!eTitle.trim())return;
+    setAiCreating(true);
+    const subj=eSubject==="Other"&&eCustom.trim()?eCustom.trim():eSubject;
+    const prompt="Hey Studlin, I need you to help me start an essay. Title: \""+eTitle.trim()+"\". Subject: "+subj+". Target length: about "+eTarget+" words."+(ePrompt.trim()?" Prompt/thesis: "+ePrompt.trim():"")+" Can you write an outline plus a first-draft opening (intro and first body paragraph) in a natural student voice? Format it as HTML using <p>, <strong> for section labels, nothing else fancy. Just give me the HTML directly, no markdown fences, no commentary.";
+    try{
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+      const data=await res.json();
+      const html=data.error?"<p><strong>Introduction</strong></p><p><em>Couldn't generate a draft: "+data.error+"</em></p>":(data.reply||"").replace(/```html?|```/g,"").trim();
+      createEssay(eTitle.trim(),html,eTarget,subj);
+    }catch(e){createEssay(eTitle.trim(),"",eTarget,subj);}
+    setAiCreating(false);
+  };
+
+  const submitNewEssay=()=>{
+    if(!eTitle.trim())return;
+    if(eMode==="ai"){aiDraftEssay();return;}
+    createEssay();
+  };
+
+  const useTemplate=(name)=>{
+    const t=ESSAY_TEMPLATES[name];
+    const id=String(Date.now()+Math.random()*1000);
+    const essay={id,title:name,subject:"English IV",target:t.target,prompt:"",content:t.content,submitted:false,createdAt:Date.now(),updatedAt:Date.now()};
+    persist(essays.concat([essay]));
+    setActiveId(id);
+    setTab("active");
+  };
+
+  const selectEssay=(id)=>{setActiveId(id);setTab("active");setFeedbackIssues(null);setToolResult(null);};
+  const deleteEssay=(id)=>{const next=essays.filter(e=>e.id!==id);persist(next);if(activeId===id){setActiveId(null);setTab("library");}};
+  const markSubmitted=()=>{if(!activeEssay)return;const next=essays.map(e=>e.id===activeId?{...e,submitted:true,updatedAt:Date.now()}:e);persist(next);};
+  const updateContent=(html)=>{if(!activeEssay)return;const next=essays.map(e=>e.id===activeId?{...e,content:html,updatedAt:Date.now()}:e);persist(next);};
+  const updateTitle=(title)=>{if(!activeEssay)return;const next=essays.map(e=>e.id===activeId?{...e,title,updatedAt:Date.now()}:e);persist(next);};
+
+  const exec=(cmd,val)=>{if(editorRef.current)editorRef.current.focus();document.execCommand(cmd,false,val);if(editorRef.current)updateContent(editorRef.current.innerHTML);};
+
+  const runFeedback=async()=>{
+    if(!activeEssay)return;
+    const text=stripHtml(activeEssay.content).trim();
+    if(!text){setFeedbackIssues(["Write a bit first, then I can give you real feedback."]);return;}
+    setFeedbackLoading(true);setFeedbackIssues(null);
+    const prompt="Hey Studlin, can you review this "+activeEssay.subject+" essay draft titled \""+activeEssay.title+"\" and give me 4 short, specific, actionable pieces of feedback to improve it? Respond with ONLY a valid JSON array of short strings, no markdown fences, no commentary. Here's the draft:\n\n"+text.slice(0,6000);
+    try{
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+      const data=await res.json();
+      if(data.error){setFeedbackIssues(["Couldn't get feedback: "+data.error]);setFeedbackLoading(false);return;}
+      var raw=(data.reply||"").replace(/```json?|```/g,"").trim();
+      var s=raw.indexOf("[");var en=raw.lastIndexOf("]");
+      if(s>=0&&en>s)raw=raw.slice(s,en+1);
+      var parsed=JSON.parse(raw);
+      setFeedbackIssues(Array.isArray(parsed)?parsed:["Couldn't parse feedback. Try again."]);
+    }catch(e){setFeedbackIssues(["Something went wrong. Try again."]);}
+    setFeedbackLoading(false);
+  };
+
+  const runTool=async(kind)=>{
+    if(!activeEssay)return;
+    const text=stripHtml(activeEssay.content).trim();
+    if(!text){return;}
+    setToolLoading(kind);setToolResult(null);
+    const instruction=kind==="refine"?"Refine the prose of this essay draft: improve word choice and flow, but keep the same ideas, length, and structure.":"Do a grammar and punctuation pass on this essay draft: fix errors only, don't change the meaning or style.";
+    const prompt="Hey Studlin, "+instruction+" Respond with ONLY the corrected text as plain paragraphs, no markdown fences, no commentary, no headers added. Here's the draft:\n\n"+text.slice(0,6000);
+    try{
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+      const data=await res.json();
+      setToolResult({kind,text:data.error?"Error: "+data.error:(data.reply||"").trim()});
+    }catch(e){setToolResult({kind,text:"Something went wrong. Try again."});}
+    setToolLoading(null);
+  };
+
+  const applyToolResult=()=>{
+    if(!toolResult||!activeEssay)return;
+    const html=toolResult.text.split(/\n+/).filter(Boolean).map(p=>"<p>"+p+"</p>").join("");
+    updateContent(html);
+    if(editorRef.current)editorRef.current.innerHTML=html;
+    setToolResult(null);
+  };
+
+  const generateCitation=async()=>{
+    if(!citeSource.trim())return;
+    setCiteLoading(true);setCiteResult("");
+    const prompt="Hey Studlin, can you format a "+citeStyle+" citation for this source: "+citeSource.trim()+". Respond with ONLY the formatted citation, no commentary.";
+    try{
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
+      const data=await res.json();
+      setCiteResult(data.error?"Error: "+data.error:(data.reply||"").trim());
+    }catch(e){setCiteResult("Something went wrong. Try again.");}
+    setCiteLoading(false);
+  };
+
+  const insertCitation=()=>{
+    if(!citeResult||!activeEssay)return;
+    const html=(activeEssay.content||"")+"<p>"+citeResult+"</p>";
+    updateContent(html);
+    if(editorRef.current)editorRef.current.innerHTML=html;
+    setCiteOpen(false);setCiteSource("");setCiteResult("");
+  };
+
+  const copyEssay=()=>{
+    if(!activeEssay)return;
+    const txt=activeEssay.title+"\n\n"+stripHtml(activeEssay.content).trim();
+    navigator.clipboard&&navigator.clipboard.writeText(txt).then(()=>{setCopiedMsg("Copied to clipboard");setTimeout(()=>setCopiedMsg(""),2200);});
+  };
+
+  const downloadEssay=()=>{
+    if(!activeEssay)return;
+    const txt=activeEssay.title+"\n\n"+stripHtml(activeEssay.content).trim();
+    const blob=new Blob([txt],{type:"text/plain"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;a.download=(activeEssay.title||"essay").replace(/[^a-z0-9]+/gi,"_")+".txt";
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const openInGoogleDocs=()=>{
+    if(!activeEssay)return;
+    const txt=activeEssay.title+"\n\n"+stripHtml(activeEssay.content).trim();
+    navigator.clipboard&&navigator.clipboard.writeText(txt).then(()=>{
+      setCopiedMsg("Copied — paste with Cmd/Ctrl+V into the new doc");
+      setTimeout(()=>setCopiedMsg(""),4000);
+    });
+    window.open("https://docs.google.com/document/create","_blank","noopener,noreferrer");
+  };
+
+  const wc=activeEssay?wordCountOf(activeEssay.content):0;
+  const target=activeEssay?activeEssay.target:0;
+  const pct=target>0?Math.min(100,Math.round(wc/target*100)):0;
+  const readability=activeEssay?readabilityOf(activeEssay.content):{grade:"—",level:""};
+
   return (
     <div>
-      <PH title="Essays" sub="Draft, refine, and submit your writing" action={<span style={{display:"flex",gap:8}}><Btn variant="subtle" onClick={()=>{const v=!gdocs;setGdocs(v);lsSet("gdocs",v);}}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},gdocs?Icon.check:Icon.link,gdocs?"Google Docs · connected":"Connect Google Docs")}</Btn><Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New essay")}</Btn></span>} />
-      <Modal open={newOpen} onClose={()=>setNewOpen(false)} title="Start a new essay" sub="Studlin will scaffold an outline and adapt the AI tutor to your subject."
-        footer={<><Btn variant="subtle" onClick={()=>setNewOpen(false)}>Cancel</Btn><Btn onClick={()=>setNewOpen(false)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.pen,"Create essay")}</Btn></>}>
+      <PH title="Essays" sub="Draft, refine, and submit your writing" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New essay")}</Btn>} />
+      <Modal open={newOpen} onClose={resetNewForm} title="Start a new essay" sub="Studlin will scaffold an outline and adapt the AI tutor to your subject."
+        footer={<><Btn variant="subtle" onClick={resetNewForm}>Cancel</Btn><Btn onClick={submitNewEssay} disabled={aiCreating} style={{opacity:eTitle.trim()?1:0.45}}>{aiCreating?"Drafting...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.pen,"Create essay")}</Btn></>}>
         <Field label="Title"><Input placeholder="e.g. Ambition and ruin in Macbeth" value={eTitle} onChange={e=>setETitle(e.target.value)} autoFocus /></Field>
         <Field label="Subject"><SelectChip options={subjects} value={eSubject} onChange={setESubject} /></Field>
         {eSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Physics, Economics, Psychology..." value={eCustom} onChange={ev=>setECustom(ev.target.value)} /></Field>}
@@ -1199,7 +1395,7 @@ function Essays() {
             </button>
             <button type="button" onClick={()=>setEMode("ai")} style={{padding:14,borderRadius:10,border:"1px solid "+(eMode==="ai"?T.lime+"66":T.border),background:eMode==="ai"?T.lime+"10":T.card2,color:T.text,cursor:"pointer",textAlign:"left",fontFamily:T.font}}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}><span style={{color:eMode==="ai"?T.lime:T.muted,display:"flex"}}>{Icon.wand}</span><span style={{fontSize:13,fontWeight:600}}>AI-assisted draft</span></div>
-              <div style={{fontSize:11.5,color:T.muted}}>Outline plus a first draft in your voice · 5 credits.</div>
+              <div style={{fontSize:11.5,color:T.muted}}>Outline plus a first draft in your voice.</div>
             </button>
           </div>
         </Field>
@@ -1208,59 +1404,109 @@ function Essays() {
           <Textarea placeholder="e.g. Argue that Macbeth's downfall is caused by ambition, not the witches." value={ePrompt} onChange={e=>setEPrompt(e.target.value)} />
         </Field>
       </Modal>
+
+      <Modal open={citeOpen} onClose={()=>{setCiteOpen(false);setCiteResult("");}} title="Cite a source" sub="AI formats it for you, then you insert it into your essay."
+        footer={<><Btn variant="subtle" onClick={()=>{setCiteOpen(false);setCiteResult("");}}>Cancel</Btn>{citeResult?<Btn onClick={insertCitation}>Insert into essay</Btn>:<Btn onClick={generateCitation} disabled={citeLoading||!citeSource.trim()}>{citeLoading?"Formatting...":"Generate citation"}</Btn>}</>}>
+        <Field label="Citation style">
+          <SelectChip options={[{value:"MLA",label:"MLA"},{value:"APA",label:"APA"},{value:"Chicago",label:"Chicago"}]} value={citeStyle} onChange={setCiteStyle} />
+        </Field>
+        <Field label="Source details" hint="Author, title, publisher, year, URL — whatever you have.">
+          <Textarea placeholder="e.g. Smith, John. 'The Tragedy of Ambition.' Shakespeare Quarterly, 2019, pp. 45-67." value={citeSource} onChange={e=>setCiteSource(e.target.value)} />
+        </Field>
+        {citeResult&&<div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",fontSize:13,color:T.text,lineHeight:1.6}}>{citeResult}</div>}
+      </Modal>
+
+      <Modal open={exportOpen} onClose={()=>setExportOpen(false)} title="Export essay" sub={activeEssay?activeEssay.title:""}>
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          <BtnSm variant="subtle" onClick={copyEssay}>{Icon.copy} Copy to clipboard</BtnSm>
+          <BtnSm variant="subtle" onClick={downloadEssay}>{Icon.file} Download as .txt</BtnSm>
+          <BtnSm variant="subtle" onClick={openInGoogleDocs}>{Icon.link} Open in Google Docs</BtnSm>
+          <div style={{fontSize:11,color:T.faint,lineHeight:1.5,marginTop:4}}>Opening in Google Docs copies your essay, then opens a new blank doc — just paste with Cmd/Ctrl+V. A full one-click sync needs Studlin to be authorized with your Google account, which isn't set up yet.</div>
+          {copiedMsg&&<div style={{fontSize:12,color:T.lime,fontWeight:600}}>{copiedMsg}</div>}
+        </div>
+      </Modal>
+
       <Pills tabs={["active","library","templates"]} active={tab} onChange={setTab} />
       <div style={{display:"grid",gridTemplateColumns:"1fr 280px",gap:16}}>
         <div>
           {tab==="active"&&(
+            activeEssay?(
             <Card>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
-                <div>
-                  <div style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:3}}>Power &amp; Corruption in Macbeth</div>
-                  <div style={{fontSize:12,color:T.muted}}>English IV · {(1247).toLocaleString()} / {(1500).toLocaleString()} words</div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16,gap:12}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <input value={activeEssay.title} onChange={e=>updateTitle(e.target.value)} style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:3,background:"transparent",border:"none",outline:"none",width:"100%",fontFamily:T.font,padding:0}} />
+                  <div style={{fontSize:12,color:T.muted}}>{activeEssay.subject} · {wc.toLocaleString()} / {target.toLocaleString()} words</div>
                 </div>
-                <Badge color={T.amber}>In progress</Badge>
+                <div style={{display:"flex",gap:8,alignItems:"center",flexShrink:0}}>
+                  <Badge color={statusOf(activeEssay)==="Submitted"?T.teal:statusOf(activeEssay)==="In progress"?T.amber:T.blue}>{statusOf(activeEssay)}</Badge>
+                  <button onClick={()=>deleteEssay(activeEssay.id)} title="Delete essay" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:16,padding:2}}>×</button>
+                </div>
               </div>
               <div style={{display:"flex",gap:2,background:T.card2,padding:"6px",borderRadius:"6px 6px 0 0",flexWrap:"wrap",border:`1px solid ${T.border}`,borderBottom:"none"}}>
-                {[["B",Icon.bold],["I",Icon.italic],["Link",Icon.link],["Quote",Icon.quote]].map(([l,ico])=>(
-                  <button key={l} style={{display:"flex",alignItems:"center",gap:4,padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>{ico} {l}</button>
+                {[["B","bold",Icon.bold],["I","italic",Icon.italic],["Link","createLink",Icon.link],["Quote","formatBlock",Icon.quote]].map(([l,cmd,ico])=>(
+                  <button key={l} type="button" onClick={()=>exec(cmd,cmd==="createLink"?(prompt("Link URL:")||""):cmd==="formatBlock"?"blockquote":undefined)} style={{display:"flex",alignItems:"center",gap:4,padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>{ico} {l}</button>
                 ))}
                 <div style={{width:1,background:T.border,margin:"2px 4px"}} />
-                {["H1","H2","H3"].map(h=><button key={h} style={{padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>{h}</button>)}
+                {["H1","H2","H3"].map(h=><button key={h} type="button" onClick={()=>exec("formatBlock",h.toLowerCase())} style={{padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>{h}</button>)}
               </div>
-              <div contentEditable suppressContentEditableWarning style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:"0 0 6px 6px",padding:16,minHeight:200,fontSize:14,lineHeight:1.8,color:T.text,outline:"none"}}>
-                <p><strong style={{color:T.white,fontWeight:600}}>Introduction</strong></p>
-                <p style={{marginTop:12}}>In Shakespeare's Macbeth, the corrupting influence of unchecked ambition is illustrated through the protagonist's descent from celebrated warrior to tyrannical murderer. The play explores how power, when pursued without moral constraint, dismantles the very humanity of those who seek it · a thesis the playwright reinforces through recurring imagery, soliloquy, and dramatic irony.</p>
+              <div ref={editorRef} contentEditable suppressContentEditableWarning onInput={e=>updateContent(e.currentTarget.innerHTML)}
+                dangerouslySetInnerHTML={{__html:activeEssay.content||"<p><br/></p>"}}
+                style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:"0 0 6px 6px",padding:16,minHeight:280,fontSize:14,lineHeight:1.8,color:T.text,outline:"none"}}>
               </div>
-              <div style={{display:"flex",gap:8,marginTop:14,alignItems:"center"}}>
-                <BtnSm variant="subtle">{Icon.wand} Refine prose</BtnSm>
-                <BtnSm variant="subtle">{Icon.check} Grammar pass</BtnSm>
-                <BtnSm variant="subtle">{Icon.quote} Cite source</BtnSm>
+              {toolResult&&(
+                <div style={{marginTop:12,background:T.card2,border:`1px solid ${T.lime}44`,borderRadius:8,padding:14}}>
+                  <Label>{toolResult.kind==="refine"?"Refined version":"Grammar pass result"}</Label>
+                  <div style={{fontSize:13,color:T.text,lineHeight:1.7,whiteSpace:"pre-wrap",maxHeight:200,overflowY:"auto",marginBottom:10}}>{toolResult.text}</div>
+                  <div style={{display:"flex",gap:8}}>
+                    <BtnSm onClick={applyToolResult}>Use this version</BtnSm>
+                    <BtnSm variant="ghost" onClick={()=>setToolResult(null)}>Dismiss</BtnSm>
+                  </div>
+                </div>
+              )}
+              <div style={{display:"flex",gap:8,marginTop:14,alignItems:"center",flexWrap:"wrap"}}>
+                <BtnSm variant="subtle" onClick={()=>runTool("refine")} disabled={toolLoading==="refine"}>{Icon.wand} {toolLoading==="refine"?"Refining...":"Refine prose"}</BtnSm>
+                <BtnSm variant="subtle" onClick={()=>runTool("grammar")} disabled={toolLoading==="grammar"}>{Icon.check} {toolLoading==="grammar"?"Checking...":"Grammar pass"}</BtnSm>
+                <BtnSm variant="subtle" onClick={()=>setCiteOpen(true)}>{Icon.quote} Cite source</BtnSm>
+                <BtnSm variant="subtle" onClick={()=>setExportOpen(true)}>{Icon.file} Export</BtnSm>
+                {!activeEssay.submitted&&<BtnSm variant="subtle" onClick={markSubmitted}>{Icon.check} Mark submitted</BtnSm>}
                 <div style={{marginLeft:"auto",fontSize:11,color:T.faint}}>Saved automatically</div>
               </div>
             </Card>
+            ):(
+              <Card style={{textAlign:"center",padding:40}}>
+                <div style={{fontSize:14,color:T.muted,marginBottom:14}}>No essay open. Pick one from your library or start a new one.</div>
+                <div style={{display:"flex",gap:8,justifyContent:"center"}}>
+                  <Btn onClick={()=>setNewOpen(true)}>New essay</Btn>
+                  <Btn variant="subtle" onClick={()=>setTab("library")}>View library</Btn>
+                </div>
+              </Card>
+            )
           )}
           {tab==="library"&&(
             <div style={{display:"flex",flexDirection:"column",gap:8}}>
-              {essays.map((e,i)=>(
-                <Card key={i} onClick={()=>{}} style={{display:"flex",alignItems:"center",gap:16}}>
-                  <div style={{width:3,height:40,borderRadius:2,background:subjectColor[e.subject]||T.lime,flexShrink:0}} />
-                  <div style={{flex:1}}>
+              {essays.length===0&&<Card style={{textAlign:"center",padding:40,color:T.muted,fontSize:13}}>Your library is empty. Create your first essay or start from a template.</Card>}
+              {essays.slice().sort((a,b)=>b.updatedAt-a.updatedAt).map((e)=>{
+                const st=statusOf(e);const ewc=wordCountOf(e.content);
+                return(
+                <Card key={e.id} onClick={()=>selectEssay(e.id)} style={{display:"flex",alignItems:"center",gap:16,cursor:"pointer"}}>
+                  <div style={{width:3,height:40,borderRadius:2,background:colorOf(e.subject),flexShrink:0}} />
+                  <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:13,fontWeight:600,color:T.white,marginBottom:2}}>{e.title}</div>
-                    <div style={{fontSize:11,color:T.muted}}>{e.subject} · {e.words.toLocaleString()} / {e.target.toLocaleString()} words</div>
+                    <div style={{fontSize:11,color:T.muted}}>{e.subject} · {ewc.toLocaleString()} / {e.target.toLocaleString()} words</div>
                   </div>
-                  <Badge color={e.status==="Submitted"?T.teal:e.status==="In progress"?T.amber:T.blue}>{e.status}</Badge>
-                  {e.grade&&<div style={{fontSize:20,fontWeight:700,color:T.lime,letterSpacing:"-0.02em"}}>{e.grade}</div>}
+                  <Badge color={st==="Submitted"?T.teal:st==="In progress"?T.amber:T.blue}>{st}</Badge>
+                  <button onClick={(ev)=>{ev.stopPropagation();deleteEssay(e.id);}} title="Delete" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:16,padding:2,flexShrink:0}}>×</button>
                 </Card>
-              ))}
+              );})}
             </div>
           )}
           {tab==="templates"&&(
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-              {["Five-paragraph essay","Literary analysis","Scientific lab report","Argumentative essay","Compare & contrast","Research paper","Personal statement","Reflective journal"].map(t=>(
-                <Card key={t} onClick={()=>{}} style={{cursor:"pointer",padding:16}}>
+              {Object.keys(ESSAY_TEMPLATES).map(t=>(
+                <Card key={t} onClick={()=>useTemplate(t)} style={{cursor:"pointer",padding:16}}>
                   <div style={{width:32,height:32,borderRadius:6,background:T.card2,border:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"center",color:T.muted,marginBottom:10}}>{Icon.file}</div>
                   <div style={{fontSize:13,fontWeight:600,color:T.white,marginBottom:2}}>{t}</div>
-                  <div style={{fontSize:11,color:T.muted}}>Structured template</div>
+                  <div style={{fontSize:11,color:T.muted}}>Structured template · {ESSAY_TEMPLATES[t].target.toLocaleString()} word target</div>
                 </Card>
               ))}
             </div>
@@ -1269,23 +1515,27 @@ function Essays() {
         <div style={{display:"flex",flexDirection:"column",gap:12}}>
           <Card style={{background:T.lime,border:"none"}}>
             <Label style={{color:T.bg}}>Word count</Label>
-            <div style={{fontSize:32,fontWeight:700,color:T.bg,letterSpacing:"-0.03em",lineHeight:1}}>1,247</div>
-            <div style={{marginTop:10,height:4,background:T.bg+"22",borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",width:"83%",background:T.bg,borderRadius:2}} /></div>
-            <div style={{fontSize:12,color:T.bg,opacity:0.7,marginTop:5}}>253 words remaining</div>
+            <div style={{fontSize:32,fontWeight:700,color:T.bg,letterSpacing:"-0.03em",lineHeight:1}}>{wc.toLocaleString()}</div>
+            <div style={{marginTop:10,height:4,background:T.bg+"22",borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",width:pct+"%",background:T.bg,borderRadius:2}} /></div>
+            <div style={{fontSize:12,color:T.bg,opacity:0.7,marginTop:5}}>{activeEssay?(target>wc?(target-wc).toLocaleString()+" words remaining":"Target reached"):"No essay open"}</div>
           </Card>
           <Card>
-            <Label>Writing feedback</Label>
-            {[["Strengthen thesis statement",T.amber],["Include counterargument",T.amber],["Expand textual evidence",T.red],["Conclusion is underdeveloped",T.red]].map(([s,c],i)=>(
-              <div key={i} style={{display:"flex",gap:8,padding:"8px 0",borderBottom:i<3?`1px solid ${T.border}`:"none",fontSize:12,color:T.muted}}>
-                <div style={{width:5,height:5,borderRadius:"50%",background:c,flexShrink:0,marginTop:5}} />
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <Label style={{marginBottom:0}}>Writing feedback</Label>
+              <BtnSm variant="subtle" onClick={runFeedback} disabled={!activeEssay||feedbackLoading}>{feedbackLoading?"...":"Get feedback"}</BtnSm>
+            </div>
+            {!feedbackIssues&&<div style={{fontSize:12,color:T.faint,padding:"6px 0"}}>Click "Get feedback" for AI suggestions on your draft.</div>}
+            {feedbackIssues&&feedbackIssues.map((s,i)=>(
+              <div key={i} style={{display:"flex",gap:8,padding:"8px 0",borderBottom:i<feedbackIssues.length-1?`1px solid ${T.border}`:"none",fontSize:12,color:T.muted}}>
+                <div style={{width:5,height:5,borderRadius:"50%",background:T.amber,flexShrink:0,marginTop:5}} />
                 {s}
               </div>
             ))}
           </Card>
           <Card>
             <Label>Readability</Label>
-            <div style={{fontSize:32,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>B+</div>
-            <div style={{fontSize:12,color:T.muted,marginTop:4}}>Grade 11 reading level</div>
+            <div style={{fontSize:32,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>{readability.grade}</div>
+            <div style={{fontSize:12,color:T.muted,marginTop:4}}>{readability.level||"Write something to see your score"}</div>
           </Card>
         </div>
       </div>
