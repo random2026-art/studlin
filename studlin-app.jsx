@@ -1956,18 +1956,39 @@ function Notes(){
   const sendTutorMsg=async()=>{
     const txt=tutorInput.trim();
     if(!txt||tutorSending)return;
-    const next=[...tutorMsgs,{role:"user",text:txt}];
-    setTutorMsgs(next);
+    // Optimistically append user message to display
+    setTutorMsgs(m=>[...m,{role:"user",text:txt}]);
     setTutorInput("");
     setTutorSending(true);
     try{
-      const ctxLine=tutorCtx?'The student flagged this passage from their notes: "'+tutorCtx+'"\n\n':"";
-      const history=next.map(m=>({r:m.role==="user"?"user":"assistant",t:m.text})).slice(-8);
-      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:ctxLine+"Student: "+txt},...history],model:"flash"})});
+      // tutorMsgs[0] is always the synthetic AI greeting — skip it when building the API call.
+      // The API uses {r:"user"|"ai", t:"..."} — "ai" maps to assistant on the Claude side.
+      // Context is injected as a prefix on the first real user turn so it persists across rounds.
+      const ctxPrefix=tutorCtx?`[Student's note excerpt: "${tutorCtx.slice(0,400)}"]\n\n`:"";
+      const realHistory=tutorMsgs.slice(1); // drop synthetic greeting
+      let apiMsgs;
+      if(realHistory.length===0){
+        // First user message — inject context directly into it so we get one clean user msg
+        apiMsgs=[{r:"user",t:ctxPrefix+txt}];
+      }else{
+        // Rebuild history, re-injecting context into the first stored user message
+        apiMsgs=realHistory.map((m,i)=>{
+          const r=m.role==="user"?"user":"ai";
+          const t=(i===0&&m.role==="user"&&ctxPrefix)?ctxPrefix+m.text:m.text;
+          return {r,t};
+        });
+        apiMsgs.push({r:"user",t:txt});
+      }
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:apiMsgs,model:"flash"})});
+      if(!res.ok){
+        const errData=await res.json().catch(()=>({}));
+        throw new Error(errData.error||"HTTP "+res.status);
+      }
       const data=await res.json();
-      setTutorMsgs(m=>[...m,{role:"ai",text:data.reply||"Sorry, I couldn't respond. Try again."}]);
+      setTutorMsgs(m=>[...m,{role:"ai",text:data.reply||"No response received."}]);
     }catch(e){
-      setTutorMsgs(m=>[...m,{role:"ai",text:"Network error — try again."}]);
+      console.error("[sendTutorMsg] error:",e);
+      setTutorMsgs(m=>[...m,{role:"ai",text:"Error: "+e.message+". Please try again."}]);
     }
     setTutorSending(false);
   };
