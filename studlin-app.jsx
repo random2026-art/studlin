@@ -2,19 +2,19 @@ const { useState, useEffect, useRef } = React;
 
 // ─── DESIGN TOKENS · dark + light themes ──────────────────────────────────────
 const darkT = {
-  bg:     "#101522",
-  surface:"#141929",
-  card:   "#1B2235",
-  card2:  "#1F2842",
-  border: "rgba(255,255,255,0.065)",
-  borderHover: "rgba(255,255,255,0.12)",
-  lime:   "#3ECF8E",
-  limeDk: "#27AE76",
-  limeLt: "#80E5BA",
-  glow:   "rgba(62,207,142,0.22)",
-  text:   "#D8DCF0",
-  muted:  "#7880A8",
-  faint:  "#333B5A",
+  bg:     "#0D120F",
+  surface:"#141A16",
+  card:   "#19211C",
+  card2:  "#212A24",
+  border: "rgba(255,255,255,0.07)",
+  borderHover: "rgba(255,255,255,0.14)",
+  lime:   "#AECE5E",
+  limeDk: "#8BAE3C",
+  limeLt: "#CBDF92",
+  glow:   "rgba(174,206,94,0.22)",
+  text:   "#E8EFE7",
+  muted:  "#849389",
+  faint:  "#3F5147",
   white:  "#ffffff",
   red:    "#D9806B",
   blue:   "#7BACDF",
@@ -27,8 +27,8 @@ const darkT = {
   lilac:  "#E2D0FF",
   sky:    "#BFE3FF",
   rose:   "#FFC9D2",
-  forest: "#0F1428",
-  ink:    "#080C28",
+  forest: "#14342A",
+  ink:    "#0E1F18",
   cream:  "#F6F1E6",
   font:   `"Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`,
   hand:   `"Bricolage Grotesque", "Geist", sans-serif`,
@@ -37,22 +37,22 @@ const darkT = {
   mode:   "dark",
 };
 const lightT = {
-  bg:     "#ECEDF2",
-  surface:"#252D52",
-  card:   "#F6F7FA",
-  card2:  "#E7E9EF",
-  border: "rgba(46,52,80,0.09)",
-  borderHover: "rgba(46,52,80,0.18)",
-  lime:   "#0D8C5A",
-  limeDk: "#096842",
-  limeLt: "#5AB893",
-  glow:   "rgba(13,140,90,0.15)",
-  text:   "#1B1E30",
-  muted:  "rgba(27,30,48,0.50)",
-  faint:  "rgba(27,30,48,0.22)",
-  white:  "#111728",
-  red:    "#A84230",
-  blue:   "#2E6EB5",
+  bg:     "#FAF6EC",
+  surface:"#14342A",
+  card:   "#ffffff",
+  card2:  "#F0EBE0",
+  border: "rgba(14,31,24,0.18)",
+  borderHover: "rgba(14,31,24,0.32)",
+  lime:   "#9EC83D",
+  limeDk: "#7FA82A",
+  limeLt: "#CBDF92",
+  glow:   "rgba(158,200,61,0.20)",
+  text:   "#0E1F18",
+  muted:  "rgba(14,31,24,0.55)",
+  faint:  "rgba(14,31,24,0.30)",
+  white:  "#14342A",
+  red:    "#A8412C",
+  blue:   "#2D6FB8",
   amber:  "#A6700C",
   purple: "#5E45A8",
   teal:   "#1A8770",
@@ -62,8 +62,8 @@ const lightT = {
   lilac:  "#E2D0FF",
   sky:    "#BFE3FF",
   rose:   "#FFC9D2",
-  forest: "#252D52",
-  ink:    "#080C28",
+  forest: "#14342A",
+  ink:    "#0E1F18",
   cream:  "#F6F1E6",
   font:   `"Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`,
   hand:   `"Bricolage Grotesque", "Geist", sans-serif`,
@@ -3494,22 +3494,22 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     const isLight=mode==="light";
     return (
       <div onClick={()=>setTheme(mode)} style={{flex:1,cursor:"pointer",borderRadius:12,padding:16,border:`2px solid ${sel?T.lime:T.border}`,background:sel?T.lime+"08":T.card2,transition:"all 0.15s"}}>
-        <div style={{height:90,borderRadius:8,overflow:"hidden",background:isLight?"#ECEDF2":"#101522",border:`1px solid ${isLight?"rgba(46,52,80,0.08)":"rgba(255,255,255,0.05)"}`,marginBottom:12,display:"flex"}}>
-          <div style={{width:24,background:"#252D52",display:"flex",flexDirection:"column",alignItems:"center",padding:"6px 0",gap:4}}>
-            <div style={{width:10,height:10,background:"#7B90C4",borderRadius:2}} />
-            <div style={{width:14,height:3,background:"rgba(255,255,255,0.18)",borderRadius:1,marginTop:4}} />
-            <div style={{width:14,height:3,background:"rgba(255,255,255,0.10)",borderRadius:1}} />
-            <div style={{width:14,height:3,background:"rgba(255,255,255,0.10)",borderRadius:1}} />
+        <div style={{height:90,borderRadius:8,overflow:"hidden",background:isLight?"#FAF6EC":"#0D120F",border:`1px solid ${isLight?"rgba(14,31,24,0.08)":"rgba(255,255,255,0.06)"}`,marginBottom:12,display:"flex"}}>
+          <div style={{width:24,background:"#14342A",display:"flex",flexDirection:"column",alignItems:"center",padding:"6px 0",gap:4}}>
+            <div style={{width:10,height:10,background:"#AECE5E",borderRadius:2}} />
+            <div style={{width:14,height:3,background:"rgba(255,255,255,0.2)",borderRadius:1,marginTop:4}} />
+            <div style={{width:14,height:3,background:"rgba(255,255,255,0.12)",borderRadius:1}} />
+            <div style={{width:14,height:3,background:"rgba(255,255,255,0.12)",borderRadius:1}} />
           </div>
           <div style={{flex:1,padding:8,display:"flex",flexDirection:"column",gap:5}}>
             <div style={{display:"flex",gap:4}}>
-              <div style={{flex:1,height:18,background:isLight?"#252D52":"#1F2842",borderRadius:3}} />
-              <div style={{width:24,height:18,background:isLight?"#4D6888":"#7B90C4",borderRadius:3}} />
-              <div style={{width:24,height:18,background:isLight?"#F6F7FA":"#1F2842",borderRadius:3,border:isLight?"1px solid rgba(46,52,80,0.09)":"none"}} />
+              <div style={{flex:1,height:18,background:isLight?"#14342A":"#212A24",borderRadius:3}} />
+              <div style={{width:24,height:18,background:"#AECE5E",borderRadius:3}} />
+              <div style={{width:24,height:18,background:isLight?"#fff":"#212A24",borderRadius:3,border:isLight?"1px solid rgba(14,31,24,0.08)":"none"}} />
             </div>
             <div style={{display:"flex",gap:4}}>
-              <div style={{flex:1,height:14,background:isLight?"#F6F7FA":"#1F2842",borderRadius:3,border:isLight?"1px solid rgba(46,52,80,0.09)":"none"}} />
-              <div style={{flex:1,height:14,background:isLight?"#F6F7FA":"#1F2842",borderRadius:3,border:isLight?"1px solid rgba(46,52,80,0.09)":"none"}} />
+              <div style={{flex:1,height:14,background:isLight?"#fff":"#212A24",borderRadius:3,border:isLight?"1px solid rgba(14,31,24,0.08)":"none"}} />
+              <div style={{flex:1,height:14,background:isLight?"#fff":"#212A24",borderRadius:3,border:isLight?"1px solid rgba(14,31,24,0.08)":"none"}} />
             </div>
           </div>
         </div>
@@ -3532,7 +3532,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const [pom,setPom]=useState(()=>lsGet("pref-pom","25 min"));
   const [verb,setVerb]=useState(()=>lsGet("pref-verb","Balanced"));
   const [brk,setBrk]=useState(()=>lsGet("pref-brk","15 min"));
-  const accents=[{n:"Lime",c:"#9EC83D"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"}];
+  const accents=[{n:"Lime",c:"#AECE5E"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"}];
   const [mgmtSubjs,setMgmtSubjs]=useState(()=>getSubjects().map(s=>({...s})));
   const [mgmtSaved,setMgmtSaved]=useState(false);
   const saveMgmtSubjs=()=>{const valid=mgmtSubjs.filter(s=>s.label.trim());saveSubjects(valid);lsSet("subjects-configured",true);setMgmtSaved(true);setTimeout(()=>setMgmtSaved(false),2500);};
@@ -4173,6 +4173,11 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
   const firstName=(prof.name||"there").split(" ")[0];
   const hr=new Date().getHours();
   const greet=hr<12?"Good morning":hr<18?"Good afternoon":"Good evening";
+  const fm=String(Math.floor(focusSecs/60)).padStart(2,"0");
+  const fs=String(focusSecs%60).padStart(2,"0");
+  const fmtTime=`${fm}:${fs}`;
+  const focusTotalSecs=25*60;
+  const focusPct=Math.max(0,Math.min(100,((focusTotalSecs-focusSecs)/focusTotalSecs)*100));
   // Real deck data from localStorage
   const rawDecks=lsGet("decks",[]);
   const realDecks=rawDecks.slice(0,6).map(d=>({
@@ -4221,8 +4226,43 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
   const weeklyXP=getWeeklyXP();
   const weeklyFocusMin=realStats.weekMin;
   const lbRank=1;
-  // streak heatmap data
-  const seed=[0,1,2,0,3,4,2,1,0,3,2,4,1,0,2,3,1,4,2,3,0,1,2,4,3,2,1,3,4,2,3,1,4,3,2,4,3,2,1,2,3,4,3,2,3,4,2,3,2,4,3,2,3,4,3,4,2,3,4,3,4,3,2,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4];
+  // Real cards mastered + words written totals
+  const cardsMasteredTotal=rawDecks.reduce((a,d)=>a+(d.done||0),0);
+  const stripHtml=(html)=>(html||"").replace(/<[^>]*>/g," ");
+  const rawEssays=lsGet("essays",[]);
+  const wordsWrittenTotal=rawEssays.reduce((a,e)=>{
+    if(typeof e.words==="number")return a+e.words;
+    const txt=stripHtml(e.content).trim();
+    return a+(txt?txt.split(/\s+/).length:0);
+  },0);
+  // Real session activity for the last 7 days, bucketed by inferred category
+  const allSessions=lsGet("sessions",[]);
+  const catOf=(mode)=>{
+    const m=(mode||"").toLowerCase();
+    if(m.includes("flashcard")||m.includes("deck")||m.includes("card"))return"flash";
+    if(m.includes("essay")||m.includes("writ"))return"write";
+    return"read";
+  };
+  const weekDays7=(()=>{const arr=[];const now=new Date();const dow=(now.getDay()+6)%7;const mon=new Date(now);mon.setDate(now.getDate()-dow);for(let i=0;i<7;i++){const d=new Date(mon);d.setDate(mon.getDate()+i);arr.push(d);}return arr;})();
+  const weekBars=weekDays7.map((d,di)=>{
+    const k=dayKey(d);
+    const daySessions=allSessions.filter(s=>s.d===k);
+    const read=daySessions.filter(s=>catOf(s.mode)==="read").reduce((a,s)=>a+(s.m||0),0);
+    const flash=daySessions.filter(s=>catOf(s.mode)==="flash").reduce((a,s)=>a+(s.m||0),0);
+    const write=daySessions.filter(s=>catOf(s.mode)==="write").reduce((a,s)=>a+(s.m||0),0);
+    return {lab:["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][di],read,flash,write,total:read+flash+write,future:k>dayKey(),isToday:k===dayKey()};
+  });
+  const weekBarMax=Math.max(60,...weekBars.map(b=>b.total));
+  // Top subject this week — from completed plan tasks' subject field
+  const subjCounts={};
+  allEvents.filter(ev=>ev.status==="done"&&ev.date>=dayKey(weekDays7[0])).forEach(ev=>{subjCounts[ev.subject]=(subjCounts[ev.subject]||0)+1;});
+  const topSubjectEntry=Object.entries(subjCounts).sort((a,b)=>b[1]-a[1])[0];
+  const topSubjectThisWeek=topSubjectEntry?topSubjectEntry[0]:null;
+  // Real 91-day streak heatmap from login days + session minutes
+  const loginDaysSet=new Set(lsGet("days",[]));
+  const minsByDay={};
+  allSessions.forEach(s=>{minsByDay[s.d]=(minsByDay[s.d]||0)+(s.m||0);});
+  const heatmapCells=(()=>{const cells=[];const now=new Date();for(let i=90;i>=0;i--){const d=new Date(now);d.setDate(now.getDate()-i);const k=dayKey(d);const mins=minsByDay[k]||0;let lvl=0;if(loginDaysSet.has(k)||mins>0){lvl=mins>=120?4:mins>=60?3:mins>=30?2:1;}cells.push(lvl);}return cells;})();
   const cellColor=(lvl)=>{
     if(!lvl) return T.mode==="light"?"rgba(8,12,40,0.06)":"rgba(255,255,255,0.06)";
     return [null,T.lime+"40",T.lime+"80",T.limeDk,T.forest][lvl];
@@ -4257,7 +4297,7 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
 
       {/* GREETING STRIP — full 3-col in normal mode, single card in Serious Mode */}
       {seriousMode ? (
-        <div style={{background:`linear-gradient(135deg, ${T.forest} 0%, #1E3078 100%)`,color:T.cream,borderRadius:22,padding:"28px 34px",position:"relative",overflow:"hidden"}}>
+        <div style={{background:`linear-gradient(135deg, ${T.forest} 0%, #1B4536 100%)`,color:T.cream,borderRadius:22,padding:"28px 34px",position:"relative",overflow:"hidden"}}>
           <div style={{position:"absolute",right:-40,top:-40,width:240,height:240,background:"radial-gradient(circle,rgba(200,255,90,0.18),transparent 70%)",pointerEvents:"none"}} />
           <div style={{position:"relative"}}>
             <div style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.45)",marginBottom:6}}>{todayLabel()} · Week {weekNo()} · <span style={{color:T.purple,letterSpacing:"0.12em"}}>SERIOUS MODE</span></div>
@@ -4272,7 +4312,7 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
       ) : (
       <div style={{display:"grid",gridTemplateColumns:"1.5fr 1fr 1fr",gap:16}}>
         {/* Greeting */}
-        <div style={{background:`linear-gradient(135deg, ${T.forest} 0%, #1E3078 100%)`,color:T.cream,borderRadius:22,padding:"26px 30px",position:"relative",overflow:"hidden",minHeight:200}}>
+        <div style={{background:`linear-gradient(135deg, ${T.forest} 0%, #1B4536 100%)`,color:T.cream,borderRadius:22,padding:"26px 30px",position:"relative",overflow:"hidden",minHeight:200}}>
           <div style={{position:"absolute",right:-40,top:-40,width:240,height:240,background:"radial-gradient(circle,rgba(200,255,90,0.18),transparent 70%)",pointerEvents:"none"}} />
           <div style={{position:"relative"}}>
             <div style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)",marginBottom:6}}>{todayLabel()} · Week {weekNo()}</div>
@@ -4358,36 +4398,216 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
         </div>
       </div>
 
-      {/* ROW 3: TODAY'S PLAN — full width */}
-      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
-        <CardHead title="Today's plan" label={planDoneCount+" / "+plan.length+" DONE"} more="Calendar" />
-        {plan.length===0
-          ? <div style={{padding:"22px 8px",textAlign:"center"}}>
-              <div style={{fontSize:13,color:T.muted,marginBottom:14,lineHeight:1.5}}>Nothing scheduled for today. Add events to your calendar and they appear here automatically.</div>
-              <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 16px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Open calendar</button>
-            </div>
-          : plan.map((t)=>{
-            const c=scOf(t.subject);
-            return (
-            <div key={t.id} onClick={()=>{togglePlanDone(t.id);forcePlan(x=>x+1);}} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer"}}>
-              <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${t.done?T.forest:T.faint}`,background:t.done?T.forest:"transparent",flex:"none",display:"grid",placeItems:"center"}}>
-                {t.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+      {/* ROW 3: Today's plan + Focus + Ask Studlin (5/3/4) */}
+      <div style={{display:"grid",gridTemplateColumns:"5fr 3fr 4fr",gap:16}}>
+        {/* Today's plan */}
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+          <CardHead title="Today's plan" label={planDoneCount+" / "+plan.length+" DONE"} more="Calendar" />
+          {plan.length===0
+            ? <div style={{padding:"22px 8px",textAlign:"center"}}>
+                <div style={{fontSize:13,color:T.muted,marginBottom:14,lineHeight:1.5}}>Nothing scheduled for today. Add events to your calendar and they appear here automatically.</div>
+                <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 16px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Open calendar</button>
               </div>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{display:"flex",alignItems:"center",gap:6}}>
-                  {t.priority&&<span style={{width:6,height:6,borderRadius:"50%",background:PRIORITY_COLORS[t.priority||3],flexShrink:0}} />}
-                  <span style={{fontSize:13.5,color:t.done?T.muted:T.text,textDecoration:t.done?"line-through":"none",fontWeight:500}}>{t.title}</span>
+            : plan.map((t)=>{
+              const c=scOf(t.subject);
+              return (
+              <div key={t.id} onClick={()=>{togglePlanDone(t.id);forcePlan(x=>x+1);}} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer"}}>
+                <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${t.done?T.forest:T.faint}`,background:t.done?T.forest:"transparent",flex:"none",display:"grid",placeItems:"center"}}>
+                  {t.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
                 </div>
-                <div style={{fontSize:11.5,color:T.muted,marginTop:1,display:"flex",gap:6,alignItems:"center"}}>
-                  <span style={{textTransform:"capitalize"}}>{t.subject}{t.kind?" · "+t.kind:""}</span>
-                  {t.duration&&<span style={{background:T.card2,padding:"0 5px",borderRadius:3,fontSize:10,fontWeight:600}}>{t.duration}m</span>}
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    {t.priority&&<span style={{width:6,height:6,borderRadius:"50%",background:PRIORITY_COLORS[t.priority||3],flexShrink:0}} />}
+                    <span style={{fontSize:13.5,color:t.done?T.muted:T.text,textDecoration:t.done?"line-through":"none",fontWeight:500}}>{t.title}</span>
+                  </div>
+                  <div style={{fontSize:11.5,color:T.muted,marginTop:1,display:"flex",gap:6,alignItems:"center"}}>
+                    <span style={{textTransform:"capitalize"}}>{t.subject}{t.kind?" · "+t.kind:""}</span>
+                    {t.duration&&<span style={{background:T.card2,padding:"0 5px",borderRadius:3,fontSize:10,fontWeight:600}}>{t.duration}m</span>}
+                  </div>
                 </div>
+                <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.06em",padding:"3px 8px",borderRadius:6,background:c+"22",color:c,textTransform:"uppercase",fontWeight:600,flex:"none"}}>{t.subject.slice(0,4)}</span>
+                <span style={{fontFamily:T.mono,fontSize:11,color:T.muted}}>{fmtClock(t.time)}</span>
               </div>
-              <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.06em",padding:"3px 8px",borderRadius:6,background:c+"22",color:c,textTransform:"uppercase",fontWeight:600,flex:"none"}}>{t.subject.slice(0,4)}</span>
-              <span style={{fontFamily:T.mono,fontSize:11,color:T.muted}}>{fmtClock(t.time)}</span>
+            );})}
+        </div>
+
+        {/* Focus Pomodoro */}
+        <div style={{background:`linear-gradient(180deg, ${T.forest} 0%, #0B201A 100%)`,color:T.cream,borderRadius:22,padding:22,position:"relative",overflow:"hidden",display:"flex",flexDirection:"column"}}>
+          <div style={{position:"absolute",right:-60,bottom:-60,width:220,height:220,background:"radial-gradient(circle,rgba(200,255,90,0.15),transparent 65%)"}} />
+          <div style={{position:"relative",zIndex:1}}>
+            <CardHead title="Focus" label="POMODORO" light />
+            <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)"}}>Session 3 of 4</div>
+            <div style={{fontFamily:T.hand,fontSize:88,lineHeight:0.85,fontWeight:700,color:T.lime,margin:"8px 0 4px",fontVariantNumeric:"tabular-nums"}}>{fmtTime}</div>
+            <div style={{fontSize:12.5,color:"rgba(246,241,230,0.7)",marginBottom:16}}>{focusRunning?`Break in ${fm} min · then 5 min off`:"Session paused · tap play to resume"}</div>
+            <div style={{height:6,background:"rgba(246,241,230,0.12)",borderRadius:99,marginBottom:18,overflow:"hidden"}}><div style={{height:"100%",width:focusPct+"%",background:T.lime,transition:"width 1s linear"}}/></div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>setFocusRunning(r=>!r)} style={{width:48,height:48,borderRadius:"50%",background:T.lime,color:T.ink,border:"none",display:"grid",placeItems:"center",cursor:"pointer"}}>
+                {focusRunning
+                  ?<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+                  :<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg>
+                }
+              </button>
+              {[
+                <svg key="s" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>,
+                <svg key="m" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>,
+              ].map((ic,i)=>(
+                <button key={i} style={{width:38,height:38,borderRadius:"50%",background:"rgba(246,241,230,0.08)",color:T.cream,border:"1px solid rgba(246,241,230,0.14)",display:"grid",placeItems:"center",cursor:"pointer"}}>{ic}</button>
+              ))}
             </div>
-          );})}
+            <div style={{display:"inline-flex",alignItems:"center",gap:8,padding:"7px 12px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,fontSize:12,marginTop:14}}>
+              <span style={{width:8,height:8,borderRadius:"50%",background:T.butter}}/>
+              English IV · Macbeth essay
+            </div>
+          </div>
+        </div>
+
+        {/* Ask Studlin */}
+        <div style={{background:T.ink,color:T.cream,borderRadius:22,padding:22,display:"flex",flexDirection:"column"}}>
+          <CardHead title="Ask Studlin" label="AI TUTOR" more="Open" light />
+          <div style={{fontSize:13,color:"rgba(246,241,230,0.7)",marginBottom:14,lineHeight:1.5}}>I noticed you're stuck on Macbeth Act III · want me to walk through the dagger soliloquy or pull quotes for your essay?</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>
+            {["Explain dagger soliloquy","Find quotes for essay","Quiz me on Act III"].map(s=>(
+              <button key={s} onClick={()=>setActive("aichat")} style={{fontSize:11.5,padding:"6px 11px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:"rgba(246,241,230,0.85)",cursor:"pointer",fontFamily:T.font}}>{s}</button>
+            ))}
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:10,background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:14,padding:"10px 12px",marginTop:"auto"}}>
+            <input placeholder="Ask anything · paste a problem" style={{flex:1,background:"none",border:"none",outline:"none",color:T.cream,fontSize:13,fontFamily:T.font,minWidth:0}}/>
+            <button onClick={()=>setActive("aichat")} style={{display:"grid",placeItems:"center",width:30,height:30,borderRadius:8,background:T.lime,color:T.ink,border:"none",cursor:"pointer",flex:"none"}}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="22 2 15 22 11 13 2 9"/></svg>
+            </button>
+          </div>
+          <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(246,241,230,0.45)",marginTop:10,display:"flex",justifyContent:"space-between"}}>
+            <span>1 credit per message</span>
+            <span>{getCredits()} credits left</span>
+          </div>
+        </div>
       </div>
+
+      {/* ROW: This week's focus (bar chart) + compact Weekly Wrapped — hidden in Serious Mode */}
+      {!seriousMode && <div style={{display:"grid",gridTemplateColumns:"8fr 4fr",gap:16}}>
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+          <CardHead title="This week's focus" label={fmtH(weeklyFocusMin)+" this week · tracked live"} />
+          <div style={{display:"flex",alignItems:"flex-end",gap:14,height:150,marginTop:4}}>
+            {weekBars.map((b,i)=>(
+              <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:8,height:"100%",justifyContent:"flex-end",opacity:b.future?0.35:1}}>
+                <div style={{width:"100%",maxWidth:38,display:"flex",flexDirection:"column-reverse",borderRadius:6,overflow:"hidden"}}>
+                  {b.write>0&&<div style={{height:Math.max(4,b.write/weekBarMax*130),background:T.butter}} />}
+                  {b.flash>0&&<div style={{height:Math.max(4,b.flash/weekBarMax*130),background:T.lime}} />}
+                  {b.read>0&&<div style={{height:Math.max(4,b.read/weekBarMax*130),background:T.forest}} />}
+                  {b.total===0&&<div style={{height:4,background:T.card2,width:"100%"}} />}
+                </div>
+                <span style={{fontSize:10.5,fontFamily:T.mono,color:b.isToday?T.lime:T.muted,fontWeight:600}}>{b.lab}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:16,flexWrap:"wrap",gap:10}}>
+            <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
+              {[{c:T.forest,l:"Reading & notes"},{c:T.lime,l:"Flashcards"},{c:T.butter,l:"Writing"}].map((it,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:T.muted}}><span style={{width:9,height:9,borderRadius:2,background:it.c}}/>{it.l}</div>
+              ))}
+            </div>
+            {topSubjectThisWeek&&<div style={{fontSize:11.5,color:T.muted,fontFamily:T.mono}}>Top subject: <span style={{color:T.lime,fontWeight:700}}>{topSubjectThisWeek.slice(0,4).toUpperCase()}</span></div>}
+          </div>
+        </div>
+        <div style={{background:T.forest,color:T.cream,borderRadius:22,padding:20}}>
+          <CardHead title="Weekly Wrapped" label={"WEEK "+weekNo()} more="View full" light />
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {[
+              {ln:"Focus hours",vn:fmtH(weeklyFocusMin)||"0m"},
+              {ln:"Cards mastered",vn:cardsMasteredTotal},
+              {ln:"Words written",vn:wordsWrittenTotal.toLocaleString()},
+            ].map((ins,i)=>(
+              <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:10,padding:"9px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:11,color:"rgba(246,241,230,0.55)",fontFamily:T.mono,letterSpacing:"0.04em",textTransform:"uppercase"}}>{ins.ln}</span>
+                <span style={{fontFamily:T.hand,fontSize:20,fontWeight:600,color:T.lime}}>{ins.vn}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:12}}>
+            <span style={{fontSize:10.5,padding:"5px 10px",background:"rgba(246,241,230,0.08)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:T.cream,fontWeight:600}}>{realStreak}-day streak</span>
+            {topSubjectThisWeek&&<span style={{fontSize:10.5,padding:"5px 10px",background:"rgba(246,241,230,0.08)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:T.cream,fontWeight:600}}>{topSubjectThisWeek} focus</span>}
+          </div>
+        </div>
+      </div>}
+
+      {/* ROW: Quick tools + Study streak heatmap — hidden in Serious Mode */}
+      {!seriousMode && <div style={{display:"grid",gridTemplateColumns:"8fr 4fr",gap:16}}>
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+          <CardHead title="Quick tools" label="JUMP RIGHT IN" more="Browse all" />
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
+            {[
+              {icon:Icon.pen,title:"Essay Writer",desc:"Draft, outline, intro & conclusion from a prompt",go:"essays"},
+              {icon:Icon.layers,title:"Flashcards from file",desc:"Drop a PDF · spaced-rep deck in 10s",go:"flashcards"},
+              {icon:Icon.scan,title:"Plagiarism check",desc:"Scan against academic databases",go:"grammar"},
+              {icon:Icon.link,title:"Citation generator",desc:"MLA · APA · Chicago · from a URL",go:"essays"},
+              {icon:Icon.wand,title:"AI Humanizer",desc:"Rewrite in your voice · beat detectors",go:"humanizer",badge:"SCHOLAR"},
+              {icon:Icon.zap,title:"Equation solver",desc:"Step-by-step math with explanations",go:"solve",badge:null},
+              {icon:Icon.msgSquare,title:"YouTube summarizer",desc:"Paste a lecture URL · get key points",go:"notes",badge:"ELITE"},
+              {icon:Icon.brain,title:"Exam prep mode",desc:"Practice tests & MCQs from your notes",go:"aitutor",badge:"ELITE"},
+            ].map((tool,i)=>(
+              <div key={i} onClick={()=>setActive(tool.go)} style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:14,padding:14,cursor:"pointer",position:"relative"}}>
+                {tool.badge&&<span style={{position:"absolute",top:10,right:10,fontSize:8.5,fontWeight:700,letterSpacing:"0.06em",padding:"2px 7px",borderRadius:99,background:T.purple+"22",color:T.purple,border:`1px solid ${T.purple}44`}}>{tool.badge}</span>}
+                <div style={{width:30,height:30,borderRadius:8,background:T.card,display:"grid",placeItems:"center",color:T.lime,marginBottom:10}}>{tool.icon}</div>
+                <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>{tool.title}</div>
+                <div style={{fontSize:11,color:T.muted,lineHeight:1.4}}>{tool.desc}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+          <CardHead title="Study streak" label="LAST 91 DAYS" />
+          <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:14}}>
+            <span style={{fontFamily:T.hand,fontSize:44,fontWeight:600,color:T.text}}>{realStreak}</span>
+            <span style={{fontSize:13,color:T.muted}}>day streak</span>
+            <span style={{marginLeft:"auto",fontSize:11,color:T.faint,fontFamily:T.mono}}>LONGEST<br/><span style={{fontSize:16,color:T.text,fontWeight:700}}>{Math.max(realStreak,getStreak())}</span></span>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(13,1fr)",gap:3}}>
+            {heatmapCells.map((lvl,i)=>(
+              <div key={i} style={{aspectRatio:"1",borderRadius:3,background:cellColor(lvl)}} />
+            ))}
+          </div>
+        </div>
+      </div>}
+
+      {/* ROW: Upcoming + Pick up where you left off — hidden in Serious Mode */}
+      {!seriousMode && <div style={{display:"grid",gridTemplateColumns:"5fr 7fr",gap:16}}>
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+          <CardHead title="Upcoming" label="NEXT 14 DAYS" more="Calendar" />
+          {upcomingEvents.length===0
+            ?<div style={{fontSize:13,color:T.muted,padding:"18px 0",textAlign:"center"}}>Nothing on the horizon. Add deadlines to your calendar.</div>
+            :upcomingEvents.map((ev,i)=>(
+              <div key={ev.id} onClick={()=>setActive("calendar")} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 0",borderBottom:i<upcomingEvents.length-1?`1px solid ${T.border}`:"none",cursor:"pointer"}}>
+                <div style={{width:44,height:44,borderRadius:10,background:ev.urgent?T.lime:T.card2,color:ev.urgent?T.ink:T.text,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                  <span style={{fontSize:15,fontWeight:800,lineHeight:1}}>{ev.d}</span>
+                  <span style={{fontSize:8.5,fontWeight:700,letterSpacing:"0.04em"}}>{ev.mo}</span>
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:600,color:T.text}}>{ev.t}</div>
+                  <div style={{fontSize:11,color:T.muted,marginTop:1}}>{ev.sub}</div>
+                </div>
+                <span style={{fontSize:10.5,fontWeight:700,padding:"4px 9px",borderRadius:99,background:ev.urgent?T.red+"18":T.card2,color:ev.urgent?T.red:T.muted,flexShrink:0}}>{ev.cd}</span>
+              </div>
+            ))}
+        </div>
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+          <CardHead title="Pick up where you left off" label="FLASHCARDS · NOTES · ESSAYS" />
+          {pickUpItems.length===0
+            ?<div style={{fontSize:13,color:T.muted,padding:"18px 0",textAlign:"center"}}>Create a deck, note, or essay and it'll show up here.</div>
+            :<div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
+              {pickUpItems.slice(0,4).map((it,i)=>{
+                const bgColors=[T.mint,T.peach,T.sky,T.lilac];
+                return (
+                  <div key={i} style={{background:bgColors[i%4],borderRadius:14,padding:14,cursor:"pointer"}}>
+                    <div style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.06em",color:"rgba(8,12,40,0.55)",marginBottom:8}}>{it.subj}</div>
+                    <div style={{fontSize:13,fontWeight:700,color:"#0E1F18",marginBottom:10,lineHeight:1.3}}>{it.title}</div>
+                    <div style={{height:4,background:"rgba(8,12,40,0.12)",borderRadius:99,marginBottom:8,overflow:"hidden"}}><div style={{height:"100%",width:it.pct+"%",background:"#0E1F18",borderRadius:99}}/></div>
+                    <div style={{fontSize:10.5,color:"rgba(8,12,40,0.6)",display:"flex",justifyContent:"space-between"}}><span>{it.a}</span><span>{it.b}</span></div>
+                  </div>
+                );
+              })}
+            </div>}
+        </div>
+      </div>}
 
       {/* ROW 4: GLOBAL LEADERBOARD — hidden in Serious Mode */}
       {!seriousMode && <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
@@ -4504,14 +4724,13 @@ function InitWizard({onComplete}){
     setStep(s => s + 1);
   };
 
-  const bg = "#ECEDF2";
-  const forest = "#252D52";
-  const lime = "#0D8C5A";
-  const limeLt = "#5AB893";
-  const ink = "#1B1E30";
-  const muted = "rgba(27,30,48,0.50)";
-  const border = "rgba(46,52,80,0.09)";
-  const card = "#F6F7FA";
+  const bg = "#FAF6EC";
+  const forest = "#14342A";
+  const lime = "#9EC83D";
+  const ink = "#0E1F18";
+  const muted = "rgba(14,31,24,0.5)";
+  const border = "rgba(14,31,24,0.18)";
+  const card = "#ffffff";
 
   const ChipOpt = ({value, active, onClick, children}) => (
     <button type="button" onClick={onClick} style={{padding:"12px 20px",borderRadius:10,fontSize:13,fontWeight:active?700:500,cursor:"pointer",border:`2px solid ${active?lime:border}`,background:active?lime+"18":"transparent",color:active?ink:muted,fontFamily:`"Geist",system-ui,sans-serif`,transition:"all 0.15s",textAlign:"center",minWidth:120}}>
@@ -4523,23 +4742,23 @@ function InitWizard({onComplete}){
     <div style={{minHeight:"100vh",background:bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 16px",fontFamily:`"Geist",system-ui,sans-serif`}}>
       {/* Logo */}
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:40}}>
-        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#2E3560,#1E2448)",display:"grid",placeItems:"center",boxShadow:`0 0 12px 3px ${lime}28`}}>
-            <div style={{width:11,height:11,borderRadius:"50%",background:`radial-gradient(circle at 35% 35%, ${limeLt}, ${lime})`,boxShadow:`0 0 8px 2px ${lime}50`}} />
+        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#14342A,#0E1F18)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(158,200,61,0.35)"}}>
+            <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #CBDF92, #9EC83D)",boxShadow:"0 0 10px 3px rgba(158,200,61,0.6)"}} />
           </div>
         <span style={{fontSize:22,fontWeight:700,color:ink,letterSpacing:"-0.02em"}}>Studlin</span>
       </div>
 
       {/* Card */}
-      <div style={{width:"100%",maxWidth:520,background:card,borderRadius:20,padding:"36px 40px",border:`1.5px solid ${border}`,boxShadow:"0 24px 60px -24px rgba(11,14,42,0.18)"}}>
+      <div style={{width:"100%",maxWidth:520,background:card,borderRadius:20,padding:"36px 40px",border:`1.5px solid ${border}`,boxShadow:"0 24px 60px -24px rgba(14,31,24,0.18)"}}>
         {/* Pre-question header (shown on all steps) */}
-        <div style={{background:`${lime}12`,border:`1px solid ${lime}40`,borderRadius:10,padding:"10px 14px",marginBottom:28,fontSize:12.5,color:ink,lineHeight:1.5,fontWeight:500}}>
+        <div style={{background:"rgba(158,200,61,0.10)",border:`1px solid ${lime}44`,borderRadius:10,padding:"10px 14px",marginBottom:28,fontSize:12.5,color:ink,lineHeight:1.5,fontWeight:500}}>
           The following questions are used to customize and train your calendar scheduling algorithm.
         </div>
 
         {/* Progress dots */}
         <div style={{display:"flex",gap:6,marginBottom:28}}>
           {STEPS.map((_,i) => (
-            <div key={i} style={{height:4,flex:1,borderRadius:99,background:i<=step?lime:"rgba(46,52,80,0.12)",transition:"background 0.3s"}} />
+            <div key={i} style={{height:4,flex:1,borderRadius:99,background:i<=step?lime:"rgba(14,31,24,0.12)",transition:"background 0.3s"}} />
           ))}
         </div>
 
@@ -4556,7 +4775,7 @@ function InitWizard({onComplete}){
             {status && (
               <div style={{marginTop:4}}>
                 <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:muted,marginBottom:8}}>{affiliationLabel}</label>
-                <input value={affiliation} onChange={e=>setAffiliation(e.target.value)} placeholder={affiliationPlaceholder} style={{width:"100%",background:"#E7E9EF",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:13.5,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",boxSizing:"border-box"}} />
+                <input value={affiliation} onChange={e=>setAffiliation(e.target.value)} placeholder={affiliationPlaceholder} style={{width:"100%",background:"#F0EBE0",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:13.5,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",boxSizing:"border-box"}} />
                 <div style={{fontSize:11,color:muted,marginTop:6}}>Visible to classmates on leaderboards.</div>
               </div>
             )}
@@ -4568,7 +4787,7 @@ function InitWizard({onComplete}){
             <div style={{fontSize:20,fontWeight:700,color:ink,marginBottom:6,letterSpacing:"-0.01em"}}>When do you prefer to study?</div>
             <div style={{fontSize:13,color:muted,marginBottom:24}}>Tasks are scheduled inside this window so your time is protected.</div>
             <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:muted,marginBottom:8}}>Peak study start time</label>
-            <input type="time" value={workStart} onChange={e=>setWorkStart(e.target.value)} style={{background:"#E7E9EF",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",maxWidth:200}} />
+            <input type="time" value={workStart} onChange={e=>setWorkStart(e.target.value)} style={{background:"#F0EBE0",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",maxWidth:200}} />
           </div>
         )}
 
@@ -4577,7 +4796,7 @@ function InitWizard({onComplete}){
             <div style={{fontSize:20,fontWeight:700,color:ink,marginBottom:6,letterSpacing:"-0.01em"}}>What time do you go to bed?</div>
             <div style={{fontSize:13,color:muted,marginBottom:24}}>We won't schedule tasks within 2 hours of your bedtime.</div>
             <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:muted,marginBottom:8}}>Bedtime</label>
-            <input type="time" value={bedtime} onChange={e=>setBedtime(e.target.value)} style={{background:"#E7E9EF",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",maxWidth:200}} />
+            <input type="time" value={bedtime} onChange={e=>setBedtime(e.target.value)} style={{background:"#F0EBE0",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",maxWidth:200}} />
           </div>
         )}
 
@@ -4626,17 +4845,17 @@ function InitWizard({onComplete}){
 // ─── AUTH SCREEN — minimal gate, links to designed pages ────────────────────
 function AuthScreen(){
   return(
-    <div style={{minHeight:"100vh",background:"#080B18",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20}}>
+    <div style={{minHeight:"100vh",background:"#0D120F",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20}}>
       <div style={{display:"flex",alignItems:"center",gap:10}}>
-        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#1C2250,#0E1238)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(79,127,232,0.38)"}}>
-          <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #A695F5, #4F7FE8)",boxShadow:"0 0 10px 3px rgba(79,127,232,0.65)"}} />
+        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#14342A,#0E1F18)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(174,206,94,0.38)"}}>
+          <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #CBDF92, #AECE5E)",boxShadow:"0 0 10px 3px rgba(174,206,94,0.65)"}} />
         </div>
-        <span style={{fontSize:22,fontWeight:700,color:"#E8EEFF"}}>Studlin</span>
+        <span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span>
       </div>
-      <p style={{fontSize:15,color:"rgba(232,238,255,0.6)",margin:0}}>Sign in to access your workspace.</p>
+      <p style={{fontSize:15,color:"rgba(232,239,231,0.6)",margin:0}}>Sign in to access your workspace.</p>
       <div style={{display:"flex",gap:12,marginTop:8}}>
-        <a href="Studlin Sign In.html" style={{padding:"12px 28px",borderRadius:10,background:"#4F7FE8",color:"#080C28",fontSize:14,fontWeight:600,textDecoration:"none"}}>Sign in</a>
-        <a href="Studlin Onboarding.html" style={{padding:"12px 28px",borderRadius:10,border:"1px solid rgba(79,127,232,0.3)",background:"transparent",color:"#4F7FE8",fontSize:14,fontWeight:600,textDecoration:"none"}}>Create account</a>
+        <a href="Studlin Sign In.html" style={{padding:"12px 28px",borderRadius:10,background:"#AECE5E",color:"#0E1F18",fontSize:14,fontWeight:600,textDecoration:"none"}}>Sign in</a>
+        <a href="Studlin Onboarding.html" style={{padding:"12px 28px",borderRadius:10,border:"1px solid rgba(174,206,94,0.3)",background:"transparent",color:"#AECE5E",fontSize:14,fontWeight:600,textDecoration:"none"}}>Create account</a>
       </div>
     </div>
   );
@@ -4647,7 +4866,7 @@ function AuthScreen(){
 function AuthGate(){
   const [user,setUser]=useState(undefined);
   useEffect(()=>{return firebase.auth().onAuthStateChanged(u=>{setUser(u||null);if(u)fetchUserProfile();});},[]);
-  if(user===undefined)return(<div style={{minHeight:"100vh",background:"#080B18",display:"grid",placeItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#1C2250,#0E1238)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(79,127,232,0.38)"}}><div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #A695F5, #4F7FE8)",boxShadow:"0 0 10px 3px rgba(79,127,232,0.65)"}}/></div><span style={{fontSize:22,fontWeight:700,color:"#E8EEFF"}}>Studlin</span></div></div>);
+  if(user===undefined)return(<div style={{minHeight:"100vh",background:"#0D120F",display:"grid",placeItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#14342A,#0E1F18)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(174,206,94,0.38)"}}><div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #CBDF92, #AECE5E)",boxShadow:"0 0 10px 3px rgba(174,206,94,0.65)"}}/></div><span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span></div></div>);
   if(!user)return <AuthScreen />;
   return <App />;
 }
@@ -4677,10 +4896,10 @@ function App() {
   const [theme,setThemeState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-theme"))||"light");
   const [accent,setAccentState]=useState(()=>{
     if(typeof localStorage!=="undefined"){
-      if(!localStorage.getItem("studlin-accent-reset5")){localStorage.setItem("studlin-accent","Forest");localStorage.setItem("studlin-accent-reset5","1");}
-      return localStorage.getItem("studlin-accent")||"Forest";
+      if(!localStorage.getItem("studlin-accent-reset5")){localStorage.setItem("studlin-accent","Lime");localStorage.setItem("studlin-accent-reset5","1");}
+      return localStorage.getItem("studlin-accent")||"Lime";
     }
-    return "Forest";
+    return "Lime";
   });
   const [density,setDensityState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-density"))||"Comfortable");
   applyTheme(theme, accent, density); // mutate T on every render so all child components re-read
@@ -4841,10 +5060,10 @@ function App() {
   return (
     <div style={{display:"flex",height:"100vh",overflow:"hidden",background:isLight?T.bg:`radial-gradient(1200px 600px at 78% -8%, ${T.glow}, transparent 60%), ${T.bg}`,fontFamily:T.font,color:T.text}}>
       {/* SIDEBAR */}
-      <div style={{width:230,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #131840 0%, #0E133000 60%)",backgroundColor:isLight?T.surface:T.surface,display:"flex",flexDirection:"column",padding:"20px 12px",borderRight:`1px solid ${isLight?"transparent":T.border}`,overflowY:"auto"}}>
+      <div style={{width:230,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #18241D 0%, #0D120F00 60%)",backgroundColor:isLight?T.surface:T.surface,display:"flex",flexDirection:"column",padding:"20px 12px",borderRight:`1px solid ${isLight?"transparent":T.border}`,overflowY:"auto"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 6px",marginBottom:20}}>
-          <div style={{width:28,height:28,background:isLight?"linear-gradient(135deg,#2E3560,#1E2448)":"linear-gradient(135deg,#1A2046,#0E1236)",borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 0 10px 2px ${T.lime}30`,flexShrink:0,position:"relative"}}>
-            <div style={{width:9,height:9,borderRadius:"50%",background:`radial-gradient(circle at 35% 35%, ${T.limeLt}, ${T.lime})`,boxShadow:`0 0 6px 2px ${T.lime}50`}} />
+          <div style={{width:28,height:28,background:T.lime,borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+            <span style={{fontSize:15,fontWeight:800,color:T.ink,fontFamily:T.font}}>S</span>
           </div>
           <span style={{fontSize:16,fontWeight:700,color:sidebarText,letterSpacing:"-0.02em",fontFamily:T.font}}>Studlin</span>
         </div>
@@ -5186,11 +5405,11 @@ function App() {
         body[data-theme="light"] input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):focus,
         body[data-theme="light"] textarea:focus,
         body[data-theme="light"] select:focus {
-          border-color: rgba(8,12,40,0.45) !important;
-          box-shadow: 0 0 0 3px rgba(79,127,232,0.18);
+          border-color: rgba(14,31,24,0.45) !important;
+          box-shadow: 0 0 0 3px rgba(158,200,61,0.18);
         }
         body[data-theme="light"] [data-card]:hover {
-          box-shadow: 0 8px 24px -10px rgba(8,12,40,0.14);
+          box-shadow: 0 8px 24px -10px rgba(14,31,24,0.14);
         }
       `}</style>
       {notifPermModal && <NotifPermModal onAllow={handleNotifAllow} onDeny={handleNotifDeny} />}
