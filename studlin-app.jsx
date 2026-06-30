@@ -4235,7 +4235,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     }
     const tokenClient=google.accounts.oauth2.initTokenClient({
       client_id:"16831354472-e2vauavtunm3ot771cg7pgline10i9rk.apps.googleusercontent.com",
-      scope:"https://www.googleapis.com/auth/calendar.readonly",
+      scope:"https://www.googleapis.com/auth/calendar.events.readonly",
       callback:async(resp)=>{
         if(resp.error){showToast("Google Calendar connection failed.","error");return;}
         setGoogleSyncing(true);
@@ -6335,7 +6335,7 @@ function App() {
                     if(typeof google==="undefined"||!google.accounts||!google.accounts.oauth2){alert("Google sign-in not ready. Try refreshing.");return;}
                     const tc=google.accounts.oauth2.initTokenClient({
                       client_id:"16831354472-e2vauavtunm3ot771cg7pgline10i9rk.apps.googleusercontent.com",
-                      scope:"https://www.googleapis.com/auth/calendar.readonly",
+                      scope:"https://www.googleapis.com/auth/calendar.events.readonly",
                       callback:async(resp)=>{
                         if(resp.error)return;
                         setCalOnboardGoogleSyncing(true);
