@@ -2395,123 +2395,77 @@ function AiTutor(){
   const [subject,setSubject]=useState(subjects[0]||"English IV");
   const [adding,setAdding]=useState(false);
   const [newSub,setNewSub]=useState("");
-  const [q,setQ]=useState("");
-  const [playing,setPlaying]=useState(null);
-  const [subjectVideos,setSubjectVideos]=useState([]);
-  const [searchResults,setSearchResults]=useState(null);
-  const [loading,setLoading]=useState(false);
-  const [searchLoading,setSearchLoading]=useState(false);
   const subColor={"English IV":T.purple,"Biology":T.teal,"Calculus":T.blue,"Spanish":T.amber,"Chemistry":T.red,"History":T.muted};
   const colorOf=(sb)=>subColor[sb]||T.lime;
 
-  const fmtDur=(secs)=>{if(!secs)return"";const m=Math.floor(secs/60);const s=secs%60;return m+":"+(s<10?"0":"")+s;};
-  const fmtViews=(n)=>{if(!n)return"";if(n>=1e6)return(n/1e6).toFixed(1)+"M views";if(n>=1e3)return(n/1e3).toFixed(1)+"K views";return n+" views";};
+  const [mode,setMode]=useState("lesson");
+  const [topic,setTopic]=useState("");
+  const [lesson,setLesson]=useState(null);
+  const [lessonLoading,setLessonLoading]=useState(false);
+  const [showAnswer,setShowAnswer]=useState(false);
 
-  const fetchVideos=async(query,shuffle)=>{
-    try{
-      const res=await fetch("/api/search-videos?q="+encodeURIComponent(query+" tutorial explained")+(shuffle?"&shuffle=1":""));
-      const data=await res.json();
-      return data.videos||[];
-    }catch(e){return[];}
-  };
-
-  const loadSubjectVideos=async(sub,shuffle)=>{
-    setLoading(true);setPlaying(null);setSubjectVideos([]);
-    const vids=await fetchVideos(sub,shuffle);
-    setSubjectVideos(vids);setLoading(false);
-  };
-
-  useEffect(()=>{if(subject)loadSubjectVideos(subject);},[subject]);
-
-  const search=async()=>{
-    if(!q.trim())return;
-    setSearchLoading(true);setPlaying(null);
-    const vids=await fetchVideos(q.trim());
-    setSearchResults(vids);setSearchLoading(false);
-  };
+  const [socMsgs,setSocMsgs]=useState([]);
+  const [socActive,setSocActive]=useState(false);
+  const [socInput,setSocInput]=useState("");
+  const [socLoading,setSocLoading]=useState(false);
 
   const addSubject=()=>{const v=newSub.trim();if(!v)return;if(!subjects.includes(v)){const next=subjects.concat([v]);setSubjects(next);lsSet("subjects",next);}setSubject(v);setNewSub("");setAdding(false);};
   const removeSubject=(sb)=>{const next=subjects.filter(x=>x!==sb);setSubjects(next);lsSet("subjects",next);if(subject===sb)setSubject(next[0]||"");};
 
-  const VideoCard=({v})=>{
-    const thumb=v.thumbnail||("https://img.youtube.com/vi/"+v.id+"/mqdefault.jpg");
-    return (
-      <div onClick={()=>{setPlaying(v);setPlayInline(false);}} style={{borderRadius:12,overflow:"hidden",background:T.card2,border:"1px solid "+T.border,cursor:"pointer",transition:"all 0.15s"}}>
-        <div style={{position:"relative",paddingBottom:"56.25%",height:0,background:"#000"}}>
-          <img src={thumb} alt={v.title} loading="lazy"
-            style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",objectFit:"cover"}} />
-          <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.25)"}}>
-            <div style={{width:44,height:44,borderRadius:"50%",background:"rgba(255,255,255,0.95)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 12px rgba(0,0,0,0.3)"}}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="#0E1F18"><polygon points="6 3 20 12 6 21"/></svg>
-            </div>
-          </div>
-          {v.duration>0&&<span style={{position:"absolute",bottom:6,right:6,fontSize:10,fontFamily:T.mono,fontWeight:600,background:"rgba(0,0,0,0.85)",color:"#fff",padding:"2px 6px",borderRadius:4}}>{fmtDur(v.duration)}</span>}
-        </div>
-        <div style={{padding:"10px 12px"}}>
-          <div style={{fontSize:12.5,fontWeight:600,color:T.white,lineHeight:1.4,marginBottom:4,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{v.title}</div>
-          <div style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:T.muted}}>
-            <span style={{whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{v.channel}</span>
-            {v.views>0&&<><span>·</span><span style={{whiteSpace:"nowrap"}}>{fmtViews(v.views)}</span></>}
-          </div>
-        </div>
-      </div>
-    );
+  const resetAll=()=>{setLesson(null);setShowAnswer(false);setSocMsgs([]);setSocActive(false);};
+
+  const genLesson=async()=>{
+    if(!topic.trim())return;
+    setLessonLoading(true);setLesson(null);setShowAnswer(false);
+    const prompt="Hey Studlin, I want a mini-lesson on \""+topic.trim()+"\" for "+subject+". Respond with ONLY valid JSON in this exact shape, no markdown fences: {\"concept\":\"a clear 3-5 sentence plain-English explanation of the core idea\",\"example\":\"one fully worked example showing the steps\",\"mistakes\":[\"common mistake 1\",\"common mistake 2\",\"common mistake 3\"],\"question\":\"one short practice question testing this exact concept\",\"answer\":\"the answer to that question with a brief explanation why\"}";
+    try{
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+      const data=await res.json();
+      if(data.error){setLesson({concept:"Couldn't generate a lesson: "+data.error,example:"",mistakes:[],question:"",answer:""});setLessonLoading(false);return;}
+      var raw=(data.reply||"").replace(/```json?|```/g,"").trim();
+      var jsonStart=raw.indexOf("{");var jsonEnd=raw.lastIndexOf("}");
+      if(jsonStart>=0&&jsonEnd>jsonStart){raw=raw.slice(jsonStart,jsonEnd+1);}
+      var parsed=JSON.parse(raw);
+      setLesson(parsed);
+    }catch(e){setLesson({concept:"Something went wrong generating this lesson. Try again.",example:"",mistakes:[],question:"",answer:""});}
+    setLessonLoading(false);
   };
 
-  const [playInline,setPlayInline]=useState(false);
-  const VideoPlayer=()=>{
-    if(!playing)return null;
-    return (
-      <Card style={{padding:0,overflow:"hidden",marginBottom:14,border:"1px solid "+T.lime+"44"}}>
-        <div style={{position:"relative",paddingBottom:"56.25%",height:0,background:"#111"}}>
-          {playInline?(
-            <iframe key={playing.id} src={"https://www.youtube.com/embed/"+playing.id+"?autoplay=1&rel=0&modestbranding=1&playsinline=1"}
-              title={playing.title} style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:"none"}}
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen />
-          ):(
-            <div onClick={()=>setPlayInline(true)} style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",cursor:"pointer"}}>
-              <img src={"https://img.youtube.com/vi/"+playing.id+"/hqdefault.jpg"} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} />
-              <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.3)"}}>
-                <div style={{width:68,height:48,borderRadius:12,background:"rgba(255,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="#fff"><polygon points="8 5 20 12 8 19"/></svg>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-        <div style={{padding:"14px 18px",display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
-          <div style={{flex:1,minWidth:0}}>
-            <div style={{fontSize:15,fontWeight:700,color:T.white,lineHeight:1.4,marginBottom:4}}>{playing.title}</div>
-            <div style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:T.muted}}>
-              <span>{playing.channel}</span>
-              {playing.views>0&&<><span>·</span><span>{fmtViews(playing.views)}</span></>}
-              {playing.duration>0&&<><span>·</span><span>{fmtDur(playing.duration)}</span></>}
-            </div>
-          </div>
-          <div style={{display:"flex",gap:6}}>
-            {!playInline&&<button onClick={()=>setPlayInline(true)} style={{background:T.lime,color:T.ink,border:"none",borderRadius:8,padding:"8px 14px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Play here</button>}
-            <a href={"https://www.youtube.com/watch?v="+playing.id} target="_blank" rel="noopener noreferrer" style={{background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"8px 14px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"none",color:T.text}}>Open on YouTube</a>
-            <button onClick={()=>{setPlaying(null);setPlayInline(false);}} style={{background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"8px 14px",color:T.text,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>✕</button>
-          </div>
-        </div>
-      </Card>
-    );
+  const startSocratic=async()=>{
+    if(!topic.trim())return;
+    setSocActive(true);setSocLoading(true);setSocMsgs([]);
+    const kickoff="I want to learn about \""+topic.trim()+"\" in "+subject+" using the Socratic method. Don't explain it to me directly. Instead, ask me ONE short guiding question to start helping me figure it out myself. Wait for my answer before continuing.";
+    try{
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:kickoff}],model:"standard"})});
+      const data=await res.json();
+      setSocMsgs([{r:"ai",t:data.reply||"Let's start: what do you already know about "+topic.trim()+"?"}]);
+    }catch(e){setSocMsgs([{r:"ai",t:"Let's start: what do you already know about "+topic.trim()+"?"}]);}
+    setSocLoading(false);
   };
 
-  const VideoGrid=({videos,loading:isLoading,empty})=>{
-    if(isLoading)return <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>{[0,1,2,3,4,5].map(i=><div key={i} style={{borderRadius:12,overflow:"hidden",background:T.card2,border:"1px solid "+T.border}}><div style={{paddingBottom:"56.25%",background:T.card,animation:"studlinPulse 1.5s infinite"}}/><div style={{padding:"10px 12px"}}><div style={{height:12,background:T.card,borderRadius:4,marginBottom:6,width:"80%"}}/><div style={{height:10,background:T.card,borderRadius:4,width:"50%"}}/></div></div>)}</div>;
-    if(!videos||videos.length===0)return <div style={{fontSize:13,color:T.muted,padding:"30px 0",textAlign:"center"}}>{empty||"No videos found."}</div>;
-    return <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>{videos.map((v,i)=><VideoCard key={v.id||i} v={v} />)}</div>;
+  const sendSocraticReply=async()=>{
+    if(!socInput.trim()||socLoading)return;
+    const userMsg={r:"user",t:socInput.trim()};
+    const next=socMsgs.concat([userMsg]);
+    setSocMsgs(next);setSocInput("");setSocLoading(true);
+    const apiMsgs=next.map(m=>({r:m.r,t:m.t}));
+    apiMsgs.push({r:"user",t:"(Remember: keep using the Socratic method on the topic \""+topic.trim()+"\" -- ask guiding questions, give hints if I'm stuck, don't just give the answer outright unless I've clearly got it.)"});
+    try{
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:apiMsgs,model:"standard"})});
+      const data=await res.json();
+      setSocMsgs(m=>m.concat([{r:"ai",t:data.reply||"Hm, try explaining your thinking a bit more?"}]));
+    }catch(e){setSocMsgs(m=>m.concat([{r:"ai",t:"Something went wrong. Try again?"}]));}
+    setSocLoading(false);
   };
 
   return (
     <div>
-      <PH title="Tutor" sub="Search any topic. Watch videos. Learn in-app." />
+      <PH title="Tutor" sub="Pick a topic. Get a mini-lesson, or learn it the Socratic way." />
       <div style={{display:"grid",gridTemplateColumns:"190px 1fr",gap:16}}>
         <div>
           <Label>Subjects</Label>
           {subjects.map(sb=>(
-            <div key={sb} onClick={()=>{setSubject(sb);setSearchResults(null);setQ("");}} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 11px",borderRadius:7,marginBottom:3,fontSize:12,cursor:"pointer",background:subject===sb?T.lime+"10":"transparent",color:subject===sb?T.lime:T.muted,fontWeight:subject===sb?600:400,border:"1px solid "+(subject===sb?T.lime+"33":"transparent"),transition:"all 0.15s",position:"relative"}}>
+            <div key={sb} onClick={()=>{setSubject(sb);resetAll();}} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 11px",borderRadius:7,marginBottom:3,fontSize:12,cursor:"pointer",background:subject===sb?T.lime+"10":"transparent",color:subject===sb?T.lime:T.muted,fontWeight:subject===sb?600:400,border:"1px solid "+(subject===sb?T.lime+"33":"transparent"),transition:"all 0.15s",position:"relative"}}>
               <div style={{width:5,height:5,borderRadius:"50%",background:subject===sb?T.lime:T.faint,flexShrink:0}} />
               <span style={{flex:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{sb}</span>
               {!defaults.includes(sb)&&<span onClick={ev=>{ev.stopPropagation();removeSubject(sb);}} style={{color:T.faint,fontSize:12}}>×</span>}
@@ -2525,57 +2479,115 @@ function AiTutor(){
             :<div onClick={()=>setAdding(true)} style={{display:"flex",alignItems:"center",gap:8,padding:"9px 11px",borderRadius:7,fontSize:12,cursor:"pointer",color:T.muted,border:"1px dashed "+T.border,marginTop:6}}>{Icon.plus} Add subject</div>
           }
         </div>
+
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
           <Card style={{padding:"14px 16px"}}>
-            <div style={{display:"flex",gap:10,alignItems:"center"}}>
+            <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:12}}>
               <span style={{color:T.muted,display:"flex"}}>{Icon.search||Icon.brain}</span>
-              <input value={q} onChange={ev=>setQ(ev.target.value)} onKeyDown={ev=>{if(ev.key==="Enter")search();}} placeholder="Search any topic · e.g. how photosynthesis works, quadratic formula, WWI causes" style={{flex:1,background:"transparent",border:"none",outline:"none",color:T.text,fontSize:13.5,fontFamily:T.font}} />
-              {searchLoading
-                ?<span style={{fontSize:12,color:T.muted}}>Searching...</span>
-                :<Btn onClick={search} style={{opacity:q.trim()?1:0.45}}>Search</Btn>}
+              <input value={topic} onChange={ev=>setTopic(ev.target.value)} onKeyDown={ev=>{if(ev.key==="Enter")(mode==="lesson"?genLesson():startSocratic());}} placeholder={"What do you want to learn in "+subject+"? e.g. how photosynthesis works"} style={{flex:1,background:"transparent",border:"none",outline:"none",color:T.text,fontSize:13.5,fontFamily:T.font}} />
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{display:"flex",gap:6,background:T.card2,borderRadius:8,padding:3}}>
+                <button onClick={()=>{setMode("lesson");resetAll();}} style={{padding:"6px 14px",borderRadius:6,border:"none",background:mode==="lesson"?T.lime:"transparent",color:mode==="lesson"?T.ink:T.muted,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,transition:"all 0.15s"}}>Mini-lesson</button>
+                <button onClick={()=>{setMode("socratic");resetAll();}} style={{padding:"6px 14px",borderRadius:6,border:"none",background:mode==="socratic"?T.lime:"transparent",color:mode==="socratic"?T.ink:T.muted,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,transition:"all 0.15s"}}>Socratic mode</button>
+              </div>
+              {mode==="lesson"
+                ?<Btn onClick={genLesson} style={{opacity:topic.trim()?1:0.45}} disabled={lessonLoading}>{lessonLoading?"Generating...":"Generate lesson"}</Btn>
+                :<Btn onClick={startSocratic} style={{opacity:topic.trim()?1:0.45}} disabled={socLoading&&!socActive}>{socActive?"Restart":"Start"}</Btn>}
             </div>
           </Card>
 
-          {searchResults&&(
-            <Card style={{padding:"14px 18px"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-                <Label>Results for "{q}"</Label>
-                <div style={{display:"flex",gap:6}}>
-                  <BtnSm variant="subtle" onClick={search}>↻ Refresh</BtnSm>
-                  <BtnSm variant="subtle" onClick={()=>{setSearchResults(null);setQ("");setPlaying(null);}}>✕ Clear</BtnSm>
+          {mode==="lesson"&&!lesson&&!lessonLoading&&(
+            <Card style={{padding:24}}>
+              <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:16}}>
+                <div style={{width:44,height:44,borderRadius:10,background:colorOf(subject)+"18",border:"1px solid "+colorOf(subject)+"33",display:"flex",alignItems:"center",justifyContent:"center",color:colorOf(subject)}}>{Icon.brain}</div>
+                <div>
+                  <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Studlin</div>
+                  <div style={{fontSize:12,color:T.muted}}>{subject} · Mini-lesson</div>
                 </div>
               </div>
-              <VideoGrid videos={searchResults} loading={searchLoading} empty={"No results for \""+q+"\". Try different keywords."} />
+              <div style={{fontSize:14,color:T.text,lineHeight:1.75,padding:"14px 16px",background:T.card2,borderRadius:8,border:"1px solid "+T.border}}>
+                Type any topic in <strong style={{color:T.lime,fontWeight:600}}>{subject}</strong> above and I'll build you a quick lesson: the concept explained simply, a worked example, common mistakes to avoid, and a practice question to check you've got it.
+              </div>
             </Card>
           )}
 
-          <VideoPlayer />
+          {mode==="lesson"&&lessonLoading&&(
+            <Card style={{padding:24,textAlign:"center"}}>
+              <div style={{fontSize:13,color:T.muted}}>Building your lesson on "{topic}"...</div>
+            </Card>
+          )}
 
-          {!searchResults&&(
-            <>
-              {!playing&&(
-                <Card style={{padding:24}}>
-                  <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:16}}>
-                    <div style={{width:44,height:44,borderRadius:10,background:colorOf(subject)+"18",border:"1px solid "+colorOf(subject)+"33",display:"flex",alignItems:"center",justifyContent:"center",color:colorOf(subject)}}>{Icon.brain}</div>
-                    <div>
-                      <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Studlin</div>
-                      <div style={{fontSize:12,color:T.muted}}>{subject} · Socratic method</div>
-                    </div>
-                  </div>
-                  <div style={{fontSize:14,color:T.text,lineHeight:1.75,padding:"14px 16px",background:T.card2,borderRadius:8,border:"1px solid "+T.border}}>
-                    Ask me anything about <strong style={{color:T.lime,fontWeight:600}}>{subject}</strong> · I will walk you through it step by step, quiz you, or build a study plan. Watch the videos below or search any topic above.
-                  </div>
+          {mode==="lesson"&&lesson&&(
+            <div style={{display:"flex",flexDirection:"column",gap:12}}>
+              <Card style={{borderLeft:"3px solid "+T.lime}}>
+                <Label>The concept</Label>
+                <div style={{fontSize:14.5,color:T.text,lineHeight:1.75}}>{lesson.concept}</div>
+              </Card>
+              {lesson.example&&(
+                <Card style={{borderLeft:"3px solid "+T.blue}}>
+                  <Label>Worked example</Label>
+                  <div style={{fontSize:14,color:T.text,lineHeight:1.75,whiteSpace:"pre-wrap"}}>{lesson.example}</div>
                 </Card>
               )}
+              {lesson.mistakes&&lesson.mistakes.length>0&&(
+                <Card style={{borderLeft:"3px solid "+T.amber}}>
+                  <Label>Common mistakes</Label>
+                  <ul style={{margin:0,paddingLeft:18,fontSize:13.5,color:T.text,lineHeight:1.8}}>
+                    {lesson.mistakes.map((m,i)=><li key={i}>{m}</li>)}
+                  </ul>
+                </Card>
+              )}
+              {lesson.question&&(
+                <Card style={{borderLeft:"3px solid "+T.purple}}>
+                  <Label>Quick check</Label>
+                  <div style={{fontSize:14.5,color:T.text,lineHeight:1.7,marginBottom:10}}>{lesson.question}</div>
+                  {showAnswer
+                    ?<div style={{fontSize:13.5,color:T.lime,lineHeight:1.7,padding:"10px 12px",background:T.lime+"0e",borderRadius:8,border:"1px solid "+T.lime+"33"}}>{lesson.answer}</div>
+                    :<BtnSm variant="subtle" onClick={()=>setShowAnswer(true)}>Reveal answer</BtnSm>}
+                </Card>
+              )}
+              <div style={{display:"flex",justifyContent:"center"}}>
+                <BtnSm variant="ghost" onClick={()=>{setLesson(null);setShowAnswer(false);}}>Ask about something else</BtnSm>
+              </div>
+            </div>
+          )}
 
-              <Card style={{padding:"14px 18px"}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-                  <Label>{subject} videos</Label>
-                  <BtnSm variant="subtle" onClick={()=>loadSubjectVideos(subject,true)}>↻ Refresh</BtnSm>
+          {mode==="socratic"&&!socActive&&(
+            <Card style={{padding:24}}>
+              <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:16}}>
+                <div style={{width:44,height:44,borderRadius:10,background:colorOf(subject)+"18",border:"1px solid "+colorOf(subject)+"33",display:"flex",alignItems:"center",justifyContent:"center",color:colorOf(subject)}}>{Icon.brain}</div>
+                <div>
+                  <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Studlin</div>
+                  <div style={{fontSize:12,color:T.muted}}>{subject} · Socratic method</div>
                 </div>
-                <VideoGrid videos={subjectVideos} loading={loading} empty={"Couldn't load videos right now. Hit refresh to try again."} />
-              </Card>
-            </>
+              </div>
+              <div style={{fontSize:14,color:T.text,lineHeight:1.75,padding:"14px 16px",background:T.card2,borderRadius:8,border:"1px solid "+T.border}}>
+                Type a topic in <strong style={{color:T.lime,fontWeight:600}}>{subject}</strong> above and hit Start. I won't explain it -- I'll ask you guiding questions until you figure it out yourself. That's how it actually sticks.
+              </div>
+            </Card>
+          )}
+
+          {mode==="socratic"&&socActive&&(
+            <Card style={{padding:0,overflow:"hidden"}}>
+              <div style={{padding:"14px 18px",borderBottom:"1px solid "+T.border,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{fontSize:13,fontWeight:700,color:T.white}}>{topic}</div>
+                <BtnSm variant="ghost" onClick={resetAll}>End session</BtnSm>
+              </div>
+              <div style={{padding:"16px 18px",display:"flex",flexDirection:"column",gap:14,maxHeight:420,overflowY:"auto"}}>
+                {socMsgs.map((m,i)=>(
+                  <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+                    <div style={{width:26,height:26,borderRadius:7,flexShrink:0,background:m.r==="ai"?T.lime:T.card2,border:m.r==="ai"?"none":"1px solid "+T.border,display:"grid",placeItems:"center",fontSize:11,fontWeight:700,color:m.r==="ai"?T.ink:T.muted}}>{m.r==="ai"?"S":"Y"}</div>
+                    <div style={{fontSize:13.5,color:T.text,lineHeight:1.7,whiteSpace:"pre-wrap",paddingTop:3}}>{m.t}</div>
+                  </div>
+                ))}
+                {socLoading&&<div style={{fontSize:12,color:T.muted,paddingLeft:36}}>Thinking...</div>}
+              </div>
+              <div style={{padding:"12px 14px",borderTop:"1px solid "+T.border,display:"flex",gap:8}}>
+                <input value={socInput} onChange={ev=>setSocInput(ev.target.value)} onKeyDown={ev=>{if(ev.key==="Enter")sendSocraticReply();}} placeholder="Type your answer or thinking..." style={{flex:1,background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none"}} />
+                <Btn onClick={sendSocraticReply} style={{opacity:socInput.trim()?1:0.45}} disabled={socLoading}>Send</Btn>
+              </div>
+            </Card>
           )}
         </div>
       </div>
