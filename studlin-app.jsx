@@ -4597,8 +4597,8 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
         </div>
       </div>}
 
-      {/* ROW: Quick tools + Study streak heatmap — hidden in Serious Mode */}
-      {!seriousMode && <div style={{display:"grid",gridTemplateColumns:"8fr 4fr",gap:16}}>
+      {/* ROW: Quick tools — always visible, pure utility */}
+      <div style={{display:"grid",gridTemplateColumns:seriousMode?"1fr":"8fr 4fr",gap:16}}>
         <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
           <CardHead title="Quick tools" label="JUMP RIGHT IN" more="Browse all" />
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
@@ -4621,7 +4621,7 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
             ))}
           </div>
         </div>
-        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+        {!seriousMode && <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
           <CardHead title="Study streak" label="LAST 91 DAYS" />
           <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:14}}>
             <span style={{fontFamily:T.hand,fontSize:44,fontWeight:600,color:T.text}}>{realStreak}</span>
@@ -4633,11 +4633,11 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
               <div key={i} style={{aspectRatio:"1",borderRadius:3,background:cellColor(lvl)}} />
             ))}
           </div>
-        </div>
-      </div>}
+        </div>}
+      </div>
 
-      {/* ROW: Upcoming + Pick up where you left off — hidden in Serious Mode */}
-      {!seriousMode && <div style={{display:"grid",gridTemplateColumns:"5fr 7fr",gap:16}}>
+      {/* ROW: Upcoming + Pick up where you left off — always visible, pure utility */}
+      <div style={{display:"grid",gridTemplateColumns:"5fr 7fr",gap:16}}>
         <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
           <CardHead title="Upcoming" label="NEXT 14 DAYS" more="Calendar" />
           {upcomingEvents.length===0
@@ -4674,7 +4674,7 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
               })}
             </div>}
         </div>
-      </div>}
+      </div>
 
       {/* ROW 4: GLOBAL LEADERBOARD — hidden in Serious Mode */}
       {!seriousMode && <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
