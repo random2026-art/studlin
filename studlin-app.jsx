@@ -1514,17 +1514,22 @@ function Flashcards() {
 // ─── NOTES ────────────────────────────────────────────────────────────────────
 function Notes(){
   const MicIcon=<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0,display:"block"}}><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg>;
-  const tagColor={Biology:T.teal,English:T.purple,Calculus:T.blue,Spanish:T.amber,Chemistry:T.red,History:T.muted};
-  const colorOf=(tg)=>tagColor[tg]||T.lime;
+
+  // Dynamic class sync from user subjects
+  const userSubjects=getSubjects();
+  const tagOptions=[...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
+  const colorOf=(tg)=>{const s=userSubjects.find(x=>x.label===tg);return s?s.color:T.lime;};
+
   const [notes,setNotes]=useState(()=>{const n=lsGet("notes",null);return(n&&Array.isArray(n))?n.filter(x=>x&&x.title):[];});
   const [sel,setSel]=useState(null);
   const [search,setSearch]=useState("");
-  const filtered=notes.filter(n=>n.title.toLowerCase().includes(search.toLowerCase())||n.body.toLowerCase().includes(search.toLowerCase()));
+  const filtered=notes.filter(n=>n.title.toLowerCase().includes(search.toLowerCase())||(n.body||"").replace(/<[^>]+>/g," ").toLowerCase().includes(search.toLowerCase()));
+
+  // Modal state — metadata only, no body field
   const [newOpen,setNewOpen]=useState(false);
   const [src,setSrc]=useState("write");
   const [newTitle,setNewTitle]=useState("");
-  const [newBody,setNewBody]=useState("");
-  const [newTag,setNewTag]=useState("Biology");
+  const [newTag,setNewTag]=useState(()=>tagOptions[0]?.value||"Biology");
   const [customTag,setCustomTag]=useState("");
   const [yt,setYt]=useState("");
   const [ytInfo,setYtInfo]=useState("");
@@ -1536,11 +1541,105 @@ function Notes(){
   const [aiLoading,setAiLoading]=useState(false);
   const [fileText,setFileText]=useState("");
   const fileRef=useRef(null);
-  useEffect(()=>{if(!rec)return;const id=setInterval(()=>setRecSecs(x=>x+1),1000);return ()=>clearInterval(id);},[rec]);
+
+  // Canvas / editor state
+  const editorRef=useRef(null);
+  const activeSel=useRef(sel); // tracks last sel without re-render side-effects
+  const [popover,setPopover]=useState(null); // {x,y,selText}
+  const [noteComments,setNoteComments]=useState(()=>lsGet("note-comments",{}));
+  const [noteFlags,setNoteFlags]=useState(()=>lsGet("note-flags",{}));
+  const [commentDraft,setCommentDraft]=useState("");
+  const [commentInputOpen,setCommentInputOpen]=useState(false);
+  const [pendingSel,setPendingSel]=useState(null);
+  const [cleaning,setCleaning]=useState(false);
+
+  // Send note state
+  const [sendNoteOpen,setSendNoteOpen]=useState(false);
+  const [sendNoteTarget,setSendNoteTarget]=useState("");
+  const [sendNoteStatus,setSendNoteStatus]=useState("");
+
+  useEffect(()=>{if(!rec)return;const id=setInterval(()=>setRecSecs(x=>x+1),1000);return()=>clearInterval(id);},[rec]);
   const fmtRec=(x)=>String(Math.floor(x/60)).padStart(2,"0")+":"+String(x%60).padStart(2,"0");
-  const tagOptions=[{value:"Biology",label:"Biology",color:T.teal},{value:"English",label:"English",color:T.purple},{value:"Calculus",label:"Calculus",color:T.blue},{value:"Spanish",label:"Spanish",color:T.amber},{value:"Chemistry",label:"Chemistry",color:T.red},{value:"History",label:"History",color:T.muted},{value:"Other",label:"Other",color:T.lime}];
+
+  // Sync editor DOM whenever the selected note changes
+  useEffect(()=>{
+    activeSel.current=sel;
+    if(sel===null||!editorRef.current||!notes[sel])return;
+    const body=notes[sel].body||"";
+    const isHtml=body.trim().startsWith("<");
+    editorRef.current.innerHTML=isHtml?body:body?body.split("\n\n").map(p=>"<p>"+(p||"<br>")+"</p>").join(""):"<p><br></p>";
+  },[sel]); // intentionally omit notes — only fire on note switch
+
+  const onEditorInput=()=>{
+    const idx=activeSel.current;
+    if(idx===null||!editorRef.current)return;
+    const html=editorRef.current.innerHTML;
+    setNotes(prev=>{const next=prev.map((n,i)=>i===idx?Object.assign({},n,{body:html}):n);lsSet("notes",next);return next;});
+  };
+
+  const execFmt=(cmd,arg=null)=>{if(editorRef.current)editorRef.current.focus();document.execCommand(cmd,false,arg);};
+
+  const handleEditorMouseUp=()=>{
+    const s=window.getSelection();
+    const text=s?s.toString().trim():"";
+    if(text.length<2){setPopover(null);return;}
+    if(s.rangeCount>0){
+      const range=s.getRangeAt(0);
+      const rect=range.getBoundingClientRect();
+      const wrap=editorRef.current.parentElement.getBoundingClientRect();
+      setPopover({x:rect.left-wrap.left+rect.width/2,y:rect.top-wrap.top-46,selText:text});
+    }
+  };
+
+  const doAddComment=()=>{
+    if(!pendingSel||!commentDraft.trim()||sel===null)return;
+    const noteId=notes[sel].id;
+    const c={id:String(Date.now()),selectedText:pendingSel,text:commentDraft.trim(),date:new Date().toLocaleDateString()};
+    const updated={...noteComments,[noteId]:[...(noteComments[noteId]||[]),c]};
+    setNoteComments(updated);lsSet("note-comments",updated);
+    setCommentDraft("");setCommentInputOpen(false);setPendingSel(null);setPopover(null);
+  };
+
+  const doAddFlag=(selText)=>{
+    if(!selText||sel===null)return;
+    const noteId=notes[sel].id;
+    const f={id:String(Date.now()),selectedText:selText,date:new Date().toLocaleDateString()};
+    const updated={...noteFlags,[noteId]:[...(noteFlags[noteId]||[]),f]};
+    setNoteFlags(updated);lsSet("note-flags",updated);
+    // Cross-tool integration: persist to tutor-flags for Solve/Tutor panels
+    const all=lsGet("tutor-flags",[]);
+    all.push({...f,noteTitle:notes[sel].title,noteId,from:"notes"});
+    lsSet("tutor-flags",all);
+    setPopover(null);setPendingSel(null);
+  };
+
+  const cleanNotes=async()=>{
+    if(sel===null||cleaning||!editorRef.current)return;
+    const html=editorRef.current.innerHTML;
+    const tmp=document.createElement("div");tmp.innerHTML=html;
+    const plain=(tmp.textContent||tmp.innerText||"").trim();
+    if(!plain)return;
+    setCleaning(true);
+    try{
+      const prompt="You are a study note formatter. Fix spelling, grammar, and structure. Organise into scannable sections using <h3>, <p>, <ul>, <li>, <strong>, <em> HTML tags. Do not change any facts. Return only the HTML, no markdown fences.\n\nRaw notes:\n"+plain.slice(0,15000);
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
+      const data=await res.json();
+      if(data.reply){
+        const cleaned=data.reply.replace(/```html?\n?/gi,"").replace(/```/g,"").trim();
+        editorRef.current.innerHTML=cleaned;
+        onEditorInput();
+      }
+    }catch(e){
+      // Fallback: paragraph-wrap lines
+      const fallback=plain.split("\n").filter(l=>l.trim()).map(l=>"<p>"+l+"</p>").join("");
+      editorRef.current.innerHTML=fallback;
+      onEditorInput();
+    }
+    setCleaning(false);
+  };
+
   const sources=[
-    {id:"write",label:"Write",desc:"Type or paste notes yourself",icon:Icon.pen,cost:null},
+    {id:"write",label:"Write",desc:"Type directly on the canvas",icon:Icon.pen,cost:null},
     {id:"file",label:"Scan a file",desc:"PDF, slides, or photos of the board",icon:Icon.file,cost:"2 credits"},
     {id:"record",label:"Record lecture",desc:"Live transcription + summary",icon:MicIcon,cost:"3 credits"},
     {id:"youtube",label:"YouTube link",desc:"Transcribes and summarises a video",icon:Icon.link,cost:"3 credits"},
@@ -1551,80 +1650,85 @@ function Notes(){
     if(!SR){setRecText("Speech recognition not supported. Try Chrome.");return;}
     const r=new SR();r.continuous=true;r.interimResults=true;r.lang="en-US";
     r.onresult=(e)=>{let t="";for(let i=0;i<e.results.length;i++)t+=e.results[i][0].transcript;setRecText(t);};
-    r.onerror=()=>{setRec(false);};
-    r.onend=()=>{setRec(false);};
+    r.onerror=()=>setRec(false);r.onend=()=>setRec(false);
     recognitionRef.current=r;r.start();setRec(true);setRecSecs(0);setRecText("");
   };
   const stopRec=()=>{if(recognitionRef.current)recognitionRef.current.stop();setRec(false);};
 
   const handleFile=async(e)=>{
-    const file=e.target.files&&e.target.files[0];if(!file)return;
-    e.target.value="";
+    const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
     const ext=file.name.split(".").pop().toLowerCase();
     if(ext==="pdf"){
       try{const pdfjsLib=await window._pdfjs;const buf=await file.arrayBuffer();const pdf=await pdfjsLib.getDocument({data:buf}).promise;let text="";for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();text+=tc.items.map(it=>it.str).join(" ")+"\n\n";}setFileText(text);if(!newTitle)setNewTitle("Notes from "+file.name);}catch(err){setFileText("Could not read PDF: "+err.message);}
-    }else{
-      const reader=new FileReader();reader.onload=()=>{setFileText(reader.result);if(!newTitle)setNewTitle("Notes from "+file.name);};reader.readAsText(file);
-    }
+    }else{const reader=new FileReader();reader.onload=()=>{setFileText(reader.result);if(!newTitle)setNewTitle("Notes from "+file.name);};reader.readAsText(file);}
   };
 
   const aiSummarize=async(text,context)=>{
     setAiLoading(true);
     try{
-      const prompt="Summarize the following "+context+" into well-structured study notes. Use headings, bullet points, and key terms. Be thorough but concise:\n\n"+text.slice(0,30000);
+      const prompt="Summarize the following "+context+" into well-structured study notes. Use <h3>, <p>, <ul>, <li>, <strong> tags. Be thorough but concise. Return HTML only.\n\n"+text.slice(0,30000);
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
-      const data=await res.json();
-      setAiLoading(false);
-      return data.reply||text;
+      const data=await res.json();setAiLoading(false);
+      return (data.reply||text).replace(/```html?\n?/gi,"").replace(/```/g,"").trim();
     }catch(e){setAiLoading(false);return text;}
   };
 
-  const saveNote=async()=>{
+  // "Continue to Canvas" — creates note and enters canvas immediately
+  const continueToCanvas=async()=>{
     const tag=newTag==="Other"&&customTag.trim()?customTag.trim():newTag;
     let title=newTitle.trim();
-    let body="";
-
+    let body="<p><br></p>";
     if(src==="write"){
-      body=newBody.trim()||"Empty note";
       if(!title)title="Untitled note";
     }else if(src==="file"){
       if(!title)title="Scanned notes";
-      if(fileText.trim()){body=await aiSummarize(fileText,"document/file");}else{body="No file content to process.";}
+      body=fileText.trim()?await aiSummarize(fileText,"document/file"):"<p>No file content.</p>";
     }else if(src==="record"){
-      if(!title)title="Lecture notes - "+fmtRec(recSecs);
-      if(recText.trim()){body=await aiSummarize(recText,"lecture transcription");}else{body="No audio was captured. Try recording again.";}
+      if(!title)title="Lecture notes – "+fmtRec(recSecs);
+      body=recText.trim()?await aiSummarize(recText,"lecture transcription"):"<p>No audio captured.</p>";
     }else if(src==="youtube"){
-      var videoTitle=ytInfo||yt.trim();
-      if(!title)title=ytInfo?ytInfo:"Notes from video";
-      if(videoTitle){
-        body=await aiSummarize("Create comprehensive study notes on this topic from a YouTube video titled: \""+videoTitle+"\". Include clear headings, bullet points, key definitions, examples, and a summary. Write the notes directly — do not say you cannot access the video.","YouTube video study notes");
-      }else{body="Paste a YouTube link to auto-detect the topic.";}
+      if(!title)title=ytInfo?"Notes: "+ytInfo:"Notes from video";
+      const topic=ytInfo||yt.trim();
+      body=topic?await aiSummarize("Create comprehensive study notes on a YouTube video titled: \""+topic+"\". Include headings, definitions, bullet points, summary.","YouTube study notes"):"<p>Paste a YouTube link.</p>";
     }
-
-    const next=[{id:String(Date.now()),title:title,body:body,tag:tag,date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now()}].concat(notes);
+    const newNote={id:String(Date.now()),title,body,tag,date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now()};
+    const next=[newNote,...notes];
     setNotes(next);lsSet("notes",next);
-    setNewOpen(false);setNewTitle("");setNewBody("");setYt("");setYtInfo("");setRec(false);setRecSecs(0);setRecText("");setSrc("write");setFileText("");setSel(0);setSearch("");
+    setNewOpen(false);setNewTitle("");setYt("");setYtInfo("");setRec(false);setRecSecs(0);setRecText("");setSrc("write");setFileText("");setSearch("");
+    setSel(0);
+    setPopover(null);
   };
 
   const updateNote=(idx,updates)=>{const next=notes.map((n,i)=>i===idx?Object.assign({},n,updates):n);setNotes(next);lsSet("notes",next);};
-  const deleteNote=(idx)=>{const next=notes.filter((_,i)=>i!==idx);setNotes(next);lsSet("notes",next);if(sel===idx)setSel(null);else if(sel>idx)setSel(sel-1);};
-  const exportNote=(n)=>{navigator.clipboard&&navigator.clipboard.writeText(n.title+"\n\n"+n.body);};
-  const [sendNoteOpen,setSendNoteOpen]=useState(false);
-  const [sendNoteTarget,setSendNoteTarget]=useState("");
-  const [sendNoteStatus,setSendNoteStatus]=useState("");
+  const deleteNote=(idx)=>{const next=notes.filter((_,i)=>i!==idx);setNotes(next);lsSet("notes",next);setSel(s=>s===idx?null:s>idx?s-1:s);};
+  const exportNote=(n)=>{const t=document.createElement("div");t.innerHTML=n.body;navigator.clipboard&&navigator.clipboard.writeText(n.title+"\n\n"+(t.textContent||t.innerText));};
   const sendNote=()=>{
-    const t=sendNoteTarget.trim();
-    if(!t||sel===null)return;
+    const t=sendNoteTarget.trim();if(!t||sel===null)return;
     const pending=lsGet("pendingShares",[]);
     pending.push({type:"note",title:notes[sel].title,body:notes[sel].body,tag:notes[sel].tag,to:t,from:getUserName(),date:dayKey()});
-    lsSet("pendingShares",pending);
-    setSendNoteStatus("sent");
+    lsSet("pendingShares",pending);setSendNoteStatus("sent");
     setTimeout(()=>{setSendNoteOpen(false);setSendNoteTarget("");setSendNoteStatus("");},1800);
   };
+  const removeComment=(nid,cid)=>{const u={...noteComments,[nid]:(noteComments[nid]||[]).filter(c=>c.id!==cid)};setNoteComments(u);lsSet("note-comments",u);};
+  const removeFlag=(nid,fid)=>{
+    const u={...noteFlags,[nid]:(noteFlags[nid]||[]).filter(f=>f.id!==fid)};setNoteFlags(u);lsSet("note-flags",u);
+    lsSet("tutor-flags",lsGet("tutor-flags",[]).filter(f=>f.id!==fid));
+  };
+
+  const activeNote=sel!==null?notes[sel]:null;
+  const nid=activeNote?.id;
+  const activeComments=nid?noteComments[nid]||[]:[];
+  const activeFlags=nid?noteFlags[nid]||[]:[];
+  const hasMargin=activeComments.length>0||activeFlags.length>0;
+
+  // Toolbar button style helper
+  const tbBtn=(active=false)=>({padding:"5px 9px",borderRadius:5,border:`1px solid ${active?T.lime+"55":T.border}`,background:active?T.lime+"14":"transparent",color:active?T.lime:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:600,display:"inline-flex",alignItems:"center",gap:4,transition:"all 0.12s"});
 
   return (
     <div>
       <PH title="Notes" sub="Write, scan, record, or import" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New note")}</Btn>} />
+
+      {/* ── SEND NOTE MODAL ── */}
       <Modal open={sendNoteOpen} onClose={()=>{setSendNoteOpen(false);setSendNoteTarget("");setSendNoteStatus("");}} title="Send note to a friend" sub="Drop a copy of this note directly into a friend's Studlin workspace." width={440}
         footer={sendNoteStatus==="sent"?null:<><Btn variant="subtle" onClick={()=>{setSendNoteOpen(false);setSendNoteTarget("");setSendNoteStatus("");}}>Cancel</Btn><Btn onClick={sendNote} style={{opacity:sendNoteTarget.trim()?1:0.45}}>{Icon.send} Send note</Btn></>}>
         {sendNoteStatus==="sent"
@@ -1636,16 +1740,15 @@ function Notes(){
           :<>
               <div style={{padding:"12px 14px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`,marginBottom:14}}>
                 <div style={{fontSize:12,fontWeight:600,color:T.white,marginBottom:2}}>{sel!==null&&notes[sel]?notes[sel].title:"Selected note"}</div>
-                <div style={{fontSize:11,color:T.muted}}>{sel!==null&&notes[sel]?notes[sel].body.slice(0,80)+"…":""}</div>
               </div>
-              <Field label="Friend's Studlin username or email">
-                <Input placeholder="e.g. @alex or alex@school.edu" value={sendNoteTarget} onChange={e=>setSendNoteTarget(e.target.value)} autoFocus />
-              </Field>
+              <Field label="Friend's Studlin username or email"><Input placeholder="e.g. @alex or alex@school.edu" value={sendNoteTarget} onChange={e=>setSendNoteTarget(e.target.value)} autoFocus /></Field>
             </>
         }
       </Modal>
-      <Modal open={newOpen} onClose={()=>{setNewOpen(false);stopRec();}} title="Create a new note" sub="Pick a source. Studlin structures everything into clean, searchable notes." width={580}
-        footer={<><Btn variant="subtle" onClick={()=>{setNewOpen(false);stopRec();}}>Cancel</Btn><Btn onClick={saveNote} disabled={aiLoading}>{aiLoading?"Processing...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.check,src==="write"?"Save note":"Create note")}</Btn></>}>
+
+      {/* ── NEW NOTE MODAL — metadata only, no body field ── */}
+      <Modal open={newOpen} onClose={()=>{setNewOpen(false);stopRec();}} title="New note" sub="Configure your note. You'll write on the canvas next." width={560}
+        footer={<><Btn variant="subtle" onClick={()=>{setNewOpen(false);stopRec();}}>Cancel</Btn><Btn onClick={continueToCanvas} disabled={aiLoading}>{aiLoading?"Processing…":"Continue to Canvas →"}</Btn></>}>
         <Field label="Source">
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
             {sources.map(o=>(
@@ -1657,20 +1760,16 @@ function Notes(){
             ))}
           </div>
         </Field>
-        <Field label="Title"><Input placeholder="e.g. Macbeth Act IV notes" value={newTitle} onChange={ev=>setNewTitle(ev.target.value)} /></Field>
+        <Field label="Title"><Input placeholder="e.g. Macbeth Act IV notes" value={newTitle} onChange={ev=>setNewTitle(ev.target.value)} autoFocus /></Field>
         <Field label="Class"><SelectChip options={tagOptions} value={newTag} onChange={setNewTag} /></Field>
         {newTag==="Other"&&<Field label="Custom class"><Input placeholder="e.g. Physics, SAT prep..." value={customTag} onChange={ev=>setCustomTag(ev.target.value)} /></Field>}
-        {src==="write"&&(
-          <Field label="Body">
-            <Textarea placeholder="Start writing or paste your notes here..." value={newBody} onChange={ev=>setNewBody(ev.target.value)} style={{minHeight:130}} />
-          </Field>
-        )}
+        {/* No body textarea for "write" — canvas is the editor */}
         {src==="file"&&(
-          <Field label="Upload" hint="Studlin reads the file and writes structured notes with AI.">
+          <Field label="Upload" hint="AI reads your file and builds structured notes.">
             <input type="file" ref={fileRef} onChange={handleFile} accept=".txt,.md,.csv,.pdf,.doc,.docx,.rtf" style={{display:"none"}} />
             <div onClick={()=>fileRef.current&&fileRef.current.click()} style={{border:"1px dashed "+T.borderHover,borderRadius:10,padding:26,textAlign:"center",background:T.card2,cursor:"pointer"}}>
               <div style={{color:T.muted,marginBottom:6,display:"flex",justifyContent:"center"}}>{Icon.file}</div>
-              <div style={{fontSize:13,color:T.text,fontWeight:500}}>{fileText?"File loaded - "+fileText.length+" chars":"Click to browse or drop a file"}</div>
+              <div style={{fontSize:13,color:T.text,fontWeight:500}}>{fileText?"File loaded — "+fileText.length+" chars":"Click to browse or drop a file"}</div>
               <div style={{fontSize:11,color:T.muted,marginTop:4}}>PDF, TXT, MD, CSV, DOCX</div>
             </div>
           </Field>
@@ -1680,55 +1779,147 @@ function Notes(){
             <div style={{border:"1px solid "+(rec?T.red+"55":T.border),borderRadius:10,padding:22,textAlign:"center",background:rec?T.red+"0a":T.card2}}>
               <button type="button" onClick={rec?stopRec:startRec} style={{width:54,height:54,borderRadius:"50%",border:"none",background:rec?T.red:T.lime,color:rec?"#fff":T.ink,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:10}}>{rec?<span style={{width:16,height:16,background:"#fff",borderRadius:3,display:"block"}} />:MicIcon}</button>
               <div style={{fontSize:15,fontWeight:700,color:rec?T.red:T.white,fontVariantNumeric:"tabular-nums"}}>{fmtRec(recSecs)}</div>
-              <div style={{fontSize:11.5,color:T.muted,marginTop:3}}>{rec?"Recording... tap to stop":"Tap to start recording"}</div>
+              <div style={{fontSize:11.5,color:T.muted,marginTop:3}}>{rec?"Recording… tap to stop":"Tap to start recording"}</div>
               {recText&&<div style={{fontSize:12,color:T.text,marginTop:12,padding:"10px 12px",background:T.card,borderRadius:8,textAlign:"left",maxHeight:120,overflowY:"auto",lineHeight:1.5}}>{recText}</div>}
             </div>
           </Field>
         )}
         {src==="youtube"&&(
           <Field label="YouTube link" hint={ytInfo?"Found: "+ytInfo:"Paste any YouTube video link. Studlin will detect the topic and generate notes."}>
-            <Input placeholder="https://youtube.com/watch?v=..." value={yt} onChange={ev=>{setYt(ev.target.value);var v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtLoading(true);fetch("/api/youtube-info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(r=>r.json()).then(d=>{if(d.title){setYtInfo(d.title+(d.author?" by "+d.author:""));if(!newTitle)setNewTitle(d.title);}setYtLoading(false);}).catch(()=>setYtLoading(false));}}} />
-            {ytLoading&&<div style={{fontSize:11,color:T.lime,marginTop:4}}>Detecting video...</div>}
+            <Input placeholder="https://youtube.com/watch?v=..." value={yt} onChange={ev=>{setYt(ev.target.value);const v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtLoading(true);fetch("/api/youtube-info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(r=>r.json()).then(d=>{if(d.title){setYtInfo(d.title+(d.author?" by "+d.author:""));if(!newTitle)setNewTitle(d.title);}setYtLoading(false);}).catch(()=>setYtLoading(false));}}} />
+            {ytLoading&&<div style={{fontSize:11,color:T.lime,marginTop:4}}>Detecting video…</div>}
           </Field>
         )}
       </Modal>
-      <div style={{display:"grid",gridTemplateColumns:"250px 1fr",gap:14}}>
+
+      {/* ── MAIN WORKSPACE LAYOUT ── */}
+      <div style={{display:"grid",gridTemplateColumns:"240px 1fr",gap:14,alignItems:"start"}}>
+
+        {/* Sidebar — note history */}
         <div>
-          <input style={{width:"100%",background:T.card2,border:"1px solid "+T.border,borderRadius:7,padding:"8px 12px",color:T.text,fontSize:12,fontFamily:T.font,outline:"none",marginBottom:10,boxSizing:"border-box"}} placeholder="Search notes..." value={search} onChange={ev=>setSearch(ev.target.value)} />
+          <input style={{width:"100%",background:T.card2,border:"1px solid "+T.border,borderRadius:7,padding:"8px 12px",color:T.text,fontSize:12,fontFamily:T.font,outline:"none",marginBottom:10,boxSizing:"border-box"}} placeholder="Search notes…" value={search} onChange={ev=>setSearch(ev.target.value)} />
           {filtered.length===0&&<div style={{padding:"20px 0",textAlign:"center",fontSize:12,color:T.muted}}>No notes yet. Create your first one.</div>}
-          {filtered.map((n,i)=>(
-            <div key={n.id||i} onClick={()=>setSel(notes.indexOf(n))} style={{background:notes.indexOf(n)===sel?T.card2:T.card,borderRadius:8,padding:"12px 14px",marginBottom:6,border:"1px solid "+(notes.indexOf(n)===sel?colorOf(n.tag)+"44":T.border),cursor:"pointer",transition:"all 0.15s"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:5}}>
-                <div style={{fontSize:12,fontWeight:600,color:T.white,flex:1,marginRight:8,lineHeight:1.3}}>{n.title}</div>
-                <Badge color={colorOf(n.tag)}>{n.tag}</Badge>
+          {filtered.map((n,i)=>{
+            const idx=notes.indexOf(n);
+            return (
+              <div key={n.id||i} onClick={()=>{setSel(idx);setPopover(null);}} style={{background:idx===sel?T.card2:T.card,borderRadius:8,padding:"11px 13px",marginBottom:6,border:"1px solid "+(idx===sel?colorOf(n.tag)+"55":T.border),cursor:"pointer",transition:"all 0.15s"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+                  <div style={{fontSize:12,fontWeight:600,color:T.white,flex:1,marginRight:8,lineHeight:1.3}}>{n.title}</div>
+                  <Badge color={colorOf(n.tag)}>{n.tag}</Badge>
+                </div>
+                <div style={{fontSize:10.5,color:T.muted,lineHeight:1.5,maxHeight:36,overflow:"hidden"}}>{(n.body||"").replace(/<[^>]+>/g," ").trim().slice(0,90)}</div>
+                <div style={{fontSize:10,color:T.faint,marginTop:6}}>{n.date}</div>
               </div>
-              <div style={{fontSize:11,color:T.muted,lineHeight:1.5,maxHeight:40,overflow:"hidden"}}>{n.body.slice(0,100)}</div>
-              <div style={{fontSize:10,color:T.faint,marginTop:8}}>{n.date}</div>
-            </div>
-          ))}
+            );
+          })}
         </div>
-        <Card style={{minHeight:380,padding:24}}>
-          {sel!==null&&notes[sel]
-            ?<>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20}}>
-                  <div style={{flex:1}}>
-                    <input value={notes[sel].title} onChange={e=>updateNote(sel,{title:e.target.value})} style={{fontSize:17,fontWeight:700,color:T.white,letterSpacing:"-0.01em",marginBottom:4,background:"transparent",border:"none",outline:"none",fontFamily:T.font,width:"100%",padding:0}} />
-                    <div style={{display:"flex",gap:8,alignItems:"center"}}><Badge color={colorOf(notes[sel].tag)}>{notes[sel].tag}</Badge><span style={{fontSize:11,color:T.muted}}>{notes[sel].date}</span></div>
-                  </div>
-                  <div style={{display:"flex",gap:6}}>
-                    <BtnSm variant="subtle" onClick={()=>exportNote(notes[sel])}>{Icon.copy} Copy</BtnSm>
-                    <BtnSm variant="ghost" onClick={()=>setSendNoteOpen(true)}>{Icon.send} Send</BtnSm>
-                    <BtnSm variant="danger" onClick={()=>deleteNote(sel)}>Delete</BtnSm>
+
+        {/* Canvas area: editor + optional margin panel */}
+        <div style={{display:"grid",gridTemplateColumns:hasMargin?"1fr 220px":"1fr",gap:12,alignItems:"start"}}>
+
+          {/* ── RICH TEXT EDITOR CARD ── */}
+          <Card style={{padding:0,overflow:"hidden",minHeight:480}}>
+            {activeNote?(
+              <>
+                {/* Formatting toolbar */}
+                <div style={{display:"flex",alignItems:"center",gap:4,padding:"8px 14px",borderBottom:`1px solid ${T.border}`,background:T.card2,flexWrap:"wrap"}}>
+                  <button style={tbBtn()} onMouseDown={e=>{e.preventDefault();execFmt("bold");}} title="Bold"><strong style={{fontSize:13}}>B</strong></button>
+                  <button style={tbBtn()} onMouseDown={e=>{e.preventDefault();execFmt("insertUnorderedList");}} title="Bullet list">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="9" y1="6" x2="20" y2="6"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="18" x2="20" y2="18"/><circle cx="4" cy="6" r="2" fill="currentColor"/><circle cx="4" cy="12" r="2" fill="currentColor"/><circle cx="4" cy="18" r="2" fill="currentColor"/></svg>
+                  </button>
+                  <button style={tbBtn()} onMouseDown={e=>{e.preventDefault();execFmt("insertOrderedList");}} title="Numbered list">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/></svg>
+                  </button>
+                  <button style={tbBtn()} onMouseDown={e=>{e.preventDefault();execFmt("hiliteColor",T.amber+"44");}} title="Highlight">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m9 11-6 6v3h3l6-6"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
+                  </button>
+                  <div style={{width:1,height:18,background:T.border,margin:"0 4px"}} />
+                  <BtnSm variant="subtle" onClick={()=>exportNote(activeNote)}>{Icon.copy} Copy</BtnSm>
+                  <BtnSm variant="subtle" onClick={()=>setSendNoteOpen(true)}>{Icon.send} Send</BtnSm>
+                  <div style={{flex:1}} />
+                  <button onClick={cleanNotes} disabled={cleaning} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${T.lime}44`,background:cleaning?T.card2:T.lime+"14",color:cleaning?T.muted:T.lime,cursor:cleaning?"default":"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
+                    {cleaning?"Cleaning…":"🪄 Clean Notes"}
+                  </button>
+                  <BtnSm variant="danger" onClick={()=>deleteNote(sel)}>Delete</BtnSm>
+                </div>
+
+                {/* Title row */}
+                <div style={{padding:"16px 24px 10px",borderBottom:`1px solid ${T.border}`}}>
+                  <input value={activeNote.title} onChange={e=>updateNote(sel,{title:e.target.value})} style={{fontSize:20,fontWeight:700,color:T.white,letterSpacing:"-0.02em",background:"transparent",border:"none",outline:"none",fontFamily:T.font,width:"100%",padding:0,marginBottom:8}} placeholder="Note title…" />
+                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                    <Badge color={colorOf(activeNote.tag)}>{activeNote.tag}</Badge>
+                    <span style={{fontSize:11,color:T.muted}}>{activeNote.date}</span>
+                    {activeFlags.length>0&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600}}>{activeFlags.length} tutor flag{activeFlags.length!==1?"s":""}</span>}
+                    {activeComments.length>0&&<span style={{fontSize:10.5,color:T.blue,fontWeight:600}}>{activeComments.length} comment{activeComments.length!==1?"s":""}</span>}
                   </div>
                 </div>
-                <textarea value={notes[sel].body} onChange={e=>updateNote(sel,{body:e.target.value})} style={{width:"100%",minHeight:280,fontSize:14,color:T.text,lineHeight:1.9,background:"transparent",border:"none",outline:"none",fontFamily:T.font,resize:"vertical",boxSizing:"border-box"}} />
+
+                {/* Contextual selection popover */}
+                {popover&&(
+                  <div style={{position:"absolute",top:popover.y,left:popover.x,transform:"translateX(-50%)",zIndex:30,display:"flex",gap:4,background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:"4px 6px",boxShadow:"0 8px 24px rgba(0,0,0,0.4)",whiteSpace:"nowrap"}}>
+                    <button onMouseDown={e=>{e.preventDefault();setPendingSel(popover.selText);setCommentInputOpen(true);}} style={{padding:"5px 10px",borderRadius:5,border:"none",background:"transparent",color:T.blue,cursor:"pointer",fontSize:12,fontFamily:T.font,fontWeight:600}}>💬 Add Comment</button>
+                    <div style={{width:1,background:T.border}} />
+                    <button onMouseDown={e=>{e.preventDefault();doAddFlag(popover.selText);}} style={{padding:"5px 10px",borderRadius:5,border:"none",background:"transparent",color:T.amber,cursor:"pointer",fontSize:12,fontFamily:T.font,fontWeight:600}}>🚨 Flag for Tutor</button>
+                  </div>
+                )}
+
+                {/* Comment input strip */}
+                {commentInputOpen&&(
+                  <div style={{padding:"10px 20px",background:T.blue+"0A",borderBottom:`1px solid ${T.blue}22`,display:"flex",gap:8,alignItems:"center"}}>
+                    <span style={{fontSize:11,color:T.blue,fontWeight:600,flexShrink:0}}>💬</span>
+                    <input value={commentDraft} onChange={e=>setCommentDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")doAddComment();if(e.key==="Escape"){setCommentInputOpen(false);setPendingSel(null);}}} placeholder={`Comment on "${(pendingSel||"").slice(0,30)}…"`} autoFocus style={{flex:1,background:"transparent",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}} />
+                    <BtnSm onClick={doAddComment} style={{opacity:commentDraft.trim()?1:0.4}}>Save</BtnSm>
+                    <BtnSm variant="subtle" onClick={()=>{setCommentInputOpen(false);setPendingSel(null);}}>✕</BtnSm>
+                  </div>
+                )}
+
+                {/* contenteditable rich text canvas */}
+                <div style={{position:"relative"}}
+                  onMouseUp={handleEditorMouseUp}
+                  onKeyDown={()=>setPopover(null)}
+                  onClick={e=>{if(e.target===e.currentTarget)editorRef.current&&editorRef.current.focus();}}>
+                  <div
+                    ref={editorRef}
+                    contentEditable={true}
+                    suppressContentEditableWarning={true}
+                    onInput={onEditorInput}
+                    style={{minHeight:380,padding:"20px 28px 40px",fontSize:14.5,lineHeight:1.85,color:T.text,outline:"none",fontFamily:T.font,boxSizing:"border-box"}}
+                  />
+                  {/* Placeholder hint when empty */}
+                </div>
               </>
-            :<div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:300,gap:12}}>
-                <div style={{color:T.faint,opacity:0.5}}>{Icon.file}</div>
-                <div style={{fontSize:13,color:T.muted}}>Select a note to read or edit it</div>
+            ):(
+              <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:380,gap:12}}>
+                <div style={{color:T.faint,opacity:0.4}}>{Icon.file}</div>
+                <div style={{fontSize:13,color:T.muted,textAlign:"center"}}>Select a note from the sidebar<br/>or create a new one to start writing.</div>
+                <Btn onClick={()=>setNewOpen(true)}>{Icon.plus} New note</Btn>
               </div>
-          }
-        </Card>
+            )}
+          </Card>
+
+          {/* ── MARGIN PANEL — comments & flags ── */}
+          {hasMargin&&(
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:2}}>Annotations</div>
+              {activeComments.map(c=>(
+                <div key={c.id} style={{background:T.card,border:`1px solid ${T.blue}33`,borderLeft:`3px solid ${T.blue}`,borderRadius:8,padding:"10px 12px",position:"relative"}}>
+                  <div style={{fontSize:10,color:T.blue,fontWeight:600,marginBottom:4,lineHeight:1.4}}>💬 "{(c.selectedText||"").slice(0,48)}{c.selectedText&&c.selectedText.length>48?"…":""}"</div>
+                  <div style={{fontSize:12,color:T.text,lineHeight:1.5}}>{c.text}</div>
+                  <div style={{fontSize:10,color:T.faint,marginTop:6}}>{c.date}</div>
+                  <button onClick={()=>removeComment(nid,c.id)} style={{position:"absolute",top:6,right:6,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:13,lineHeight:1,padding:2}}>×</button>
+                </div>
+              ))}
+              {activeFlags.map(f=>(
+                <div key={f.id} style={{background:T.card,border:`1px solid ${T.amber}44`,borderLeft:`3px solid ${T.amber}`,borderRadius:8,padding:"10px 12px",position:"relative"}}>
+                  <div style={{fontSize:11,color:T.amber,fontWeight:700,marginBottom:4}}>🚨 Tutor Flag</div>
+                  <div style={{fontSize:11,color:T.muted,lineHeight:1.5,fontStyle:"italic"}}>"{(f.selectedText||"").slice(0,60)}{f.selectedText&&f.selectedText.length>60?"…":""}"</div>
+                  <div style={{fontSize:10,color:T.faint,marginTop:6}}>{f.date} · synced to Tutor</div>
+                  <button onClick={()=>removeFlag(nid,f.id)} style={{position:"absolute",top:6,right:6,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:13,lineHeight:1,padding:2}}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
