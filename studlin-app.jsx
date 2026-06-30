@@ -2416,20 +2416,39 @@ function CalendarTab(){
   const aiArrange=async()=>{
     if(!evTitle.trim())return;
     setAiLoading(true);
+    const now=new Date();
     const tk=dayKey();
-    const existing=events.filter(ev=>ev.date>=tk).map(ev=>({title:ev.title,date:ev.date,time:ev.time,duration:ev.duration||60}));
+    const nowH=String(now.getHours()).padStart(2,"0");
+    const nowM=String(now.getMinutes()).padStart(2,"0");
+    const nowTime=nowH+":"+nowM;
+    // Earliest bookable time today: current time + 15-min buffer, rounded up to next 15-min mark
+    const bufMins=now.getHours()*60+now.getMinutes()+15;
+    const earliestTodayMins=Math.ceil(bufMins/15)*15;
+    const earliestTodayTime=minutesToTime(earliestTodayMins);
+    // If today's remaining window (earliestToday → 22:00) can't fit even one session, direct AI to start tomorrow
+    const perSession=Math.round(evDuration/(evSplitEnabled?evSplitCount:1));
     const splitCount=evSplitEnabled?evSplitCount:1;
-    const perSession=Math.round(evDuration/splitCount);
+    const todayWindowMins=Math.max(0,22*60-earliestTodayMins);
+    const firstAvailDate=todayWindowMins>=perSession?tk:(()=>{const d=new Date(now);d.setDate(d.getDate()+1);return dayKey(d);})();
+    const existing=events.filter(ev=>ev.date>=tk).map(ev=>({title:ev.title,date:ev.date,time:ev.time,duration:ev.duration||60}));
     const priorityLabel=evPriority<200?"Low":evPriority<400?"Medium-Low":evPriority<600?"Medium":evPriority<800?"High":"Urgent";
-    const prompt="You are a scheduling AI. Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+priorityLabel+(evDeadline?". Deadline: "+evDeadline:"")+". Today is "+tk+". Existing schedule: "+JSON.stringify(existing)+". RULES: Higher priority = earlier slots. Must be before deadline. Avoid conflicts. Hours 8:00-22:00. Spread splits across days. Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
+    const prompt="You are a scheduling AI. The user's LIVE clock reads "+nowTime+" on "+tk+". Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+priorityLabel+(evDeadline?". Deadline: "+evDeadline:"")+". Existing schedule: "+JSON.stringify(existing)+". STRICT RULES (violations are forbidden): 1) NEVER place any session before "+earliestTodayTime+" on today ("+tk+") — those slots have already passed. 2) The earliest you may schedule anything today is "+earliestTodayTime+". 3) If today has no open window at or after "+earliestTodayTime+", start from "+firstAvailDate+" instead. 4) All sessions must be within 08:00-22:00. 5) Higher priority = earlier slots. 6) Must be before deadline. 7) Avoid conflicts. 8) Spread splits across days. Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
     try{
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
       const data=await res.json();
       const raw=data.reply.replace(/```json?|```/g,"").trim();
       const parsed=JSON.parse(raw);
       if(parsed.sessions&&parsed.sessions.length>0){
+        // Client-side guardrail: if the AI still returned a past slot, push it to the next valid day
+        const sanitized=parsed.sessions.map(s=>{
+          if(s.date===tk&&timeToMinutes(s.time)<earliestTodayMins){
+            const d=new Date(now);d.setDate(d.getDate()+1);
+            return {...s,date:dayKey(d),time:earliestTodayTime};
+          }
+          return s;
+        });
         const groupId=splitCount>1?"split-"+Date.now():null;
-        const tasks=parsed.sessions.slice(0,splitCount).map((s,i)=>buildTask(s.date,s.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})));
+        const tasks=sanitized.slice(0,splitCount).map((s,i)=>buildTask(s.date,s.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})));
         commitTasks(tasks);
       }else{saveManual();}
     }catch(e){saveManual();}
