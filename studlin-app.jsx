@@ -146,6 +146,12 @@ const Icon = {
   brain:     ic(<><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"/><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/><path d="M3.477 10.896a4 4 0 0 1 .585-.396"/><path d="M19.938 10.5a4 4 0 0 1 .585.396"/><path d="M6 18a4 4 0 0 1-1.967-.516"/><path d="M19.967 17.484A4 4 0 0 1 18 18"/></>),
   scan:      ic(<><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="8" y1="12" x2="16" y2="12"/></>),
   dot:       ic(<><circle cx="12" cy="12" r="4" fill="currentColor" stroke="none"/></>),
+  mail:      ic(<><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></>),
+  qr:        ic(<><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/><path d="M12 7v3a2 2 0 0 1-2 2H7"/><path d="M3 12h.01"/><path d="M12 3h.01"/><path d="M12 16v.01"/><path d="M16 12h1"/><path d="M21 12v.01"/><path d="M12 21v-1"/></>),
+  heart:     ic(<><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></>),
+  volOff:    ic(<><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></>),
+  msgSquare: ic(<><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></>),
+  userPlus:  ic(<><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="16" y1="11" x2="22" y2="11"/></>),
 };
 
 // ─── MOTIVATIONAL QUOTES + BREAK IDEAS ───────────────────────────────────────
@@ -875,7 +881,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
 }
 
 // ─── NAV ICONS MAP ────────────────────────────────────────────────────────────
-const navIcon = {dashboard:Icon.grid,aichat:Icon.chat,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,music:Icon.music,settings:Icon.settings,profile:Icon.user};
+const navIcon = {dashboard:Icon.grid,aichat:Icon.chat,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.heart,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,music:Icon.music,settings:Icon.settings,profile:Icon.user};
 
 // ─── AI CHAT ──────────────────────────────────────────────────────────────────
 function AiChat() {
@@ -1352,6 +1358,22 @@ function Flashcards() {
 
   const addCard=()=>{if(!cQ.trim())return;setDraft(d=>[...d,{q:cQ.trim(),a:cA.trim()||"(no answer)"}]);setCQ("");setCA("");};
   const deleteDeck=(id)=>{const next=deckList.filter(d=>d.id!==id);setDeckList(next);lsSet("decks",next);if(studyDeck&&studyDeck.id===id){setStudyDeck(null);setTab("decks");}};
+  const [sendDeckOpen,setSendDeckOpen]=useState(false);
+  const [sendDeckTarget,setSendDeckTarget]=useState("");
+  const [sendDeckId,setSendDeckId]=useState(null);
+  const [sendDeckStatus,setSendDeckStatus]=useState("");
+  const sendDeck=(deck)=>{setSendDeckId(deck.id);setSendDeckOpen(true);};
+  const confirmSendDeck=()=>{
+    const t=sendDeckTarget.trim();
+    if(!t||!sendDeckId)return;
+    const deck=deckList.find(d=>d.id===sendDeckId);
+    if(!deck)return;
+    const pending=lsGet("pendingShares",[]);
+    pending.push({type:"deck",name:deck.name,cards:deck.cards,to:t,from:getUserName(),date:dayKey()});
+    lsSet("pendingShares",pending);
+    setSendDeckStatus("sent");
+    setTimeout(()=>{setSendDeckOpen(false);setSendDeckTarget("");setSendDeckId(null);setSendDeckStatus("");},1800);
+  };
 
   const studyCards=studyDeck?studyDeck.cards:[];
   const curCard=studyCards[idx];
@@ -1359,6 +1381,22 @@ function Flashcards() {
   return (
     <div>
       <PH title="Flashcards" sub="Study with spaced repetition" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New deck")}</Btn>} />
+      <Modal open={sendDeckOpen} onClose={()=>{setSendDeckOpen(false);setSendDeckTarget("");setSendDeckId(null);setSendDeckStatus("");}} title="Send deck to a friend" sub="Beam this entire deck into a friend's Studlin workspace." width={440}
+        footer={sendDeckStatus==="sent"?null:<><Btn variant="subtle" onClick={()=>{setSendDeckOpen(false);setSendDeckTarget("");setSendDeckId(null);setSendDeckStatus("");}}>Cancel</Btn><Btn onClick={confirmSendDeck} style={{opacity:sendDeckTarget.trim()?1:0.45}}>{Icon.send} Send deck</Btn></>}>
+        {sendDeckStatus==="sent"
+          ?<div style={{textAlign:"center",padding:"24px 0"}}>
+              <div style={{fontSize:32,marginBottom:12}}>✓</div>
+              <div style={{fontSize:15,fontWeight:600,color:T.white,marginBottom:4}}>Deck sent!</div>
+              <div style={{fontSize:13,color:T.muted}}>Sent to <strong style={{color:T.lime}}>{sendDeckTarget}</strong></div>
+            </div>
+          :<>
+              {sendDeckId&&(()=>{const d=deckList.find(x=>x.id===sendDeckId);return d?<div style={{padding:"12px 14px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`,marginBottom:14}}><div style={{fontSize:12,fontWeight:600,color:T.white,marginBottom:2}}>{d.name}</div><div style={{fontSize:11,color:T.muted}}>{d.cards?d.cards.length:0} cards</div></div>:null;})()}
+              <Field label="Friend's Studlin username or email">
+                <Input placeholder="e.g. @alex or alex@school.edu" value={sendDeckTarget} onChange={e=>setSendDeckTarget(e.target.value)} autoFocus />
+              </Field>
+            </>
+        }
+      </Modal>
       <Modal open={newOpen} onClose={()=>{setNewOpen(false);stopRec();}} title="Create a flashcard deck" sub="Build manually, from a file, YouTube video, or recorded lecture." width={580}
         footer={<><Btn variant="subtle" onClick={()=>{setNewOpen(false);stopRec();}}>Cancel</Btn><Btn onClick={createDeck} disabled={aiLoading||ytFetching}>{aiLoading?"Generating cards...":ytFetching?"Detecting video...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.layers,"Create deck")}</Btn></>}>
         <Field label="Deck name"><Input placeholder="e.g. Bio chapter 4 cards" value={dName} onChange={e=>setDName(e.target.value)} autoFocus /></Field>
@@ -1447,7 +1485,10 @@ function Flashcards() {
                 <button onClick={(e)=>{e.stopPropagation();deleteDeck(d.id);}} style={{position:"absolute",top:12,right:12,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14}}>x</button>
                 <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>{d.name}</div>
                 <div style={{fontSize:11,color:T.muted,marginBottom:14}}>{d.cards?d.cards.length:d.count} cards</div>
-                <BtnSm onClick={()=>{setStudyDeck(d);setTab("study");setIdx(0);setFlipped(false);}}>Study now</BtnSm>
+                <div style={{display:"flex",gap:6}}>
+                  <BtnSm onClick={()=>{setStudyDeck(d);setTab("study");setIdx(0);setFlipped(false);}}>Study now</BtnSm>
+                  <BtnSm variant="ghost" onClick={(e)=>{e.stopPropagation();sendDeck(d);}}>{Icon.send} Send</BtnSm>
+                </div>
               </Card>
             ))}
           </div>
@@ -1555,10 +1596,41 @@ function Notes(){
   const updateNote=(idx,updates)=>{const next=notes.map((n,i)=>i===idx?Object.assign({},n,updates):n);setNotes(next);lsSet("notes",next);};
   const deleteNote=(idx)=>{const next=notes.filter((_,i)=>i!==idx);setNotes(next);lsSet("notes",next);if(sel===idx)setSel(null);else if(sel>idx)setSel(sel-1);};
   const exportNote=(n)=>{navigator.clipboard&&navigator.clipboard.writeText(n.title+"\n\n"+n.body);};
+  const [sendNoteOpen,setSendNoteOpen]=useState(false);
+  const [sendNoteTarget,setSendNoteTarget]=useState("");
+  const [sendNoteStatus,setSendNoteStatus]=useState("");
+  const sendNote=()=>{
+    const t=sendNoteTarget.trim();
+    if(!t||sel===null)return;
+    const pending=lsGet("pendingShares",[]);
+    pending.push({type:"note",title:notes[sel].title,body:notes[sel].body,tag:notes[sel].tag,to:t,from:getUserName(),date:dayKey()});
+    lsSet("pendingShares",pending);
+    setSendNoteStatus("sent");
+    setTimeout(()=>{setSendNoteOpen(false);setSendNoteTarget("");setSendNoteStatus("");},1800);
+  };
 
   return (
     <div>
       <PH title="Notes" sub="Write, scan, record, or import" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New note")}</Btn>} />
+      <Modal open={sendNoteOpen} onClose={()=>{setSendNoteOpen(false);setSendNoteTarget("");setSendNoteStatus("");}} title="Send note to a friend" sub="Drop a copy of this note directly into a friend's Studlin workspace." width={440}
+        footer={sendNoteStatus==="sent"?null:<><Btn variant="subtle" onClick={()=>{setSendNoteOpen(false);setSendNoteTarget("");setSendNoteStatus("");}}>Cancel</Btn><Btn onClick={sendNote} style={{opacity:sendNoteTarget.trim()?1:0.45}}>{Icon.send} Send note</Btn></>}>
+        {sendNoteStatus==="sent"
+          ?<div style={{textAlign:"center",padding:"24px 0"}}>
+              <div style={{fontSize:32,marginBottom:12}}>✓</div>
+              <div style={{fontSize:15,fontWeight:600,color:T.white,marginBottom:4}}>Note sent!</div>
+              <div style={{fontSize:13,color:T.muted}}>"{sel!==null&&notes[sel]?notes[sel].title:""}" was sent to <strong style={{color:T.lime}}>{sendNoteTarget}</strong></div>
+            </div>
+          :<>
+              <div style={{padding:"12px 14px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`,marginBottom:14}}>
+                <div style={{fontSize:12,fontWeight:600,color:T.white,marginBottom:2}}>{sel!==null&&notes[sel]?notes[sel].title:"Selected note"}</div>
+                <div style={{fontSize:11,color:T.muted}}>{sel!==null&&notes[sel]?notes[sel].body.slice(0,80)+"…":""}</div>
+              </div>
+              <Field label="Friend's Studlin username or email">
+                <Input placeholder="e.g. @alex or alex@school.edu" value={sendNoteTarget} onChange={e=>setSendNoteTarget(e.target.value)} autoFocus />
+              </Field>
+            </>
+        }
+      </Modal>
       <Modal open={newOpen} onClose={()=>{setNewOpen(false);stopRec();}} title="Create a new note" sub="Pick a source. Studlin structures everything into clean, searchable notes." width={580}
         footer={<><Btn variant="subtle" onClick={()=>{setNewOpen(false);stopRec();}}>Cancel</Btn><Btn onClick={saveNote} disabled={aiLoading}>{aiLoading?"Processing...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.check,src==="write"?"Save note":"Create note")}</Btn></>}>
         <Field label="Source">
@@ -1632,6 +1704,7 @@ function Notes(){
                   </div>
                   <div style={{display:"flex",gap:6}}>
                     <BtnSm variant="subtle" onClick={()=>exportNote(notes[sel])}>{Icon.copy} Copy</BtnSm>
+                    <BtnSm variant="ghost" onClick={()=>setSendNoteOpen(true)}>{Icon.send} Send</BtnSm>
                     <BtnSm variant="danger" onClick={()=>deleteNote(sel)}>Delete</BtnSm>
                   </div>
                 </div>
@@ -1649,6 +1722,181 @@ function Notes(){
 }
 
 
+
+// ─── FRIENDS & CHAT ──────────────────────────────────────────────────────────
+function FriendsChat(){
+  const [friends,setFriends]=useState(()=>lsGet("friends",[]));
+  const [activeFriend,setActiveFriend]=useState(null);
+  const [dms,setDms]=useState(()=>lsGet("dms",{}));
+  const [dmInput,setDmInput]=useState("");
+  const [addTab,setAddTab]=useState("link");
+  const [inviteInput,setInviteInput]=useState("");
+  const [inviteStatus,setInviteStatus]=useState("");
+  const [copied,setCopied]=useState(false);
+  const chatEndRef=useRef(null);
+  const me=getUserName()||"You";
+  const refCode=(me).toLowerCase().replace(/\s+/g,"");
+  const inviteLink="https://studlin.vercel.app?ref="+refCode;
+  const inviteMsg="Hey! I'm using Studlin to lock into my schedule. It has an AI calendar that automatically plans our study/work slots and lets us share notes or see when we're both free. Grab an account here so we can sync up: "+inviteLink;
+
+  useEffect(()=>{if(chatEndRef.current)chatEndRef.current.scrollIntoView({behavior:"smooth"});},[activeFriend,dms]);
+
+  const copyInvite=()=>{navigator.clipboard&&navigator.clipboard.writeText(inviteMsg);setCopied(true);setTimeout(()=>setCopied(false),2200);};
+
+  const sendInvite=()=>{
+    const v=inviteInput.trim();if(!v)return;
+    const isEmail=v.includes("@")&&v.includes(".");
+    const isUser=v.startsWith("@")||(!isEmail&&v.length>1);
+    if(isEmail){
+      setInviteStatus("email_sent");
+      setTimeout(()=>{setInviteStatus("");setInviteInput("");},2000);
+    } else if(isUser){
+      const username=v.startsWith("@")?v.slice(1):v;
+      if(friends.find(f=>f.name.toLowerCase()===username.toLowerCase())){setInviteStatus("already");return;}
+      const newFriend={id:String(Date.now()),name:username,status:"pending",online:false,initials:username.slice(0,2).toUpperCase()};
+      const next=[...friends,newFriend];setFriends(next);lsSet("friends",next);
+      setInviteStatus("request_sent");
+      setTimeout(()=>{setInviteStatus("");setInviteInput("");},2000);
+    }
+  };
+
+  const sendDm=()=>{
+    const msg=dmInput.trim();if(!msg||!activeFriend)return;
+    const key=activeFriend.id;
+    const thread=dms[key]||[];
+    const next={...dms,[key]:[...thread,{from:"me",text:msg,ts:Date.now()}]};
+    setDms(next);lsSet("dms",next);setDmInput("");
+  };
+
+  const DEMO_FRIENDS=[
+    {id:"d1",name:"Alex Rivera",status:"active",online:true,initials:"AR"},
+    {id:"d2",name:"Sam Chen",status:"active",online:false,initials:"SC"},
+    {id:"d3",name:"Jordan Lee",status:"active",online:true,initials:"JL"},
+  ];
+  const allFriends=[...DEMO_FRIENDS,...friends.filter(f=>!DEMO_FRIENDS.find(d=>d.id===f.id))];
+  const thread=activeFriend?(dms[activeFriend.id]||[]):[];
+
+  const qrUrl="https://api.qrserver.com/v1/create-qr-code/?data="+encodeURIComponent(inviteLink)+"&size=180x180&color=AECE5E&bgcolor=19211C&margin=12";
+
+  return (
+    <div>
+      <PH title="Friends & Chat" sub="Study together. Share notes. Stay in sync." />
+      <div style={{display:"grid",gridTemplateColumns:"220px 1fr 300px",gap:14,minHeight:520}}>
+
+        {/* ── FRIEND LIST ── */}
+        <div>
+          <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8}}>Friends</div>
+          {allFriends.length===0&&<div style={{fontSize:12,color:T.muted,padding:"10px 0"}}>No friends yet. Invite someone below.</div>}
+          {allFriends.map(f=>(
+            <div key={f.id} onClick={()=>setActiveFriend(f)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:9,marginBottom:4,cursor:"pointer",background:activeFriend?.id===f.id?T.card2:"transparent",border:`1px solid ${activeFriend?.id===f.id?T.lime+"33":"transparent"}`,transition:"all 0.15s"}}>
+              <div style={{position:"relative",flexShrink:0}}>
+                <Av initials={f.initials||f.name.slice(0,2).toUpperCase()} color={T.lime} size={32} picUrl="" />
+                <div style={{position:"absolute",bottom:0,right:0,width:9,height:9,borderRadius:"50%",background:f.online?T.teal:T.faint,border:`2px solid ${T.surface}`}} />
+              </div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:12.5,fontWeight:600,color:T.white,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{f.name}</div>
+                <div style={{fontSize:10,color:f.online?T.teal:T.muted}}>{f.status==="pending"?"Request sent":f.online?"Online":"Offline"}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* ── DM PANE ── */}
+        <Card style={{display:"flex",flexDirection:"column",padding:0,overflow:"hidden"}}>
+          {activeFriend
+            ?<>
+                <div style={{padding:"12px 16px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",gap:10}}>
+                  <div style={{position:"relative",flexShrink:0}}>
+                    <Av initials={activeFriend.initials||activeFriend.name.slice(0,2).toUpperCase()} color={T.lime} size={30} picUrl="" />
+                    <div style={{position:"absolute",bottom:0,right:0,width:8,height:8,borderRadius:"50%",background:activeFriend.online?T.teal:T.faint,border:`2px solid ${T.card}`}} />
+                  </div>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:700,color:T.white}}>{activeFriend.name}</div>
+                    <div style={{fontSize:10,color:activeFriend.online?T.teal:T.muted}}>{activeFriend.online?"Online":"Offline"}</div>
+                  </div>
+                </div>
+                <div style={{flex:1,overflowY:"auto",padding:16,display:"flex",flexDirection:"column",gap:8,minHeight:200}}>
+                  {thread.length===0&&<div style={{textAlign:"center",fontSize:12,color:T.muted,marginTop:40}}>No messages yet. Say hi!</div>}
+                  {thread.map((m,i)=>(
+                    <div key={i} style={{display:"flex",justifyContent:m.from==="me"?"flex-end":"flex-start"}}>
+                      <div style={{maxWidth:"72%",padding:"9px 13px",borderRadius:12,background:m.from==="me"?T.lime:T.card2,color:m.from==="me"?T.ink:T.text,fontSize:13,lineHeight:1.5}}>
+                        {m.text}
+                      </div>
+                    </div>
+                  ))}
+                  <div ref={chatEndRef} />
+                </div>
+                <div style={{padding:"10px 12px",borderTop:`1px solid ${T.border}`,display:"flex",gap:8}}>
+                  <input value={dmInput} onChange={e=>setDmInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendDm();}}} placeholder={`Message ${activeFriend.name.split(" ")[0]}…`} style={{flex:1,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none"}} />
+                  <BtnSm onClick={sendDm} style={{flexShrink:0}}>{Icon.send}</BtnSm>
+                </div>
+              </>
+            :<div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:12,padding:32}}>
+                <div style={{color:T.faint,opacity:0.5}}>{Icon.msgSquare}</div>
+                <div style={{fontSize:13,color:T.muted,textAlign:"center"}}>Select a friend to start chatting</div>
+              </div>
+          }
+        </Card>
+
+        {/* ── ADD & INVITE ── */}
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:4}}>Add &amp; Invite Friends</div>
+
+          {/* Tab switcher */}
+          <div style={{display:"flex",gap:4}}>
+            {["link","email","qr"].map(t=>(
+              <button key={t} onClick={()=>setAddTab(t)} style={{flex:1,padding:"6px 0",borderRadius:6,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font,border:`1px solid ${addTab===t?T.lime+"44":T.border}`,background:addTab===t?T.lime+"14":"transparent",color:addTab===t?T.lime:T.muted,textTransform:"capitalize",transition:"all 0.15s"}}>
+                {t==="link"?"Link":t==="email"?"Search":"QR Code"}
+              </button>
+            ))}
+          </div>
+
+          {addTab==="link"&&(
+            <Card style={{padding:16}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                <div style={{width:32,height:32,borderRadius:8,background:T.lime+"18",border:`1px solid ${T.lime}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,flexShrink:0}}>{Icon.link}</div>
+                <div>
+                  <div style={{fontSize:12.5,fontWeight:700,color:T.white}}>One-click invite link</div>
+                  <div style={{fontSize:11,color:T.muted}}>Copies a message + your link</div>
+                </div>
+              </div>
+              <div style={{fontSize:11,color:T.muted,padding:"10px 12px",background:T.card2,borderRadius:7,border:`1px solid ${T.border}`,lineHeight:1.6,marginBottom:12,wordBreak:"break-all"}}>{inviteLink}</div>
+              <Btn onClick={copyInvite} style={{width:"100%",justifyContent:"center"}}>{copied?Icon.check:Icon.copy} {copied?"Copied!":"Copy invite message"}</Btn>
+            </Card>
+          )}
+
+          {addTab==="email"&&(
+            <Card style={{padding:16}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                <div style={{width:32,height:32,borderRadius:8,background:T.blue+"18",border:`1px solid ${T.blue}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.blue,flexShrink:0}}>{Icon.userPlus}</div>
+                <div>
+                  <div style={{fontSize:12.5,fontWeight:700,color:T.white}}>Find or invite</div>
+                  <div style={{fontSize:11,color:T.muted}}>Username sends request · email invites</div>
+                </div>
+              </div>
+              <input value={inviteInput} onChange={e=>{setInviteInput(e.target.value);setInviteStatus("");}} onKeyDown={e=>{if(e.key==="Enter")sendInvite();}} placeholder="@username or email@school.edu" style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",boxSizing:"border-box",marginBottom:10}} />
+              {inviteStatus==="email_sent"&&<div style={{fontSize:12,color:T.teal,marginBottom:8}}>Invite email sent!</div>}
+              {inviteStatus==="request_sent"&&<div style={{fontSize:12,color:T.lime,marginBottom:8}}>Friend request sent!</div>}
+              {inviteStatus==="already"&&<div style={{fontSize:12,color:T.amber,marginBottom:8}}>Already a friend.</div>}
+              <Btn onClick={sendInvite} style={{width:"100%",justifyContent:"center",opacity:inviteInput.trim()?1:0.45}}>{Icon.send} Send</Btn>
+            </Card>
+          )}
+
+          {addTab==="qr"&&(
+            <Card style={{padding:16,textAlign:"center"}}>
+              <div style={{fontSize:12.5,fontWeight:700,color:T.white,marginBottom:4}}>Scan to join Studlin</div>
+              <div style={{fontSize:11,color:T.muted,marginBottom:12}}>Show this to a friend nearby</div>
+              <div style={{display:"inline-block",padding:8,background:"#19211C",borderRadius:10,border:`1px solid ${T.border}`}}>
+                <img src={qrUrl} width={160} height={160} alt="Studlin invite QR code" style={{display:"block",borderRadius:6}} onError={e=>{e.target.style.display="none";}} />
+              </div>
+              <div style={{fontSize:10,color:T.faint,marginTop:10,wordBreak:"break-all"}}>{inviteLink}</div>
+            </Card>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ─── CALENDAR ─────────────────────────────────────────────────────────────────
 // ─── TASK TIMER MODAL ────────────────────────────────────────────────────────
@@ -1673,6 +1921,9 @@ function TaskTimerModal({task,onClose,onComplete}){
   const [phase,setPhase]=useState("quote");
   const [secs,setSecs]=useState(0);
   const [running,setRunning]=useState(false);
+  const [soundOn,setSoundOn]=useState(true);
+
+  const playBeep=()=>{try{const ctx=new(window.AudioContext||window.webkitAudioContext)();const osc=ctx.createOscillator();const gain=ctx.createGain();osc.connect(gain);gain.connect(ctx.destination);osc.frequency.setValueAtTime(880,ctx.currentTime);osc.frequency.exponentialRampToValueAtTime(440,ctx.currentTime+0.3);gain.gain.setValueAtTime(0.3,ctx.currentTime);gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.35);osc.start(ctx.currentTime);osc.stop(ctx.currentTime+0.35);}catch(e){}};
 
   const focus2Mins=Math.max(1,totalMins-breakPos-breakMins);
   const fmt=s=>String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0");
@@ -1686,8 +1937,8 @@ function TaskTimerModal({task,onClose,onComplete}){
       const remaining=Math.max(0,Math.round((endTimeRef.current-Date.now())/1000));
       setSecs(remaining);
       if(remaining<=0){
-        if(phase==="focus1"){setPhase("break");setRunning(false);}
-        else if(phase==="break"){setPhase("breakDone");setRunning(false);}
+        if(phase==="focus1"){setPhase("break");setRunning(false);if(soundOn)playBeep();}
+        else if(phase==="break"){setPhase("breakDone");setRunning(false);if(soundOn)playBeep();}
         else if(phase==="focus2"){
           setPhase("done");setRunning(false);
           if(onComplete)onComplete(Math.max(1,Math.round(focusElapsed.current/60)));
@@ -1781,7 +2032,7 @@ function TaskTimerModal({task,onClose,onComplete}){
           {/* Interactive timeline */}
           <div style={{marginBottom:24,textAlign:"left"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-              <span style={{fontSize:11,fontWeight:600,color:T.muted,letterSpacing:"0.06em",textTransform:"uppercase"}}>Break schedule</span>
+              <span style={{fontSize:11,fontWeight:600,color:T.muted,letterSpacing:"0.06em",textTransform:"uppercase"}}>Challenge placement</span>
               <div onClick={()=>setBreakOn(b=>!b)} style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
                 <div style={{width:30,height:17,borderRadius:99,background:breakOn?T.lime:T.faint,position:"relative",transition:"background 0.2s"}}>
                   <div style={{width:13,height:13,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:breakOn?15:2,transition:"left 0.2s"}}/>
@@ -1811,7 +2062,7 @@ function TaskTimerModal({task,onClose,onComplete}){
 
             {breakOn&&(
               <div style={{fontSize:11,color:T.muted,marginTop:8,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
-                <span>Break at <strong style={{color:T.amber}}>{breakPos}m</strong> · {breakMins}m · <strong style={{color:T.lime}}>{focus2Mins}m</strong> after</span>
+                <span>Challenge at <strong style={{color:T.amber}}>{breakPos}m</strong> · {breakMins}m · <strong style={{color:T.lime}}>{focus2Mins}m</strong> after</span>
                 <span style={{fontSize:10,color:T.faint}}>Drag to reposition · double-click to edit duration</span>
               </div>
             )}
@@ -1852,12 +2103,16 @@ function TaskTimerModal({task,onClose,onComplete}){
   // ── ACTIVE TIMER (focus1 | break | breakDone | focus2) ───────────────────
   const isBreak=phase==="break"||phase==="breakDone";
   const timerColor=isBreak?T.amber:T.lime;
-  const phaseLabel=phase==="focus1"?"Time until break":phase==="break"?"Break time":phase==="breakDone"?"Break complete":"Time remaining";
+  const phaseLabel=phase==="focus1"?"Time until challenge":phase==="break"?"Challenge":phase==="breakDone"?"Challenge complete":"Time remaining";
   const phaseDuration=phase==="focus1"?breakPos*60:phase==="break"?breakMins*60:focus2Mins*60;
   const phasePct=Math.max(0,Math.min(1,phaseDuration>0?1-secs/phaseDuration:1));
 
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",backdropFilter:"blur(12px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <button onClick={()=>setSoundOn(s=>!s)} title={soundOn?"Mute alarm":"Unmute alarm"} style={{position:"absolute",top:20,right:20,background:"rgba(255,255,255,0.08)",border:"1px solid rgba(255,255,255,0.15)",borderRadius:8,padding:"7px 10px",color:soundOn?"rgba(255,255,255,0.8)":"rgba(255,255,255,0.3)",cursor:"pointer",display:"flex",alignItems:"center",gap:6,fontSize:11,fontWeight:600,fontFamily:T.font,transition:"all 0.15s"}}>
+        {soundOn?Icon.volume:Icon.volOff}
+        <span>{soundOn?"Sound on":"Sound off"}</span>
+      </button>
       <div style={{width:"100%",maxWidth:400,textAlign:"center"}}>
         <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:timerColor,marginBottom:16}}>{phaseLabel}</div>
 
@@ -1872,7 +2127,7 @@ function TaskTimerModal({task,onClose,onComplete}){
           <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
             <div style={{fontSize:44,fontWeight:800,color:"#FFFFFF",fontFamily:T.mono,letterSpacing:"-0.03em",textShadow:"0 2px 12px rgba(0,0,0,0.6),0 0 30px rgba(255,255,255,0.15)"}}>{fmt(secs)}</div>
             <div style={{fontSize:10,color:"rgba(255,255,255,0.55)",marginTop:4,letterSpacing:"0.1em",textTransform:"uppercase"}}>
-              {phase==="focus1"?"until break":isBreak?"break":"remaining"}
+              {phase==="focus1"?"until challenge":isBreak?"challenge":"remaining"}
             </div>
           </div>
         </div>
@@ -1883,6 +2138,11 @@ function TaskTimerModal({task,onClose,onComplete}){
           <div style={{fontSize:13,color:T.amber,margin:"0 auto 20px",padding:"12px 16px",background:T.amber+"12",borderRadius:10,lineHeight:1.5,maxWidth:320}}>
             {breakIdeaRef.current}
           </div>
+        )}
+        {phase==="break"&&(
+          <button onClick={resume} style={{display:"block",width:"100%",maxWidth:240,margin:"0 auto 12px",padding:"12px 24px",background:"rgba(255,255,255,0.10)",color:"#ffffff",border:"1px solid rgba(255,255,255,0.25)",borderRadius:12,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:T.font,letterSpacing:"-0.01em"}}>
+            Resume Focus Early
+          </button>
         )}
 
         {phase==="breakDone"&&(
@@ -2094,6 +2354,14 @@ function CalendarTab(){
   const [weekOffset,setWeekOffset]=useState(0);
   const [editOpen,setEditOpen]=useState(false);
   const [editEv,setEditEv]=useState(null);
+  const [groupSyncOpen,setGroupSyncOpen]=useState(false);
+  const [gsStep,setGsStep]=useState(1);
+  const [gsDueDate,setGsDueDate]=useState(dayKey());
+  const [gsDuration,setGsDuration]=useState(120);
+  const [gsStartTime,setGsStartTime]=useState("15:00");
+  const [gsEndTime,setGsEndTime]=useState("17:00");
+  const [gsInvitees,setGsInvitees]=useState("");
+  const [gsResults,setGsResults]=useState(null);
   const [editTitle,setEditTitle]=useState("");
   const [editDate,setEditDate]=useState("");
   const [editTime,setEditTime]=useState("14:30");
@@ -2172,11 +2440,50 @@ function CalendarTab(){
   const markDone=(id)=>{const next=events.map(ev=>ev.id===id?{...ev,status:"done",completedAt:Date.now()}:ev);setEvents(next);lsSet("events",next);};
   const nav=(d)=>setYm(c=>{const m2=c.m+d;return {y:c.y+Math.floor(m2/12),m:((m2%12)+12)%12};});
   const openEdit=(ev)=>{setEditEv(ev);setEditTitle(ev.title||"");setEditDate(ev.date||dayKey());setEditTime(ev.time||"14:30");setEditDuration(ev.duration||60);setEditDeadline(ev.deadline||"");setEditPriority((ev.priority||5)*100);setEditDifficulty((ev.difficulty||5)*100);setEditSubject(ev.subject||"Chemistry");setEditKind(ev.kind||"deadline");setEditNotes(ev.notes||"");setEditOpen(true);};
+  const runGroupSync=()=>{
+    const prefStart=timeToMinutes(gsStartTime);
+    const prefEnd=timeToMinutes(gsEndTime);
+    const dur=gsDuration;
+    const slots=[];
+    const today=new Date();
+    const due=new Date(gsDueDate);
+    for(let offset=0;offset<=14;offset++){
+      const d=new Date(today);d.setDate(today.getDate()+offset);
+      if(d>due)break;
+      const dk=dayKey(d);
+      const dayEvs=events.filter(e=>e.date===dk);
+      const occupied=dayEvs.map(e=>({s:timeToMinutes(e.time||"0:00"),e:timeToMinutes(e.time||"0:00")+(e.duration||60)}));
+      const isFree=(start,end)=>!occupied.some(o=>!(end<=o.s||start>=o.e));
+      if(prefEnd-prefStart>=dur&&isFree(prefStart,prefStart+dur)){
+        slots.push({tier:1,date:dk,start:gsStartTime,end:minutesToTime(prefStart+dur),day:d.toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})});
+      }
+      if(slots.length>=3)break;
+    }
+    if(slots.length===0){
+      const altWindows=[{s:"09:00",e:"11:00"},{s:"13:00",e:"15:00"},{s:"18:00",e:"20:00"},{s:"20:00",e:"22:00"}];
+      for(let offset=0;offset<=14&&slots.length<3;offset++){
+        const d=new Date(today);d.setDate(today.getDate()+offset);
+        if(d>due)break;
+        const dk=dayKey(d);
+        const dayEvs=events.filter(e=>e.date===dk);
+        const occupied=dayEvs.map(e=>({s:timeToMinutes(e.time||"0:00"),e:timeToMinutes(e.time||"0:00")+(e.duration||60)}));
+        const isFree=(start,end)=>!occupied.some(o=>!(end<=o.s||start>=o.e));
+        for(const w of altWindows){
+          const ws=timeToMinutes(w.s);const we=timeToMinutes(w.e);
+          if(we-ws>=dur&&isFree(ws,ws+dur)){
+            slots.push({tier:2,date:dk,start:w.s,end:minutesToTime(ws+dur),day:d.toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})});
+            break;
+          }
+        }
+      }
+    }
+    setGsResults(slots);setGsStep(2);
+  };
   const closeEdit=()=>{setEditOpen(false);setEditEv(null);};
   const saveEdit=()=>{if(!editEv||!editTitle.trim())return;const next=events.map(e=>e.id===editEv.id?{...e,title:editTitle.trim(),date:editDate,time:editTime,duration:editDuration,deadline:editDeadline||null,priority:Math.round(editPriority/100),difficulty:Math.round(editDifficulty/100),subject:editSubject,kind:editKind,notes:editNotes}:e);setEvents(next);lsSet("events",next);closeEdit();};
   return (
     <div>
-      <PH title="Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn>} />
+      <PH title="Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><Btn variant="ghost" onClick={()=>{setGroupSyncOpen(true);setGsStep(1);setGsResults(null);}}>{Icon.users} Group Sync</Btn><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></div>} />
       <div style={{display:"flex",gap:6,marginBottom:20}}>
         {["monthly","weekly"].map(v=>(
           <button key={v} onClick={()=>setCalView(v)} style={{padding:"6px 14px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",background:calView===v?T.lime+"14":"transparent",color:calView===v?T.lime:T.muted,border:`1px solid ${calView===v?T.lime+"44":T.border}`,fontFamily:T.font,transition:"all 0.15s",textTransform:"capitalize"}}>{v}</button>
@@ -2272,6 +2579,49 @@ function CalendarTab(){
         </Field>
         <Field label="Subject"><SelectChip options={SUBJ} value={editSubject} onChange={setEditSubject} /></Field>
         <Field label="Notes (optional)"><Textarea value={editNotes} onChange={e=>setEditNotes(e.target.value)} /></Field>
+      </Modal>
+      <Modal open={groupSyncOpen} onClose={()=>setGroupSyncOpen(false)} title="Group Smart Match" sub="Find a time slot when everyone is free." width={540}
+        footer={gsStep===1?<><Btn variant="subtle" onClick={()=>setGroupSyncOpen(false)}>Cancel</Btn><Btn onClick={runGroupSync}>Find slots</Btn></>:<><Btn variant="subtle" onClick={()=>{setGsStep(1);setGsResults(null);}}>← Back</Btn><Btn variant="subtle" onClick={()=>setGroupSyncOpen(false)}>Done</Btn></>}>
+        {gsStep===1&&(
+          <>
+            <Field label="Project due date"><Input type="date" value={gsDueDate} onChange={e=>setGsDueDate(e.target.value)} /></Field>
+            <Field label="Total meeting duration (minutes)" hint="e.g. 120 for a 2-hour session"><Input type="number" min={15} max={480} value={gsDuration} onChange={e=>setGsDuration(Math.max(15,+e.target.value||60))} /></Field>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <Field label="Preferred window — start"><Input type="time" value={gsStartTime} onChange={e=>setGsStartTime(e.target.value)} /></Field>
+              <Field label="Preferred window — end"><Input type="time" value={gsEndTime} onChange={e=>setGsEndTime(e.target.value)} /></Field>
+            </div>
+            <Field label="Group members (optional)" hint="Enter usernames or emails, comma-separated"><Input placeholder="e.g. @alex, @sam, jamie@school.edu" value={gsInvitees} onChange={e=>setGsInvitees(e.target.value)} /></Field>
+          </>
+        )}
+        {gsStep===2&&(
+          <div>
+            {gsResults&&gsResults.length===0&&<div style={{textAlign:"center",padding:"24px 0",color:T.muted,fontSize:13}}>No available slots found before the due date. Try extending the window or increasing flexibility.</div>}
+            {gsResults&&gsResults.length>0&&(
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                {gsResults.some(s=>s.tier===1)&&<div style={{fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.lime,marginBottom:4}}>Ideal matches — everyone is free</div>}
+                {gsResults.filter(s=>s.tier===1).map((s,i)=>(
+                  <div key={"t1-"+i} style={{display:"flex",alignItems:"center",justify:"space-between",padding:"14px 16px",background:T.lime+"0e",border:`1px solid ${T.lime}33`,borderRadius:10}}>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:13,fontWeight:600,color:T.white}}>{s.day}</div>
+                      <div style={{fontSize:12,color:T.lime}}>{s.start} – {s.end} · {gsDuration} min</div>
+                    </div>
+                    <BtnSm onClick={()=>{commitTasks([{id:String(Date.now()),title:"Group meeting",date:s.date,time:s.start,subject:"Other",kind:"study block",notes:gsInvitees?"Members: "+gsInvitees:"",priority:4,difficulty:2,deadline:gsDueDate,duration:gsDuration,status:"pending",timeSpent:0,completedAt:null}]);setGroupSyncOpen(false);}}>Book it</BtnSm>
+                  </div>
+                ))}
+                {gsResults.some(s=>s.tier===2)&&<div style={{fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.amber,margin:"8px 0 4px"}}>Alternative slots</div>}
+                {gsResults.filter(s=>s.tier===2).map((s,i)=>(
+                  <div key={"t2-"+i} style={{display:"flex",alignItems:"center",padding:"14px 16px",background:T.amber+"0a",border:`1px solid ${T.amber}33`,borderRadius:10}}>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:13,fontWeight:600,color:T.white}}>{s.day}</div>
+                      <div style={{fontSize:12,color:T.amber}}>{s.start} – {s.end} · {gsDuration} min</div>
+                    </div>
+                    <BtnSm onClick={()=>{commitTasks([{id:String(Date.now()),title:"Group meeting",date:s.date,time:s.start,subject:"Other",kind:"study block",notes:gsInvitees?"Members: "+gsInvitees:"",priority:4,difficulty:2,deadline:gsDueDate,duration:gsDuration,status:"pending",timeSpent:0,completedAt:null}]);setGroupSyncOpen(false);}}>Book it</BtnSm>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </Modal>
       {calView==="monthly"&&(<div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:16}}>
         <Card style={{padding:16}}>
@@ -4340,6 +4690,7 @@ function App() {
       {id:"essays",label:"Essays",badge:String(lsGet("essays",[]).length||"")},
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
+      {id:"friends",label:"Friends & Chat"},
     ]},
     {label:"Tools",items:[
       {id:"solve",label:"Solve"},
@@ -4349,9 +4700,9 @@ function App() {
     ]},
   ];
   const bottomItems=[{id:"settings",label:"Settings"},{id:"profile",label:"Profile"}];
-  const pages={aichat:AiChat,essays:Essays,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,solve:Solve,aitutor:AiTutor,grammar:GrammarPolish,humanizer:AiHumanizer,profile:Profile};
-  const labelOf={dashboard:"Dashboard",aichat:"AI Chat",essays:"Essays",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",aitutor:"AI Tutor",grammar:"Grammar & Polish",humanizer:"Rewrite",settings:"Settings",profile:"Profile",solve:"Solve"};
-  const sectionOf={dashboard:"Workspace",aichat:"Workspace",essays:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",aitutor:"Tools",grammar:"Tools",humanizer:"Tools",solve:"Tools",settings:"Account",profile:"Account"};
+  const pages={aichat:AiChat,essays:Essays,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,aitutor:AiTutor,grammar:GrammarPolish,humanizer:AiHumanizer,profile:Profile};
+  const labelOf={dashboard:"Dashboard",aichat:"AI Chat",essays:"Essays",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Friends & Chat",aitutor:"AI Tutor",grammar:"Grammar & Polish",humanizer:"Rewrite",settings:"Settings",profile:"Profile",solve:"Solve"};
+  const sectionOf={dashboard:"Workspace",aichat:"Workspace",essays:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",friends:"Workspace",aitutor:"Tools",grammar:"Tools",humanizer:"Tools",solve:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
   if (!onboarded) return <InitWizard onComplete={()=>{setOnboarded(true);if(!lsGet("notifAsked",false))setTimeout(()=>setNotifPermModal(true),500);}} />;
