@@ -76,7 +76,7 @@ const hexA=(hex,a)=>{const h=hex.replace('#','');const r=parseInt(h.slice(0,2),1
 // accent palettes — override the lime family per user choice
 const ACCENTS={
   Lime:  {dk:{lime:"#AECE5E",limeDk:"#8BAE3C",limeLt:"#CBDF92"}, lt:{lime:"#9EC83D",limeDk:"#7FA82A",limeLt:"#CBDF92"}},
-  Forest:{dk:{lime:"#6FC1A0",limeDk:"#4E9C7B",limeLt:"#A9E0CB"}, lt:{lime:"#2E8E6E",limeDk:"#22705680".slice(0,7),limeLt:"#A9E0CB"}},
+  Forest:{dk:{lime:"#6FC1A0",limeDk:"#4E9C7B",limeLt:"#A9E0CB"}, lt:{lime:"#2E8E6E",limeDk:"#227056",limeLt:"#A9E0CB"}},
   Sky:   {dk:{lime:"#84BBEA",limeDk:"#5A93C9",limeLt:"#BFE0FA"}, lt:{lime:"#2D74BC",limeDk:"#225A98",limeLt:"#BFE0FA"}},
   Lilac: {dk:{lime:"#B89BE0",limeDk:"#9474C9",limeLt:"#DCCBF5"}, lt:{lime:"#7E5BC0",limeDk:"#634599",limeLt:"#DCCBF5"}},
   Peach: {dk:{lime:"#E8A06E",limeDk:"#C9764A",limeLt:"#F5C9AC"}, lt:{lime:"#C2683A",limeDk:"#A4542C",limeLt:"#F5C9AC"}},
@@ -3567,16 +3567,16 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   <div style={{fontSize:12,color:T.muted}}>Switch between light and dark. Your choice persists across sessions.</div>
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <span style={{fontSize:12,color:T.muted}}>Light</span>
+                  <span style={{fontSize:12,color:theme==="light"?T.lime:T.muted,fontWeight:theme==="light"?600:400}}>Light</span>
                   <div onClick={()=>setTheme(theme==="dark"?"light":"dark")} style={{width:46,height:24,borderRadius:12,background:theme==="dark"?T.lime:T.card2,border:`1.5px solid ${theme==="dark"?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
-                    <div style={{width:18,height:18,borderRadius:"50%",background:theme==="dark"?T.ink:"#ffffff",border:`1px solid ${theme==="dark"?"transparent":T.border}`,position:"absolute",top:2,left:theme==="dark"?24:2,transition:"left 0.2s",boxShadow:"0 1px 4px rgba(0,0,0,0.2)"}} />
+                    <div style={{width:18,height:18,borderRadius:"50%",background:"#ffffff",border:`1px solid rgba(0,0,0,0.10)`,position:"absolute",top:2,left:theme==="dark"?24:2,transition:"left 0.2s",boxShadow:"0 1px 4px rgba(0,0,0,0.18)"}} />
                   </div>
-                  <span style={{fontSize:12,color:T.muted}}>Dark</span>
+                  <span style={{fontSize:12,color:theme==="dark"?T.lime:T.muted,fontWeight:theme==="dark"?600:400}}>Dark</span>
                 </div>
               </div>
               <div style={{display:"flex",gap:10}}>
-                <ThemeCard mode="light" label="Light" sub="Cream paper · sage accents" />
-                <ThemeCard mode="dark"  label="Dark"  sub="Forest matte · refined" />
+                <ThemeCard mode="light" label="Light" sub="Bone white · muted slate" />
+                <ThemeCard mode="dark"  label="Dark"  sub="Midnight matte · slate blue" />
               </div>
             </Card>
             <Card style={{marginBottom:12}}>
