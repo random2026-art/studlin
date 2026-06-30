@@ -224,7 +224,7 @@ function getWeeklyXP(){const sessions=lsGet("sessions",[]);const weekAgo=Date.no
 //   console.cloud.google.com → APIs & Services → Credentials → Create OAuth Client ID (Web)
 //   Authorized JS origin: https://studlin.vercel.app
 //   Also enable: Drive API (googleapis.com/drive/v3)
-const GOOGLE_OAUTH_CLIENT_ID = "YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com";
+const GOOGLE_OAUTH_CLIENT_ID = "16831354472-bsq7nhbg1jbrovhj69sib9f9fmg4jag2.apps.googleusercontent.com";
 const GDOCS_CONFIGURED = GOOGLE_OAUTH_CLIENT_ID !== "YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com";
 
 async function createGoogleDoc(essay) {
