@@ -1,3 +1,6 @@
+const { db } = require('./_lib/firebase-admin');
+const { setCors, verifyAuth } = require('./_lib/auth');
+
 const MODEL_MAP = {
   standard: 'claude-sonnet-4-6',
   flash: 'claude-haiku-4-5',
@@ -63,24 +66,68 @@ IMPORTANT: When asked to create notes from a YouTube URL, NEVER say you cannot a
 
 const FLASH_PROMPT = `You are Studlin Flash, a quick-answer study assistant. Give the most direct, concise answer possible. Sound like a smart study buddy, not a textbook. 1-3 sentences max unless the question genuinely needs more. Use bullet points to keep it scannable. Be helpful but brief.`;
 
+const CREDIT_COST = { standard: 1, flash: 1 };
+const DEFAULT_CREDITS = 120;
+const RATE_LIMIT_PER_MIN = 20;
+
 module.exports = async (req, res) => {
-  const allowedOrigins = ['https://studlin.vercel.app', 'https://www.studlin.vercel.app'];
-  const origin = req.headers.origin;
-  if (allowedOrigins.includes(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  }
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  setCors(req, res);
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return res.status(500).json({ error: 'AI service not configured.' });
 
+  const user = await verifyAuth(req);
+  if (!user) return res.status(401).json({ error: 'Sign in required.' });
+
   try {
     const { messages, model } = req.body;
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({ error: 'Messages are required.' });
+    }
+
+    const cost = CREDIT_COST[model] || 1;
+    const userRef = db.collection('users').doc(user.uid);
+
+    let creditsAfter;
+    try {
+      creditsAfter = await db.runTransaction(async (tx) => {
+        const doc = await tx.get(userRef);
+        const now = Date.now();
+        const data = doc.exists ? doc.data() : { credits: DEFAULT_CREDITS, plan: 'Free' };
+        const credits = data.credits ?? DEFAULT_CREDITS;
+
+        const windowStart = data.rlWindowStart || 0;
+        const windowCount = now - windowStart < 60000 ? (data.rlCount || 0) : 0;
+        if (windowCount >= RATE_LIMIT_PER_MIN) {
+          throw new Error('RATE_LIMIT');
+        }
+        if (credits < cost) {
+          throw new Error('NO_CREDITS');
+        }
+
+        const next = credits - cost;
+        const update = {
+          credits: next,
+          rlWindowStart: now - windowStart < 60000 ? windowStart : now,
+          rlCount: windowCount + 1,
+        };
+        if (doc.exists) {
+          tx.update(userRef, update);
+        } else {
+          tx.set(userRef, Object.assign({ createdAt: new Date().toISOString(), plan: 'Free' }, update));
+        }
+        return next;
+      });
+    } catch (txErr) {
+      if (txErr.message === 'RATE_LIMIT') {
+        return res.status(429).json({ error: 'Too many requests. Slow down a bit.' });
+      }
+      if (txErr.message === 'NO_CREDITS') {
+        return res.status(402).json({ error: 'Not enough credits. Upgrade or buy more.' });
+      }
+      throw txErr;
     }
 
     const claudeModel = MODEL_MAP[model] || MODEL_MAP.standard;
@@ -109,12 +156,13 @@ module.exports = async (req, res) => {
 
     if (!response.ok) {
       const errText = await response.text();
+      await userRef.update({ credits: creditsAfter + cost }).catch(() => {});
       return res.status(502).json({ error: 'AI error: ' + errText.slice(0, 200) });
     }
 
     const data = await response.json();
     const reply = data.content?.find(b => b.type === 'text')?.text || 'No response.';
-    return res.status(200).json({ reply });
+    return res.status(200).json({ reply, credits: creditsAfter });
   } catch (err) {
     return res.status(500).json({ error: err.message || 'Server error.' });
   }
