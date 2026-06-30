@@ -1215,6 +1215,7 @@ function Essays() {
   const [citeResult,setCiteResult]=useState("");
   const [exportOpen,setExportOpen]=useState(false);
   const [copiedMsg,setCopiedMsg]=useState("");
+  const [gdocsStep,setGdocsStep]=useState("idle");
   const editorRef=useRef(null);
   const subjects=[{value:"English IV",label:"English IV",color:T.purple},{value:"Biology",label:"Biology",color:T.teal},{value:"History",label:"History",color:T.muted},{value:"Chemistry",label:"Chemistry",color:T.red},{value:"Calculus",label:"Calculus",color:T.blue},{value:"Other",label:"Other",color:T.lime}];
   const subjectColor={"English IV":T.purple,"Biology":T.teal,"History":T.muted,"Chemistry":T.red,"Calculus":T.blue};
@@ -1364,14 +1365,20 @@ function Essays() {
     URL.revokeObjectURL(url);
   };
 
-  const openInGoogleDocs=()=>{
+  const copyForGoogleDocs=async()=>{
     if(!activeEssay)return;
     const txt=activeEssay.title+"\n\n"+stripHtml(activeEssay.content).trim();
-    navigator.clipboard&&navigator.clipboard.writeText(txt).then(()=>{
-      setCopiedMsg("Copied — paste with Cmd/Ctrl+V into the new doc");
-      setTimeout(()=>setCopiedMsg(""),4000);
-    });
+    try{
+      if(!navigator.clipboard)throw new Error("no clipboard api");
+      await navigator.clipboard.writeText(txt);
+      setGdocsStep("ready");
+    }catch(e){
+      setGdocsStep("error");
+    }
+  };
+  const openBlankGoogleDoc=()=>{
     window.open("https://docs.google.com/document/create","_blank","noopener,noreferrer");
+    setGdocsStep("opened");
   };
 
   const wc=activeEssay?wordCountOf(activeEssay.content):0;
@@ -1416,13 +1423,41 @@ function Essays() {
         {citeResult&&<div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",fontSize:13,color:T.text,lineHeight:1.6}}>{citeResult}</div>}
       </Modal>
 
-      <Modal open={exportOpen} onClose={()=>setExportOpen(false)} title="Export essay" sub={activeEssay?activeEssay.title:""}>
+      <Modal open={exportOpen} onClose={()=>{setExportOpen(false);setGdocsStep("idle");}} title="Export essay" sub={activeEssay?activeEssay.title:""}>
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           <BtnSm variant="subtle" onClick={copyEssay}>{Icon.copy} Copy to clipboard</BtnSm>
           <BtnSm variant="subtle" onClick={downloadEssay}>{Icon.file} Download as .txt</BtnSm>
-          <BtnSm variant="subtle" onClick={openInGoogleDocs}>{Icon.link} Open in Google Docs</BtnSm>
-          <div style={{fontSize:11,color:T.faint,lineHeight:1.5,marginTop:4}}>Opening in Google Docs copies your essay, then opens a new blank doc — just paste with Cmd/Ctrl+V. A full one-click sync needs Studlin to be authorized with your Google account, which isn't set up yet.</div>
           {copiedMsg&&<div style={{fontSize:12,color:T.lime,fontWeight:600}}>{copiedMsg}</div>}
+
+          <div style={{height:1,background:T.border,margin:"6px 0"}} />
+
+          <Label>Google Docs</Label>
+          {gdocsStep==="idle"&&(
+            <>
+              <BtnSm variant="subtle" onClick={copyForGoogleDocs}>{Icon.link} Copy essay for Google Docs</BtnSm>
+              <div style={{fontSize:11,color:T.faint,lineHeight:1.5}}>This is a 2-step copy-and-paste flow, not a live sync — Studlin isn't authorized with your Google account for direct one-click export. Step 1 copies your essay to the clipboard.</div>
+            </>
+          )}
+          {gdocsStep==="ready"&&(
+            <>
+              <div style={{fontSize:12,color:T.lime,fontWeight:600,display:"flex",alignItems:"center",gap:6}}>{Icon.check} Essay copied to clipboard</div>
+              <BtnSm onClick={openBlankGoogleDoc}>{Icon.link} Open a new Google Doc</BtnSm>
+              <div style={{fontSize:11,color:T.faint,lineHeight:1.5}}>A blank Google Doc will open in a new tab. Click inside it and press <strong style={{color:T.text}}>Cmd+V</strong> (Mac) or <strong style={{color:T.text}}>Ctrl+V</strong> (Windows) to paste your essay in.</div>
+            </>
+          )}
+          {gdocsStep==="opened"&&(
+            <>
+              <div style={{fontSize:12,color:T.lime,fontWeight:600,display:"flex",alignItems:"center",gap:6}}>{Icon.check} Google Doc opened in a new tab</div>
+              <div style={{fontSize:12,color:T.text,lineHeight:1.6}}>Switch to that tab now, click inside the document, and press <strong>Cmd+V</strong> / <strong>Ctrl+V</strong> to paste your essay.</div>
+              <BtnSm variant="ghost" onClick={()=>setGdocsStep("idle")}>Start over</BtnSm>
+            </>
+          )}
+          {gdocsStep==="error"&&(
+            <>
+              <div style={{fontSize:12,color:T.red,fontWeight:600}}>Couldn't copy automatically — your browser blocked clipboard access.</div>
+              <div style={{fontSize:11,color:T.faint,lineHeight:1.5}}>Use "Copy to clipboard" above instead, then open <a href="https://docs.google.com/document/create" target="_blank" rel="noopener noreferrer" style={{color:T.lime}}>a new Google Doc</a> and paste manually.</div>
+            </>
+          )}
         </div>
       </Modal>
 
