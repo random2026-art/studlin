@@ -1887,6 +1887,13 @@ function Notes(){
   const [sendNoteStatus,setSendNoteStatus]=useState(""); // "" | "sending" | "sent" | "error"
   const [sendNoteError,setSendNoteError]=useState("");
 
+  // Split-screen AI Tutor sidebar
+  const [tutorOpen,setTutorOpen]=useState(false);
+  const [tutorCtx,setTutorCtx]=useState("");
+  const [tutorMsgs,setTutorMsgs]=useState([]);
+  const [tutorInput,setTutorInput]=useState("");
+  const [tutorSending,setTutorSending]=useState(false);
+
   useEffect(()=>{if(!rec)return;const id=setInterval(()=>setRecSecs(x=>x+1),1000);return()=>clearInterval(id);},[rec]);
   const fmtRec=(x)=>String(Math.floor(x/60)).padStart(2,"0")+":"+String(x%60).padStart(2,"0");
 
@@ -1935,11 +1942,34 @@ function Notes(){
     const f={id:String(Date.now()),selectedText:selText,date:new Date().toLocaleDateString()};
     const updated={...noteFlags,[noteId]:[...(noteFlags[noteId]||[]),f]};
     setNoteFlags(updated);lsSet("note-flags",updated);
-    // Cross-tool integration: persist to tutor-flags for Solve/Tutor panels
     const all=lsGet("tutor-flags",[]);
     all.push({...f,noteTitle:notes[sel].title,noteId,from:"notes"});
     lsSet("tutor-flags",all);
+    // Open split-screen tutor sidebar seeded with flagged text
+    const preview=selText.length>120?selText.slice(0,120)+"…":selText;
+    setTutorCtx(selText);
+    setTutorMsgs([{role:"ai",text:"I can see you flagged:\n\n\""+preview+"\"\n\nWhat would you like me to explain about this?"}]);
+    setTutorOpen(true);
     setPopover(null);setPendingSel(null);
+  };
+
+  const sendTutorMsg=async()=>{
+    const txt=tutorInput.trim();
+    if(!txt||tutorSending)return;
+    const next=[...tutorMsgs,{role:"user",text:txt}];
+    setTutorMsgs(next);
+    setTutorInput("");
+    setTutorSending(true);
+    try{
+      const ctxLine=tutorCtx?'The student flagged this passage from their notes: "'+tutorCtx+'"\n\n':"";
+      const history=next.map(m=>({r:m.role==="user"?"user":"assistant",t:m.text})).slice(-8);
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:ctxLine+"Student: "+txt},...history],model:"flash"})});
+      const data=await res.json();
+      setTutorMsgs(m=>[...m,{role:"ai",text:data.reply||"Sorry, I couldn't respond. Try again."}]);
+    }catch(e){
+      setTutorMsgs(m=>[...m,{role:"ai",text:"Network error — try again."}]);
+    }
+    setTutorSending(false);
   };
 
   const cleanNotes=async()=>{
@@ -2185,8 +2215,8 @@ function Notes(){
           })}
         </div>
 
-        {/* Canvas area: editor + optional margin panel */}
-        <div style={{display:"grid",gridTemplateColumns:hasMargin?"1fr 220px":"1fr",gap:12,alignItems:"start"}}>
+        {/* Canvas area: editor + optional margin panel + optional tutor sidebar */}
+        <div style={{display:"grid",gridTemplateColumns:tutorOpen?"1fr 340px":hasMargin?"1fr 220px":"1fr",gap:12,alignItems:"start"}}>
 
           {/* ── RICH TEXT EDITOR CARD ── */}
           <Card style={{padding:0,overflow:"hidden",minHeight:480}}>
@@ -2194,22 +2224,46 @@ function Notes(){
               <>
                 {/* Formatting toolbar */}
                 <div style={{display:"flex",alignItems:"center",gap:4,padding:"8px 14px",borderBottom:`1px solid ${T.border}`,background:T.card2,flexWrap:"wrap"}}>
+                  {/* Font family */}
+                  <select onMouseDown={e=>e.stopPropagation()} onChange={e=>{if(editorRef.current)editorRef.current.focus();document.execCommand("styleWithCSS",false,true);document.execCommand("fontName",false,e.target.value);}} defaultValue="" style={{padding:"4px 6px",borderRadius:5,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer",outline:"none",height:28}}>
+                    <option value="" disabled>Font</option>
+                    <option value="Inter, sans-serif">Inter</option>
+                    <option value="Arial, sans-serif">Arial</option>
+                    <option value="Georgia, serif">Georgia</option>
+                    <option value="'Courier New', monospace">Courier</option>
+                    <option value="'JetBrains Mono', monospace">Mono</option>
+                  </select>
+                  <div style={{width:1,height:18,background:T.border,margin:"0 2px"}} />
+                  {/* Bold */}
                   <button style={tbBtn()} onMouseDown={e=>{e.preventDefault();execFmt("bold");}} title="Bold"><strong style={{fontSize:13}}>B</strong></button>
+                  {/* Italic */}
+                  <button style={tbBtn()} onMouseDown={e=>{e.preventDefault();execFmt("italic");}} title="Italic"><em style={{fontSize:13}}>I</em></button>
+                  {/* Bullet */}
                   <button style={tbBtn()} onMouseDown={e=>{e.preventDefault();execFmt("insertUnorderedList");}} title="Bullet list">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="9" y1="6" x2="20" y2="6"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="18" x2="20" y2="18"/><circle cx="4" cy="6" r="2" fill="currentColor"/><circle cx="4" cy="12" r="2" fill="currentColor"/><circle cx="4" cy="18" r="2" fill="currentColor"/></svg>
                   </button>
+                  {/* Numbered */}
                   <button style={tbBtn()} onMouseDown={e=>{e.preventDefault();execFmt("insertOrderedList");}} title="Numbered list">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/></svg>
                   </button>
-                  <button style={tbBtn()} onMouseDown={e=>{e.preventDefault();execFmt("hiliteColor",T.amber+"44");}} title="Highlight">
+                  <div style={{width:1,height:18,background:T.border,margin:"0 2px"}} />
+                  {/* Text color */}
+                  <label title="Text color" style={{...tbBtn(),padding:"4px 7px",cursor:"pointer",position:"relative",overflow:"hidden"}}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+                    <span style={{fontSize:10,letterSpacing:"0.02em"}}>A</span>
+                    <input type="color" defaultValue="#e8efe7" onInput={e=>{if(editorRef.current)editorRef.current.focus();document.execCommand("styleWithCSS",false,true);document.execCommand("foreColor",false,e.target.value);}} style={{position:"absolute",opacity:0,width:"100%",height:"100%",top:0,left:0,cursor:"pointer",border:"none",padding:0}} />
+                  </label>
+                  {/* Highlight color */}
+                  <label title="Highlight color" style={{...tbBtn(),padding:"4px 7px",cursor:"pointer",position:"relative",overflow:"hidden"}}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m9 11-6 6v3h3l6-6"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
-                  </button>
-                  <div style={{width:1,height:18,background:T.border,margin:"0 4px"}} />
+                    <input type="color" defaultValue="#aece5e" onInput={e=>{if(editorRef.current)editorRef.current.focus();document.execCommand("styleWithCSS",false,true);document.execCommand("hiliteColor",false,e.target.value);}} style={{position:"absolute",opacity:0,width:"100%",height:"100%",top:0,left:0,cursor:"pointer",border:"none",padding:0}} />
+                  </label>
+                  <div style={{width:1,height:18,background:T.border,margin:"0 2px"}} />
                   <BtnSm variant="subtle" onClick={()=>exportNote(activeNote)}>{Icon.copy} Copy</BtnSm>
                   <BtnSm variant="subtle" onClick={()=>setSendNoteOpen(true)}>{Icon.send} Send</BtnSm>
                   <div style={{flex:1}} />
                   <button onClick={cleanNotes} disabled={cleaning} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${T.lime}44`,background:cleaning?T.card2:T.lime+"14",color:cleaning?T.muted:T.lime,cursor:cleaning?"default":"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
-                    {cleaning?"Cleaning…":"🪄 Clean Notes"}
+                    {cleaning?<>Cleaning…</>:<>{Icon.wand} Clean Notes</>}
                   </button>
                   <BtnSm variant="danger" onClick={()=>deleteNote(sel)}>Delete</BtnSm>
                 </div>
@@ -2228,16 +2282,15 @@ function Notes(){
                 {/* Contextual selection popover */}
                 {popover&&(
                   <div style={{position:"absolute",top:popover.y,left:popover.x,transform:"translateX(-50%)",zIndex:30,display:"flex",gap:4,background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:"4px 6px",boxShadow:"0 8px 24px rgba(0,0,0,0.4)",whiteSpace:"nowrap"}}>
-                    <button onMouseDown={e=>{e.preventDefault();setPendingSel(popover.selText);setCommentInputOpen(true);}} style={{padding:"5px 10px",borderRadius:5,border:"none",background:"transparent",color:T.blue,cursor:"pointer",fontSize:12,fontFamily:T.font,fontWeight:600}}>💬 Add Comment</button>
+                    <button onMouseDown={e=>{e.preventDefault();setPendingSel(popover.selText);setCommentInputOpen(true);}} style={{padding:"5px 10px",borderRadius:5,border:"none",background:"transparent",color:T.blue,cursor:"pointer",fontSize:12,fontFamily:T.font,fontWeight:600}}>Add Comment</button>
                     <div style={{width:1,background:T.border}} />
-                    <button onMouseDown={e=>{e.preventDefault();doAddFlag(popover.selText);}} style={{padding:"5px 10px",borderRadius:5,border:"none",background:"transparent",color:T.amber,cursor:"pointer",fontSize:12,fontFamily:T.font,fontWeight:600}}>🚨 Flag for Tutor</button>
+                    <button onMouseDown={e=>{e.preventDefault();doAddFlag(popover.selText);}} style={{padding:"5px 10px",borderRadius:5,border:"none",background:"transparent",color:T.amber,cursor:"pointer",fontSize:12,fontFamily:T.font,fontWeight:600}}>Flag for Tutor</button>
                   </div>
                 )}
 
                 {/* Comment input strip */}
                 {commentInputOpen&&(
                   <div style={{padding:"10px 20px",background:T.blue+"0A",borderBottom:`1px solid ${T.blue}22`,display:"flex",gap:8,alignItems:"center"}}>
-                    <span style={{fontSize:11,color:T.blue,fontWeight:600,flexShrink:0}}>💬</span>
                     <input value={commentDraft} onChange={e=>setCommentDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")doAddComment();if(e.key==="Escape"){setCommentInputOpen(false);setPendingSel(null);}}} placeholder={`Comment on "${(pendingSel||"").slice(0,30)}…"`} autoFocus style={{flex:1,background:"transparent",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}} />
                     <BtnSm onClick={doAddComment} style={{opacity:commentDraft.trim()?1:0.4}}>Save</BtnSm>
                     <BtnSm variant="subtle" onClick={()=>{setCommentInputOpen(false);setPendingSel(null);}}>✕</BtnSm>
@@ -2268,13 +2321,52 @@ function Notes(){
             )}
           </Card>
 
+          {/* ── TUTOR SIDEBAR — split-screen AI panel ── */}
+          {tutorOpen&&(
+            <div style={{display:"flex",flexDirection:"column",height:"100%",background:T.card,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",minHeight:480}}>
+              {/* Header */}
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 16px",borderBottom:`1px solid ${T.border}`,background:T.card2,flexShrink:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <div style={{width:26,height:26,borderRadius:7,background:T.amber+"22",border:`1px solid ${T.amber}44`,display:"flex",alignItems:"center",justifyContent:"center",color:T.amber}}>{Icon.brain}</div>
+                  <div>
+                    <div style={{fontSize:12,fontWeight:700,color:T.white}}>AI Tutor</div>
+                    <div style={{fontSize:10,color:T.muted}}>Ask about your flagged text</div>
+                  </div>
+                </div>
+                <button onClick={()=>setTutorOpen(false)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:16,lineHeight:1,padding:4,borderRadius:4,display:"flex",alignItems:"center",justifyContent:"center"}}>{Icon.xmark}</button>
+              </div>
+              {/* Messages */}
+              <div style={{flex:1,overflowY:"auto",padding:"14px 14px 8px",display:"flex",flexDirection:"column",gap:10}}>
+                {tutorMsgs.map((m,i)=>(
+                  <div key={i} style={{display:"flex",flexDirection:"column",alignItems:m.role==="user"?"flex-end":"flex-start"}}>
+                    <div style={{maxWidth:"88%",padding:"9px 12px",borderRadius:m.role==="user"?"10px 10px 3px 10px":"10px 10px 10px 3px",background:m.role==="user"?T.lime+"22":T.card2,border:`1px solid ${m.role==="user"?T.lime+"33":T.border}`,fontSize:12.5,color:T.text,lineHeight:1.6,whiteSpace:"pre-wrap"}}>
+                      {m.text}
+                    </div>
+                  </div>
+                ))}
+                {tutorSending&&(
+                  <div style={{display:"flex",alignItems:"flex-start"}}>
+                    <div style={{padding:"9px 14px",borderRadius:"10px 10px 10px 3px",background:T.card2,border:`1px solid ${T.border}`,fontSize:12,color:T.muted}}>
+                      <span style={{animation:"studlinPulse 1.2s ease infinite",display:"inline-block"}}>Thinking…</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+              {/* Input */}
+              <div style={{padding:"10px 12px",borderTop:`1px solid ${T.border}`,flexShrink:0,display:"flex",gap:8,alignItems:"flex-end"}}>
+                <textarea value={tutorInput} onChange={e=>setTutorInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendTutorMsg();}}} placeholder="Ask your tutor…" rows={2} style={{flex:1,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",color:T.text,fontSize:12.5,fontFamily:T.font,resize:"none",outline:"none",lineHeight:1.5}} />
+                <button onClick={sendTutorMsg} disabled={!tutorInput.trim()||tutorSending} style={{padding:"8px 12px",borderRadius:8,border:"none",background:tutorInput.trim()&&!tutorSending?T.amber:T.card2,color:tutorInput.trim()&&!tutorSending?T.ink:T.faint,cursor:tutorInput.trim()&&!tutorSending?"pointer":"default",fontFamily:T.font,fontSize:12,fontWeight:700,transition:"all 0.15s",flexShrink:0}}>{Icon.send}</button>
+              </div>
+            </div>
+          )}
+
           {/* ── MARGIN PANEL — comments & flags ── */}
-          {hasMargin&&(
+          {!tutorOpen&&hasMargin&&(
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
               <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:2}}>Annotations</div>
               {activeComments.map(c=>(
                 <div key={c.id} style={{background:T.card,border:`1px solid ${T.blue}33`,borderLeft:`3px solid ${T.blue}`,borderRadius:8,padding:"10px 12px",position:"relative"}}>
-                  <div style={{fontSize:10,color:T.blue,fontWeight:600,marginBottom:4,lineHeight:1.4}}>💬 "{(c.selectedText||"").slice(0,48)}{c.selectedText&&c.selectedText.length>48?"…":""}"</div>
+                  <div style={{fontSize:10,color:T.blue,fontWeight:600,marginBottom:4,lineHeight:1.4}}>"{(c.selectedText||"").slice(0,48)}{c.selectedText&&c.selectedText.length>48?"…":""}"</div>
                   <div style={{fontSize:12,color:T.text,lineHeight:1.5}}>{c.text}</div>
                   <div style={{fontSize:10,color:T.faint,marginTop:6}}>{c.date}</div>
                   <button onClick={()=>removeComment(nid,c.id)} style={{position:"absolute",top:6,right:6,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:13,lineHeight:1,padding:2}}>×</button>
@@ -2282,9 +2374,12 @@ function Notes(){
               ))}
               {activeFlags.map(f=>(
                 <div key={f.id} style={{background:T.card,border:`1px solid ${T.amber}44`,borderLeft:`3px solid ${T.amber}`,borderRadius:8,padding:"10px 12px",position:"relative"}}>
-                  <div style={{fontSize:11,color:T.amber,fontWeight:700,marginBottom:4}}>🚨 Tutor Flag</div>
+                  <div style={{fontSize:10,fontWeight:700,color:T.amber,marginBottom:4,letterSpacing:"0.05em",textTransform:"uppercase"}}>Tutor Flag</div>
                   <div style={{fontSize:11,color:T.muted,lineHeight:1.5,fontStyle:"italic"}}>"{(f.selectedText||"").slice(0,60)}{f.selectedText&&f.selectedText.length>60?"…":""}"</div>
-                  <div style={{fontSize:10,color:T.faint,marginTop:6}}>{f.date} · synced to Tutor</div>
+                  <div style={{display:"flex",gap:8,marginTop:8,alignItems:"center"}}>
+                    <div style={{fontSize:10,color:T.faint}}>{f.date}</div>
+                    <button onMouseDown={e=>{e.preventDefault();setTutorCtx(f.selectedText);setTutorMsgs([{role:"ai",text:"Let's look at:\n\n\""+f.selectedText.slice(0,120)+(f.selectedText.length>120?"…":"")+"\"\n\nWhat would you like me to explain?"}]);setTutorOpen(true);}} style={{fontSize:10,color:T.amber,background:"none",border:"none",cursor:"pointer",padding:0,fontFamily:T.font,fontWeight:600}}>Open tutor →</button>
+                  </div>
                   <button onClick={()=>removeFlag(nid,f.id)} style={{position:"absolute",top:6,right:6,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:13,lineHeight:1,padding:2}}>×</button>
                 </div>
               ))}
