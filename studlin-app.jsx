@@ -209,6 +209,8 @@ const PROF_TIERS=[
 ];
 function getProfTitle(xp){let t=PROF_TIERS[0];for(const r of PROF_TIERS){if(xp>=r.minXP)t=r;else break;}return t.title;}
 function calcSessionXP(mins){return Math.round(mins*(1+Math.floor(mins/30)*0.1));}
+function awardFlashcardXP(rating){const pts={Mastered:15,Good:8,Hard:3,Missed:0};const gain=pts[rating]||0;if(gain>0)lsSet("xpBonus",(lsGet("xpBonus",0)+gain));return gain;}
+function getWeeklyXP(){const sessions=lsGet("sessions",[]);const weekAgo=Date.now()-6*86400000;const weekSessions=sessions.filter(x=>x.t>=weekAgo);const focusXP=weekSessions.reduce((acc,x)=>acc+calcSessionXP(x.m||0),0);const days=new Set(lsGet("days",[]));let wdays=0;for(let i=0;i<7;i++){const d=new Date();d.setDate(d.getDate()-i);if(days.has(dayKey(d)))wdays++;}return focusXP+wdays*15+Math.min(getStreak(),7)*30;}
 
 // ─── SHARED PRIMITIVES ────────────────────────────────────────────────────────
 const Btn = ({children,onClick,style={},variant="lime"}) => {
@@ -1428,7 +1430,7 @@ function Flashcards() {
           <div style={{display:"flex",gap:8,marginTop:14,justifyContent:"center"}}>
             {flipped
               ?[["Missed",T.red],["Hard",T.amber],["Good",T.teal],["Mastered",T.lime]].map(([l,c])=>(
-                  <button key={l} onClick={()=>{setFlipped(false);setIdx(i=>(i+1)%studyCards.length);}} style={{flex:1,padding:"9px 0",borderRadius:7,background:c+"14",color:c,border:"1px solid "+c+"33",cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:T.font}}>{l}</button>
+                  <button key={l} onClick={()=>{awardFlashcardXP(l);setFlipped(false);setIdx(i=>(i+1)%studyCards.length);}} style={{flex:1,padding:"9px 0",borderRadius:7,background:c+"14",color:c,border:"1px solid "+c+"33",cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:T.font}}>{l}</button>
                 ))
               :<><Btn variant="ghost" onClick={()=>{setFlipped(false);setIdx(i=>Math.max(0,i-1));}}>Prev</Btn><Btn onClick={()=>setFlipped(true)}>Reveal answer</Btn><Btn variant="ghost" onClick={()=>{setFlipped(false);setIdx(i=>(i+1)%studyCards.length);}}>Next</Btn></>
             }
@@ -3664,6 +3666,108 @@ function Profile() {
   );
 }
 
+// ─── LEVEL ROADMAP MODAL ─────────────────────────────────────────────────────
+function LevelRoadmapModal({open,onClose,currentXP}){
+  if(!open)return null;
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:460,maxHeight:"86vh",background:T.card,borderRadius:18,border:`1px solid ${T.border}`,overflow:"hidden",display:"flex",flexDirection:"column",boxShadow:"0 28px 70px -20px rgba(0,0,0,0.55)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
+        <div style={{padding:"20px 22px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div>
+            <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Career Rank Roadmap</div>
+            <div style={{fontSize:12.5,color:T.muted,marginTop:3}}>11 tiers · Intern to CEO</div>
+          </div>
+          <button onClick={onClose} style={{width:30,height:30,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer",fontSize:15}}>×</button>
+        </div>
+        <div style={{padding:"18px 22px",overflowY:"auto"}}>
+          {PROF_TIERS.map((tier,i)=>{
+            const next=PROF_TIERS[i+1]||null;
+            const unlocked=currentXP>=tier.minXP;
+            const isCurrent=unlocked&&(!next||currentXP<next.minXP);
+            const pct=isCurrent&&next?Math.round(Math.max(0,Math.min(100,(currentXP-tier.minXP)/(next.minXP-tier.minXP)*100))):unlocked?100:0;
+            return(
+              <div key={tier.title} style={{display:"flex",gap:14,position:"relative",paddingBottom:i<PROF_TIERS.length-1?8:0}}>
+                {i<PROF_TIERS.length-1&&<div style={{position:"absolute",left:19,top:40,width:2,height:"calc(100% - 12px)",background:unlocked?T.lime+"66":T.card2,zIndex:0}}/>}
+                <div style={{width:40,height:40,borderRadius:"50%",background:isCurrent?T.lime:unlocked?T.lime+"22":T.card2,border:`2px solid ${isCurrent?T.lime:unlocked?T.lime+"55":T.faint}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,zIndex:1,fontSize:15,fontWeight:700,color:isCurrent?T.ink:unlocked?T.lime:T.faint}}>
+                  {isCurrent?"★":unlocked?"✓":""}
+                </div>
+                <div style={{flex:1,paddingBottom:i<PROF_TIERS.length-1?18:0,minWidth:0}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                    <div style={{fontSize:13.5,fontWeight:isCurrent?700:600,color:isCurrent?T.lime:unlocked?T.text:T.muted,letterSpacing:"-0.01em"}}>{tier.title}</div>
+                    <div style={{fontFamily:T.mono,fontSize:10,color:unlocked?T.lime:T.faint,fontWeight:600,flexShrink:0}}>{tier.minXP.toLocaleString()} XP</div>
+                  </div>
+                  {isCurrent&&next&&(
+                    <div style={{marginTop:7}}>
+                      <div style={{height:4,background:T.card2,borderRadius:99,overflow:"hidden"}}><div style={{height:"100%",width:pct+"%",background:T.lime,borderRadius:99,transition:"width 0.5s ease"}}/></div>
+                      <div style={{fontSize:11,color:T.muted,marginTop:4}}>{(next.minXP-currentXP).toLocaleString()} XP until {next.title}</div>
+                    </div>
+                  )}
+                  {isCurrent&&!next&&<div style={{fontSize:11,color:T.lime,marginTop:4,fontWeight:600}}>Maximum rank achieved</div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── LEADERBOARD MODAL ───────────────────────────────────────────────────────
+function LeaderboardModal({open,onClose,currentXP}){
+  if(!open)return null;
+  const [filter,setFilter]=React.useState("global");
+  const userTier=getProfTitle(currentXP);
+  const allUsers=[
+    {r:1,n:"Maya R.",xp:2140,streak:12,tier:"Associate",you:true,grad:"linear-gradient(135deg,#FFD7B5,#FFC9D2)"},
+    {r:2,n:"Devon K.",xp:1840,streak:8,tier:"Associate",grad:"linear-gradient(135deg,#BFE3FF,#E2D0FF)"},
+    {r:3,n:"Priya S.",xp:1602,streak:5,tier:"Associate",grad:"linear-gradient(135deg,#C4F0D8,#FFE99A)"},
+    {r:4,n:"Jordan T.",xp:1088,streak:0,tier:"Intern",grad:"linear-gradient(135deg,#E2D0FF,#FFD7B5)"},
+    {r:5,n:"Alex W.",xp:980,streak:3,tier:"Intern",grad:"linear-gradient(135deg,#FFE99A,#C4F0D8)"},
+    {r:6,n:"Sam L.",xp:870,streak:1,tier:"Intern",grad:"linear-gradient(135deg,#BFE3FF,#FFD7B5)"},
+    {r:7,n:"Riley M.",xp:640,streak:0,tier:"Intern",grad:"linear-gradient(135deg,#C4F0D8,#E2D0FF)"},
+  ];
+  const shown=filter==="level"?allUsers.filter(u=>u.tier===userTier||u.you):allUsers;
+  const rankColor=(r)=>r===1?"#FFD700":r===2?"#C0C0C0":r===3?"#CD7F32":T.muted;
+  const rankBg=(r)=>r===1?"rgba(255,215,0,0.12)":r===2?"rgba(192,192,192,0.08)":r===3?"rgba(205,127,50,0.08)":"transparent";
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:500,maxHeight:"86vh",background:T.card,borderRadius:18,border:`1px solid ${T.border}`,overflow:"hidden",display:"flex",flexDirection:"column",boxShadow:"0 28px 70px -20px rgba(0,0,0,0.55)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
+        <div style={{padding:"20px 22px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div>
+            <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Global Leaderboard</div>
+            <div style={{fontSize:12.5,color:T.muted,marginTop:3}}>Rankings reset weekly</div>
+          </div>
+          <button onClick={onClose} style={{width:30,height:30,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer",fontSize:15}}>×</button>
+        </div>
+        <div style={{padding:"14px 22px 10px",borderBottom:`1px solid ${T.border}`,display:"flex",gap:6}}>
+          {["global","level"].map(f=>(
+            <button key={f} onClick={()=>setFilter(f)} style={{padding:"6px 14px",borderRadius:6,fontSize:12,cursor:"pointer",border:`1px solid ${filter===f?T.lime+"44":T.border}`,background:filter===f?T.lime+"14":"transparent",color:filter===f?T.lime:T.muted,fontWeight:filter===f?600:400,fontFamily:T.font,letterSpacing:"0.01em",transition:"all 0.15s"}}>
+              {f==="global"?"Global":"By Level ("+userTier+")"}
+            </button>
+          ))}
+        </div>
+        <div style={{overflowY:"auto",flex:1}}>
+          {shown.map((u,i)=>(
+            <div key={u.r} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 22px",borderBottom:`1px solid ${T.border}`,background:u.you?T.lime+"08":rankBg(u.r)}}>
+              <div style={{width:28,height:28,borderRadius:"50%",background:rankBg(u.r)||T.card2,border:`2px solid ${rankColor(u.r)}`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:T.mono,fontSize:11,fontWeight:700,color:rankColor(u.r),flexShrink:0}}>{u.r}</div>
+              <div style={{width:34,height:34,borderRadius:"50%",background:u.grad,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:13,color:T.ink,flexShrink:0}}>{u.n.slice(0,1)}</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:u.you?700:600,color:u.you?T.lime:T.text}}>{u.n}{u.you&&" (you)"}</div>
+                <div style={{fontSize:11,color:T.muted,marginTop:1}}>{u.tier} · {u.streak>0?u.streak+"-day streak":"No streak"}</div>
+              </div>
+              <div style={{textAlign:"right",flexShrink:0}}>
+                <div style={{fontFamily:T.mono,fontSize:13,fontWeight:700,color:rankColor(u.r)||T.text}}>{u.xp.toLocaleString()}</div>
+                <div style={{fontSize:10,color:T.faint}}>XP</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRunning=()=>{}, setScheduleSettingsOpen=()=>{}}) {
   const realStats=sessionStats();
@@ -3671,6 +3775,9 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
   const lvl=levelInfo();
   const wk=weekStreak();
   const [,forcePlan]=useState(0);
+  const [levelRoadmapOpen,setLevelRoadmapOpen]=useState(false);
+  const [leaderboardOpen,setLeaderboardOpen]=useState(false);
+  const [shareMsg,setShareMsg]=useState("");
   const plan=todaysPlan();
   const planDoneCount=plan.filter(t=>t.done).length;
   const planLeft=Math.max(0,plan.length-planDoneCount);
@@ -3681,38 +3788,54 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
   const firstName=(prof.name||"there").split(" ")[0];
   const hr=new Date().getHours();
   const greet=hr<12?"Good morning":hr<18?"Good afternoon":"Good evening";
-  const fm=String(Math.floor(focusSecs/60)).padStart(2,"0");
-  const fs=String(focusSecs%60).padStart(2,"0");
-  const fmtTime=`${fm}:${fs}`;
-  const totalSecs=25*60; // pomodoro session
-  const pct=Math.max(0,Math.min(100,((totalSecs-focusSecs)/totalSecs)*100));
-  const tasks=[
-    {task:"Bio · Cell respiration flashcards",sub:"Reviewed 24 / 30 cards · 86% accuracy",tag:"Bio",tagBg:T.mint,done:true,time:"30m"},
-    {task:"Read Ch. 4 · Macbeth Act III",sub:"Notes synced to \"English IV\"",tag:"Eng",tagBg:T.lilac,done:true,time:"25m"},
-    {task:"Spanish · review subjunctive",sub:"8 / 12 verbs mastered",tag:"Esp",tagBg:T.peach,done:true,time:"20m"},
-    {task:'Draft essay · "Power & corruption"',sub:"1,247 / 1,500 words · grammar pass pending",tag:"NOW",tagBg:T.ink,tagColor:T.cream,now:true,time:"45m"},
-    {task:"Calc · practice integrals",sub:"Set 4.2 · problems 1–14",tag:"Calc",tagBg:T.sky,time:"25m"},
-  ];
-  const decks=[
-    {subj:"BIO · DECK",title:"Cellular respiration",pct:80,a:"24 / 30",b:"86%",bg:T.mint},
-    {subj:"ENG · ESSAY",title:"Power & corruption (Macbeth)",pct:60,a:"1,247 wd",b:"DRAFT",bg:T.peach},
-    {subj:"CALC · NOTES",title:"Integration techniques",pct:45,a:"14 pages",b:"Mon",bg:T.sky},
-    {subj:"CHEM · DECK",title:"Stoichiometry · quiz prep",pct:35,a:"9 / 26",b:"QUIZ MON",bg:T.lilac},
-    {subj:"ESP · DECK",title:"Subjunctive verbs",pct:67,a:"8 / 12",b:"92%",bg:T.card2},
-    {subj:"HIST · NOTES",title:"Cold War timeline",pct:25,a:"6 pages",b:"3d ago",bg:T.card2},
-  ];
-  const lb=[
-    {r:1,n:"Maya R.",m:"14h 22m · 12-day streak",s:"2,140",you:true,grad:"linear-gradient(135deg,#FFD7B5,#FFC9D2)"},
-    {r:2,n:"Devon K.",m:"12h 08m · 8-day streak",s:"1,840",grad:"linear-gradient(135deg,#BFE3FF,#E2D0FF)"},
-    {r:3,n:"Priya S.",m:"10h 41m · 5-day streak",s:"1,602",grad:"linear-gradient(135deg,#C4F0D8,#FFE99A)"},
-    {r:4,n:"Jordan T.",m:"7h 15m · streak broken",s:"1,088",grad:"linear-gradient(135deg,#E2D0FF,#FFD7B5)"},
-  ];
-  const dl=[
-    {d:"20",mo:"MON",t:"Chem quiz · stoichiometry",sub:"CHEM 14B · weighs 12%",cd:"3d",urgent:true},
-    {d:"22",mo:"WED",t:"Macbeth essay due",sub:"1,500 words · 60% draft",cd:"5d"},
-    {d:"25",mo:"SAT",t:"Calc problem set 4.2",sub:"Integrals · 14 problems",cd:"8d"},
-    {d:"29",mo:"WED",t:"Bio midterm",sub:"Cell + molecular · 40 MCQ",cd:"12d"},
-  ];
+  // Real deck data from localStorage
+  const rawDecks=lsGet("decks",[]);
+  const realDecks=rawDecks.slice(0,6).map(d=>({
+    subj:(d.name||"Deck").slice(0,10).toUpperCase()+" · DECK",
+    title:d.name||"Untitled deck",
+    pct:d.cards&&d.cards.length>0?Math.round((d.done||0)/d.cards.length*100):0,
+    a:(d.cards?d.cards.length:(d.count||0))+" cards",
+    b:d.done>0?d.done+" done":"NEW",
+    bg:T.card2,
+    id:d.id,
+  }));
+  // Real notes from localStorage
+  const rawNotes=lsGet("notes",[]);
+  const noteCards=rawNotes.slice(0,3).map(n=>({
+    subj:(n.tag||"Note").slice(0,8).toUpperCase()+" · NOTES",
+    title:n.title||"Untitled note",
+    pct:50,
+    a:n.body?(n.body.split(" ").length+" words"):"0 words",
+    b:n.created?new Date(n.created).toLocaleDateString("en",{weekday:"short"}):"",
+    bg:T.card2,
+    id:n.id,
+  }));
+  const pickUpItems=[...realDecks,...noteCards];
+  // Real upcoming events (next 14 days)
+  const allEvents=lsGet("events",[]);
+  const today=dayKey();
+  const in14days=new Date();in14days.setDate(in14days.getDate()+14);
+  const upcomingEvents=allEvents
+    .filter(ev=>ev.date>=today&&ev.date<=dayKey(in14days)&&ev.status!=="done")
+    .sort((a,b)=>a.date.localeCompare(b.date)||((a.time||"").localeCompare(b.time||"")))
+    .slice(0,5)
+    .map(ev=>{
+      const evDate=new Date(ev.date+"T12:00:00");
+      const daysUntil=Math.ceil((new Date(ev.date)-new Date(today))/86400000);
+      return{
+        d:String(evDate.getDate()).padStart(2,"0"),
+        mo:["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"][evDate.getMonth()],
+        t:ev.title,
+        sub:(ev.subject||"")+(ev.kind?" · "+ev.kind:""),
+        cd:daysUntil===0?"Today":daysUntil===1?"Tomorrow":daysUntil+"d",
+        urgent:daysUntil<=2,
+        id:ev.id,
+      };
+    });
+  // Real weekly wrapped stats
+  const weeklyXP=getWeeklyXP();
+  const weeklyFocusMin=realStats.weekMin;
+  const lbRank=1;
   // streak heatmap data
   const seed=[0,1,2,0,3,4,2,1,0,3,2,4,1,0,2,3,1,4,2,3,0,1,2,4,3,2,1,3,4,2,3,1,4,3,2,4,3,2,1,2,3,4,3,2,3,4,2,3,2,4,3,2,3,4,3,4,2,3,4,3,4,3,2,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4,3,4];
   const cellColor=(lvl)=>{
@@ -3761,38 +3884,53 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
           </div>
         </div>
 
-        {/* Streak */}
+        {/* Streak — Duolingo-style flame indicator */}
         <div onClick={()=>setActive("profile")} style={{background:T.lime,borderRadius:22,padding:22,cursor:"pointer",border:"none",display:"flex",flexDirection:"column"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(14,31,24,0.6)",fontWeight:600}}>Day Streak</span>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={T.ink} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{opacity:0.6}}><path d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill={T.ink} stroke="none" style={{opacity:0.85}}><path d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
           </div>
           <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.ink,margin:"10px 0 2px"}}>{realStreak}<span style={{fontSize:20,color:"rgba(14,31,24,0.55)",marginLeft:6}}>days</span></div>
-          <div style={{fontSize:12,color:"rgba(14,31,24,0.7)"}}>Longest: 31 · +10 credits unlocked</div>
-          <div style={{display:"flex",gap:5,marginTop:"auto",paddingTop:14}}>
+          <div style={{fontSize:12,color:"rgba(14,31,24,0.7)",marginBottom:4}}>Today{wk.find(d=>d.today)?.on?" · active":"· keep going!"}</div>
+          <div style={{display:"flex",gap:5,marginTop:"auto",paddingTop:10}}>
             {wk.map((d,i)=>{
-              const today=d.today, on=d.on;
-              return <div key={i} style={{flex:1,height:26,borderRadius:6,background:today?T.ink:on?T.forest:"rgba(14,31,24,0.10)",color:today?T.lime:on?T.lime:"rgba(14,31,24,0.4)",opacity:d.future?0.45:1,display:"grid",placeItems:"center",fontSize:10,fontFamily:T.mono,fontWeight:today?700:400,boxShadow:today?"0 0 0 2px "+T.ink:"none"}}>{d.lab}</div>;
+              const isToday=d.today, on=d.on;
+              return(
+                <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+                  <div style={{width:"100%",height:28,borderRadius:7,background:isToday?T.ink:on?T.forest:"rgba(14,31,24,0.10)",color:isToday?T.lime:on?T.lime:"rgba(14,31,24,0.35)",opacity:d.future?0.4:1,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:isToday?"0 0 0 2px "+T.ink:"none"}}>
+                    {on||isToday
+                      ?<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
+                      :<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="4"/></svg>
+                    }
+                  </div>
+                  <span style={{fontSize:9,fontFamily:T.mono,fontWeight:isToday?700:400,color:isToday?T.ink:"rgba(14,31,24,0.45)"}}>{d.lab}</span>
+                </div>
+              );
             })}
           </div>
         </div>
 
-        {/* XP / Level */}
-        <div onClick={()=>setActive("profile")} style={{background:T.card,borderRadius:22,padding:22,cursor:"pointer",border:`1px solid ${T.border}`,display:"flex",flexDirection:"column"}}>
+        {/* XP / Level — clickable → career roadmap modal */}
+        <div onClick={()=>setLevelRoadmapOpen(true)} style={{background:T.card,borderRadius:22,padding:22,cursor:"pointer",border:`1px solid ${T.border}`,display:"flex",flexDirection:"column",position:"relative",overflow:"hidden"}}>
+          <div style={{position:"absolute",right:-30,bottom:-30,width:130,height:130,background:`radial-gradient(circle,${T.lime}18,transparent 70%)`,pointerEvents:"none"}}/>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,fontWeight:600}}>XP &amp; Level</span>
-            <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.12em",background:T.card2,padding:"3px 8px",borderRadius:99,color:T.text}}>{lvl.title.toUpperCase()}</span>
+            <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,fontWeight:600}}>XP &amp; Rank</span>
+            <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.10em",background:T.lime+"22",padding:"3px 9px",borderRadius:99,color:T.lime,border:`1px solid ${T.lime}44`,fontWeight:700}}>{lvl.title.toUpperCase()}</span>
           </div>
           <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.text,margin:"10px 0 2px"}}>{lvl.xp.toLocaleString()}<span style={{fontSize:20,color:T.muted,marginLeft:6}}>xp</span></div>
-          <div style={{fontSize:12,color:T.muted}}>{lvl.nextTier?`${(lvl.nextTier.minXP-lvl.xp).toLocaleString()} XP to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
+          <div style={{fontSize:12,color:T.muted,marginBottom:4}}>{lvl.nextTier?`${(lvl.nextTier.minXP-lvl.xp).toLocaleString()} XP to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
           <div style={{height:6,background:T.card2,borderRadius:99,marginTop:"auto",overflow:"hidden"}}>
-            <div style={{height:"100%",width:lvl.tierPct+"%",background:T.lime}} />
+            <div style={{height:"100%",width:lvl.tierPct+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}}/>
+          </div>
+          <div style={{fontSize:11,color:T.faint,marginTop:8,display:"flex",alignItems:"center",gap:4}}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
+            View career roadmap
           </div>
         </div>
       </div>
 
-      {/* ROW 2: Today's plan + Focus + Chat (5/3/4) */}
-      <div style={{display:"grid",gridTemplateColumns:"5fr 3fr 4fr",gap:16}}>
+      {/* ROW 2: Today's plan + Chat */}
+      <div style={{display:"grid",gridTemplateColumns:"6fr 5fr",gap:16}}>
         {/* Today's plan */}
         <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
           <CardHead title="Today's plan" label={planDoneCount+" / "+plan.length+" DONE"} more="Calendar" />
@@ -3822,36 +3960,6 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
                 <span style={{fontFamily:T.mono,fontSize:11,color:T.muted}}>{fmtClock(t.time)}</span>
               </div>
             );})}
-        </div>
-
-        {/* Focus Pomodoro */}
-        <div style={{background:`linear-gradient(180deg, ${T.forest} 0%, #0B201A 100%)`,color:T.cream,borderRadius:22,padding:22,position:"relative",overflow:"hidden",display:"flex",flexDirection:"column"}}>
-          <div style={{position:"absolute",right:-60,bottom:-60,width:220,height:220,background:"radial-gradient(circle,rgba(200,255,90,0.15),transparent 65%)"}} />
-          <div style={{position:"relative",zIndex:1}}>
-            <CardHead title="Focus" label="POMODORO" light />
-            <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)"}}>Session 3 of 4</div>
-            <div style={{fontFamily:T.hand,fontSize:88,lineHeight:0.85,fontWeight:700,color:T.lime,margin:"8px 0 4px",fontVariantNumeric:"tabular-nums"}}>{fmtTime}</div>
-            <div style={{fontSize:12.5,color:"rgba(246,241,230,0.7)",marginBottom:16}}>{focusRunning?`Break in ${fm} min · then 5 min off`:"Session paused · tap play to resume"}</div>
-            <div style={{height:6,background:"rgba(246,241,230,0.12)",borderRadius:99,marginBottom:18,overflow:"hidden"}}><div style={{height:"100%",width:pct+"%",background:T.lime,transition:"width 1s linear"}}/></div>
-            <div style={{display:"flex",gap:8}}>
-              <button onClick={()=>setFocusRunning(r=>!r)} style={{width:48,height:48,borderRadius:"50%",background:T.lime,color:T.ink,border:"none",display:"grid",placeItems:"center",cursor:"pointer"}}>
-                {focusRunning
-                  ?<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
-                  :<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg>
-                }
-              </button>
-              {[
-                <svg key="s" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>,
-                <svg key="m" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>,
-              ].map((ic,i)=>(
-                <button key={i} style={{width:38,height:38,borderRadius:"50%",background:"rgba(246,241,230,0.08)",color:T.cream,border:"1px solid rgba(246,241,230,0.14)",display:"grid",placeItems:"center",cursor:"pointer"}}>{ic}</button>
-              ))}
-            </div>
-            <div style={{display:"inline-flex",alignItems:"center",gap:8,padding:"7px 12px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,fontSize:12,marginTop:14}}>
-              <span style={{width:8,height:8,borderRadius:"50%",background:T.butter}}/>
-              English IV · Macbeth essay
-            </div>
-          </div>
         </div>
 
         {/* Ask Studlin */}
@@ -3905,23 +4013,27 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
         </div>
 
         <div style={{background:T.forest,color:T.cream,borderRadius:22,padding:22}}>
-          <CardHead title="Weekly Wrapped" label="WEEK 20" more="View full" light />
+          <CardHead title="Weekly Wrapped" label={"WEEK "+weekNo()} more="View full" light />
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:14}}>
-            {[{l:"Focus hours",v:"14h 22m",d:"+3.2h"},{l:"Cards mastered",v:"142",d:"+38"},{l:"Words written",v:"3,840",d:"+1,200"}].map((s,i)=>(
+            {[
+              {l:"Focus hours",v:fmtH(weeklyFocusMin)||"0m"},
+              {l:"XP earned",v:weeklyXP.toLocaleString()+" xp"},
+              {l:"Leaderboard",v:"#"+lbRank},
+            ].map((s,i)=>(
               <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:12,padding:"12px 14px"}}>
                 <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.06em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)"}}>{s.l}</div>
-                <div style={{fontFamily:T.hand,fontSize:28,fontWeight:700,color:T.lime,lineHeight:1,marginTop:4}}>{s.v}</div>
-                <div style={{fontSize:11,color:T.lime,fontWeight:600,marginTop:2,opacity:0.85}}>{s.d} vs last wk</div>
+                <div style={{fontFamily:T.hand,fontSize:26,fontWeight:700,color:T.lime,lineHeight:1.1,marginTop:4}}>{s.v}</div>
               </div>
             ))}
           </div>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            {["12-day streak","Bio top 1%","Early bird"].map((b,i)=>(
-              <span key={i} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.12)",borderRadius:99,fontSize:11.5,color:T.cream}}>
-                <span style={{width:18,height:18,borderRadius:"50%",background:T.lime,display:"grid",placeItems:"center",color:T.ink,fontSize:10,fontWeight:700,flex:"none"}}>{["12","*","4"][i]}</span>
-                {b}
-              </span>
-            ))}
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+            <span style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.12)",borderRadius:99,fontSize:11.5,color:T.cream}}>
+              <span style={{width:18,height:18,borderRadius:"50%",background:T.lime,display:"grid",placeItems:"center",color:T.ink,fontSize:10,fontWeight:700,flex:"none"}}>{realStreak}</span>
+              {realStreak}-day streak
+            </span>
+            <button onClick={()=>setLeaderboardOpen(true)} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.12)",borderRadius:99,fontSize:11.5,color:T.cream,cursor:"pointer",fontFamily:T.font}}>
+              Leaderboard →
+            </button>
           </div>
         </div>
       </div>
@@ -3973,23 +4085,25 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
 
       {/* ROW 5: Upcoming + Quote + Decks rows split */}
       <div style={{display:"grid",gridTemplateColumns:"4fr 4fr 8fr",gap:16}}>
-        {/* Upcoming */}
+        {/* Upcoming — real calendar events */}
+        {upcomingEvents.length>0&&(
         <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
           <CardHead title="Upcoming" label="NEXT 14 DAYS" more="Calendar" />
-          {dl.map((d,i)=>(
-            <div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0",borderBottom:i<dl.length-1?`1px solid ${T.border}`:"none"}}>
+          {upcomingEvents.map((d,i)=>(
+            <div key={d.id||i} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0",borderBottom:i<upcomingEvents.length-1?`1px solid ${T.border}`:"none"}}>
               <div style={{width:44,flex:"none",textAlign:"center",padding:"6px 0",background:d.urgent?T.lime:T.card2,borderRadius:8}}>
-                <div style={{fontFamily:T.hand,fontSize:22,fontWeight:700,lineHeight:1,color:T.text}}>{d.d}</div>
-                <div style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",color:T.muted}}>{d.mo}</div>
+                <div style={{fontFamily:T.hand,fontSize:22,fontWeight:700,lineHeight:1,color:d.urgent?T.ink:T.text}}>{d.d}</div>
+                <div style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",color:d.urgent?"rgba(14,31,24,0.6)":T.muted}}>{d.mo}</div>
               </div>
               <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:13,fontWeight:600,color:T.text}}>{d.t}</div>
+                <div style={{fontSize:13,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.t}</div>
                 <div style={{fontSize:11.5,color:T.muted}}>{d.sub}</div>
               </div>
-              <span style={{fontFamily:T.mono,fontSize:11,padding:"3px 8px",background:d.urgent?T.butter:T.bg,borderRadius:6,color:T.text,border:d.urgent?"none":`1px solid ${T.border}`,fontWeight:d.urgent?600:400}}>{d.cd}</span>
+              <span style={{fontFamily:T.mono,fontSize:11,padding:"3px 8px",background:d.urgent?T.butter:T.bg,borderRadius:6,color:T.text,border:d.urgent?"none":`1px solid ${T.border}`,fontWeight:d.urgent?600:400,flexShrink:0}}>{d.cd}</span>
             </div>
           ))}
         </div>
+        )}
 
         {/* Pre-session quote */}
         <div style={{background:T.butter,borderRadius:22,padding:22,position:"relative",overflow:"hidden",border:"none"}}>
@@ -3999,54 +4113,69 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
           <div style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.12em",textTransform:"uppercase",color:"rgba(14,31,24,0.55)"}}>— Albert Einstein</div>
         </div>
 
-        {/* Pick up where you left off */}
+        {/* Pick up where you left off — real deck + note data */}
+        {pickUpItems.length>0&&(
         <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
-          <CardHead title="Pick up where you left off" label="FLASHCARDS · NOTES · ESSAYS" more="All library" />
+          <CardHead title="Pick up where you left off" more="All library" />
           <div style={{display:"flex",gap:10,overflowX:"auto",padding:"0 4px 4px"}}>
-            {decks.map((d,i)=>(
-              <div key={i} style={{flex:"none",width:160,background:d.bg,border:`1px solid ${T.border}`,borderRadius:14,padding:14,cursor:"pointer"}}>
-                <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.12em",textTransform:"uppercase",color:"rgba(14,31,24,0.55)"}}>{d.subj}</div>
-                <h5 style={{fontSize:14,margin:"6px 0 12px",lineHeight:1.2,color:T.ink,minHeight:34,fontWeight:600}}>{d.title}</h5>
-                <div style={{height:4,background:"rgba(14,31,24,0.10)",borderRadius:99,overflow:"hidden"}}><div style={{height:"100%",width:d.pct+"%",background:T.forest}}/></div>
-                <div style={{display:"flex",justifyContent:"space-between",marginTop:6,fontSize:10.5,color:"rgba(14,31,24,0.6)",fontFamily:T.mono}}>
+            {pickUpItems.map((d,i)=>(
+              <div key={d.id||i} onClick={()=>setActive("flashcards")} style={{flex:"none",width:160,background:T.card2,border:`1px solid ${T.border}`,borderRadius:14,padding:14,cursor:"pointer",transition:"border-color 0.15s"}}>
+                <div style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.10em",textTransform:"uppercase",color:T.muted,marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.subj}</div>
+                <div style={{fontSize:13.5,margin:"4px 0 12px",lineHeight:1.25,color:T.text,minHeight:32,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical"}}>{d.title}</div>
+                <div style={{height:4,background:T.border,borderRadius:99,overflow:"hidden"}}><div style={{height:"100%",width:d.pct+"%",background:T.lime,borderRadius:99}}/></div>
+                <div style={{display:"flex",justifyContent:"space-between",marginTop:6,fontSize:10.5,color:T.muted,fontFamily:T.mono}}>
                   <span>{d.a}</span><span>{d.b}</span>
                 </div>
               </div>
             ))}
           </div>
         </div>
+        )}
       </div>
 
       {/* ROW 6: Wrapped (full) */}
       <div style={{background:T.forest,color:T.cream,borderRadius:22,padding:22}}>
-        <CardHead title="This week, you…" label="WRAPPED · DROPS SUNDAY" more="Share my Wrapped" light />
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginTop:14}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:12,flexWrap:"wrap"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
+            <Hand style={{color:T.cream}}>This week, you…</Hand>
+            <Eye style={{color:"rgba(246,241,230,0.6)",borderColor:"rgba(246,241,230,0.18)"}}>{"WRAPPED · WEEK "+weekNo()}</Eye>
+          </div>
+          <button onClick={()=>{
+            const txt=`📊 My Studlin Week ${weekNo()}\n\nFocus time: ${fmtH(weeklyFocusMin)||"0m"}\nXP earned: ${weeklyXP.toLocaleString()} XP\nDay streak: ${realStreak} days\nRank: #${lbRank} Global\n\nstudlin.app`;
+            navigator.clipboard&&navigator.clipboard.writeText(txt).then(()=>{setShareMsg("Copied to clipboard!");setTimeout(()=>setShareMsg(""),2500);});
+          }} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"8px 16px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,flexShrink:0}}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+            Share Wrapped
+          </button>
+        </div>
+        {shareMsg&&<div style={{fontSize:12,color:T.lime,fontWeight:600,marginBottom:12,display:"flex",alignItems:"center",gap:6}}>✓ {shareMsg}</div>}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginTop:4}}>
           {[
-            {ln:"Focus hours",vn:"14h 22m",ch:"+3h 12m vs last wk"},
-            {ln:"Cards mastered",vn:"142",ch:"+38 vs last wk"},
-            {ln:"Words written",vn:"3,840",ch:"+1,200 vs last wk"},
+            {ln:"Focus hours",vn:fmtH(weeklyFocusMin)||"0m"},
+            {ln:"XP earned",vn:weeklyXP.toLocaleString()+" xp"},
+            {ln:"Leaderboard rank",vn:"#"+lbRank+" Global"},
           ].map((ins,i)=>(
             <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:12,padding:"12px 14px"}}>
               <div style={{fontSize:11,color:"rgba(246,241,230,0.55)",fontFamily:T.mono,letterSpacing:"0.06em",textTransform:"uppercase"}}>{ins.ln}</div>
               <div style={{fontFamily:T.hand,fontSize:32,lineHeight:1,fontWeight:600,color:T.lime,marginTop:4}}>{ins.vn}</div>
-              <div style={{fontSize:11,color:T.lime,fontWeight:600,marginTop:2,opacity:0.85}}>{ins.ch}</div>
             </div>
           ))}
         </div>
-        <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:18}}>
-          {[
-            {m:"12",t:"12-day streak"},{m:"★",t:"Bio top 1%"},{m:"W",t:"1st place · Bio Cram Squad"},
-            {m:"⚡",t:"Early bird (4 AM sessions)"},
-            {m:"30",t:"30-day streak · 18 to go",locked:true},{m:"∞",t:"Cram master · 20h / wk",locked:true},
-          ].map((a,i)=>(
-            <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:a.locked?"rgba(246,241,230,0.04)":"rgba(246,241,230,0.06)",border:`1px solid rgba(246,241,230,${a.locked?0.06:0.12})`,borderRadius:99,fontSize:12,fontWeight:500,opacity:a.locked?0.5:1,color:T.cream}}>
-              <span style={{width:22,height:22,borderRadius:"50%",background:a.locked?"rgba(246,241,230,0.1)":T.lime,display:"grid",placeItems:"center",fontFamily:T.hand,fontWeight:700,fontSize:13,color:T.ink,flex:"none"}}>{a.m}</span>
-              {a.t}
-            </div>
-          ))}
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:18,alignItems:"center"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.12)",borderRadius:99,fontSize:12,fontWeight:500,color:T.cream}}>
+            <span style={{width:22,height:22,borderRadius:"50%",background:T.lime,display:"grid",placeItems:"center",fontFamily:T.hand,fontWeight:700,fontSize:13,color:T.ink,flex:"none"}}>{realStreak}</span>
+            {realStreak}-day streak
+          </div>
+          <button onClick={()=>setLeaderboardOpen(true)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.12)",borderRadius:99,fontSize:12,fontWeight:500,color:T.cream,cursor:"pointer",fontFamily:T.font}}>
+            <span style={{width:22,height:22,borderRadius:"50%",background:T.lime,display:"grid",placeItems:"center",fontWeight:700,fontSize:13,color:T.ink,flex:"none"}}>#1</span>
+            Global leaderboard
+          </button>
         </div>
       </div>
 
+      {/* Modals */}
+      <LevelRoadmapModal open={levelRoadmapOpen} onClose={()=>setLevelRoadmapOpen(false)} currentXP={lvl.xp} />
+      <LeaderboardModal open={leaderboardOpen} onClose={()=>setLeaderboardOpen(false)} currentXP={lvl.xp} />
     </div>
   );
 }
@@ -4364,7 +4493,6 @@ function App() {
       {id:"essays",label:"Essays",badge:String(lsGet("essays",[]).length||"")},
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
-      {id:"focustimer",label:"Focus timer"},
     ]},
     {label:"Tools",items:[
       {id:"solve",label:"Solve"},
@@ -4441,7 +4569,7 @@ function App() {
             <input placeholder="Search notes, flashcards, essays, or ask AI…" style={{flex:1,background:"none",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}} />
             <span style={{fontFamily:T.mono,fontSize:10,background:T.bg,color:T.muted,padding:"2px 7px",borderRadius:5,border:`1px solid ${T.border}`}}>⌘ K</span>
           </div>
-          <div onClick={()=>setActive("focustimer")} title={focusRunning?"Focus active · click to manage":"Focus paused · click to resume"} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"7px 13px",background:isLight?T.ink:T.card,color:isLight?T.cream:T.text,border:`1px solid ${T.border}`,borderRadius:99,fontSize:12.5,fontWeight:500,flexShrink:0,cursor:"pointer"}}>
+          <div onClick={()=>setFocusRunning(r=>!r)} title={focusRunning?"Focus active · click to pause":"Focus paused · click to resume"} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"7px 13px",background:isLight?T.ink:T.card,color:isLight?T.cream:T.text,border:`1px solid ${T.border}`,borderRadius:99,fontSize:12.5,fontWeight:500,flexShrink:0,cursor:"pointer"}}>
             <span style={{width:6,height:6,borderRadius:"50%",background:focusRunning?T.lime:T.muted,boxShadow:focusRunning?`0 0 8px ${T.lime}`:"none",animation:focusRunning?"studlinPulse 1.6s infinite":"none"}} />
             {focusRunning?"Focus active · ":"Focus paused · "}<span style={{fontFamily:T.mono,fontVariantNumeric:"tabular-nums"}}>{fm}:{fs}</span>
           </div>
@@ -4484,7 +4612,6 @@ function App() {
         <div key={active} data-page style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both"}}>
           {active==="dashboard"?<Dashboard setActive={setActive} focusSecs={focusSecs} focusRunning={focusRunning} setFocusRunning={setFocusRunning} setScheduleSettingsOpen={setScheduleSettingsOpen} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} />:
-           active==="focustimer"?<FocusTimer focusSecs={focusSecs} setFocusSecs={setFocusSecs} focusRunning={focusRunning} setFocusRunning={setFocusRunning} focusMode={focusMode} setFocusMode={setFocusMode} focusTotal={focusTotal} setFocusTotal={setFocusTotal} />:
            ActivePage?<ActivePage />:null}
         </div>
       </div>
