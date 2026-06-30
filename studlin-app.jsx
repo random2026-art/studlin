@@ -1884,7 +1884,8 @@ function Notes(){
   // Send note state
   const [sendNoteOpen,setSendNoteOpen]=useState(false);
   const [sendNoteTarget,setSendNoteTarget]=useState("");
-  const [sendNoteStatus,setSendNoteStatus]=useState("");
+  const [sendNoteStatus,setSendNoteStatus]=useState(""); // "" | "sending" | "sent" | "error"
+  const [sendNoteError,setSendNoteError]=useState("");
 
   useEffect(()=>{if(!rec)return;const id=setInterval(()=>setRecSecs(x=>x+1),1000);return()=>clearInterval(id);},[rec]);
   const fmtRec=(x)=>String(Math.floor(x/60)).padStart(2,"0")+":"+String(x%60).padStart(2,"0");
@@ -2030,12 +2031,40 @@ function Notes(){
   const updateNote=(idx,updates)=>{const next=notes.map((n,i)=>i===idx?Object.assign({},n,updates):n);setNotes(next);lsSet("notes",next);};
   const deleteNote=(idx)=>{const next=notes.filter((_,i)=>i!==idx);setNotes(next);lsSet("notes",next);setSel(s=>s===idx?null:s>idx?s-1:s);};
   const exportNote=(n)=>{const t=document.createElement("div");t.innerHTML=n.body;navigator.clipboard&&navigator.clipboard.writeText(n.title+"\n\n"+(t.textContent||t.innerText));};
-  const sendNote=()=>{
-    const t=sendNoteTarget.trim();if(!t||sel===null)return;
-    const pending=lsGet("pendingShares",[]);
-    pending.push({type:"note",title:notes[sel].title,body:notes[sel].body,tag:notes[sel].tag,to:t,from:getUserName(),date:dayKey()});
-    lsSet("pendingShares",pending);setSendNoteStatus("sent");
-    setTimeout(()=>{setSendNoteOpen(false);setSendNoteTarget("");setSendNoteStatus("");},1800);
+  const sendNote=async()=>{
+    const t=sendNoteTarget.trim();
+    if(!t||sel===null)return;
+    setSendNoteStatus("sending");
+    setSendNoteError("");
+    try{
+      console.log("[sendNote] Calling /api/send-note for",t);
+      const res=await authFetch("/api/send-note",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          recipientEmail:t,
+          noteTitle:notes[sel].title,
+          noteBody:notes[sel].body,
+          noteTag:notes[sel].tag,
+          senderName:getUserName()
+        })
+      });
+      const data=await res.json();
+      console.log("[sendNote] Response",res.status,data);
+      if(!res.ok||data.error){
+        const msg=data.detail||data.error||"Send failed (HTTP "+res.status+")";
+        console.error("[sendNote] Error:",msg);
+        setSendNoteError(msg);
+        setSendNoteStatus("error");
+        return;
+      }
+      setSendNoteStatus("sent");
+      setTimeout(()=>{setSendNoteOpen(false);setSendNoteTarget("");setSendNoteStatus("");setSendNoteError("");},2200);
+    }catch(e){
+      console.error("[sendNote] Network/fetch error:",e.message);
+      setSendNoteError("Network error — "+e.message);
+      setSendNoteStatus("error");
+    }
   };
   const removeComment=(nid,cid)=>{const u={...noteComments,[nid]:(noteComments[nid]||[]).filter(c=>c.id!==cid)};setNoteComments(u);lsSet("note-comments",u);};
   const removeFlag=(nid,fid)=>{
@@ -2057,21 +2086,35 @@ function Notes(){
       <PH title="Notes" sub="Write, scan, record, or import" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New note")}</Btn>} />
 
       {/* ── SEND NOTE MODAL ── */}
-      <Modal open={sendNoteOpen} onClose={()=>{setSendNoteOpen(false);setSendNoteTarget("");setSendNoteStatus("");}} title="Send note to a friend" sub="Drop a copy of this note directly into a friend's Studlin workspace." width={440}
-        footer={sendNoteStatus==="sent"?null:<><Btn variant="subtle" onClick={()=>{setSendNoteOpen(false);setSendNoteTarget("");setSendNoteStatus("");}}>Cancel</Btn><Btn onClick={sendNote} style={{opacity:sendNoteTarget.trim()?1:0.45}}>{Icon.send} Send note</Btn></>}>
-        {sendNoteStatus==="sent"
-          ?<div style={{textAlign:"center",padding:"24px 0"}}>
-              <div style={{fontSize:32,marginBottom:12}}>✓</div>
-              <div style={{fontSize:15,fontWeight:600,color:T.white,marginBottom:4}}>Note sent!</div>
-              <div style={{fontSize:13,color:T.muted}}>"{sel!==null&&notes[sel]?notes[sel].title:""}" was sent to <strong style={{color:T.lime}}>{sendNoteTarget}</strong></div>
+      <Modal open={sendNoteOpen} onClose={()=>{if(sendNoteStatus==="sending")return;setSendNoteOpen(false);setSendNoteTarget("");setSendNoteStatus("");setSendNoteError("");}} title="Send note to a friend" sub="Deliver this note directly to any email address." width={440}
+        footer={sendNoteStatus==="sent"?null:(
+          <>
+            <Btn variant="subtle" onClick={()=>{setSendNoteOpen(false);setSendNoteTarget("");setSendNoteStatus("");setSendNoteError("");}} style={{opacity:sendNoteStatus==="sending"?0.4:1}}>Cancel</Btn>
+            <Btn onClick={sendNote} disabled={sendNoteStatus==="sending"||!sendNoteTarget.trim()} style={{opacity:(!sendNoteTarget.trim()||sendNoteStatus==="sending")?0.45:1}}>
+              {sendNoteStatus==="sending"?<>{Icon.send} Sending…</>:<>{Icon.send} Send note</>}
+            </Btn>
+          </>
+        )}>
+        {sendNoteStatus==="sent"?(
+          <div style={{textAlign:"center",padding:"24px 0"}}>
+            <div style={{width:48,height:48,borderRadius:"50%",background:T.teal+"18",border:`1px solid ${T.teal}44`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 14px",color:T.teal}}>{Icon.check}</div>
+            <div style={{fontSize:15,fontWeight:600,color:T.white,marginBottom:4}}>Email sent!</div>
+            <div style={{fontSize:13,color:T.muted}}>"{sel!==null&&notes[sel]?notes[sel].title:""}" was emailed to <strong style={{color:T.lime}}>{sendNoteTarget}</strong></div>
+          </div>
+        ):(
+          <>
+            <div style={{padding:"12px 14px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`,marginBottom:14}}>
+              <div style={{fontSize:12,fontWeight:600,color:T.white,marginBottom:2}}>{sel!==null&&notes[sel]?notes[sel].title:"Selected note"}</div>
+              {sel!==null&&notes[sel]&&<div style={{fontSize:11,color:T.muted}}>{notes[sel].tag} · {notes[sel].date}</div>}
             </div>
-          :<>
-              <div style={{padding:"12px 14px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`,marginBottom:14}}>
-                <div style={{fontSize:12,fontWeight:600,color:T.white,marginBottom:2}}>{sel!==null&&notes[sel]?notes[sel].title:"Selected note"}</div>
+            <Field label="Recipient email"><Input placeholder="e.g. alex@school.edu" value={sendNoteTarget} onChange={e=>{setSendNoteTarget(e.target.value);setSendNoteError("");}} autoFocus /></Field>
+            {sendNoteStatus==="error"&&(
+              <div style={{marginTop:10,padding:"10px 13px",background:T.red+"12",border:`1px solid ${T.red}33`,borderRadius:8,fontSize:12,color:T.red,lineHeight:1.5}}>
+                {sendNoteError||"Something went wrong. Check the Vercel function logs."}
               </div>
-              <Field label="Friend's Studlin username or email"><Input placeholder="e.g. @alex or alex@school.edu" value={sendNoteTarget} onChange={e=>setSendNoteTarget(e.target.value)} autoFocus /></Field>
-            </>
-        }
+            )}
+          </>
+        )}
       </Modal>
 
       {/* ── NEW NOTE MODAL — metadata only, no body field ── */}
