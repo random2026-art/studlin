@@ -218,6 +218,44 @@ function calcSessionXP(mins){return Math.round(mins*(1+Math.floor(mins/30)*0.1))
 function awardFlashcardXP(rating){const pts={Mastered:15,Good:8,Hard:3,Missed:0};const gain=pts[rating]||0;if(gain>0)lsSet("xpBonus",(lsGet("xpBonus",0)+gain));return gain;}
 function getWeeklyXP(){const sessions=lsGet("sessions",[]);const weekAgo=Date.now()-6*86400000;const weekSessions=sessions.filter(x=>x.t>=weekAgo);const focusXP=weekSessions.reduce((acc,x)=>acc+calcSessionXP(x.m||0),0);const days=new Set(lsGet("days",[]));let wdays=0;for(let i=0;i<7;i++){const d=new Date();d.setDate(d.getDate()-i);if(days.has(dayKey(d)))wdays++;}return focusXP+wdays*15+Math.min(getStreak(),7)*30;}
 
+// ─── GOOGLE DOCS INTEGRATION ─────────────────────────────────────────────────
+// To enable one-click export to Google Docs, replace the placeholder below
+// with your OAuth 2.0 Client ID from Google Cloud Console:
+//   console.cloud.google.com → APIs & Services → Credentials → Create OAuth Client ID (Web)
+//   Authorized JS origin: https://studlin.vercel.app
+//   Also enable: Drive API (googleapis.com/drive/v3)
+const GOOGLE_OAUTH_CLIENT_ID = "YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com";
+const GDOCS_CONFIGURED = GOOGLE_OAUTH_CLIENT_ID !== "YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com";
+
+async function createGoogleDoc(essay) {
+  if (!GDOCS_CONFIGURED) throw new Error("GOOGLE_OAUTH_CLIENT_ID not configured");
+  if (typeof google === "undefined" || !google.accounts) throw new Error("Google Identity Services not loaded");
+  const htmlContent = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${essay.title}</title></head><body>${essay.content||"<p></p>"}</body></html>`;
+  return new Promise(function(resolve, reject) {
+    const tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_OAUTH_CLIENT_ID,
+      scope: "https://www.googleapis.com/auth/drive.file",
+      callback: async function(tokenResponse) {
+        if (tokenResponse.error) { reject(new Error(tokenResponse.error)); return; }
+        try {
+          const boundary = "studlin_gdoc_boundary";
+          const metadata = JSON.stringify({ name: essay.title||"Untitled", mimeType: "application/vnd.google-apps.document" });
+          const body = "--"+boundary+"\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n"+metadata+"\r\n--"+boundary+"\r\nContent-Type: text/html\r\n\r\n"+htmlContent+"\r\n--"+boundary+"--";
+          const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", {
+            method: "POST",
+            headers: { "Authorization": "Bearer "+tokenResponse.access_token, "Content-Type": "multipart/related; boundary="+boundary },
+            body: body,
+          });
+          const data = await res.json();
+          if (data.id) { resolve("https://docs.google.com/document/d/"+data.id+"/edit"); }
+          else { reject(new Error(data.error?.message||"Failed to create document")); }
+        } catch(e) { reject(e); }
+      },
+    });
+    tokenClient.requestAccessToken({ prompt: "" });
+  });
+}
+
 // ─── SHARED PRIMITIVES ────────────────────────────────────────────────────────
 const Btn = ({children,onClick,style={},variant="lime"}) => {
   const base = {display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",border:"none",fontFamily:T.font,letterSpacing:"0.01em",transition:"opacity 0.15s"};
@@ -1365,20 +1403,18 @@ function Essays() {
     URL.revokeObjectURL(url);
   };
 
-  const copyForGoogleDocs=async()=>{
+  const doGoogleDocsExport=async()=>{
     if(!activeEssay)return;
-    const txt=activeEssay.title+"\n\n"+stripHtml(activeEssay.content).trim();
+    if(!GDOCS_CONFIGURED){setGdocsStep("unconfigured");return;}
+    setGdocsStep("loading");
     try{
-      if(!navigator.clipboard)throw new Error("no clipboard api");
-      await navigator.clipboard.writeText(txt);
-      setGdocsStep("ready");
+      const url=await createGoogleDoc(activeEssay);
+      setGdocsStep("done");
+      window.open(url,"_blank","noopener,noreferrer");
     }catch(e){
-      setGdocsStep("error");
+      const msg=e.message||"Unknown error";
+      setGdocsStep(msg.includes("popup")?"popup_blocked":msg.includes("configured")?"unconfigured":"apierror");
     }
-  };
-  const openBlankGoogleDoc=()=>{
-    window.open("https://docs.google.com/document/create","_blank","noopener,noreferrer");
-    setGdocsStep("opened");
   };
 
   const wc=activeEssay?wordCountOf(activeEssay.content):0;
@@ -1432,30 +1468,37 @@ function Essays() {
           <div style={{height:1,background:T.border,margin:"6px 0"}} />
 
           <Label>Google Docs</Label>
-          {gdocsStep==="idle"&&(
+          {(gdocsStep==="idle"||gdocsStep==="loading")&&(
+            <Btn onClick={doGoogleDocsExport} disabled={gdocsStep==="loading"||!activeEssay} style={{justifyContent:"center"}}>
+              {gdocsStep==="loading"
+                ?<><span style={{width:13,height:13,border:"2px solid rgba(255,255,255,0.3)",borderTopColor:"#fff",borderRadius:"50%",animation:"studlinSpin 0.7s linear infinite",display:"inline-block",marginRight:8}} />Creating Google Doc...</>
+                :<>{Icon.link} Open in Google Docs</>}
+            </Btn>
+          )}
+          {gdocsStep==="done"&&(
             <>
-              <BtnSm variant="subtle" onClick={copyForGoogleDocs}>{Icon.link} Copy essay for Google Docs</BtnSm>
-              <div style={{fontSize:11,color:T.faint,lineHeight:1.5}}>This is a 2-step copy-and-paste flow, not a live sync — Studlin isn't authorized with your Google account for direct one-click export. Step 1 copies your essay to the clipboard.</div>
+              <div style={{fontSize:12,color:T.lime,fontWeight:600,display:"flex",alignItems:"center",gap:6}}>{Icon.check} Google Doc created and opened</div>
+              <BtnSm variant="ghost" onClick={()=>setGdocsStep("idle")}>Export again</BtnSm>
             </>
           )}
-          {gdocsStep==="ready"&&(
+          {gdocsStep==="unconfigured"&&(
+            <div style={{fontSize:11,color:T.amber,lineHeight:1.6,background:T.amber+"12",border:"1px solid "+T.amber+"33",borderRadius:8,padding:"10px 12px"}}>
+              <strong style={{display:"block",marginBottom:4}}>Google OAuth Client ID not set up yet.</strong>
+              To enable one-click Google Docs export, add a <code style={{fontSize:10}}>GOOGLE_OAUTH_CLIENT_ID</code> to your studlin-app.jsx. See the comment near the top of the file for exact steps — it takes about 2 minutes in Google Cloud Console.
+            </div>
+          )}
+          {gdocsStep==="popup_blocked"&&(
             <>
-              <div style={{fontSize:12,color:T.lime,fontWeight:600,display:"flex",alignItems:"center",gap:6}}>{Icon.check} Essay copied to clipboard</div>
-              <BtnSm onClick={openBlankGoogleDoc}>{Icon.link} Open a new Google Doc</BtnSm>
-              <div style={{fontSize:11,color:T.faint,lineHeight:1.5}}>A blank Google Doc will open in a new tab. Click inside it and press <strong style={{color:T.text}}>Cmd+V</strong> (Mac) or <strong style={{color:T.text}}>Ctrl+V</strong> (Windows) to paste your essay in.</div>
+              <div style={{fontSize:12,color:T.red,fontWeight:600}}>Popup was blocked.</div>
+              <div style={{fontSize:11,color:T.faint,lineHeight:1.5}}>Allow popups for studlin.vercel.app and try again.</div>
+              <BtnSm variant="ghost" onClick={()=>setGdocsStep("idle")}>Try again</BtnSm>
             </>
           )}
-          {gdocsStep==="opened"&&(
+          {gdocsStep==="apierror"&&(
             <>
-              <div style={{fontSize:12,color:T.lime,fontWeight:600,display:"flex",alignItems:"center",gap:6}}>{Icon.check} Google Doc opened in a new tab</div>
-              <div style={{fontSize:12,color:T.text,lineHeight:1.6}}>Switch to that tab now, click inside the document, and press <strong>Cmd+V</strong> / <strong>Ctrl+V</strong> to paste your essay.</div>
-              <BtnSm variant="ghost" onClick={()=>setGdocsStep("idle")}>Start over</BtnSm>
-            </>
-          )}
-          {gdocsStep==="error"&&(
-            <>
-              <div style={{fontSize:12,color:T.red,fontWeight:600}}>Couldn't copy automatically — your browser blocked clipboard access.</div>
-              <div style={{fontSize:11,color:T.faint,lineHeight:1.5}}>Use "Copy to clipboard" above instead, then open <a href="https://docs.google.com/document/create" target="_blank" rel="noopener noreferrer" style={{color:T.lime}}>a new Google Doc</a> and paste manually.</div>
+              <div style={{fontSize:12,color:T.red,fontWeight:600}}>Couldn't create the document.</div>
+              <div style={{fontSize:11,color:T.faint,lineHeight:1.5}}>Make sure Drive API is enabled in your Google Cloud project and try again.</div>
+              <BtnSm variant="ghost" onClick={()=>setGdocsStep("idle")}>Try again</BtnSm>
             </>
           )}
         </div>
