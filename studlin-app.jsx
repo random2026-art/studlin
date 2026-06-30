@@ -8,10 +8,10 @@ const darkT = {
   card2:  "#1F2842",
   border: "rgba(255,255,255,0.065)",
   borderHover: "rgba(255,255,255,0.12)",
-  lime:   "#7B90C4",
-  limeDk: "#5E73A8",
-  limeLt: "#A5B3D8",
-  glow:   "rgba(123,144,196,0.18)",
+  lime:   "#3ECF8E",
+  limeDk: "#27AE76",
+  limeLt: "#80E5BA",
+  glow:   "rgba(62,207,142,0.22)",
   text:   "#D8DCF0",
   muted:  "#7880A8",
   faint:  "#333B5A",
@@ -43,10 +43,10 @@ const lightT = {
   card2:  "#E7E9EF",
   border: "rgba(46,52,80,0.09)",
   borderHover: "rgba(46,52,80,0.18)",
-  lime:   "#4D6888",
-  limeDk: "#3B5270",
-  limeLt: "#7A98B8",
-  glow:   "rgba(77,104,136,0.12)",
+  lime:   "#0D8C5A",
+  limeDk: "#096842",
+  limeLt: "#5AB893",
+  glow:   "rgba(13,140,90,0.15)",
   text:   "#1B1E30",
   muted:  "rgba(27,30,48,0.50)",
   faint:  "rgba(27,30,48,0.22)",
@@ -76,7 +76,7 @@ const hexA=(hex,a)=>{const h=hex.replace('#','');const r=parseInt(h.slice(0,2),1
 // accent palettes — override the lime family per user choice
 const ACCENTS={
   Indigo:{dk:{lime:"#7B90C4",limeDk:"#5E73A8",limeLt:"#A5B3D8"}, lt:{lime:"#4D6888",limeDk:"#3B5270",limeLt:"#7A98B8"}},
-  Forest:{dk:{lime:"#6FC1A0",limeDk:"#4E9C7B",limeLt:"#A9E0CB"}, lt:{lime:"#2E8E6E",limeDk:"#22705680".slice(0,7),limeLt:"#A9E0CB"}},
+  Forest:{dk:{lime:"#3ECF8E",limeDk:"#27AE76",limeLt:"#80E5BA"}, lt:{lime:"#0D8C5A",limeDk:"#096842",limeLt:"#5AB893"}},
   Sky:   {dk:{lime:"#84BBEA",limeDk:"#5A93C9",limeLt:"#BFE0FA"}, lt:{lime:"#2D74BC",limeDk:"#225A98",limeLt:"#BFE0FA"}},
   Lilac: {dk:{lime:"#B89BE0",limeDk:"#9474C9",limeLt:"#DCCBF5"}, lt:{lime:"#7E5BC0",limeDk:"#634599",limeLt:"#DCCBF5"}},
   Peach: {dk:{lime:"#E8A06E",limeDk:"#C9764A",limeLt:"#F5C9AC"}, lt:{lime:"#C2683A",limeDk:"#A4542C",limeLt:"#F5C9AC"}},
@@ -97,7 +97,7 @@ function applyTheme(name, accent, density) {
 }
 applyTheme(
   (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-theme')) || 'light',
-  (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-accent')) || 'Indigo',
+  (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-accent')) || 'Forest',
   (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-density')) || 'Comfortable'
 );
 
@@ -3486,7 +3486,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const [pom,setPom]=useState(()=>lsGet("pref-pom","25 min"));
   const [verb,setVerb]=useState(()=>lsGet("pref-verb","Balanced"));
   const [brk,setBrk]=useState(()=>lsGet("pref-brk","15 min"));
-  const accents=[{n:"Indigo",c:"#4F7FE8"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"}];
+  const accents=[{n:"Forest",c:"#3ECF8E"},{n:"Indigo",c:"#4F7FE8"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"}];
 
   return (
     <div>
@@ -4425,7 +4425,8 @@ function InitWizard({onComplete}){
 
   const bg = "#ECEDF2";
   const forest = "#252D52";
-  const lime = "#4D6888";
+  const lime = "#0D8C5A";
+  const limeLt = "#5AB893";
   const ink = "#1B1E30";
   const muted = "rgba(27,30,48,0.50)";
   const border = "rgba(46,52,80,0.09)";
@@ -4442,7 +4443,7 @@ function InitWizard({onComplete}){
       {/* Logo */}
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:40}}>
         <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#2E3560,#1E2448)",display:"grid",placeItems:"center",boxShadow:`0 0 12px 3px ${lime}28`}}>
-            <div style={{width:11,height:11,borderRadius:"50%",background:`radial-gradient(circle at 35% 35%, #7A98B8, ${lime})`,boxShadow:`0 0 8px 2px ${lime}50`}} />
+            <div style={{width:11,height:11,borderRadius:"50%",background:`radial-gradient(circle at 35% 35%, ${limeLt}, ${lime})`,boxShadow:`0 0 8px 2px ${lime}50`}} />
           </div>
         <span style={{fontSize:22,fontWeight:700,color:ink,letterSpacing:"-0.02em"}}>Studlin</span>
       </div>
@@ -4595,10 +4596,10 @@ function App() {
   const [theme,setThemeState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-theme"))||"light");
   const [accent,setAccentState]=useState(()=>{
     if(typeof localStorage!=="undefined"){
-      if(!localStorage.getItem("studlin-accent-reset4")){localStorage.setItem("studlin-accent","Indigo");localStorage.setItem("studlin-accent-reset4","1");}
-      return localStorage.getItem("studlin-accent")||"Indigo";
+      if(!localStorage.getItem("studlin-accent-reset5")){localStorage.setItem("studlin-accent","Forest");localStorage.setItem("studlin-accent-reset5","1");}
+      return localStorage.getItem("studlin-accent")||"Forest";
     }
-    return "Indigo";
+    return "Forest";
   });
   const [density,setDensityState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-density"))||"Comfortable");
   applyTheme(theme, accent, density); // mutate T on every render so all child components re-read
