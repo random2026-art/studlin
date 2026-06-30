@@ -75,15 +75,15 @@ const T = {...darkT}; // mutable · applyTheme() swaps in place so all component
 const hexA=(hex,a)=>{const h=hex.replace('#','');const r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16);return `rgba(${r},${g},${b},${a})`;};
 // accent palettes — override the lime family per user choice
 const ACCENTS={
-  Indigo:{dk:{lime:"#7B90C4",limeDk:"#5E73A8",limeLt:"#A5B3D8"}, lt:{lime:"#4D6888",limeDk:"#3B5270",limeLt:"#7A98B8"}},
-  Forest:{dk:{lime:"#3ECF8E",limeDk:"#27AE76",limeLt:"#80E5BA"}, lt:{lime:"#0D8C5A",limeDk:"#096842",limeLt:"#5AB893"}},
+  Lime:  {dk:{lime:"#AECE5E",limeDk:"#8BAE3C",limeLt:"#CBDF92"}, lt:{lime:"#9EC83D",limeDk:"#7FA82A",limeLt:"#CBDF92"}},
+  Forest:{dk:{lime:"#6FC1A0",limeDk:"#4E9C7B",limeLt:"#A9E0CB"}, lt:{lime:"#2E8E6E",limeDk:"#227056",limeLt:"#A9E0CB"}},
   Sky:   {dk:{lime:"#84BBEA",limeDk:"#5A93C9",limeLt:"#BFE0FA"}, lt:{lime:"#2D74BC",limeDk:"#225A98",limeLt:"#BFE0FA"}},
   Lilac: {dk:{lime:"#B89BE0",limeDk:"#9474C9",limeLt:"#DCCBF5"}, lt:{lime:"#7E5BC0",limeDk:"#634599",limeLt:"#DCCBF5"}},
   Peach: {dk:{lime:"#E8A06E",limeDk:"#C9764A",limeLt:"#F5C9AC"}, lt:{lime:"#C2683A",limeDk:"#A4542C",limeLt:"#F5C9AC"}},
 };
 function applyTheme(name, accent, density) {
   Object.assign(T, name === 'light' ? lightT : darkT);
-  const acc=ACCENTS[accent]||ACCENTS.Indigo;
+  const acc=ACCENTS[accent]||ACCENTS.Lime;
   const a=name==='light'?acc.lt:acc.dk;
   T.lime=a.lime; T.limeDk=a.limeDk; T.limeLt=a.limeLt;
   T.glow=hexA(a.lime, name==='light'?0.18:0.22);
@@ -97,7 +97,7 @@ function applyTheme(name, accent, density) {
 }
 applyTheme(
   (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-theme')) || 'light',
-  (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-accent')) || 'Forest',
+  (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-accent')) || 'Lime',
   (typeof localStorage !== 'undefined' && localStorage.getItem('studlin-density')) || 'Comfortable'
 );
 
@@ -3486,7 +3486,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const [pom,setPom]=useState(()=>lsGet("pref-pom","25 min"));
   const [verb,setVerb]=useState(()=>lsGet("pref-verb","Balanced"));
   const [brk,setBrk]=useState(()=>lsGet("pref-brk","15 min"));
-  const accents=[{n:"Forest",c:"#3ECF8E"},{n:"Indigo",c:"#4F7FE8"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"}];
+  const accents=[{n:"Lime",c:"#9EC83D"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"}];
 
   return (
     <div>
