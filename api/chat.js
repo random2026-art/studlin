@@ -64,7 +64,11 @@ IMPORTANT: When asked to create notes from a YouTube URL, NEVER say you cannot a
 const FLASH_PROMPT = `You are Studlin Flash, a quick-answer study assistant. Give the most direct, concise answer possible. Sound like a smart study buddy, not a textbook. 1-3 sentences max unless the question genuinely needs more. Use bullet points to keep it scannable. Be helpful but brief.`;
 
 module.exports = async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const allowedOrigins = ['https://studlin.vercel.app', 'https://www.studlin.vercel.app'];
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();

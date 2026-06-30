@@ -4307,6 +4307,7 @@ function App() {
       {id:"essays",label:"Essays",badge:String(lsGet("essays",[]).length||"")},
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
+      {id:"focustimer",label:"Focus timer"},
     ]},
     {label:"Tools",items:[
       {id:"solve",label:"Solve"},
