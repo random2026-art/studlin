@@ -951,7 +951,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
 }
 
 // ─── NAV ICONS MAP ────────────────────────────────────────────────────────────
-const navIcon = {dashboard:Icon.grid,aichat:Icon.chat,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.heart,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,music:Icon.music,settings:Icon.settings,profile:Icon.user};
+const navIcon = {dashboard:Icon.grid,aichat:Icon.chat,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.heart,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,music:Icon.music,settings:Icon.settings,profile:Icon.user};
 
 // ─── AI CHAT ──────────────────────────────────────────────────────────────────
 function AiChat() {
@@ -4001,6 +4001,299 @@ function AiTutor(){
   );
 }
 
+// ─── WRITE STUDIO ─────────────────────────────────────────────────────────────
+function WriteStudio(){
+  const [essays,setEssays]=useState(()=>lsGet("essays",[]));
+  const [activeId,setActiveId]=useState(null);
+  const [aiMode,setAiMode]=useState("feedback");
+  const [newOpen,setNewOpen]=useState(false);
+  const [eTitle,setETitle]=useState("");const [eSubject,setESubject]=useState("English IV");const [eTarget,setETarget]=useState("1500");const [ePrompt,setEPrompt]=useState("");const [eMode,setEMode]=useState("self");const [eCustom,setECustom]=useState("");const [aiCreating,setAiCreating]=useState(false);
+  const [tutorMode,setTutorMode]=useState("lesson");const [topic,setTopic]=useState("");const [lesson,setLesson]=useState(null);const [lessonLoading,setLessonLoading]=useState(false);const [showAnswer,setShowAnswer]=useState(false);const [socMsgs,setSocMsgs]=useState([]);const [socActive,setSocActive]=useState(false);const [socInput,setSocInput]=useState("");const [socLoading,setSocLoading]=useState(false);
+  const [checkLoading,setCheckLoading]=useState(false);const [issues,setIssues]=useState([]);const [grade,setGrade]=useState(null);const [grammarStats,setGrammarStats]=useState(null);
+  const [rewriteLoading,setRewriteLoading]=useState(false);const [rewriteResult,setRewriteResult]=useState("");const [activeRW,setActiveRW]=useState(null);
+  const [feedbackLoading,setFeedbackLoading]=useState(false);const [feedbackIssues,setFeedbackIssues]=useState(null);
+  const [copiedMsg,setCopiedMsg]=useState("");
+  const [exportOpen,setExportOpen]=useState(false);const [gdocsStep,setGdocsStep]=useState("idle");
+  const [citeOpen,setCiteOpen]=useState(false);const [citeSource,setCiteSource]=useState("");const [citeStyle,setCiteStyle]=useState("MLA");const [citeLoading,setCiteLoading]=useState(false);const [citeResult,setCiteResult]=useState("");
+  const editorRef=useRef(null);
+  const subjects=[{value:"English IV",label:"English IV",color:T.purple},{value:"Biology",label:"Biology",color:T.teal},{value:"History",label:"History",color:T.muted},{value:"Chemistry",label:"Chemistry",color:T.red},{value:"Calculus",label:"Calculus",color:T.blue},{value:"Other",label:"Other",color:T.lime}];
+  const persist=(next)=>{setEssays(next);lsSet("essays",next);};
+  const activeEssay=essays.find(e=>e.id===activeId)||null;
+  const statusOf=(e)=>{if(e.submitted)return"Submitted";const wc=wordCountOf(e.content);if(wc===0)return"Outline";return"In progress";};
+  const scOf={Submitted:T.teal,"In progress":T.amber,Outline:T.blue};
+  const subjectColor={"English IV":T.purple,"Biology":T.teal,"History":T.muted,"Chemistry":T.red,"Calculus":T.blue};
+  const colorOf=(s)=>subjectColor[s]||T.lime;
+  const wc=activeEssay?wordCountOf(activeEssay.content):0;
+  const target=activeEssay?activeEssay.target:0;
+  const pct=target>0?Math.min(100,Math.round(wc/target*100)):0;
+  const essayText=activeEssay?stripHtml(activeEssay.content).trim():"";
+
+  const createDoc=(prefillTitle,prefillContent,prefillTarget,prefillSubject)=>{
+    const id=String(Date.now()+Math.random()*999);
+    const subj=eSubject==="Other"&&eCustom.trim()?eCustom.trim():(prefillSubject||eSubject);
+    const doc={id,title:prefillTitle||eTitle.trim()||"Untitled",subject:subj,target:+(prefillTarget||eTarget)||1500,prompt:ePrompt.trim(),content:prefillContent||"",submitted:false,createdAt:Date.now(),updatedAt:Date.now()};
+    persist(essays.concat([doc]));setActiveId(id);setNewOpen(false);setETitle("");setEPrompt("");setECustom("");setAiCreating(false);
+    return doc;
+  };
+  const aiDraft=async()=>{
+    if(!eTitle.trim())return;setAiCreating(true);
+    const subj=eSubject==="Other"&&eCustom.trim()?eCustom.trim():eSubject;
+    const p="Hey Studlin, help me start an essay. Title: \""+eTitle.trim()+"\". Subject: "+subj+"."+(ePrompt?" Prompt: "+ePrompt:"")+" Write an HTML outline + opening draft (intro + first body paragraph). Format with <p> and <strong> for headers only. Give me the HTML directly.";
+    try{const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:p}],model:"standard"})});const d=await res.json();createDoc(eTitle.trim(),(d.reply||"").replace(/```html?|```/g,"").trim(),eTarget,subj);}
+    catch(e){createDoc(eTitle.trim(),"",eTarget,subj);}
+  };
+  const useTemplate=(name)=>{const t=ESSAY_TEMPLATES[name];const id=String(Date.now()+Math.random()*999);const doc={id,title:name,subject:"English IV",target:t.target,prompt:"",content:t.content,submitted:false,createdAt:Date.now(),updatedAt:Date.now()};persist(essays.concat([doc]));setActiveId(id);};
+  const deleteDoc=(id)=>{persist(essays.filter(e=>e.id!==id));if(activeId===id)setActiveId(null);};
+  const updateContent=(html)=>{if(!activeEssay)return;persist(essays.map(e=>e.id===activeId?{...e,content:html,updatedAt:Date.now()}:e));};
+  const updateTitle=(title)=>{if(!activeEssay)return;persist(essays.map(e=>e.id===activeId?{...e,title,updatedAt:Date.now()}:e));};
+  const exec=(cmd,val)=>{if(editorRef.current)editorRef.current.focus();document.execCommand(cmd,false,val);if(editorRef.current)updateContent(editorRef.current.innerHTML);};
+  const markSubmitted=()=>{if(!activeEssay)return;persist(essays.map(e=>e.id===activeId?{...e,submitted:true}:e));};
+
+  const runGrammarCheck=async()=>{
+    if(!essayText||essayText.length<10)return;
+    setCheckLoading(true);setIssues([]);setGrade(null);setGrammarStats(null);
+    try{const p="Hey Studlin, check my writing. Return ONLY valid JSON: {\"grade\":\"B+\",\"readingLevel\":\"Grade 11\",\"issues\":[{\"type\":\"Grammar\",\"orig\":\"wrong text\",\"fix\":\"fixed\",\"desc\":\"explanation\"}],\"grammarCount\":0,\"styleCount\":0,\"clarityCount\":0,\"summary\":\"one sentence\"}\n\nText:\n"+essayText.slice(0,6000);const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:p}],model:"standard"})});const d=await res.json();var raw=(d.reply||"").replace(/```json?|```/g,"").trim();var s=raw.indexOf("{");var en=raw.lastIndexOf("}");if(s>=0&&en>s)raw=raw.slice(s,en+1);try{var parsed=JSON.parse(raw);setGrade(parsed.grade||"?");setGrammarStats({grammar:parsed.grammarCount||0,style:parsed.styleCount||0,clarity:parsed.clarityCount||0,reading:parsed.readingLevel||"",summary:parsed.summary||""});setIssues(Array.isArray(parsed.issues)?parsed.issues:[]);}catch(pe){setGrade("?");setGrammarStats({grammar:0,style:0,clarity:0,reading:"",summary:"Couldn't parse. Try again."});}}
+    catch(e){setGrade("?");}setCheckLoading(false);
+  };
+  const acceptFix=(issue)=>{if(!activeEssay)return;const html=(activeEssay.content||"").replace(issue.orig,issue.fix);updateContent(html);if(editorRef.current)editorRef.current.innerHTML=html;setIssues(arr=>arr.filter(x=>x!==issue));};
+  const acceptAllFixes=()=>{if(!activeEssay)return;let html=activeEssay.content||"";issues.forEach(issue=>{html=html.replace(issue.orig,issue.fix);});updateContent(html);if(editorRef.current)editorRef.current.innerHTML=html;setIssues([]);};
+  const typeColor={"Grammar":T.red,"Spelling":T.red,"Punctuation":T.amber,"Style":T.amber,"Clarity":T.teal};
+
+  const runRewrite=async(mode)=>{
+    if(!essayText)return;setActiveRW(mode);setRewriteLoading(true);setRewriteResult("");
+    const prompts={clarity:"Rewrite for maximum clarity.",academic:"Elevate to a formal academic register.",simplify:"Simplify. Aim for Grade 8 reading level.",transitions:"Add transitional phrases to improve flow.",vary:"Vary sentence length and structure for rhythm.",humanize:"Rewrite this AI-generated text to sound natural and human — remove robotic phrasing, vary sentence length, add natural imperfections."};
+    try{const p="Hey Studlin, "+prompts[mode]+"\n\nText:\n"+essayText.slice(0,6000)+"\n\nGive me the rewritten text only, nothing else.";const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:p}],model:"standard"})});const d=await res.json();setRewriteResult(d.reply||"No result.");}
+    catch(e){setRewriteResult("Error: "+e.message);}setRewriteLoading(false);
+  };
+  const applyRewrite=()=>{if(!rewriteResult||!activeEssay)return;const html=rewriteResult.split(/\n+/).filter(Boolean).map(p=>"<p>"+p+"</p>").join("");updateContent(html);if(editorRef.current)editorRef.current.innerHTML=html;setRewriteResult("");setActiveRW(null);};
+
+  const runFeedback=async()=>{
+    if(!essayText)return;setFeedbackLoading(true);setFeedbackIssues(null);
+    try{const p="Hey Studlin, give me 4 short, specific, actionable feedback points to improve this "+( activeEssay?.subject||"")+" essay. Respond ONLY as a JSON array of strings.\n\n"+essayText.slice(0,6000);const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:p}],model:"standard"})});const d=await res.json();var raw=(d.reply||"").replace(/```json?|```/g,"").trim();var s=raw.indexOf("[");var en=raw.lastIndexOf("]");if(s>=0&&en>s)raw=raw.slice(s,en+1);setFeedbackIssues(JSON.parse(raw));}
+    catch(e){setFeedbackIssues(["Something went wrong. Try again."]);}setFeedbackLoading(false);
+  };
+
+  const genLesson=async()=>{if(!topic.trim())return;setLessonLoading(true);setLesson(null);setShowAnswer(false);const p="Hey Studlin, mini-lesson on \""+topic.trim()+"\". Respond ONLY with valid JSON: {\"concept\":\"3-5 sentence explanation\",\"example\":\"one worked example\",\"mistakes\":[\"mistake1\",\"mistake2\",\"mistake3\"],\"question\":\"one practice question\",\"answer\":\"answer with explanation\"}";try{const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:p}],model:"standard"})});const d=await res.json();var raw=(d.reply||"").replace(/```json?|```/g,"").trim();var s=raw.indexOf("{");var en=raw.lastIndexOf("}");if(s>=0&&en>s)raw=raw.slice(s,en+1);setLesson(JSON.parse(raw));}catch(e){setLesson({concept:"Couldn't generate. Try again.",example:"",mistakes:[],question:"",answer:""});}setLessonLoading(false);};
+  const startSocratic=async()=>{if(!topic.trim())return;setSocActive(true);setSocLoading(true);setSocMsgs([]);try{const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:"I want to learn about \""+topic.trim()+"\" using the Socratic method. Don't explain it directly — ask me one guiding question to start."}],model:"standard"})});const d=await res.json();setSocMsgs([{r:"ai",t:d.reply||"What do you already know about "+topic+"?"}]);}catch(e){setSocMsgs([{r:"ai",t:"Let's start: what do you know about "+topic+"?"}]);}setSocLoading(false);};
+  const sendSocratic=async()=>{if(!socInput.trim()||socLoading)return;const userMsg={r:"user",t:socInput.trim()};const next=socMsgs.concat([userMsg]);setSocMsgs(next);setSocInput("");setSocLoading(true);const apiMsgs=next.concat([{r:"user",t:"(Keep using Socratic method on \""+topic+"\" — guiding questions only, no direct answers unless they've clearly got it.)"}]);try{const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:apiMsgs,model:"standard"})});const d=await res.json();setSocMsgs(m=>m.concat([{r:"ai",t:d.reply||"Keep going — what else do you know?"}]));}catch(e){setSocMsgs(m=>m.concat([{r:"ai",t:"Something went wrong. Try again?"}]));}setSocLoading(false);};
+
+  const generateCitation=async()=>{if(!citeSource.trim())return;setCiteLoading(true);setCiteResult("");try{const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:"Format a "+citeStyle+" citation for: "+citeSource.trim()+". Respond with ONLY the formatted citation."}],model:"flash"})});const d=await res.json();setCiteResult(d.reply||"");}catch(e){setCiteResult("Error. Try again.");}setCiteLoading(false);};
+  const insertCitation=()=>{if(!citeResult||!activeEssay)return;const html=(activeEssay.content||"")+"<p>"+citeResult+"</p>";updateContent(html);if(editorRef.current)editorRef.current.innerHTML=html;setCiteOpen(false);setCiteSource("");setCiteResult("");};
+
+  const copyEssay=()=>{if(!activeEssay)return;const txt=activeEssay.title+"\n\n"+essayText;navigator.clipboard&&navigator.clipboard.writeText(txt).then(()=>{setCopiedMsg("Copied");setTimeout(()=>setCopiedMsg(""),2000);});};
+  const downloadEssay=()=>{if(!activeEssay)return;const blob=new Blob([activeEssay.title+"\n\n"+essayText],{type:"text/plain"});const a=Object.assign(document.createElement("a"),{href:URL.createObjectURL(blob),download:(activeEssay.title||"essay").replace(/[^a-z0-9]+/gi,"_")+".txt"});document.body.appendChild(a);a.click();document.body.removeChild(a);};
+  const doGoogleDocsExport=async()=>{if(!activeEssay)return;if(!GDOCS_CONFIGURED){setGdocsStep("unconfigured");return;}setGdocsStep("loading");try{const url=await createGoogleDoc(activeEssay);setGdocsStep("done");window.open(url,"_blank","noopener,noreferrer");}catch(e){setGdocsStep(e.message?.includes("popup")?"popup_blocked":e.message?.includes("configured")?"unconfigured":"apierror");}};
+
+  const AiPanel=()=>(
+    <div style={{display:"flex",flexDirection:"column",height:"100%",overflowY:"auto"}}>
+      <div style={{display:"flex",gap:3,background:T.card2,borderRadius:10,padding:3,marginBottom:14,flexShrink:0}}>
+        {[["feedback","Feedback"],["check","Grammar"],["rewrite","Rewrite"],["tutor","Tutor"]].map(([m,l])=>(
+          <button key={m} onClick={()=>setAiMode(m)} style={{flex:1,padding:"6px 4px",borderRadius:7,border:"none",background:aiMode===m?T.lime:"transparent",color:aiMode===m?T.ink:T.muted,fontSize:11,fontWeight:aiMode===m?700:400,cursor:"pointer",fontFamily:T.font,transition:"all 0.15s"}}>{l}</button>
+        ))}
+      </div>
+
+      {aiMode==="feedback"&&(
+        <div>
+          <Btn onClick={runFeedback} disabled={feedbackLoading||!essayText} style={{width:"100%",justifyContent:"center",marginBottom:12}}>{feedbackLoading?"Analyzing...":Icon.wand+" Get feedback"}</Btn>
+          {!feedbackIssues&&<div style={{fontSize:12,color:T.faint,textAlign:"center",padding:"20px 0"}}>{activeEssay?"Click to get AI suggestions on your draft.":"Open or create a doc first."}</div>}
+          {feedbackIssues&&feedbackIssues.map((s,i)=>(
+            <div key={i} style={{display:"flex",gap:8,padding:"9px 0",borderBottom:i<feedbackIssues.length-1?"1px solid "+T.border:"none",fontSize:12,color:T.muted}}>
+              <div style={{width:5,height:5,borderRadius:"50%",background:T.amber,flexShrink:0,marginTop:5}} />{s}
+            </div>
+          ))}
+          {activeEssay&&(<>
+            <div style={{height:1,background:T.border,margin:"14px 0"}} />
+            <Label>Readability</Label>
+            <div style={{fontSize:32,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>{readabilityOf(activeEssay.content).grade}</div>
+            <div style={{fontSize:11,color:T.muted,marginTop:3}}>{readabilityOf(activeEssay.content).level||"Write something first"}</div>
+          </>)}
+        </div>
+      )}
+
+      {aiMode==="check"&&(
+        <div>
+          <Btn onClick={runGrammarCheck} disabled={checkLoading||!essayText} style={{width:"100%",justifyContent:"center",marginBottom:12}}>{checkLoading?"Checking...":"Run grammar check"}</Btn>
+          {grade&&<div style={{background:T.lime,borderRadius:10,padding:"12px 14px",marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:11,fontWeight:600,color:T.bg,opacity:0.7,letterSpacing:"0.06em",textTransform:"uppercase"}}>Grade</div><div style={{fontSize:36,fontWeight:800,color:T.bg,letterSpacing:"-0.04em",lineHeight:1}}>{grade}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:11,color:T.bg,opacity:0.7}}>{grammarStats?.reading}</div>{grammarStats&&<div style={{fontSize:10,color:T.bg,opacity:0.6,marginTop:4}}>{grammarStats.summary}</div>}</div></div>}
+          {issues.length>0&&(<><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}><div style={{fontSize:12,fontWeight:600,color:T.white}}>{issues.length} issue{issues.length!==1?"s":""}</div><BtnSm onClick={acceptAllFixes}>Accept all</BtnSm></div>
+          {issues.map((issue,i)=>(
+            <div key={i} style={{background:T.card2,border:"1px solid "+(typeColor[issue.type]||T.amber)+"44",borderRadius:8,padding:10,marginBottom:6}}>
+              <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:6}}><Badge color={typeColor[issue.type]||T.amber}>{issue.type}</Badge><span style={{fontSize:10,color:T.muted,flex:1}}>{issue.desc}</span></div>
+              <div style={{fontSize:12,display:"flex",flexWrap:"wrap",gap:6,alignItems:"center",marginBottom:8}}>
+                <span style={{color:T.red,textDecoration:"line-through",background:T.red+"10",padding:"1px 6px",borderRadius:4}}>{issue.orig}</span>
+                <span style={{color:T.faint}}>→</span>
+                <span style={{color:T.lime,fontWeight:600,background:T.lime+"10",padding:"1px 6px",borderRadius:4}}>{issue.fix}</span>
+              </div>
+              <div style={{display:"flex",gap:6}}><BtnSm onClick={()=>acceptFix(issue)}>Apply</BtnSm><BtnSm variant="ghost" onClick={()=>setIssues(arr=>arr.filter(x=>x!==issue))}>Dismiss</BtnSm></div>
+            </div>
+          ))}</>)}
+          {!grade&&!issues.length&&<div style={{fontSize:12,color:T.faint,textAlign:"center",padding:"20px 0"}}>{activeEssay?"Click to check grammar and style.":"Open or create a doc first."}</div>}
+        </div>
+      )}
+
+      {aiMode==="rewrite"&&(
+        <div>
+          {[["clarity","Rephrase for clarity"],["academic","Academic register"],["simplify","Simplify language"],["transitions","Add transitions"],["vary","Vary sentences"],["humanize","Humanize (remove AI tone)"]].map(([mode,label])=>(
+            <button key={mode} onClick={()=>runRewrite(mode)} disabled={rewriteLoading||!essayText} style={{display:"flex",alignItems:"center",gap:8,width:"100%",textAlign:"left",padding:"10px 12px",borderRadius:8,marginBottom:6,fontSize:12.5,cursor:"pointer",border:"1px solid "+(activeRW===mode?T.purple+"66":T.border),background:activeRW===mode?T.purple+"10":"transparent",color:activeRW===mode?T.purple:T.muted,fontFamily:T.font,fontWeight:activeRW===mode?600:400,transition:"all 0.15s"}}>{Icon.wand} {rewriteLoading&&activeRW===mode?"Working...":label}</button>
+          ))}
+          {rewriteResult&&(
+            <div style={{marginTop:10,background:T.card2,border:"1px solid "+T.purple+"44",borderRadius:8,padding:12}}>
+              <div style={{fontSize:12,color:T.text,lineHeight:1.7,maxHeight:200,overflowY:"auto",marginBottom:8}}>{rewriteResult}</div>
+              <div style={{display:"flex",gap:6}}><BtnSm onClick={applyRewrite}>Apply to doc</BtnSm><BtnSm variant="ghost" onClick={()=>setRewriteResult("")}>Dismiss</BtnSm></div>
+            </div>
+          )}
+          {!essayText&&<div style={{fontSize:12,color:T.faint,textAlign:"center",padding:"20px 0"}}>Open or create a doc first.</div>}
+        </div>
+      )}
+
+      {aiMode==="tutor"&&(
+        <div>
+          <div style={{display:"flex",gap:4,background:T.card2,borderRadius:8,padding:3,marginBottom:12}}>
+            <button onClick={()=>{setTutorMode("lesson");setSocActive(false);setSocMsgs([]);}} style={{flex:1,padding:"5px",borderRadius:6,border:"none",background:tutorMode==="lesson"?T.card:"transparent",color:tutorMode==="lesson"?T.white:T.muted,fontSize:11,fontWeight:tutorMode==="lesson"?600:400,cursor:"pointer",fontFamily:T.font}}>Mini-lesson</button>
+            <button onClick={()=>setTutorMode("socratic")} style={{flex:1,padding:"5px",borderRadius:6,border:"none",background:tutorMode==="socratic"?T.card:"transparent",color:tutorMode==="socratic"?T.white:T.muted,fontSize:11,fontWeight:tutorMode==="socratic"?600:400,cursor:"pointer",fontFamily:T.font}}>Socratic</button>
+          </div>
+          <div style={{display:"flex",gap:6,marginBottom:10}}>
+            <input value={topic} onChange={e=>setTopic(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")tutorMode==="lesson"?genLesson():startSocratic();}} placeholder="What topic?" style={{flex:1,background:T.card2,border:"1px solid "+T.border,borderRadius:7,padding:"8px 10px",color:T.text,fontSize:12,fontFamily:T.font,outline:"none"}} />
+            <BtnSm onClick={tutorMode==="lesson"?genLesson:startSocratic} disabled={(tutorMode==="lesson"?lessonLoading:socLoading)||!topic.trim()}>{tutorMode==="lesson"?(lessonLoading?"...":"Go"):(socActive?"Restart":"Go")}</BtnSm>
+          </div>
+          {tutorMode==="lesson"&&lesson&&(
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              <div style={{background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:12}}><div style={{fontSize:10,fontWeight:700,color:T.lime,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6}}>Concept</div><div style={{fontSize:12.5,color:T.text,lineHeight:1.6}}>{lesson.concept}</div></div>
+              {lesson.example&&<div style={{background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:12}}><div style={{fontSize:10,fontWeight:700,color:T.blue,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6}}>Example</div><div style={{fontSize:12,color:T.text,lineHeight:1.6,whiteSpace:"pre-wrap"}}>{lesson.example}</div></div>}
+              {lesson.mistakes?.length>0&&<div style={{background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:12}}><div style={{fontSize:10,fontWeight:700,color:T.amber,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6}}>Common mistakes</div><ul style={{margin:0,paddingLeft:16,fontSize:12,color:T.text,lineHeight:1.7}}>{lesson.mistakes.map((m,i)=><li key={i}>{m}</li>)}</ul></div>}
+              {lesson.question&&<div style={{background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:12}}><div style={{fontSize:10,fontWeight:700,color:T.purple,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6}}>Quick check</div><div style={{fontSize:12.5,color:T.text,marginBottom:8}}>{lesson.question}</div>{showAnswer?<div style={{fontSize:12,color:T.lime,background:T.lime+"0e",padding:"8px 10px",borderRadius:6}}>{lesson.answer}</div>:<BtnSm variant="subtle" onClick={()=>setShowAnswer(true)}>Reveal answer</BtnSm>}</div>}
+              <BtnSm variant="ghost" onClick={()=>{setLesson(null);setShowAnswer(false);}}>Clear</BtnSm>
+            </div>
+          )}
+          {tutorMode==="socratic"&&socActive&&(
+            <div>
+              <div style={{maxHeight:260,overflowY:"auto",display:"flex",flexDirection:"column",gap:10,marginBottom:10}}>
+                {socMsgs.map((m,i)=>(
+                  <div key={i} style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+                    <div style={{width:22,height:22,borderRadius:6,background:m.r==="ai"?T.lime:T.card2,display:"grid",placeItems:"center",fontSize:10,fontWeight:700,color:m.r==="ai"?T.ink:T.muted,flexShrink:0}}>{m.r==="ai"?"S":"Y"}</div>
+                    <div style={{fontSize:12,color:T.text,lineHeight:1.6,paddingTop:2}}>{m.t}</div>
+                  </div>
+                ))}
+                {socLoading&&<div style={{fontSize:11,color:T.muted,paddingLeft:30}}>Thinking...</div>}
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <input value={socInput} onChange={e=>setSocInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")sendSocratic();}} placeholder="Your answer..." style={{flex:1,background:T.card2,border:"1px solid "+T.border,borderRadius:7,padding:"7px 9px",color:T.text,fontSize:12,fontFamily:T.font,outline:"none"}} />
+                <BtnSm onClick={sendSocratic} disabled={socLoading||!socInput.trim()}>Send</BtnSm>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  return(
+    <div style={{display:"grid",gridTemplateColumns:"200px 1fr 280px",gap:14,height:"calc(100vh - 72px)"}}>
+      {/* ── LEFT: Library */}
+      <div style={{display:"flex",flexDirection:"column",gap:0,overflowY:"auto"}}>
+        <Btn onClick={()=>setNewOpen(true)} style={{width:"100%",justifyContent:"center",marginBottom:10,fontSize:12}}>{Icon.plus} New doc</Btn>
+        <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.12em",color:T.muted,textTransform:"uppercase",marginBottom:6,paddingLeft:2}}>Your docs</div>
+        {essays.length===0&&<div style={{fontSize:12,color:T.faint,padding:"10px 0",textAlign:"center"}}>No docs yet.</div>}
+        {essays.slice().sort((a,b)=>b.updatedAt-a.updatedAt).map(e=>{
+          const st=statusOf(e);const isActive=e.id===activeId;
+          return(
+            <div key={e.id} onClick={()=>setActiveId(e.id)} style={{padding:"9px 10px",borderRadius:8,marginBottom:3,cursor:"pointer",background:isActive?T.lime+"10":"transparent",border:"1px solid "+(isActive?T.lime+"44":"transparent"),display:"flex",alignItems:"center",gap:8,transition:"all 0.1s"}}>
+              <div style={{width:3,height:30,borderRadius:2,background:colorOf(e.subject),flexShrink:0}} />
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:12,fontWeight:isActive?600:400,color:isActive?T.white:T.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{e.title}</div>
+                <div style={{fontSize:10,color:T.faint,marginTop:1}}>{wordCountOf(e.content).toLocaleString()} words</div>
+              </div>
+              <button onClick={ev=>{ev.stopPropagation();deleteDoc(e.id);}} style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:13,padding:2,flexShrink:0,lineHeight:1}}>×</button>
+            </div>
+          );
+        })}
+        <div style={{height:1,background:T.border,margin:"10px 0"}} />
+        <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.12em",color:T.muted,textTransform:"uppercase",marginBottom:6,paddingLeft:2}}>Templates</div>
+        {Object.keys(ESSAY_TEMPLATES).map(name=>(
+          <div key={name} onClick={()=>useTemplate(name)} style={{padding:"7px 10px",borderRadius:7,marginBottom:2,cursor:"pointer",fontSize:11,color:T.muted,display:"flex",alignItems:"center",gap:7,transition:"all 0.1s",border:"1px solid transparent"}}
+            onMouseEnter={e=>e.currentTarget.style.background=T.card2}
+            onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+            {Icon.file}<span>{name}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* ── CENTER: Editor */}
+      <div style={{display:"flex",flexDirection:"column",overflow:"hidden",background:T.card,borderRadius:16,border:"1px solid "+T.border}}>
+        {activeEssay?(
+          <>
+            <div style={{padding:"14px 18px",borderBottom:"1px solid "+T.border,display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+              <input value={activeEssay.title} onChange={e=>updateTitle(e.target.value)} style={{flex:1,fontSize:15,fontWeight:700,color:T.white,background:"transparent",border:"none",outline:"none",fontFamily:T.font}} />
+              <div style={{display:"flex",gap:6,alignItems:"center",flexShrink:0}}>
+                <span style={{fontSize:11,color:T.muted,fontFamily:T.mono}}>{wc.toLocaleString()} / {target.toLocaleString()} words</span>
+                <div style={{width:60,height:4,background:T.card2,borderRadius:99,overflow:"hidden"}}><div style={{height:"100%",width:pct+"%",background:T.lime,borderRadius:99}} /></div>
+                <BtnSm variant="subtle" onClick={()=>setExportOpen(true)}>{Icon.file}</BtnSm>
+                <BtnSm variant="subtle" onClick={()=>setCiteOpen(true)}>{Icon.quote}</BtnSm>
+                {!activeEssay.submitted&&<BtnSm variant="subtle" onClick={markSubmitted}>Submit</BtnSm>}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:1,background:T.card2,padding:"5px 10px",borderBottom:"1px solid "+T.border,flexWrap:"wrap",flexShrink:0}}>
+              {[["B","bold",Icon.bold],["I","italic",Icon.italic],["Q","formatBlock",Icon.quote]].map(([l,cmd,ico])=>(
+                <button key={l} type="button" onClick={()=>exec(cmd,cmd==="formatBlock"?"blockquote":undefined)} style={{display:"flex",alignItems:"center",gap:3,padding:"4px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:11,cursor:"pointer",fontFamily:T.font}}>{ico}</button>
+              ))}
+              <div style={{width:1,background:T.border,margin:"2px 4px"}} />
+              {["H1","H2","H3"].map(h=><button key={h} type="button" onClick={()=>exec("formatBlock",h.toLowerCase())} style={{padding:"4px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:11,cursor:"pointer",fontFamily:T.font}}>{h}</button>)}
+            </div>
+            <div ref={editorRef} contentEditable suppressContentEditableWarning onInput={e=>updateContent(e.currentTarget.innerHTML)} dangerouslySetInnerHTML={{__html:activeEssay.content||"<p><br/></p>"}}
+              style={{flex:1,overflowY:"auto",padding:"24px 28px",fontSize:14.5,lineHeight:1.85,color:T.text,outline:"none"}} />
+          </>
+        ):(
+          <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,padding:40,textAlign:"center"}}>
+            <div style={{width:56,height:56,borderRadius:14,background:T.lime+"14",border:"1px solid "+T.lime+"33",display:"grid",placeItems:"center",color:T.lime}}>{Icon.pen}</div>
+            <div><div style={{fontSize:17,fontWeight:700,color:T.white,marginBottom:6}}>Write Studio</div><div style={{fontSize:13,color:T.muted,maxWidth:280,lineHeight:1.6}}>Your essays, AI tutor, grammar check, and rewrite tools — all in one place. Create a doc or pick a template to get started.</div></div>
+            <Btn onClick={()=>setNewOpen(true)}>{Icon.plus} New doc</Btn>
+          </div>
+        )}
+      </div>
+
+      {/* ── RIGHT: AI Panel */}
+      <div style={{background:T.card,borderRadius:16,border:"1px solid "+T.border,padding:14,overflowY:"auto"}}>
+        <AiPanel />
+      </div>
+
+      {/* ── Modals */}
+      <Modal open={newOpen} onClose={()=>{setNewOpen(false);setETitle("");setEPrompt("");setECustom("");setAiCreating(false);}} title="New document" sub="Start blank or get an AI-assisted first draft."
+        footer={<><Btn variant="subtle" onClick={()=>setNewOpen(false)}>Cancel</Btn><Btn onClick={eMode==="ai"?aiDraft:()=>createDoc()} disabled={aiCreating} style={{opacity:eTitle.trim()?1:0.45}}>{aiCreating?"Drafting...":<>{Icon.pen} Create</>}</Btn></>}>
+        <Field label="Title"><Input placeholder="e.g. Power & Corruption in Macbeth" value={eTitle} onChange={e=>setETitle(e.target.value)} autoFocus /></Field>
+        <Field label="Subject"><SelectChip options={subjects} value={eSubject} onChange={setESubject} /></Field>
+        {eSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Physics..." value={eCustom} onChange={e=>setECustom(e.target.value)} /></Field>}
+        <Field label="Mode">
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <button type="button" onClick={()=>setEMode("self")} style={{padding:12,borderRadius:9,border:"1px solid "+(eMode==="self"?T.lime+"55":T.border),background:eMode==="self"?T.lime+"10":T.card2,color:T.text,cursor:"pointer",textAlign:"left",fontFamily:T.font}}><div style={{fontSize:12,fontWeight:600,color:eMode==="self"?T.lime:T.white}}>Write myself</div><div style={{fontSize:11,color:T.muted}}>Blank editor</div></button>
+            <button type="button" onClick={()=>setEMode("ai")} style={{padding:12,borderRadius:9,border:"1px solid "+(eMode==="ai"?T.lime+"55":T.border),background:eMode==="ai"?T.lime+"10":T.card2,color:T.text,cursor:"pointer",textAlign:"left",fontFamily:T.font}}><div style={{fontSize:12,fontWeight:600,color:eMode==="ai"?T.lime:T.white}}>AI draft</div><div style={{fontSize:11,color:T.muted}}>Outline + opening</div></button>
+          </div>
+        </Field>
+        <Field label="Word target"><Input type="number" value={eTarget} onChange={e=>setETarget(e.target.value)} /></Field>
+        <Field label="Prompt (optional)"><Textarea placeholder="Paste the assignment brief or your thesis..." value={ePrompt} onChange={e=>setEPrompt(e.target.value)} /></Field>
+      </Modal>
+
+      <Modal open={citeOpen} onClose={()=>{setCiteOpen(false);setCiteResult("");}} title="Cite a source"
+        footer={<><Btn variant="subtle" onClick={()=>{setCiteOpen(false);setCiteResult("");}}>Cancel</Btn>{citeResult?<Btn onClick={insertCitation}>Insert into doc</Btn>:<Btn onClick={generateCitation} disabled={citeLoading||!citeSource.trim()}>{citeLoading?"Formatting...":"Generate"}</Btn>}</>}>
+        <Field label="Style"><SelectChip options={[{value:"MLA",label:"MLA"},{value:"APA",label:"APA"},{value:"Chicago",label:"Chicago"}]} value={citeStyle} onChange={setCiteStyle} /></Field>
+        <Field label="Source details"><Textarea placeholder="Author, title, publication, year, URL — whatever you have." value={citeSource} onChange={e=>setCiteSource(e.target.value)} /></Field>
+        {citeResult&&<div style={{background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"12px 14px",fontSize:13,color:T.text}}>{citeResult}</div>}
+      </Modal>
+
+      <Modal open={exportOpen} onClose={()=>{setExportOpen(false);setGdocsStep("idle");}} title="Export doc" sub={activeEssay?.title||""}>
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          <BtnSm variant="subtle" onClick={copyEssay}>{Icon.copy} Copy to clipboard {copiedMsg&&<span style={{color:T.lime,marginLeft:8}}>{copiedMsg}</span>}</BtnSm>
+          <BtnSm variant="subtle" onClick={downloadEssay}>{Icon.file} Download as .txt</BtnSm>
+          <div style={{height:1,background:T.border,margin:"4px 0"}} />
+          <Label>Google Docs</Label>
+          {(gdocsStep==="idle"||gdocsStep==="loading")&&<Btn onClick={doGoogleDocsExport} disabled={gdocsStep==="loading"||!activeEssay} style={{justifyContent:"center"}}>{gdocsStep==="loading"?<><span style={{width:13,height:13,border:"2px solid rgba(255,255,255,0.3)",borderTopColor:"#fff",borderRadius:"50%",animation:"studlinSpin 0.7s linear infinite",display:"inline-block",marginRight:8}} />Creating...</>:<>{Icon.link} Open in Google Docs</>}</Btn>}
+          {gdocsStep==="done"&&<div style={{fontSize:12,color:T.lime,fontWeight:600,display:"flex",alignItems:"center",gap:6}}>{Icon.check} Doc created and opened</div>}
+          {gdocsStep==="unconfigured"&&<div style={{fontSize:11,color:T.amber,background:T.amber+"12",border:"1px solid "+T.amber+"33",borderRadius:8,padding:"10px 12px",lineHeight:1.6}}>Google OAuth Client ID needs to be configured. See the comment at the top of studlin-app.jsx.</div>}
+          {gdocsStep==="apierror"&&<><div style={{fontSize:12,color:T.red}}>Couldn't create doc. Make sure Drive API is enabled.</div><BtnSm variant="ghost" onClick={()=>setGdocsStep("idle")}>Try again</BtnSm></>}
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
 // ─── SOLVE ───────────────────────────────────────────────────────────────────
 function Solve(){
   const [image,setImage]=useState(null);
@@ -6207,22 +6500,19 @@ function App() {
       {id:"dashboard",label:"Dashboard"},
       {id:"calendar",label:"Calendar"},
       {id:"aichat",label:"Chat"},
-      {id:"essays",label:"Essays",badge:String(lsGet("essays",[]).length||"")},
+      {id:"writestudio",label:"Write Studio",badge:String(lsGet("essays",[]).length||"")},
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
       {id:"friends",label:"Studlin Network"},
     ]},
     {label:"Tools",items:[
       {id:"solve",label:"Solve"},
-      {id:"aitutor",label:"Tutor"},
-      {id:"grammar",label:"Grammar & Polish"},
-      {id:"humanizer",label:"Rewrite"},
     ]},
   ];
   const bottomItems=[{id:"settings",label:"Settings"},{id:"profile",label:"Profile"}];
-  const pages={aichat:AiChat,essays:Essays,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,aitutor:AiTutor,grammar:GrammarPolish,humanizer:AiHumanizer,profile:Profile};
-  const labelOf={dashboard:"Dashboard",aichat:"AI Chat",essays:"Essays",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",aitutor:"AI Tutor",grammar:"Grammar & Polish",humanizer:"Rewrite",settings:"Settings",profile:"Profile",solve:"Solve"};
-  const sectionOf={dashboard:"Workspace",aichat:"Workspace",essays:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",friends:"Workspace",aitutor:"Tools",grammar:"Tools",humanizer:"Tools",solve:"Tools",settings:"Account",profile:"Account"};
+  const pages={aichat:AiChat,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile};
+  const labelOf={dashboard:"Dashboard",aichat:"AI Chat",writestudio:"Write Studio",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve"};
+  const sectionOf={dashboard:"Workspace",aichat:"Workspace",writestudio:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",friends:"Workspace",solve:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
   if (!onboarded) return <InitWizard onComplete={()=>{setOnboarded(true);if(!lsGet("notifAsked",false))setTimeout(()=>setNotifPermModal(true),500);}} />;
