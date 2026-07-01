@@ -2890,7 +2890,7 @@ function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
   const pp=panelPalette(); // drawer is a permanently-dark panel (like the sidebar) — needs its own light-on-dark text colors
   const qaBtn={display:"flex",alignItems:"center",gap:10,width:"100%",padding:"10px 11px",borderRadius:9,border:"none",background:"transparent",cursor:"pointer",fontFamily:T.font,fontSize:12.5,fontWeight:600,color:pp.text,textAlign:"left"};
 
-  return (
+  return ReactDOM.createPortal(
     <>
       <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(8,12,10,0.5)",zIndex:400,opacity:open?1:0,pointerEvents:open?"auto":"none",transition:"opacity 0.25s"}} />
       <div style={{position:"fixed",top:0,right:0,height:"100vh",width:400,maxWidth:"92vw",background:T.surface,borderLeft:`1px solid ${pp.border}`,boxShadow:"-24px 0 60px -20px rgba(0,0,0,0.5)",zIndex:401,display:"flex",flexDirection:"column",transform:open?"translateX(0)":"translateX(100%)",transition:"transform 0.28s cubic-bezier(.2,.85,.3,1)"}}>
@@ -3010,7 +3010,8 @@ function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
           </div>
         </Modal>
       )}
-    </>
+    </>,
+    document.body
   );
 }
 
