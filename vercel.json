@@ -1,13 +1,22 @@
 {
+  "rewrites": [
+    { "source": "/", "destination": "/Studlin Web App.html" }
+  ],
   "functions": {
     "api/checkout.js": { "memory": 256, "maxDuration": 10 },
     "api/create-intent.js": { "memory": 256, "maxDuration": 10 },
     "api/search-videos.js": { "memory": 128, "maxDuration": 10 },
     "api/chat.js": { "memory": 256, "maxDuration": 30 },
     "api/me.js": { "memory": 256, "maxDuration": 10 },
-    "api/stripe-webhook.js": { "memory": 256, "maxDuration": 15 }
+    "api/stripe-webhook.js": { "memory": 256, "maxDuration": 15 },
+    "api/send-welcome.js": { "memory": 256, "maxDuration": 10 },
+    "api/send-note.js": { "memory": 256, "maxDuration": 10 }
   },
   "headers": [
+    {
+      "source": "/",
+      "headers": [{ "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }]
+    },
     {
       "source": "/checkout.html",
       "headers": [{ "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }]

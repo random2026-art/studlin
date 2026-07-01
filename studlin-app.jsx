@@ -1884,7 +1884,15 @@ function Notes(){
   // Send note state
   const [sendNoteOpen,setSendNoteOpen]=useState(false);
   const [sendNoteTarget,setSendNoteTarget]=useState("");
-  const [sendNoteStatus,setSendNoteStatus]=useState("");
+  const [sendNoteStatus,setSendNoteStatus]=useState(""); // "" | "sending" | "sent" | "error"
+  const [sendNoteError,setSendNoteError]=useState("");
+
+  // Split-screen AI Tutor sidebar
+  const [tutorOpen,setTutorOpen]=useState(false);
+  const [tutorCtx,setTutorCtx]=useState("");
+  const [tutorMsgs,setTutorMsgs]=useState([]);
+  const [tutorInput,setTutorInput]=useState("");
+  const [tutorSending,setTutorSending]=useState(false);
 
   useEffect(()=>{if(!rec)return;const id=setInterval(()=>setRecSecs(x=>x+1),1000);return()=>clearInterval(id);},[rec]);
   const fmtRec=(x)=>String(Math.floor(x/60)).padStart(2,"0")+":"+String(x%60).padStart(2,"0");
@@ -1934,11 +1942,77 @@ function Notes(){
     const f={id:String(Date.now()),selectedText:selText,date:new Date().toLocaleDateString()};
     const updated={...noteFlags,[noteId]:[...(noteFlags[noteId]||[]),f]};
     setNoteFlags(updated);lsSet("note-flags",updated);
-    // Cross-tool integration: persist to tutor-flags for Solve/Tutor panels
     const all=lsGet("tutor-flags",[]);
     all.push({...f,noteTitle:notes[sel].title,noteId,from:"notes"});
     lsSet("tutor-flags",all);
     setPopover(null);setPendingSel(null);
+    openTutorWithContext(selText);
+  };
+
+  // Immediately analyze the flagged text via the API and open the sidebar
+  const openTutorWithContext=async(selText)=>{
+    setTutorCtx(selText);
+    setTutorOpen(true);
+    setTutorMsgs([{role:"ai",text:"…",loading:true}]);
+    const analysisPrompt=
+      `A student flagged this passage from their study notes:\n\n"${selText.slice(0,600)}"\n\n`+
+      `Respond as their AI tutor. Follow these rules:\n`+
+      `- If the passage contains a question (has words like why, how, what, explain, define, or ends with "?"), answer it directly with a clear, engaging explanation. Use an analogy if it helps.\n`+
+      `- If the passage is a concept, formula, term, or statement, give a concise 2-sentence explanation of what it means, then ask ONE sharp follow-up question to test whether the student actually understands it.\n`+
+      `Be direct. Sound like a smart tutor, not a textbook. Keep it under 150 words.`;
+    try{
+      const res=await authFetch("/api/chat",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({messages:[{r:"user",t:analysisPrompt}],model:"standard"})
+      });
+      if(!res.ok){
+        const errData=await res.json().catch(()=>({}));
+        throw new Error(errData.error||"HTTP "+res.status);
+      }
+      const data=await res.json();
+      setTutorMsgs([{role:"ai",text:data.reply||"I'm here to help. What would you like to know about this passage?"}]);
+    }catch(e){
+      console.error("[openTutorWithContext] error:",e);
+      setTutorMsgs([{role:"ai",text:"I'm here to help with \""+selText.slice(0,60)+(selText.length>60?"…":"")+"\". What would you like me to explain?"}]);
+    }
+  };
+
+  const sendTutorMsg=async()=>{
+    const txt=tutorInput.trim();
+    if(!txt||tutorSending)return;
+    setTutorMsgs(m=>[...m,{role:"user",text:txt}]);
+    setTutorInput("");
+    setTutorSending(true);
+    try{
+      // Reconstruct conversation for the API. The conversation always starts with
+      // the analysis prompt (user) → initial AI response, then the real turns after.
+      // api/chat expects {r:"user"|"ai", t:"..."} — "ai" maps to assistant inside the API.
+      const ctx=tutorCtx?`[Note excerpt: "${tutorCtx.slice(0,400)}"]\n\n`:"";
+      const realMsgs=tutorMsgs.filter(m=>!m.loading);
+      // Synthetic opener restores the initial user→ai exchange so the model has context
+      const opener={r:"user",t:ctx+"Analyze this passage from my notes and help me understand it."};
+      // Map existing display messages into API format
+      const history=realMsgs.map(m=>({r:m.role==="user"?"user":"ai",t:m.text}));
+      // Full sequence: opener → initial AI response → subsequent turns → new user msg
+      const apiMsgs=[opener,...history,{r:"user",t:txt}];
+      const res=await authFetch("/api/chat",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({messages:apiMsgs,model:"standard"})
+      });
+      if(!res.ok){
+        const errData=await res.json().catch(()=>({}));
+        console.error("[sendTutorMsg] API error response:",res.status,errData);
+        throw new Error(errData.error||"HTTP "+res.status);
+      }
+      const data=await res.json();
+      setTutorMsgs(m=>[...m,{role:"ai",text:data.reply||"No response received."}]);
+    }catch(e){
+      console.error("[sendTutorMsg] error:",e);
+      setTutorMsgs(m=>[...m,{role:"ai",text:"Error: "+e.message+". Please try again."}]);
+    }
+    setTutorSending(false);
   };
 
   const cleanNotes=async()=>{
@@ -2030,12 +2104,40 @@ function Notes(){
   const updateNote=(idx,updates)=>{const next=notes.map((n,i)=>i===idx?Object.assign({},n,updates):n);setNotes(next);lsSet("notes",next);};
   const deleteNote=(idx)=>{const next=notes.filter((_,i)=>i!==idx);setNotes(next);lsSet("notes",next);setSel(s=>s===idx?null:s>idx?s-1:s);};
   const exportNote=(n)=>{const t=document.createElement("div");t.innerHTML=n.body;navigator.clipboard&&navigator.clipboard.writeText(n.title+"\n\n"+(t.textContent||t.innerText));};
-  const sendNote=()=>{
-    const t=sendNoteTarget.trim();if(!t||sel===null)return;
-    const pending=lsGet("pendingShares",[]);
-    pending.push({type:"note",title:notes[sel].title,body:notes[sel].body,tag:notes[sel].tag,to:t,from:getUserName(),date:dayKey()});
-    lsSet("pendingShares",pending);setSendNoteStatus("sent");
-    setTimeout(()=>{setSendNoteOpen(false);setSendNoteTarget("");setSendNoteStatus("");},1800);
+  const sendNote=async()=>{
+    const t=sendNoteTarget.trim();
+    if(!t||sel===null)return;
+    setSendNoteStatus("sending");
+    setSendNoteError("");
+    try{
+      console.log("[sendNote] Calling /api/send-note for",t);
+      const res=await authFetch("/api/send-note",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          recipientEmail:t,
+          noteTitle:notes[sel].title,
+          noteBody:notes[sel].body,
+          noteTag:notes[sel].tag,
+          senderName:getUserName()
+        })
+      });
+      const data=await res.json();
+      console.log("[sendNote] Response",res.status,data);
+      if(!res.ok||data.error){
+        const msg=data.detail||data.error||"Send failed (HTTP "+res.status+")";
+        console.error("[sendNote] Error:",msg);
+        setSendNoteError(msg);
+        setSendNoteStatus("error");
+        return;
+      }
+      setSendNoteStatus("sent");
+      setTimeout(()=>{setSendNoteOpen(false);setSendNoteTarget("");setSendNoteStatus("");setSendNoteError("");},2200);
+    }catch(e){
+      console.error("[sendNote] Network/fetch error:",e.message);
+      setSendNoteError("Network error — "+e.message);
+      setSendNoteStatus("error");
+    }
   };
   const removeComment=(nid,cid)=>{const u={...noteComments,[nid]:(noteComments[nid]||[]).filter(c=>c.id!==cid)};setNoteComments(u);lsSet("note-comments",u);};
   const removeFlag=(nid,fid)=>{
@@ -2057,21 +2159,35 @@ function Notes(){
       <PH title="Notes" sub="Write, scan, record, or import" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New note")}</Btn>} />
 
       {/* ── SEND NOTE MODAL ── */}
-      <Modal open={sendNoteOpen} onClose={()=>{setSendNoteOpen(false);setSendNoteTarget("");setSendNoteStatus("");}} title="Send note to a friend" sub="Drop a copy of this note directly into a friend's Studlin workspace." width={440}
-        footer={sendNoteStatus==="sent"?null:<><Btn variant="subtle" onClick={()=>{setSendNoteOpen(false);setSendNoteTarget("");setSendNoteStatus("");}}>Cancel</Btn><Btn onClick={sendNote} style={{opacity:sendNoteTarget.trim()?1:0.45}}>{Icon.send} Send note</Btn></>}>
-        {sendNoteStatus==="sent"
-          ?<div style={{textAlign:"center",padding:"24px 0"}}>
-              <div style={{fontSize:32,marginBottom:12}}>✓</div>
-              <div style={{fontSize:15,fontWeight:600,color:T.white,marginBottom:4}}>Note sent!</div>
-              <div style={{fontSize:13,color:T.muted}}>"{sel!==null&&notes[sel]?notes[sel].title:""}" was sent to <strong style={{color:T.lime}}>{sendNoteTarget}</strong></div>
+      <Modal open={sendNoteOpen} onClose={()=>{if(sendNoteStatus==="sending")return;setSendNoteOpen(false);setSendNoteTarget("");setSendNoteStatus("");setSendNoteError("");}} title="Send note to a friend" sub="Deliver this note directly to any email address." width={440}
+        footer={sendNoteStatus==="sent"?null:(
+          <>
+            <Btn variant="subtle" onClick={()=>{setSendNoteOpen(false);setSendNoteTarget("");setSendNoteStatus("");setSendNoteError("");}} style={{opacity:sendNoteStatus==="sending"?0.4:1}}>Cancel</Btn>
+            <Btn onClick={sendNote} disabled={sendNoteStatus==="sending"||!sendNoteTarget.trim()} style={{opacity:(!sendNoteTarget.trim()||sendNoteStatus==="sending")?0.45:1}}>
+              {sendNoteStatus==="sending"?<>{Icon.send} Sending…</>:<>{Icon.send} Send note</>}
+            </Btn>
+          </>
+        )}>
+        {sendNoteStatus==="sent"?(
+          <div style={{textAlign:"center",padding:"24px 0"}}>
+            <div style={{width:48,height:48,borderRadius:"50%",background:T.teal+"18",border:`1px solid ${T.teal}44`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 14px",color:T.teal}}>{Icon.check}</div>
+            <div style={{fontSize:15,fontWeight:600,color:T.white,marginBottom:4}}>Email sent!</div>
+            <div style={{fontSize:13,color:T.muted}}>"{sel!==null&&notes[sel]?notes[sel].title:""}" was emailed to <strong style={{color:T.lime}}>{sendNoteTarget}</strong></div>
+          </div>
+        ):(
+          <>
+            <div style={{padding:"12px 14px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`,marginBottom:14}}>
+              <div style={{fontSize:12,fontWeight:600,color:T.white,marginBottom:2}}>{sel!==null&&notes[sel]?notes[sel].title:"Selected note"}</div>
+              {sel!==null&&notes[sel]&&<div style={{fontSize:11,color:T.muted}}>{notes[sel].tag} · {notes[sel].date}</div>}
             </div>
-          :<>
-              <div style={{padding:"12px 14px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`,marginBottom:14}}>
-                <div style={{fontSize:12,fontWeight:600,color:T.white,marginBottom:2}}>{sel!==null&&notes[sel]?notes[sel].title:"Selected note"}</div>
+            <Field label="Recipient email"><Input placeholder="e.g. alex@school.edu" value={sendNoteTarget} onChange={e=>{setSendNoteTarget(e.target.value);setSendNoteError("");}} autoFocus /></Field>
+            {sendNoteStatus==="error"&&(
+              <div style={{marginTop:10,padding:"10px 13px",background:T.red+"12",border:`1px solid ${T.red}33`,borderRadius:8,fontSize:12,color:T.red,lineHeight:1.5}}>
+                {sendNoteError||"Something went wrong. Check the Vercel function logs."}
               </div>
-              <Field label="Friend's Studlin username or email"><Input placeholder="e.g. @alex or alex@school.edu" value={sendNoteTarget} onChange={e=>setSendNoteTarget(e.target.value)} autoFocus /></Field>
-            </>
-        }
+            )}
+          </>
+        )}
       </Modal>
 
       {/* ── NEW NOTE MODAL — metadata only, no body field ── */}
@@ -2142,8 +2258,8 @@ function Notes(){
           })}
         </div>
 
-        {/* Canvas area: editor + optional margin panel */}
-        <div style={{display:"grid",gridTemplateColumns:hasMargin?"1fr 220px":"1fr",gap:12,alignItems:"start"}}>
+        {/* Canvas area: editor + optional margin panel + optional tutor sidebar */}
+        <div style={{display:"grid",gridTemplateColumns:tutorOpen?"1fr 340px":hasMargin?"1fr 220px":"1fr",gap:12,alignItems:"start"}}>
 
           {/* ── RICH TEXT EDITOR CARD ── */}
           <Card style={{padding:0,overflow:"hidden",minHeight:480}}>
@@ -2151,22 +2267,46 @@ function Notes(){
               <>
                 {/* Formatting toolbar */}
                 <div style={{display:"flex",alignItems:"center",gap:4,padding:"8px 14px",borderBottom:`1px solid ${T.border}`,background:T.card2,flexWrap:"wrap"}}>
+                  {/* Font family */}
+                  <select onMouseDown={e=>e.stopPropagation()} onChange={e=>{if(editorRef.current)editorRef.current.focus();document.execCommand("styleWithCSS",false,true);document.execCommand("fontName",false,e.target.value);}} defaultValue="" style={{padding:"4px 6px",borderRadius:5,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer",outline:"none",height:28}}>
+                    <option value="" disabled>Font</option>
+                    <option value="Inter, sans-serif">Inter</option>
+                    <option value="Arial, sans-serif">Arial</option>
+                    <option value="Georgia, serif">Georgia</option>
+                    <option value="'Courier New', monospace">Courier</option>
+                    <option value="'JetBrains Mono', monospace">Mono</option>
+                  </select>
+                  <div style={{width:1,height:18,background:T.border,margin:"0 2px"}} />
+                  {/* Bold */}
                   <button style={tbBtn()} onMouseDown={e=>{e.preventDefault();execFmt("bold");}} title="Bold"><strong style={{fontSize:13}}>B</strong></button>
+                  {/* Italic */}
+                  <button style={tbBtn()} onMouseDown={e=>{e.preventDefault();execFmt("italic");}} title="Italic"><em style={{fontSize:13}}>I</em></button>
+                  {/* Bullet */}
                   <button style={tbBtn()} onMouseDown={e=>{e.preventDefault();execFmt("insertUnorderedList");}} title="Bullet list">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="9" y1="6" x2="20" y2="6"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="18" x2="20" y2="18"/><circle cx="4" cy="6" r="2" fill="currentColor"/><circle cx="4" cy="12" r="2" fill="currentColor"/><circle cx="4" cy="18" r="2" fill="currentColor"/></svg>
                   </button>
+                  {/* Numbered */}
                   <button style={tbBtn()} onMouseDown={e=>{e.preventDefault();execFmt("insertOrderedList");}} title="Numbered list">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/></svg>
                   </button>
-                  <button style={tbBtn()} onMouseDown={e=>{e.preventDefault();execFmt("hiliteColor",T.amber+"44");}} title="Highlight">
+                  <div style={{width:1,height:18,background:T.border,margin:"0 2px"}} />
+                  {/* Text color */}
+                  <label title="Text color" style={{...tbBtn(),padding:"4px 7px",cursor:"pointer",position:"relative",overflow:"hidden"}}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+                    <span style={{fontSize:10,letterSpacing:"0.02em"}}>A</span>
+                    <input type="color" defaultValue="#e8efe7" onInput={e=>{if(editorRef.current)editorRef.current.focus();document.execCommand("styleWithCSS",false,true);document.execCommand("foreColor",false,e.target.value);}} style={{position:"absolute",opacity:0,width:"100%",height:"100%",top:0,left:0,cursor:"pointer",border:"none",padding:0}} />
+                  </label>
+                  {/* Highlight color */}
+                  <label title="Highlight color" style={{...tbBtn(),padding:"4px 7px",cursor:"pointer",position:"relative",overflow:"hidden"}}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="m9 11-6 6v3h3l6-6"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
-                  </button>
-                  <div style={{width:1,height:18,background:T.border,margin:"0 4px"}} />
+                    <input type="color" defaultValue="#aece5e" onInput={e=>{if(editorRef.current)editorRef.current.focus();document.execCommand("styleWithCSS",false,true);document.execCommand("hiliteColor",false,e.target.value);}} style={{position:"absolute",opacity:0,width:"100%",height:"100%",top:0,left:0,cursor:"pointer",border:"none",padding:0}} />
+                  </label>
+                  <div style={{width:1,height:18,background:T.border,margin:"0 2px"}} />
                   <BtnSm variant="subtle" onClick={()=>exportNote(activeNote)}>{Icon.copy} Copy</BtnSm>
                   <BtnSm variant="subtle" onClick={()=>setSendNoteOpen(true)}>{Icon.send} Send</BtnSm>
                   <div style={{flex:1}} />
                   <button onClick={cleanNotes} disabled={cleaning} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${T.lime}44`,background:cleaning?T.card2:T.lime+"14",color:cleaning?T.muted:T.lime,cursor:cleaning?"default":"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
-                    {cleaning?"Cleaning…":"🪄 Clean Notes"}
+                    {cleaning?<>Cleaning…</>:<>{Icon.wand} Clean Notes</>}
                   </button>
                   <BtnSm variant="danger" onClick={()=>deleteNote(sel)}>Delete</BtnSm>
                 </div>
@@ -2185,16 +2325,15 @@ function Notes(){
                 {/* Contextual selection popover */}
                 {popover&&(
                   <div style={{position:"absolute",top:popover.y,left:popover.x,transform:"translateX(-50%)",zIndex:30,display:"flex",gap:4,background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:"4px 6px",boxShadow:"0 8px 24px rgba(0,0,0,0.4)",whiteSpace:"nowrap"}}>
-                    <button onMouseDown={e=>{e.preventDefault();setPendingSel(popover.selText);setCommentInputOpen(true);}} style={{padding:"5px 10px",borderRadius:5,border:"none",background:"transparent",color:T.blue,cursor:"pointer",fontSize:12,fontFamily:T.font,fontWeight:600}}>💬 Add Comment</button>
+                    <button onMouseDown={e=>{e.preventDefault();setPendingSel(popover.selText);setCommentInputOpen(true);}} style={{padding:"5px 10px",borderRadius:5,border:"none",background:"transparent",color:T.blue,cursor:"pointer",fontSize:12,fontFamily:T.font,fontWeight:600}}>Add Comment</button>
                     <div style={{width:1,background:T.border}} />
-                    <button onMouseDown={e=>{e.preventDefault();doAddFlag(popover.selText);}} style={{padding:"5px 10px",borderRadius:5,border:"none",background:"transparent",color:T.amber,cursor:"pointer",fontSize:12,fontFamily:T.font,fontWeight:600}}>🚨 Flag for Tutor</button>
+                    <button onMouseDown={e=>{e.preventDefault();doAddFlag(popover.selText);}} style={{padding:"5px 10px",borderRadius:5,border:"none",background:"transparent",color:T.amber,cursor:"pointer",fontSize:12,fontFamily:T.font,fontWeight:600}}>Flag for Tutor</button>
                   </div>
                 )}
 
                 {/* Comment input strip */}
                 {commentInputOpen&&(
                   <div style={{padding:"10px 20px",background:T.blue+"0A",borderBottom:`1px solid ${T.blue}22`,display:"flex",gap:8,alignItems:"center"}}>
-                    <span style={{fontSize:11,color:T.blue,fontWeight:600,flexShrink:0}}>💬</span>
                     <input value={commentDraft} onChange={e=>setCommentDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")doAddComment();if(e.key==="Escape"){setCommentInputOpen(false);setPendingSel(null);}}} placeholder={`Comment on "${(pendingSel||"").slice(0,30)}…"`} autoFocus style={{flex:1,background:"transparent",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}} />
                     <BtnSm onClick={doAddComment} style={{opacity:commentDraft.trim()?1:0.4}}>Save</BtnSm>
                     <BtnSm variant="subtle" onClick={()=>{setCommentInputOpen(false);setPendingSel(null);}}>✕</BtnSm>
@@ -2225,13 +2364,52 @@ function Notes(){
             )}
           </Card>
 
+          {/* ── TUTOR SIDEBAR — split-screen AI panel ── */}
+          {tutorOpen&&(
+            <div style={{display:"flex",flexDirection:"column",height:"100%",background:T.card,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",minHeight:480}}>
+              {/* Header */}
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 16px",borderBottom:`1px solid ${T.border}`,background:T.card2,flexShrink:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <div style={{width:26,height:26,borderRadius:7,background:T.amber+"22",border:`1px solid ${T.amber}44`,display:"flex",alignItems:"center",justifyContent:"center",color:T.amber}}>{Icon.brain}</div>
+                  <div>
+                    <div style={{fontSize:12,fontWeight:700,color:T.white}}>AI Tutor</div>
+                    <div style={{fontSize:10,color:T.muted}}>Ask about your flagged text</div>
+                  </div>
+                </div>
+                <button onClick={()=>setTutorOpen(false)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:16,lineHeight:1,padding:4,borderRadius:4,display:"flex",alignItems:"center",justifyContent:"center"}}>{Icon.xmark}</button>
+              </div>
+              {/* Messages */}
+              <div style={{flex:1,overflowY:"auto",padding:"14px 14px 8px",display:"flex",flexDirection:"column",gap:10}}>
+                {tutorMsgs.map((m,i)=>(
+                  <div key={i} style={{display:"flex",flexDirection:"column",alignItems:m.role==="user"?"flex-end":"flex-start"}}>
+                    <div style={{maxWidth:"88%",padding:"9px 12px",borderRadius:m.role==="user"?"10px 10px 3px 10px":"10px 10px 10px 3px",background:m.role==="user"?T.lime+"22":T.card2,border:`1px solid ${m.role==="user"?T.lime+"33":T.border}`,fontSize:12.5,color:m.loading?T.muted:T.text,lineHeight:1.6,whiteSpace:"pre-wrap"}}>
+                      {m.loading?<span style={{animation:"studlinPulse 1.2s ease infinite",display:"inline-block"}}>Analyzing…</span>:m.text}
+                    </div>
+                  </div>
+                ))}
+                {tutorSending&&(
+                  <div style={{display:"flex",alignItems:"flex-start"}}>
+                    <div style={{padding:"9px 14px",borderRadius:"10px 10px 10px 3px",background:T.card2,border:`1px solid ${T.border}`,fontSize:12,color:T.muted}}>
+                      <span style={{animation:"studlinPulse 1.2s ease infinite",display:"inline-block"}}>Thinking…</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+              {/* Input */}
+              <div style={{padding:"10px 12px",borderTop:`1px solid ${T.border}`,flexShrink:0,display:"flex",gap:8,alignItems:"flex-end"}}>
+                <textarea value={tutorInput} onChange={e=>setTutorInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendTutorMsg();}}} placeholder="Ask your tutor…" rows={2} style={{flex:1,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",color:T.text,fontSize:12.5,fontFamily:T.font,resize:"none",outline:"none",lineHeight:1.5}} />
+                <button onClick={sendTutorMsg} disabled={!tutorInput.trim()||tutorSending} style={{padding:"8px 12px",borderRadius:8,border:"none",background:tutorInput.trim()&&!tutorSending?T.amber:T.card2,color:tutorInput.trim()&&!tutorSending?T.ink:T.faint,cursor:tutorInput.trim()&&!tutorSending?"pointer":"default",fontFamily:T.font,fontSize:12,fontWeight:700,transition:"all 0.15s",flexShrink:0}}>{Icon.send}</button>
+              </div>
+            </div>
+          )}
+
           {/* ── MARGIN PANEL — comments & flags ── */}
-          {hasMargin&&(
+          {!tutorOpen&&hasMargin&&(
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
               <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:2}}>Annotations</div>
               {activeComments.map(c=>(
                 <div key={c.id} style={{background:T.card,border:`1px solid ${T.blue}33`,borderLeft:`3px solid ${T.blue}`,borderRadius:8,padding:"10px 12px",position:"relative"}}>
-                  <div style={{fontSize:10,color:T.blue,fontWeight:600,marginBottom:4,lineHeight:1.4}}>💬 "{(c.selectedText||"").slice(0,48)}{c.selectedText&&c.selectedText.length>48?"…":""}"</div>
+                  <div style={{fontSize:10,color:T.blue,fontWeight:600,marginBottom:4,lineHeight:1.4}}>"{(c.selectedText||"").slice(0,48)}{c.selectedText&&c.selectedText.length>48?"…":""}"</div>
                   <div style={{fontSize:12,color:T.text,lineHeight:1.5}}>{c.text}</div>
                   <div style={{fontSize:10,color:T.faint,marginTop:6}}>{c.date}</div>
                   <button onClick={()=>removeComment(nid,c.id)} style={{position:"absolute",top:6,right:6,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:13,lineHeight:1,padding:2}}>×</button>
@@ -2239,9 +2417,12 @@ function Notes(){
               ))}
               {activeFlags.map(f=>(
                 <div key={f.id} style={{background:T.card,border:`1px solid ${T.amber}44`,borderLeft:`3px solid ${T.amber}`,borderRadius:8,padding:"10px 12px",position:"relative"}}>
-                  <div style={{fontSize:11,color:T.amber,fontWeight:700,marginBottom:4}}>🚨 Tutor Flag</div>
+                  <div style={{fontSize:10,fontWeight:700,color:T.amber,marginBottom:4,letterSpacing:"0.05em",textTransform:"uppercase"}}>Tutor Flag</div>
                   <div style={{fontSize:11,color:T.muted,lineHeight:1.5,fontStyle:"italic"}}>"{(f.selectedText||"").slice(0,60)}{f.selectedText&&f.selectedText.length>60?"…":""}"</div>
-                  <div style={{fontSize:10,color:T.faint,marginTop:6}}>{f.date} · synced to Tutor</div>
+                  <div style={{display:"flex",gap:8,marginTop:8,alignItems:"center"}}>
+                    <div style={{fontSize:10,color:T.faint}}>{f.date}</div>
+                    <button onMouseDown={e=>{e.preventDefault();openTutorWithContext(f.selectedText);}} style={{fontSize:10,color:T.amber,background:"none",border:"none",cursor:"pointer",padding:0,fontFamily:T.font,fontWeight:600}}>Open tutor →</button>
+                  </div>
                   <button onClick={()=>removeFlag(nid,f.id)} style={{position:"absolute",top:6,right:6,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:13,lineHeight:1,padding:2}}>×</button>
                 </div>
               ))}
@@ -5696,6 +5877,12 @@ function InitWizard({onComplete}){
     const updatedProf = {...getProfile(), status, affiliation, school:affiliation};
     lsSet("profile", updatedProf);
     lsSet("onboarded", true);
+    // Fire welcome email — best-effort, non-blocking
+    authFetch("/api/send-welcome", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({name:updatedProf.name||"", email:updatedProf.email||""})
+    }).catch(()=>{});
     onComplete();
   };
 
