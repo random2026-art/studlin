@@ -5208,19 +5208,6 @@ function Profile() {
   const affiliationLabel = status==="highschool"?"School name":status==="college"?"University":status==="working"?"Company":"School / affiliation";
   const affiliationPlaceholder = status==="highschool"?"e.g. Lincoln High School":status==="college"?"e.g. UCLA, NYU...":status==="working"?"e.g. Google, startup...":"Your school or company";
 
-  const badges=[
-    {icon:Icon.flame,name:streak+"-Day streak",color:T.amber},
-    {icon:Icon.trophy,name:"Goal crusher",color:T.lime},
-    {icon:Icon.layers,name:"Card master",color:T.teal},
-    {icon:Icon.zap,name:"Speed reader",color:T.blue},
-    {icon:Icon.brain,name:"Bio distinction",color:T.purple},
-    {icon:Icon.pen,name:"Essay merit",color:T.red},
-    {icon:Icon.star,name:"Top scorer",color:T.amber},
-    {icon:Icon.award,name:"Peer mentor",color:T.lime},
-    {icon:Icon.shield,name:"Streak guard",color:T.teal},
-    {icon:Icon.check,name:"Consistent",color:T.blue},
-  ];
-  const activityData=[40,70,55,90,100,30,20];
 
   const StatusChip=({value,label,active})=>(
     <button type="button" onClick={()=>setStatus(value)} style={{padding:"8px 16px",borderRadius:8,fontSize:12,fontWeight:active?600:400,cursor:"pointer",border:`1.5px solid ${active?T.lime+"66":T.border}`,background:active?T.lime+"14":"transparent",color:active?T.lime:T.muted,fontFamily:T.font,transition:"all 0.15s"}}>{label}</button>
@@ -5229,20 +5216,18 @@ function Profile() {
   return (
     <div>
       {/* ── Header card */}
-      <Card style={{display:"flex",alignItems:"center",gap:24,marginBottom:16,padding:28}}>
-        {/* Profile picture module */}
-        <div style={{position:"relative",flexShrink:0}}>
+      <Card style={{display:"flex",alignItems:"center",gap:28,marginBottom:16,padding:28}}>
+        {/* Profile picture — click anywhere to change */}
+        <div style={{position:"relative",flexShrink:0,cursor:"pointer"}} onClick={()=>fileInputRef.current&&fileInputRef.current.click()}
+          onMouseEnter={e=>{const ov=e.currentTarget.querySelector(".pic-overlay");if(ov)ov.style.opacity="1";}}
+          onMouseLeave={e=>{const ov=e.currentTarget.querySelector(".pic-overlay");if(ov)ov.style.opacity="0";}}>
           {picUrl
-            ? <img src={picUrl} style={{width:80,height:80,borderRadius:"50%",objectFit:"cover",border:`2px solid ${T.lime}44`}} alt="Profile" />
-            : <Av initials={initials} color={T.lime} size={80} picUrl="" />
+            ? <img src={picUrl} style={{width:96,height:96,borderRadius:"50%",objectFit:"cover",border:`3px solid ${T.lime}`,display:"block"}} alt="Profile" />
+            : <div style={{width:96,height:96,borderRadius:"50%",background:`linear-gradient(135deg,${T.forest},${T.limeDk})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:32,fontWeight:700,color:"#fff",border:`3px solid ${T.lime}`,letterSpacing:"-0.02em"}}>{initials}</div>
           }
-          <div style={{position:"absolute",bottom:0,right:0,display:"flex",gap:3}}>
-            <button title="Upload photo" onClick={()=>fileInputRef.current&&fileInputRef.current.click()} style={{width:24,height:24,borderRadius:"50%",background:T.lime,border:"none",cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 2px 8px rgba(0,0,0,0.2)"}}>
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.ink} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            </button>
-            <button title="Take photo" onClick={()=>camInputRef.current&&camInputRef.current.click()} style={{width:24,height:24,borderRadius:"50%",background:T.card2,border:`1px solid ${T.border}`,cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 2px 8px rgba(0,0,0,0.15)"}}>
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.muted} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-            </button>
+          <div className="pic-overlay" style={{position:"absolute",inset:0,borderRadius:"50%",background:"rgba(0,0,0,0.55)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4,opacity:0,transition:"opacity 0.18s"}}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+            <span style={{fontSize:9,fontWeight:700,color:"#fff",letterSpacing:"0.04em"}}>CHANGE</span>
           </div>
           <input ref={fileInputRef} type="file" accept="image/*" style={{display:"none"}} onChange={handlePicFile} />
           <input ref={camInputRef} type="file" accept="image/*" capture="user" style={{display:"none"}} onChange={handlePicFile} />
@@ -5308,53 +5293,93 @@ function Profile() {
         </div>
       </Card>
 
-      {/* ── Stats */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
-        {[["Total study time",fmtH(ps.totalMin),T.lime],["Essays submitted","8",T.purple],["Cards mastered","147",T.teal],["Quizzes completed","23",T.amber],["Chat sessions","89",T.blue],["Focus sessions",String(ps.focusSessions),T.red]].map(([l,v,c],i)=>(
-          <Card key={i} style={{textAlign:"center",padding:16}}>
-            <div style={{fontSize:26,fontWeight:700,color:c,letterSpacing:"-0.02em",lineHeight:1}}>{v}</div>
-            <div style={{fontSize:11,color:T.muted,marginTop:6}}>{l}</div>
-          </Card>
-        ))}
-      </div>
-
-      {/* ── Achievements */}
-      <div style={{fontSize:12,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:10}}>Achievements</div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,marginBottom:16}}>
-        {badges.map((b,i)=>(
-          <Card key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:8,padding:14,cursor:"pointer"}}>
-            <div style={{width:36,height:36,borderRadius:8,background:b.color+"14",border:`1px solid ${b.color}33`,display:"flex",alignItems:"center",justifyContent:"center",color:b.color}}>{b.icon}</div>
-            <div style={{fontSize:10,color:T.muted,textAlign:"center",lineHeight:1.3}}>{b.name}</div>
-          </Card>
-        ))}
-      </div>
-
-      {/* ── Activity charts */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-        <Card>
-          <Label>Weekly activity</Label>
-          <div style={{display:"flex",gap:5,alignItems:"flex-end",height:80,marginTop:8}}>
-            {activityData.map((h,i)=>(
-              <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:5}}>
-                <div style={{width:"100%",height:`${h}%`,background:i===4?T.lime:T.card2,borderRadius:"3px 3px 0 0",transition:"height 0.3s"}} />
-                <div style={{fontSize:9,color:T.faint,letterSpacing:"0.05em"}}>{"MTWTFSS"[i]}</div>
-              </div>
+      {/* ── Stats (real data only) */}
+      {(()=>{
+        const allDecks=lsGet("decks",[]);
+        const cardsMastered=allDecks.reduce((a,d)=>a+(d.done||0),0);
+        const allEssays=lsGet("essays",[]);
+        const essaysSubmitted=allEssays.filter(e=>e.submitted).length;
+        const stats=[
+          ["Total study time",fmtH(ps.totalMin)||"0m",T.lime],
+          ["Focus sessions",String(ps.focusSessions),T.teal],
+          ["Essays submitted",String(essaysSubmitted),T.purple],
+          ["Cards mastered",String(cardsMastered),T.blue],
+          ["Day streak",String(streak),T.amber],
+          ["Level",lvl.title,T.red],
+        ];
+        return(
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
+            {stats.map(([l,v,c],i)=>(
+              <Card key={i} style={{textAlign:"center",padding:16}}>
+                <div style={{fontSize:26,fontWeight:700,color:c,letterSpacing:"-0.02em",lineHeight:1}}>{v}</div>
+                <div style={{fontSize:11,color:T.muted,marginTop:6}}>{l}</div>
+              </Card>
             ))}
           </div>
-        </Card>
-        <Card>
-          <Label>Subject distribution</Label>
-          {[["Biology",38,T.teal],["English",28,T.purple],["Calculus",22,T.blue],["Spanish",12,T.amber]].map(([s,p,c],i)=>(
-            <div key={i} style={{marginBottom:11}}>
-              <div style={{display:"flex",justifyContent:"space-between",fontSize:11,marginBottom:4}}>
-                <span style={{color:T.muted}}>{s}</span>
-                <span style={{color:c,fontWeight:600}}>{p}%</span>
+        );
+      })()}
+
+      {/* ── Activity + Subject distribution */}
+      {(()=>{
+        const allSessions=lsGet("sessions",[]);
+        const allEvents=lsGet("events",[]);
+        const now=new Date();
+        const dow=(now.getDay()+6)%7;
+        const monDate=new Date(now);monDate.setDate(now.getDate()-dow);
+        const days=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+        const weekData=days.map((lab,i)=>{
+          const d=new Date(monDate);d.setDate(monDate.getDate()+i);
+          const k=dayKey(d);
+          const mins=allSessions.filter(s=>s.d===k).reduce((a,s)=>a+(s.m||0),0);
+          return{lab,mins,isToday:k===dayKey(now),future:d>now&&k!==dayKey(now)};
+        });
+        const maxMins=Math.max(1,...weekData.map(d=>d.mins));
+        const totalWeekMins=weekData.reduce((a,d)=>a+d.mins,0);
+        const subjCounts={};
+        allEvents.forEach(ev=>{if(ev.subject)subjCounts[ev.subject]=(subjCounts[ev.subject]||0)+1;});
+        const subjTotal=Object.values(subjCounts).reduce((a,n)=>a+n,0)||1;
+        const subjColors={"English IV":T.purple,"Biology":T.teal,"Calculus":T.blue,"Spanish":T.amber,"Chemistry":T.red,"History":T.muted};
+        const subjRows=Object.entries(subjCounts).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([s,n])=>({s,pct:Math.round(n/subjTotal*100),c:subjColors[s]||T.lime}));
+        return(
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <Card>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+                <div>
+                  <Label>Weekly activity</Label>
+                  <div style={{fontSize:22,fontWeight:700,color:T.white,letterSpacing:"-0.02em",lineHeight:1}}>{fmtH(totalWeekMins)||"0m"}</div>
+                  <div style={{fontSize:11,color:T.muted,marginTop:2}}>this week</div>
+                </div>
               </div>
-              <Prog pct={p} color={c} height={3} />
-            </div>
-          ))}
-        </Card>
-      </div>
+              <div style={{display:"flex",gap:4,alignItems:"flex-end",height:100}}>
+                {weekData.map((d,i)=>{
+                  const h=maxMins>0?Math.max(2,Math.round((d.mins/maxMins)*90)):2;
+                  return(
+                    <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:5,opacity:d.future?0.3:1}}>
+                      {d.mins>0&&<div style={{fontSize:8,color:d.isToday?T.lime:T.faint,fontFamily:T.mono}}>{d.mins>=60?Math.floor(d.mins/60)+"h":d.mins+"m"}</div>}
+                      <div style={{width:"100%",height:h,background:d.isToday?T.lime:T.card2,borderRadius:"4px 4px 0 0",transition:"height 0.4s",border:d.isToday?`1px solid ${T.limeDk}`:"none"}} />
+                      <div style={{fontSize:9,color:d.isToday?T.lime:T.faint,fontWeight:d.isToday?700:400,fontFamily:T.mono}}>{d.lab.slice(0,1)}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+            <Card>
+              <Label>Subject distribution</Label>
+              {subjRows.length===0
+                ?<div style={{fontSize:12,color:T.faint,padding:"16px 0",textAlign:"center"}}>Add tasks to your calendar to track subjects.</div>
+                :subjRows.map((row,i)=>(
+                  <div key={i} style={{marginBottom:12}}>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:11,marginBottom:4}}>
+                      <span style={{color:T.muted}}>{row.s}</span>
+                      <span style={{color:row.c,fontWeight:600}}>{row.pct}%</span>
+                    </div>
+                    <Prog pct={row.pct} color={row.c} height={4} />
+                  </div>
+                ))}
+            </Card>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -6418,16 +6443,17 @@ function App() {
           {bottomItems.map(item=><NavItem key={item.id} item={item} />)}
         </div>
         {/* AI credits card */}
+        {(()=>{const cr=getCredits();const lim=Math.max(cr,getCreditLimit());const plan=getPlan();const daysLeft=(()=>{const n=new Date();const e=new Date(n.getFullYear(),n.getMonth()+1,1);return Math.ceil((e-n)/86400000);})();const pct=Math.min(100,Math.round(cr/lim*100));return(
         <div onClick={()=>setCreditsOpen(true)} style={{background:T.lime,borderRadius:12,padding:"12px 14px",marginTop:"auto",border:`1px solid ${T.limeDk}`,cursor:"pointer",position:"relative",overflow:"hidden",boxShadow:`0 12px 24px -12px ${T.lime}80`}}>
           <div style={{position:"absolute",right:-30,top:-30,width:90,height:90,background:"radial-gradient(circle,rgba(255,255,255,0.5),transparent 70%)",pointerEvents:"none"}} />
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
             <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",fontWeight:600,color:"rgba(8,12,40,0.65)"}}>AI CREDITS</span>
-            <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",fontWeight:700,background:T.ink,color:T.lime,padding:"2px 6px",borderRadius:4}}>PRO</span>
+            <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",fontWeight:700,background:T.ink,color:T.lime,padding:"2px 6px",borderRadius:4}}>{plan.toUpperCase()}</span>
           </div>
-          <div style={{fontFamily:T.hand,fontSize:36,fontWeight:700,color:T.ink,lineHeight:0.85,marginTop:6}}>{getCredits()}<span style={{fontFamily:T.font,fontSize:13,fontWeight:500,color:"rgba(8,12,40,0.5)",marginLeft:2}}>/ {getCreditLimit()}</span></div>
-          <div style={{fontSize:10.5,color:"rgba(8,12,40,0.6)",marginTop:2,position:"relative"}}>Resets in 12 days</div>
-          <div style={{height:4,background:"rgba(8,12,40,0.15)",borderRadius:99,marginTop:10,overflow:"hidden"}}><div style={{height:"100%",width:Math.min(100,Math.round(getCredits()/getCreditLimit()*100))+"%",background:T.ink,borderRadius:99}} /></div>
-        </div>
+          <div style={{fontFamily:T.hand,fontSize:36,fontWeight:700,color:T.ink,lineHeight:0.85,marginTop:6}}>{cr}<span style={{fontFamily:T.font,fontSize:13,fontWeight:500,color:"rgba(8,12,40,0.5)",marginLeft:2}}>/ {getCreditLimit()}</span></div>
+          <div style={{fontSize:10.5,color:"rgba(8,12,40,0.6)",marginTop:2,position:"relative"}}>Resets in {daysLeft} day{daysLeft===1?"":"s"}</div>
+          <div style={{height:4,background:"rgba(8,12,40,0.15)",borderRadius:99,marginTop:10,overflow:"hidden"}}><div style={{height:"100%",width:pct+"%",background:T.ink,borderRadius:99}} /></div>
+        </div>);})()}
       </div>
 
       {/* MAIN AREA */}

@@ -67,7 +67,7 @@ IMPORTANT: When asked to create notes from a YouTube URL, NEVER say you cannot a
 const FLASH_PROMPT = `You are Studlin Flash, a quick-answer study assistant. Give the most direct, concise answer possible. Sound like a smart study buddy, not a textbook. 1-3 sentences max unless the question genuinely needs more. Use bullet points to keep it scannable. Be helpful but brief.`;
 
 const CREDIT_COST = { standard: 1, flash: 1 };
-const DEFAULT_CREDITS = 120;
+const DEFAULT_CREDITS = 30; // Free plan limit
 const RATE_LIMIT_PER_MIN = 20;
 
 module.exports = async (req, res) => {
