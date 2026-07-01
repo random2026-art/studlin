@@ -2437,16 +2437,45 @@ function Notes(){
 
 
 // ─── FRIENDS & CHAT ──────────────────────────────────────────────────────────
+// ─── NETWORK: shared data + helpers ──────────────────────────────────────────
+const NETWORK_DIRECTORY=[
+  {n:"Devon Karu",h:"@devonk",s:"Lehigh University",online:true},
+  {n:"Priya Shah",h:"@priyas",s:"UC Berkeley",online:false},
+  {n:"Jordan Tran",h:"@jtran",s:"Lehigh University",online:true},
+  {n:"Amara Okafor",h:"@amarao",s:"NYU",online:false},
+  {n:"Liam Chen",h:"@liamc",s:"Stanford University",online:true},
+  {n:"Sofia Diaz",h:"@sofiad",s:"Lehigh University",online:false},
+  {n:"Marcus Webb",h:"@marcusw",s:"UCLA",online:true},
+  {n:"Chloe Park",h:"@chloep",s:"MIT",online:false},
+  {n:"Riya Mehta",h:"@riyam",s:"Lehigh University",online:true},
+];
+const NETWORK_SYNC_SLOTS=[
+  {day:"Wednesday, Jul 2",time:"3:00 – 5:00 PM",match:"4/4 free",best:true},
+  {day:"Friday, Jul 4",time:"10:00 AM – 12:00 PM",match:"4/4 free",best:false},
+  {day:"Thursday, Jul 3",time:"2:00 – 4:00 PM",match:"3/4 free",best:false},
+];
+const GROUP_DURATIONS=[{label:"1 week",days:7},{label:"2 weeks",days:14},{label:"1 month",days:30},{label:"2 months",days:60},{label:"3 months",days:90}];
+const isOnlineStatusOn=()=>lsGet("settings",{}).onlineStatus!==false;
+function fmtGroupCountdown(expiresAt){
+  if(!expiresAt)return null;
+  const ms=expiresAt-Date.now();
+  if(ms<=0)return{expired:true,urgent:true,label:"Archiving…"};
+  const days=Math.ceil(ms/86400000);
+  if(days>60)return{expired:false,urgent:false,label:Math.round(days/30)+" mo"};
+  if(days>13)return{expired:false,urgent:false,label:Math.round(days/7)+" wk"};
+  if(days>1)return{expired:false,urgent:days<=7,label:days+" days"};
+  return{expired:false,urgent:true,label:"today"};
+}
+
 function FriendsChat(){
-  const [slide,setSlide]=useState(0);
-  const [syncStep,setSyncStep]=useState(-1);
-  const [syncRunning,setSyncRunning]=useState(false);
   const [searchQ,setSearchQ]=useState("");
   const [searchFilter,setSearchFilter]=useState("All");
   const [inviteEmail,setInviteEmail]=useState("");
   const [emailSent,setEmailSent]=useState(false);
   const [copied,setCopied]=useState(false);
   const [inviteOpen,setInviteOpen]=useState(false);
+  const [createGroupOpen,setCreateGroupOpen]=useState(false);
+  const [chatTarget,setChatTarget]=useState(null);
   const [friendReqs,setFriendReqs]=useState([
     {id:1,n:"Zoe Martinez",h:"@zoem",s:"Lehigh University"},
     {id:2,n:"Ethan Woo",h:"@ethanw",s:"Penn State"},
@@ -2456,28 +2485,13 @@ function FriendsChat(){
   const inviteLink="https://studlin.app?ref="+refCode;
   const qrUrl="https://api.qrserver.com/v1/create-qr-code/?data="+encodeURIComponent(inviteLink)+"&size=150x150&color=AECE5E&bgcolor=0D120F&margin=10";
 
-  const DIRECTORY=[
-    {n:"Devon Karu",h:"@devonk",s:"Lehigh University",online:true},
-    {n:"Priya Shah",h:"@priyas",s:"UC Berkeley",online:false},
-    {n:"Jordan Tran",h:"@jtran",s:"Lehigh University",online:true},
-    {n:"Amara Okafor",h:"@amarao",s:"NYU",online:false},
-    {n:"Liam Chen",h:"@liamc",s:"Stanford University",online:true},
-    {n:"Sofia Diaz",h:"@sofiad",s:"Lehigh University",online:false},
-    {n:"Marcus Webb",h:"@marcusw",s:"UCLA",online:true},
-    {n:"Chloe Park",h:"@chloep",s:"MIT",online:false},
-    {n:"Riya Mehta",h:"@riyam",s:"Lehigh University",online:true},
-  ];
-  const makeFutureDay=(n)=>{const d=new Date();d.setDate(d.getDate()+n);return d;};
-  const SYNC_SLOTS=[
-    {day:"Wednesday, Jul 2",time:"3:00 – 5:00 PM",match:"4/4 free",best:true},
-    {day:"Friday, Jul 4",time:"10:00 AM – 12:00 PM",match:"4/4 free",best:false},
-    {day:"Thursday, Jul 3",time:"2:00 – 4:00 PM",match:"3/4 free",best:false},
-  ];
-
   const [addedUsers,setAddedUsers]=useState(()=>lsGet("network-added",[]));
   const toggleAdd=(h)=>{const n=addedUsers.includes(h)?addedUsers.filter(x=>x!==h):[...addedUsers,h];setAddedUsers(n);lsSet("network-added",n);};
+  const [groups,setGroups]=useState(()=>lsGet("network-groups",[]));
+  const activeGroups=groups.filter(g=>!g.expiresAt||g.expiresAt>Date.now());
+  const myFriends=NETWORK_DIRECTORY.filter(u=>addedUsers.includes(u.h));
 
-  const filtered=DIRECTORY.filter(u=>{
+  const filtered=NETWORK_DIRECTORY.filter(u=>{
     const q=searchQ.toLowerCase().trim();
     if(!q)return true;
     if(searchFilter==="@username")return u.h.toLowerCase().includes(q);
@@ -2497,230 +2511,38 @@ function FriendsChat(){
   };
   const declineReq=(id)=>setFriendReqs(p=>p.filter(r=>r.id!==id));
 
-  const runSyncDemo=()=>{
-    setSyncStep(0);setSyncRunning(true);
-    [1,2,3].forEach((s,i)=>setTimeout(()=>setSyncStep(s),(i+1)*1200));
-    setTimeout(()=>setSyncRunning(false),4*1200);
+  const [cgName,setCgName]=useState("");
+  const [cgMembers,setCgMembers]=useState([]);
+  const [cgType,setCgType]=useState("permanent");
+  const [cgDuration,setCgDuration]=useState("1 month");
+  const resetCreateGroup=()=>{setCgName("");setCgMembers([]);setCgType("permanent");setCgDuration("1 month");};
+  const toggleCgMember=(h)=>setCgMembers(m=>m.includes(h)?m.filter(x=>x!==h):[...m,h]);
+  const submitCreateGroup=()=>{
+    if(!cgName.trim()||cgMembers.length===0)return;
+    const dur=GROUP_DURATIONS.find(d=>d.label===cgDuration);
+    const g={id:"g"+Date.now(),name:cgName.trim(),memberHandles:[...cgMembers],type:cgType,createdAt:Date.now(),expiresAt:cgType==="temporary"&&dur?Date.now()+dur.days*86400000:null};
+    const next=[g,...groups];setGroups(next);lsSet("network-groups",next);
+    setCreateGroupOpen(false);resetCreateGroup();
+  };
+  const makeGroupPermanent=(id)=>{
+    const next=groups.map(g=>g.id===id?{...g,type:"permanent",expiresAt:null}:g);
+    setGroups(next);lsSet("network-groups",next);
+    setChatTarget(t=>(t&&t.kind==="group"&&t.group.id===id)?{...t,group:next.find(g=>g.id===id)}:t);
+  };
+  const deleteGroup=(id)=>{
+    const next=groups.filter(g=>g.id!==id);setGroups(next);lsSet("network-groups",next);
+    const all=lsGet("network-chats",{});delete all["group:"+id];lsSet("network-chats",all);
+    setChatTarget(t=>(t&&t.kind==="group"&&t.group.id===id)?null:t);
   };
 
   return (
     <div>
-      <PH title="Studlin Network" sub="Study together. Share notes. Stay in sync." />
+      <PH title="Studlin Network" sub="Study together. Stay in sync." />
 
-      {/* ── INTERACTIVE WALKTHROUGH ── */}
-      <Card style={{marginBottom:16,padding:0,overflow:"hidden"}}>
-        {/* Tab strip */}
-        <div style={{display:"flex",borderBottom:`1px solid ${T.border}`,padding:"0 20px",overflowX:"auto"}}>
-          {[{label:"Add Friends",icon:Icon.heart},{label:"Sync Schedule",icon:Icon.cal},{label:"Share Decks",icon:Icon.layers}].map((tab,i)=>(
-            <button key={i} onClick={()=>setSlide(i)} style={{padding:"13px 16px",fontSize:12,fontWeight:slide===i?700:500,color:slide===i?T.lime:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,borderBottom:`2px solid ${slide===i?T.lime:"transparent"}`,marginBottom:-1,transition:"all 0.15s",display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>
-              <span style={{opacity:slide===i?1:0.6}}>{tab.icon}</span>{tab.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Slide 0 – Add Friends + Notes */}
-        {slide===0&&(
-          <div style={{padding:"26px 30px"}}>
-            <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:18}}>
-              <div style={{width:44,height:44,borderRadius:12,background:T.lime+"18",border:`1px solid ${T.lime}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,flexShrink:0}}>{Icon.heart}</div>
-              <div>
-                <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:3}}>Build your study squad.</div>
-                <div style={{fontSize:12.5,color:T.muted}}>Start by adding classmates from your courses.</div>
-              </div>
-            </div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:18}}>
-              {[{n:"Devon Karu",h:"@devonk"},{n:"Priya Shah",h:"@priyas"}].map(u=>(
-                <div key={u.h} style={{display:"flex",alignItems:"center",gap:10,padding:"11px 13px",background:T.card2,borderRadius:10,border:`1px solid ${T.border}`}}>
-                  <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={30} picUrl="" />
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:12,fontWeight:600,color:T.white}}>{u.n}</div>
-                    <div style={{fontSize:10.5,color:T.muted}}>{u.h}</div>
-                  </div>
-                  <BtnSm variant="lime">Add</BtnSm>
-                </div>
-              ))}
-            </div>
-            <div style={{padding:"14px 16px",background:T.amber+"0D",border:`1px solid ${T.amber}25`,borderRadius:10}}>
-              <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
-                <span style={{color:T.amber,flexShrink:0,marginTop:2}}>{Icon.file}</span>
-                <div>
-                  <div style={{fontSize:12.5,fontWeight:600,color:T.white,marginBottom:4}}>Once a request is accepted, open Notes.</div>
-                  <div style={{fontSize:12,color:T.muted,lineHeight:1.65}}>Missed a lecture? Go to <strong style={{color:T.amber}}>Notes</strong>, tap a friend's name, and request their markdown class notes directly into your workspace — one click, instant delivery.</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Slide 1 – Sync Schedule animated Show & Tell */}
-        {slide===1&&(
-          <div style={{padding:"26px 30px"}}>
-            <div style={{marginBottom:16}}>
-              <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:4}}>Group project due but can't find a day?</div>
-              <div style={{fontSize:12.5,color:T.muted,lineHeight:1.5}}>Studlin's <strong style={{color:T.purple}}>Sync Schedule</strong> scans everyone's calendars and finds the perfect window automatically.</div>
-            </div>
-            {/* Simulated app window */}
-            <div style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",marginBottom:14}}>
-              <div style={{display:"flex",alignItems:"center",gap:7,padding:"7px 12px",borderBottom:`1px solid ${T.border}`,background:T.surface}}>
-                <div style={{display:"flex",gap:4}}><div style={{width:8,height:8,borderRadius:"50%",background:"#FF5F57"}}/><div style={{width:8,height:8,borderRadius:"50%",background:"#FEBC2E"}}/><div style={{width:8,height:8,borderRadius:"50%",background:"#28C840"}}/></div>
-                <div style={{flex:1,background:T.card2,borderRadius:4,padding:"3px 9px",fontSize:9.5,color:T.muted}}>studlin.app › Calendar › Group Sync</div>
-              </div>
-              <div style={{padding:"14px 16px",minHeight:148}}>
-                {syncStep===-1&&(
-                  <div style={{textAlign:"center",paddingTop:18}}>
-                    <div style={{fontSize:12,color:T.muted,marginBottom:12}}>Watch a live demo of how it works.</div>
-                    <button onClick={runSyncDemo} style={{padding:"9px 22px",borderRadius:8,background:T.purple,color:"#fff",border:"none",fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,display:"inline-flex",alignItems:"center",gap:7}}>{Icon.zap} Run demo</button>
-                  </div>
-                )}
-                {syncStep>=0&&(
-                  <div>
-                    <div style={{display:"flex",gap:5,marginBottom:12}}>
-                      {["Open Calendar","Select Group","Run Sync","Results"].map((label,i)=>(
-                        <div key={i} style={{flex:1,padding:"4px 4px",borderRadius:5,fontSize:9,fontWeight:600,textAlign:"center",background:syncStep>i?T.purple:syncStep===i?T.purple+"22":"transparent",color:syncStep>i?"#fff":syncStep===i?T.purple:T.faint,border:`1px solid ${syncStep>=i?T.purple+"55":T.border}`,transition:"all 0.3s"}}>{label}</div>
-                      ))}
-                    </div>
-                    {syncStep===0&&(
-                      <div style={{textAlign:"center",paddingTop:8}}>
-                        <div style={{display:"inline-flex",alignItems:"center",gap:8,padding:"8px 14px",background:T.card2,borderRadius:8,border:`1px solid ${T.purple}44`}}>
-                          <span style={{color:T.purple}}>{Icon.cal}</span>
-                          <span style={{color:T.text,fontSize:12}}>Navigating to Calendar tab…</span>
-                          <span style={{color:T.purple}}>●</span>
-                        </div>
-                      </div>
-                    )}
-                    {syncStep===1&&(
-                      <div>
-                        <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:8}}>
-                          {["Devon K.","Priya S.","Jordan T.","You"].map((n,i)=>(
-                            <div key={i} style={{padding:"5px 10px",borderRadius:6,background:i===3?T.purple+"22":T.card2,border:`1px solid ${i===3?T.purple+"55":T.border}`,fontSize:11,color:i===3?T.purple:T.text,fontWeight:i===3?700:400}}>{n}{i<3?" ✓":""}</div>
-                          ))}
-                        </div>
-                        <div style={{fontSize:10.5,color:T.muted}}>Group selected — 4 members</div>
-                      </div>
-                    )}
-                    {syncStep===2&&(
-                      <div style={{paddingTop:6}}>
-                        <div style={{fontSize:11,color:T.muted,marginBottom:9,textAlign:"center"}}>Scanning 4 calendars for overlap…</div>
-                        <div style={{height:4,background:T.card2,borderRadius:2,overflow:"hidden"}}>
-                          <div style={{height:"100%",background:`linear-gradient(90deg,${T.purple},${T.lime})`,borderRadius:2,animation:"gwBar 1.1s ease-out forwards",transform:"scaleX(0)",transformOrigin:"left"}}/>
-                        </div>
-                        <style>{`@keyframes gwBar{to{transform:scaleX(1)}}`}</style>
-                      </div>
-                    )}
-                    {syncStep>=3&&(
-                      <div>
-                        <div style={{fontSize:11,color:T.lime,fontWeight:600,marginBottom:8}}>✓ Best windows found!</div>
-                        {SYNC_SLOTS.map((slot,i)=>(
-                          <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 10px",background:slot.best?T.lime+"0E":T.card2,border:`1px solid ${slot.best?T.lime+"44":T.border}`,borderRadius:7,marginBottom:5}}>
-                            <div style={{flex:1}}>
-                              <div style={{fontSize:11,fontWeight:600,color:slot.best?T.lime:T.text}}>{slot.day}</div>
-                              <div style={{fontSize:10,color:T.muted}}>{slot.time}</div>
-                            </div>
-                            <div style={{fontSize:10,fontWeight:700,color:slot.best?T.lime:T.muted,padding:"2px 7px",borderRadius:4,background:slot.best?T.lime+"18":T.card2,border:`1px solid ${slot.best?T.lime+"33":T.border}`}}>{slot.match}</div>
-                            {slot.best&&<div style={{fontSize:10,color:T.lime}}>★ Best</div>}
-                          </div>
-                        ))}
-                        <button onClick={()=>{setSyncStep(-1);setSyncRunning(false);}} style={{marginTop:6,fontSize:10.5,color:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>↺ Watch again</button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-            <div style={{fontSize:11.5,color:T.muted,textAlign:"center"}}>Find <strong style={{color:T.purple}}>Group Sync</strong> in Calendar → top-right button.</div>
-          </div>
-        )}
-
-        {/* Slide 2 – Flashcard sharing */}
-        {slide===2&&(
-          <div style={{padding:"26px 30px"}}>
-            <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:18}}>
-              <div style={{width:44,height:44,borderRadius:12,background:T.teal+"18",border:`1px solid ${T.teal}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.teal,flexShrink:0}}>{Icon.layers}</div>
-              <div>
-                <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:3}}>Beam a deck to your study group.</div>
-                <div style={{fontSize:12.5,color:T.muted}}>Push your entire flashcard set into a friend's Studlin workspace instantly.</div>
-              </div>
-            </div>
-            <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:18}}>
-              <div style={{flex:1,padding:"14px",background:T.card2,borderRadius:10,border:`1px solid ${T.border}`,textAlign:"center"}}>
-                <Av initials="ME" color={T.lime} size={32} picUrl="" />
-                <div style={{fontSize:11,color:T.text,marginTop:6,fontWeight:600}}>You</div>
-                <div style={{marginTop:8,padding:"8px 10px",background:T.surface,borderRadius:7,border:`1px solid ${T.teal}33`,fontSize:10.5,color:T.teal}}>
-                  <div style={{fontWeight:600,marginBottom:2}}>Bio Final Prep</div>
-                  <div style={{color:T.muted}}>48 cards</div>
-                </div>
-              </div>
-              <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,flexShrink:0}}>
-                <div style={{width:44,height:2,background:`linear-gradient(90deg,${T.teal},${T.lime})`,borderRadius:1,position:"relative"}}>
-                  <div style={{position:"absolute",right:-3,top:-4,width:9,height:9,borderTop:`2px solid ${T.lime}`,borderRight:`2px solid ${T.lime}`,transform:"rotate(45deg)"}}/>
-                </div>
-                <div style={{fontSize:9.5,color:T.muted,fontWeight:700,letterSpacing:"0.06em"}}>BEAM</div>
-              </div>
-              <div style={{flex:1,padding:"14px",background:T.card2,borderRadius:10,border:`1px solid ${T.teal}44`,textAlign:"center"}}>
-                <Av initials="PS" color={T.purple} size={32} picUrl="" />
-                <div style={{fontSize:11,color:T.text,marginTop:6,fontWeight:600}}>Priya Shah</div>
-                <div style={{marginTop:8,padding:"8px 10px",background:T.teal+"12",borderRadius:7,border:`1px solid ${T.teal}44`,fontSize:10.5,color:T.teal}}>
-                  <div style={{fontWeight:600,marginBottom:2}}>Bio Final Prep</div>
-                  <div style={{color:T.muted}}>Received ✓</div>
-                </div>
-              </div>
-            </div>
-            <div style={{padding:"12px 16px",background:T.teal+"0C",border:`1px solid ${T.teal}25`,borderRadius:10}}>
-              <div style={{fontSize:12,color:T.muted,lineHeight:1.65}}>Go to <strong style={{color:T.teal}}>Flashcards</strong>, open any deck, hit <strong style={{color:T.teal}}>Send</strong>, and type a friend's username. Their workspace updates instantly — no copy-paste, no exporting.</div>
-            </div>
-          </div>
-        )}
-
-        {/* Dot nav */}
-        <div style={{display:"flex",justifyContent:"center",alignItems:"center",gap:7,padding:"10px 0 14px",borderTop:`1px solid ${T.border}`}}>
-          {[0,1,2].map(i=>(
-            <button key={i} onClick={()=>setSlide(i)} style={{width:i===slide?22:7,height:7,borderRadius:4,background:i===slide?T.lime:T.faint,border:"none",cursor:"pointer",padding:0,transition:"all 0.2s"}}/>
-          ))}
-        </div>
-      </Card>
-
-      {/* ── INCOMING FRIEND REQUESTS ── */}
-      {friendReqs.length>0&&(
-        <div style={{marginBottom:16}}>
-          <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8,display:"flex",alignItems:"center",gap:8}}>
-            Incoming Requests
-            <span style={{background:T.amber,color:T.ink,fontSize:9,fontWeight:800,borderRadius:4,padding:"1px 6px"}}>{friendReqs.length}</span>
-          </div>
-          <Card style={{padding:0,overflow:"hidden"}}>
-            {friendReqs.map((req,i)=>(
-              <div key={req.id} style={{display:"flex",alignItems:"center",gap:12,padding:"13px 16px",borderBottom:i<friendReqs.length-1?`1px solid ${T.border}`:"none",transition:"background 0.15s"}}>
-                <Av initials={req.n.split(" ").map(x=>x[0]).join("")} color={T.amber} size={36} picUrl="" />
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:13,fontWeight:600,color:T.white}}>{req.n}</div>
-                  <div style={{fontSize:11,color:T.muted}}>{req.h} · <span style={{color:T.blue}}>{req.s}</span></div>
-                </div>
-                <div style={{display:"flex",gap:7,flexShrink:0}}>
-                  <button onClick={()=>acceptReq(req.id)} style={{padding:"6px 14px",borderRadius:7,background:T.lime,color:T.ink,border:"none",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Accept</button>
-                  <button onClick={()=>declineReq(req.id)} style={{padding:"6px 13px",borderRadius:7,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Decline</button>
-                </div>
-              </div>
-            ))}
-          </Card>
-        </div>
-      )}
-
-      {/* ── GROWTH BANNER ── */}
-      <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderRadius:10,background:T.lime+"0C",border:`1px solid ${T.lime}22`,marginBottom:16}}>
-        <div style={{width:28,height:28,borderRadius:8,background:T.lime+"1A",border:`1px solid ${T.lime}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,flexShrink:0}}>{Icon.zap}</div>
-        <div style={{flex:1,fontSize:12.5,color:T.muted,lineHeight:1.5}}>
-          <span style={{color:T.text,fontWeight:600}}>Invite classmates to unlock collective scheduling.</span>{" "}For every friend who joins, you <strong style={{color:T.lime}}>both</strong> get <span style={{color:T.lime,fontWeight:600}}>50 bonus AI credits</span>.
-        </div>
-        <button onClick={()=>setInviteOpen(true)} style={{flexShrink:0,padding:"7px 16px",borderRadius:7,background:T.lime,color:T.ink,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>
-          Invite friends
-        </button>
-      </div>
-
-      {/* ── DIRECTORY + QR ── */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 296px",gap:14,marginBottom:16}}>
-
-        {/* Directory */}
+      {/* ── ADD FRIENDS / SEARCH ── */}
+      <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8}}>Add Friends</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 296px",gap:14,marginBottom:24}}>
         <div>
-          <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8}}>Find People</div>
           <div style={{display:"flex",gap:6,marginBottom:10}}>
             {["All","@username","Name","School"].map(f=>(
               <button key={f} onClick={()=>setSearchFilter(f)} style={{padding:"5px 11px",borderRadius:6,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font,border:`1px solid ${searchFilter===f?T.lime+"44":T.border}`,background:searchFilter===f?T.lime+"14":"transparent",color:searchFilter===f?T.lime:T.muted,transition:"all 0.12s"}}>{f}</button>
@@ -2733,7 +2555,7 @@ function FriendsChat(){
           </div>
           <Card style={{padding:0,overflow:"hidden"}}>
             {!noResults
-              ?(searchQ.trim()?filtered:DIRECTORY.slice(0,6)).map((u,i,arr)=>{
+              ?(searchQ.trim()?filtered:NETWORK_DIRECTORY.slice(0,6)).map((u,i,arr)=>{
                   const added=addedUsers.includes(u.h);
                   return (
                     <div key={u.h} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
@@ -2765,11 +2587,9 @@ function FriendsChat(){
           </Card>
         </div>
 
-        {/* QR Column */}
         <div style={{display:"flex",flexDirection:"column"}}>
-          <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8}}>Invite via QR</div>
           <Card style={{padding:18,textAlign:"center",flex:1}}>
-            <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>Scan with your phone</div>
+            <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>Invite via QR</div>
             <div style={{fontSize:11,color:T.muted,marginBottom:14,lineHeight:1.55}}>Opens Studlin invite for instant sign-up.</div>
             <div style={{display:"flex",alignItems:"center",justifyContent:"center",marginBottom:12}}>
               <div style={{padding:10,background:T.card2,borderRadius:12,border:`1px solid ${T.border}`}}>
@@ -2802,6 +2622,92 @@ function FriendsChat(){
         </div>
       </div>
 
+      {/* ── GROWTH BANNER ── */}
+      <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderRadius:10,background:T.lime+"0C",border:`1px solid ${T.lime}22`,marginBottom:24}}>
+        <div style={{width:28,height:28,borderRadius:8,background:T.lime+"1A",border:`1px solid ${T.lime}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,flexShrink:0}}>{Icon.zap}</div>
+        <div style={{flex:1,fontSize:12.5,color:T.muted,lineHeight:1.5}}>
+          <span style={{color:T.text,fontWeight:600}}>Invite classmates to unlock collective scheduling.</span>{" "}For every friend who joins, you <strong style={{color:T.lime}}>both</strong> get <span style={{color:T.lime,fontWeight:600}}>50 bonus AI credits</span>.
+        </div>
+        <button onClick={()=>setInviteOpen(true)} style={{flexShrink:0,padding:"7px 16px",borderRadius:7,background:T.lime,color:T.ink,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font,whiteSpace:"nowrap"}}>
+          Invite friends
+        </button>
+      </div>
+
+      {/* ── FRIENDS LIST & ACTIVE GROUPS ── */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:24}}>
+        <div>
+          <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8}}>My Friends</div>
+          <Card style={{padding:0,overflow:"hidden"}}>
+            {myFriends.length===0
+              ?<div style={{padding:20,fontSize:12.5,color:T.muted,lineHeight:1.6}}>No friends yet. Search above to add classmates.</div>
+              :myFriends.map((u,i)=>(
+                <div key={u.h} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<myFriends.length-1?`1px solid ${T.border}`:"none"}}>
+                  <div style={{position:"relative",flexShrink:0}}>
+                    <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={34} picUrl="" />
+                    <div style={{position:"absolute",bottom:0,right:0,width:9,height:9,borderRadius:"50%",background:u.online?T.teal:T.faint,border:`2px solid ${T.card}`}} />
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:600,color:T.white}}>{u.n}</div>
+                    <div style={{fontSize:11,color:T.muted}}>{u.h} · <span style={{color:T.blue}}>{u.s}</span></div>
+                  </div>
+                  <button onClick={()=>setChatTarget({kind:"dm",user:u})} style={{width:32,height:32,borderRadius:9,border:`1px solid ${T.border}`,background:T.card2,color:T.lime,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.msgSquare}</button>
+                </div>
+              ))
+            }
+          </Card>
+        </div>
+
+        <div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+            <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint}}>Active Groups</div>
+            <button onClick={()=>{resetCreateGroup();setCreateGroupOpen(true);}} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:T.lime,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>{Icon.plus} Create Group</button>
+          </div>
+          <Card style={{padding:0,overflow:"hidden"}}>
+            {activeGroups.length===0
+              ?<div style={{padding:20,fontSize:12.5,color:T.muted,lineHeight:1.6}}>No groups yet. Create one to start a project chat.</div>
+              :activeGroups.map((g,i)=>{
+                  const expiry=fmtGroupCountdown(g.expiresAt);
+                  return (
+                    <div key={g.id} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<activeGroups.length-1?`1px solid ${T.border}`:"none"}}>
+                      <div style={{width:34,height:34,borderRadius:10,background:T.purple+"18",border:`1px solid ${T.purple}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.purple,flexShrink:0}}>{Icon.users}</div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:600,color:T.white}}>{g.name}</div>
+                        <div style={{fontSize:11,color:T.muted}}>{g.memberHandles.length+1} members{expiry?<> · <span style={{color:expiry.urgent?T.amber:T.purple}}>Archives in {expiry.label}</span></>:""}</div>
+                      </div>
+                      <button onClick={()=>setChatTarget({kind:"group",group:g})} style={{width:32,height:32,borderRadius:9,border:`1px solid ${T.border}`,background:T.card2,color:T.lime,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.msgSquare}</button>
+                    </div>
+                  );
+                })
+            }
+          </Card>
+        </div>
+      </div>
+
+      {/* ── INCOMING FRIEND REQUESTS ── */}
+      {friendReqs.length>0&&(
+        <div style={{marginBottom:16}}>
+          <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8,display:"flex",alignItems:"center",gap:8}}>
+            Incoming Requests
+            <span style={{background:T.amber,color:T.ink,fontSize:9,fontWeight:800,borderRadius:4,padding:"1px 6px"}}>{friendReqs.length}</span>
+          </div>
+          <Card style={{padding:0,overflow:"hidden"}}>
+            {friendReqs.map((req,i)=>(
+              <div key={req.id} style={{display:"flex",alignItems:"center",gap:12,padding:"13px 16px",borderBottom:i<friendReqs.length-1?`1px solid ${T.border}`:"none",transition:"background 0.15s"}}>
+                <Av initials={req.n.split(" ").map(x=>x[0]).join("")} color={T.amber} size={36} picUrl="" />
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:600,color:T.white}}>{req.n}</div>
+                  <div style={{fontSize:11,color:T.muted}}>{req.h} · <span style={{color:T.blue}}>{req.s}</span></div>
+                </div>
+                <div style={{display:"flex",gap:7,flexShrink:0}}>
+                  <button onClick={()=>acceptReq(req.id)} style={{padding:"6px 14px",borderRadius:7,background:T.lime,color:T.ink,border:"none",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Accept</button>
+                  <button onClick={()=>declineReq(req.id)} style={{padding:"6px 13px",borderRadius:7,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Decline</button>
+                </div>
+              </div>
+            ))}
+          </Card>
+        </div>
+      )}
+
       {/* ── INVITE MODAL ── */}
       {inviteOpen&&(
         <div onClick={()=>setInviteOpen(false)} style={{position:"fixed",inset:0,zIndex:90,background:"rgba(8,12,10,0.78)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -2814,7 +2720,7 @@ function FriendsChat(){
               </div>
             </div>
             <div style={{fontSize:13,color:T.muted,lineHeight:1.7,marginBottom:20}}>
-              When your whole class is on Studlin, <strong style={{color:T.lime}}>Sync Schedule</strong> can automatically find when <em>everyone</em> is free — no more "when can everyone meet?" texts.
+              When your whole class is on Studlin, syncing calendars can automatically find when <em>everyone</em> is free — no more "when can everyone meet?" texts.
             </div>
             <div style={{padding:"11px 14px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,marginBottom:14,display:"flex",alignItems:"center",gap:10}}>
               <div style={{flex:1,fontSize:12,color:T.text,fontFamily:T.mono,wordBreak:"break-all"}}>{inviteLink}</div>
@@ -2832,7 +2738,280 @@ function FriendsChat(){
           </div>
         </div>
       )}
+
+      {/* ── CREATE GROUP MODAL ── */}
+      <Modal open={createGroupOpen} onClose={()=>{setCreateGroupOpen(false);resetCreateGroup();}} title="Create a group" sub="Standard chat, or a project group that archives itself." width={480}
+        footer={<><Btn variant="subtle" onClick={()=>{setCreateGroupOpen(false);resetCreateGroup();}}>Cancel</Btn><Btn onClick={submitCreateGroup} style={{opacity:cgName.trim()&&cgMembers.length>0?1:0.45}}>{Icon.plus} Create group</Btn></>}>
+        <Field label="Group name"><Input placeholder="e.g. Bio Study Group" value={cgName} onChange={e=>setCgName(e.target.value)} autoFocus /></Field>
+        <Field label="Members" hint={myFriends.length===0?"Add friends first to start a group.":null}>
+          <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:150,overflowY:"auto"}}>
+            {myFriends.map(u=>{
+              const sel=cgMembers.includes(u.h);
+              return (
+                <div key={u.h} onClick={()=>toggleCgMember(u.h)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:8,cursor:"pointer",background:sel?T.lime+"10":T.card2,border:`1px solid ${sel?T.lime+"44":T.border}`}}>
+                  <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={26} picUrl="" />
+                  <div style={{flex:1,fontSize:12.5,color:T.text,fontWeight:600}}>{u.n}</div>
+                  <div style={{width:16,height:16,borderRadius:5,border:`1.5px solid ${sel?T.lime:T.border}`,background:sel?T.lime:"transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                    {sel&&<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke={T.bg} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Field>
+        <Field label="Group type">
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div onClick={()=>setCgType("permanent")} style={{padding:"12px 13px",borderRadius:10,cursor:"pointer",border:`1.5px solid ${cgType==="permanent"?T.lime:T.border}`,background:cgType==="permanent"?T.lime+"0A":T.card2}}>
+              <div style={{color:cgType==="permanent"?T.lime:T.muted,marginBottom:6}}>{Icon.users}</div>
+              <div style={{fontSize:12.5,fontWeight:700,color:T.white,marginBottom:2}}>Permanent Group</div>
+              <div style={{fontSize:11,color:T.muted,lineHeight:1.4}}>Standard ongoing chat.</div>
+            </div>
+            <div onClick={()=>setCgType("temporary")} style={{padding:"12px 13px",borderRadius:10,cursor:"pointer",border:`1.5px solid ${cgType==="temporary"?T.purple:T.border}`,background:cgType==="temporary"?T.purple+"0A":T.card2}}>
+              <div style={{color:cgType==="temporary"?T.purple:T.muted,marginBottom:6}}>{Icon.clock}</div>
+              <div style={{fontSize:12.5,fontWeight:700,color:T.white,marginBottom:2}}>Project / Temporary</div>
+              <div style={{fontSize:11,color:T.muted,lineHeight:1.4}}>Auto-archives after a set duration.</div>
+            </div>
+          </div>
+        </Field>
+        {cgType==="temporary"&&(
+          <Field label="Archive after">
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {GROUP_DURATIONS.map(d=>(
+                <button key={d.label} onClick={()=>setCgDuration(d.label)} style={{padding:"7px 13px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${cgDuration===d.label?T.purple+"66":T.border}`,background:cgDuration===d.label?T.purple+"14":"transparent",color:cgDuration===d.label?T.purple:T.muted,fontFamily:T.font,fontWeight:cgDuration===d.label?600:400}}>{d.label}</button>
+              ))}
+            </div>
+          </Field>
+        )}
+      </Modal>
+
+      <ChatDrawer open={!!chatTarget} target={chatTarget} onClose={()=>setChatTarget(null)} onMakePermanent={makeGroupPermanent} onDeleteGroup={deleteGroup} />
     </div>
+  );
+}
+
+// ─── NETWORK: chat message bubble ────────────────────────────────────────────
+// Drawer panel is always a dark surface (like the sidebar), regardless of theme —
+// so it needs its own light-on-dark palette instead of theme-adaptive T.text/T.muted.
+function panelPalette(){
+  const isLight=T.mode==="light";
+  return {
+    text:  isLight?"#F6F1E6":T.text,
+    muted: isLight?"rgba(246,241,230,0.55)":T.muted,
+    faint: isLight?"rgba(246,241,230,0.35)":T.faint,
+    border:isLight?"rgba(246,241,230,0.14)":T.border,
+    card2: isLight?"rgba(246,241,230,0.08)":T.card2,
+  };
+}
+function ChatBubble({m}){
+  const pp=panelPalette();
+  const mine=m.from==="me";
+  const align=mine?"flex-end":"flex-start";
+  const bg=mine?T.lime+"1F":pp.card2;
+  const border=mine?T.lime+"40":pp.border;
+  if(m.kind==="calendar"){
+    return (
+      <div style={{alignSelf:"center",width:"100%",padding:"12px 13px",background:T.purple+"1A",border:`1px solid ${T.purple}40`,borderRadius:12}}>
+        <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:8,color:T.purple,fontSize:11,fontWeight:700}}>{Icon.cal} Shared free time found</div>
+        {(m.meta.slots||[]).map((s,i)=>(
+          <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",borderRadius:7,background:s.best?T.lime+"18":"transparent",marginBottom:3}}>
+            <div style={{flex:1}}><div style={{fontSize:11.5,fontWeight:600,color:s.best?T.lime:pp.text}}>{s.day}</div><div style={{fontSize:10,color:pp.muted}}>{s.time}</div></div>
+            <div style={{fontSize:9.5,fontWeight:700,color:pp.muted}}>{s.match}</div>
+            {s.best&&<div style={{fontSize:9.5,color:T.lime}}>★ Best</div>}
+          </div>
+        ))}
+      </div>
+    );
+  }
+  if(m.kind==="note"||m.kind==="deck"){
+    const isNote=m.kind==="note";
+    return (
+      <div style={{alignSelf:align,maxWidth:"84%",display:"flex",alignItems:"center",gap:10,padding:"10px 12px",background:bg,border:`1px solid ${border}`,borderRadius:12}}>
+        <span style={{color:isNote?T.amber:T.teal,flexShrink:0}}>{isNote?Icon.file:Icon.layers}</span>
+        <div style={{minWidth:0}}>
+          <div style={{fontSize:12,fontWeight:700,color:pp.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{isNote?m.meta.title:m.meta.name}</div>
+          <div style={{fontSize:10.5,color:pp.muted}}>{isNote?"Note shared":m.meta.count+" cards · Deck shared"}</div>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={{alignSelf:align,maxWidth:"78%",padding:"9px 13px",background:bg,border:`1px solid ${border}`,borderRadius:12,fontSize:13,color:pp.text,lineHeight:1.5}}>{m.text}</div>
+  );
+}
+
+// ─── NETWORK: sliding chat drawer (DM + Group, w/ Quick Actions) ─────────────
+function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
+  const isGroup=!!(target&&target.kind==="group");
+  const chatId=target?(isGroup?"group:"+target.group.id:"dm:"+target.user.h):null;
+  const [messages,setMessages]=useState([]);
+  const [input,setInput]=useState("");
+  const [quickOpen,setQuickOpen]=useState(false);
+  const [notePicker,setNotePicker]=useState(false);
+  const [deckPicker,setDeckPicker]=useState(false);
+  const [syncRunning,setSyncRunning]=useState(false);
+  const [settingsOpen,setSettingsOpen]=useState(false);
+  const scrollRef=useRef(null);
+
+  useEffect(()=>{
+    if(!chatId){setMessages([]);return;}
+    setMessages(lsGet("network-chats",{})[chatId]||[]);
+    setInput("");setQuickOpen(false);setNotePicker(false);setDeckPicker(false);setSyncRunning(false);setSettingsOpen(false);
+  },[chatId]);
+
+  useEffect(()=>{if(scrollRef.current)scrollRef.current.scrollTop=scrollRef.current.scrollHeight;},[messages]);
+
+  useEffect(()=>{
+    if(!open)return;
+    const onKey=e=>{if(e.key==="Escape")onClose();};
+    window.addEventListener("keydown",onKey);
+    return ()=>window.removeEventListener("keydown",onKey);
+  },[open]);
+
+  const persist=(next)=>{
+    setMessages(next);
+    if(!chatId)return;
+    const all=lsGet("network-chats",{});all[chatId]=next;lsSet("network-chats",all);
+  };
+  const pushMessage=(msg)=>persist([...messages,{id:Date.now()+"-"+Math.random(),ts:Date.now(),...msg}]);
+
+  const sendText=()=>{if(!input.trim())return;pushMessage({from:"me",kind:"text",text:input.trim()});setInput("");};
+  const runCalendarSync=()=>{
+    setQuickOpen(false);setSyncRunning(true);
+    setTimeout(()=>{setSyncRunning(false);pushMessage({from:"me",kind:"calendar",meta:{slots:NETWORK_SYNC_SLOTS}});},2100);
+  };
+  const attachNote=(note)=>{pushMessage({from:"me",kind:"note",meta:{title:note.title,id:note.id}});setNotePicker(false);};
+  const attachDeck=(deck)=>{pushMessage({from:"me",kind:"deck",meta:{name:deck.name,count:deck.cards?deck.cards.length:(deck.count||0),id:deck.id}});setDeckPicker(false);};
+
+  const notesList=lsGet("notes",[]);
+  const decksList=lsGet("decks",[]);
+  const expiry=isGroup?fmtGroupCountdown(target.group.expiresAt):null;
+  const title=target?(isGroup?target.group.name:target.user.n):"";
+  const subtitle=target?(isGroup?(target.group.memberHandles.length+1)+" members":target.user.h+" · "+target.user.s):"";
+  const pp=panelPalette(); // drawer is a permanently-dark panel (like the sidebar) — needs its own light-on-dark text colors
+  const qaBtn={display:"flex",alignItems:"center",gap:10,width:"100%",padding:"10px 11px",borderRadius:9,border:"none",background:"transparent",cursor:"pointer",fontFamily:T.font,fontSize:12.5,fontWeight:600,color:pp.text,textAlign:"left"};
+
+  return ReactDOM.createPortal(
+    <>
+      <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(8,12,10,0.5)",zIndex:400,opacity:open?1:0,pointerEvents:open?"auto":"none",transition:"opacity 0.25s"}} />
+      <div style={{position:"fixed",top:0,right:0,height:"100vh",width:400,maxWidth:"92vw",background:T.surface,borderLeft:`1px solid ${pp.border}`,boxShadow:"-24px 0 60px -20px rgba(0,0,0,0.5)",zIndex:401,display:"flex",flexDirection:"column",transform:open?"translateX(0)":"translateX(100%)",transition:"transform 0.28s cubic-bezier(.2,.85,.3,1)"}}>
+        {target&&(<>
+          <div style={{padding:"18px 18px 14px",borderBottom:`1px solid ${pp.border}`,display:"flex",alignItems:"center",gap:12}}>
+            {isGroup
+              ?<div style={{width:40,height:40,borderRadius:12,background:T.purple+"18",border:`1px solid ${T.purple}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.purple,flexShrink:0}}>{Icon.users}</div>
+              :<div style={{position:"relative",flexShrink:0}}><Av initials={target.user.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={40} picUrl="" /><div style={{position:"absolute",bottom:0,right:0,width:10,height:10,borderRadius:"50%",background:target.user.online?T.teal:pp.faint,border:`2px solid ${T.surface}`}} /></div>
+            }
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:14,fontWeight:700,color:pp.text,letterSpacing:"-0.01em"}}>{title}</div>
+              <div style={{fontSize:11,color:pp.muted}}>{subtitle}</div>
+            </div>
+            <button onClick={onClose} style={{width:30,height:30,borderRadius:8,border:`1px solid ${pp.border}`,background:pp.card2,color:pp.muted,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.xmark}</button>
+          </div>
+
+          {isGroup&&(
+            <div onClick={()=>setSettingsOpen(true)} style={{display:"flex",alignItems:"center",gap:8,padding:"9px 18px",borderBottom:`1px solid ${pp.border}`,cursor:"pointer",background:pp.card2}}>
+              <span style={{color:expiry?(expiry.urgent?T.amber:T.purple):pp.muted,display:"flex"}}>{Icon.clock}</span>
+              <span style={{fontSize:11.5,color:pp.muted,flex:1}}>
+                {expiry?(expiry.expired?"Archiving now…":<>Archives in <strong style={{color:expiry.urgent?T.amber:pp.text}}>{expiry.label}</strong></>):"Permanent group"}
+              </span>
+              <span style={{fontSize:10.5,color:pp.faint}}>Group settings ›</span>
+            </div>
+          )}
+
+          <div ref={scrollRef} style={{flex:1,overflowY:"auto",padding:"16px 18px",display:"flex",flexDirection:"column",gap:10}}>
+            {messages.length===0&&<div style={{textAlign:"center",color:pp.faint,fontSize:12,marginTop:40}}>No messages yet. Say hi.</div>}
+            {messages.map(m=><ChatBubble key={m.id} m={m} />)}
+          </div>
+
+          {notePicker&&(
+            <div style={{borderTop:`1px solid ${pp.border}`,padding:"12px 18px",maxHeight:180,overflowY:"auto"}}>
+              <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:pp.faint,marginBottom:8}}>Send a note</div>
+              {notesList.length===0
+                ?<div style={{fontSize:12,color:pp.muted}}>No notes yet.</div>
+                :notesList.slice(0,8).map(n=>(
+                  <div key={n.id} onClick={()=>attachNote(n)} style={{display:"flex",alignItems:"center",gap:9,padding:"8px 9px",borderRadius:8,cursor:"pointer"}}>
+                    <span style={{color:T.amber,flexShrink:0}}>{Icon.file}</span>
+                    <div style={{fontSize:12,color:pp.text,fontWeight:600,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{n.title}</div>
+                  </div>
+                ))
+              }
+            </div>
+          )}
+          {deckPicker&&(
+            <div style={{borderTop:`1px solid ${pp.border}`,padding:"12px 18px",maxHeight:180,overflowY:"auto"}}>
+              <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:pp.faint,marginBottom:8}}>Send a deck</div>
+              {decksList.length===0
+                ?<div style={{fontSize:12,color:pp.muted}}>No decks yet.</div>
+                :decksList.slice(0,8).map(d=>(
+                  <div key={d.id} onClick={()=>attachDeck(d)} style={{display:"flex",alignItems:"center",gap:9,padding:"8px 9px",borderRadius:8,cursor:"pointer"}}>
+                    <span style={{color:T.teal,flexShrink:0}}>{Icon.layers}</span>
+                    <div style={{fontSize:12,color:pp.text,fontWeight:600,flex:1}}>{d.name}</div>
+                    <div style={{fontSize:10.5,color:pp.muted}}>{d.cards?d.cards.length:(d.count||0)} cards</div>
+                  </div>
+                ))
+              }
+            </div>
+          )}
+          {syncRunning&&(
+            <div style={{borderTop:`1px solid ${pp.border}`,padding:"14px 18px"}}>
+              <div style={{fontSize:11,color:pp.muted,marginBottom:8,textAlign:"center"}}>Scanning calendars for overlap…</div>
+              <div style={{height:4,background:pp.card2,borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",background:`linear-gradient(90deg,${T.purple},${T.lime})`,borderRadius:2,animation:"gwBarDrawer 2s ease-out forwards",transform:"scaleX(0)",transformOrigin:"left"}}/></div>
+              <style>{`@keyframes gwBarDrawer{to{transform:scaleX(1)}}`}</style>
+            </div>
+          )}
+          {quickOpen&&(
+            <div style={{borderTop:`1px solid ${pp.border}`,padding:"8px",display:"flex",flexDirection:"column",gap:2}}>
+              <button onClick={runCalendarSync} style={qaBtn}><span style={{color:T.purple,display:"flex"}}>{Icon.cal}</span><span style={{flex:1}}>Sync Calendar</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Find free time</span></button>
+              <button onClick={()=>{setNotePicker(true);setDeckPicker(false);setQuickOpen(false);}} style={qaBtn}><span style={{color:T.amber,display:"flex"}}>{Icon.file}</span><span style={{flex:1}}>Send Notes</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Drop a note link</span></button>
+              <button onClick={()=>{setDeckPicker(true);setNotePicker(false);setQuickOpen(false);}} style={qaBtn}><span style={{color:T.teal,display:"flex"}}>{Icon.layers}</span><span style={{flex:1}}>Send Flashcard Deck</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Share a deck</span></button>
+            </div>
+          )}
+
+          <div style={{display:"flex",alignItems:"center",gap:8,padding:"12px 16px",borderTop:`1px solid ${pp.border}`}}>
+            <button onClick={()=>{setQuickOpen(q=>!q);setNotePicker(false);setDeckPicker(false);}} style={{width:34,height:34,borderRadius:9,border:`1px solid ${quickOpen?T.lime+"55":pp.border}`,background:quickOpen?T.lime+"20":pp.card2,color:quickOpen?T.lime:pp.muted,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.plus}</button>
+            <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")sendText();}} placeholder="Message…" style={{flex:1,background:pp.card2,border:`1px solid ${pp.border}`,borderRadius:9,padding:"9px 12px",color:pp.text,fontSize:13,fontFamily:T.font,outline:"none"}} />
+            <button onClick={sendText} style={{width:34,height:34,borderRadius:9,border:"none",background:input.trim()?T.lime:pp.card2,color:input.trim()?T.bg:pp.faint,display:"grid",placeItems:"center",cursor:input.trim()?"pointer":"default",flexShrink:0}}>{Icon.send}</button>
+          </div>
+        </>)}
+      </div>
+
+      {isGroup&&(
+        <Modal open={settingsOpen} onClose={()=>setSettingsOpen(false)} title={target.group.name} sub="Group settings" width={420}>
+          <Label>Members</Label>
+          <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:18}}>
+            <div style={{display:"flex",alignItems:"center",gap:9}}>
+              <Av initials="ME" color={T.lime} size={28} picUrl="" />
+              <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>You</div>
+              <div style={{width:7,height:7,borderRadius:"50%",background:isOnlineStatusOn()?T.teal:T.faint,marginLeft:"auto"}} />
+            </div>
+            {target.group.memberHandles.map(h=>{
+              const u=NETWORK_DIRECTORY.find(x=>x.h===h);
+              if(!u)return null;
+              return (
+                <div key={h} style={{display:"flex",alignItems:"center",gap:9}}>
+                  <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={28} picUrl="" />
+                  <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>{u.n}</div>
+                  <div style={{width:7,height:7,borderRadius:"50%",background:u.online?T.teal:T.faint,marginLeft:"auto"}} />
+                </div>
+              );
+            })}
+          </div>
+          <div style={{paddingTop:16,borderTop:`1px solid ${T.border}`}}>
+            <Label>Expiration</Label>
+            {target.group.type==="temporary"
+              ?(<>
+                  <div style={{fontSize:12.5,color:T.text,marginBottom:10,lineHeight:1.5}}>
+                    {expiry&&expiry.expired?"This group has expired and will archive shortly.":<>Auto-archives on <strong>{new Date(target.group.expiresAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</strong> — {expiry&&expiry.label} left.</>}
+                  </div>
+                  <Btn variant="subtle" onClick={()=>onMakePermanent(target.group.id)} style={{width:"100%",justifyContent:"center",marginBottom:8}}>{Icon.users} Make permanent</Btn>
+                </>)
+              :<div style={{fontSize:12.5,color:T.muted,marginBottom:10}}>This is a standard ongoing group — it will never auto-archive.</div>
+            }
+            <Btn variant="danger" onClick={()=>{setSettingsOpen(false);onDeleteGroup(target.group.id);}} style={{width:"100%",justifyContent:"center"}}>{Icon.xmark} Delete group</Btn>
+          </div>
+        </Modal>
+      )}
+    </>,
+    document.body
   );
 }
 
@@ -4740,7 +4919,7 @@ function FocusMusic(){
 // ─── SETTINGS ─────────────────────────────────────────────────────────────────
 function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}}) {
   const [active,setActive]=useState("General");
-  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,sr:true,auto:true,analytics:false,sync:true,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false},...lsGet("settings",{})}));
+  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,sr:true,auto:true,analytics:false,onlineStatus:true,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false},...lsGet("settings",{})}));
   const tog=k=>setToggles(t=>{const n={...t,[k]:!t[k]};lsSet("settings",n);return n;});
   const [sysPushStatus,setSysPushStatus]=useState(()=>{
     if(typeof Notification==="undefined")return "unsupported";
@@ -5082,7 +5261,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Control what others can see.</div>
               <Row label="Public profile" sub="Let others find you by name or handle." k="profile" />
               <Row label="Share Weekly Wrapped" sub="Allow sharing your stats card on social." k="share" />
-              <Row label="Show online status" sub="Display a green dot when you're in a focus session." k="sync" />
+              <Row label="Show Online Status" sub="When off, your presence dot is hidden from friends and you'll appear offline in the Studlin Network." k="onlineStatus" />
             </Card>
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Data &amp; AI</div>
