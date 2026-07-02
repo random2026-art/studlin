@@ -152,6 +152,7 @@ const Icon = {
   volOff:    ic(<><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></>),
   msgSquare: ic(<><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></>),
   userPlus:  ic(<><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="16" y1="11" x2="22" y2="11"/></>),
+  sparkles:  ic(<><path d="m12 3-1.9 4.6a2.5 2.5 0 0 1-1.5 1.5L4 11l4.6 1.9a2.5 2.5 0 0 1 1.5 1.5L12 19l1.9-4.6a2.5 2.5 0 0 1 1.5-1.5L20 11l-4.6-1.9a2.5 2.5 0 0 1-1.5-1.5L12 3Z"/><path d="M19 3v3M17.5 4.5h3"/></>),
 };
 
 // ─── MOTIVATIONAL QUOTES + BREAK IDEAS ───────────────────────────────────────
@@ -214,6 +215,7 @@ const PROF_TIERS=[
   {title:"CEO",           minXP:300000},
 ];
 function getProfTitle(xp){let t=PROF_TIERS[0];for(const r of PROF_TIERS){if(xp>=r.minXP)t=r;else break;}return t.title;}
+function tierProgressFor(xp){let idx=0;for(let i=0;i<PROF_TIERS.length;i++){if(xp>=PROF_TIERS[i].minXP)idx=i;}const cur=PROF_TIERS[idx],next=PROF_TIERS[idx+1]||null;const pct=next?Math.round(Math.max(0,Math.min(100,(xp-cur.minXP)/(next.minXP-cur.minXP)*100))):100;return {title:cur.title,next,pct};}
 function calcSessionXP(mins){return Math.round(mins*(1+Math.floor(mins/30)*0.1));}
 function awardFlashcardXP(rating){const pts={Mastered:15,Good:8,Hard:3,Missed:0};const gain=pts[rating]||0;if(gain>0)lsSet("xpBonus",(lsGet("xpBonus",0)+gain));return gain;}
 function getWeeklyXP(){const sessions=lsGet("sessions",[]);const weekAgo=Date.now()-6*86400000;const weekSessions=sessions.filter(x=>x.t>=weekAgo);const focusXP=weekSessions.reduce((acc,x)=>acc+calcSessionXP(x.m||0),0);const days=new Set(lsGet("days",[]));let wdays=0;for(let i=0;i<7;i++){const d=new Date();d.setDate(d.getDate()-i);if(days.has(dayKey(d)))wdays++;}return focusXP+wdays*15+Math.min(getStreak(),7)*30;}
@@ -383,6 +385,38 @@ const prioLabel=(v)=>{const p=v/10;return p<=20?"Low":p<=40?"Low–Medium":p<=60
 async function getAuthToken(){try{const u=firebase.auth().currentUser;if(!u)return null;return await u.getIdToken();}catch(e){return null;}}
 async function authFetch(url,opts={}){try{const token=await getAuthToken();const h=Object.assign({},opts.headers||{});if(token)h["Authorization"]="Bearer "+token;return fetch(url,Object.assign({},opts,{headers:h}));}catch(e){return fetch(url,opts);}}
 async function fetchUserProfile(){try{const res=await authFetch("/api/me");if(!res.ok)return null;const d=await res.json();lsSet("credits",d.credits);lsSet("plan",d.plan||"Free");return d;}catch(e){return null;}}
+
+// ─── FIRESTORE (client SDK) — live user directory + friend graph ────────────
+// Everything privacy-sensitive (credits, plan, email) stays server-only via
+// the existing /api/* routes + Admin SDK. This client SDK is used only for
+// the public directory (`profiles`) and the `friendships` relationship graph,
+// per firestore.rules.
+const fsdb=()=>firebase.firestore();
+const slugUsername=(name)=>(name||"").toLowerCase().replace(/[^a-z0-9]/g,"").slice(0,24)||"student";
+// Creates/refreshes this user's public directory entry so they're searchable
+// and their name/school stay current. Safe to call anytime a signed-in user
+// is present — merges rather than overwrites, and never touches private data.
+async function upsertProfile(extra={}){
+  const u=firebase.auth().currentUser;
+  if(!u)return;
+  const prof=getProfile();
+  const name=u.displayName||prof.name||"Student";
+  const username=slugUsername(name);
+  const school=extra.school!==undefined?extra.school:(prof.affiliation||prof.school||"");
+  const status=extra.status!==undefined?extra.status:(prof.status||"");
+  const data={
+    uid:u.uid,
+    name,
+    username,
+    usernameLower:username,
+    nameLower:name.toLowerCase(),
+    school,
+    schoolLower:(school||"").toLowerCase(),
+    status,
+    updatedAt:new Date().toISOString(),
+  };
+  try{await fsdb().collection('profiles').doc(u.uid).set(data,{merge:true});}catch(e){}
+}
 const dayKey=(d)=>{const x=d||new Date();return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");};
 function daysOverdue(ev){if(!ev.deadline)return 0;if(ev.date<=ev.deadline)return 0;const d1=new Date(ev.date),d2=new Date(ev.deadline);return Math.ceil((d1-d2)/86400000);}
 function daysUntilDeadline(ev){if(!ev.deadline)return null;const d1=new Date(ev.deadline),d2=new Date(dayKey());return Math.ceil((d1-d2)/86400000);}
@@ -951,7 +985,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
 }
 
 // ─── NAV ICONS MAP ────────────────────────────────────────────────────────────
-const navIcon = {dashboard:Icon.grid,aichat:Icon.chat,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.heart,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,music:Icon.music,settings:Icon.settings,profile:Icon.user};
+const navIcon = {dashboard:Icon.grid,aichat:Icon.sparkles,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.users,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,music:Icon.music,settings:Icon.settings,profile:Icon.user};
 
 // ─── AI CHAT ──────────────────────────────────────────────────────────────────
 function AiChat() {
@@ -1820,19 +1854,26 @@ function Flashcards() {
       {tab==="decks"&&(
         <div>
           {deckList.length===0&&<Card style={{padding:24,textAlign:"center"}}><div style={{fontSize:13,color:T.muted,marginBottom:12}}>No decks yet. Create your first one.</div><Btn onClick={()=>setNewOpen(true)}>{Icon.plus} New deck</Btn></Card>}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-            {deckList.map((d,i)=>(
+          {(()=>{
+            const renderDeckCard=(d,i)=>(
               <Card key={d.id||i} style={{cursor:"pointer",position:"relative"}}>
                 <button onClick={(e)=>{e.stopPropagation();deleteDeck(d.id);}} style={{position:"absolute",top:12,right:12,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14}}>x</button>
                 <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>{d.name}</div>
-                <div style={{fontSize:11,color:T.muted,marginBottom:14}}>{d.cards?d.cards.length:d.count} cards</div>
+                <div style={{fontSize:11,color:T.muted,marginBottom:14}}>{d.cards?d.cards.length:d.count} cards{d.source==="imported"&&<span style={{color:T.teal,fontWeight:600}}> · from {d.importedFrom}</span>}</div>
                 <div style={{display:"flex",gap:6}}>
                   <BtnSm onClick={()=>{setStudyDeck(d);setTab("study");setIdx(0);setFlipped(false);}}>Study now</BtnSm>
                   <BtnSm variant="ghost" onClick={(e)=>{e.stopPropagation();sendDeck(d);}}>{Icon.send} Send</BtnSm>
                 </div>
               </Card>
-            ))}
-          </div>
+            );
+            const ownDecks=deckList.filter(d=>d.source!=="imported");
+            const importedDecks=deckList.filter(d=>d.source==="imported");
+            return (<>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>{ownDecks.map(renderDeckCard)}</div>
+              {importedDecks.length>0&&<div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,margin:"18px 0 10px"}}>Imported Decks</div>}
+              {importedDecks.length>0&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>{importedDecks.map(renderDeckCard)}</div>}
+            </>);
+          })()}
         </div>
       )}
     </div>
@@ -1879,6 +1920,7 @@ function Notes(){
   const [commentDraft,setCommentDraft]=useState("");
   const [commentInputOpen,setCommentInputOpen]=useState(false);
   const [pendingSel,setPendingSel]=useState(null);
+  const [pendingSelGlobal,setPendingSelGlobal]=useState(false); // true = document-level comment, no text selected
   const [cleaning,setCleaning]=useState(false);
 
   // Send note state
@@ -1928,12 +1970,19 @@ function Notes(){
   };
 
   const doAddComment=()=>{
-    if(!pendingSel||!commentDraft.trim()||sel===null)return;
+    if(!commentDraft.trim()||sel===null)return;
+    if(!pendingSelGlobal&&!pendingSel)return;
     const noteId=notes[sel].id;
-    const c={id:String(Date.now()),selectedText:pendingSel,text:commentDraft.trim(),date:new Date().toLocaleDateString()};
+    const c={id:String(Date.now()),selectedText:pendingSelGlobal?null:pendingSel,text:commentDraft.trim(),date:new Date().toLocaleDateString()};
     const updated={...noteComments,[noteId]:[...(noteComments[noteId]||[]),c]};
     setNoteComments(updated);lsSet("note-comments",updated);
-    setCommentDraft("");setCommentInputOpen(false);setPendingSel(null);setPopover(null);
+    setCommentDraft("");setCommentInputOpen(false);setPendingSel(null);setPendingSelGlobal(false);setPopover(null);
+  };
+
+  // Document-level comment — attaches a note to the whole file, no highlight required
+  const openDocComment=()=>{
+    if(sel===null)return;
+    setPendingSel(null);setPendingSelGlobal(true);setCommentInputOpen(true);setPopover(null);
   };
 
   const doAddFlag=(selText)=>{
@@ -1978,6 +2027,18 @@ function Notes(){
     }
   };
 
+  // Document-level tutor — no highlight required. Pulls the whole note as context
+  // and opens the sidebar ready for the student's first question.
+  const openTutorForDocument=()=>{
+    if(sel===null||!editorRef.current)return;
+    const tmp=document.createElement("div");tmp.innerHTML=editorRef.current.innerHTML;
+    const plain=(tmp.textContent||tmp.innerText||"").trim();
+    setTutorCtx(plain);
+    setTutorOpen(true);
+    setTutorMsgs([{role:"ai",text:plain?"I've got the whole note open — \""+notes[sel].title+"\". Ask me anything about it: a summary, a quiz, or something specific you're stuck on.":"This note is empty — write something first, then I can help you with it."}]);
+    setPopover(null);
+  };
+
   const sendTutorMsg=async()=>{
     const txt=tutorInput.trim();
     if(!txt||tutorSending)return;
@@ -1988,10 +2049,11 @@ function Notes(){
       // Reconstruct conversation for the API. The conversation always starts with
       // the analysis prompt (user) → initial AI response, then the real turns after.
       // api/chat expects {r:"user"|"ai", t:"..."} — "ai" maps to assistant inside the API.
-      const ctx=tutorCtx?`[Note excerpt: "${tutorCtx.slice(0,400)}"]\n\n`:"";
+      // Sliced generously since tutorCtx may be an entire note, not just a highlighted passage.
+      const ctx=tutorCtx?`[Notes for context: "${tutorCtx.slice(0,6000)}"]\n\n`:"";
       const realMsgs=tutorMsgs.filter(m=>!m.loading);
       // Synthetic opener restores the initial user→ai exchange so the model has context
-      const opener={r:"user",t:ctx+"Analyze this passage from my notes and help me understand it."};
+      const opener={r:"user",t:ctx+"Help me understand these notes and answer my questions about them."};
       // Map existing display messages into API format
       const history=realMsgs.map(m=>({r:m.role==="user"?"user":"ai",t:m.text}));
       // Full sequence: opener → initial AI response → subsequent turns → new user msg
@@ -2243,19 +2305,31 @@ function Notes(){
         <div>
           <input style={{width:"100%",background:T.card2,border:"1px solid "+T.border,borderRadius:7,padding:"8px 12px",color:T.text,fontSize:12,fontFamily:T.font,outline:"none",marginBottom:10,boxSizing:"border-box"}} placeholder="Search notes…" value={search} onChange={ev=>setSearch(ev.target.value)} />
           {filtered.length===0&&<div style={{padding:"20px 0",textAlign:"center",fontSize:12,color:T.muted}}>No notes yet. Create your first one.</div>}
-          {filtered.map((n,i)=>{
-            const idx=notes.indexOf(n);
-            return (
-              <div key={n.id||i} onClick={()=>{setSel(idx);setPopover(null);}} style={{background:idx===sel?T.card2:T.card,borderRadius:8,padding:"11px 13px",marginBottom:6,border:"1px solid "+(idx===sel?colorOf(n.tag)+"55":T.border),cursor:"pointer",transition:"all 0.15s"}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
-                  <div style={{fontSize:12,fontWeight:600,color:T.white,flex:1,marginRight:8,lineHeight:1.3}}>{n.title}</div>
-                  <Badge color={colorOf(n.tag)}>{n.tag}</Badge>
+          {(()=>{
+            const renderNoteRow=(n,i)=>{
+              const idx=notes.indexOf(n);
+              return (
+                <div key={n.id||i} onClick={()=>{setSel(idx);setPopover(null);}} style={{background:idx===sel?T.card2:T.card,borderRadius:8,padding:"11px 13px",marginBottom:6,border:"1px solid "+(idx===sel?colorOf(n.tag)+"55":T.border),cursor:"pointer",transition:"all 0.15s"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+                    <div style={{fontSize:12,fontWeight:600,color:T.white,flex:1,marginRight:8,lineHeight:1.3}}>{n.title}</div>
+                    <Badge color={colorOf(n.tag)}>{n.tag}</Badge>
+                  </div>
+                  <div style={{fontSize:10.5,color:T.muted,lineHeight:1.5,maxHeight:36,overflow:"hidden"}}>{(n.body||"").replace(/<[^>]+>/g," ").trim().slice(0,90)}</div>
+                  <div style={{fontSize:10,color:T.faint,marginTop:6,display:"flex",justifyContent:"space-between"}}>
+                    <span>{n.date}</span>
+                    {n.source==="shared"&&<span style={{color:T.blue,fontWeight:600}}>from {n.sharedFrom}</span>}
+                  </div>
                 </div>
-                <div style={{fontSize:10.5,color:T.muted,lineHeight:1.5,maxHeight:36,overflow:"hidden"}}>{(n.body||"").replace(/<[^>]+>/g," ").trim().slice(0,90)}</div>
-                <div style={{fontSize:10,color:T.faint,marginTop:6}}>{n.date}</div>
-              </div>
-            );
-          })}
+              );
+            };
+            const ownNotes=filtered.filter(n=>n.source!=="shared");
+            const sharedNotes=filtered.filter(n=>n.source==="shared");
+            return (<>
+              {ownNotes.map(renderNoteRow)}
+              {sharedNotes.length>0&&<div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,margin:"14px 0 8px"}}>Shared with Me</div>}
+              {sharedNotes.map(renderNoteRow)}
+            </>);
+          })()}
         </div>
 
         {/* Canvas area: editor + optional margin panel + optional tutor sidebar */}
@@ -2305,6 +2379,12 @@ function Notes(){
                   <BtnSm variant="subtle" onClick={()=>exportNote(activeNote)}>{Icon.copy} Copy</BtnSm>
                   <BtnSm variant="subtle" onClick={()=>setSendNoteOpen(true)}>{Icon.send} Send</BtnSm>
                   <div style={{flex:1}} />
+                  <button onClick={openDocComment} title="Attach a note to the whole document — no highlight needed" style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${T.blue}44`,background:T.blue+"14",color:T.blue,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
+                    {Icon.chat} Add Comment
+                  </button>
+                  <button onClick={openTutorForDocument} title="Ask the AI Tutor about this whole note — no highlight needed" style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${T.amber}44`,background:T.amber+"14",color:T.amber,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
+                    {Icon.brain} Ask Tutor
+                  </button>
                   <button onClick={cleanNotes} disabled={cleaning} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${T.lime}44`,background:cleaning?T.card2:T.lime+"14",color:cleaning?T.muted:T.lime,cursor:cleaning?"default":"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
                     {cleaning?<>Cleaning…</>:<>{Icon.wand} Clean Notes</>}
                   </button>
@@ -2325,7 +2405,7 @@ function Notes(){
                 {/* Contextual selection popover */}
                 {popover&&(
                   <div style={{position:"absolute",top:popover.y,left:popover.x,transform:"translateX(-50%)",zIndex:30,display:"flex",gap:4,background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:"4px 6px",boxShadow:"0 8px 24px rgba(0,0,0,0.4)",whiteSpace:"nowrap"}}>
-                    <button onMouseDown={e=>{e.preventDefault();setPendingSel(popover.selText);setCommentInputOpen(true);}} style={{padding:"5px 10px",borderRadius:5,border:"none",background:"transparent",color:T.blue,cursor:"pointer",fontSize:12,fontFamily:T.font,fontWeight:600}}>Add Comment</button>
+                    <button onMouseDown={e=>{e.preventDefault();setPendingSel(popover.selText);setPendingSelGlobal(false);setCommentInputOpen(true);}} style={{padding:"5px 10px",borderRadius:5,border:"none",background:"transparent",color:T.blue,cursor:"pointer",fontSize:12,fontFamily:T.font,fontWeight:600}}>Add Comment</button>
                     <div style={{width:1,background:T.border}} />
                     <button onMouseDown={e=>{e.preventDefault();doAddFlag(popover.selText);}} style={{padding:"5px 10px",borderRadius:5,border:"none",background:"transparent",color:T.amber,cursor:"pointer",fontSize:12,fontFamily:T.font,fontWeight:600}}>Flag for Tutor</button>
                   </div>
@@ -2334,9 +2414,9 @@ function Notes(){
                 {/* Comment input strip */}
                 {commentInputOpen&&(
                   <div style={{padding:"10px 20px",background:T.blue+"0A",borderBottom:`1px solid ${T.blue}22`,display:"flex",gap:8,alignItems:"center"}}>
-                    <input value={commentDraft} onChange={e=>setCommentDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")doAddComment();if(e.key==="Escape"){setCommentInputOpen(false);setPendingSel(null);}}} placeholder={`Comment on "${(pendingSel||"").slice(0,30)}…"`} autoFocus style={{flex:1,background:"transparent",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}} />
+                    <input value={commentDraft} onChange={e=>setCommentDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")doAddComment();if(e.key==="Escape"){setCommentInputOpen(false);setPendingSel(null);setPendingSelGlobal(false);}}} placeholder={pendingSelGlobal?"Add a note about this whole document…":`Comment on "${(pendingSel||"").slice(0,30)}…"`} autoFocus style={{flex:1,background:"transparent",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}} />
                     <BtnSm onClick={doAddComment} style={{opacity:commentDraft.trim()?1:0.4}}>Save</BtnSm>
-                    <BtnSm variant="subtle" onClick={()=>{setCommentInputOpen(false);setPendingSel(null);}}>✕</BtnSm>
+                    <BtnSm variant="subtle" onClick={()=>{setCommentInputOpen(false);setPendingSel(null);setPendingSelGlobal(false);}}>✕</BtnSm>
                   </div>
                 )}
 
@@ -2373,7 +2453,7 @@ function Notes(){
                   <div style={{width:26,height:26,borderRadius:7,background:T.amber+"22",border:`1px solid ${T.amber}44`,display:"flex",alignItems:"center",justifyContent:"center",color:T.amber}}>{Icon.brain}</div>
                   <div>
                     <div style={{fontSize:12,fontWeight:700,color:T.white}}>AI Tutor</div>
-                    <div style={{fontSize:10,color:T.muted}}>Ask about your flagged text</div>
+                    <div style={{fontSize:10,color:T.muted}}>Ask about this note</div>
                   </div>
                 </div>
                 <button onClick={()=>setTutorOpen(false)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:16,lineHeight:1,padding:4,borderRadius:4,display:"flex",alignItems:"center",justifyContent:"center"}}>{Icon.xmark}</button>
@@ -2409,7 +2489,7 @@ function Notes(){
               <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:2}}>Annotations</div>
               {activeComments.map(c=>(
                 <div key={c.id} style={{background:T.card,border:`1px solid ${T.blue}33`,borderLeft:`3px solid ${T.blue}`,borderRadius:8,padding:"10px 12px",position:"relative"}}>
-                  <div style={{fontSize:10,color:T.blue,fontWeight:600,marginBottom:4,lineHeight:1.4}}>"{(c.selectedText||"").slice(0,48)}{c.selectedText&&c.selectedText.length>48?"…":""}"</div>
+                  <div style={{fontSize:10,color:T.blue,fontWeight:600,marginBottom:4,lineHeight:1.4}}>{c.selectedText?`"${c.selectedText.slice(0,48)}${c.selectedText.length>48?"…":""}"`:<span style={{textTransform:"uppercase",letterSpacing:"0.05em"}}>Document note</span>}</div>
                   <div style={{fontSize:12,color:T.text,lineHeight:1.5}}>{c.text}</div>
                   <div style={{fontSize:10,color:T.faint,marginTop:6}}>{c.date}</div>
                   <button onClick={()=>removeComment(nid,c.id)} style={{position:"absolute",top:6,right:6,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:13,lineHeight:1,padding:2}}>×</button>
@@ -2438,24 +2518,22 @@ function Notes(){
 
 // ─── FRIENDS & CHAT ──────────────────────────────────────────────────────────
 // ─── NETWORK: shared data + helpers ──────────────────────────────────────────
+// Presence is simulated locally (this app has no realtime multi-user backend yet —
+// every "friend" here is a mock profile, consistent with the rest of Studlin Network).
 const NETWORK_DIRECTORY=[
-  {n:"Devon Karu",h:"@devonk",s:"Lehigh University",online:true},
-  {n:"Priya Shah",h:"@priyas",s:"UC Berkeley",online:false},
-  {n:"Jordan Tran",h:"@jtran",s:"Lehigh University",online:true},
-  {n:"Amara Okafor",h:"@amarao",s:"NYU",online:false},
-  {n:"Liam Chen",h:"@liamc",s:"Stanford University",online:true},
-  {n:"Sofia Diaz",h:"@sofiad",s:"Lehigh University",online:false},
-  {n:"Marcus Webb",h:"@marcusw",s:"UCLA",online:true},
-  {n:"Chloe Park",h:"@chloep",s:"MIT",online:false},
-  {n:"Riya Mehta",h:"@riyam",s:"Lehigh University",online:true},
-];
-const NETWORK_SYNC_SLOTS=[
-  {day:"Wednesday, Jul 2",time:"3:00 – 5:00 PM",match:"4/4 free",best:true},
-  {day:"Friday, Jul 4",time:"10:00 AM – 12:00 PM",match:"4/4 free",best:false},
-  {day:"Thursday, Jul 3",time:"2:00 – 4:00 PM",match:"3/4 free",best:false},
+  {n:"Devon Karu",h:"@devonk",s:"Lehigh University",online:true,presence:{state:"locked-in",subject:"Calculus",remainingMin:34}},
+  {n:"Priya Shah",h:"@priyas",s:"UC Berkeley",online:false,presence:{state:"offline"}},
+  {n:"Jordan Tran",h:"@jtran",s:"Lehigh University",online:true,presence:{state:"in-class"}},
+  {n:"Amara Okafor",h:"@amarao",s:"NYU",online:false,presence:{state:"offline"}},
+  {n:"Liam Chen",h:"@liamc",s:"Stanford University",online:true,presence:{state:"idle"}},
+  {n:"Sofia Diaz",h:"@sofiad",s:"Lehigh University",online:false,presence:{state:"offline"}},
+  {n:"Marcus Webb",h:"@marcusw",s:"UCLA",online:true,presence:{state:"locked-in",subject:"Organic Chem",remainingMin:12}},
+  {n:"Chloe Park",h:"@chloep",s:"MIT",online:false,presence:{state:"offline"}},
+  {n:"Riya Mehta",h:"@riyam",s:"Lehigh University",online:true,presence:{state:"idle"}},
 ];
 const GROUP_DURATIONS=[{label:"1 week",days:7},{label:"2 weeks",days:14},{label:"1 month",days:30},{label:"2 months",days:60},{label:"3 months",days:90}];
 const isOnlineStatusOn=()=>lsGet("settings",{}).onlineStatus!==false;
+const isIncognitoOn=()=>lsGet("settings",{}).incognito===true;
 function fmtGroupCountdown(expiresAt){
   if(!expiresAt)return null;
   const ms=expiresAt-Date.now();
@@ -2465,6 +2543,16 @@ function fmtGroupCountdown(expiresAt){
   if(days>13)return{expired:false,urgent:false,label:Math.round(days/7)+" wk"};
   if(days>1)return{expired:false,urgent:days<=7,label:days+" days"};
   return{expired:false,urgent:true,label:"today"};
+}
+// Live study-state sub-label for a friend's presence — masked to offline when
+// the friend has incognito on (simulated: NETWORK_DIRECTORY entries never set
+// this, but the current user's own incognito state reuses the same renderer).
+function presenceInfo(u,{incognito=false}={}){
+  const p=incognito?{state:"offline"}:(u.presence||{state:u.online?"idle":"offline"});
+  if(p.state==="locked-in")return{color:T.teal,text:"Locking In: "+p.subject+" ("+p.remainingMin+"m left)",joinable:true};
+  if(p.state==="in-class")return{color:T.amber,text:"In Class",joinable:false};
+  if(p.state==="idle")return{color:T.muted,text:"Idle",joinable:false};
+  return{color:T.faint,text:"Offline",joinable:false};
 }
 
 function FriendsChat(){
@@ -2476,51 +2564,183 @@ function FriendsChat(){
   const [inviteOpen,setInviteOpen]=useState(false);
   const [createGroupOpen,setCreateGroupOpen]=useState(false);
   const [chatTarget,setChatTarget]=useState(null);
-  const [friendReqs,setFriendReqs]=useState([
-    {id:1,n:"Zoe Martinez",h:"@zoem",s:"Lehigh University"},
-    {id:2,n:"Ethan Woo",h:"@ethanw",s:"Penn State"},
-  ]);
   const me=getUserName()||"You";
   const refCode=me.toLowerCase().replace(/\s+/g,"");
   const inviteLink="https://studlin.app?ref="+refCode;
   const qrUrl="https://api.qrserver.com/v1/create-qr-code/?data="+encodeURIComponent(inviteLink)+"&size=150x150&color=AECE5E&bgcolor=0D120F&margin=10";
+  const myUid=firebase.auth().currentUser?.uid||null;
 
-  const [addedUsers,setAddedUsers]=useState(()=>lsGet("network-added",[]));
-  const toggleAdd=(h)=>{const n=addedUsers.includes(h)?addedUsers.filter(x=>x!==h):[...addedUsers,h];setAddedUsers(n);lsSet("network-added",n);};
+  // ── Live friend graph (Firestore `friendships` + `profiles`) ──────────────
+  const [friends,setFriends]=useState([]); // accepted, either direction — {uid,n,h,s,online,presence}
+  const [incomingReqs,setIncomingReqs]=useState([]); // pending, received by me — {id,senderId,n,h,s}
+  const [outgoingReqIds,setOutgoingReqIds]=useState(()=>new Set()); // uids I've already sent a pending request to
   const [groups,setGroups]=useState(()=>lsGet("network-groups",[]));
   const activeGroups=groups.filter(g=>!g.expiresAt||g.expiresAt>Date.now());
-  const myFriends=NETWORK_DIRECTORY.filter(u=>addedUsers.includes(u.h));
+  const myFriends=friends;
 
-  const filtered=NETWORK_DIRECTORY.filter(u=>{
-    const q=searchQ.toLowerCase().trim();
-    if(!q)return true;
-    if(searchFilter==="@username")return u.h.toLowerCase().includes(q);
-    if(searchFilter==="Name")return u.n.toLowerCase().includes(q);
-    if(searchFilter==="School")return u.s.toLowerCase().includes(q);
-    return u.n.toLowerCase().includes(q)||u.h.toLowerCase().includes(q)||u.s.toLowerCase().includes(q);
+  const profileToFriend=(uid,d)=>({
+    uid,
+    n:(d&&d.name)||"Studlin User",
+    h:"@"+((d&&d.username)||uid.slice(0,6)),
+    s:(d&&d.school)||"",
+    online:false,
+    presence:{state:"idle"},
   });
-  const noResults=searchQ.trim()&&filtered.length===0;
+
+  // Incoming pending requests — real-time via onSnapshot.
+  useEffect(()=>{
+    if(!myUid)return;
+    const unsub=fsdb().collection('friendships').where('receiverId','==',myUid).where('status','==','pending')
+      .onSnapshot(async snap=>{
+        const docs=snap.docs.map(d=>({id:d.id,senderId:d.data().senderId}));
+        const withProfiles=await Promise.all(docs.map(async d=>{
+          try{
+            const p=await fsdb().collection('profiles').doc(d.senderId).get();
+            const f=profileToFriend(d.senderId,p.exists?p.data():null);
+            return {id:d.id,senderId:d.senderId,n:f.n,h:f.h,s:f.s};
+          }catch(e){return {id:d.id,senderId:d.senderId,n:"Studlin User",h:"@"+d.senderId.slice(0,6),s:""};}
+        }));
+        setIncomingReqs(withProfiles);
+      },()=>{});
+    return unsub;
+  },[myUid]);
+
+  // Outgoing pending requests — just the target uids, so search can show "Pending".
+  useEffect(()=>{
+    if(!myUid)return;
+    const unsub=fsdb().collection('friendships').where('senderId','==',myUid).where('status','==','pending')
+      .onSnapshot(snap=>setOutgoingReqIds(new Set(snap.docs.map(d=>d.data().receiverId))),()=>{});
+    return unsub;
+  },[myUid]);
+
+  // Accepted friendships (either direction) — real-time via onSnapshot, resolved
+  // against `profiles` for display. This is what powers "My Friends" live on
+  // both sides once the other person accepts, with no manual refresh needed.
+  useEffect(()=>{
+    if(!myUid)return;
+    let asSender=[],asReceiver=[],cancelled=false;
+    const rebuild=async()=>{
+      const ids=[...new Set([...asSender,...asReceiver])];
+      if(ids.length===0){setFriends([]);return;}
+      const docs=await Promise.all(ids.map(uid=>fsdb().collection('profiles').doc(uid).get().catch(()=>null)));
+      if(cancelled)return;
+      setFriends(docs.map((p,i)=>profileToFriend(ids[i],p&&p.exists?p.data():null)));
+    };
+    const unsub1=fsdb().collection('friendships').where('senderId','==',myUid).where('status','==','accepted')
+      .onSnapshot(snap=>{asSender=snap.docs.map(d=>d.data().receiverId);rebuild();},()=>{});
+    const unsub2=fsdb().collection('friendships').where('receiverId','==',myUid).where('status','==','accepted')
+      .onSnapshot(snap=>{asReceiver=snap.docs.map(d=>d.data().senderId);rebuild();},()=>{});
+    return ()=>{cancelled=true;unsub1();unsub2();};
+  },[myUid]);
+
+  // ── Unified "All" / "Groups" inbox — combined, chronological ──────────────
+  const [inboxTab,setInboxTab]=useState("All");
+  const networkChats=lsGet("network-chats",{});
+  const lastMsgOf=(id)=>{const arr=networkChats[id];return arr&&arr.length?arr[arr.length-1]:null;};
+  const previewOf=(m)=>!m?null:(m.kind==="text"?m.text:m.kind==="calendar"?"Shared free time found":m.kind==="note"?"Note shared":m.kind==="deck"?"Deck shared":"New message");
+  const inboxDms=myFriends.map(u=>{const last=lastMsgOf("dm:"+u.h);return{kind:"dm",key:"dm:"+u.h,user:u,lastTs:last?last.ts:0,preview:previewOf(last)};});
+  const inboxGroups=activeGroups.map(g=>{const last=lastMsgOf("group:"+g.id);return{kind:"group",key:"group:"+g.id,group:g,lastTs:last?last.ts:0,preview:previewOf(last)};});
+  const inboxShown=(inboxTab==="Groups"?inboxGroups:[...inboxDms,...inboxGroups]).slice().sort((a,b)=>b.lastTs-a.lastTs);
+
+  // ── Live search — one-shot Firestore prefix query against `profiles` ──────
+  const [searchResults,setSearchResults]=useState([]);
+  const [searching,setSearching]=useState(false);
+  useEffect(()=>{
+    // Strip a leading "@" (people naturally type "@friendname") — usernameLower
+    // never has one stored, so leaving it in would silently match nothing.
+    const raw=searchQ.trim().toLowerCase().replace(/^@/,"");
+    if(!raw){setSearchResults([]);setSearching(false);return;}
+    setSearching(true);
+    let active=true;
+    const runQuery=async(field,value)=>{
+      if(!value)return[];
+      const snap=await fsdb().collection('profiles').where(field,'>=',value).where(field,'<=',value+String.fromCharCode(0xf8ff)).limit(10).get();
+      return snap.docs.map(d=>profileToFriend(d.id,d.data()));
+    };
+    const t=setTimeout(async()=>{
+      try{
+        let results;
+        if(searchFilter==="@username")results=await runQuery('usernameLower',raw.replace(/\s+/g,""));
+        else if(searchFilter==="Name")results=await runQuery('nameLower',raw);
+        else if(searchFilter==="School")results=await runQuery('schoolLower',raw);
+        else{
+          // "All" — a plain search bar has no way to know which field the
+          // student meant, so query name/username/school in parallel and
+          // merge, deduping by uid.
+          const [byUsername,byName,bySchool]=await Promise.all([
+            runQuery('usernameLower',raw.replace(/\s+/g,"")),
+            runQuery('nameLower',raw),
+            runQuery('schoolLower',raw),
+          ]);
+          const seen=new Set();
+          results=[...byUsername,...byName,...bySchool].filter(u=>seen.has(u.uid)?false:(seen.add(u.uid),true));
+        }
+        if(!active)return;
+        setSearchResults(results.filter(u=>u.uid!==myUid).slice(0,10));
+      }catch(e){if(active)setSearchResults([]);}
+      if(active)setSearching(false);
+    },300);
+    return ()=>{active=false;clearTimeout(t);};
+  },[searchQ,searchFilter,myUid]);
+  const noResults=searchQ.trim()&&!searching&&searchResults.length===0;
 
   const sendEmailInvite=()=>{if(!inviteEmail.trim())return;setEmailSent(true);setTimeout(()=>{setEmailSent(false);setInviteEmail("");},2500);};
   const copyLink=()=>{navigator.clipboard&&navigator.clipboard.writeText(inviteLink);setCopied(true);setTimeout(()=>setCopied(false),2200);};
 
-  const acceptReq=(id)=>{
-    const req=friendReqs.find(r=>r.id===id);
-    setFriendReqs(p=>p.filter(r=>r.id!==id));
-    if(req){const n=[...addedUsers,req.h];setAddedUsers(n);lsSet("network-added",n);}
+  // Sending a request when the other person already has a pending request in
+  // to us just accepts theirs instead of creating a redundant duplicate doc.
+  const sendFriendRequest=async(targetUid)=>{
+    if(!myUid||targetUid===myUid)return;
+    const theirs=incomingReqs.find(r=>r.senderId===targetUid);
+    if(theirs){await acceptReq(theirs.id);return;}
+    try{await fsdb().collection('friendships').add({senderId:myUid,receiverId:targetUid,status:'pending',createdAt:new Date().toISOString()});}catch(e){}
   };
-  const declineReq=(id)=>setFriendReqs(p=>p.filter(r=>r.id!==id));
+  const acceptReq=async(id)=>{try{await fsdb().collection('friendships').doc(id).update({status:'accepted',updatedAt:new Date().toISOString()});}catch(e){}};
+  const declineReq=async(id)=>{try{await fsdb().collection('friendships').doc(id).delete();}catch(e){}};
+
+  // ── Co-op "Join Lock-In" — simulated request/accept, then hands off to the
+  // global TaskTimerModal (via the same window._setTimerTask bridge Calendar uses)
+  const [joinRevealFor,setJoinRevealFor]=useState(null);
+  const [netToast,setNetToast]=useState(null);
+  const showNetToast=(msg)=>{setNetToast(msg);setTimeout(()=>setNetToast(null),3200);};
+  const joinLockIn=(u)=>{
+    setJoinRevealFor(null);
+    showNetToast("Request sent to "+u.n+"…");
+    setTimeout(()=>{
+      showNetToast(u.n+" joined your session!");
+      const p=u.presence||{};
+      if(window._setTimerTask)window._setTimerTask({
+        id:"coop-"+Date.now(),
+        title:"Co-op session with "+u.n,
+        subject:p.subject||"Study session",
+        duration:Math.max(5,p.remainingMin||25),
+        kind:"study block",
+        coop:{name:u.n,initials:u.n.split(" ").map(x=>x[0]).join("")},
+      });
+    },1400);
+  };
 
   const [cgName,setCgName]=useState("");
   const [cgMembers,setCgMembers]=useState([]);
   const [cgType,setCgType]=useState("permanent");
   const [cgDuration,setCgDuration]=useState("1 month");
-  const resetCreateGroup=()=>{setCgName("");setCgMembers([]);setCgType("permanent");setCgDuration("1 month");};
+  const [cgCustomDate,setCgCustomDate]=useState("");
+  const resetCreateGroup=()=>{setCgName("");setCgMembers([]);setCgType("permanent");setCgDuration("1 month");setCgCustomDate("");};
   const toggleCgMember=(h)=>setCgMembers(m=>m.includes(h)?m.filter(x=>x!==h):[...m,h]);
+  const cgCustomInvalid=cgType==="temporary"&&cgDuration==="Custom date"&&!cgCustomDate;
   const submitCreateGroup=()=>{
-    if(!cgName.trim()||cgMembers.length===0)return;
-    const dur=GROUP_DURATIONS.find(d=>d.label===cgDuration);
-    const g={id:"g"+Date.now(),name:cgName.trim(),memberHandles:[...cgMembers],type:cgType,createdAt:Date.now(),expiresAt:cgType==="temporary"&&dur?Date.now()+dur.days*86400000:null};
+    if(!cgName.trim()||cgMembers.length===0||cgCustomInvalid)return;
+    let expiresAt=null;
+    if(cgType==="temporary"){
+      if(cgDuration==="Custom date"&&cgCustomDate)expiresAt=new Date(cgCustomDate+"T23:59:59").getTime();
+      else{const dur=GROUP_DURATIONS.find(d=>d.label===cgDuration);expiresAt=dur?Date.now()+dur.days*86400000:null;}
+    }
+    // Snapshot each member's display name at creation time — group chat is
+    // stored locally, but member handles now refer to real Firestore friends
+    // rather than the old mock directory, so their name won't be resolvable
+    // from a shared lookup table later.
+    const memberNames=Object.fromEntries(cgMembers.map(h=>{const f=myFriends.find(x=>x.h===h);return [h,f?f.n:h];}));
+    const g={id:"g"+Date.now(),name:cgName.trim(),memberHandles:[...cgMembers],memberNames,type:cgType,createdAt:Date.now(),expiresAt};
     const next=[g,...groups];setGroups(next);lsSet("network-groups",next);
     setCreateGroupOpen(false);resetCreateGroup();
   };
@@ -2554,35 +2774,42 @@ function FriendsChat(){
             {searchQ&&<button onClick={()=>setSearchQ("")} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:0,display:"flex",lineHeight:1,flexShrink:0}}>{Icon.xmark}</button>}
           </div>
           <Card style={{padding:0,overflow:"hidden"}}>
-            {!noResults
-              ?(searchQ.trim()?filtered:NETWORK_DIRECTORY.slice(0,6)).map((u,i,arr)=>{
-                  const added=addedUsers.includes(u.h);
-                  return (
-                    <div key={u.h} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
-                      <div style={{position:"relative",flexShrink:0}}>
-                        <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={34} picUrl="" />
-                        <div style={{position:"absolute",bottom:0,right:0,width:9,height:9,borderRadius:"50%",background:u.online?T.teal:T.faint,border:`2px solid ${T.card}`}} />
+            {!searchQ.trim()
+              ?<div style={{padding:24,textAlign:"center",fontSize:12.5,color:T.muted,lineHeight:1.6}}>Search by username, name, or school to find classmates already on Studlin.</div>
+              :searching
+                ?<div style={{padding:24,textAlign:"center",fontSize:12.5,color:T.muted}}>Searching…</div>
+                :!noResults
+                  ?searchResults.map((u,i,arr)=>{
+                      const isFriend=friends.some(f=>f.uid===u.uid);
+                      const incomingFromThem=incomingReqs.find(r=>r.senderId===u.uid);
+                      const isPendingOut=outgoingReqIds.has(u.uid);
+                      const label=isFriend?"Following":incomingFromThem?"Accept":isPendingOut?"Pending":"Add";
+                      const onClickBtn=isFriend||isPendingOut?undefined:incomingFromThem?()=>acceptReq(incomingFromThem.id):()=>sendFriendRequest(u.uid);
+                      return (
+                        <div key={u.uid} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
+                          <div style={{position:"relative",flexShrink:0}}>
+                            <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={34} picUrl="" />
+                          </div>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:13,fontWeight:600,color:T.white}}>{u.n}</div>
+                            <div style={{fontSize:11,color:T.muted}}>{u.h}{u.s&&<> · <span style={{color:T.blue}}>{u.s}</span></>}</div>
+                          </div>
+                          <BtnSm variant={label==="Add"||label==="Accept"?"lime":"subtle"} onClick={onClickBtn} style={{flexShrink:0,opacity:onClickBtn?1:0.7}}>{label}</BtnSm>
+                        </div>
+                      );
+                    })
+                  :<div style={{padding:20}}>
+                      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+                        <div style={{width:34,height:34,borderRadius:9,background:T.blue+"18",border:`1px solid ${T.blue}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.blue,flexShrink:0}}>{Icon.mail}</div>
+                        <div>
+                          <div style={{fontSize:13,fontWeight:700,color:T.white}}>No one found for "{searchQ}"</div>
+                          <div style={{fontSize:11,color:T.muted}}>Invite them to join Studlin via email.</div>
+                        </div>
                       </div>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:13,fontWeight:600,color:T.white}}>{u.n}</div>
-                        <div style={{fontSize:11,color:T.muted}}>{u.h} · <span style={{color:T.blue}}>{u.s}</span></div>
-                      </div>
-                      <BtnSm variant={added?"subtle":"lime"} onClick={()=>toggleAdd(u.h)} style={{flexShrink:0}}>{added?"Following":"Add"}</BtnSm>
+                      <input value={inviteEmail} onChange={e=>setInviteEmail(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")sendEmailInvite();}} placeholder="friend@university.edu" style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",boxSizing:"border-box",marginBottom:10}} />
+                      {emailSent&&<div style={{fontSize:12,color:T.teal,marginBottom:8}}>Invite sent!</div>}
+                      <Btn onClick={sendEmailInvite} style={{width:"100%",justifyContent:"center",opacity:inviteEmail.trim()?1:0.45}}>{Icon.mail} Send invite</Btn>
                     </div>
-                  );
-                })
-              :<div style={{padding:20}}>
-                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
-                    <div style={{width:34,height:34,borderRadius:9,background:T.blue+"18",border:`1px solid ${T.blue}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.blue,flexShrink:0}}>{Icon.mail}</div>
-                    <div>
-                      <div style={{fontSize:13,fontWeight:700,color:T.white}}>No one found for "{searchQ}"</div>
-                      <div style={{fontSize:11,color:T.muted}}>Invite them to join Studlin via email.</div>
-                    </div>
-                  </div>
-                  <input value={inviteEmail} onChange={e=>setInviteEmail(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")sendEmailInvite();}} placeholder="friend@university.edu" style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",boxSizing:"border-box",marginBottom:10}} />
-                  {emailSent&&<div style={{fontSize:12,color:T.teal,marginBottom:8}}>Invite sent!</div>}
-                  <Btn onClick={sendEmailInvite} style={{width:"100%",justifyContent:"center",opacity:inviteEmail.trim()?1:0.45}}>{Icon.mail} Send invite</Btn>
-                </div>
             }
           </Card>
         </div>
@@ -2633,66 +2860,72 @@ function FriendsChat(){
         </button>
       </div>
 
-      {/* ── FRIENDS LIST & ACTIVE GROUPS ── */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:24}}>
-        <div>
-          <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8}}>My Friends</div>
-          <Card style={{padding:0,overflow:"hidden"}}>
-            {myFriends.length===0
-              ?<div style={{padding:20,fontSize:12.5,color:T.muted,lineHeight:1.6}}>No friends yet. Search above to add classmates.</div>
-              :myFriends.map((u,i)=>(
-                <div key={u.h} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<myFriends.length-1?`1px solid ${T.border}`:"none"}}>
-                  <div style={{position:"relative",flexShrink:0}}>
-                    <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={34} picUrl="" />
-                    <div style={{position:"absolute",bottom:0,right:0,width:9,height:9,borderRadius:"50%",background:u.online?T.teal:T.faint,border:`2px solid ${T.card}`}} />
-                  </div>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:13,fontWeight:600,color:T.white}}>{u.n}</div>
-                    <div style={{fontSize:11,color:T.muted}}>{u.h} · <span style={{color:T.blue}}>{u.s}</span></div>
-                  </div>
-                  <button onClick={()=>setChatTarget({kind:"dm",user:u})} style={{width:32,height:32,borderRadius:9,border:`1px solid ${T.border}`,background:T.card2,color:T.lime,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.msgSquare}</button>
-                </div>
-              ))
-            }
-          </Card>
-        </div>
-
-        <div>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-            <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint}}>Active Groups</div>
-            <button onClick={()=>{resetCreateGroup();setCreateGroupOpen(true);}} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:T.lime,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>{Icon.plus} Create Group</button>
+      {/* ── UNIFIED INBOX — "All" (DMs + groups, chronological) / "Groups" ── */}
+      <div style={{marginBottom:24}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+          <div style={{display:"flex",gap:6}}>
+            {["All","Groups"].map(t=>(
+              <button key={t} onClick={()=>setInboxTab(t)} style={{padding:"5px 13px",borderRadius:99,fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,border:`1px solid ${inboxTab===t?T.lime+"55":T.border}`,background:inboxTab===t?T.lime+"14":"transparent",color:inboxTab===t?T.lime:T.muted,transition:"all 0.12s"}}>{t}</button>
+            ))}
           </div>
-          <Card style={{padding:0,overflow:"hidden"}}>
-            {activeGroups.length===0
-              ?<div style={{padding:20,fontSize:12.5,color:T.muted,lineHeight:1.6}}>No groups yet. Create one to start a project chat.</div>
-              :activeGroups.map((g,i)=>{
+          <button onClick={()=>{resetCreateGroup();setCreateGroupOpen(true);}} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:T.lime,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>{Icon.plus} Create Group</button>
+        </div>
+        <Card style={{padding:0,overflow:"hidden"}}>
+          {inboxShown.length===0
+            ?<div style={{padding:20,fontSize:12.5,color:T.muted,lineHeight:1.6}}>{inboxTab==="Groups"?"No groups yet. Create one to start a project chat.":"No friends or groups yet. Search above to add classmates."}</div>
+            :inboxShown.map((row,i)=>{
+                if(row.kind==="group"){
+                  const g=row.group;
                   const expiry=fmtGroupCountdown(g.expiresAt);
                   return (
-                    <div key={g.id} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<activeGroups.length-1?`1px solid ${T.border}`:"none"}}>
+                    <div key={row.key} onClick={()=>setChatTarget({kind:"group",group:g})} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<inboxShown.length-1?`1px solid ${T.border}`:"none",cursor:"pointer"}}>
                       <div style={{width:34,height:34,borderRadius:10,background:T.purple+"18",border:`1px solid ${T.purple}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.purple,flexShrink:0}}>{Icon.users}</div>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{fontSize:13,fontWeight:600,color:T.white}}>{g.name}</div>
-                        <div style={{fontSize:11,color:T.muted}}>{g.memberHandles.length+1} members{expiry?<> · <span style={{color:expiry.urgent?T.amber:T.purple}}>Archives in {expiry.label}</span></>:""}</div>
+                        <div style={{fontSize:11,color:T.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{row.preview||(g.memberHandles.length+1)+" members"}{expiry?<> · <span style={{color:expiry.urgent?T.amber:T.purple}}>Archives in {expiry.label}</span></>:""}</div>
                       </div>
-                      <button onClick={()=>setChatTarget({kind:"group",group:g})} style={{width:32,height:32,borderRadius:9,border:`1px solid ${T.border}`,background:T.card2,color:T.lime,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.msgSquare}</button>
+                      <button onClick={e=>{e.stopPropagation();setChatTarget({kind:"group",group:g});}} style={{width:32,height:32,borderRadius:9,border:`1px solid ${T.border}`,background:T.card2,color:T.lime,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.msgSquare}</button>
                     </div>
                   );
-                })
-            }
-          </Card>
-        </div>
+                }
+                const u=row.user;
+                const pr=presenceInfo(u);
+                const revealed=joinRevealFor===u.h;
+                return (
+                  <div key={row.key} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<inboxShown.length-1?`1px solid ${T.border}`:"none"}}>
+                    <div onClick={()=>setChatTarget({kind:"dm",user:u})} style={{position:"relative",flexShrink:0,cursor:"pointer"}}>
+                      <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={34} picUrl="" />
+                      <div style={{position:"absolute",bottom:0,right:0,width:9,height:9,borderRadius:"50%",background:pr.color,border:`2px solid ${T.card}`}} />
+                    </div>
+                    <div onClick={()=>setChatTarget({kind:"dm",user:u})} style={{flex:1,minWidth:0,cursor:"pointer"}}>
+                      <div style={{fontSize:13,fontWeight:600,color:T.white}}>{u.n}</div>
+                      <div onClick={e=>{if(pr.joinable){e.stopPropagation();setJoinRevealFor(revealed?null:u.h);}}} style={{fontSize:11,color:pr.color,fontWeight:pr.joinable?600:400,cursor:pr.joinable?"pointer":"default",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{row.preview&&!pr.joinable?row.preview:pr.text}</div>
+                    </div>
+                    {revealed&&pr.joinable
+                      ?<button onClick={()=>joinLockIn(u)} style={{flexShrink:0,padding:"7px 14px",borderRadius:99,background:T.teal,color:T.ink,border:"none",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,boxShadow:`0 0 0 4px ${T.teal}22, 0 4px 14px -4px ${T.teal}88`,whiteSpace:"nowrap"}}>Join Lock-In</button>
+                      :<button onClick={()=>setChatTarget({kind:"dm",user:u})} style={{width:32,height:32,borderRadius:9,border:`1px solid ${T.border}`,background:T.card2,color:T.lime,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.msgSquare}</button>
+                    }
+                  </div>
+                );
+              })
+          }
+        </Card>
       </div>
 
+      {netToast&&(
+        <div style={{position:"fixed",bottom:22,left:"50%",transform:"translateX(-50%)",zIndex:900,padding:"10px 18px",background:T.ink,color:T.cream,borderRadius:99,fontSize:12.5,fontWeight:600,boxShadow:"0 16px 40px -12px rgba(0,0,0,0.5)",animation:"studlinPop 0.2s cubic-bezier(.2,.85,.3,1)"}}>{netToast}</div>
+      )}
+
       {/* ── INCOMING FRIEND REQUESTS ── */}
-      {friendReqs.length>0&&(
+      {incomingReqs.length>0&&(
         <div style={{marginBottom:16}}>
           <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8,display:"flex",alignItems:"center",gap:8}}>
             Incoming Requests
-            <span style={{background:T.amber,color:T.ink,fontSize:9,fontWeight:800,borderRadius:4,padding:"1px 6px"}}>{friendReqs.length}</span>
+            <span style={{background:T.amber,color:T.ink,fontSize:9,fontWeight:800,borderRadius:4,padding:"1px 6px"}}>{incomingReqs.length}</span>
           </div>
           <Card style={{padding:0,overflow:"hidden"}}>
-            {friendReqs.map((req,i)=>(
-              <div key={req.id} style={{display:"flex",alignItems:"center",gap:12,padding:"13px 16px",borderBottom:i<friendReqs.length-1?`1px solid ${T.border}`:"none",transition:"background 0.15s"}}>
+            {incomingReqs.map((req,i)=>(
+              <div key={req.id} style={{display:"flex",alignItems:"center",gap:12,padding:"13px 16px",borderBottom:i<incomingReqs.length-1?`1px solid ${T.border}`:"none",transition:"background 0.15s"}}>
                 <Av initials={req.n.split(" ").map(x=>x[0]).join("")} color={T.amber} size={36} picUrl="" />
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontSize:13,fontWeight:600,color:T.white}}>{req.n}</div>
@@ -2741,7 +2974,7 @@ function FriendsChat(){
 
       {/* ── CREATE GROUP MODAL ── */}
       <Modal open={createGroupOpen} onClose={()=>{setCreateGroupOpen(false);resetCreateGroup();}} title="Create a group" sub="Standard chat, or a project group that archives itself." width={480}
-        footer={<><Btn variant="subtle" onClick={()=>{setCreateGroupOpen(false);resetCreateGroup();}}>Cancel</Btn><Btn onClick={submitCreateGroup} style={{opacity:cgName.trim()&&cgMembers.length>0?1:0.45}}>{Icon.plus} Create group</Btn></>}>
+        footer={<><Btn variant="subtle" onClick={()=>{setCreateGroupOpen(false);resetCreateGroup();}}>Cancel</Btn><Btn onClick={submitCreateGroup} style={{opacity:cgName.trim()&&cgMembers.length>0&&!cgCustomInvalid?1:0.45}}>{Icon.plus} Create group</Btn></>}>
         <Field label="Group name"><Input placeholder="e.g. Bio Study Group" value={cgName} onChange={e=>setCgName(e.target.value)} autoFocus /></Field>
         <Field label="Members" hint={myFriends.length===0?"Add friends first to start a group.":null}>
           <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:150,overflowY:"auto"}}>
@@ -2774,12 +3007,16 @@ function FriendsChat(){
           </div>
         </Field>
         {cgType==="temporary"&&(
-          <Field label="Archive after">
+          <Field label="Archive after" hint="Pick a preset, or set a custom date — e.g. your final exam day.">
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
               {GROUP_DURATIONS.map(d=>(
                 <button key={d.label} onClick={()=>setCgDuration(d.label)} style={{padding:"7px 13px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${cgDuration===d.label?T.purple+"66":T.border}`,background:cgDuration===d.label?T.purple+"14":"transparent",color:cgDuration===d.label?T.purple:T.muted,fontFamily:T.font,fontWeight:cgDuration===d.label?600:400}}>{d.label}</button>
               ))}
+              <button onClick={()=>setCgDuration("Custom date")} style={{padding:"7px 13px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${cgDuration==="Custom date"?T.purple+"66":T.border}`,background:cgDuration==="Custom date"?T.purple+"14":"transparent",color:cgDuration==="Custom date"?T.purple:T.muted,fontFamily:T.font,fontWeight:cgDuration==="Custom date"?600:400}}>Custom date</button>
             </div>
+            {cgDuration==="Custom date"&&(
+              <Input type="date" value={cgCustomDate} onChange={e=>setCgCustomDate(e.target.value)} min={new Date().toISOString().slice(0,10)} style={{marginTop:10}} />
+            )}
           </Field>
         )}
       </Modal>
@@ -2802,35 +3039,46 @@ function panelPalette(){
     card2: isLight?"rgba(246,241,230,0.08)":T.card2,
   };
 }
-function ChatBubble({m}){
+function ChatBubble({m,onRespond,onSchedule}){
   const pp=panelPalette();
   const mine=m.from==="me";
   const align=mine?"flex-end":"flex-start";
   const bg=mine?T.lime+"1F":pp.card2;
   const border=mine?T.lime+"40":pp.border;
   if(m.kind==="calendar"){
+    const w=m.meta;
     return (
-      <div style={{alignSelf:"center",width:"100%",padding:"12px 13px",background:T.purple+"1A",border:`1px solid ${T.purple}40`,borderRadius:12}}>
-        <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:8,color:T.purple,fontSize:11,fontWeight:700}}>{Icon.cal} Shared free time found</div>
-        {(m.meta.slots||[]).map((s,i)=>(
-          <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",borderRadius:7,background:s.best?T.lime+"18":"transparent",marginBottom:3}}>
-            <div style={{flex:1}}><div style={{fontSize:11.5,fontWeight:600,color:s.best?T.lime:pp.text}}>{s.day}</div><div style={{fontSize:10,color:pp.muted}}>{s.time}</div></div>
-            <div style={{fontSize:9.5,fontWeight:700,color:pp.muted}}>{s.match}</div>
-            {s.best&&<div style={{fontSize:9.5,color:T.lime}}>★ Best</div>}
-          </div>
-        ))}
+      <div style={{alignSelf:"center",width:"100%",padding:"14px 15px",background:T.purple+"1A",border:`1px solid ${T.purple}40`,borderRadius:12}}>
+        <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:8,color:T.purple,fontSize:11,fontWeight:700}}>🤖 Studlin Match</div>
+        <div style={{fontSize:12.5,color:pp.text,lineHeight:1.55,marginBottom:12}}>Found an optimal <strong>{w.duration}-minute</strong> study window <strong>{w.dayLabel} at {w.timeLabel}</strong> where everyone is free!</div>
+        {m.status==="scheduled"
+          ?<div style={{fontSize:11.5,color:T.lime,fontWeight:600}}>✓ Scheduled — added to your calendar</div>
+          :<button onClick={()=>onSchedule(m.id)} style={{width:"100%",padding:"9px 0",borderRadius:8,background:T.lime,color:T.bg,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Schedule Group Session</button>
+        }
       </div>
     );
   }
   if(m.kind==="note"||m.kind==="deck"){
     const isNote=m.kind==="note";
+    const incoming=m.direction==="incoming";
+    const pending=m.status==="pending";
     return (
-      <div style={{alignSelf:align,maxWidth:"84%",display:"flex",alignItems:"center",gap:10,padding:"10px 12px",background:bg,border:`1px solid ${border}`,borderRadius:12}}>
-        <span style={{color:isNote?T.amber:T.teal,flexShrink:0}}>{isNote?Icon.file:Icon.layers}</span>
-        <div style={{minWidth:0}}>
-          <div style={{fontSize:12,fontWeight:700,color:pp.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{isNote?m.meta.title:m.meta.name}</div>
-          <div style={{fontSize:10.5,color:pp.muted}}>{isNote?"Note shared":m.meta.count+" cards · Deck shared"}</div>
+      <div style={{alignSelf:align,maxWidth:"86%",padding:"10px 12px",background:bg,border:`1px solid ${border}`,borderRadius:12}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <span style={{color:isNote?T.amber:T.teal,flexShrink:0}}>{isNote?Icon.file:Icon.layers}</span>
+          <div style={{minWidth:0,flex:1}}>
+            <div style={{fontSize:12,fontWeight:700,color:pp.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{isNote?m.meta.title:m.meta.name}</div>
+            <div style={{fontSize:10.5,color:pp.muted}}>{isNote?"Note":m.meta.count+" cards"}{incoming?" · shared with you":" · you shared this"}</div>
+          </div>
         </div>
+        {pending&&(
+          <div style={{display:"flex",gap:8,marginTop:10}}>
+            <button onClick={()=>onRespond(m.id,"approved")} style={{flex:1,padding:"7px 0",borderRadius:7,background:T.lime,color:T.bg,border:"none",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>{incoming?"Approve & Accept":"Approve & Send"}</button>
+            <button onClick={()=>onRespond(m.id,"declined")} style={{flex:1,padding:"7px 0",borderRadius:7,background:"transparent",color:pp.muted,border:`1px solid ${pp.border}`,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Decline</button>
+          </div>
+        )}
+        {m.status==="approved"&&<div style={{fontSize:10,color:T.lime,marginTop:8,fontWeight:600}}>{incoming?"✓ Added to your workspace":"✓ Sent"}</div>}
+        {m.status==="declined"&&<div style={{fontSize:10,color:pp.faint,marginTop:8,fontWeight:600}}>Declined</div>}
       </div>
     );
   }
@@ -2875,17 +3123,79 @@ function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
   const pushMessage=(msg)=>persist([...messages,{id:Date.now()+"-"+Math.random(),ts:Date.now(),...msg}]);
 
   const sendText=()=>{if(!input.trim())return;pushMessage({from:"me",kind:"text",text:input.trim()});setInput("");};
+  // Scans everyone's schedules for an overlapping free block. There's no real
+  // shared-schedule backend behind these mock friends, so the "scan" is
+  // simulated, but the resulting slot is real and genuinely bookable below.
+  const findSharedStudyWindow=()=>{
+    const d=new Date();d.setDate(d.getDate()+1);d.setHours(15,0,0,0);
+    return{date:dayKey(d),time:"15:00",duration:90,dayLabel:"tomorrow",timeLabel:"3:00 PM"};
+  };
   const runCalendarSync=()=>{
     setQuickOpen(false);setSyncRunning(true);
-    setTimeout(()=>{setSyncRunning(false);pushMessage({from:"me",kind:"calendar",meta:{slots:NETWORK_SYNC_SLOTS}});},2100);
+    setTimeout(()=>{setSyncRunning(false);pushMessage({from:"me",kind:"calendar",status:"unscheduled",meta:findSharedStudyWindow()});},2100);
   };
-  const attachNote=(note)=>{pushMessage({from:"me",kind:"note",meta:{title:note.title,id:note.id}});setNotePicker(false);};
-  const attachDeck=(deck)=>{pushMessage({from:"me",kind:"deck",meta:{name:deck.name,count:deck.cards?deck.cards.length:(deck.count||0),id:deck.id}});setDeckPicker(false);};
+  // Injects the matched window into the current user's own calendar as a
+  // study block. (Only this browser's calendar can actually be written to —
+  // there's no backend to push the event into other members' accounts too.)
+  const scheduleGroupSession=(id)=>{
+    const msg=messages.find(x=>x.id===id);
+    if(!msg)return;
+    const w=msg.meta;
+    const events=lsGet("events",[]);
+    const ev={id:"netsync-"+Date.now(),date:w.date,time:w.time,duration:w.duration,title:peerName+" study session",subject:peerName,kind:"study block"};
+    lsSet("events",[...events,ev]);
+    persist(messages.map(x=>x.id===id?{...x,status:"scheduled"}:x));
+  };
+  // Sharing a note/deck posts a pending card first — a lightweight one-click
+  // confirmation before it actually goes out (mirrors the same verification
+  // loop used for incoming shares below).
+  const attachNote=(note)=>{pushMessage({from:"me",kind:"note",direction:"outgoing",status:"pending",meta:{title:note.title,id:note.id,body:note.body}});setNotePicker(false);};
+  const attachDeck=(deck)=>{pushMessage({from:"me",kind:"deck",direction:"outgoing",status:"pending",meta:{name:deck.name,count:deck.cards?deck.cards.length:(deck.count||0),id:deck.id,cards:deck.cards}});setDeckPicker(false);};
+
+  const peerName=target?(isGroup?target.group.name:target.user.n):"";
+  const peerFirst=peerName.split(" ")[0];
+
+  // Approve/decline for both directions. Incoming approvals do the real work:
+  // copy the shared resource into the recipient's own Notes/Flashcards workspace.
+  const respondToShare=(id,decision)=>{
+    const msg=messages.find(x=>x.id===id);
+    if(!msg)return;
+    if(decision==="approved"&&msg.direction==="incoming"){
+      if(msg.kind==="note"){
+        const notes=lsGet("notes",[]);
+        const copy={id:String(Date.now()),title:msg.meta.title,body:msg.meta.body||"<p>Shared from "+peerName+".</p>",tag:"Shared",date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now(),source:"shared",sharedFrom:peerName};
+        lsSet("notes",[copy,...notes]);
+      }else if(msg.kind==="deck"){
+        const decks=lsGet("decks",[]);
+        const copy={id:String(Date.now()),name:msg.meta.name,count:(msg.meta.cards||[]).length,done:0,color:T.teal,cards:msg.meta.cards||[],source:"imported",importedFrom:peerName};
+        lsSet("decks",[copy,...decks]);
+      }
+    }
+    persist(messages.map(x=>x.id===id?{...x,status:decision}:x));
+  };
+
+  // Simulated incoming share requests — there's no real second Studlin account
+  // behind these mock friends, so the "friend's" response is fabricated locally,
+  // but the approve/decline UI and the copy-into-workspace step are fully real.
+  const requestNote=()=>{
+    setQuickOpen(false);
+    pushMessage({from:"me",kind:"text",text:"Requested notes from "+peerFirst+"."});
+    setTimeout(()=>{
+      pushMessage({from:"them",kind:"note",direction:"incoming",status:"pending",meta:{title:peerFirst+"'s notes",body:"<h3>"+peerFirst+"'s notes</h3><p>Shared from their Studlin workspace.</p>"}});
+    },1600);
+  };
+  const requestDeck=()=>{
+    setQuickOpen(false);
+    pushMessage({from:"me",kind:"text",text:"Requested a flashcard deck from "+peerFirst+"."});
+    setTimeout(()=>{
+      pushMessage({from:"them",kind:"deck",direction:"incoming",status:"pending",meta:{name:peerFirst+"'s deck",cards:[{q:"Sample question from "+peerFirst,a:"Sample answer"},{q:"Second card",a:"Second answer"}]}});
+    },1600);
+  };
 
   const notesList=lsGet("notes",[]);
   const decksList=lsGet("decks",[]);
   const expiry=isGroup?fmtGroupCountdown(target.group.expiresAt):null;
-  const title=target?(isGroup?target.group.name:target.user.n):"";
+  const title=peerName;
   const subtitle=target?(isGroup?(target.group.memberHandles.length+1)+" members":target.user.h+" · "+target.user.s):"";
   const pp=panelPalette(); // drawer is a permanently-dark panel (like the sidebar) — needs its own light-on-dark text colors
   const qaBtn={display:"flex",alignItems:"center",gap:10,width:"100%",padding:"10px 11px",borderRadius:9,border:"none",background:"transparent",cursor:"pointer",fontFamily:T.font,fontSize:12.5,fontWeight:600,color:pp.text,textAlign:"left"};
@@ -2919,7 +3229,7 @@ function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
 
           <div ref={scrollRef} style={{flex:1,overflowY:"auto",padding:"16px 18px",display:"flex",flexDirection:"column",gap:10}}>
             {messages.length===0&&<div style={{textAlign:"center",color:pp.faint,fontSize:12,marginTop:40}}>No messages yet. Say hi.</div>}
-            {messages.map(m=><ChatBubble key={m.id} m={m} />)}
+            {messages.map(m=><ChatBubble key={m.id} m={m} onRespond={respondToShare} onSchedule={scheduleGroupSession} />)}
           </div>
 
           {notePicker&&(
@@ -2960,9 +3270,11 @@ function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
           )}
           {quickOpen&&(
             <div style={{borderTop:`1px solid ${pp.border}`,padding:"8px",display:"flex",flexDirection:"column",gap:2}}>
-              <button onClick={runCalendarSync} style={qaBtn}><span style={{color:T.purple,display:"flex"}}>{Icon.cal}</span><span style={{flex:1}}>Sync Calendar</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Find free time</span></button>
+              <button onClick={runCalendarSync} style={qaBtn}><span style={{color:T.purple,display:"flex"}}>{Icon.cal}</span><span style={{flex:1}}>Find Shared Study Window</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Find free time</span></button>
               <button onClick={()=>{setNotePicker(true);setDeckPicker(false);setQuickOpen(false);}} style={qaBtn}><span style={{color:T.amber,display:"flex"}}>{Icon.file}</span><span style={{flex:1}}>Send Notes</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Drop a note link</span></button>
               <button onClick={()=>{setDeckPicker(true);setNotePicker(false);setQuickOpen(false);}} style={qaBtn}><span style={{color:T.teal,display:"flex"}}>{Icon.layers}</span><span style={{flex:1}}>Send Flashcard Deck</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Share a deck</span></button>
+              <button onClick={requestNote} style={qaBtn}><span style={{color:T.amber,display:"flex"}}>{Icon.file}</span><span style={{flex:1}}>Request a Note</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Ask {peerFirst||"them"}</span></button>
+              <button onClick={requestDeck} style={qaBtn}><span style={{color:T.teal,display:"flex"}}>{Icon.layers}</span><span style={{flex:1}}>Request a Deck</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Ask {peerFirst||"them"}</span></button>
             </div>
           )}
 
@@ -2981,16 +3293,16 @@ function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
             <div style={{display:"flex",alignItems:"center",gap:9}}>
               <Av initials="ME" color={T.lime} size={28} picUrl="" />
               <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>You</div>
-              <div style={{width:7,height:7,borderRadius:"50%",background:isOnlineStatusOn()?T.teal:T.faint,marginLeft:"auto"}} />
+              <div style={{width:7,height:7,borderRadius:"50%",background:isOnlineStatusOn()&&!isIncognitoOn()?T.teal:T.faint,marginLeft:"auto"}} />
             </div>
             {target.group.memberHandles.map(h=>{
-              const u=NETWORK_DIRECTORY.find(x=>x.h===h);
-              if(!u)return null;
+              const fromDirectory=NETWORK_DIRECTORY.find(x=>x.h===h);
+              const name=fromDirectory?fromDirectory.n:(target.group.memberNames&&target.group.memberNames[h])||h;
               return (
                 <div key={h} style={{display:"flex",alignItems:"center",gap:9}}>
-                  <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={28} picUrl="" />
-                  <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>{u.n}</div>
-                  <div style={{width:7,height:7,borderRadius:"50%",background:u.online?T.teal:T.faint,marginLeft:"auto"}} />
+                  <Av initials={name.split(" ").map(x=>x[0]).join("")} color={T.lime} size={28} picUrl="" />
+                  <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>{name}</div>
+                  <div style={{width:7,height:7,borderRadius:"50%",background:fromDirectory&&fromDirectory.online?T.teal:T.faint,marginLeft:"auto"}} />
                 </div>
               );
             })}
@@ -3039,20 +3351,43 @@ function TaskTimerModal({task,onClose,onComplete}){
   const [secs,setSecs]=useState(0);
   const [running,setRunning]=useState(false);
   const [soundOn,setSoundOn]=useState(true);
-  const [pausedByViolation,setPausedByViolation]=useState(false);
-  const [violationCount,setViolationCount]=useState(0);
-  const violatedRef=useRef(false);
+  const [completion,setCompletion]=useState(null);
+  const [barFilled,setBarFilled]=useState(false);
+  const [rankRisen,setRankRisen]=useState(false);
 
   const playBeep=()=>{try{const ctx=new(window.AudioContext||window.webkitAudioContext)();const osc=ctx.createOscillator();const gain=ctx.createGain();osc.connect(gain);gain.connect(ctx.destination);osc.frequency.setValueAtTime(880,ctx.currentTime);osc.frequency.exponentialRampToValueAtTime(440,ctx.currentTime+0.3);gain.gain.setValueAtTime(0.3,ctx.currentTime);gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.35);osc.start(ctx.currentTime);osc.stop(ctx.currentTime+0.35);}catch(e){}};
 
-  const enterFullscreen=()=>{try{const el=document.documentElement;const req=el.requestFullscreen||el.webkitRequestFullscreen||el.msRequestFullscreen;if(req)req.call(el).catch(()=>{});}catch(e){}};
-  const exitFullscreenSafe=()=>{try{if(document.fullscreenElement||document.webkitFullscreenElement){const ex=document.exitFullscreen||document.webkitExitFullscreen;if(ex)ex.call(document).catch(()=>{});}}catch(e){}};
-  const isActiveFocusPhase=(p)=>p==="focus1"||p==="focus2";
-  const applyPenalty=(mins)=>violatedRef.current?Math.max(1,Math.floor(mins*0.75)):mins;
-
   const focus2Mins=Math.max(1,totalMins-breakPos-breakMins);
   const fmt=s=>String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0");
-  const circumference=2*Math.PI*52;
+
+  // Logs the session, awards XP, then reveals the reward summary — the modal
+  // stays open (as the "done" screen) until the student dismisses it.
+  const completeSession=(mins)=>{
+    const name=getUserName();
+    const streak=getStreak();
+    const xpBefore=getXP();
+    const rowsBefore=buildLeaderboard(name,xpBefore,streak);
+    const rankBefore=(rowsBefore.find(u=>u.you)||{}).r||rowsBefore.length;
+    if(onComplete)onComplete(mins);
+    if(task.coop){
+      // Co-op multiplier: +20% on top of the normal session XP (1.2x total).
+      const bonus=Math.round(calcSessionXP(mins)*0.2);
+      if(bonus>0)lsSet("xpBonus",lsGet("xpBonus",0)+bonus);
+    }
+    const xpAfter=getXP();
+    const rowsAfter=buildLeaderboard(name,xpAfter,streak);
+    const rankAfter=(rowsAfter.find(u=>u.you)||{}).r||rowsAfter.length;
+    setCompletion({
+      mins,
+      gain:Math.max(0,xpAfter-xpBefore),
+      xpAfter,
+      tierBefore:getProfTitle(xpBefore),
+      tierAfter:getProfTitle(xpAfter),
+      rankBefore,rankAfter,rows:rowsAfter,
+    });
+    setPhase("done");
+    setRunning(false);
+  };
 
   useEffect(()=>{
     if(!running)return;
@@ -3065,8 +3400,7 @@ function TaskTimerModal({task,onClose,onComplete}){
         if(phase==="focus1"){setPhase("break");setRunning(false);if(soundOn)playBeep();}
         else if(phase==="break"){setPhase("breakDone");setRunning(false);if(soundOn)playBeep();}
         else if(phase==="focus2"){
-          setPhase("done");setRunning(false);
-          if(onComplete)onComplete(applyPenalty(Math.max(1,Math.round(focusElapsed.current/60))));
+          completeSession(Math.max(1,Math.round(focusElapsed.current/60)));
         }
       }
     },250);
@@ -3077,38 +3411,13 @@ function TaskTimerModal({task,onClose,onComplete}){
         focusStartRef.current=null;
       }
     };
-  },[running,phase,totalMins,onComplete]);
+  },[running,phase,totalMins]);
 
   useEffect(()=>{
     if(phase==="break"){setSecs(breakMins*60);setRunning(true);}
   },[phase,breakMins]);
 
-  // ── FOCUS LOCKDOWN: detect tab-switch / fullscreen exit, pause + flag ─────
-  useEffect(()=>{
-    const onViolation=()=>{
-      if(running&&isActiveFocusPhase(phase)){
-        setRunning(false);
-        setPausedByViolation(true);
-        violatedRef.current=true;
-        setViolationCount(c=>c+1);
-      }
-    };
-    const onVisibility=()=>{if(document.hidden)onViolation();};
-    const onFullscreenChange=()=>{
-      const inFs=!!(document.fullscreenElement||document.webkitFullscreenElement);
-      if(!inFs)onViolation();
-    };
-    document.addEventListener("visibilitychange",onVisibility);
-    document.addEventListener("fullscreenchange",onFullscreenChange);
-    document.addEventListener("webkitfullscreenchange",onFullscreenChange);
-    return()=>{
-      document.removeEventListener("visibilitychange",onVisibility);
-      document.removeEventListener("fullscreenchange",onFullscreenChange);
-      document.removeEventListener("webkitfullscreenchange",onFullscreenChange);
-    };
-  },[running,phase]);
-
-  // ── FOCUS LOCKDOWN: warn before closing the tab mid-session ───────────────
+  // ── Warn before closing the tab mid-session ───────────────────────────────
   useEffect(()=>{
     const sessionLive=phase==="focus1"||phase==="break"||phase==="breakDone"||phase==="focus2";
     if(!sessionLive)return;
@@ -3117,20 +3426,18 @@ function TaskTimerModal({task,onClose,onComplete}){
     return()=>window.removeEventListener("beforeunload",onBeforeUnload);
   },[phase]);
 
-  const resumeFromViolation=()=>{
-    setPausedByViolation(false);
-    enterFullscreen();
-    setRunning(true);
-  };
-
-  useEffect(()=>{if(phase==="done")exitFullscreenSafe();},[phase]);
-  useEffect(()=>()=>{exitFullscreenSafe();},[]);
+  // ── Reward reveal sequence: XP bar fills first, then (if the student
+  // passed classmates) their leaderboard position climbs into view ─────────
+  useEffect(()=>{
+    if(phase!=="done"||!completion)return;
+    setBarFilled(false);setRankRisen(false);
+    const t1=setTimeout(()=>setBarFilled(true),80);
+    const t2=setTimeout(()=>setRankRisen(true),950);
+    return()=>{clearTimeout(t1);clearTimeout(t2);};
+  },[phase,completion]);
 
   const startLockIn=()=>{
     focusElapsed.current=0;
-    violatedRef.current=false;
-    setViolationCount(0);
-    enterFullscreen();
     if(breakOn&&totalMins>=15&&focus2Mins>0){
       setPhase("focus1");setSecs(breakPos*60);setRunning(true);
     }else{
@@ -3138,16 +3445,14 @@ function TaskTimerModal({task,onClose,onComplete}){
     }
   };
 
-  const resume=()=>{enterFullscreen();setPhase("focus2");setSecs(focus2Mins*60);setRunning(true);};
+  const resume=()=>{setPhase("focus2");setSecs(focus2Mins*60);setRunning(true);};
 
   const finishEarly=()=>{
     if(phase!=="break"&&focusStartRef.current){
       focusElapsed.current+=(Date.now()-focusStartRef.current)/1000;
       focusStartRef.current=null;
     }
-    const m=applyPenalty(Math.max(1,Math.round(focusElapsed.current/60)));
-    setPhase("done");setRunning(false);
-    if(onComplete)onComplete(m);
+    completeSession(Math.max(1,Math.round(focusElapsed.current/60)));
   };
 
   const updateBreakPos=(e)=>{
@@ -3203,7 +3508,10 @@ function TaskTimerModal({task,onClose,onComplete}){
           {/* Interactive timeline */}
           <div style={{marginBottom:24,textAlign:"left"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-              <span style={{fontSize:11,fontWeight:600,color:T.muted,letterSpacing:"0.06em",textTransform:"uppercase"}}>Challenge placement</span>
+              <div>
+                <div style={{fontSize:11,fontWeight:600,color:T.muted,letterSpacing:"0.06em",textTransform:"uppercase"}}>Add Break Time</div>
+                <div style={{fontSize:10,color:T.faint,marginTop:2}}>Toggle on to include a timed break.</div>
+              </div>
               <div onClick={()=>setBreakOn(b=>!b)} style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
                 <div style={{width:30,height:17,borderRadius:99,background:breakOn?T.lime:T.faint,position:"relative",transition:"background 0.2s"}}>
                   <div style={{width:13,height:13,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:breakOn?15:2,transition:"left 0.2s"}}/>
@@ -3233,7 +3541,7 @@ function TaskTimerModal({task,onClose,onComplete}){
 
             {breakOn&&(
               <div style={{fontSize:11,color:T.muted,marginTop:8,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
-                <span>Challenge at <strong style={{color:T.amber}}>{breakPos}m</strong> · {breakMins}m · <strong style={{color:T.lime}}>{focus2Mins}m</strong> after</span>
+                <span>Break at <strong style={{color:T.amber}}>{breakPos}m</strong> · {breakMins}m · <strong style={{color:T.lime}}>{focus2Mins}m</strong> after</span>
                 <span style={{fontSize:10,color:T.faint}}>Drag to reposition · double-click to edit duration</span>
               </div>
             )}
@@ -3259,88 +3567,128 @@ function TaskTimerModal({task,onClose,onComplete}){
     );
   }
 
-  // ── DONE SCREEN ───────────────────────────────────────────────────────────
-  if(phase==="done")return(
-    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(10px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:420,background:T.card,borderRadius:20,border:`1px solid ${T.border}`,padding:"40px 36px",textAlign:"center"}}>
-        <h2 style={{fontSize:24,fontWeight:700,color:T.white,margin:"0 0 8px"}}>Session complete</h2>
-        <p style={{fontSize:14,color:T.muted,margin:"0 0 8px"}}>{task.title}</p>
-        <div style={{fontSize:28,fontWeight:700,color:T.lime,fontFamily:T.mono,marginBottom:20}}>{Math.max(1,Math.round(focusElapsed.current/60))} min focused</div>
-        <Btn onClick={onClose} style={{width:"100%",justifyContent:"center"}}>Done</Btn>
-      </div>
-    </div>
-  );
+  // ── XP + LEADERBOARD REWARD SCREEN ────────────────────────────────────────
+  if(phase==="done"){
+    if(!completion)return null;
+    const {mins,gain,xpAfter,tierBefore,tierAfter,rankBefore,rankAfter,rows}=completion;
+    const tieredUp=tierBefore!==tierAfter;
+    const rankRose=rankAfter<rankBefore;
+    const prog=tierProgressFor(xpAfter);
+    const ROW_H=42;
+    const deltaRows=Math.max(0,rankBefore-rankAfter);
+    return(
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(10px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+        <div style={{width:"100%",maxWidth:440,background:T.card,borderRadius:22,border:`1px solid ${T.border}`,padding:"36px 32px",textAlign:"center",position:"relative",overflow:"hidden",animation:"studlinPop 0.25s cubic-bezier(.2,.85,.3,1)"}}>
+          {tieredUp&&<div style={{position:"absolute",inset:0,background:`radial-gradient(circle at 50% 15%, ${T.lime}40, transparent 62%)`,pointerEvents:"none"}}/>}
+          <div style={{position:"relative"}}>
+            <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:T.lime,marginBottom:10}}>Session complete</div>
+            <h2 style={{fontSize:23,fontWeight:700,color:T.white,margin:"0 0 4px"}}>{mins} min focused</h2>
+            <div style={{fontSize:13,color:T.muted,marginBottom:22}}>{task.title}</div>
 
-  // ── ACTIVE TIMER (focus1 | break | breakDone | focus2) ───────────────────
-  const isBreak=phase==="break"||phase==="breakDone";
-  const timerColor=isBreak?T.amber:T.lime;
-  const phaseLabel=phase==="focus1"?"Time until challenge":phase==="break"?"Challenge":phase==="breakDone"?"Challenge complete":"Time remaining";
-  const phaseDuration=phase==="focus1"?breakPos*60:phase==="break"?breakMins*60:focus2Mins*60;
-  const phasePct=Math.max(0,Math.min(1,phaseDuration>0?1-secs/phaseDuration:1));
+            {task.coop&&(
+              <div style={{fontSize:11.5,color:T.teal,fontWeight:700,marginBottom:10,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>{Icon.zap} Co-op bonus: 1.2× XP</div>
+            )}
+            <div style={{display:"grid",gridTemplateColumns:task.coop?"1fr 1fr":"1fr",gap:10,marginBottom:tieredUp||rankRose?16:22}}>
+              <div style={{background:T.card2,borderRadius:14,padding:"18px 20px",textAlign:"left"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:9}}>
+                  <span style={{fontSize:12,color:T.muted,fontWeight:600}}>{task.coop?"You":tierAfter}</span>
+                  <span style={{fontFamily:T.mono,fontSize:16,fontWeight:700,color:T.lime}}>+{gain} XP</span>
+                </div>
+                <div style={{height:6,background:T.border,borderRadius:99,overflow:"hidden"}}>
+                  <div style={{height:"100%",width:(barFilled?prog.pct:0)+"%",background:T.lime,borderRadius:99,transition:"width 1.1s cubic-bezier(.2,.8,.2,1)"}}/>
+                </div>
+                <div style={{fontSize:11,color:T.faint,marginTop:7}}>{task.coop?tierAfter:(prog.next?`${(prog.next.minXP-xpAfter).toLocaleString()} XP to ${prog.next.title}`:"Maximum rank achieved")}</div>
+              </div>
+              {task.coop&&(
+                <div style={{background:T.card2,borderRadius:14,padding:"18px 20px",textAlign:"left"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:9}}>
+                    <span style={{fontSize:12,color:T.muted,fontWeight:600}}>{task.coop.name}</span>
+                    <span style={{fontFamily:T.mono,fontSize:16,fontWeight:700,color:T.teal}}>+{gain} XP</span>
+                  </div>
+                  <div style={{height:6,background:T.border,borderRadius:99,overflow:"hidden"}}>
+                    <div style={{height:"100%",width:(barFilled?prog.pct:0)+"%",background:T.teal,borderRadius:99,transition:"width 1.1s cubic-bezier(.2,.8,.2,1)"}}/>
+                  </div>
+                  <div style={{fontSize:11,color:T.faint,marginTop:7}}>Locked in together</div>
+                </div>
+              )}
+            </div>
 
-  return(
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",backdropFilter:"blur(12px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-      <button onClick={()=>setSoundOn(s=>!s)} title={soundOn?"Mute alarm":"Unmute alarm"} style={{position:"absolute",top:20,right:20,background:"rgba(255,255,255,0.08)",border:"1px solid rgba(255,255,255,0.15)",borderRadius:8,padding:"7px 10px",color:soundOn?"rgba(255,255,255,0.8)":"rgba(255,255,255,0.3)",cursor:"pointer",display:"flex",alignItems:"center",gap:6,fontSize:11,fontWeight:600,fontFamily:T.font,transition:"all 0.15s"}}>
-        {soundOn?Icon.volume:Icon.volOff}
-        <span>{soundOn?"Sound on":"Sound off"}</span>
-      </button>
-      {pausedByViolation&&isActiveFocusPhase(phase)&&(
-        <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.92)",zIndex:1001,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-          <div style={{width:"100%",maxWidth:400,textAlign:"center"}}>
-            <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:T.red,marginBottom:14}}>Focus broken</div>
-            <h2 style={{fontSize:22,fontWeight:700,color:"#fff",margin:"0 0 10px"}}>You left focus mode</h2>
-            <p style={{fontSize:13.5,color:"rgba(255,255,255,0.65)",lineHeight:1.6,margin:"0 0 28px",maxWidth:340,marginLeft:"auto",marginRight:"auto"}}>
-              Your timer is paused. Leaving early reduces the XP you earn for this session. Come back and lock back in, or finish now with what you've got.
-            </p>
-            <Btn onClick={resumeFromViolation} style={{width:"100%",justifyContent:"center",padding:"14px 24px",fontSize:15,marginBottom:10}}>Resume focus</Btn>
-            <Btn variant="ghost" onClick={finishEarly} style={{background:"rgba(255,255,255,0.08)",borderColor:"rgba(255,255,255,0.2)",color:"#fff"}}>End session now</Btn>
-          </div>
-        </div>
-      )}
-      <div style={{width:"100%",maxWidth:400,textAlign:"center"}}>
-        <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:timerColor,marginBottom:16}}>{phaseLabel}</div>
+            {tieredUp&&(
+              <div style={{fontSize:13,fontWeight:700,color:T.lime,marginBottom:rankRose?14:22,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                {Icon.star}Ranked up to {tierAfter}
+              </div>
+            )}
 
-        <div style={{position:"relative",width:180,height:180,margin:"0 auto 20px"}}>
-          <svg viewBox="0 0 120 120" style={{width:180,height:180,transform:"rotate(-90deg)"}}>
-            <circle cx="60" cy="60" r="52" fill="rgba(0,0,0,0.6)" stroke="rgba(255,255,255,0.08)" strokeWidth="6"/>
-            <circle cx="60" cy="60" r="52" fill="none" stroke={timerColor} strokeWidth="6" strokeLinecap="round"
-              strokeDasharray={circumference}
-              strokeDashoffset={circumference*(1-phasePct)}
-              style={{transition:"stroke-dashoffset 0.5s",filter:`drop-shadow(0 0 6px ${timerColor}88)`}}/>
-          </svg>
-          <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
-            <div style={{fontSize:44,fontWeight:800,color:"#FFFFFF",fontFamily:T.mono,letterSpacing:"-0.03em",textShadow:"0 2px 12px rgba(0,0,0,0.6),0 0 30px rgba(255,255,255,0.15)"}}>{fmt(secs)}</div>
-            <div style={{fontSize:10,color:"rgba(255,255,255,0.55)",marginTop:4,letterSpacing:"0.1em",textTransform:"uppercase"}}>
-              {phase==="focus1"?"until challenge":isBreak?"challenge":"remaining"}
+            {rankRose&&(
+              <div style={{background:T.card2,borderRadius:14,padding:"14px 16px",marginBottom:22,textAlign:"left",overflow:"hidden"}}>
+                <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:10}}>Leaderboard</div>
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  {rows.map((u)=>(
+                    <div key={u.n} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 9px",borderRadius:9,background:u.you?T.lime+"14":"transparent",border:`1px solid ${u.you?T.lime+"33":"transparent"}`,transform:u.you&&!rankRisen?`translateY(${deltaRows*ROW_H}px)`:"translateY(0)",transition:"transform 0.9s cubic-bezier(.2,.85,.25,1.05)"}}>
+                      <span style={{width:18,fontFamily:T.mono,fontSize:11,fontWeight:700,color:u.you?T.lime:T.faint}}>{u.r}</span>
+                      <span style={{flex:1,fontSize:12,fontWeight:u.you?700:500,color:u.you?T.white:T.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{u.n}</span>
+                      <span style={{fontFamily:T.mono,fontSize:11,color:u.you?T.lime:T.faint}}>{u.xp.toLocaleString()}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{display:"flex",gap:10}}>
+              <Btn variant="ghost" onClick={onClose} style={{flex:1,justifyContent:"center"}}>Skip</Btn>
+              <Btn onClick={onClose} style={{flex:1,justifyContent:"center"}}>Back to dashboard</Btn>
             </div>
           </div>
         </div>
+      </div>
+    );
+  }
 
-        <div style={{fontSize:15,fontWeight:600,color:T.white,marginBottom:8}}>{task.title}</div>
+  // ── ACTIVE TIMER (focus1 | break | breakDone | focus2) — a persistent
+  // floating widget, not a fullscreen takeover, so the rest of the app stays
+  // visible and interactive while the session keeps ticking in the background.
+  const isBreak=phase==="break"||phase==="breakDone";
+  const timerColor=isBreak?T.amber:T.lime;
+  const phaseLabel=phase==="focus1"?"Time until break":phase==="break"?"Break":phase==="breakDone"?"Break complete":"Time remaining";
+  const phaseDuration=phase==="focus1"?breakPos*60:phase==="break"?breakMins*60:focus2Mins*60;
+  const phasePct=Math.max(0,Math.min(1,phaseDuration>0?1-secs/phaseDuration:1));
+  const widgetR=26;
+  const widgetCirc=2*Math.PI*widgetR;
 
-        {isBreak&&(
-          <div style={{fontSize:13,color:T.amber,margin:"0 auto 20px",padding:"12px 16px",background:T.amber+"12",borderRadius:10,lineHeight:1.5,maxWidth:320}}>
-            {breakIdeaRef.current}
-          </div>
-        )}
-        {phase==="break"&&(
-          <button onClick={resume} style={{display:"block",width:"100%",maxWidth:240,margin:"0 auto 12px",padding:"12px 24px",background:"rgba(255,255,255,0.10)",color:"#ffffff",border:"1px solid rgba(255,255,255,0.25)",borderRadius:12,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:T.font,letterSpacing:"-0.01em"}}>
-            Resume Focus Early
-          </button>
-        )}
+  return(
+    <div style={{position:"fixed",bottom:20,right:20,zIndex:500,width:284,background:T.card,border:`1px solid ${T.border}`,borderRadius:18,boxShadow:"0 20px 50px -14px rgba(0,0,0,0.5)",padding:"14px 16px",fontFamily:T.font,animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
+      <div style={{display:"flex",alignItems:"center",gap:12}}>
+        <div style={{position:"relative",width:48,height:48,flexShrink:0}}>
+          <svg viewBox="0 0 64 64" style={{width:48,height:48,transform:"rotate(-90deg)"}}>
+            <circle cx="32" cy="32" r={widgetR} fill="none" stroke={T.border} strokeWidth="5"/>
+            <circle cx="32" cy="32" r={widgetR} fill="none" stroke={timerColor} strokeWidth="5" strokeLinecap="round"
+              strokeDasharray={widgetCirc}
+              strokeDashoffset={widgetCirc*(1-phasePct)}
+              style={{transition:"stroke-dashoffset 0.5s"}}/>
+          </svg>
+          {task.coop&&(
+            <div title={"Locked in with "+task.coop.name} style={{position:"absolute",bottom:-3,right:-3,width:20,height:20,borderRadius:"50%",background:T.teal,border:`2px solid ${T.card}`,display:"grid",placeItems:"center",fontSize:8.5,fontWeight:800,color:T.ink}}>{task.coop.initials}</div>
+          )}
+        </div>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.09em",textTransform:"uppercase",color:timerColor,marginBottom:2}}>{phaseLabel}{task.coop&&" · 1.2× XP"}</div>
+          <div style={{fontFamily:T.mono,fontSize:19,fontWeight:800,color:T.white,letterSpacing:"-0.02em"}}>{fmt(secs)}</div>
+          <div style={{fontSize:11,color:T.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{task.coop?"With "+task.coop.name:task.title}</div>
+        </div>
+        <button onClick={()=>setSoundOn(s=>!s)} title={soundOn?"Mute alarm":"Unmute alarm"} style={{width:28,height:28,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:soundOn?T.text:T.faint,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{soundOn?Icon.volume:Icon.volOff}</button>
+      </div>
 
-        {phase==="breakDone"&&(
-          <button onClick={resume} style={{display:"block",width:"100%",maxWidth:240,margin:"0 auto 16px",padding:"16px 24px",background:T.lime,color:T.ink,border:"none",borderRadius:12,fontSize:16,fontWeight:700,cursor:"pointer",fontFamily:T.font,letterSpacing:"-0.01em"}}>
-            Resume
-          </button>
-        )}
+      {isBreak&&(
+        <div style={{fontSize:11.5,color:T.amber,margin:"10px 0 0",padding:"9px 11px",background:T.amber+"12",borderRadius:9,lineHeight:1.5}}>
+          {breakIdeaRef.current}
+        </div>
+      )}
 
-        {phase!=="breakDone"&&(
-          <div style={{display:"flex",gap:10,justifyContent:"center",marginTop:phase==="break"?8:24}}>
-            {phase!=="break"&&<Btn variant="ghost" onClick={()=>setRunning(r=>!r)} style={{background:"rgba(255,255,255,0.13)",borderColor:"rgba(255,255,255,0.38)",color:"#ffffff",fontWeight:700}}>{running?"Pause":"Resume"}</Btn>}
-            <Btn variant="danger" onClick={finishEarly}>Finish early</Btn>
-          </div>
-        )}
+      <div style={{display:"flex",gap:8,marginTop:12}}>
+        {phase==="break"&&<BtnSm onClick={resume} style={{flex:1,justifyContent:"center"}}>Resume early</BtnSm>}
+        {phase==="breakDone"&&<BtnSm onClick={resume} style={{flex:1,justifyContent:"center"}}>Resume</BtnSm>}
+        {phase!=="break"&&phase!=="breakDone"&&<BtnSm variant="ghost" onClick={()=>setRunning(r=>!r)} style={{flex:1,justifyContent:"center"}}>{running?"Pause":"Resume"}</BtnSm>}
+        {phase!=="breakDone"&&<BtnSm variant="danger" onClick={finishEarly} style={{flex:1,justifyContent:"center"}}>Finish</BtnSm>}
       </div>
     </div>
   );
@@ -3473,15 +3821,25 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
                   const isDone = ev.status === "done";
                   const over = daysOverdue(ev);
                   const color = over > 0 ? T.red : colorOf(ev.subject);
+                  const isStudy = ev.kind === "study block";
+                  const isExam = ev.kind === "exam";
+                  // Study blocks: solid subject-color fill. Exams: dark canvas with a
+                  // thick glowing subject-color border. Everything else (class,
+                  // deadline, reminder): the original thin left-accent strip.
+                  const kindStyle = isStudy
+                    ? {background:color,borderLeft:"none",color:T.ink}
+                    : isExam
+                      ? {background:T.ink,border:`2px solid ${color}`,borderLeft:`2px solid ${color}`,boxShadow:`0 0 10px -1px ${color}, inset 0 0 10px ${color}22`,color:T.cream}
+                      : {background:color+"1E",borderLeft:`3px solid ${color}`,color};
                   return (
                     <div key={ev.id}
                       draggable
                       onDragStart={()=>{ setWkDragId(ev.id); setWkDragDeadline(ev.deadline||null); }}
                       onDoubleClick={()=>openEdit(ev)}
                       title="Double-click to edit · Drag to reschedule"
-                      style={{position:"absolute",top:topPx,left:2,right:2,height:heightPx,borderRadius:5,background:color+"1E",borderLeft:`3px solid ${color}`,padding:"2px 5px",cursor:"grab",overflow:"hidden",zIndex:3,opacity:isDone?0.4:1,boxSizing:"border-box",userSelect:"none"}}>
-                      <div style={{fontSize:9.5,fontWeight:700,color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</div>
-                      {heightPx > 34 && <div style={{fontSize:8.5,color:T.muted,marginTop:1}}>{fmtTime(ev.time)}{dur ? " · "+dur+"m" : ""}</div>}
+                      style={{position:"absolute",top:topPx,left:2,right:2,height:heightPx,borderRadius:5,padding:"2px 5px",cursor:"grab",overflow:"hidden",zIndex:3,opacity:isDone?0.4:1,boxSizing:"border-box",userSelect:"none",...kindStyle}}>
+                      <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"⚠️ EXAM · ":""}{ev.title}</div>
+                      {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:1}}>{fmtTime(ev.time)}{dur ? " · "+dur+"m" : ""}</div>}
                     </div>
                   );
                 })}
@@ -3514,8 +3872,9 @@ function CalendarTab(){
   const [selDay,setSelDay]=useState(dayKey());
   const [newOpen,setNewOpen]=useState(false);
   const [evTitle,setEvTitle]=useState("");
-  const [evDate,setEvDate]=useState(dayKey());
-  const [evTime,setEvTime]=useState(()=>{const n=new Date();return String(n.getHours()).padStart(2,"0")+":"+String(n.getMinutes()).padStart(2,"0");});
+  const [evDate,setEvDate]=useState("");
+  const [evTime,setEvTime]=useState("");
+  const [evPrefillDate,setEvPrefillDate]=useState(dayKey());
   const [evSubject,setEvSubject]=useState("None");
   const [evCustom,setEvCustom]=useState("");
   const [evKind,setEvKind]=useState("deadline");
@@ -3566,8 +3925,13 @@ function CalendarTab(){
   const relDay=(k)=>{if(k===todayK)return "Today";const t=new Date();t.setDate(t.getDate()+1);if(k===dayKey(t))return "Tomorrow";const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{month:"short",day:"numeric"});};
   const upcoming=events.filter(ev=>ev.date>=todayK).sort((a,b)=>a.date===b.date?(a.time<b.time?-1:1):(a.date<b.date?-1:1)).slice(0,6);
   const dayEvents=(byDay[selDay]||[]).slice().sort((a,b)=>a.time<b.time?-1:1);
-  const openNew=(dateK)=>{const n=new Date();setEvTime(String(n.getHours()).padStart(2,"0")+":"+String(n.getMinutes()).padStart(2,"0"));setEvSubject("None");setEvDate(dateK||selDay);setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setNewOpen(true);};
-  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvPriority(500);setEvDifficulty(500);setEvDeadline("");setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);};
+  // Target Date/Start Time start blank — for tasks/study blocks, blank means
+  // "let AI schedule this". The clicked day is remembered so fixed-time kinds
+  // (exam/class/reminder), which always need a real date, can still default
+  // to it once the user picks one of those types.
+  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("");setEvSubject("None");setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setNewOpen(true);};
+  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvDate("");setEvTime("");setEvPriority(500);setEvDifficulty(500);setEvDeadline("");setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);};
+  const onEvKindChange=(k)=>{setEvKind(k);if((k==="exam"||k==="class"||k==="reminder")&&!evDate)setEvDate(evPrefillDate);};
   const buildTask=(date,time,titleSuffix,splitInfo)=>{
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
     return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,kind:evKind,notes:evNotes,priority:Math.round(evPriority/100),difficulty:Math.round(evDifficulty/100),deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,...(splitInfo||{})};
@@ -3581,7 +3945,7 @@ function CalendarTab(){
     setToast(true);setTimeout(()=>setToast(false),2200);
   };
   const saveManual=()=>{
-    if(!evTitle.trim())return;
+    if(!evTitle.trim()||!evDate.trim()||!evTime.trim())return;
     if(!evSplitEnabled){commitTasks([buildTask(evDate,evTime)]);return;}
     const groupId="split-"+Date.now();
     const perSession=Math.round(evDuration/evSplitCount);
@@ -3594,24 +3958,41 @@ function CalendarTab(){
   };
   const aiArrange=async()=>{
     if(!evTitle.trim())return;
+    if(evKind==="exam"||evKind==="class")return; // fixed real-world blocks — AI never touches these
+    if(evDate.trim()&&evTime.trim())return; // a manual Target Date/Start Time is set — use Save manually instead
     setAiLoading(true);
     const now=new Date();
     const tk=dayKey();
     const nowH=String(now.getHours()).padStart(2,"0");
     const nowM=String(now.getMinutes()).padStart(2,"0");
     const nowTime=nowH+":"+nowM;
-    // Earliest bookable time today: current time + 15-min buffer, rounded up to next 15-min mark
+    const prefs=getSchedulePreferences();
+    const prefStartMins=timeToMinutes(prefs.workStartTime);
+    const prefEndMins=timeToMinutes(prefs.workEndTime);
+    // Earliest bookable time today: the later of (user's preferred start) or (now + 15-min buffer)
     const bufMins=now.getHours()*60+now.getMinutes()+15;
-    const earliestTodayMins=Math.ceil(bufMins/15)*15;
+    const earliestTodayMins=Math.max(prefStartMins,Math.ceil(bufMins/15)*15);
     const earliestTodayTime=minutesToTime(earliestTodayMins);
-    // If today's remaining window (earliestToday → 22:00) can't fit even one session, direct AI to start tomorrow
+    // If today's remaining preferred window can't fit even one session, direct AI to start tomorrow
     const perSession=Math.round(evDuration/(evSplitEnabled?evSplitCount:1));
     const splitCount=evSplitEnabled?evSplitCount:1;
-    const todayWindowMins=Math.max(0,22*60-earliestTodayMins);
+    const todayWindowMins=Math.max(0,prefEndMins-earliestTodayMins);
     const firstAvailDate=todayWindowMins>=perSession?tk:(()=>{const d=new Date(now);d.setDate(d.getDate()+1);return dayKey(d);})();
     const existing=events.filter(ev=>ev.date>=tk).map(ev=>({title:ev.title,date:ev.date,time:ev.time,duration:ev.duration||60}));
     const priorityLabel=evPriority<200?"Low":evPriority<400?"Medium-Low":evPriority<600?"Medium":evPriority<800?"High":"Urgent";
-    const prompt="You are a scheduling AI. The user's LIVE clock reads "+nowTime+" on "+tk+". Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+priorityLabel+(evDeadline?". Deadline: "+evDeadline:"")+". Existing schedule: "+JSON.stringify(existing)+". STRICT RULES (violations are forbidden): 1) NEVER place any session before "+earliestTodayTime+" on today ("+tk+") — those slots have already passed. 2) The earliest you may schedule anything today is "+earliestTodayTime+". 3) If today has no open window at or after "+earliestTodayTime+", start from "+firstAvailDate+" instead. 4) All sessions must be within 08:00-22:00. 5) Higher priority = earlier slots. 6) Must be before deadline. 7) Avoid conflicts. 8) Spread splits across days. Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
+    const prompt="You are a scheduling AI. The user's LIVE clock reads "+nowTime+" on "+tk+". Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+priorityLabel+(evDeadline?". Deadline: "+evDeadline:"")+". Existing schedule: "+JSON.stringify(existing)+". The user's preferred daily study window is "+prefs.workStartTime+"–"+prefs.workEndTime+" — always fill that window first, chronologically from the start, before ever using time outside it. STRICT RULES (violations are forbidden): 1) NEVER place any session before "+earliestTodayTime+" on today ("+tk+") — those slots have already passed. 2) The earliest you may schedule anything today is "+earliestTodayTime+". 3) If today has no open window at or after "+earliestTodayTime+", start from "+firstAvailDate+" instead. 4) Prefer sessions within "+prefs.workStartTime+"-"+prefs.workEndTime+"; only expand outside that range (up to 08:00-22:00) if the preferred window is fully booked that day. 5) Higher priority = earlier slots. 6) Must be before deadline. 7) Avoid conflicts. 8) Spread splits across days. Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
+    // If the AI call fails or returns nothing usable, fall back to placing
+    // sessions chronologically starting at the earliest available slot —
+    // evDate/evTime are blank in AI mode, so saveManual() isn't usable here.
+    const fallbackSchedule=()=>{
+      const groupId=splitCount>1?"split-"+Date.now():null;
+      const tasks=[];
+      for(let i=0;i<splitCount;i++){
+        const d=new Date(firstAvailDate+"T12:00:00");d.setDate(d.getDate()+i);
+        tasks.push(buildTask(dayKey(d),earliestTodayTime,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})));
+      }
+      commitTasks(tasks);
+    };
     try{
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
       const data=await res.json();
@@ -3629,8 +4010,8 @@ function CalendarTab(){
         const groupId=splitCount>1?"split-"+Date.now():null;
         const tasks=sanitized.slice(0,splitCount).map((s,i)=>buildTask(s.date,s.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})));
         commitTasks(tasks);
-      }else{saveManual();}
-    }catch(e){saveManual();}
+      }else{fallbackSchedule();}
+    }catch(e){fallbackSchedule();}
     setAiLoading(false);
   };
   const removeEvent=(id)=>{const next=events.filter(ev=>ev.id!==id);setEvents(next);lsSet("events",next);};
@@ -3679,6 +4060,14 @@ function CalendarTab(){
   };
   const closeEdit=()=>{setEditOpen(false);setEditEv(null);};
   const saveEdit=()=>{if(!editEv||!editTitle.trim())return;const next=events.map(e=>e.id===editEv.id?{...e,title:editTitle.trim(),date:editDate,time:editTime,duration:editDuration,deadline:editDeadline||null,priority:Math.round(editPriority/100),difficulty:Math.round(editDifficulty/100),subject:editSubject,kind:editKind,notes:editNotes}:e);setEvents(next);lsSet("events",next);closeEdit();};
+  // Fixed real-world blocks (exam/class) only take Day/Start Time/Duration and
+  // are never AI-scheduled. Reminders are simple Date/Time markers. Everything
+  // else (deadline/study block) is a "task" that can be placed manually or by AI.
+  const isFixedKind=evKind==="exam"||evKind==="class";
+  const isReminderKind=evKind==="reminder";
+  const isTaskKind=!isFixedKind&&!isReminderKind;
+  const manualMode=isTaskKind&&evDate.trim()!==""&&evTime.trim()!=="";
+  const aiMode=isTaskKind&&!manualMode&&evDeadline.trim()!=="";
   return (
     <div>
       {subjOnboardOpen&&(
@@ -3716,20 +4105,34 @@ function CalendarTab(){
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} Task added</div>
       )}
       <Modal open={newOpen} onClose={resetForm} title="New task" sub="Add details and let Studlin schedule it, or place it manually." width={580}
-        footer={(evKind==="reminder")?<><Btn variant="subtle" onClick={resetForm}>Cancel</Btn></>:<><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn variant="ghost" onClick={saveManual} style={{opacity:evTitle.trim()?1:0.45}}>Save manually</Btn><Btn onClick={aiArrange} style={{opacity:evTitle.trim()?1:0.45}} disabled={aiLoading}>{aiLoading?"Scheduling...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.wand,"AI arrange")}</Btn></>}>
+        footer={
+          isReminderKind||isFixedKind
+            ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} style={{opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>{isReminderKind?"Save reminder":"Save"}</Btn></>
+            : <>
+                <Btn variant="subtle" onClick={resetForm}>Cancel</Btn>
+                <Btn variant="ghost" onClick={saveManual} style={{opacity:!evTitle.trim()?0.45:(manualMode?1:0.45)}}>Save manually</Btn>
+                <Btn onClick={aiArrange} disabled={aiLoading||manualMode} style={{opacity:aiLoading?1:(!evTitle.trim()?0.45:(manualMode?0.45:1))}}>{aiLoading?"Scheduling...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.wand,"AI arrange")}</Btn>
+              </>
+        }>
         <Field label="Title"><Input placeholder="e.g. Study Bio chapter 4-6" value={evTitle} onChange={ev=>setEvTitle(ev.target.value)} autoFocus /></Field>
-        
-        <Field label="Type" hint="Choose the task type to determine scheduling behavior">
-          <SelectChip options={["deadline","exam","class","study block","reminder"]} value={evKind} onChange={setEvKind} />
+
+        <Field label="Type" hint={isFixedKind?"Fixed real-world block — Studlin will never move or reschedule this.":"Choose the task type to determine scheduling behavior"}>
+          <SelectChip options={["deadline","exam","class","study block","reminder"]} value={evKind} onChange={onEvKindChange} />
         </Field>
 
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <Field label="Do on Date"><Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} /></Field>
-          {evKind!=="reminder"&&<Field label="Start time"><Input type="time" value={evTime} onChange={ev=>setEvTime(ev.target.value)} /></Field>}
-          {evKind==="reminder"&&<Field label="Reminder time"><Input type="time" value={evTime} onChange={ev=>setEvTime(ev.target.value)} /></Field>}
+          <Field label={isTaskKind?"Target Date":"Date"} hint={isTaskKind?"Only fill this out for a manual entry. Leave blank to let AI automatically schedule this.":undefined}>
+            <Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} />
+          </Field>
+          <Field label={isReminderKind?"Reminder time":"Start time"}><Input type="time" value={evTime} onChange={ev=>setEvTime(ev.target.value)} /></Field>
         </div>
+        {manualMode&&<div style={{fontSize:11,color:T.amber,fontWeight:600,marginTop:-6,marginBottom:14}}>Using manual date. Clear Target Date to use AI scheduling.</div>}
 
-        {evKind!=="reminder"&&(
+        {isFixedKind&&(
+          <Field label="Duration (minutes)" hint="How long this occupies on your calendar"><Input type="number" min={5} max={480} value={evDuration} onChange={ev=>setEvDuration(Math.max(5,+ev.target.value||5))} /></Field>
+        )}
+
+        {isTaskKind&&(
           <>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
               <Field label="Deadline" hint="When this must be done by"><Input type="date" value={evDeadline} onChange={ev=>setEvDeadline(ev.target.value)} /></Field>
@@ -3763,7 +4166,7 @@ function CalendarTab(){
         <Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field>
         {evSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Drivers ed, SAT prep, club..." value={evCustom} onChange={ev=>setEvCustom(ev.target.value)} /></Field>}
 
-        {evKind!=="reminder"&&(
+        {isTaskKind&&(
           <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14}}>
             <div onClick={()=>setEvSplitEnabled(s=>!s)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
               <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Split into sessions</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Spread this task across multiple days</div></div>
@@ -3786,32 +4189,36 @@ function CalendarTab(){
         <Field label="Type"><SelectChip options={["deadline","exam","class","study block","reminder"]} value={editKind} onChange={setEditKind} /></Field>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
           <Field label="Scheduled date"><Input type="date" value={editDate} onChange={e=>setEditDate(e.target.value)} /></Field>
-          <Field label="Start time"><Input type="time" value={editTime} onChange={e=>setEditTime(e.target.value)} /></Field>
+          <Field label={editKind==="reminder"?"Reminder time":"Start time"}><Input type="time" value={editTime} onChange={e=>setEditTime(e.target.value)} /></Field>
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <Field label="Deadline" hint="When this must be done by"><Input type="date" value={editDeadline} onChange={e=>setEditDeadline(e.target.value)} /></Field>
+        {editKind!=="reminder"&&(
           <Field label="Duration (minutes)"><Input type="number" min={5} max={480} value={editDuration} onChange={e=>setEditDuration(Math.max(5,+e.target.value||5))} /></Field>
-        </div>
-        <Field label={`Priority: ${Math.round(editPriority/10)}%`} hint="Higher priority tasks are scheduled earlier">
-          <div style={{display:"flex",alignItems:"center",gap:12}}>
-            <span style={{fontSize:11,color:T.muted,width:28}}>Low</span>
-            <div style={{flex:1,position:"relative",paddingTop:24}}>
-              <div style={{position:"absolute",top:0,left:`${editPriority/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{prioLabel(editPriority)}</div>
-              <input type="range" min={0} max={1000} value={editPriority} onChange={e=>setEditPriority(+e.target.value)} style={{width:"100%",accentColor:T.lime,height:6,borderRadius:3,cursor:"pointer"}} />
-            </div>
-            <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Urgent</span>
-          </div>
-        </Field>
-        <Field label={`Difficulty: ${Math.round(editDifficulty/10)}%`} hint="Very Easy to Very Difficult">
-          <div style={{display:"flex",alignItems:"center",gap:12}}>
-            <span style={{fontSize:11,color:T.muted,width:28}}>Easy</span>
-            <div style={{flex:1,position:"relative",paddingTop:24}}>
-              <div style={{position:"absolute",top:0,left:`${editDifficulty/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.purple,background:T.purple+"18",border:`1px solid ${T.purple}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{diffLabel(editDifficulty)}</div>
-              <input type="range" min={0} max={1000} value={editDifficulty} onChange={e=>setEditDifficulty(+e.target.value)} style={{width:"100%",accentColor:T.purple,height:6,borderRadius:3,cursor:"pointer"}} />
-            </div>
-            <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Hard</span>
-          </div>
-        </Field>
+        )}
+        {editKind!=="exam"&&editKind!=="class"&&editKind!=="reminder"&&(
+          <>
+            <Field label="Deadline" hint="When this must be done by"><Input type="date" value={editDeadline} onChange={e=>setEditDeadline(e.target.value)} /></Field>
+            <Field label={`Priority: ${Math.round(editPriority/10)}%`} hint="Higher priority tasks are scheduled earlier">
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                <span style={{fontSize:11,color:T.muted,width:28}}>Low</span>
+                <div style={{flex:1,position:"relative",paddingTop:24}}>
+                  <div style={{position:"absolute",top:0,left:`${editPriority/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{prioLabel(editPriority)}</div>
+                  <input type="range" min={0} max={1000} value={editPriority} onChange={e=>setEditPriority(+e.target.value)} style={{width:"100%",accentColor:T.lime,height:6,borderRadius:3,cursor:"pointer"}} />
+                </div>
+                <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Urgent</span>
+              </div>
+            </Field>
+            <Field label={`Difficulty: ${Math.round(editDifficulty/10)}%`} hint="Very Easy to Very Difficult">
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                <span style={{fontSize:11,color:T.muted,width:28}}>Easy</span>
+                <div style={{flex:1,position:"relative",paddingTop:24}}>
+                  <div style={{position:"absolute",top:0,left:`${editDifficulty/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.purple,background:T.purple+"18",border:`1px solid ${T.purple}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{diffLabel(editDifficulty)}</div>
+                  <input type="range" min={0} max={1000} value={editDifficulty} onChange={e=>setEditDifficulty(+e.target.value)} style={{width:"100%",accentColor:T.purple,height:6,borderRadius:3,cursor:"pointer"}} />
+                </div>
+                <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Hard</span>
+              </div>
+            </Field>
+          </>
+        )}
         <Field label="Subject"><SelectChip options={SUBJ} value={editSubject} onChange={setEditSubject} /></Field>
         <Field label="Notes (optional)"><Textarea value={editNotes} onChange={e=>setEditNotes(e.target.value)} /></Field>
       </Modal>
@@ -3891,7 +4298,9 @@ function CalendarTab(){
                   <div style={{display:"flex",flexDirection:"column",gap:2,marginTop:3}}>
                     {evs.slice(0,2).map((ev,j)=>{
                       const over=daysOverdue(ev);
-                      return <div key={j} style={{fontSize:9,fontWeight:600,color:over>0?T.red:colorOf(ev.subject),background:(over>0?T.red:colorOf(ev.subject))+"16",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",display:"flex",alignItems:"center",gap:3}}>
+                      const tagColor=over>0?T.red:colorOf(ev.subject);
+                      const isExam=ev.kind==="exam";
+                      return <div key={j} style={{fontSize:9,fontWeight:600,color:tagColor,background:tagColor+(isExam?"22":"16"),border:isExam?`1px solid ${tagColor}`:"none",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",display:"flex",alignItems:"center",gap:3}}>
                         {ev.priority&&ev.priority>=4&&<span style={{width:5,height:5,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority],flexShrink:0}} />}
                         {ev.title}
                       </div>;
@@ -3918,23 +4327,39 @@ function CalendarTab(){
               :dayEvents.map(ev=>{
                 const over=daysOverdue(ev);
                 const isDone=ev.status==="done";
+                const color=over>0?T.red:colorOf(ev.subject);
+                const isStudy=ev.kind==="study block";
+                const isExam=ev.kind==="exam";
+                // Study blocks: solid subject-color container. Exams: dark canvas
+                // with a thick glowing subject-color border + an explicit tag.
+                // Classes (and everything else): the original thin left strip.
+                const rowStyle=isStudy
+                  ? {background:color,borderRadius:9,padding:"9px 12px",marginBottom:6}
+                  : isExam
+                    ? {background:T.ink,border:`2px solid ${color}`,boxShadow:`0 0 12px -2px ${color}`,borderRadius:9,padding:"9px 12px",marginBottom:6}
+                    : {borderBottom:"1px solid "+T.border,padding:"9px 0"};
+                const titleColor=isStudy?T.ink:isExam?T.cream:(isDone?T.muted:T.white);
+                const subColor=isStudy?"rgba(14,31,24,0.65)":isExam?color:T.muted;
+                const badgeBg=isStudy?"rgba(14,31,24,0.14)":isExam?color+"22":T.card2;
                 return(
-                <div key={ev.id} draggable onDragStart={()=>setDragId(ev.id)} style={{display:"flex",gap:10,padding:"9px 0",borderBottom:"1px solid "+T.border,alignItems:"flex-start",opacity:isDone?0.5:1,cursor:"grab"}}>
-                  <div style={{width:3,alignSelf:"stretch",borderRadius:2,background:over>0?T.red:colorOf(ev.subject),flexShrink:0}} />
+                <div key={ev.id} draggable onDragStart={()=>setDragId(ev.id)} style={{display:"flex",gap:10,alignItems:"flex-start",opacity:isDone?0.5:1,cursor:"grab",...rowStyle}}>
+                  {!isStudy&&!isExam&&<div style={{width:3,alignSelf:"stretch",borderRadius:2,background:color,flexShrink:0}} />}
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{display:"flex",alignItems:"center",gap:6}}>
                       {ev.priority&&<span style={{width:7,height:7,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority||3],flexShrink:0}} />}
-                      <span style={{fontSize:12.5,fontWeight:600,color:isDone?T.muted:T.white,lineHeight:1.35,textDecoration:isDone?"line-through":"none"}}>{ev.title}</span>
+                      {isExam&&<span style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.04em",color,background:color+"1E",border:`1px solid ${color}55`,borderRadius:5,padding:"1px 6px",flexShrink:0}}>⚠️ EXAM</span>}
+                      <span style={{fontSize:12.5,fontWeight:600,color:titleColor,lineHeight:1.35,textDecoration:isDone?"line-through":"none"}}>{ev.title}</span>
                     </div>
-                    <div style={{fontSize:11,color:T.muted,marginTop:2,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                    <div style={{fontSize:11,color:subColor,marginTop:2,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
                       <span>{fmtTime(ev.time)}</span>
-                      {ev.duration&&<span style={{background:T.card2,padding:"1px 6px",borderRadius:4,fontSize:10,fontWeight:600}}>{ev.duration>=60?Math.floor(ev.duration/60)+"h"+(ev.duration%60?" "+ev.duration%60+"m":""):ev.duration+"m"}</span>}
+                      {ev.duration&&<span style={{background:badgeBg,padding:"1px 6px",borderRadius:4,fontSize:10,fontWeight:600,color:titleColor}}>{ev.duration>=60?Math.floor(ev.duration/60)+"h"+(ev.duration%60?" "+ev.duration%60+"m":""):ev.duration+"m"}</span>}
                       <span>{ev.subject}</span>
                       {over>0&&<span style={{color:T.red,fontWeight:600}}>{over}d overdue</span>}
                     </div>
                   </div>
                   <div style={{display:"flex",gap:4,flexShrink:0,alignItems:"center"}}>
-                    {!isDone&&ev.duration&&<button onClick={()=>{if(window._setTimerTask)window._setTimerTask(ev);}} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.lime}44`,background:T.lime+"12",color:T.lime,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Begin</button>}
+                    {!isDone&&ev.duration&&(ev.kind==="study block"||ev.kind==="deadline")&&<button onClick={()=>{if(window._setTimerTask)window._setTimerTask(ev);}} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.lime}44`,background:T.lime+"12",color:T.lime,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Begin</button>}
+                    {!isDone&&(ev.kind==="exam"||ev.kind==="class"||ev.kind==="reminder")&&<button onClick={()=>openEdit(ev)} title="View details" style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Details</button>}
                     {!isDone&&<button onClick={()=>markDone(ev.id)} title="Mark done" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",display:"flex"}}>{Icon.check}</button>}
                     <button onClick={()=>removeEvent(ev.id)} title="Delete" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,padding:2}}>×</button>
                   </div>
@@ -4919,7 +5344,7 @@ function FocusMusic(){
 // ─── SETTINGS ─────────────────────────────────────────────────────────────────
 function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}}) {
   const [active,setActive]=useState("General");
-  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,sr:true,auto:true,analytics:false,onlineStatus:true,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false},...lsGet("settings",{})}));
+  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,sr:true,auto:true,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false},...lsGet("settings",{})}));
   const tog=k=>setToggles(t=>{const n={...t,[k]:!t[k]};lsSet("settings",n);return n;});
   const [sysPushStatus,setSysPushStatus]=useState(()=>{
     if(typeof Notification==="undefined")return "unsupported";
@@ -5262,6 +5687,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Row label="Public profile" sub="Let others find you by name or handle." k="profile" />
               <Row label="Share Weekly Wrapped" sub="Allow sharing your stats card on social." k="share" />
               <Row label="Show Online Status" sub="When off, your presence dot is hidden from friends and you'll appear offline in the Studlin Network." k="onlineStatus" />
+              <Row label="Incognito Mode" sub="Completely masks your live study status — you'll appear offline everywhere and won't receive Join Lock-In requests." k="incognito" />
             </Card>
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Data &amp; AI</div>
@@ -5683,15 +6109,15 @@ function LevelRoadmapModal({open,onClose,currentXP}){
   if(!open)return null;
   return(
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
-      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:460,maxHeight:"86vh",background:T.card,borderRadius:18,border:`1px solid ${T.border}`,overflow:"hidden",display:"flex",flexDirection:"column",boxShadow:"0 28px 70px -20px rgba(0,0,0,0.55)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
-        <div style={{padding:"20px 22px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:460,maxHeight:"80vh",background:T.card,borderRadius:18,border:`1px solid ${T.border}`,overflow:"hidden",display:"flex",flexDirection:"column",boxShadow:"0 28px 70px -20px rgba(0,0,0,0.55)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
+        <div style={{padding:"20px 22px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
           <div>
             <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Career Rank Roadmap</div>
             <div style={{fontSize:12.5,color:T.muted,marginTop:3}}>11 tiers · Intern to CEO</div>
           </div>
           <button onClick={onClose} style={{width:30,height:30,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer",fontSize:15}}>×</button>
         </div>
-        <div style={{padding:"18px 22px",overflowY:"auto"}}>
+        <div style={{padding:"18px 22px",overflowY:"auto",flex:1,minHeight:0}}>
           {PROF_TIERS.map((tier,i)=>{
             const next=PROF_TIERS[i+1]||null;
             const unlocked=currentXP>=tier.minXP;
@@ -5981,7 +6407,10 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
         <div onClick={()=>setActive("profile")} style={{background:T.lime,borderRadius:22,padding:22,cursor:"pointer",border:"none",display:"flex",flexDirection:"column"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(8,12,40,0.6)",fontWeight:600}}>Day Streak</span>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill={T.ink} stroke="none" style={{opacity:0.85}}><path d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
+            <svg width="22" height="22" viewBox="0 0 24 24" stroke="none">
+              <defs><linearGradient id="streakFlameGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#FF5F52"/><stop offset="100%" stopColor="#B3001B"/></linearGradient></defs>
+              <path fill="url(#streakFlameGrad)" d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/>
+            </svg>
           </div>
           <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.ink,margin:"10px 0 2px"}}>{realStreak}<span style={{fontSize:20,color:"rgba(8,12,40,0.55)",marginLeft:6}}>days</span></div>
           <div style={{fontSize:12,color:"rgba(8,12,40,0.7)",marginBottom:4}}>Today{wk.find(d=>d.today)?.on?" · active":"· keep going!"}</div>
@@ -6349,6 +6778,21 @@ function InitWizard({onComplete}){
     const updatedProf = {...getProfile(), status, affiliation, school:affiliation};
     lsSet("profile", updatedProf);
     lsSet("onboarded", true);
+
+    // Live write to the authenticated user's own Firestore document (allowed
+    // directly from the client — firestore.rules restricts this write to
+    // exactly these onboarding fields, nothing private like credits/plan).
+    const u=firebase.auth().currentUser;
+    if(u){
+      fsdb().collection('users').doc(u.uid).set({
+        status, affiliation, school:affiliation,
+        workStartTime:workStart, bedtime, difficultyPreference:difficulty,
+        onboarded:true,
+        updatedAt:new Date().toISOString(),
+      },{merge:true}).catch(()=>{});
+      upsertProfile({status, school:affiliation});
+    }
+
     // Fire welcome email — best-effort, non-blocking
     authFetch("/api/send-welcome", {
       method:"POST",
@@ -6360,6 +6804,11 @@ function InitWizard({onComplete}){
 
   const skip = () => {
     lsSet("onboarded", true);
+    const u=firebase.auth().currentUser;
+    if(u){
+      fsdb().collection('users').doc(u.uid).set({onboarded:true,updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});
+      upsertProfile();
+    }
     onComplete();
   };
 
@@ -6517,7 +6966,7 @@ function AuthScreen(){
 // ─── AUTH GATE ────────────────────────────────────────────────────────────────
 function AuthGate(){
   const [user,setUser]=useState(undefined);
-  useEffect(()=>{return firebase.auth().onAuthStateChanged(u=>{setUser(u||null);if(u)fetchUserProfile();});},[]);
+  useEffect(()=>{return firebase.auth().onAuthStateChanged(u=>{setUser(u||null);if(u){fetchUserProfile();upsertProfile();}});},[]);
   if(user===undefined)return(<div style={{minHeight:"100vh",background:"#0D120F",display:"grid",placeItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#14342A,#0E1F18)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(174,206,94,0.38)"}}><div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #CBDF92, #AECE5E)",boxShadow:"0 0 10px 3px rgba(174,206,94,0.65)"}}/></div><span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span></div></div>);
   if(!user)return <AuthScreen />;
   return <App />;
@@ -6678,7 +7127,7 @@ function App() {
     {label:"Workspace",items:[
       {id:"dashboard",label:"Dashboard"},
       {id:"calendar",label:"Calendar"},
-      {id:"aichat",label:"Chat"},
+      {id:"aichat",label:"Studlin AI"},
       {id:"writestudio",label:"Write Studio",badge:String(lsGet("essays",[]).length||"")},
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
@@ -6690,7 +7139,7 @@ function App() {
   ];
   const bottomItems=[{id:"settings",label:"Settings"},{id:"profile",label:"Profile"}];
   const pages={aichat:AiChat,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile};
-  const labelOf={dashboard:"Dashboard",aichat:"AI Chat",writestudio:"Write Studio",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve"};
+  const labelOf={dashboard:"Dashboard",aichat:"Studlin AI",writestudio:"Write Studio",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve"};
   const sectionOf={dashboard:"Workspace",aichat:"Workspace",writestudio:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",friends:"Workspace",solve:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
@@ -6961,7 +7410,8 @@ function App() {
         logSession(mins,"Task: "+timerTask.title);
         const next=lsGet("events",[]).map(ev=>ev.id===timerTask.id?{...ev,status:"done",timeSpent:mins,completedAt:Date.now()}:ev);
         lsSet("events",next);
-        setTimerTask(null);
+        // Modal stays open to show the XP/leaderboard reward summary — it
+        // closes itself (setTimerTask(null) via onClose) once dismissed.
       }} />}
 
       {newDayModal&&(
