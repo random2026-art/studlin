@@ -3120,6 +3120,12 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
   const [deckPicker,setDeckPicker]=useState(false);
   const [syncRunning,setSyncRunning]=useState(false);
   const [settingsOpen,setSettingsOpen]=useState(false);
+  const [findWindowOpen,setFindWindowOpen]=useState(false);
+  const [fwTimeMode,setFwTimeMode]=useState("anytime");
+  const [fwTimeFrom,setFwTimeFrom]=useState("15:00");
+  const [fwTimeTo,setFwTimeTo]=useState("17:00");
+  const [fwDayScope,setFwDayScope]=useState("tomorrow");
+  const [fwDuration,setFwDuration]=useState(90);
   const scrollRef=useRef(null);
 
   // Live message thread — a DM room is created lazily (idempotent merge) the
@@ -3128,7 +3134,7 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
   // messages subcollection's security rules (which look up its memberUids)
   // resolve for reads/writes.
   useEffect(()=>{
-    setInput("");setQuickOpen(false);setNotePicker(false);setDeckPicker(false);setSyncRunning(false);setSettingsOpen(false);
+    setInput("");setQuickOpen(false);setNotePicker(false);setDeckPicker(false);setSyncRunning(false);setSettingsOpen(false);setFindWindowOpen(false);
     if(!roomId||!myUid){setMessages([]);return;}
     let cancelled=false;
     if(!isGroup){
@@ -3165,16 +3171,47 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
   };
 
   const sendText=()=>{if(!input.trim())return;sendMessage({kind:"text",text:input.trim()});setInput("");};
-  // Scans everyone's schedules for an overlapping free block. There's no real
-  // shared-schedule backend behind these mock friends, so the "scan" is
-  // simulated, but the resulting slot is real and genuinely bookable below.
-  const findSharedStudyWindow=()=>{
-    const d=new Date();d.setDate(d.getDate()+1);d.setHours(15,0,0,0);
-    return{date:dayKey(d),time:"15:00",duration:90,dayLabel:"tomorrow",timeLabel:"3:00 PM"};
+  const fmtTimeLabel=(t)=>{const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
+  // There's no real shared-schedule backend behind these friends — this
+  // client can't see the other person's calendar, only the sender's own
+  // (localStorage `events`, never synced to Firestore). So the "match" still
+  // can't confirm mutual availability, but it's no longer arbitrary either:
+  // it genuinely scans for a slot in the chosen window/day-range that's free
+  // on the sender's own calendar, same overlap check the real "Group Sync"
+  // free-slot finder in CalendarTab uses (runGroupSync).
+  const findSharedStudyWindow=(params)=>{
+    const prefStart=params.timeMode==="custom"?timeToMinutes(params.timeFrom):timeToMinutes("08:00");
+    const prefEnd=params.timeMode==="custom"?timeToMinutes(params.timeTo):timeToMinutes("22:00");
+    const scanDays=params.dayScope==="tomorrow"?1:params.dayScope==="3days"?3:7;
+    const duration=params.duration;
+    const events=lsGet("events",[]);
+    const today=new Date();
+    const isFree=(dk,start,end)=>{
+      const occupied=events.filter(e=>e.date===dk).map(e=>({s:timeToMinutes(e.time||"0:00"),e:timeToMinutes(e.time||"0:00")+(e.duration||60)}));
+      return !occupied.some(o=>!(end<=o.s||start>=o.e));
+    };
+    const labelFor=(offset,d)=>offset===1?"tomorrow":d.toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"});
+    for(let offset=1;offset<=scanDays;offset++){
+      const d=new Date(today);d.setDate(today.getDate()+offset);
+      const dk=dayKey(d);
+      for(let start=prefStart;start+duration<=prefEnd;start+=30){
+        if(isFree(dk,start,start+duration)){
+          const time=minutesToTime(start);
+          return{date:dk,time,duration,dayLabel:labelFor(offset,d),timeLabel:fmtTimeLabel(time)};
+        }
+      }
+    }
+    // Nothing fully free in the whole range — fall back to the start of the
+    // preferred window on the last scanned day, so the feature never
+    // dead-ends with no suggestion at all.
+    const d=new Date(today);d.setDate(today.getDate()+scanDays);
+    const time=minutesToTime(prefStart);
+    return{date:dayKey(d),time,duration,dayLabel:labelFor(scanDays,d),timeLabel:fmtTimeLabel(time)};
   };
-  const runCalendarSync=()=>{
-    setQuickOpen(false);setSyncRunning(true);
-    setTimeout(()=>{setSyncRunning(false);sendMessage({kind:"calendar",status:"unscheduled",meta:findSharedStudyWindow()});},2100);
+  const submitFindWindow=()=>{
+    setFindWindowOpen(false);setSyncRunning(true);
+    const params={timeMode:fwTimeMode,timeFrom:fwTimeFrom,timeTo:fwTimeTo,dayScope:fwDayScope,duration:fwDuration};
+    setTimeout(()=>{setSyncRunning(false);sendMessage({kind:"calendar",status:"unscheduled",meta:findSharedStudyWindow(params)});},2100);
   };
   // Injects the matched window into the current user's own calendar as a
   // study block. (Only this browser's calendar can actually be written to —
@@ -3302,7 +3339,7 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
           )}
           {quickOpen&&(
             <div style={{borderTop:`1px solid ${pp.border}`,padding:"8px",display:"flex",flexDirection:"column",gap:2}}>
-              <button onClick={runCalendarSync} style={qaBtn}><span style={{color:T.purple,display:"flex"}}>{Icon.cal}</span><span style={{flex:1}}>Find Shared Study Window</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Find free time</span></button>
+              <button onClick={()=>{setQuickOpen(false);setFindWindowOpen(true);}} style={qaBtn}><span style={{color:T.purple,display:"flex"}}>{Icon.cal}</span><span style={{flex:1}}>Find Shared Study Window</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Find free time</span></button>
               <button onClick={()=>{setNotePicker(true);setDeckPicker(false);setQuickOpen(false);}} style={qaBtn}><span style={{color:T.amber,display:"flex"}}>{Icon.file}</span><span style={{flex:1}}>Send Notes</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Drop a note link</span></button>
               <button onClick={()=>{setDeckPicker(true);setNotePicker(false);setQuickOpen(false);}} style={qaBtn}><span style={{color:T.teal,display:"flex"}}>{Icon.layers}</span><span style={{flex:1}}>Send Flashcard Deck</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Share a deck</span></button>
               <button onClick={requestNote} style={qaBtn}><span style={{color:T.amber,display:"flex"}}>{Icon.file}</span><span style={{flex:1}}>Request a Note</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Ask {peerFirst||"them"}</span></button>
@@ -3352,6 +3389,37 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
           </div>
         </Modal>
       )}
+
+      <Modal open={findWindowOpen} onClose={()=>setFindWindowOpen(false)} title="Find Shared Study Window" sub="Studlin Match scans for mutual free time within these constraints." width={420}
+        footer={<><Btn variant="subtle" onClick={()=>setFindWindowOpen(false)}>Cancel</Btn><Btn onClick={submitFindWindow}>{Icon.cal} Find Window</Btn></>}>
+        <Field label="Preferred Time">
+          <div style={{display:"flex",gap:6,marginBottom:fwTimeMode==="custom"?10:0}}>
+            {[{v:"anytime",label:"Anytime"},{v:"custom",label:"Custom range"}].map(o=>(
+              <button key={o.v} onClick={()=>setFwTimeMode(o.v)} style={{padding:"7px 13px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${fwTimeMode===o.v?T.purple+"66":T.border}`,background:fwTimeMode===o.v?T.purple+"14":"transparent",color:fwTimeMode===o.v?T.purple:T.muted,fontFamily:T.font,fontWeight:fwTimeMode===o.v?600:400}}>{o.label}</button>
+            ))}
+          </div>
+          {fwTimeMode==="custom"&&(
+            <div style={{display:"flex",gap:10}}>
+              <Input type="time" value={fwTimeFrom} onChange={e=>setFwTimeFrom(e.target.value)} />
+              <Input type="time" value={fwTimeTo} onChange={e=>setFwTimeTo(e.target.value)} />
+            </div>
+          )}
+        </Field>
+        <Field label="Look Ahead">
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            {[{v:"tomorrow",label:"Tomorrow"},{v:"3days",label:"Next 3 Days"},{v:"week",label:"Full Week"}].map(o=>(
+              <button key={o.v} onClick={()=>setFwDayScope(o.v)} style={{padding:"7px 13px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${fwDayScope===o.v?T.purple+"66":T.border}`,background:fwDayScope===o.v?T.purple+"14":"transparent",color:fwDayScope===o.v?T.purple:T.muted,fontFamily:T.font,fontWeight:fwDayScope===o.v?600:400}}>{o.label}</button>
+            ))}
+          </div>
+        </Field>
+        <Field label="Duration">
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            {[{v:60,label:"60 min"},{v:90,label:"90 min"},{v:120,label:"2 hours"}].map(o=>(
+              <button key={o.v} onClick={()=>setFwDuration(o.v)} style={{padding:"7px 13px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${fwDuration===o.v?T.purple+"66":T.border}`,background:fwDuration===o.v?T.purple+"14":"transparent",color:fwDuration===o.v?T.purple:T.muted,fontFamily:T.font,fontWeight:fwDuration===o.v?600:400}}>{o.label}</button>
+            ))}
+          </div>
+        </Field>
+      </Modal>
     </>,
     document.body
   );
