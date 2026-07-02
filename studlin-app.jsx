@@ -269,17 +269,17 @@ async function createGoogleDoc(essay) {
 }
 
 // ─── SHARED PRIMITIVES ────────────────────────────────────────────────────────
-const Btn = ({children,onClick,style={},variant="lime"}) => {
-  const base = {display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",border:"none",fontFamily:T.font,letterSpacing:"0.01em",transition:"opacity 0.15s"};
+const Btn = ({children,onClick,style={},variant="lime",disabled=false}) => {
+  const base = {display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",borderRadius:7,fontSize:12,fontWeight:600,cursor:disabled?"not-allowed":"pointer",border:"none",fontFamily:T.font,letterSpacing:"0.01em",transition:"opacity 0.15s"};
   const variants = {
     lime:{background:T.lime,color:T.bg},
     ghost:{background:"transparent",color:T.muted,border:`1px solid ${T.border}`},
     subtle:{background:T.card2,color:T.text,border:`1px solid ${T.border}`},
     danger:{background:"rgba(224,90,71,0.1)",color:T.red,border:"1px solid rgba(224,90,71,0.2)"},
   };
-  return <button onClick={onClick} style={{...base,...variants[variant],...style}}>{children}</button>;
+  return <button onClick={onClick} disabled={disabled} style={{...base,...variants[variant],...style}}>{children}</button>;
 };
-const BtnSm = ({children,onClick,style={},variant="lime"}) => <Btn onClick={onClick} style={{padding:"5px 12px",fontSize:11,...style}} variant={variant}>{children}</Btn>;
+const BtnSm = ({children,onClick,style={},variant="lime",disabled=false}) => <Btn onClick={onClick} disabled={disabled} style={{padding:"5px 12px",fontSize:11,...style}} variant={variant}>{children}</Btn>;
 
 const Badge = ({children,color=T.lime}) => <span style={{display:"inline-flex",alignItems:"center",padding:"3px 9px",borderRadius:4,fontSize:11,fontWeight:600,letterSpacing:"0.03em",background:color+"18",color,border:`1px solid ${color}22`}}>{children}</span>;
 
@@ -333,6 +333,95 @@ const Input = (props) => (
 const Textarea = (props) => (
   <textarea {...props} style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.font,outline:"none",resize:"vertical",minHeight:90,boxSizing:"border-box",...(props.style||{})}} />
 );
+// Drop-in replacement for <input type="time"> — same 24h "HH:MM" value/onChange
+// contract, but never invokes the browser's own picker chrome (which on
+// Safari/iOS renders as a scrolling wheel; Chrome/Edge render it as a plain
+// box — same code, wildly different UX depending on browser). Typing digits
+// ("930", "1430") or digits+am/pm ("930pm") both parse; an unparseable entry
+// just reverts to the last valid value on blur rather than crashing or left
+// half-typed.
+const TimeInput = ({value,onChange,style}) => {
+  const to12=(v)=>{
+    if(!v)return "";
+    const p=v.split(":");const h=+p[0],m=+p[1];
+    if(isNaN(h)||isNaN(m))return "";
+    const ap=h>=12?"PM":"AM";const h12=h%12||12;
+    return h12+":"+String(m).padStart(2,"0")+" "+ap;
+  };
+  const parse=(str)=>{
+    const s=(str||"").trim().toLowerCase();
+    if(!s)return null;
+    const ap=/pm/.test(s)?"pm":/am/.test(s)?"am":null;
+    const digits=s.replace(/[^0-9]/g,"");
+    if(!digits)return null;
+    let h,m;
+    if(digits.length<=2){h=+digits;m=0;}
+    else if(digits.length===3){h=+digits.slice(0,1);m=+digits.slice(1);}
+    else{h=+digits.slice(0,2);m=+digits.slice(2,4);}
+    if(m>59)return null;
+    if(ap==="pm"&&h<12)h+=12;
+    if(ap==="am"&&h===12)h=0;
+    if(h>23||h<0)return null;
+    return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
+  };
+  const [draft,setDraft]=useState(()=>to12(value));
+  const [focused,setFocused]=useState(false);
+  useEffect(()=>{if(!focused)setDraft(to12(value));},[value,focused]);
+  const commit=(e)=>{
+    setFocused(false);
+    const parsed=parse(draft);
+    if(parsed){if(parsed!==value)onChange(parsed);setDraft(to12(parsed));}
+    else setDraft(to12(value));
+  };
+  return (
+    <Input
+      type="text"
+      inputMode="numeric"
+      placeholder="e.g. 9:30 AM"
+      value={draft}
+      onFocus={e=>{setFocused(true);e.target.select();}}
+      onChange={e=>setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
+      style={style}
+    />
+  );
+};
+// Drop-in replacement for a plain numeric <Input type="number">. The bug it
+// fixes: `onChange={e=>setX(Math.max(min,+e.target.value||fallback))}` snaps
+// back to the fallback on every keystroke (since +"" is 0, a falsy value),
+// so a field can never actually be cleared to type a fresh number. This
+// keeps a free-typing local draft (including blank) and only ever commits a
+// valid, clamped number back to the caller's state on blur — so whatever
+// downstream code does real arithmetic on that state never sees a stale or
+// invalid value, but the input itself never fights the user mid-keystroke.
+const NumField = ({value,onChange,min,max,fallback,style,...rest}) => {
+  const [draft,setDraft]=useState(()=>String(value));
+  const [focused,setFocused]=useState(false);
+  useEffect(()=>{if(!focused)setDraft(String(value));},[value,focused]);
+  const commit=()=>{
+    setFocused(false);
+    let n=parseInt(draft,10);
+    if(isNaN(n))n=fallback!==undefined?fallback:(min!==undefined?min:0);
+    if(min!==undefined)n=Math.max(min,n);
+    if(max!==undefined)n=Math.min(max,n);
+    setDraft(String(n));
+    if(n!==value)onChange(n);
+  };
+  return (
+    <Input
+      type="number"
+      min={min}
+      max={max}
+      value={draft}
+      onFocus={()=>setFocused(true)}
+      onChange={e=>setDraft(e.target.value)}
+      onBlur={commit}
+      style={style}
+      {...rest}
+    />
+  );
+};
 const SelectChip = ({options, value, onChange}) => (
   <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
     {options.map(o=>{
@@ -899,11 +988,11 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
             <div>
               <label style={{fontSize:12,color:T.text,marginBottom:4,display:"block"}}>Start time</label>
-              <input type="time" value={workStart} onChange={e=>setWorkStart(e.target.value)} style={{width:"100%",background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.mono}} />
+              <TimeInput value={workStart} onChange={setWorkStart} style={{fontFamily:T.mono}} />
             </div>
             <div>
               <label style={{fontSize:12,color:T.text,marginBottom:4,display:"block"}}>End time</label>
-              <input type="time" value={workEnd} onChange={e=>setWorkEnd(e.target.value)} style={{width:"100%",background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.mono}} />
+              <TimeInput value={workEnd} onChange={setWorkEnd} style={{fontFamily:T.mono}} />
             </div>
           </div>
           <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>Tasks will be scheduled within this window. Your study schedule respects these hours.</div>
@@ -911,7 +1000,7 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
         
         <div style={{marginBottom:22}}>
           <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>Bedtime (Soft Limit)</label>
-          <input type="time" value={bedtime} onChange={e=>setBedtime(e.target.value)} style={{width:"100%",background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.mono,maxWidth:200}} />
+          <TimeInput value={bedtime} onChange={setBedtime} style={{fontFamily:T.mono,maxWidth:200}} />
           <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>Tasks won't be scheduled in the 2 hours before bedtime. This keeps your evening protected.</div>
         </div>
         
@@ -3432,15 +3521,15 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
           </div>
           {fwTimeMode==="custom"&&(
             <div style={{display:"flex",gap:10}}>
-              <Input type="time" value={fwTimeFrom} onChange={e=>setFwTimeFrom(e.target.value)} />
-              <Input type="time" value={fwTimeTo} onChange={e=>setFwTimeTo(e.target.value)} />
+              <TimeInput value={fwTimeFrom} onChange={setFwTimeFrom} />
+              <TimeInput value={fwTimeTo} onChange={setFwTimeTo} />
             </div>
           )}
         </Field>
         <Field label="Look Ahead">
           {fwDayScope==="custom"?(
             <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <Input type="number" min="1" max="30" value={fwCustomDays} onChange={e=>setFwCustomDays(Math.max(1,+e.target.value||1))} style={{width:70}} />
+              <NumField min={1} max={30} fallback={1} value={fwCustomDays} onChange={setFwCustomDays} style={{width:70}} />
               <span style={{fontSize:12.5,color:T.muted}}>Days</span>
               <button onClick={()=>setFwDayScope("tomorrow")} style={{marginLeft:"auto",background:"none",border:"none",color:T.purple,fontSize:11.5,cursor:"pointer",fontFamily:T.font}}>‹ presets</button>
             </div>
@@ -3455,7 +3544,7 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
         <Field label="Duration">
           {fwDurationCustom?(
             <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <Input type="number" min="15" step="15" value={fwDuration} onChange={e=>setFwDuration(Math.max(15,+e.target.value||15))} style={{width:70}} />
+              <NumField min={15} step={15} fallback={15} value={fwDuration} onChange={setFwDuration} style={{width:70}} />
               <span style={{fontSize:12.5,color:T.muted}}>Minutes</span>
               <button onClick={()=>{setFwDurationCustom(false);setFwDuration(90);}} style={{marginLeft:"auto",background:"none",border:"none",color:T.purple,fontSize:11.5,cursor:"pointer",fontFamily:T.font}}>‹ presets</button>
             </div>
@@ -4167,6 +4256,7 @@ function CalendarTab(){
   const nav=(d)=>setYm(c=>{const m2=c.m+d;return {y:c.y+Math.floor(m2/12),m:((m2%12)+12)%12};});
   const openEdit=(ev)=>{setEditEv(ev);setEditTitle(ev.title||"");setEditDate(ev.date||dayKey());setEditTime(ev.time||"14:30");setEditDuration(ev.duration||60);setEditDeadline(ev.deadline||"");setEditPriority((ev.priority||5)*100);setEditDifficulty((ev.difficulty||5)*100);setEditSubject(ev.subject||"Chemistry");setEditKind(ev.kind||"deadline");setEditNotes(ev.notes||"");setEditOpen(true);};
   const runGroupSync=()=>{
+    if(!gsDueDate.trim())return;
     const prefStart=timeToMinutes(gsStartTime);
     const prefEnd=timeToMinutes(gsEndTime);
     const dur=gsDuration;
@@ -4254,11 +4344,11 @@ function CalendarTab(){
       <Modal open={newOpen} onClose={resetForm} title="New task" sub="Add details and let Studlin schedule it, or place it manually." width={580}
         footer={
           isReminderKind||isFixedKind
-            ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} style={{opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>{isReminderKind?"Save reminder":"Save"}</Btn></>
+            ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!(evTitle.trim()&&evDate.trim()&&evTime.trim())} style={{opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>{isReminderKind?"Save reminder":"Save"}</Btn></>
             : <>
                 <Btn variant="subtle" onClick={resetForm}>Cancel</Btn>
-                <Btn variant="ghost" onClick={saveManual} style={{opacity:!evTitle.trim()?0.45:(manualMode?1:0.45)}}>Save manually</Btn>
-                <Btn onClick={aiArrange} disabled={aiLoading||manualMode} style={{opacity:aiLoading?1:(!evTitle.trim()?0.45:(manualMode?0.45:1))}}>{aiLoading?"Scheduling...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.wand,"AI arrange")}</Btn>
+                <Btn variant="ghost" onClick={saveManual} disabled={!evTitle.trim()||!manualMode} style={{opacity:!evTitle.trim()?0.45:(manualMode?1:0.45)}}>Save manually</Btn>
+                <Btn onClick={aiArrange} disabled={aiLoading||manualMode||!evTitle.trim()} style={{opacity:aiLoading?1:(!evTitle.trim()?0.45:(manualMode?0.45:1))}}>{aiLoading?"Scheduling...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.wand,"AI arrange")}</Btn>
               </>
         }>
         <Field label="Title"><Input placeholder="e.g. Study Bio chapter 4-6" value={evTitle} onChange={ev=>setEvTitle(ev.target.value)} autoFocus /></Field>
@@ -4271,19 +4361,19 @@ function CalendarTab(){
           <Field label={isTaskKind?"Target Date":"Date"} hint={isTaskKind?"Only fill this out for a manual entry. Leave blank to let AI automatically schedule this.":undefined}>
             <Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} />
           </Field>
-          <Field label={isReminderKind?"Reminder time":"Start time"}><Input type="time" value={evTime} onChange={ev=>setEvTime(ev.target.value)} /></Field>
+          <Field label={isReminderKind?"Reminder time":"Start time"}><TimeInput value={evTime} onChange={setEvTime} /></Field>
         </div>
         {manualMode&&<div style={{fontSize:11,color:T.amber,fontWeight:600,marginTop:-6,marginBottom:14}}>Using manual date. Clear Target Date to use AI scheduling.</div>}
 
         {isFixedKind&&(
-          <Field label="Duration (minutes)" hint="How long this occupies on your calendar"><Input type="number" min={5} max={480} value={evDuration} onChange={ev=>setEvDuration(Math.max(5,+ev.target.value||5))} /></Field>
+          <Field label="Duration (minutes)" hint="How long this occupies on your calendar"><NumField min={5} max={480} fallback={5} value={evDuration} onChange={setEvDuration} /></Field>
         )}
 
         {isTaskKind&&(
           <>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
               <Field label="Deadline" hint="When this must be done by"><Input type="date" value={evDeadline} onChange={ev=>setEvDeadline(ev.target.value)} /></Field>
-              <Field label="Duration (minutes)" hint="How long you plan to spend"><Input type="number" min={5} max={480} value={evDuration} onChange={ev=>setEvDuration(Math.max(5,+ev.target.value||5))} /></Field>
+              <Field label="Duration (minutes)" hint="How long you plan to spend"><NumField min={5} max={480} fallback={5} value={evDuration} onChange={setEvDuration} /></Field>
             </div>
 
             <Field label={`Priority: ${Math.round(evPriority/10)}%`} hint="Higher priority tasks are scheduled earlier">
@@ -4321,7 +4411,7 @@ function CalendarTab(){
             </div>
             {evSplitEnabled&&(
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
-                <Field label="Number of sessions"><Input type="number" min={2} max={10} value={evSplitCount} onChange={ev=>setEvSplitCount(Math.max(2,Math.min(10,+ev.target.value||2)))} /></Field>
+                <Field label="Number of sessions"><NumField min={2} max={10} fallback={2} value={evSplitCount} onChange={setEvSplitCount} /></Field>
                 <Field label="Per session"><div style={{fontSize:14,fontWeight:600,color:T.lime,padding:"10px 0"}}>{Math.round(evDuration/evSplitCount)} min each</div></Field>
               </div>
             )}
@@ -4331,15 +4421,15 @@ function CalendarTab(){
         <Field label="Notes (optional)"><Textarea placeholder="e.g. Bring calculator, covers chapters 4 to 6." value={evNotes} onChange={ev=>setEvNotes(ev.target.value)} /></Field>
       </Modal>
       <Modal open={editOpen} onClose={closeEdit} title="Edit task" sub="Update this task's details." width={580}
-        footer={<><Btn variant="subtle" onClick={closeEdit}>Cancel</Btn><Btn onClick={saveEdit} style={{opacity:editTitle.trim()?1:0.45}}>Save changes</Btn></>}>
+        footer={<><Btn variant="subtle" onClick={closeEdit}>Cancel</Btn><Btn onClick={saveEdit} disabled={!editTitle.trim()} style={{opacity:editTitle.trim()?1:0.45}}>Save changes</Btn></>}>
         <Field label="Title"><Input value={editTitle} onChange={e=>setEditTitle(e.target.value)} autoFocus /></Field>
         <Field label="Type"><SelectChip options={["deadline","exam","class","study block","reminder"]} value={editKind} onChange={setEditKind} /></Field>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
           <Field label="Scheduled date"><Input type="date" value={editDate} onChange={e=>setEditDate(e.target.value)} /></Field>
-          <Field label={editKind==="reminder"?"Reminder time":"Start time"}><Input type="time" value={editTime} onChange={e=>setEditTime(e.target.value)} /></Field>
+          <Field label={editKind==="reminder"?"Reminder time":"Start time"}><TimeInput value={editTime} onChange={setEditTime} /></Field>
         </div>
         {editKind!=="reminder"&&(
-          <Field label="Duration (minutes)"><Input type="number" min={5} max={480} value={editDuration} onChange={e=>setEditDuration(Math.max(5,+e.target.value||5))} /></Field>
+          <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={5} value={editDuration} onChange={setEditDuration} /></Field>
         )}
         {editKind!=="exam"&&editKind!=="class"&&editKind!=="reminder"&&(
           <>
@@ -4370,14 +4460,14 @@ function CalendarTab(){
         <Field label="Notes (optional)"><Textarea value={editNotes} onChange={e=>setEditNotes(e.target.value)} /></Field>
       </Modal>
       <Modal open={groupSyncOpen} onClose={()=>setGroupSyncOpen(false)} title="Group Smart Match" sub="Find a time slot when everyone is free." width={540}
-        footer={gsStep===1?<><Btn variant="subtle" onClick={()=>setGroupSyncOpen(false)}>Cancel</Btn><Btn onClick={runGroupSync}>Find slots</Btn></>:<><Btn variant="subtle" onClick={()=>{setGsStep(1);setGsResults(null);}}>← Back</Btn><Btn variant="subtle" onClick={()=>setGroupSyncOpen(false)}>Done</Btn></>}>
+        footer={gsStep===1?<><Btn variant="subtle" onClick={()=>setGroupSyncOpen(false)}>Cancel</Btn><Btn onClick={runGroupSync} disabled={!gsDueDate.trim()} style={{opacity:gsDueDate.trim()?1:0.45}}>Find slots</Btn></>:<><Btn variant="subtle" onClick={()=>{setGsStep(1);setGsResults(null);}}>← Back</Btn><Btn variant="subtle" onClick={()=>setGroupSyncOpen(false)}>Done</Btn></>}>
         {gsStep===1&&(
           <>
             <Field label="Project due date"><Input type="date" value={gsDueDate} onChange={e=>setGsDueDate(e.target.value)} /></Field>
-            <Field label="Total meeting duration (minutes)" hint="e.g. 120 for a 2-hour session"><Input type="number" min={15} max={480} value={gsDuration} onChange={e=>setGsDuration(Math.max(15,+e.target.value||60))} /></Field>
+            <Field label="Total meeting duration (minutes)" hint="e.g. 120 for a 2-hour session"><NumField min={15} max={480} fallback={60} value={gsDuration} onChange={setGsDuration} /></Field>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-              <Field label="Preferred window — start"><Input type="time" value={gsStartTime} onChange={e=>setGsStartTime(e.target.value)} /></Field>
-              <Field label="Preferred window — end"><Input type="time" value={gsEndTime} onChange={e=>setGsEndTime(e.target.value)} /></Field>
+              <Field label="Preferred window — start"><TimeInput value={gsStartTime} onChange={setGsStartTime} /></Field>
+              <Field label="Preferred window — end"><TimeInput value={gsEndTime} onChange={setGsEndTime} /></Field>
             </div>
             <Field label="Group members (optional)" hint="Enter usernames or emails, comma-separated"><Input placeholder="e.g. @alex, @sam, jamie@school.edu" value={gsInvitees} onChange={e=>setGsInvitees(e.target.value)} /></Field>
           </>
@@ -6147,10 +6237,10 @@ function Profile() {
 
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
           <Field label="Study start time" hint="Tasks are scheduled from this hour.">
-            <Input type="time" value={workStart} onChange={e=>setWorkStart(e.target.value)} />
+            <TimeInput value={workStart} onChange={setWorkStart} />
           </Field>
           <Field label="Bedtime" hint="Tasks end 2 hours before this.">
-            <Input type="time" value={bedtime} onChange={e=>setBedtime(e.target.value)} />
+            <TimeInput value={bedtime} onChange={setBedtime} />
           </Field>
         </div>
 
@@ -7043,7 +7133,7 @@ function InitWizard({onComplete}){
             <div style={{fontSize:20,fontWeight:700,color:ink,marginBottom:6,letterSpacing:"-0.01em"}}>When do you prefer to study?</div>
             <div style={{fontSize:13,color:muted,marginBottom:24}}>Tasks are scheduled inside this window so your time is protected.</div>
             <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:muted,marginBottom:8}}>Peak study start time</label>
-            <input type="time" value={workStart} onChange={e=>setWorkStart(e.target.value)} style={{background:"#F0EBE0",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",maxWidth:200}} />
+            <TimeInput value={workStart} onChange={setWorkStart} style={{background:"#F0EBE0",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,maxWidth:200}} />
           </div>
         )}
 
@@ -7052,7 +7142,7 @@ function InitWizard({onComplete}){
             <div style={{fontSize:20,fontWeight:700,color:ink,marginBottom:6,letterSpacing:"-0.01em"}}>What time do you go to bed?</div>
             <div style={{fontSize:13,color:muted,marginBottom:24}}>We won't schedule tasks within 2 hours of your bedtime.</div>
             <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:muted,marginBottom:8}}>Bedtime</label>
-            <input type="time" value={bedtime} onChange={e=>setBedtime(e.target.value)} style={{background:"#F0EBE0",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",maxWidth:200}} />
+            <TimeInput value={bedtime} onChange={setBedtime} style={{background:"#F0EBE0",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,maxWidth:200}} />
           </div>
         )}
 
