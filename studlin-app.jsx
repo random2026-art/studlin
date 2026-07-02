@@ -2646,16 +2646,37 @@ function FriendsChat(){
   const [searchResults,setSearchResults]=useState([]);
   const [searching,setSearching]=useState(false);
   useEffect(()=>{
-    const q=searchQ.trim().toLowerCase();
-    if(!q){setSearchResults([]);setSearching(false);return;}
-    const field=searchFilter==="School"?"schoolLower":searchFilter==="Name"?"nameLower":"usernameLower";
+    // Strip a leading "@" (people naturally type "@friendname") — usernameLower
+    // never has one stored, so leaving it in would silently match nothing.
+    const raw=searchQ.trim().toLowerCase().replace(/^@/,"");
+    if(!raw){setSearchResults([]);setSearching(false);return;}
     setSearching(true);
     let active=true;
+    const runQuery=async(field,value)=>{
+      if(!value)return[];
+      const snap=await fsdb().collection('profiles').where(field,'>=',value).where(field,'<=',value+String.fromCharCode(0xf8ff)).limit(10).get();
+      return snap.docs.map(d=>profileToFriend(d.id,d.data()));
+    };
     const t=setTimeout(async()=>{
       try{
-        const snap=await fsdb().collection('profiles').where(field,'>=',q).where(field,'<=',q+String.fromCharCode(0xf8ff)).limit(10).get();
+        let results;
+        if(searchFilter==="@username")results=await runQuery('usernameLower',raw.replace(/\s+/g,""));
+        else if(searchFilter==="Name")results=await runQuery('nameLower',raw);
+        else if(searchFilter==="School")results=await runQuery('schoolLower',raw);
+        else{
+          // "All" — a plain search bar has no way to know which field the
+          // student meant, so query name/username/school in parallel and
+          // merge, deduping by uid.
+          const [byUsername,byName,bySchool]=await Promise.all([
+            runQuery('usernameLower',raw.replace(/\s+/g,"")),
+            runQuery('nameLower',raw),
+            runQuery('schoolLower',raw),
+          ]);
+          const seen=new Set();
+          results=[...byUsername,...byName,...bySchool].filter(u=>seen.has(u.uid)?false:(seen.add(u.uid),true));
+        }
         if(!active)return;
-        setSearchResults(snap.docs.map(d=>profileToFriend(d.id,d.data())).filter(u=>u.uid!==myUid));
+        setSearchResults(results.filter(u=>u.uid!==myUid).slice(0,10));
       }catch(e){if(active)setSearchResults([]);}
       if(active)setSearching(false);
     },300);
