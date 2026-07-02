@@ -4848,7 +4848,7 @@ function WriteStudio(){
         ):(
           <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,padding:40,textAlign:"center"}}>
             <div style={{width:56,height:56,borderRadius:14,background:T.lime+"14",border:"1px solid "+T.lime+"33",display:"grid",placeItems:"center",color:T.lime}}>{Icon.pen}</div>
-            <div><div style={{fontSize:17,fontWeight:700,color:T.white,marginBottom:6}}>Write Studio</div><div style={{fontSize:13,color:T.muted,maxWidth:280,lineHeight:1.6}}>Your essays, AI tutor, grammar check, and rewrite tools — all in one place. Create a doc or pick a template to get started.</div></div>
+            <div><div style={{fontSize:17,fontWeight:700,color:T.white,marginBottom:6}}>Writing Suite</div><div style={{fontSize:13,color:T.muted,maxWidth:280,lineHeight:1.6}}>Your essays, AI tutor, grammar check, and rewrite tools — all in one place. Create a doc or pick a template to get started.</div></div>
             <Btn onClick={()=>setNewOpen(true)}>{Icon.plus} New doc</Btn>
           </div>
         )}
@@ -7128,7 +7128,7 @@ function App() {
       {id:"dashboard",label:"Dashboard"},
       {id:"calendar",label:"Calendar"},
       {id:"aichat",label:"Studlin AI"},
-      {id:"writestudio",label:"Write Studio",badge:String(lsGet("essays",[]).length||"")},
+      {id:"writestudio",label:"Writing Suite",badge:String(lsGet("essays",[]).length||"")},
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
       {id:"friends",label:"Studlin Network"},
@@ -7139,7 +7139,7 @@ function App() {
   ];
   const bottomItems=[{id:"settings",label:"Settings"},{id:"profile",label:"Profile"}];
   const pages={aichat:AiChat,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile};
-  const labelOf={dashboard:"Dashboard",aichat:"Studlin AI",writestudio:"Write Studio",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve"};
+  const labelOf={dashboard:"Dashboard",aichat:"Studlin AI",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve"};
   const sectionOf={dashboard:"Workspace",aichat:"Workspace",writestudio:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",friends:"Workspace",solve:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
