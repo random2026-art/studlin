@@ -3687,15 +3687,25 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
                   const isDone = ev.status === "done";
                   const over = daysOverdue(ev);
                   const color = over > 0 ? T.red : colorOf(ev.subject);
+                  const isStudy = ev.kind === "study block";
+                  const isExam = ev.kind === "exam";
+                  // Study blocks: solid subject-color fill. Exams: dark canvas with a
+                  // thick glowing subject-color border. Everything else (class,
+                  // deadline, reminder): the original thin left-accent strip.
+                  const kindStyle = isStudy
+                    ? {background:color,borderLeft:"none",color:T.ink}
+                    : isExam
+                      ? {background:T.ink,border:`2px solid ${color}`,borderLeft:`2px solid ${color}`,boxShadow:`0 0 10px -1px ${color}, inset 0 0 10px ${color}22`,color:T.cream}
+                      : {background:color+"1E",borderLeft:`3px solid ${color}`,color};
                   return (
                     <div key={ev.id}
                       draggable
                       onDragStart={()=>{ setWkDragId(ev.id); setWkDragDeadline(ev.deadline||null); }}
                       onDoubleClick={()=>openEdit(ev)}
                       title="Double-click to edit · Drag to reschedule"
-                      style={{position:"absolute",top:topPx,left:2,right:2,height:heightPx,borderRadius:5,background:color+"1E",borderLeft:`3px solid ${color}`,padding:"2px 5px",cursor:"grab",overflow:"hidden",zIndex:3,opacity:isDone?0.4:1,boxSizing:"border-box",userSelect:"none"}}>
-                      <div style={{fontSize:9.5,fontWeight:700,color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</div>
-                      {heightPx > 34 && <div style={{fontSize:8.5,color:T.muted,marginTop:1}}>{fmtTime(ev.time)}{dur ? " · "+dur+"m" : ""}</div>}
+                      style={{position:"absolute",top:topPx,left:2,right:2,height:heightPx,borderRadius:5,padding:"2px 5px",cursor:"grab",overflow:"hidden",zIndex:3,opacity:isDone?0.4:1,boxSizing:"border-box",userSelect:"none",...kindStyle}}>
+                      <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"⚠️ EXAM · ":""}{ev.title}</div>
+                      {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:1}}>{fmtTime(ev.time)}{dur ? " · "+dur+"m" : ""}</div>}
                     </div>
                   );
                 })}
@@ -3728,8 +3738,9 @@ function CalendarTab(){
   const [selDay,setSelDay]=useState(dayKey());
   const [newOpen,setNewOpen]=useState(false);
   const [evTitle,setEvTitle]=useState("");
-  const [evDate,setEvDate]=useState(dayKey());
-  const [evTime,setEvTime]=useState(()=>{const n=new Date();return String(n.getHours()).padStart(2,"0")+":"+String(n.getMinutes()).padStart(2,"0");});
+  const [evDate,setEvDate]=useState("");
+  const [evTime,setEvTime]=useState("");
+  const [evPrefillDate,setEvPrefillDate]=useState(dayKey());
   const [evSubject,setEvSubject]=useState("None");
   const [evCustom,setEvCustom]=useState("");
   const [evKind,setEvKind]=useState("deadline");
@@ -3780,8 +3791,13 @@ function CalendarTab(){
   const relDay=(k)=>{if(k===todayK)return "Today";const t=new Date();t.setDate(t.getDate()+1);if(k===dayKey(t))return "Tomorrow";const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{month:"short",day:"numeric"});};
   const upcoming=events.filter(ev=>ev.date>=todayK).sort((a,b)=>a.date===b.date?(a.time<b.time?-1:1):(a.date<b.date?-1:1)).slice(0,6);
   const dayEvents=(byDay[selDay]||[]).slice().sort((a,b)=>a.time<b.time?-1:1);
-  const openNew=(dateK)=>{const n=new Date();setEvTime(String(n.getHours()).padStart(2,"0")+":"+String(n.getMinutes()).padStart(2,"0"));setEvSubject("None");setEvDate(dateK||selDay);setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setNewOpen(true);};
-  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvPriority(500);setEvDifficulty(500);setEvDeadline("");setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);};
+  // Target Date/Start Time start blank — for tasks/study blocks, blank means
+  // "let AI schedule this". The clicked day is remembered so fixed-time kinds
+  // (exam/class/reminder), which always need a real date, can still default
+  // to it once the user picks one of those types.
+  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("");setEvSubject("None");setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setNewOpen(true);};
+  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvDate("");setEvTime("");setEvPriority(500);setEvDifficulty(500);setEvDeadline("");setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);};
+  const onEvKindChange=(k)=>{setEvKind(k);if((k==="exam"||k==="class"||k==="reminder")&&!evDate)setEvDate(evPrefillDate);};
   const buildTask=(date,time,titleSuffix,splitInfo)=>{
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
     return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,kind:evKind,notes:evNotes,priority:Math.round(evPriority/100),difficulty:Math.round(evDifficulty/100),deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,...(splitInfo||{})};
@@ -3795,7 +3811,7 @@ function CalendarTab(){
     setToast(true);setTimeout(()=>setToast(false),2200);
   };
   const saveManual=()=>{
-    if(!evTitle.trim())return;
+    if(!evTitle.trim()||!evDate.trim()||!evTime.trim())return;
     if(!evSplitEnabled){commitTasks([buildTask(evDate,evTime)]);return;}
     const groupId="split-"+Date.now();
     const perSession=Math.round(evDuration/evSplitCount);
@@ -3808,24 +3824,41 @@ function CalendarTab(){
   };
   const aiArrange=async()=>{
     if(!evTitle.trim())return;
+    if(evKind==="exam"||evKind==="class")return; // fixed real-world blocks — AI never touches these
+    if(evDate.trim()&&evTime.trim())return; // a manual Target Date/Start Time is set — use Save manually instead
     setAiLoading(true);
     const now=new Date();
     const tk=dayKey();
     const nowH=String(now.getHours()).padStart(2,"0");
     const nowM=String(now.getMinutes()).padStart(2,"0");
     const nowTime=nowH+":"+nowM;
-    // Earliest bookable time today: current time + 15-min buffer, rounded up to next 15-min mark
+    const prefs=getSchedulePreferences();
+    const prefStartMins=timeToMinutes(prefs.workStartTime);
+    const prefEndMins=timeToMinutes(prefs.workEndTime);
+    // Earliest bookable time today: the later of (user's preferred start) or (now + 15-min buffer)
     const bufMins=now.getHours()*60+now.getMinutes()+15;
-    const earliestTodayMins=Math.ceil(bufMins/15)*15;
+    const earliestTodayMins=Math.max(prefStartMins,Math.ceil(bufMins/15)*15);
     const earliestTodayTime=minutesToTime(earliestTodayMins);
-    // If today's remaining window (earliestToday → 22:00) can't fit even one session, direct AI to start tomorrow
+    // If today's remaining preferred window can't fit even one session, direct AI to start tomorrow
     const perSession=Math.round(evDuration/(evSplitEnabled?evSplitCount:1));
     const splitCount=evSplitEnabled?evSplitCount:1;
-    const todayWindowMins=Math.max(0,22*60-earliestTodayMins);
+    const todayWindowMins=Math.max(0,prefEndMins-earliestTodayMins);
     const firstAvailDate=todayWindowMins>=perSession?tk:(()=>{const d=new Date(now);d.setDate(d.getDate()+1);return dayKey(d);})();
     const existing=events.filter(ev=>ev.date>=tk).map(ev=>({title:ev.title,date:ev.date,time:ev.time,duration:ev.duration||60}));
     const priorityLabel=evPriority<200?"Low":evPriority<400?"Medium-Low":evPriority<600?"Medium":evPriority<800?"High":"Urgent";
-    const prompt="You are a scheduling AI. The user's LIVE clock reads "+nowTime+" on "+tk+". Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+priorityLabel+(evDeadline?". Deadline: "+evDeadline:"")+". Existing schedule: "+JSON.stringify(existing)+". STRICT RULES (violations are forbidden): 1) NEVER place any session before "+earliestTodayTime+" on today ("+tk+") — those slots have already passed. 2) The earliest you may schedule anything today is "+earliestTodayTime+". 3) If today has no open window at or after "+earliestTodayTime+", start from "+firstAvailDate+" instead. 4) All sessions must be within 08:00-22:00. 5) Higher priority = earlier slots. 6) Must be before deadline. 7) Avoid conflicts. 8) Spread splits across days. Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
+    const prompt="You are a scheduling AI. The user's LIVE clock reads "+nowTime+" on "+tk+". Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+priorityLabel+(evDeadline?". Deadline: "+evDeadline:"")+". Existing schedule: "+JSON.stringify(existing)+". The user's preferred daily study window is "+prefs.workStartTime+"–"+prefs.workEndTime+" — always fill that window first, chronologically from the start, before ever using time outside it. STRICT RULES (violations are forbidden): 1) NEVER place any session before "+earliestTodayTime+" on today ("+tk+") — those slots have already passed. 2) The earliest you may schedule anything today is "+earliestTodayTime+". 3) If today has no open window at or after "+earliestTodayTime+", start from "+firstAvailDate+" instead. 4) Prefer sessions within "+prefs.workStartTime+"-"+prefs.workEndTime+"; only expand outside that range (up to 08:00-22:00) if the preferred window is fully booked that day. 5) Higher priority = earlier slots. 6) Must be before deadline. 7) Avoid conflicts. 8) Spread splits across days. Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
+    // If the AI call fails or returns nothing usable, fall back to placing
+    // sessions chronologically starting at the earliest available slot —
+    // evDate/evTime are blank in AI mode, so saveManual() isn't usable here.
+    const fallbackSchedule=()=>{
+      const groupId=splitCount>1?"split-"+Date.now():null;
+      const tasks=[];
+      for(let i=0;i<splitCount;i++){
+        const d=new Date(firstAvailDate+"T12:00:00");d.setDate(d.getDate()+i);
+        tasks.push(buildTask(dayKey(d),earliestTodayTime,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})));
+      }
+      commitTasks(tasks);
+    };
     try{
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
       const data=await res.json();
@@ -3843,8 +3876,8 @@ function CalendarTab(){
         const groupId=splitCount>1?"split-"+Date.now():null;
         const tasks=sanitized.slice(0,splitCount).map((s,i)=>buildTask(s.date,s.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})));
         commitTasks(tasks);
-      }else{saveManual();}
-    }catch(e){saveManual();}
+      }else{fallbackSchedule();}
+    }catch(e){fallbackSchedule();}
     setAiLoading(false);
   };
   const removeEvent=(id)=>{const next=events.filter(ev=>ev.id!==id);setEvents(next);lsSet("events",next);};
@@ -3893,6 +3926,14 @@ function CalendarTab(){
   };
   const closeEdit=()=>{setEditOpen(false);setEditEv(null);};
   const saveEdit=()=>{if(!editEv||!editTitle.trim())return;const next=events.map(e=>e.id===editEv.id?{...e,title:editTitle.trim(),date:editDate,time:editTime,duration:editDuration,deadline:editDeadline||null,priority:Math.round(editPriority/100),difficulty:Math.round(editDifficulty/100),subject:editSubject,kind:editKind,notes:editNotes}:e);setEvents(next);lsSet("events",next);closeEdit();};
+  // Fixed real-world blocks (exam/class) only take Day/Start Time/Duration and
+  // are never AI-scheduled. Reminders are simple Date/Time markers. Everything
+  // else (deadline/study block) is a "task" that can be placed manually or by AI.
+  const isFixedKind=evKind==="exam"||evKind==="class";
+  const isReminderKind=evKind==="reminder";
+  const isTaskKind=!isFixedKind&&!isReminderKind;
+  const manualMode=isTaskKind&&evDate.trim()!==""&&evTime.trim()!=="";
+  const aiMode=isTaskKind&&!manualMode&&evDeadline.trim()!=="";
   return (
     <div>
       {subjOnboardOpen&&(
@@ -3930,20 +3971,34 @@ function CalendarTab(){
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} Task added</div>
       )}
       <Modal open={newOpen} onClose={resetForm} title="New task" sub="Add details and let Studlin schedule it, or place it manually." width={580}
-        footer={(evKind==="reminder")?<><Btn variant="subtle" onClick={resetForm}>Cancel</Btn></>:<><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn variant="ghost" onClick={saveManual} style={{opacity:evTitle.trim()?1:0.45}}>Save manually</Btn><Btn onClick={aiArrange} style={{opacity:evTitle.trim()?1:0.45}} disabled={aiLoading}>{aiLoading?"Scheduling...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.wand,"AI arrange")}</Btn></>}>
+        footer={
+          isReminderKind||isFixedKind
+            ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} style={{opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>{isReminderKind?"Save reminder":"Save"}</Btn></>
+            : <>
+                <Btn variant="subtle" onClick={resetForm}>Cancel</Btn>
+                <Btn variant="ghost" onClick={saveManual} style={{opacity:!evTitle.trim()?0.45:(manualMode?1:0.45)}}>Save manually</Btn>
+                <Btn onClick={aiArrange} disabled={aiLoading||manualMode} style={{opacity:aiLoading?1:(!evTitle.trim()?0.45:(manualMode?0.45:1))}}>{aiLoading?"Scheduling...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.wand,"AI arrange")}</Btn>
+              </>
+        }>
         <Field label="Title"><Input placeholder="e.g. Study Bio chapter 4-6" value={evTitle} onChange={ev=>setEvTitle(ev.target.value)} autoFocus /></Field>
-        
-        <Field label="Type" hint="Choose the task type to determine scheduling behavior">
-          <SelectChip options={["deadline","exam","class","study block","reminder"]} value={evKind} onChange={setEvKind} />
+
+        <Field label="Type" hint={isFixedKind?"Fixed real-world block — Studlin will never move or reschedule this.":"Choose the task type to determine scheduling behavior"}>
+          <SelectChip options={["deadline","exam","class","study block","reminder"]} value={evKind} onChange={onEvKindChange} />
         </Field>
 
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <Field label="Do on Date"><Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} /></Field>
-          {evKind!=="reminder"&&<Field label="Start time"><Input type="time" value={evTime} onChange={ev=>setEvTime(ev.target.value)} /></Field>}
-          {evKind==="reminder"&&<Field label="Reminder time"><Input type="time" value={evTime} onChange={ev=>setEvTime(ev.target.value)} /></Field>}
+          <Field label={isTaskKind?"Target Date":"Date"} hint={isTaskKind?"Only fill this out for a manual entry. Leave blank to let AI automatically schedule this.":undefined}>
+            <Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} />
+          </Field>
+          <Field label={isReminderKind?"Reminder time":"Start time"}><Input type="time" value={evTime} onChange={ev=>setEvTime(ev.target.value)} /></Field>
         </div>
+        {manualMode&&<div style={{fontSize:11,color:T.amber,fontWeight:600,marginTop:-6,marginBottom:14}}>Using manual date. Clear Target Date to use AI scheduling.</div>}
 
-        {evKind!=="reminder"&&(
+        {isFixedKind&&(
+          <Field label="Duration (minutes)" hint="How long this occupies on your calendar"><Input type="number" min={5} max={480} value={evDuration} onChange={ev=>setEvDuration(Math.max(5,+ev.target.value||5))} /></Field>
+        )}
+
+        {isTaskKind&&(
           <>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
               <Field label="Deadline" hint="When this must be done by"><Input type="date" value={evDeadline} onChange={ev=>setEvDeadline(ev.target.value)} /></Field>
@@ -3977,7 +4032,7 @@ function CalendarTab(){
         <Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field>
         {evSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Drivers ed, SAT prep, club..." value={evCustom} onChange={ev=>setEvCustom(ev.target.value)} /></Field>}
 
-        {evKind!=="reminder"&&(
+        {isTaskKind&&(
           <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14}}>
             <div onClick={()=>setEvSplitEnabled(s=>!s)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
               <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Split into sessions</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Spread this task across multiple days</div></div>
@@ -4000,32 +4055,36 @@ function CalendarTab(){
         <Field label="Type"><SelectChip options={["deadline","exam","class","study block","reminder"]} value={editKind} onChange={setEditKind} /></Field>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
           <Field label="Scheduled date"><Input type="date" value={editDate} onChange={e=>setEditDate(e.target.value)} /></Field>
-          <Field label="Start time"><Input type="time" value={editTime} onChange={e=>setEditTime(e.target.value)} /></Field>
+          <Field label={editKind==="reminder"?"Reminder time":"Start time"}><Input type="time" value={editTime} onChange={e=>setEditTime(e.target.value)} /></Field>
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <Field label="Deadline" hint="When this must be done by"><Input type="date" value={editDeadline} onChange={e=>setEditDeadline(e.target.value)} /></Field>
+        {editKind!=="reminder"&&(
           <Field label="Duration (minutes)"><Input type="number" min={5} max={480} value={editDuration} onChange={e=>setEditDuration(Math.max(5,+e.target.value||5))} /></Field>
-        </div>
-        <Field label={`Priority: ${Math.round(editPriority/10)}%`} hint="Higher priority tasks are scheduled earlier">
-          <div style={{display:"flex",alignItems:"center",gap:12}}>
-            <span style={{fontSize:11,color:T.muted,width:28}}>Low</span>
-            <div style={{flex:1,position:"relative",paddingTop:24}}>
-              <div style={{position:"absolute",top:0,left:`${editPriority/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{prioLabel(editPriority)}</div>
-              <input type="range" min={0} max={1000} value={editPriority} onChange={e=>setEditPriority(+e.target.value)} style={{width:"100%",accentColor:T.lime,height:6,borderRadius:3,cursor:"pointer"}} />
-            </div>
-            <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Urgent</span>
-          </div>
-        </Field>
-        <Field label={`Difficulty: ${Math.round(editDifficulty/10)}%`} hint="Very Easy to Very Difficult">
-          <div style={{display:"flex",alignItems:"center",gap:12}}>
-            <span style={{fontSize:11,color:T.muted,width:28}}>Easy</span>
-            <div style={{flex:1,position:"relative",paddingTop:24}}>
-              <div style={{position:"absolute",top:0,left:`${editDifficulty/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.purple,background:T.purple+"18",border:`1px solid ${T.purple}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{diffLabel(editDifficulty)}</div>
-              <input type="range" min={0} max={1000} value={editDifficulty} onChange={e=>setEditDifficulty(+e.target.value)} style={{width:"100%",accentColor:T.purple,height:6,borderRadius:3,cursor:"pointer"}} />
-            </div>
-            <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Hard</span>
-          </div>
-        </Field>
+        )}
+        {editKind!=="exam"&&editKind!=="class"&&editKind!=="reminder"&&(
+          <>
+            <Field label="Deadline" hint="When this must be done by"><Input type="date" value={editDeadline} onChange={e=>setEditDeadline(e.target.value)} /></Field>
+            <Field label={`Priority: ${Math.round(editPriority/10)}%`} hint="Higher priority tasks are scheduled earlier">
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                <span style={{fontSize:11,color:T.muted,width:28}}>Low</span>
+                <div style={{flex:1,position:"relative",paddingTop:24}}>
+                  <div style={{position:"absolute",top:0,left:`${editPriority/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{prioLabel(editPriority)}</div>
+                  <input type="range" min={0} max={1000} value={editPriority} onChange={e=>setEditPriority(+e.target.value)} style={{width:"100%",accentColor:T.lime,height:6,borderRadius:3,cursor:"pointer"}} />
+                </div>
+                <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Urgent</span>
+              </div>
+            </Field>
+            <Field label={`Difficulty: ${Math.round(editDifficulty/10)}%`} hint="Very Easy to Very Difficult">
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                <span style={{fontSize:11,color:T.muted,width:28}}>Easy</span>
+                <div style={{flex:1,position:"relative",paddingTop:24}}>
+                  <div style={{position:"absolute",top:0,left:`${editDifficulty/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.purple,background:T.purple+"18",border:`1px solid ${T.purple}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{diffLabel(editDifficulty)}</div>
+                  <input type="range" min={0} max={1000} value={editDifficulty} onChange={e=>setEditDifficulty(+e.target.value)} style={{width:"100%",accentColor:T.purple,height:6,borderRadius:3,cursor:"pointer"}} />
+                </div>
+                <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Hard</span>
+              </div>
+            </Field>
+          </>
+        )}
         <Field label="Subject"><SelectChip options={SUBJ} value={editSubject} onChange={setEditSubject} /></Field>
         <Field label="Notes (optional)"><Textarea value={editNotes} onChange={e=>setEditNotes(e.target.value)} /></Field>
       </Modal>
@@ -4105,7 +4164,9 @@ function CalendarTab(){
                   <div style={{display:"flex",flexDirection:"column",gap:2,marginTop:3}}>
                     {evs.slice(0,2).map((ev,j)=>{
                       const over=daysOverdue(ev);
-                      return <div key={j} style={{fontSize:9,fontWeight:600,color:over>0?T.red:colorOf(ev.subject),background:(over>0?T.red:colorOf(ev.subject))+"16",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",display:"flex",alignItems:"center",gap:3}}>
+                      const tagColor=over>0?T.red:colorOf(ev.subject);
+                      const isExam=ev.kind==="exam";
+                      return <div key={j} style={{fontSize:9,fontWeight:600,color:tagColor,background:tagColor+(isExam?"22":"16"),border:isExam?`1px solid ${tagColor}`:"none",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",display:"flex",alignItems:"center",gap:3}}>
                         {ev.priority&&ev.priority>=4&&<span style={{width:5,height:5,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority],flexShrink:0}} />}
                         {ev.title}
                       </div>;
@@ -4132,17 +4193,32 @@ function CalendarTab(){
               :dayEvents.map(ev=>{
                 const over=daysOverdue(ev);
                 const isDone=ev.status==="done";
+                const color=over>0?T.red:colorOf(ev.subject);
+                const isStudy=ev.kind==="study block";
+                const isExam=ev.kind==="exam";
+                // Study blocks: solid subject-color container. Exams: dark canvas
+                // with a thick glowing subject-color border + an explicit tag.
+                // Classes (and everything else): the original thin left strip.
+                const rowStyle=isStudy
+                  ? {background:color,borderRadius:9,padding:"9px 12px",marginBottom:6}
+                  : isExam
+                    ? {background:T.ink,border:`2px solid ${color}`,boxShadow:`0 0 12px -2px ${color}`,borderRadius:9,padding:"9px 12px",marginBottom:6}
+                    : {borderBottom:"1px solid "+T.border,padding:"9px 0"};
+                const titleColor=isStudy?T.ink:isExam?T.cream:(isDone?T.muted:T.white);
+                const subColor=isStudy?"rgba(14,31,24,0.65)":isExam?color:T.muted;
+                const badgeBg=isStudy?"rgba(14,31,24,0.14)":isExam?color+"22":T.card2;
                 return(
-                <div key={ev.id} draggable onDragStart={()=>setDragId(ev.id)} style={{display:"flex",gap:10,padding:"9px 0",borderBottom:"1px solid "+T.border,alignItems:"flex-start",opacity:isDone?0.5:1,cursor:"grab"}}>
-                  <div style={{width:3,alignSelf:"stretch",borderRadius:2,background:over>0?T.red:colorOf(ev.subject),flexShrink:0}} />
+                <div key={ev.id} draggable onDragStart={()=>setDragId(ev.id)} style={{display:"flex",gap:10,alignItems:"flex-start",opacity:isDone?0.5:1,cursor:"grab",...rowStyle}}>
+                  {!isStudy&&!isExam&&<div style={{width:3,alignSelf:"stretch",borderRadius:2,background:color,flexShrink:0}} />}
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{display:"flex",alignItems:"center",gap:6}}>
                       {ev.priority&&<span style={{width:7,height:7,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority||3],flexShrink:0}} />}
-                      <span style={{fontSize:12.5,fontWeight:600,color:isDone?T.muted:T.white,lineHeight:1.35,textDecoration:isDone?"line-through":"none"}}>{ev.title}</span>
+                      {isExam&&<span style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.04em",color,background:color+"1E",border:`1px solid ${color}55`,borderRadius:5,padding:"1px 6px",flexShrink:0}}>⚠️ EXAM</span>}
+                      <span style={{fontSize:12.5,fontWeight:600,color:titleColor,lineHeight:1.35,textDecoration:isDone?"line-through":"none"}}>{ev.title}</span>
                     </div>
-                    <div style={{fontSize:11,color:T.muted,marginTop:2,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                    <div style={{fontSize:11,color:subColor,marginTop:2,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
                       <span>{fmtTime(ev.time)}</span>
-                      {ev.duration&&<span style={{background:T.card2,padding:"1px 6px",borderRadius:4,fontSize:10,fontWeight:600}}>{ev.duration>=60?Math.floor(ev.duration/60)+"h"+(ev.duration%60?" "+ev.duration%60+"m":""):ev.duration+"m"}</span>}
+                      {ev.duration&&<span style={{background:badgeBg,padding:"1px 6px",borderRadius:4,fontSize:10,fontWeight:600,color:titleColor}}>{ev.duration>=60?Math.floor(ev.duration/60)+"h"+(ev.duration%60?" "+ev.duration%60+"m":""):ev.duration+"m"}</span>}
                       <span>{ev.subject}</span>
                       {over>0&&<span style={{color:T.red,fontWeight:600}}>{over}d overdue</span>}
                     </div>
