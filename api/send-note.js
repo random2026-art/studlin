@@ -12,7 +12,11 @@ module.exports = async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const { recipientEmail, noteTitle, noteBody, noteTag, senderName } = req.body || {};
+  const { recipientEmail, noteTitle, noteBody, noteTag } = req.body || {};
+  // Sender name shown in the email comes from the verified token, never the
+  // request body — otherwise any signed-in user could spoof whose name
+  // appears as having shared the note.
+  const senderName = user.name || user.email || 'A Studlin user';
 
   console.log('[send-note] Request from uid=%s to=%s note="%s"', user.uid, recipientEmail, noteTitle);
 

@@ -220,6 +220,16 @@ function calcSessionXP(mins){return Math.round(mins*(1+Math.floor(mins/30)*0.1))
 function awardFlashcardXP(rating){const pts={Mastered:15,Good:8,Hard:3,Missed:0};const gain=pts[rating]||0;if(gain>0)lsSet("xpBonus",(lsGet("xpBonus",0)+gain));return gain;}
 function getWeeklyXP(){const sessions=lsGet("sessions",[]);const weekAgo=Date.now()-6*86400000;const weekSessions=sessions.filter(x=>x.t>=weekAgo);const focusXP=weekSessions.reduce((acc,x)=>acc+calcSessionXP(x.m||0),0);const days=new Set(lsGet("days",[]));let wdays=0;for(let i=0;i<7;i++){const d=new Date();d.setDate(d.getDate()-i);if(days.has(dayKey(d)))wdays++;}return focusXP+wdays*15+Math.min(getStreak(),7)*30;}
 
+// ─── PUSH NOTIFICATIONS (FCM) ────────────────────────────────────────────────
+// To enable real desktop push delivery, replace the placeholder below with
+// your Web Push certificate key pair from Firebase Console:
+//   console.firebase.google.com → studlin-cb78b → Project Settings →
+//   Cloud Messaging → Web configuration → Web Push certificates → Generate key pair
+// Also requires FIREBASE_SERVICE_ACCOUNT set in Vercel's env vars so
+// api/send-push.js can actually call admin.messaging().send() — see api/_lib/firebase-admin.js.
+const FCM_VAPID_KEY = "BAgeXH3hA5APFcYuopRiB_7dBey6w1cYHStHBG-b8jnYA3941-4D1pQKILfsfNCjI3Ot2S5BTAwvEMgohR9ubmA";
+const FCM_CONFIGURED = FCM_VAPID_KEY !== "REPLACE_WITH_VAPID_KEY_FROM_FIREBASE_CONSOLE";
+
 // ─── GOOGLE DOCS INTEGRATION ─────────────────────────────────────────────────
 // To enable one-click export to Google Docs, replace the placeholder below
 // with your OAuth 2.0 Client ID from Google Cloud Console:
@@ -259,17 +269,17 @@ async function createGoogleDoc(essay) {
 }
 
 // ─── SHARED PRIMITIVES ────────────────────────────────────────────────────────
-const Btn = ({children,onClick,style={},variant="lime"}) => {
-  const base = {display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",border:"none",fontFamily:T.font,letterSpacing:"0.01em",transition:"opacity 0.15s"};
+const Btn = ({children,onClick,style={},variant="lime",disabled=false}) => {
+  const base = {display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",borderRadius:7,fontSize:12,fontWeight:600,cursor:disabled?"not-allowed":"pointer",border:"none",fontFamily:T.font,letterSpacing:"0.01em",transition:"opacity 0.15s"};
   const variants = {
     lime:{background:T.lime,color:T.bg},
     ghost:{background:"transparent",color:T.muted,border:`1px solid ${T.border}`},
     subtle:{background:T.card2,color:T.text,border:`1px solid ${T.border}`},
     danger:{background:"rgba(224,90,71,0.1)",color:T.red,border:"1px solid rgba(224,90,71,0.2)"},
   };
-  return <button onClick={onClick} style={{...base,...variants[variant],...style}}>{children}</button>;
+  return <button onClick={onClick} disabled={disabled} style={{...base,...variants[variant],...style}}>{children}</button>;
 };
-const BtnSm = ({children,onClick,style={},variant="lime"}) => <Btn onClick={onClick} style={{padding:"5px 12px",fontSize:11,...style}} variant={variant}>{children}</Btn>;
+const BtnSm = ({children,onClick,style={},variant="lime",disabled=false}) => <Btn onClick={onClick} disabled={disabled} style={{padding:"5px 12px",fontSize:11,...style}} variant={variant}>{children}</Btn>;
 
 const Badge = ({children,color=T.lime}) => <span style={{display:"inline-flex",alignItems:"center",padding:"3px 9px",borderRadius:4,fontSize:11,fontWeight:600,letterSpacing:"0.03em",background:color+"18",color,border:`1px solid ${color}22`}}>{children}</span>;
 
@@ -323,6 +333,95 @@ const Input = (props) => (
 const Textarea = (props) => (
   <textarea {...props} style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.font,outline:"none",resize:"vertical",minHeight:90,boxSizing:"border-box",...(props.style||{})}} />
 );
+// Drop-in replacement for <input type="time"> — same 24h "HH:MM" value/onChange
+// contract, but never invokes the browser's own picker chrome (which on
+// Safari/iOS renders as a scrolling wheel; Chrome/Edge render it as a plain
+// box — same code, wildly different UX depending on browser). Typing digits
+// ("930", "1430") or digits+am/pm ("930pm") both parse; an unparseable entry
+// just reverts to the last valid value on blur rather than crashing or left
+// half-typed.
+const TimeInput = ({value,onChange,style}) => {
+  const to12=(v)=>{
+    if(!v)return "";
+    const p=v.split(":");const h=+p[0],m=+p[1];
+    if(isNaN(h)||isNaN(m))return "";
+    const ap=h>=12?"PM":"AM";const h12=h%12||12;
+    return h12+":"+String(m).padStart(2,"0")+" "+ap;
+  };
+  const parse=(str)=>{
+    const s=(str||"").trim().toLowerCase();
+    if(!s)return null;
+    const ap=/pm/.test(s)?"pm":/am/.test(s)?"am":null;
+    const digits=s.replace(/[^0-9]/g,"");
+    if(!digits)return null;
+    let h,m;
+    if(digits.length<=2){h=+digits;m=0;}
+    else if(digits.length===3){h=+digits.slice(0,1);m=+digits.slice(1);}
+    else{h=+digits.slice(0,2);m=+digits.slice(2,4);}
+    if(m>59)return null;
+    if(ap==="pm"&&h<12)h+=12;
+    if(ap==="am"&&h===12)h=0;
+    if(h>23||h<0)return null;
+    return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
+  };
+  const [draft,setDraft]=useState(()=>to12(value));
+  const [focused,setFocused]=useState(false);
+  useEffect(()=>{if(!focused)setDraft(to12(value));},[value,focused]);
+  const commit=(e)=>{
+    setFocused(false);
+    const parsed=parse(draft);
+    if(parsed){if(parsed!==value)onChange(parsed);setDraft(to12(parsed));}
+    else setDraft(to12(value));
+  };
+  return (
+    <Input
+      type="text"
+      inputMode="numeric"
+      placeholder="e.g. 9:30 AM"
+      value={draft}
+      onFocus={e=>{setFocused(true);e.target.select();}}
+      onChange={e=>setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
+      style={style}
+    />
+  );
+};
+// Drop-in replacement for a plain numeric <Input type="number">. The bug it
+// fixes: `onChange={e=>setX(Math.max(min,+e.target.value||fallback))}` snaps
+// back to the fallback on every keystroke (since +"" is 0, a falsy value),
+// so a field can never actually be cleared to type a fresh number. This
+// keeps a free-typing local draft (including blank) and only ever commits a
+// valid, clamped number back to the caller's state on blur — so whatever
+// downstream code does real arithmetic on that state never sees a stale or
+// invalid value, but the input itself never fights the user mid-keystroke.
+const NumField = ({value,onChange,min,max,fallback,style,...rest}) => {
+  const [draft,setDraft]=useState(()=>String(value));
+  const [focused,setFocused]=useState(false);
+  useEffect(()=>{if(!focused)setDraft(String(value));},[value,focused]);
+  const commit=()=>{
+    setFocused(false);
+    let n=parseInt(draft,10);
+    if(isNaN(n))n=fallback!==undefined?fallback:(min!==undefined?min:0);
+    if(min!==undefined)n=Math.max(min,n);
+    if(max!==undefined)n=Math.min(max,n);
+    setDraft(String(n));
+    if(n!==value)onChange(n);
+  };
+  return (
+    <Input
+      type="number"
+      min={min}
+      max={max}
+      value={draft}
+      onFocus={()=>setFocused(true)}
+      onChange={e=>setDraft(e.target.value)}
+      onBlur={commit}
+      style={style}
+      {...rest}
+    />
+  );
+};
 const SelectChip = ({options, value, onChange}) => (
   <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
     {options.map(o=>{
@@ -889,11 +988,11 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
             <div>
               <label style={{fontSize:12,color:T.text,marginBottom:4,display:"block"}}>Start time</label>
-              <input type="time" value={workStart} onChange={e=>setWorkStart(e.target.value)} style={{width:"100%",background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.mono}} />
+              <TimeInput value={workStart} onChange={setWorkStart} style={{fontFamily:T.mono}} />
             </div>
             <div>
               <label style={{fontSize:12,color:T.text,marginBottom:4,display:"block"}}>End time</label>
-              <input type="time" value={workEnd} onChange={e=>setWorkEnd(e.target.value)} style={{width:"100%",background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.mono}} />
+              <TimeInput value={workEnd} onChange={setWorkEnd} style={{fontFamily:T.mono}} />
             </div>
           </div>
           <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>Tasks will be scheduled within this window. Your study schedule respects these hours.</div>
@@ -901,7 +1000,7 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
         
         <div style={{marginBottom:22}}>
           <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>Bedtime (Soft Limit)</label>
-          <input type="time" value={bedtime} onChange={e=>setBedtime(e.target.value)} style={{width:"100%",background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.mono,maxWidth:200}} />
+          <TimeInput value={bedtime} onChange={setBedtime} style={{fontFamily:T.mono,maxWidth:200}} />
           <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>Tasks won't be scheduled in the 2 hours before bedtime. This keeps your evening protected.</div>
         </div>
         
@@ -1804,7 +1903,7 @@ function Flashcards() {
         )}
         {dSource==="youtube"&&(
           <Field label="YouTube link" hint={ytInfo?"Found: "+ytInfo:"Paste a link — Studlin detects the topic and generates cards."}>
-            <Input placeholder="https://youtube.com/watch?v=..." value={ytUrl} onChange={ev=>{setYtUrl(ev.target.value);var v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtFetching(true);setYtInfo("");fetch("/api/youtube-info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(function(r){return r.json();}).then(function(d){if(d.title){setYtInfo(d.title+(d.author?" by "+d.author:""));setDName(d.title+" cards");}setYtFetching(false);}).catch(function(){setYtFetching(false);});}}} />
+            <Input placeholder="https://youtube.com/watch?v=..." value={ytUrl} onChange={ev=>{setYtUrl(ev.target.value);var v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtFetching(true);setYtInfo("");authFetch("/api/youtube-info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(function(r){return r.json();}).then(function(d){if(d.title){setYtInfo(d.title+(d.author?" by "+d.author:""));setDName(d.title+" cards");}setYtFetching(false);}).catch(function(){setYtFetching(false);});}}} />
             {ytFetching&&<div style={{fontSize:11,color:T.lime,marginTop:6}}>Detecting video title...</div>}
             {ytInfo&&!ytFetching&&<div style={{fontSize:11,color:T.lime,fontWeight:600,marginTop:6}}>Found: {ytInfo}</div>}
           </Field>
@@ -2292,7 +2391,7 @@ function Notes(){
         )}
         {src==="youtube"&&(
           <Field label="YouTube link" hint={ytInfo?"Found: "+ytInfo:"Paste any YouTube video link. Studlin will detect the topic and generate notes."}>
-            <Input placeholder="https://youtube.com/watch?v=..." value={yt} onChange={ev=>{setYt(ev.target.value);const v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtLoading(true);fetch("/api/youtube-info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(r=>r.json()).then(d=>{if(d.title){setYtInfo(d.title+(d.author?" by "+d.author:""));if(!newTitle)setNewTitle(d.title);}setYtLoading(false);}).catch(()=>setYtLoading(false));}}} />
+            <Input placeholder="https://youtube.com/watch?v=..." value={yt} onChange={ev=>{setYt(ev.target.value);const v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtLoading(true);authFetch("/api/youtube-info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(r=>r.json()).then(d=>{if(d.title){setYtInfo(d.title+(d.author?" by "+d.author:""));if(!newTitle)setNewTitle(d.title);}setYtLoading(false);}).catch(()=>setYtLoading(false));}}} />
             {ytLoading&&<div style={{fontSize:11,color:T.lime,marginTop:4}}>Detecting video…</div>}
           </Field>
         )}
@@ -2532,6 +2631,19 @@ const NETWORK_DIRECTORY=[
   {n:"Riya Mehta",h:"@riyam",s:"Lehigh University",online:true,presence:{state:"idle"}},
 ];
 const GROUP_DURATIONS=[{label:"1 week",days:7},{label:"2 weeks",days:14},{label:"1 month",days:30},{label:"2 months",days:60},{label:"3 months",days:90}];
+// Deterministic id for a 1:1 chat room — both sides compute the same id
+// from their two uids without a lookup, so the room can be created lazily
+// (idempotent merge) the first time either person opens the DM.
+const dmRoomId=(a,b)=>"dm_"+[a,b].sort().join('_');
+// A room is unread for `myUid` if its last message came from someone else
+// and either it's never been opened, or it arrived after the last time it
+// was opened. Derived entirely from live chatRooms data — no separate
+// unread counter to keep in sync.
+const isRoomUnread=(room,myUid)=>{
+  if(!room||!room.lastMessage||room.lastMessage.senderId===myUid)return false;
+  const readAt=room.lastReadAt&&room.lastReadAt[myUid];
+  return !readAt||room.lastMessage.ts>readAt;
+};
 const isOnlineStatusOn=()=>lsGet("settings",{}).onlineStatus!==false;
 const isIncognitoOn=()=>lsGet("settings",{}).incognito===true;
 function fmtGroupCountdown(expiresAt){
@@ -2574,8 +2686,9 @@ function FriendsChat(){
   const [friends,setFriends]=useState([]); // accepted, either direction — {uid,n,h,s,online,presence}
   const [incomingReqs,setIncomingReqs]=useState([]); // pending, received by me — {id,senderId,n,h,s}
   const [outgoingReqIds,setOutgoingReqIds]=useState(()=>new Set()); // uids I've already sent a pending request to
-  const [groups,setGroups]=useState(()=>lsGet("network-groups",[]));
-  const activeGroups=groups.filter(g=>!g.expiresAt||g.expiresAt>Date.now());
+  const [myRooms,setMyRooms]=useState({}); // chatRooms I'm a member of, keyed by id — DM rooms only exist once opened
+  const groupRooms=Object.values(myRooms).filter(r=>r.type==="group");
+  const activeGroups=groupRooms.filter(g=>!g.expiresAt||g.expiresAt>Date.now());
   const myFriends=friends;
 
   const profileToFriend=(uid,d)=>({
@@ -2633,13 +2746,27 @@ function FriendsChat(){
     return ()=>{cancelled=true;unsub1();unsub2();};
   },[myUid]);
 
+  // Chat rooms (DMs + groups) I belong to — one query drives the whole inbox
+  // (list + live previews) plus group membership, the same way the
+  // friendship listeners above drive the friend list. This is also what
+  // makes a newly-created group show up in a member's inbox live, with no
+  // refresh — the group doc itself is what they're subscribed to here.
+  useEffect(()=>{
+    if(!myUid){setMyRooms({});return;}
+    const unsub=fsdb().collection('chatRooms').where('memberUids','array-contains',myUid)
+      .onSnapshot(snap=>{
+        const next={};
+        snap.docs.forEach(d=>{next[d.id]={id:d.id,...d.data()};});
+        setMyRooms(next);
+      },()=>{});
+    return unsub;
+  },[myUid]);
+
   // ── Unified "All" / "Groups" inbox — combined, chronological ──────────────
   const [inboxTab,setInboxTab]=useState("All");
-  const networkChats=lsGet("network-chats",{});
-  const lastMsgOf=(id)=>{const arr=networkChats[id];return arr&&arr.length?arr[arr.length-1]:null;};
   const previewOf=(m)=>!m?null:(m.kind==="text"?m.text:m.kind==="calendar"?"Shared free time found":m.kind==="note"?"Note shared":m.kind==="deck"?"Deck shared":"New message");
-  const inboxDms=myFriends.map(u=>{const last=lastMsgOf("dm:"+u.h);return{kind:"dm",key:"dm:"+u.h,user:u,lastTs:last?last.ts:0,preview:previewOf(last)};});
-  const inboxGroups=activeGroups.map(g=>{const last=lastMsgOf("group:"+g.id);return{kind:"group",key:"group:"+g.id,group:g,lastTs:last?last.ts:0,preview:previewOf(last)};});
+  const inboxDms=myFriends.map(u=>{const room=myRooms[dmRoomId(myUid,u.uid)];const last=room&&room.lastMessage;return{kind:"dm",key:"dm:"+u.uid,user:u,lastTs:last?last.ts:0,preview:previewOf(last),unread:isRoomUnread(room,myUid)};});
+  const inboxGroups=activeGroups.map(g=>{const last=g.lastMessage;return{kind:"group",key:"group:"+g.id,group:g,lastTs:last?last.ts:0,preview:previewOf(last),unread:isRoomUnread(g,myUid)};});
   const inboxShown=(inboxTab==="Groups"?inboxGroups:[...inboxDms,...inboxGroups]).slice().sort((a,b)=>b.lastTs-a.lastTs);
 
   // ── Live search — one-shot Firestore prefix query against `profiles` ──────
@@ -2726,32 +2853,35 @@ function FriendsChat(){
   const [cgDuration,setCgDuration]=useState("1 month");
   const [cgCustomDate,setCgCustomDate]=useState("");
   const resetCreateGroup=()=>{setCgName("");setCgMembers([]);setCgType("permanent");setCgDuration("1 month");setCgCustomDate("");};
-  const toggleCgMember=(h)=>setCgMembers(m=>m.includes(h)?m.filter(x=>x!==h):[...m,h]);
+  const toggleCgMember=(uid)=>setCgMembers(m=>m.includes(uid)?m.filter(x=>x!==uid):[...m,uid]);
   const cgCustomInvalid=cgType==="temporary"&&cgDuration==="Custom date"&&!cgCustomDate;
-  const submitCreateGroup=()=>{
-    if(!cgName.trim()||cgMembers.length===0||cgCustomInvalid)return;
+  const submitCreateGroup=async()=>{
+    if(!myUid||!cgName.trim()||cgMembers.length===0||cgCustomInvalid)return;
     let expiresAt=null;
     if(cgType==="temporary"){
       if(cgDuration==="Custom date"&&cgCustomDate)expiresAt=new Date(cgCustomDate+"T23:59:59").getTime();
       else{const dur=GROUP_DURATIONS.find(d=>d.label===cgDuration);expiresAt=dur?Date.now()+dur.days*86400000:null;}
     }
-    // Snapshot each member's display name at creation time — group chat is
-    // stored locally, but member handles now refer to real Firestore friends
-    // rather than the old mock directory, so their name won't be resolvable
-    // from a shared lookup table later.
-    const memberNames=Object.fromEntries(cgMembers.map(h=>{const f=myFriends.find(x=>x.h===h);return [h,f?f.n:h];}));
-    const g={id:"g"+Date.now(),name:cgName.trim(),memberHandles:[...cgMembers],memberNames,type:cgType,createdAt:Date.now(),expiresAt};
-    const next=[g,...groups];setGroups(next);lsSet("network-groups",next);
+    // Snapshot each member's display name at creation time (keyed by uid,
+    // the same id used for security-rule membership checks) so the group
+    // settings panel can show names without extra profile reads.
+    const memberNames={[myUid]:me};
+    cgMembers.forEach(uid=>{const f=myFriends.find(x=>x.uid===uid);memberNames[uid]=f?f.n:uid;});
+    const now=new Date().toISOString();
+    try{
+      await fsdb().collection('chatRooms').add({
+        type:"group",memberUids:[myUid,...cgMembers],createdBy:myUid,
+        name:cgName.trim(),groupType:cgType,expiresAt,memberNames,
+        createdAt:now,updatedAt:now,lastMessage:null,
+      });
+    }catch(e){}
     setCreateGroupOpen(false);resetCreateGroup();
   };
-  const makeGroupPermanent=(id)=>{
-    const next=groups.map(g=>g.id===id?{...g,type:"permanent",expiresAt:null}:g);
-    setGroups(next);lsSet("network-groups",next);
-    setChatTarget(t=>(t&&t.kind==="group"&&t.group.id===id)?{...t,group:next.find(g=>g.id===id)}:t);
+  const makeGroupPermanent=async(id)=>{
+    try{await fsdb().collection('chatRooms').doc(id).update({groupType:"permanent",expiresAt:null,updatedAt:new Date().toISOString()});}catch(e){}
   };
-  const deleteGroup=(id)=>{
-    const next=groups.filter(g=>g.id!==id);setGroups(next);lsSet("network-groups",next);
-    const all=lsGet("network-chats",{});delete all["group:"+id];lsSet("network-chats",all);
+  const deleteGroup=async(id)=>{
+    try{await fsdb().collection('chatRooms').doc(id).delete();}catch(e){}
     setChatTarget(t=>(t&&t.kind==="group"&&t.group.id===id)?null:t);
   };
 
@@ -2882,8 +3012,9 @@ function FriendsChat(){
                       <div style={{width:34,height:34,borderRadius:10,background:T.purple+"18",border:`1px solid ${T.purple}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.purple,flexShrink:0}}>{Icon.users}</div>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{fontSize:13,fontWeight:600,color:T.white}}>{g.name}</div>
-                        <div style={{fontSize:11,color:T.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{row.preview||(g.memberHandles.length+1)+" members"}{expiry?<> · <span style={{color:expiry.urgent?T.amber:T.purple}}>Archives in {expiry.label}</span></>:""}</div>
+                        <div style={{fontSize:11,color:T.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{row.preview||g.memberUids.length+" members"}{expiry?<> · <span style={{color:expiry.urgent?T.amber:T.purple}}>Archives in {expiry.label}</span></>:""}</div>
                       </div>
+                      {row.unread&&<div style={{width:8,height:8,borderRadius:"50%",background:T.lime,flexShrink:0}} />}
                       <button onClick={e=>{e.stopPropagation();setChatTarget({kind:"group",group:g});}} style={{width:32,height:32,borderRadius:9,border:`1px solid ${T.border}`,background:T.card2,color:T.lime,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.msgSquare}</button>
                     </div>
                   );
@@ -2901,6 +3032,7 @@ function FriendsChat(){
                       <div style={{fontSize:13,fontWeight:600,color:T.white}}>{u.n}</div>
                       <div onClick={e=>{if(pr.joinable){e.stopPropagation();setJoinRevealFor(revealed?null:u.h);}}} style={{fontSize:11,color:pr.color,fontWeight:pr.joinable?600:400,cursor:pr.joinable?"pointer":"default",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{row.preview&&!pr.joinable?row.preview:pr.text}</div>
                     </div>
+                    {row.unread&&<div style={{width:8,height:8,borderRadius:"50%",background:T.lime,flexShrink:0}} />}
                     {revealed&&pr.joinable
                       ?<button onClick={()=>joinLockIn(u)} style={{flexShrink:0,padding:"7px 14px",borderRadius:99,background:T.teal,color:T.ink,border:"none",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,boxShadow:`0 0 0 4px ${T.teal}22, 0 4px 14px -4px ${T.teal}88`,whiteSpace:"nowrap"}}>Join Lock-In</button>
                       :<button onClick={()=>setChatTarget({kind:"dm",user:u})} style={{width:32,height:32,borderRadius:9,border:`1px solid ${T.border}`,background:T.card2,color:T.lime,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.msgSquare}</button>
@@ -2979,9 +3111,9 @@ function FriendsChat(){
         <Field label="Members" hint={myFriends.length===0?"Add friends first to start a group.":null}>
           <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:150,overflowY:"auto"}}>
             {myFriends.map(u=>{
-              const sel=cgMembers.includes(u.h);
+              const sel=cgMembers.includes(u.uid);
               return (
-                <div key={u.h} onClick={()=>toggleCgMember(u.h)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:8,cursor:"pointer",background:sel?T.lime+"10":T.card2,border:`1px solid ${sel?T.lime+"44":T.border}`}}>
+                <div key={u.uid} onClick={()=>toggleCgMember(u.uid)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:8,cursor:"pointer",background:sel?T.lime+"10":T.card2,border:`1px solid ${sel?T.lime+"44":T.border}`}}>
                   <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={26} picUrl="" />
                   <div style={{flex:1,fontSize:12.5,color:T.text,fontWeight:600}}>{u.n}</div>
                   <div style={{width:16,height:16,borderRadius:5,border:`1.5px solid ${sel?T.lime:T.border}`,background:sel?T.lime:"transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -3021,7 +3153,7 @@ function FriendsChat(){
         )}
       </Modal>
 
-      <ChatDrawer open={!!chatTarget} target={chatTarget} onClose={()=>setChatTarget(null)} onMakePermanent={makeGroupPermanent} onDeleteGroup={deleteGroup} />
+      <ChatDrawer open={!!chatTarget} myUid={myUid} target={chatTarget&&chatTarget.kind==="group"&&myRooms[chatTarget.group.id]?{...chatTarget,group:myRooms[chatTarget.group.id]}:chatTarget} onClose={()=>setChatTarget(null)} onMakePermanent={makeGroupPermanent} onDeleteGroup={deleteGroup} />
     </div>
   );
 }
@@ -3039,9 +3171,9 @@ function panelPalette(){
     card2: isLight?"rgba(246,241,230,0.08)":T.card2,
   };
 }
-function ChatBubble({m,onRespond,onSchedule}){
+function ChatBubble({m,myUid,onRespond,onSchedule}){
   const pp=panelPalette();
-  const mine=m.from==="me";
+  const mine=m.senderId===myUid;
   const align=mine?"flex-end":"flex-start";
   const bg=mine?T.lime+"1F":pp.card2;
   const border=mine?T.lime+"40":pp.border;
@@ -3060,7 +3192,7 @@ function ChatBubble({m,onRespond,onSchedule}){
   }
   if(m.kind==="note"||m.kind==="deck"){
     const isNote=m.kind==="note";
-    const incoming=m.direction==="incoming";
+    const incoming=m.senderId!==myUid;
     const pending=m.status==="pending";
     return (
       <div style={{alignSelf:align,maxWidth:"86%",padding:"10px 12px",background:bg,border:`1px solid ${border}`,borderRadius:12}}>
@@ -3088,9 +3220,9 @@ function ChatBubble({m,onRespond,onSchedule}){
 }
 
 // ─── NETWORK: sliding chat drawer (DM + Group, w/ Quick Actions) ─────────────
-function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
+function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
   const isGroup=!!(target&&target.kind==="group");
-  const chatId=target?(isGroup?"group:"+target.group.id:"dm:"+target.user.h):null;
+  const roomId=target?(isGroup?target.group.id:(myUid&&target.user.uid?dmRoomId(myUid,target.user.uid):null)):null;
   const [messages,setMessages]=useState([]);
   const [input,setInput]=useState("");
   const [quickOpen,setQuickOpen]=useState(false);
@@ -3098,13 +3230,40 @@ function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
   const [deckPicker,setDeckPicker]=useState(false);
   const [syncRunning,setSyncRunning]=useState(false);
   const [settingsOpen,setSettingsOpen]=useState(false);
+  const [findWindowOpen,setFindWindowOpen]=useState(false);
+  const [fwTimeMode,setFwTimeMode]=useState("anytime");
+  const [fwTimeFrom,setFwTimeFrom]=useState("15:00");
+  const [fwTimeTo,setFwTimeTo]=useState("17:00");
+  const [fwDayScope,setFwDayScope]=useState("tomorrow");
+  const [fwCustomDays,setFwCustomDays]=useState(5);
+  const [fwDuration,setFwDuration]=useState(90);
+  const [fwDurationCustom,setFwDurationCustom]=useState(false);
   const scrollRef=useRef(null);
 
+  // Live message thread — a DM room is created lazily (idempotent merge) the
+  // first time it's opened; a group room already exists from creation, so
+  // this is a no-op merge for groups. Only after the room doc exists can the
+  // messages subcollection's security rules (which look up its memberUids)
+  // resolve for reads/writes.
   useEffect(()=>{
-    if(!chatId){setMessages([]);return;}
-    setMessages(lsGet("network-chats",{})[chatId]||[]);
-    setInput("");setQuickOpen(false);setNotePicker(false);setDeckPicker(false);setSyncRunning(false);setSettingsOpen(false);
-  },[chatId]);
+    setInput("");setQuickOpen(false);setNotePicker(false);setDeckPicker(false);setSyncRunning(false);setSettingsOpen(false);setFindWindowOpen(false);
+    if(!roomId||!myUid){setMessages([]);return;}
+    let cancelled=false;
+    if(!isGroup){
+      const now=new Date().toISOString();
+      fsdb().collection('chatRooms').doc(roomId).set({
+        type:"dm",memberUids:[myUid,target.user.uid].sort(),createdBy:myUid,
+        createdAt:now,updatedAt:now,lastMessage:null,
+      },{merge:true}).catch(()=>{});
+    }
+    // Marks the room read the moment it's opened — the sidebar badge and
+    // inbox dots clear on their own via their own onSnapshot listeners,
+    // nothing to manually decrement.
+    fsdb().collection('chatRooms').doc(roomId).update({['lastReadAt.'+myUid]:Date.now()}).catch(()=>{});
+    const unsub=fsdb().collection('chatRooms').doc(roomId).collection('messages').orderBy('ts','asc')
+      .onSnapshot(snap=>{if(!cancelled)setMessages(snap.docs.map(d=>({id:d.id,...d.data()})));},()=>{});
+    return ()=>{cancelled=true;unsub();};
+  },[roomId]);
 
   useEffect(()=>{if(scrollRef.current)scrollRef.current.scrollTop=scrollRef.current.scrollHeight;},[messages]);
 
@@ -3115,42 +3274,83 @@ function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
     return ()=>window.removeEventListener("keydown",onKey);
   },[open]);
 
-  const persist=(next)=>{
-    setMessages(next);
-    if(!chatId)return;
-    const all=lsGet("network-chats",{});all[chatId]=next;lsSet("network-chats",all);
+  // Every send does two writes: the message itself, then a bump of the
+  // parent room's lastMessage/updatedAt so the inbox preview/sort (driven by
+  // the single chatRooms listener in FriendsChat) updates live for everyone
+  // in the room, not just the sender.
+  const sendMessage=(fields)=>{
+    if(!roomId||!myUid)return;
+    const ts=Date.now();
+    const roomRef=fsdb().collection('chatRooms').doc(roomId);
+    roomRef.collection('messages').add({senderId:myUid,ts,...fields}).catch(()=>{});
+    roomRef.update({lastMessage:{text:fields.text||null,kind:fields.kind,ts,senderId:myUid},updatedAt:new Date().toISOString()}).catch(()=>{});
+    // Server-side push — checks the recipient's own preference before
+    // sending, so this is a request to try, not a guarantee it fires.
+    const preview=fields.text||(fields.kind==="calendar"?"Shared free time found":fields.kind==="note"?"Note shared":fields.kind==="deck"?"Deck shared":"New message");
+    authFetch("/api/send-push",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({roomId,preview})}).catch(()=>{});
   };
-  const pushMessage=(msg)=>persist([...messages,{id:Date.now()+"-"+Math.random(),ts:Date.now(),...msg}]);
 
-  const sendText=()=>{if(!input.trim())return;pushMessage({from:"me",kind:"text",text:input.trim()});setInput("");};
-  // Scans everyone's schedules for an overlapping free block. There's no real
-  // shared-schedule backend behind these mock friends, so the "scan" is
-  // simulated, but the resulting slot is real and genuinely bookable below.
-  const findSharedStudyWindow=()=>{
-    const d=new Date();d.setDate(d.getDate()+1);d.setHours(15,0,0,0);
-    return{date:dayKey(d),time:"15:00",duration:90,dayLabel:"tomorrow",timeLabel:"3:00 PM"};
+  const sendText=()=>{if(!input.trim())return;sendMessage({kind:"text",text:input.trim()});setInput("");};
+  const fmtTimeLabel=(t)=>{const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
+  // There's no real shared-schedule backend behind these friends — this
+  // client can't see the other person's calendar, only the sender's own
+  // (localStorage `events`, never synced to Firestore). So the "match" still
+  // can't confirm mutual availability, but it's no longer arbitrary either:
+  // it genuinely scans for a slot in the chosen window/day-range that's free
+  // on the sender's own calendar, same overlap check the real "Group Sync"
+  // free-slot finder in CalendarTab uses (runGroupSync).
+  const findSharedStudyWindow=(params)=>{
+    const prefStart=params.timeMode==="custom"?timeToMinutes(params.timeFrom):timeToMinutes("08:00");
+    const prefEnd=params.timeMode==="custom"?timeToMinutes(params.timeTo):timeToMinutes("22:00");
+    const scanDays=Math.max(1,params.lookAheadDayRange||1);
+    const duration=params.durationInMinutes;
+    const events=lsGet("events",[]);
+    const today=new Date();
+    const isFree=(dk,start,end)=>{
+      const occupied=events.filter(e=>e.date===dk).map(e=>({s:timeToMinutes(e.time||"0:00"),e:timeToMinutes(e.time||"0:00")+(e.duration||60)}));
+      return !occupied.some(o=>!(end<=o.s||start>=o.e));
+    };
+    const labelFor=(offset,d)=>offset===1?"tomorrow":d.toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"});
+    for(let offset=1;offset<=scanDays;offset++){
+      const d=new Date(today);d.setDate(today.getDate()+offset);
+      const dk=dayKey(d);
+      for(let start=prefStart;start+duration<=prefEnd;start+=30){
+        if(isFree(dk,start,start+duration)){
+          const time=minutesToTime(start);
+          return{date:dk,time,duration,dayLabel:labelFor(offset,d),timeLabel:fmtTimeLabel(time)};
+        }
+      }
+    }
+    // Nothing fully free in the whole range — fall back to the start of the
+    // preferred window on the last scanned day, so the feature never
+    // dead-ends with no suggestion at all.
+    const d=new Date(today);d.setDate(today.getDate()+scanDays);
+    const time=minutesToTime(prefStart);
+    return{date:dayKey(d),time,duration,dayLabel:labelFor(scanDays,d),timeLabel:fmtTimeLabel(time)};
   };
-  const runCalendarSync=()=>{
-    setQuickOpen(false);setSyncRunning(true);
-    setTimeout(()=>{setSyncRunning(false);pushMessage({from:"me",kind:"calendar",status:"unscheduled",meta:findSharedStudyWindow()});},2100);
+  const submitFindWindow=()=>{
+    setFindWindowOpen(false);setSyncRunning(true);
+    const lookAheadDayRange=fwDayScope==="custom"?fwCustomDays:fwDayScope==="tomorrow"?1:fwDayScope==="3days"?3:7;
+    const params={timeMode:fwTimeMode,timeFrom:fwTimeFrom,timeTo:fwTimeTo,lookAheadDayRange,durationInMinutes:fwDuration};
+    setTimeout(()=>{setSyncRunning(false);sendMessage({kind:"calendar",status:"unscheduled",meta:findSharedStudyWindow(params)});},2100);
   };
   // Injects the matched window into the current user's own calendar as a
   // study block. (Only this browser's calendar can actually be written to —
   // there's no backend to push the event into other members' accounts too.)
   const scheduleGroupSession=(id)=>{
     const msg=messages.find(x=>x.id===id);
-    if(!msg)return;
+    if(!msg||!roomId)return;
     const w=msg.meta;
     const events=lsGet("events",[]);
     const ev={id:"netsync-"+Date.now(),date:w.date,time:w.time,duration:w.duration,title:peerName+" study session",subject:peerName,kind:"study block"};
     lsSet("events",[...events,ev]);
-    persist(messages.map(x=>x.id===id?{...x,status:"scheduled"}:x));
+    fsdb().collection('chatRooms').doc(roomId).collection('messages').doc(id).update({status:"scheduled"}).catch(()=>{});
   };
   // Sharing a note/deck posts a pending card first — a lightweight one-click
   // confirmation before it actually goes out (mirrors the same verification
   // loop used for incoming shares below).
-  const attachNote=(note)=>{pushMessage({from:"me",kind:"note",direction:"outgoing",status:"pending",meta:{title:note.title,id:note.id,body:note.body}});setNotePicker(false);};
-  const attachDeck=(deck)=>{pushMessage({from:"me",kind:"deck",direction:"outgoing",status:"pending",meta:{name:deck.name,count:deck.cards?deck.cards.length:(deck.count||0),id:deck.id,cards:deck.cards}});setDeckPicker(false);};
+  const attachNote=(note)=>{sendMessage({kind:"note",status:"pending",meta:{title:note.title,id:note.id,body:note.body}});setNotePicker(false);};
+  const attachDeck=(deck)=>{sendMessage({kind:"deck",status:"pending",meta:{name:deck.name,count:deck.cards?deck.cards.length:(deck.count||0),id:deck.id,cards:deck.cards}});setDeckPicker(false);};
 
   const peerName=target?(isGroup?target.group.name:target.user.n):"";
   const peerFirst=peerName.split(" ")[0];
@@ -3159,8 +3359,8 @@ function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
   // copy the shared resource into the recipient's own Notes/Flashcards workspace.
   const respondToShare=(id,decision)=>{
     const msg=messages.find(x=>x.id===id);
-    if(!msg)return;
-    if(decision==="approved"&&msg.direction==="incoming"){
+    if(!msg||!roomId)return;
+    if(decision==="approved"&&msg.senderId!==myUid){
       if(msg.kind==="note"){
         const notes=lsGet("notes",[]);
         const copy={id:String(Date.now()),title:msg.meta.title,body:msg.meta.body||"<p>Shared from "+peerName+".</p>",tag:"Shared",date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now(),source:"shared",sharedFrom:peerName};
@@ -3171,32 +3371,22 @@ function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
         lsSet("decks",[copy,...decks]);
       }
     }
-    persist(messages.map(x=>x.id===id?{...x,status:decision}:x));
+    fsdb().collection('chatRooms').doc(roomId).collection('messages').doc(id).update({status:decision}).catch(()=>{});
   };
 
-  // Simulated incoming share requests — there's no real second Studlin account
-  // behind these mock friends, so the "friend's" response is fabricated locally,
-  // but the approve/decline UI and the copy-into-workspace step are fully real.
-  const requestNote=()=>{
-    setQuickOpen(false);
-    pushMessage({from:"me",kind:"text",text:"Requested notes from "+peerFirst+"."});
-    setTimeout(()=>{
-      pushMessage({from:"them",kind:"note",direction:"incoming",status:"pending",meta:{title:peerFirst+"'s notes",body:"<h3>"+peerFirst+"'s notes</h3><p>Shared from their Studlin workspace.</p>"}});
-    },1600);
-  };
-  const requestDeck=()=>{
-    setQuickOpen(false);
-    pushMessage({from:"me",kind:"text",text:"Requested a flashcard deck from "+peerFirst+"."});
-    setTimeout(()=>{
-      pushMessage({from:"them",kind:"deck",direction:"incoming",status:"pending",meta:{name:peerFirst+"'s deck",cards:[{q:"Sample question from "+peerFirst,a:"Sample answer"},{q:"Second card",a:"Second answer"}]}});
-    },1600);
-  };
+  // Ask the other person to share a note/deck. There's no way to make them
+  // actually respond, so this just sends the request text — no fabricated
+  // reply. (Faking a message "from" them would be spoofing, and the security
+  // rules block a client from writing a message with someone else's senderId
+  // anyway.)
+  const requestNote=()=>{setQuickOpen(false);sendMessage({kind:"text",text:"Requested notes from "+peerFirst+"."});};
+  const requestDeck=()=>{setQuickOpen(false);sendMessage({kind:"text",text:"Requested a flashcard deck from "+peerFirst+"."});};
 
   const notesList=lsGet("notes",[]);
   const decksList=lsGet("decks",[]);
   const expiry=isGroup?fmtGroupCountdown(target.group.expiresAt):null;
   const title=peerName;
-  const subtitle=target?(isGroup?(target.group.memberHandles.length+1)+" members":target.user.h+" · "+target.user.s):"";
+  const subtitle=target?(isGroup?target.group.memberUids.length+" members":target.user.h+" · "+target.user.s):"";
   const pp=panelPalette(); // drawer is a permanently-dark panel (like the sidebar) — needs its own light-on-dark text colors
   const qaBtn={display:"flex",alignItems:"center",gap:10,width:"100%",padding:"10px 11px",borderRadius:9,border:"none",background:"transparent",cursor:"pointer",fontFamily:T.font,fontSize:12.5,fontWeight:600,color:pp.text,textAlign:"left"};
 
@@ -3229,7 +3419,7 @@ function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
 
           <div ref={scrollRef} style={{flex:1,overflowY:"auto",padding:"16px 18px",display:"flex",flexDirection:"column",gap:10}}>
             {messages.length===0&&<div style={{textAlign:"center",color:pp.faint,fontSize:12,marginTop:40}}>No messages yet. Say hi.</div>}
-            {messages.map(m=><ChatBubble key={m.id} m={m} onRespond={respondToShare} onSchedule={scheduleGroupSession} />)}
+            {messages.map(m=><ChatBubble key={m.id} m={m} myUid={myUid} onRespond={respondToShare} onSchedule={scheduleGroupSession} />)}
           </div>
 
           {notePicker&&(
@@ -3270,7 +3460,7 @@ function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
           )}
           {quickOpen&&(
             <div style={{borderTop:`1px solid ${pp.border}`,padding:"8px",display:"flex",flexDirection:"column",gap:2}}>
-              <button onClick={runCalendarSync} style={qaBtn}><span style={{color:T.purple,display:"flex"}}>{Icon.cal}</span><span style={{flex:1}}>Find Shared Study Window</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Find free time</span></button>
+              <button onClick={()=>{setQuickOpen(false);setFindWindowOpen(true);}} style={qaBtn}><span style={{color:T.purple,display:"flex"}}>{Icon.cal}</span><span style={{flex:1}}>Find Shared Study Window</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Find free time</span></button>
               <button onClick={()=>{setNotePicker(true);setDeckPicker(false);setQuickOpen(false);}} style={qaBtn}><span style={{color:T.amber,display:"flex"}}>{Icon.file}</span><span style={{flex:1}}>Send Notes</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Drop a note link</span></button>
               <button onClick={()=>{setDeckPicker(true);setNotePicker(false);setQuickOpen(false);}} style={qaBtn}><span style={{color:T.teal,display:"flex"}}>{Icon.layers}</span><span style={{flex:1}}>Send Flashcard Deck</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Share a deck</span></button>
               <button onClick={requestNote} style={qaBtn}><span style={{color:T.amber,display:"flex"}}>{Icon.file}</span><span style={{flex:1}}>Request a Note</span><span style={{fontSize:10.5,color:pp.faint,fontWeight:400}}>Ask {peerFirst||"them"}</span></button>
@@ -3295,21 +3485,19 @@ function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
               <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>You</div>
               <div style={{width:7,height:7,borderRadius:"50%",background:isOnlineStatusOn()&&!isIncognitoOn()?T.teal:T.faint,marginLeft:"auto"}} />
             </div>
-            {target.group.memberHandles.map(h=>{
-              const fromDirectory=NETWORK_DIRECTORY.find(x=>x.h===h);
-              const name=fromDirectory?fromDirectory.n:(target.group.memberNames&&target.group.memberNames[h])||h;
+            {target.group.memberUids.filter(uid=>uid!==myUid).map(uid=>{
+              const name=(target.group.memberNames&&target.group.memberNames[uid])||"Studlin User";
               return (
-                <div key={h} style={{display:"flex",alignItems:"center",gap:9}}>
+                <div key={uid} style={{display:"flex",alignItems:"center",gap:9}}>
                   <Av initials={name.split(" ").map(x=>x[0]).join("")} color={T.lime} size={28} picUrl="" />
                   <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>{name}</div>
-                  <div style={{width:7,height:7,borderRadius:"50%",background:fromDirectory&&fromDirectory.online?T.teal:T.faint,marginLeft:"auto"}} />
                 </div>
               );
             })}
           </div>
           <div style={{paddingTop:16,borderTop:`1px solid ${T.border}`}}>
             <Label>Expiration</Label>
-            {target.group.type==="temporary"
+            {target.group.groupType==="temporary"
               ?(<>
                   <div style={{fontSize:12.5,color:T.text,marginBottom:10,lineHeight:1.5}}>
                     {expiry&&expiry.expired?"This group has expired and will archive shortly.":<>Auto-archives on <strong>{new Date(target.group.expiresAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</strong> — {expiry&&expiry.label} left.</>}
@@ -3318,10 +3506,58 @@ function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
                 </>)
               :<div style={{fontSize:12.5,color:T.muted,marginBottom:10}}>This is a standard ongoing group — it will never auto-archive.</div>
             }
-            <Btn variant="danger" onClick={()=>{setSettingsOpen(false);onDeleteGroup(target.group.id);}} style={{width:"100%",justifyContent:"center"}}>{Icon.xmark} Delete group</Btn>
+            {target.group.createdBy===myUid&&<Btn variant="danger" onClick={()=>{setSettingsOpen(false);onDeleteGroup(target.group.id);}} style={{width:"100%",justifyContent:"center"}}>{Icon.xmark} Delete group</Btn>}
           </div>
         </Modal>
       )}
+
+      <Modal open={findWindowOpen} onClose={()=>setFindWindowOpen(false)} title="Find Shared Study Window" sub="Studlin Match scans for mutual free time within these constraints." width={420}
+        footer={<><Btn variant="subtle" onClick={()=>setFindWindowOpen(false)}>Cancel</Btn><Btn onClick={submitFindWindow}>{Icon.cal} Find Window</Btn></>}>
+        <Field label="Preferred Time">
+          <div style={{display:"flex",gap:6,marginBottom:fwTimeMode==="custom"?10:0}}>
+            {[{v:"anytime",label:"Anytime"},{v:"custom",label:"Custom range"}].map(o=>(
+              <button key={o.v} onClick={()=>setFwTimeMode(o.v)} style={{padding:"7px 13px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${fwTimeMode===o.v?T.purple+"66":T.border}`,background:fwTimeMode===o.v?T.purple+"14":"transparent",color:fwTimeMode===o.v?T.purple:T.muted,fontFamily:T.font,fontWeight:fwTimeMode===o.v?600:400}}>{o.label}</button>
+            ))}
+          </div>
+          {fwTimeMode==="custom"&&(
+            <div style={{display:"flex",gap:10}}>
+              <TimeInput value={fwTimeFrom} onChange={setFwTimeFrom} />
+              <TimeInput value={fwTimeTo} onChange={setFwTimeTo} />
+            </div>
+          )}
+        </Field>
+        <Field label="Look Ahead">
+          {fwDayScope==="custom"?(
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <NumField min={1} max={30} fallback={1} value={fwCustomDays} onChange={setFwCustomDays} style={{width:70}} />
+              <span style={{fontSize:12.5,color:T.muted}}>Days</span>
+              <button onClick={()=>setFwDayScope("tomorrow")} style={{marginLeft:"auto",background:"none",border:"none",color:T.purple,fontSize:11.5,cursor:"pointer",fontFamily:T.font}}>‹ presets</button>
+            </div>
+          ):(
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {[{v:"tomorrow",label:"Tomorrow"},{v:"3days",label:"Next 3 Days"},{v:"week",label:"Full Week"},{v:"custom",label:"Custom..."}].map(o=>(
+                <button key={o.v} onClick={()=>setFwDayScope(o.v)} style={{padding:"7px 13px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${fwDayScope===o.v?T.purple+"66":T.border}`,background:fwDayScope===o.v?T.purple+"14":"transparent",color:fwDayScope===o.v?T.purple:T.muted,fontFamily:T.font,fontWeight:fwDayScope===o.v?600:400}}>{o.label}</button>
+              ))}
+            </div>
+          )}
+        </Field>
+        <Field label="Duration">
+          {fwDurationCustom?(
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <NumField min={15} step={15} fallback={15} value={fwDuration} onChange={setFwDuration} style={{width:70}} />
+              <span style={{fontSize:12.5,color:T.muted}}>Minutes</span>
+              <button onClick={()=>{setFwDurationCustom(false);setFwDuration(90);}} style={{marginLeft:"auto",background:"none",border:"none",color:T.purple,fontSize:11.5,cursor:"pointer",fontFamily:T.font}}>‹ presets</button>
+            </div>
+          ):(
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {[{v:60,label:"60 min"},{v:90,label:"90 min"},{v:120,label:"2 hours"}].map(o=>(
+                <button key={o.v} onClick={()=>setFwDuration(o.v)} style={{padding:"7px 13px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${fwDuration===o.v?T.purple+"66":T.border}`,background:fwDuration===o.v?T.purple+"14":"transparent",color:fwDuration===o.v?T.purple:T.muted,fontFamily:T.font,fontWeight:fwDuration===o.v?600:400}}>{o.label}</button>
+              ))}
+              <button onClick={()=>setFwDurationCustom(true)} style={{padding:"7px 13px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontFamily:T.font}}>Custom...</button>
+            </div>
+          )}
+        </Field>
+      </Modal>
     </>,
     document.body
   );
@@ -4020,6 +4256,7 @@ function CalendarTab(){
   const nav=(d)=>setYm(c=>{const m2=c.m+d;return {y:c.y+Math.floor(m2/12),m:((m2%12)+12)%12};});
   const openEdit=(ev)=>{setEditEv(ev);setEditTitle(ev.title||"");setEditDate(ev.date||dayKey());setEditTime(ev.time||"14:30");setEditDuration(ev.duration||60);setEditDeadline(ev.deadline||"");setEditPriority((ev.priority||5)*100);setEditDifficulty((ev.difficulty||5)*100);setEditSubject(ev.subject||"Chemistry");setEditKind(ev.kind||"deadline");setEditNotes(ev.notes||"");setEditOpen(true);};
   const runGroupSync=()=>{
+    if(!gsDueDate.trim())return;
     const prefStart=timeToMinutes(gsStartTime);
     const prefEnd=timeToMinutes(gsEndTime);
     const dur=gsDuration;
@@ -4107,11 +4344,11 @@ function CalendarTab(){
       <Modal open={newOpen} onClose={resetForm} title="New task" sub="Add details and let Studlin schedule it, or place it manually." width={580}
         footer={
           isReminderKind||isFixedKind
-            ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} style={{opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>{isReminderKind?"Save reminder":"Save"}</Btn></>
+            ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!(evTitle.trim()&&evDate.trim()&&evTime.trim())} style={{opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>{isReminderKind?"Save reminder":"Save"}</Btn></>
             : <>
                 <Btn variant="subtle" onClick={resetForm}>Cancel</Btn>
-                <Btn variant="ghost" onClick={saveManual} style={{opacity:!evTitle.trim()?0.45:(manualMode?1:0.45)}}>Save manually</Btn>
-                <Btn onClick={aiArrange} disabled={aiLoading||manualMode} style={{opacity:aiLoading?1:(!evTitle.trim()?0.45:(manualMode?0.45:1))}}>{aiLoading?"Scheduling...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.wand,"AI arrange")}</Btn>
+                <Btn variant="ghost" onClick={saveManual} disabled={!evTitle.trim()||!manualMode} style={{opacity:!evTitle.trim()?0.45:(manualMode?1:0.45)}}>Save manually</Btn>
+                <Btn onClick={aiArrange} disabled={aiLoading||manualMode||!evTitle.trim()} style={{opacity:aiLoading?1:(!evTitle.trim()?0.45:(manualMode?0.45:1))}}>{aiLoading?"Scheduling...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.wand,"AI arrange")}</Btn>
               </>
         }>
         <Field label="Title"><Input placeholder="e.g. Study Bio chapter 4-6" value={evTitle} onChange={ev=>setEvTitle(ev.target.value)} autoFocus /></Field>
@@ -4124,19 +4361,19 @@ function CalendarTab(){
           <Field label={isTaskKind?"Target Date":"Date"} hint={isTaskKind?"Only fill this out for a manual entry. Leave blank to let AI automatically schedule this.":undefined}>
             <Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} />
           </Field>
-          <Field label={isReminderKind?"Reminder time":"Start time"}><Input type="time" value={evTime} onChange={ev=>setEvTime(ev.target.value)} /></Field>
+          <Field label={isReminderKind?"Reminder time":"Start time"}><TimeInput value={evTime} onChange={setEvTime} /></Field>
         </div>
         {manualMode&&<div style={{fontSize:11,color:T.amber,fontWeight:600,marginTop:-6,marginBottom:14}}>Using manual date. Clear Target Date to use AI scheduling.</div>}
 
         {isFixedKind&&(
-          <Field label="Duration (minutes)" hint="How long this occupies on your calendar"><Input type="number" min={5} max={480} value={evDuration} onChange={ev=>setEvDuration(Math.max(5,+ev.target.value||5))} /></Field>
+          <Field label="Duration (minutes)" hint="How long this occupies on your calendar"><NumField min={5} max={480} fallback={5} value={evDuration} onChange={setEvDuration} /></Field>
         )}
 
         {isTaskKind&&(
           <>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
               <Field label="Deadline" hint="When this must be done by"><Input type="date" value={evDeadline} onChange={ev=>setEvDeadline(ev.target.value)} /></Field>
-              <Field label="Duration (minutes)" hint="How long you plan to spend"><Input type="number" min={5} max={480} value={evDuration} onChange={ev=>setEvDuration(Math.max(5,+ev.target.value||5))} /></Field>
+              <Field label="Duration (minutes)" hint="How long you plan to spend"><NumField min={5} max={480} fallback={5} value={evDuration} onChange={setEvDuration} /></Field>
             </div>
 
             <Field label={`Priority: ${Math.round(evPriority/10)}%`} hint="Higher priority tasks are scheduled earlier">
@@ -4174,7 +4411,7 @@ function CalendarTab(){
             </div>
             {evSplitEnabled&&(
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
-                <Field label="Number of sessions"><Input type="number" min={2} max={10} value={evSplitCount} onChange={ev=>setEvSplitCount(Math.max(2,Math.min(10,+ev.target.value||2)))} /></Field>
+                <Field label="Number of sessions"><NumField min={2} max={10} fallback={2} value={evSplitCount} onChange={setEvSplitCount} /></Field>
                 <Field label="Per session"><div style={{fontSize:14,fontWeight:600,color:T.lime,padding:"10px 0"}}>{Math.round(evDuration/evSplitCount)} min each</div></Field>
               </div>
             )}
@@ -4184,15 +4421,15 @@ function CalendarTab(){
         <Field label="Notes (optional)"><Textarea placeholder="e.g. Bring calculator, covers chapters 4 to 6." value={evNotes} onChange={ev=>setEvNotes(ev.target.value)} /></Field>
       </Modal>
       <Modal open={editOpen} onClose={closeEdit} title="Edit task" sub="Update this task's details." width={580}
-        footer={<><Btn variant="subtle" onClick={closeEdit}>Cancel</Btn><Btn onClick={saveEdit} style={{opacity:editTitle.trim()?1:0.45}}>Save changes</Btn></>}>
+        footer={<><Btn variant="subtle" onClick={closeEdit}>Cancel</Btn><Btn onClick={saveEdit} disabled={!editTitle.trim()} style={{opacity:editTitle.trim()?1:0.45}}>Save changes</Btn></>}>
         <Field label="Title"><Input value={editTitle} onChange={e=>setEditTitle(e.target.value)} autoFocus /></Field>
         <Field label="Type"><SelectChip options={["deadline","exam","class","study block","reminder"]} value={editKind} onChange={setEditKind} /></Field>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
           <Field label="Scheduled date"><Input type="date" value={editDate} onChange={e=>setEditDate(e.target.value)} /></Field>
-          <Field label={editKind==="reminder"?"Reminder time":"Start time"}><Input type="time" value={editTime} onChange={e=>setEditTime(e.target.value)} /></Field>
+          <Field label={editKind==="reminder"?"Reminder time":"Start time"}><TimeInput value={editTime} onChange={setEditTime} /></Field>
         </div>
         {editKind!=="reminder"&&(
-          <Field label="Duration (minutes)"><Input type="number" min={5} max={480} value={editDuration} onChange={e=>setEditDuration(Math.max(5,+e.target.value||5))} /></Field>
+          <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={5} value={editDuration} onChange={setEditDuration} /></Field>
         )}
         {editKind!=="exam"&&editKind!=="class"&&editKind!=="reminder"&&(
           <>
@@ -4223,14 +4460,14 @@ function CalendarTab(){
         <Field label="Notes (optional)"><Textarea value={editNotes} onChange={e=>setEditNotes(e.target.value)} /></Field>
       </Modal>
       <Modal open={groupSyncOpen} onClose={()=>setGroupSyncOpen(false)} title="Group Smart Match" sub="Find a time slot when everyone is free." width={540}
-        footer={gsStep===1?<><Btn variant="subtle" onClick={()=>setGroupSyncOpen(false)}>Cancel</Btn><Btn onClick={runGroupSync}>Find slots</Btn></>:<><Btn variant="subtle" onClick={()=>{setGsStep(1);setGsResults(null);}}>← Back</Btn><Btn variant="subtle" onClick={()=>setGroupSyncOpen(false)}>Done</Btn></>}>
+        footer={gsStep===1?<><Btn variant="subtle" onClick={()=>setGroupSyncOpen(false)}>Cancel</Btn><Btn onClick={runGroupSync} disabled={!gsDueDate.trim()} style={{opacity:gsDueDate.trim()?1:0.45}}>Find slots</Btn></>:<><Btn variant="subtle" onClick={()=>{setGsStep(1);setGsResults(null);}}>← Back</Btn><Btn variant="subtle" onClick={()=>setGroupSyncOpen(false)}>Done</Btn></>}>
         {gsStep===1&&(
           <>
             <Field label="Project due date"><Input type="date" value={gsDueDate} onChange={e=>setGsDueDate(e.target.value)} /></Field>
-            <Field label="Total meeting duration (minutes)" hint="e.g. 120 for a 2-hour session"><Input type="number" min={15} max={480} value={gsDuration} onChange={e=>setGsDuration(Math.max(15,+e.target.value||60))} /></Field>
+            <Field label="Total meeting duration (minutes)" hint="e.g. 120 for a 2-hour session"><NumField min={15} max={480} fallback={60} value={gsDuration} onChange={setGsDuration} /></Field>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-              <Field label="Preferred window — start"><Input type="time" value={gsStartTime} onChange={e=>setGsStartTime(e.target.value)} /></Field>
-              <Field label="Preferred window — end"><Input type="time" value={gsEndTime} onChange={e=>setGsEndTime(e.target.value)} /></Field>
+              <Field label="Preferred window — start"><TimeInput value={gsStartTime} onChange={setGsStartTime} /></Field>
+              <Field label="Preferred window — end"><TimeInput value={gsEndTime} onChange={setGsEndTime} /></Field>
             </div>
             <Field label="Group members (optional)" hint="Enter usernames or emails, comma-separated"><Input placeholder="e.g. @alex, @sam, jamie@school.edu" value={gsInvitees} onChange={e=>setGsInvitees(e.target.value)} /></Field>
           </>
@@ -5352,20 +5589,28 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     if(Notification.permission==="denied")return "denied";
     return "default";
   });
+  const myUid=firebase.auth().currentUser?.uid||null;
+  // Mirrors the local toggle into Firestore so the server-side push sender
+  // (api/send-push.js) can gate on it — local state stays the source of
+  // truth for the UI (instant, no round-trip), this write is fire-and-forget.
+  const syncPushPref=(enabled)=>{
+    if(!myUid)return;
+    fsdb().collection('users').doc(myUid).update({'preferences.pushNotificationsEnabled':enabled,updatedAt:new Date().toISOString()}).catch(()=>{});
+  };
   const handleSysPushToggle=()=>{
     if(toggles.sysPush){
-      tog("sysPush");return;
+      tog("sysPush");syncPushPref(false);return;
     }
     if(typeof Notification==="undefined"){return;}
     if(Notification.permission==="granted"){
-      tog("sysPush");setSysPushStatus("granted");
+      tog("sysPush");setSysPushStatus("granted");syncPushPref(true);
       new Notification("Studlin",{body:"Desktop notifications are on. We'll keep you in sync."});
       return;
     }
     if(Notification.permission==="denied"){setSysPushStatus("denied");return;}
     Notification.requestPermission().then(perm=>{
       setSysPushStatus(perm);
-      if(perm==="granted"){tog("sysPush");new Notification("Studlin",{body:"Desktop notifications are on. We'll keep you in sync."});}
+      if(perm==="granted"){tog("sysPush");syncPushPref(true);new Notification("Studlin",{body:"Desktop notifications are on. We'll keep you in sync."});}
     });
   };
   const [profile,setProfileState]=useState(()=>getProfile());
@@ -5629,7 +5874,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:14,marginBottom:14}}>
                 <div style={{flex:1}}>
                   <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:3}}>System Notifications</div>
-                  <div style={{fontSize:12,color:T.muted,lineHeight:1.5}}>Deliver Studlin alerts directly to your desktop — even when the tab is closed or running in the background.</div>
+                  <div style={{fontSize:12,color:T.muted,lineHeight:1.5}}>Receive native desktop alerts for incoming chat messages and study session updates — even when this tab is closed or in the background.</div>
                 </div>
                 <div onClick={handleSysPushToggle} style={{width:38,height:20,borderRadius:10,background:toggles.sysPush?T.lime:T.card2,border:`1px solid ${toggles.sysPush?T.lime:T.border}`,position:"relative",cursor:sysPushStatus==="denied"?"not-allowed":"pointer",transition:"all 0.2s",flexShrink:0,opacity:sysPushStatus==="unsupported"?0.45:1}}>
                   <div style={{width:14,height:14,borderRadius:"50%",background:toggles.sysPush?T.bg:"#fff",position:"absolute",top:2,left:toggles.sysPush?21:2,transition:"left 0.2s"}} />
@@ -5992,10 +6237,10 @@ function Profile() {
 
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
           <Field label="Study start time" hint="Tasks are scheduled from this hour.">
-            <Input type="time" value={workStart} onChange={e=>setWorkStart(e.target.value)} />
+            <TimeInput value={workStart} onChange={setWorkStart} />
           </Field>
           <Field label="Bedtime" hint="Tasks end 2 hours before this.">
-            <Input type="time" value={bedtime} onChange={e=>setBedtime(e.target.value)} />
+            <TimeInput value={bedtime} onChange={setBedtime} />
           </Field>
         </div>
 
@@ -6888,7 +7133,7 @@ function InitWizard({onComplete}){
             <div style={{fontSize:20,fontWeight:700,color:ink,marginBottom:6,letterSpacing:"-0.01em"}}>When do you prefer to study?</div>
             <div style={{fontSize:13,color:muted,marginBottom:24}}>Tasks are scheduled inside this window so your time is protected.</div>
             <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:muted,marginBottom:8}}>Peak study start time</label>
-            <input type="time" value={workStart} onChange={e=>setWorkStart(e.target.value)} style={{background:"#F0EBE0",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",maxWidth:200}} />
+            <TimeInput value={workStart} onChange={setWorkStart} style={{background:"#F0EBE0",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,maxWidth:200}} />
           </div>
         )}
 
@@ -6897,7 +7142,7 @@ function InitWizard({onComplete}){
             <div style={{fontSize:20,fontWeight:700,color:ink,marginBottom:6,letterSpacing:"-0.01em"}}>What time do you go to bed?</div>
             <div style={{fontSize:13,color:muted,marginBottom:24}}>We won't schedule tasks within 2 hours of your bedtime.</div>
             <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:muted,marginBottom:8}}>Bedtime</label>
-            <input type="time" value={bedtime} onChange={e=>setBedtime(e.target.value)} style={{background:"#F0EBE0",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",maxWidth:200}} />
+            <TimeInput value={bedtime} onChange={setBedtime} style={{background:"#F0EBE0",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,maxWidth:200}} />
           </div>
         )}
 
@@ -6963,74 +7208,68 @@ function AuthScreen(){
 }
 
 
+// ─── VERIFY EMAIL SCREEN — blocks the dashboard until a password account
+// confirms their inbox link. Google accounts never see this (see isPasswordAccount).
+function VerifyEmailScreen({user}){
+  const [status,setStatus]=useState("idle"); // idle | sending | sent | checking
+  const [err,setErr]=useState("");
+  const resend=async()=>{
+    setStatus("sending");setErr("");
+    try{await user.sendEmailVerification();setStatus("sent");setTimeout(()=>setStatus("idle"),30000);}
+    catch(e){setErr(e.code==="auth/too-many-requests"?"Too many requests — wait a bit before trying again.":"Couldn't send the email. Try again shortly.");setStatus("idle");}
+  };
+  const checkVerified=async()=>{
+    setStatus("checking");
+    try{await user.reload();}catch(e){}
+    if(firebase.auth().currentUser&&firebase.auth().currentUser.emailVerified){
+      // onAuthStateChanged doesn't refire just from reload() — force AuthGate to
+      // re-evaluate by nudging auth state via a no-op state change upstream.
+      window.location.reload();
+    }else{setStatus("idle");}
+  };
+  useEffect(()=>{
+    const onFocus=()=>{if(document.visibilityState==="visible")checkVerified();};
+    document.addEventListener("visibilitychange",onFocus);
+    return ()=>document.removeEventListener("visibilitychange",onFocus);
+  },[]);
+  return(
+    <div style={{minHeight:"100vh",background:"#0D120F",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20,padding:24}}>
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#14342A,#0E1F18)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(174,206,94,0.38)"}}>
+          <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #CBDF92, #AECE5E)",boxShadow:"0 0 10px 3px rgba(174,206,94,0.65)"}} />
+        </div>
+        <span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span>
+      </div>
+      <div style={{width:"100%",maxWidth:380,background:"#111A15",border:"1px solid rgba(174,206,94,0.16)",borderRadius:16,padding:"28px 26px",textAlign:"center"}}>
+        <div style={{fontSize:17,fontWeight:700,color:"#E8EFE7",marginBottom:8}}>Check your inbox</div>
+        <p style={{fontSize:13.5,color:"rgba(232,239,231,0.6)",lineHeight:1.6,margin:"0 0 4px"}}>
+          We sent a verification link to<br/><strong style={{color:"#E8EFE7"}}>{user.email}</strong>.
+        </p>
+        <p style={{fontSize:13.5,color:"rgba(232,239,231,0.6)",lineHeight:1.6,margin:"0 0 20px"}}>Click it, then come back here.</p>
+        <button onClick={checkVerified} disabled={status==="checking"} style={{width:"100%",padding:"12px 0",borderRadius:10,background:"#AECE5E",color:"#0E1F18",border:"none",fontSize:14,fontWeight:600,cursor:status==="checking"?"not-allowed":"pointer",opacity:status==="checking"?0.7:1,marginBottom:10}}>
+          {status==="checking"?"Checking…":"I've verified — continue"}
+        </button>
+        <button onClick={resend} disabled={status==="sending"||status==="sent"} style={{width:"100%",padding:"11px 0",borderRadius:10,border:"1px solid rgba(174,206,94,0.3)",background:"transparent",color:"#AECE5E",fontSize:13.5,fontWeight:600,cursor:status==="sending"||status==="sent"?"not-allowed":"pointer",opacity:status==="sending"||status==="sent"?0.6:1}}>
+          {status==="sending"?"Sending…":status==="sent"?"Sent — check your inbox":"Resend verification email"}
+        </button>
+        {err&&<div style={{fontSize:12,color:"#E05A47",marginTop:10}}>{err}</div>}
+      </div>
+      <button onClick={()=>firebase.auth().signOut()} style={{background:"none",border:"none",color:"rgba(232,239,231,0.4)",fontSize:12.5,cursor:"pointer",textDecoration:"underline"}}>Sign out</button>
+    </div>
+  );
+}
+
 // ─── AUTH GATE ────────────────────────────────────────────────────────────────
+const isPasswordAccount=(u)=>!!(u.providerData&&u.providerData.some(p=>p.providerId==="password"));
 function AuthGate(){
   const [user,setUser]=useState(undefined);
-  const [verifying,setVerifying]=useState(false);
-  const [resent,setResent]=useState(false);
-  const [reloadErr,setReloadErr]=useState("");
-
-  useEffect(()=>{return firebase.auth().onAuthStateChanged(u=>{setUser(u||null);if(u){fetchUserProfile();upsertProfile();}});},[]);
-
-  const handleContinue=async()=>{
-    setVerifying(true);setReloadErr("");
-    try{
-      await firebase.auth().currentUser.reload();
-      const refreshed=firebase.auth().currentUser;
-      if(refreshed&&refreshed.emailVerified){
-        setUser(refreshed);
-      } else {
-        setReloadErr("Email not verified yet. Check your inbox and click the link first.");
-      }
-    }catch(e){setReloadErr("Something went wrong. Please try again.");}
-    setVerifying(false);
-  };
-
-  const handleResend=async()=>{
-    try{await firebase.auth().currentUser.sendEmailVerification();}catch(e){}
-    setResent(true);setTimeout(()=>setResent(false),4000);
-  };
-
-  const isEmailPassword=(u)=>u&&u.providerData&&u.providerData[0]&&u.providerData[0].providerId==="password";
-
-  const LoadingScreen=()=>(<div style={{minHeight:"100vh",background:"#0D120F",display:"grid",placeItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#14342A,#0E1F18)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(174,206,94,0.38)"}}><div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #CBDF92, #AECE5E)",boxShadow:"0 0 10px 3px rgba(174,206,94,0.65)"}}/></div><span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span></div></div>);
-
-  if(user===undefined)return <LoadingScreen />;
+  useEffect(()=>{return firebase.auth().onAuthStateChanged(u=>{
+    setUser(u||null);
+    if(u&&(!isPasswordAccount(u)||u.emailVerified)){fetchUserProfile();upsertProfile();}
+  });},[]);
+  if(user===undefined)return(<div style={{minHeight:"100vh",background:"#0D120F",display:"grid",placeItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#14342A,#0E1F18)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(174,206,94,0.38)"}}><div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #CBDF92, #AECE5E)",boxShadow:"0 0 10px 3px rgba(174,206,94,0.65)"}}/></div><span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span></div></div>);
   if(!user)return <AuthScreen />;
-
-  if(isEmailPassword(user)&&!user.emailVerified){
-    return(
-      <div style={{minHeight:"100vh",background:"#0D120F",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,fontFamily:'"Geist",-apple-system,BlinkMacSystemFont,sans-serif'}}>
-        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:36}}>
-          <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#14342A,#0E1F18)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(174,206,94,0.38)"}}>
-            <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #CBDF92, #AECE5E)",boxShadow:"0 0 10px 3px rgba(174,206,94,0.65)"}} />
-          </div>
-          <span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span>
-        </div>
-        <div style={{background:"#141A16",border:"1px solid rgba(255,255,255,0.08)",borderRadius:20,padding:"32px 36px",maxWidth:420,width:"100%",textAlign:"center",boxShadow:"0 24px 60px rgba(0,0,0,0.4)"}}>
-          <div style={{width:52,height:52,borderRadius:14,background:"rgba(174,206,94,0.12)",border:"1px solid rgba(174,206,94,0.25)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 20px",color:"#AECE5E"}}>
-            {ic(<><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></>,24)}
-          </div>
-          <div style={{fontSize:20,fontWeight:700,color:"#E8EFE7",marginBottom:10,letterSpacing:"-0.02em"}}>Check your inbox</div>
-          <div style={{fontSize:13.5,color:"rgba(232,239,231,0.6)",lineHeight:1.6,marginBottom:6}}>We sent a verification link to</div>
-          <div style={{fontSize:14,fontWeight:600,color:"#E8EFE7",marginBottom:6}}>{user.email}</div>
-          <div style={{fontSize:13,color:"rgba(232,239,231,0.5)",marginBottom:28}}>Click it, then come back here.</div>
-          {reloadErr&&<div style={{fontSize:12.5,color:"#D9806B",background:"rgba(217,128,107,0.10)",border:"1px solid rgba(217,128,107,0.25)",borderRadius:8,padding:"10px 14px",marginBottom:14}}>{reloadErr}</div>}
-          {resent&&<div style={{fontSize:12.5,color:"#AECE5E",background:"rgba(174,206,94,0.10)",border:"1px solid rgba(174,206,94,0.25)",borderRadius:8,padding:"10px 14px",marginBottom:14}}>Verification email sent. Check your inbox.</div>}
-          <button onClick={handleContinue} disabled={verifying} style={{width:"100%",padding:"13px 0",borderRadius:12,background:"#AECE5E",color:"#0E1F18",border:"none",fontWeight:700,fontSize:15,cursor:"pointer",marginBottom:10,opacity:verifying?0.7:1}}>
-            {verifying?"Checking...":"I've verified — continue"}
-          </button>
-          <button onClick={handleResend} style={{width:"100%",padding:"12px 0",borderRadius:12,background:"transparent",color:"rgba(232,239,231,0.7)",border:"1px solid rgba(255,255,255,0.10)",fontWeight:500,fontSize:14,cursor:"pointer",marginBottom:20}}>
-            Resend verification email
-          </button>
-          <button onClick={()=>firebase.auth().signOut()} style={{background:"none",border:"none",color:"rgba(232,239,231,0.35)",fontSize:13,cursor:"pointer",textDecoration:"underline"}}>
-            Sign out
-          </button>
-        </div>
-      </div>
-    );
-  }
-
+  if(isPasswordAccount(user)&&!user.emailVerified)return <VerifyEmailScreen user={user} />;
   return <App />;
 }
 
@@ -7095,6 +7334,58 @@ function App() {
   const handleNotifDeny=()=>{
     lsSet("notifAsked",true);setNotifPermModal(false);
   };
+  const myUid=firebase.auth().currentUser?.uid||null;
+
+  // Global unread count for the sidebar badge — mounted here (not inside
+  // FriendsChat) so it stays live even while the user is on a different tab,
+  // the same chatRooms query FriendsChat uses for its own inbox.
+  const [unreadCount,setUnreadCount]=useState(0);
+  useEffect(()=>{
+    if(!myUid){setUnreadCount(0);return;}
+    const unsub=fsdb().collection('chatRooms').where('memberUids','array-contains',myUid)
+      .onSnapshot(snap=>{
+        let n=0;
+        snap.docs.forEach(d=>{if(isRoomUnread(d.data(),myUid))n++;});
+        setUnreadCount(n);
+      },()=>{});
+    return unsub;
+  },[myUid]);
+
+  // First time the user opens Studlin Network, ask for desktop notification
+  // permission and (if granted) register a device token for real push. A
+  // second Notification.requestPermission() call when already granted/denied
+  // is a harmless no-op — browsers only ever show the native prompt once.
+  useEffect(()=>{
+    if(active!=="friends"||!myUid||!FCM_CONFIGURED)return;
+    if(lsGet("networkPushAsked",false))return;
+    lsSet("networkPushAsked",true);
+    if(typeof Notification==="undefined")return;
+    Notification.requestPermission().then(perm=>{
+      if(perm!=="granted"||!("serviceWorker"in navigator))return;
+      navigator.serviceWorker.ready.then(reg=>
+        firebase.messaging().getToken({vapidKey:FCM_VAPID_KEY,serviceWorkerRegistration:reg})
+      ).then(token=>{
+        if(!token)return;
+        fsdb().collection('users').doc(myUid).update({
+          fcmTokens:firebase.firestore.FieldValue.arrayUnion(token),
+          updatedAt:new Date().toISOString(),
+        }).catch(()=>{});
+      }).catch(()=>{});
+    });
+  },[active,myUid]);
+
+  // Foreground push handler — FCM routes here (instead of the service
+  // worker's background handler) whenever a Studlin tab already has focus.
+  // Since the recipient's onSnapshot listeners already update the chat live
+  // in that case, showing a duplicate OS notification would be redundant —
+  // this intentionally no-ops rather than popping a native alert.
+  useEffect(()=>{
+    if(!FCM_CONFIGURED||typeof firebase==="undefined"||!firebase.messaging)return;
+    try{
+      const unsub=firebase.messaging().onMessage(()=>{});
+      return unsub;
+    }catch(e){}
+  },[]);
   const [notifSeen,setNotifSeen]=useState(false);
   const [customDollars,setCustomDollars]=useState("");
   const [boughtMsg,setBoughtMsg]=useState("");
@@ -7193,7 +7484,7 @@ function App() {
       {id:"writestudio",label:"Writing Suite",badge:String(lsGet("essays",[]).length||"")},
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
-      {id:"friends",label:"Studlin Network"},
+      {id:"friends",label:"Studlin Network",badge:String(unreadCount||"")},
     ]},
     {label:"Tools",items:[
       {id:"solve",label:"Solve"},
