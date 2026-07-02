@@ -37,6 +37,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
 firebase.initializeApp({
   apiKey:"AIzaSyApWyzKeifMgGCSjSjZClCCipUKDAiao4U",
@@ -46,6 +47,7 @@ firebase.initializeApp({
   messagingSenderId:"16831354472",
   appId:"1:16831354472:web:50220e57868dba46c18ddd"
 });
+if("serviceWorker" in navigator){navigator.serviceWorker.register("/service-worker.js").catch(function(){});}
 </script>
 <script>
 window._pdfjs=import("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs").then(m=>{m.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";return m;}).catch(()=>{});

@@ -220,6 +220,16 @@ function calcSessionXP(mins){return Math.round(mins*(1+Math.floor(mins/30)*0.1))
 function awardFlashcardXP(rating){const pts={Mastered:15,Good:8,Hard:3,Missed:0};const gain=pts[rating]||0;if(gain>0)lsSet("xpBonus",(lsGet("xpBonus",0)+gain));return gain;}
 function getWeeklyXP(){const sessions=lsGet("sessions",[]);const weekAgo=Date.now()-6*86400000;const weekSessions=sessions.filter(x=>x.t>=weekAgo);const focusXP=weekSessions.reduce((acc,x)=>acc+calcSessionXP(x.m||0),0);const days=new Set(lsGet("days",[]));let wdays=0;for(let i=0;i<7;i++){const d=new Date();d.setDate(d.getDate()-i);if(days.has(dayKey(d)))wdays++;}return focusXP+wdays*15+Math.min(getStreak(),7)*30;}
 
+// ─── PUSH NOTIFICATIONS (FCM) ────────────────────────────────────────────────
+// To enable real desktop push delivery, replace the placeholder below with
+// your Web Push certificate key pair from Firebase Console:
+//   console.firebase.google.com → studlin-cb78b → Project Settings →
+//   Cloud Messaging → Web configuration → Web Push certificates → Generate key pair
+// Also requires FIREBASE_SERVICE_ACCOUNT set in Vercel's env vars so
+// api/send-push.js can actually call admin.messaging().send() — see api/_lib/firebase-admin.js.
+const FCM_VAPID_KEY = "REPLACE_WITH_VAPID_KEY_FROM_FIREBASE_CONSOLE";
+const FCM_CONFIGURED = FCM_VAPID_KEY !== "REPLACE_WITH_VAPID_KEY_FROM_FIREBASE_CONSOLE";
+
 // ─── GOOGLE DOCS INTEGRATION ─────────────────────────────────────────────────
 // To enable one-click export to Google Docs, replace the placeholder below
 // with your OAuth 2.0 Client ID from Google Cloud Console:
@@ -2536,6 +2546,15 @@ const GROUP_DURATIONS=[{label:"1 week",days:7},{label:"2 weeks",days:14},{label:
 // from their two uids without a lookup, so the room can be created lazily
 // (idempotent merge) the first time either person opens the DM.
 const dmRoomId=(a,b)=>"dm_"+[a,b].sort().join('_');
+// A room is unread for `myUid` if its last message came from someone else
+// and either it's never been opened, or it arrived after the last time it
+// was opened. Derived entirely from live chatRooms data — no separate
+// unread counter to keep in sync.
+const isRoomUnread=(room,myUid)=>{
+  if(!room||!room.lastMessage||room.lastMessage.senderId===myUid)return false;
+  const readAt=room.lastReadAt&&room.lastReadAt[myUid];
+  return !readAt||room.lastMessage.ts>readAt;
+};
 const isOnlineStatusOn=()=>lsGet("settings",{}).onlineStatus!==false;
 const isIncognitoOn=()=>lsGet("settings",{}).incognito===true;
 function fmtGroupCountdown(expiresAt){
@@ -2657,8 +2676,8 @@ function FriendsChat(){
   // ── Unified "All" / "Groups" inbox — combined, chronological ──────────────
   const [inboxTab,setInboxTab]=useState("All");
   const previewOf=(m)=>!m?null:(m.kind==="text"?m.text:m.kind==="calendar"?"Shared free time found":m.kind==="note"?"Note shared":m.kind==="deck"?"Deck shared":"New message");
-  const inboxDms=myFriends.map(u=>{const room=myRooms[dmRoomId(myUid,u.uid)];const last=room&&room.lastMessage;return{kind:"dm",key:"dm:"+u.uid,user:u,lastTs:last?last.ts:0,preview:previewOf(last)};});
-  const inboxGroups=activeGroups.map(g=>{const last=g.lastMessage;return{kind:"group",key:"group:"+g.id,group:g,lastTs:last?last.ts:0,preview:previewOf(last)};});
+  const inboxDms=myFriends.map(u=>{const room=myRooms[dmRoomId(myUid,u.uid)];const last=room&&room.lastMessage;return{kind:"dm",key:"dm:"+u.uid,user:u,lastTs:last?last.ts:0,preview:previewOf(last),unread:isRoomUnread(room,myUid)};});
+  const inboxGroups=activeGroups.map(g=>{const last=g.lastMessage;return{kind:"group",key:"group:"+g.id,group:g,lastTs:last?last.ts:0,preview:previewOf(last),unread:isRoomUnread(g,myUid)};});
   const inboxShown=(inboxTab==="Groups"?inboxGroups:[...inboxDms,...inboxGroups]).slice().sort((a,b)=>b.lastTs-a.lastTs);
 
   // ── Live search — one-shot Firestore prefix query against `profiles` ──────
@@ -2906,6 +2925,7 @@ function FriendsChat(){
                         <div style={{fontSize:13,fontWeight:600,color:T.white}}>{g.name}</div>
                         <div style={{fontSize:11,color:T.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{row.preview||g.memberUids.length+" members"}{expiry?<> · <span style={{color:expiry.urgent?T.amber:T.purple}}>Archives in {expiry.label}</span></>:""}</div>
                       </div>
+                      {row.unread&&<div style={{width:8,height:8,borderRadius:"50%",background:T.lime,flexShrink:0}} />}
                       <button onClick={e=>{e.stopPropagation();setChatTarget({kind:"group",group:g});}} style={{width:32,height:32,borderRadius:9,border:`1px solid ${T.border}`,background:T.card2,color:T.lime,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.msgSquare}</button>
                     </div>
                   );
@@ -2923,6 +2943,7 @@ function FriendsChat(){
                       <div style={{fontSize:13,fontWeight:600,color:T.white}}>{u.n}</div>
                       <div onClick={e=>{if(pr.joinable){e.stopPropagation();setJoinRevealFor(revealed?null:u.h);}}} style={{fontSize:11,color:pr.color,fontWeight:pr.joinable?600:400,cursor:pr.joinable?"pointer":"default",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{row.preview&&!pr.joinable?row.preview:pr.text}</div>
                     </div>
+                    {row.unread&&<div style={{width:8,height:8,borderRadius:"50%",background:T.lime,flexShrink:0}} />}
                     {revealed&&pr.joinable
                       ?<button onClick={()=>joinLockIn(u)} style={{flexShrink:0,padding:"7px 14px",borderRadius:99,background:T.teal,color:T.ink,border:"none",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,boxShadow:`0 0 0 4px ${T.teal}22, 0 4px 14px -4px ${T.teal}88`,whiteSpace:"nowrap"}}>Join Lock-In</button>
                       :<button onClick={()=>setChatTarget({kind:"dm",user:u})} style={{width:32,height:32,borderRadius:9,border:`1px solid ${T.border}`,background:T.card2,color:T.lime,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.msgSquare}</button>
@@ -3125,7 +3146,9 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
   const [fwTimeFrom,setFwTimeFrom]=useState("15:00");
   const [fwTimeTo,setFwTimeTo]=useState("17:00");
   const [fwDayScope,setFwDayScope]=useState("tomorrow");
+  const [fwCustomDays,setFwCustomDays]=useState(5);
   const [fwDuration,setFwDuration]=useState(90);
+  const [fwDurationCustom,setFwDurationCustom]=useState(false);
   const scrollRef=useRef(null);
 
   // Live message thread — a DM room is created lazily (idempotent merge) the
@@ -3144,6 +3167,10 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
         createdAt:now,updatedAt:now,lastMessage:null,
       },{merge:true}).catch(()=>{});
     }
+    // Marks the room read the moment it's opened — the sidebar badge and
+    // inbox dots clear on their own via their own onSnapshot listeners,
+    // nothing to manually decrement.
+    fsdb().collection('chatRooms').doc(roomId).update({['lastReadAt.'+myUid]:Date.now()}).catch(()=>{});
     const unsub=fsdb().collection('chatRooms').doc(roomId).collection('messages').orderBy('ts','asc')
       .onSnapshot(snap=>{if(!cancelled)setMessages(snap.docs.map(d=>({id:d.id,...d.data()})));},()=>{});
     return ()=>{cancelled=true;unsub();};
@@ -3168,6 +3195,10 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
     const roomRef=fsdb().collection('chatRooms').doc(roomId);
     roomRef.collection('messages').add({senderId:myUid,ts,...fields}).catch(()=>{});
     roomRef.update({lastMessage:{text:fields.text||null,kind:fields.kind,ts,senderId:myUid},updatedAt:new Date().toISOString()}).catch(()=>{});
+    // Server-side push — checks the recipient's own preference before
+    // sending, so this is a request to try, not a guarantee it fires.
+    const preview=fields.text||(fields.kind==="calendar"?"Shared free time found":fields.kind==="note"?"Note shared":fields.kind==="deck"?"Deck shared":"New message");
+    authFetch("/api/send-push",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({roomId,preview})}).catch(()=>{});
   };
 
   const sendText=()=>{if(!input.trim())return;sendMessage({kind:"text",text:input.trim()});setInput("");};
@@ -3182,8 +3213,8 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
   const findSharedStudyWindow=(params)=>{
     const prefStart=params.timeMode==="custom"?timeToMinutes(params.timeFrom):timeToMinutes("08:00");
     const prefEnd=params.timeMode==="custom"?timeToMinutes(params.timeTo):timeToMinutes("22:00");
-    const scanDays=params.dayScope==="tomorrow"?1:params.dayScope==="3days"?3:7;
-    const duration=params.duration;
+    const scanDays=Math.max(1,params.lookAheadDayRange||1);
+    const duration=params.durationInMinutes;
     const events=lsGet("events",[]);
     const today=new Date();
     const isFree=(dk,start,end)=>{
@@ -3210,7 +3241,8 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
   };
   const submitFindWindow=()=>{
     setFindWindowOpen(false);setSyncRunning(true);
-    const params={timeMode:fwTimeMode,timeFrom:fwTimeFrom,timeTo:fwTimeTo,dayScope:fwDayScope,duration:fwDuration};
+    const lookAheadDayRange=fwDayScope==="custom"?fwCustomDays:fwDayScope==="tomorrow"?1:fwDayScope==="3days"?3:7;
+    const params={timeMode:fwTimeMode,timeFrom:fwTimeFrom,timeTo:fwTimeTo,lookAheadDayRange,durationInMinutes:fwDuration};
     setTimeout(()=>{setSyncRunning(false);sendMessage({kind:"calendar",status:"unscheduled",meta:findSharedStudyWindow(params)});},2100);
   };
   // Injects the matched window into the current user's own calendar as a
@@ -3406,18 +3438,35 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
           )}
         </Field>
         <Field label="Look Ahead">
-          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-            {[{v:"tomorrow",label:"Tomorrow"},{v:"3days",label:"Next 3 Days"},{v:"week",label:"Full Week"}].map(o=>(
-              <button key={o.v} onClick={()=>setFwDayScope(o.v)} style={{padding:"7px 13px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${fwDayScope===o.v?T.purple+"66":T.border}`,background:fwDayScope===o.v?T.purple+"14":"transparent",color:fwDayScope===o.v?T.purple:T.muted,fontFamily:T.font,fontWeight:fwDayScope===o.v?600:400}}>{o.label}</button>
-            ))}
-          </div>
+          {fwDayScope==="custom"?(
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <Input type="number" min="1" max="30" value={fwCustomDays} onChange={e=>setFwCustomDays(Math.max(1,+e.target.value||1))} style={{width:70}} />
+              <span style={{fontSize:12.5,color:T.muted}}>Days</span>
+              <button onClick={()=>setFwDayScope("tomorrow")} style={{marginLeft:"auto",background:"none",border:"none",color:T.purple,fontSize:11.5,cursor:"pointer",fontFamily:T.font}}>‹ presets</button>
+            </div>
+          ):(
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {[{v:"tomorrow",label:"Tomorrow"},{v:"3days",label:"Next 3 Days"},{v:"week",label:"Full Week"},{v:"custom",label:"Custom..."}].map(o=>(
+                <button key={o.v} onClick={()=>setFwDayScope(o.v)} style={{padding:"7px 13px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${fwDayScope===o.v?T.purple+"66":T.border}`,background:fwDayScope===o.v?T.purple+"14":"transparent",color:fwDayScope===o.v?T.purple:T.muted,fontFamily:T.font,fontWeight:fwDayScope===o.v?600:400}}>{o.label}</button>
+              ))}
+            </div>
+          )}
         </Field>
         <Field label="Duration">
-          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-            {[{v:60,label:"60 min"},{v:90,label:"90 min"},{v:120,label:"2 hours"}].map(o=>(
-              <button key={o.v} onClick={()=>setFwDuration(o.v)} style={{padding:"7px 13px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${fwDuration===o.v?T.purple+"66":T.border}`,background:fwDuration===o.v?T.purple+"14":"transparent",color:fwDuration===o.v?T.purple:T.muted,fontFamily:T.font,fontWeight:fwDuration===o.v?600:400}}>{o.label}</button>
-            ))}
-          </div>
+          {fwDurationCustom?(
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <Input type="number" min="15" step="15" value={fwDuration} onChange={e=>setFwDuration(Math.max(15,+e.target.value||15))} style={{width:70}} />
+              <span style={{fontSize:12.5,color:T.muted}}>Minutes</span>
+              <button onClick={()=>{setFwDurationCustom(false);setFwDuration(90);}} style={{marginLeft:"auto",background:"none",border:"none",color:T.purple,fontSize:11.5,cursor:"pointer",fontFamily:T.font}}>‹ presets</button>
+            </div>
+          ):(
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {[{v:60,label:"60 min"},{v:90,label:"90 min"},{v:120,label:"2 hours"}].map(o=>(
+                <button key={o.v} onClick={()=>setFwDuration(o.v)} style={{padding:"7px 13px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${fwDuration===o.v?T.purple+"66":T.border}`,background:fwDuration===o.v?T.purple+"14":"transparent",color:fwDuration===o.v?T.purple:T.muted,fontFamily:T.font,fontWeight:fwDuration===o.v?600:400}}>{o.label}</button>
+              ))}
+              <button onClick={()=>setFwDurationCustom(true)} style={{padding:"7px 13px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontFamily:T.font}}>Custom...</button>
+            </div>
+          )}
         </Field>
       </Modal>
     </>,
@@ -5450,20 +5499,28 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     if(Notification.permission==="denied")return "denied";
     return "default";
   });
+  const myUid=firebase.auth().currentUser?.uid||null;
+  // Mirrors the local toggle into Firestore so the server-side push sender
+  // (api/send-push.js) can gate on it — local state stays the source of
+  // truth for the UI (instant, no round-trip), this write is fire-and-forget.
+  const syncPushPref=(enabled)=>{
+    if(!myUid)return;
+    fsdb().collection('users').doc(myUid).update({'preferences.pushNotificationsEnabled':enabled,updatedAt:new Date().toISOString()}).catch(()=>{});
+  };
   const handleSysPushToggle=()=>{
     if(toggles.sysPush){
-      tog("sysPush");return;
+      tog("sysPush");syncPushPref(false);return;
     }
     if(typeof Notification==="undefined"){return;}
     if(Notification.permission==="granted"){
-      tog("sysPush");setSysPushStatus("granted");
+      tog("sysPush");setSysPushStatus("granted");syncPushPref(true);
       new Notification("Studlin",{body:"Desktop notifications are on. We'll keep you in sync."});
       return;
     }
     if(Notification.permission==="denied"){setSysPushStatus("denied");return;}
     Notification.requestPermission().then(perm=>{
       setSysPushStatus(perm);
-      if(perm==="granted"){tog("sysPush");new Notification("Studlin",{body:"Desktop notifications are on. We'll keep you in sync."});}
+      if(perm==="granted"){tog("sysPush");syncPushPref(true);new Notification("Studlin",{body:"Desktop notifications are on. We'll keep you in sync."});}
     });
   };
   const [profile,setProfileState]=useState(()=>getProfile());
@@ -5727,7 +5784,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:14,marginBottom:14}}>
                 <div style={{flex:1}}>
                   <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:3}}>System Notifications</div>
-                  <div style={{fontSize:12,color:T.muted,lineHeight:1.5}}>Deliver Studlin alerts directly to your desktop — even when the tab is closed or running in the background.</div>
+                  <div style={{fontSize:12,color:T.muted,lineHeight:1.5}}>Receive native desktop alerts for incoming chat messages and study session updates — even when this tab is closed or in the background.</div>
                 </div>
                 <div onClick={handleSysPushToggle} style={{width:38,height:20,borderRadius:10,background:toggles.sysPush?T.lime:T.card2,border:`1px solid ${toggles.sysPush?T.lime:T.border}`,position:"relative",cursor:sysPushStatus==="denied"?"not-allowed":"pointer",transition:"all 0.2s",flexShrink:0,opacity:sysPushStatus==="unsupported"?0.45:1}}>
                   <div style={{width:14,height:14,borderRadius:"50%",background:toggles.sysPush?T.bg:"#fff",position:"absolute",top:2,left:toggles.sysPush?21:2,transition:"left 0.2s"}} />
@@ -7131,6 +7188,58 @@ function App() {
   const handleNotifDeny=()=>{
     lsSet("notifAsked",true);setNotifPermModal(false);
   };
+  const myUid=firebase.auth().currentUser?.uid||null;
+
+  // Global unread count for the sidebar badge — mounted here (not inside
+  // FriendsChat) so it stays live even while the user is on a different tab,
+  // the same chatRooms query FriendsChat uses for its own inbox.
+  const [unreadCount,setUnreadCount]=useState(0);
+  useEffect(()=>{
+    if(!myUid){setUnreadCount(0);return;}
+    const unsub=fsdb().collection('chatRooms').where('memberUids','array-contains',myUid)
+      .onSnapshot(snap=>{
+        let n=0;
+        snap.docs.forEach(d=>{if(isRoomUnread(d.data(),myUid))n++;});
+        setUnreadCount(n);
+      },()=>{});
+    return unsub;
+  },[myUid]);
+
+  // First time the user opens Studlin Network, ask for desktop notification
+  // permission and (if granted) register a device token for real push. A
+  // second Notification.requestPermission() call when already granted/denied
+  // is a harmless no-op — browsers only ever show the native prompt once.
+  useEffect(()=>{
+    if(active!=="friends"||!myUid||!FCM_CONFIGURED)return;
+    if(lsGet("networkPushAsked",false))return;
+    lsSet("networkPushAsked",true);
+    if(typeof Notification==="undefined")return;
+    Notification.requestPermission().then(perm=>{
+      if(perm!=="granted"||!("serviceWorker"in navigator))return;
+      navigator.serviceWorker.ready.then(reg=>
+        firebase.messaging().getToken({vapidKey:FCM_VAPID_KEY,serviceWorkerRegistration:reg})
+      ).then(token=>{
+        if(!token)return;
+        fsdb().collection('users').doc(myUid).update({
+          fcmTokens:firebase.firestore.FieldValue.arrayUnion(token),
+          updatedAt:new Date().toISOString(),
+        }).catch(()=>{});
+      }).catch(()=>{});
+    });
+  },[active,myUid]);
+
+  // Foreground push handler — FCM routes here (instead of the service
+  // worker's background handler) whenever a Studlin tab already has focus.
+  // Since the recipient's onSnapshot listeners already update the chat live
+  // in that case, showing a duplicate OS notification would be redundant —
+  // this intentionally no-ops rather than popping a native alert.
+  useEffect(()=>{
+    if(!FCM_CONFIGURED||typeof firebase==="undefined"||!firebase.messaging)return;
+    try{
+      const unsub=firebase.messaging().onMessage(()=>{});
+      return unsub;
+    }catch(e){}
+  },[]);
   const [notifSeen,setNotifSeen]=useState(false);
   const [customDollars,setCustomDollars]=useState("");
   const [boughtMsg,setBoughtMsg]=useState("");
@@ -7229,7 +7338,7 @@ function App() {
       {id:"writestudio",label:"Writing Suite",badge:String(lsGet("essays",[]).length||"")},
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
-      {id:"friends",label:"Studlin Network"},
+      {id:"friends",label:"Studlin Network",badge:String(unreadCount||"")},
     ]},
     {label:"Tools",items:[
       {id:"solve",label:"Solve"},
