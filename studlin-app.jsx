@@ -880,7 +880,7 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
     <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:95,background:"rgba(8,12,10,0.72)",backdropFilter:"blur(7px)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div onClick={e=>e.stopPropagation()} style={{width:520,maxWidth:"100%",background:T.surface,border:"1px solid "+T.border,borderRadius:16,padding:28,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)",maxHeight:"90vh",overflowY:"auto"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:24}}>
-          <span style={{display:"inline-flex",width:34,height:34,borderRadius:10,background:T.lime+"20",border:"1px solid "+T.lime+"44",alignItems:"center",justifyContent:"center",color:T.lime,fontSize:16}}>⚙️</span>
+          <span style={{display:"inline-flex",width:34,height:34,borderRadius:10,background:T.lime+"20",border:"1px solid "+T.lime+"44",alignItems:"center",justifyContent:"center",color:T.lime}}>{Icon.settings}</span>
           <div style={{fontSize:18,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Study Schedule Preferences</div>
         </div>
         
@@ -4878,7 +4878,7 @@ function WriteStudio(){
         ):(
           <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,padding:40,textAlign:"center"}}>
             <div style={{width:56,height:56,borderRadius:14,background:T.lime+"14",border:"1px solid "+T.lime+"33",display:"grid",placeItems:"center",color:T.lime}}>{Icon.pen}</div>
-            <div><div style={{fontSize:17,fontWeight:700,color:T.white,marginBottom:6}}>Write Studio</div><div style={{fontSize:13,color:T.muted,maxWidth:280,lineHeight:1.6}}>Your essays, AI tutor, grammar check, and rewrite tools — all in one place. Create a doc or pick a template to get started.</div></div>
+            <div><div style={{fontSize:17,fontWeight:700,color:T.white,marginBottom:6}}>Writing Suite</div><div style={{fontSize:13,color:T.muted,maxWidth:280,lineHeight:1.6}}>Your essays, AI tutor, grammar check, and rewrite tools — all in one place. Create a doc or pick a template to get started.</div></div>
             <Btn onClick={()=>setNewOpen(true)}>{Icon.plus} New doc</Btn>
           </div>
         )}
@@ -6428,7 +6428,7 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
                 {focusRunning?"Pause focus session":"Resume focus session"}
               </button>
               <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",color:T.cream,border:"1px solid rgba(246,241,230,0.18)",background:"transparent",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>View today's plan</button>
-              <button onClick={()=>setScheduleSettingsOpen(true)} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",color:T.cream,border:"1px solid rgba(246,241,230,0.18)",background:"transparent",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>⚙️ Customize schedule</button>
+              <button onClick={()=>setScheduleSettingsOpen(true)} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",color:T.cream,border:"1px solid rgba(246,241,230,0.18)",background:"transparent",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Customize schedule</button>
             </div>
           </div>
         </div>
@@ -7007,7 +7007,7 @@ function NotifPermModal({onAllow=()=>{},onDeny=()=>{}}) {
   return (
     <div style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
       <div style={{background:T.bg,borderRadius:24,padding:"36px 32px 28px",maxWidth:360,width:"100%",boxShadow:"0 24px 80px rgba(0,0,0,0.35)",border:`1px solid ${T.border}`,textAlign:"center"}}>
-        <div style={{width:64,height:64,borderRadius:18,background:`linear-gradient(135deg,${T.lime}30,${T.lime}10)`,border:`1px solid ${T.lime}40`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 20px",fontSize:28}}>🔔</div>
+        <div style={{width:64,height:64,borderRadius:18,background:`linear-gradient(135deg,${T.lime}30,${T.lime}10)`,border:`1px solid ${T.lime}40`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 20px",color:T.lime}}>{ic(<><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></>,28)}</div>
         <div style={{fontFamily:T.sans,fontWeight:700,fontSize:20,color:T.text,marginBottom:8,letterSpacing:"-0.3px"}}>Stay on track</div>
         <div style={{fontFamily:T.sans,fontSize:14,color:T.muted,lineHeight:1.6,marginBottom:28}}>
           Allow Studlin to send you smart alerts before study blocks begin — so you never miss a lock-in session.
@@ -7158,7 +7158,7 @@ function App() {
       {id:"dashboard",label:"Dashboard"},
       {id:"calendar",label:"Calendar"},
       {id:"aichat",label:"Studlin AI"},
-      {id:"writestudio",label:"Write Studio",badge:String(lsGet("essays",[]).length||"")},
+      {id:"writestudio",label:"Writing Suite",badge:String(lsGet("essays",[]).length||"")},
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
       {id:"friends",label:"Studlin Network"},
@@ -7169,7 +7169,7 @@ function App() {
   ];
   const bottomItems=[{id:"settings",label:"Settings"},{id:"profile",label:"Profile"}];
   const pages={aichat:AiChat,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile};
-  const labelOf={dashboard:"Dashboard",aichat:"Studlin AI",writestudio:"Write Studio",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve"};
+  const labelOf={dashboard:"Dashboard",aichat:"Studlin AI",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve"};
   const sectionOf={dashboard:"Workspace",aichat:"Workspace",writestudio:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",friends:"Workspace",solve:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
