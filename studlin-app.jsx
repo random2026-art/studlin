@@ -1879,6 +1879,7 @@ function Notes(){
   const [commentDraft,setCommentDraft]=useState("");
   const [commentInputOpen,setCommentInputOpen]=useState(false);
   const [pendingSel,setPendingSel]=useState(null);
+  const [pendingSelGlobal,setPendingSelGlobal]=useState(false); // true = document-level comment, no text selected
   const [cleaning,setCleaning]=useState(false);
 
   // Send note state
@@ -1928,12 +1929,19 @@ function Notes(){
   };
 
   const doAddComment=()=>{
-    if(!pendingSel||!commentDraft.trim()||sel===null)return;
+    if(!commentDraft.trim()||sel===null)return;
+    if(!pendingSelGlobal&&!pendingSel)return;
     const noteId=notes[sel].id;
-    const c={id:String(Date.now()),selectedText:pendingSel,text:commentDraft.trim(),date:new Date().toLocaleDateString()};
+    const c={id:String(Date.now()),selectedText:pendingSelGlobal?null:pendingSel,text:commentDraft.trim(),date:new Date().toLocaleDateString()};
     const updated={...noteComments,[noteId]:[...(noteComments[noteId]||[]),c]};
     setNoteComments(updated);lsSet("note-comments",updated);
-    setCommentDraft("");setCommentInputOpen(false);setPendingSel(null);setPopover(null);
+    setCommentDraft("");setCommentInputOpen(false);setPendingSel(null);setPendingSelGlobal(false);setPopover(null);
+  };
+
+  // Document-level comment — attaches a note to the whole file, no highlight required
+  const openDocComment=()=>{
+    if(sel===null)return;
+    setPendingSel(null);setPendingSelGlobal(true);setCommentInputOpen(true);setPopover(null);
   };
 
   const doAddFlag=(selText)=>{
@@ -1978,6 +1986,18 @@ function Notes(){
     }
   };
 
+  // Document-level tutor — no highlight required. Pulls the whole note as context
+  // and opens the sidebar ready for the student's first question.
+  const openTutorForDocument=()=>{
+    if(sel===null||!editorRef.current)return;
+    const tmp=document.createElement("div");tmp.innerHTML=editorRef.current.innerHTML;
+    const plain=(tmp.textContent||tmp.innerText||"").trim();
+    setTutorCtx(plain);
+    setTutorOpen(true);
+    setTutorMsgs([{role:"ai",text:plain?"I've got the whole note open — \""+notes[sel].title+"\". Ask me anything about it: a summary, a quiz, or something specific you're stuck on.":"This note is empty — write something first, then I can help you with it."}]);
+    setPopover(null);
+  };
+
   const sendTutorMsg=async()=>{
     const txt=tutorInput.trim();
     if(!txt||tutorSending)return;
@@ -1988,10 +2008,11 @@ function Notes(){
       // Reconstruct conversation for the API. The conversation always starts with
       // the analysis prompt (user) → initial AI response, then the real turns after.
       // api/chat expects {r:"user"|"ai", t:"..."} — "ai" maps to assistant inside the API.
-      const ctx=tutorCtx?`[Note excerpt: "${tutorCtx.slice(0,400)}"]\n\n`:"";
+      // Sliced generously since tutorCtx may be an entire note, not just a highlighted passage.
+      const ctx=tutorCtx?`[Notes for context: "${tutorCtx.slice(0,6000)}"]\n\n`:"";
       const realMsgs=tutorMsgs.filter(m=>!m.loading);
       // Synthetic opener restores the initial user→ai exchange so the model has context
-      const opener={r:"user",t:ctx+"Analyze this passage from my notes and help me understand it."};
+      const opener={r:"user",t:ctx+"Help me understand these notes and answer my questions about them."};
       // Map existing display messages into API format
       const history=realMsgs.map(m=>({r:m.role==="user"?"user":"ai",t:m.text}));
       // Full sequence: opener → initial AI response → subsequent turns → new user msg
@@ -2305,6 +2326,12 @@ function Notes(){
                   <BtnSm variant="subtle" onClick={()=>exportNote(activeNote)}>{Icon.copy} Copy</BtnSm>
                   <BtnSm variant="subtle" onClick={()=>setSendNoteOpen(true)}>{Icon.send} Send</BtnSm>
                   <div style={{flex:1}} />
+                  <button onClick={openDocComment} title="Attach a note to the whole document — no highlight needed" style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${T.blue}44`,background:T.blue+"14",color:T.blue,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
+                    {Icon.chat} Add Comment
+                  </button>
+                  <button onClick={openTutorForDocument} title="Ask the AI Tutor about this whole note — no highlight needed" style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${T.amber}44`,background:T.amber+"14",color:T.amber,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
+                    {Icon.brain} Ask Tutor
+                  </button>
                   <button onClick={cleanNotes} disabled={cleaning} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${T.lime}44`,background:cleaning?T.card2:T.lime+"14",color:cleaning?T.muted:T.lime,cursor:cleaning?"default":"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
                     {cleaning?<>Cleaning…</>:<>{Icon.wand} Clean Notes</>}
                   </button>
@@ -2325,7 +2352,7 @@ function Notes(){
                 {/* Contextual selection popover */}
                 {popover&&(
                   <div style={{position:"absolute",top:popover.y,left:popover.x,transform:"translateX(-50%)",zIndex:30,display:"flex",gap:4,background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:"4px 6px",boxShadow:"0 8px 24px rgba(0,0,0,0.4)",whiteSpace:"nowrap"}}>
-                    <button onMouseDown={e=>{e.preventDefault();setPendingSel(popover.selText);setCommentInputOpen(true);}} style={{padding:"5px 10px",borderRadius:5,border:"none",background:"transparent",color:T.blue,cursor:"pointer",fontSize:12,fontFamily:T.font,fontWeight:600}}>Add Comment</button>
+                    <button onMouseDown={e=>{e.preventDefault();setPendingSel(popover.selText);setPendingSelGlobal(false);setCommentInputOpen(true);}} style={{padding:"5px 10px",borderRadius:5,border:"none",background:"transparent",color:T.blue,cursor:"pointer",fontSize:12,fontFamily:T.font,fontWeight:600}}>Add Comment</button>
                     <div style={{width:1,background:T.border}} />
                     <button onMouseDown={e=>{e.preventDefault();doAddFlag(popover.selText);}} style={{padding:"5px 10px",borderRadius:5,border:"none",background:"transparent",color:T.amber,cursor:"pointer",fontSize:12,fontFamily:T.font,fontWeight:600}}>Flag for Tutor</button>
                   </div>
@@ -2334,9 +2361,9 @@ function Notes(){
                 {/* Comment input strip */}
                 {commentInputOpen&&(
                   <div style={{padding:"10px 20px",background:T.blue+"0A",borderBottom:`1px solid ${T.blue}22`,display:"flex",gap:8,alignItems:"center"}}>
-                    <input value={commentDraft} onChange={e=>setCommentDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")doAddComment();if(e.key==="Escape"){setCommentInputOpen(false);setPendingSel(null);}}} placeholder={`Comment on "${(pendingSel||"").slice(0,30)}…"`} autoFocus style={{flex:1,background:"transparent",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}} />
+                    <input value={commentDraft} onChange={e=>setCommentDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")doAddComment();if(e.key==="Escape"){setCommentInputOpen(false);setPendingSel(null);setPendingSelGlobal(false);}}} placeholder={pendingSelGlobal?"Add a note about this whole document…":`Comment on "${(pendingSel||"").slice(0,30)}…"`} autoFocus style={{flex:1,background:"transparent",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}} />
                     <BtnSm onClick={doAddComment} style={{opacity:commentDraft.trim()?1:0.4}}>Save</BtnSm>
-                    <BtnSm variant="subtle" onClick={()=>{setCommentInputOpen(false);setPendingSel(null);}}>✕</BtnSm>
+                    <BtnSm variant="subtle" onClick={()=>{setCommentInputOpen(false);setPendingSel(null);setPendingSelGlobal(false);}}>✕</BtnSm>
                   </div>
                 )}
 
@@ -2373,7 +2400,7 @@ function Notes(){
                   <div style={{width:26,height:26,borderRadius:7,background:T.amber+"22",border:`1px solid ${T.amber}44`,display:"flex",alignItems:"center",justifyContent:"center",color:T.amber}}>{Icon.brain}</div>
                   <div>
                     <div style={{fontSize:12,fontWeight:700,color:T.white}}>AI Tutor</div>
-                    <div style={{fontSize:10,color:T.muted}}>Ask about your flagged text</div>
+                    <div style={{fontSize:10,color:T.muted}}>Ask about this note</div>
                   </div>
                 </div>
                 <button onClick={()=>setTutorOpen(false)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:16,lineHeight:1,padding:4,borderRadius:4,display:"flex",alignItems:"center",justifyContent:"center"}}>{Icon.xmark}</button>
@@ -2409,7 +2436,7 @@ function Notes(){
               <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:2}}>Annotations</div>
               {activeComments.map(c=>(
                 <div key={c.id} style={{background:T.card,border:`1px solid ${T.blue}33`,borderLeft:`3px solid ${T.blue}`,borderRadius:8,padding:"10px 12px",position:"relative"}}>
-                  <div style={{fontSize:10,color:T.blue,fontWeight:600,marginBottom:4,lineHeight:1.4}}>"{(c.selectedText||"").slice(0,48)}{c.selectedText&&c.selectedText.length>48?"…":""}"</div>
+                  <div style={{fontSize:10,color:T.blue,fontWeight:600,marginBottom:4,lineHeight:1.4}}>{c.selectedText?`"${c.selectedText.slice(0,48)}${c.selectedText.length>48?"…":""}"`:<span style={{textTransform:"uppercase",letterSpacing:"0.05em"}}>Document note</span>}</div>
                   <div style={{fontSize:12,color:T.text,lineHeight:1.5}}>{c.text}</div>
                   <div style={{fontSize:10,color:T.faint,marginTop:6}}>{c.date}</div>
                   <button onClick={()=>removeComment(nid,c.id)} style={{position:"absolute",top:6,right:6,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:13,lineHeight:1,padding:2}}>×</button>

@@ -11,24 +11,33 @@ module.exports = async (req, res) => {
   const user = await verifyAuth(req);
   if (!user) return res.status(401).json({ error: 'Sign in required.' });
 
-  const ref = db.collection('users').doc(user.uid);
-  let doc = await ref.get();
-
-  if (!doc.exists) {
-    const data = {
-      plan: 'Free',
-      credits: DEFAULT_CREDITS,
-      createdAt: new Date().toISOString(),
-      email: user.email || null,
-    };
-    await ref.set(data);
-    return res.status(200).json(data);
+  if (!db) {
+    return res.status(200).json({ plan: 'Free', credits: DEFAULT_CREDITS, email: user.email || null });
   }
 
-  const data = doc.data();
-  return res.status(200).json({
-    plan: data.plan || 'Free',
-    credits: data.credits ?? DEFAULT_CREDITS,
-    email: data.email || user.email || null,
-  });
+  try {
+    const ref = db.collection('users').doc(user.uid);
+    const doc = await ref.get();
+
+    if (!doc.exists) {
+      const data = {
+        plan: 'Free',
+        credits: DEFAULT_CREDITS,
+        createdAt: new Date().toISOString(),
+        email: user.email || null,
+      };
+      await ref.set(data);
+      return res.status(200).json(data);
+    }
+
+    const data = doc.data();
+    return res.status(200).json({
+      plan: data.plan || 'Free',
+      credits: data.credits ?? DEFAULT_CREDITS,
+      email: data.email || user.email || null,
+    });
+  } catch (err) {
+    console.warn('Profile lookup unavailable, returning defaults:', err.message);
+    return res.status(200).json({ plan: 'Free', credits: DEFAULT_CREDITS, email: user.email || null });
+  }
 };

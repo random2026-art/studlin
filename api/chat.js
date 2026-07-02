@@ -88,46 +88,59 @@ module.exports = async (req, res) => {
     }
 
     const cost = CREDIT_COST[model] || 1;
-    const userRef = db.collection('users').doc(user.uid);
 
-    let creditsAfter;
-    try {
-      creditsAfter = await db.runTransaction(async (tx) => {
-        const doc = await tx.get(userRef);
-        const now = Date.now();
-        const data = doc.exists ? doc.data() : { credits: DEFAULT_CREDITS, plan: 'Free' };
-        const credits = data.credits ?? DEFAULT_CREDITS;
+    // Credit tracking is best-effort: if Firestore is unreachable or the
+    // `users` collection/document isn't there yet, don't let that break the
+    // chat itself — just skip the credit deduction for this request.
+    let creditsAfter = null;
+    let creditTrackingSkipped = false;
+    const userRef = db ? db.collection('users').doc(user.uid) : null;
 
-        const windowStart = data.rlWindowStart || 0;
-        const windowCount = now - windowStart < 60000 ? (data.rlCount || 0) : 0;
-        if (windowCount >= RATE_LIMIT_PER_MIN) {
-          throw new Error('RATE_LIMIT');
-        }
-        if (credits < cost) {
-          throw new Error('NO_CREDITS');
-        }
+    if (!userRef) {
+      creditTrackingSkipped = true;
+    } else {
+      try {
+        creditsAfter = await db.runTransaction(async (tx) => {
+          const doc = await tx.get(userRef);
+          const now = Date.now();
+          const data = doc.exists ? doc.data() : { credits: DEFAULT_CREDITS, plan: 'Free' };
+          const credits = data.credits ?? DEFAULT_CREDITS;
 
-        const next = credits - cost;
-        const update = {
-          credits: next,
-          rlWindowStart: now - windowStart < 60000 ? windowStart : now,
-          rlCount: windowCount + 1,
-        };
-        if (doc.exists) {
-          tx.update(userRef, update);
-        } else {
-          tx.set(userRef, Object.assign({ createdAt: new Date().toISOString(), plan: 'Free' }, update));
+          const windowStart = data.rlWindowStart || 0;
+          const windowCount = now - windowStart < 60000 ? (data.rlCount || 0) : 0;
+          if (windowCount >= RATE_LIMIT_PER_MIN) {
+            throw new Error('RATE_LIMIT');
+          }
+          if (credits < cost) {
+            throw new Error('NO_CREDITS');
+          }
+
+          const next = credits - cost;
+          const update = {
+            credits: next,
+            rlWindowStart: now - windowStart < 60000 ? windowStart : now,
+            rlCount: windowCount + 1,
+          };
+          if (doc.exists) {
+            tx.update(userRef, update);
+          } else {
+            tx.set(userRef, Object.assign({ createdAt: new Date().toISOString(), plan: 'Free' }, update));
+          }
+          return next;
+        });
+      } catch (txErr) {
+        if (txErr.message === 'RATE_LIMIT') {
+          return res.status(429).json({ error: 'Too many requests. Slow down a bit.' });
         }
-        return next;
-      });
-    } catch (txErr) {
-      if (txErr.message === 'RATE_LIMIT') {
-        return res.status(429).json({ error: 'Too many requests. Slow down a bit.' });
+        if (txErr.message === 'NO_CREDITS') {
+          return res.status(402).json({ error: 'Not enough credits. Upgrade or buy more.' });
+        }
+        // Unexpected Firestore error (e.g. NOT_FOUND from a database/collection
+        // that isn't set up yet) — log it and let the chat continue rather than
+        // surfacing a raw backend error to the student.
+        console.warn('Credit tracking unavailable, continuing without it:', txErr.message);
+        creditTrackingSkipped = true;
       }
-      if (txErr.message === 'NO_CREDITS') {
-        return res.status(402).json({ error: 'Not enough credits. Upgrade or buy more.' });
-      }
-      throw txErr;
     }
 
     const claudeModel = MODEL_MAP[model] || MODEL_MAP.standard;
@@ -156,7 +169,9 @@ module.exports = async (req, res) => {
 
     if (!response.ok) {
       const errText = await response.text();
-      await userRef.update({ credits: creditsAfter + cost }).catch(() => {});
+      if (!creditTrackingSkipped && userRef) {
+        await userRef.update({ credits: creditsAfter + cost }).catch(() => {});
+      }
       return res.status(502).json({ error: 'AI error: ' + errText.slice(0, 200) });
     }
 
