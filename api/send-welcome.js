@@ -9,9 +9,13 @@ module.exports = async (req, res) => {
   const user = await verifyAuth(req);
   if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-  const { name, email } = req.body || {};
-  const toEmail = email || user.email;
-  const toName  = name  || user.name || 'there';
+  // Recipient always comes from the verified token, never the request body —
+  // this route only ever makes sense as "email the signed-in user their own
+  // welcome message," so there's no legitimate case for a client-chosen
+  // recipient. `name` stays client-suppliable since it's just greeting copy.
+  const { name } = req.body || {};
+  const toEmail = user.email;
+  const toName  = name || user.name || 'there';
 
   if (!toEmail) return res.status(400).json({ error: 'No email address available' });
 

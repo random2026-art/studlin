@@ -67,12 +67,15 @@ const VIDEOS = [
   {id:"2tM1LFFxeKg",title:"Microeconomics vs Macroeconomics",channel:"Jacob Clifford",duration:420,views:2800000,tags:"economics micro macro differences overview introduction"},
 ];
 
-const { setCors } = require('./_lib/auth');
+const { setCors, verifyAuth } = require('./_lib/auth');
 
 module.exports = async (req, res) => {
   setCors(req, res);
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   if (req.method === 'OPTIONS') return res.status(200).end();
+
+  const user = await verifyAuth(req);
+  if (!user) return res.status(401).json({ error: 'Sign in required.' });
 
   const q = (req.query.q || '').toLowerCase().trim();
   if (!q) return res.status(400).json({ error: 'Missing ?q= parameter' });

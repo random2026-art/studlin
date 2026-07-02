@@ -1903,7 +1903,7 @@ function Flashcards() {
         )}
         {dSource==="youtube"&&(
           <Field label="YouTube link" hint={ytInfo?"Found: "+ytInfo:"Paste a link — Studlin detects the topic and generates cards."}>
-            <Input placeholder="https://youtube.com/watch?v=..." value={ytUrl} onChange={ev=>{setYtUrl(ev.target.value);var v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtFetching(true);setYtInfo("");fetch("/api/youtube-info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(function(r){return r.json();}).then(function(d){if(d.title){setYtInfo(d.title+(d.author?" by "+d.author:""));setDName(d.title+" cards");}setYtFetching(false);}).catch(function(){setYtFetching(false);});}}} />
+            <Input placeholder="https://youtube.com/watch?v=..." value={ytUrl} onChange={ev=>{setYtUrl(ev.target.value);var v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtFetching(true);setYtInfo("");authFetch("/api/youtube-info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(function(r){return r.json();}).then(function(d){if(d.title){setYtInfo(d.title+(d.author?" by "+d.author:""));setDName(d.title+" cards");}setYtFetching(false);}).catch(function(){setYtFetching(false);});}}} />
             {ytFetching&&<div style={{fontSize:11,color:T.lime,marginTop:6}}>Detecting video title...</div>}
             {ytInfo&&!ytFetching&&<div style={{fontSize:11,color:T.lime,fontWeight:600,marginTop:6}}>Found: {ytInfo}</div>}
           </Field>
@@ -2391,7 +2391,7 @@ function Notes(){
         )}
         {src==="youtube"&&(
           <Field label="YouTube link" hint={ytInfo?"Found: "+ytInfo:"Paste any YouTube video link. Studlin will detect the topic and generate notes."}>
-            <Input placeholder="https://youtube.com/watch?v=..." value={yt} onChange={ev=>{setYt(ev.target.value);const v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtLoading(true);fetch("/api/youtube-info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(r=>r.json()).then(d=>{if(d.title){setYtInfo(d.title+(d.author?" by "+d.author:""));if(!newTitle)setNewTitle(d.title);}setYtLoading(false);}).catch(()=>setYtLoading(false));}}} />
+            <Input placeholder="https://youtube.com/watch?v=..." value={yt} onChange={ev=>{setYt(ev.target.value);const v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtLoading(true);authFetch("/api/youtube-info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(r=>r.json()).then(d=>{if(d.title){setYtInfo(d.title+(d.author?" by "+d.author:""));if(!newTitle)setNewTitle(d.title);}setYtLoading(false);}).catch(()=>setYtLoading(false));}}} />
             {ytLoading&&<div style={{fontSize:11,color:T.lime,marginTop:4}}>Detecting video…</div>}
           </Field>
         )}
@@ -7208,12 +7208,68 @@ function AuthScreen(){
 }
 
 
+// ─── VERIFY EMAIL SCREEN — blocks the dashboard until a password account
+// confirms their inbox link. Google accounts never see this (see isPasswordAccount).
+function VerifyEmailScreen({user}){
+  const [status,setStatus]=useState("idle"); // idle | sending | sent | checking
+  const [err,setErr]=useState("");
+  const resend=async()=>{
+    setStatus("sending");setErr("");
+    try{await user.sendEmailVerification();setStatus("sent");setTimeout(()=>setStatus("idle"),30000);}
+    catch(e){setErr(e.code==="auth/too-many-requests"?"Too many requests — wait a bit before trying again.":"Couldn't send the email. Try again shortly.");setStatus("idle");}
+  };
+  const checkVerified=async()=>{
+    setStatus("checking");
+    try{await user.reload();}catch(e){}
+    if(firebase.auth().currentUser&&firebase.auth().currentUser.emailVerified){
+      // onAuthStateChanged doesn't refire just from reload() — force AuthGate to
+      // re-evaluate by nudging auth state via a no-op state change upstream.
+      window.location.reload();
+    }else{setStatus("idle");}
+  };
+  useEffect(()=>{
+    const onFocus=()=>{if(document.visibilityState==="visible")checkVerified();};
+    document.addEventListener("visibilitychange",onFocus);
+    return ()=>document.removeEventListener("visibilitychange",onFocus);
+  },[]);
+  return(
+    <div style={{minHeight:"100vh",background:"#0D120F",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20,padding:24}}>
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#14342A,#0E1F18)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(174,206,94,0.38)"}}>
+          <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #CBDF92, #AECE5E)",boxShadow:"0 0 10px 3px rgba(174,206,94,0.65)"}} />
+        </div>
+        <span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span>
+      </div>
+      <div style={{width:"100%",maxWidth:380,background:"#111A15",border:"1px solid rgba(174,206,94,0.16)",borderRadius:16,padding:"28px 26px",textAlign:"center"}}>
+        <div style={{fontSize:17,fontWeight:700,color:"#E8EFE7",marginBottom:8}}>Check your inbox</div>
+        <p style={{fontSize:13.5,color:"rgba(232,239,231,0.6)",lineHeight:1.6,margin:"0 0 4px"}}>
+          We sent a verification link to<br/><strong style={{color:"#E8EFE7"}}>{user.email}</strong>.
+        </p>
+        <p style={{fontSize:13.5,color:"rgba(232,239,231,0.6)",lineHeight:1.6,margin:"0 0 20px"}}>Click it, then come back here.</p>
+        <button onClick={checkVerified} disabled={status==="checking"} style={{width:"100%",padding:"12px 0",borderRadius:10,background:"#AECE5E",color:"#0E1F18",border:"none",fontSize:14,fontWeight:600,cursor:status==="checking"?"not-allowed":"pointer",opacity:status==="checking"?0.7:1,marginBottom:10}}>
+          {status==="checking"?"Checking…":"I've verified — continue"}
+        </button>
+        <button onClick={resend} disabled={status==="sending"||status==="sent"} style={{width:"100%",padding:"11px 0",borderRadius:10,border:"1px solid rgba(174,206,94,0.3)",background:"transparent",color:"#AECE5E",fontSize:13.5,fontWeight:600,cursor:status==="sending"||status==="sent"?"not-allowed":"pointer",opacity:status==="sending"||status==="sent"?0.6:1}}>
+          {status==="sending"?"Sending…":status==="sent"?"Sent — check your inbox":"Resend verification email"}
+        </button>
+        {err&&<div style={{fontSize:12,color:"#E05A47",marginTop:10}}>{err}</div>}
+      </div>
+      <button onClick={()=>firebase.auth().signOut()} style={{background:"none",border:"none",color:"rgba(232,239,231,0.4)",fontSize:12.5,cursor:"pointer",textDecoration:"underline"}}>Sign out</button>
+    </div>
+  );
+}
+
 // ─── AUTH GATE ────────────────────────────────────────────────────────────────
+const isPasswordAccount=(u)=>!!(u.providerData&&u.providerData.some(p=>p.providerId==="password"));
 function AuthGate(){
   const [user,setUser]=useState(undefined);
-  useEffect(()=>{return firebase.auth().onAuthStateChanged(u=>{setUser(u||null);if(u){fetchUserProfile();upsertProfile();}});},[]);
+  useEffect(()=>{return firebase.auth().onAuthStateChanged(u=>{
+    setUser(u||null);
+    if(u&&(!isPasswordAccount(u)||u.emailVerified)){fetchUserProfile();upsertProfile();}
+  });},[]);
   if(user===undefined)return(<div style={{minHeight:"100vh",background:"#0D120F",display:"grid",placeItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#14342A,#0E1F18)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(174,206,94,0.38)"}}><div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #CBDF92, #AECE5E)",boxShadow:"0 0 10px 3px rgba(174,206,94,0.65)"}}/></div><span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span></div></div>);
   if(!user)return <AuthScreen />;
+  if(isPasswordAccount(user)&&!user.emailVerified)return <VerifyEmailScreen user={user} />;
   return <App />;
 }
 
