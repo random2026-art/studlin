@@ -222,7 +222,10 @@ function StepSignup({ state, set, advance }) {
     try {
       const cred = await firebase.auth().createUserWithEmailAndPassword(state.email, state.password);
       await cred.user.updateProfile({ displayName: state.name.trim() });
-      try { await cred.user.sendEmailVerification(); } catch(e) {}
+      try {
+        const token = await cred.user.getIdToken();
+        await fetch("/api/send-verification", { method: "POST", headers: { Authorization: "Bearer " + token } });
+      } catch(e) {}
       advance(true);
     } catch(err) {
       setAuthError(ERR_MAP[err.code]||"Something went wrong. Please try again.");
