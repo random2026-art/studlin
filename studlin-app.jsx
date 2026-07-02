@@ -227,7 +227,7 @@ function getWeeklyXP(){const sessions=lsGet("sessions",[]);const weekAgo=Date.no
 //   Cloud Messaging → Web configuration → Web Push certificates → Generate key pair
 // Also requires FIREBASE_SERVICE_ACCOUNT set in Vercel's env vars so
 // api/send-push.js can actually call admin.messaging().send() — see api/_lib/firebase-admin.js.
-const FCM_VAPID_KEY = "REPLACE_WITH_VAPID_KEY_FROM_FIREBASE_CONSOLE";
+const FCM_VAPID_KEY = "BAgeXH3hA5APFcYuopRiB_7dBey6w1cYHStHBG-b8jnYA3941-4D1pQKILfsfNCjI3Ot2S5BTAwvEMgohR9ubmA";
 const FCM_CONFIGURED = FCM_VAPID_KEY !== "REPLACE_WITH_VAPID_KEY_FROM_FIREBASE_CONSOLE";
 
 // ─── GOOGLE DOCS INTEGRATION ─────────────────────────────────────────────────
