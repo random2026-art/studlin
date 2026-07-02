@@ -6966,9 +6966,71 @@ function AuthScreen(){
 // ─── AUTH GATE ────────────────────────────────────────────────────────────────
 function AuthGate(){
   const [user,setUser]=useState(undefined);
+  const [verifying,setVerifying]=useState(false);
+  const [resent,setResent]=useState(false);
+  const [reloadErr,setReloadErr]=useState("");
+
   useEffect(()=>{return firebase.auth().onAuthStateChanged(u=>{setUser(u||null);if(u){fetchUserProfile();upsertProfile();}});},[]);
-  if(user===undefined)return(<div style={{minHeight:"100vh",background:"#0D120F",display:"grid",placeItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#14342A,#0E1F18)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(174,206,94,0.38)"}}><div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #CBDF92, #AECE5E)",boxShadow:"0 0 10px 3px rgba(174,206,94,0.65)"}}/></div><span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span></div></div>);
+
+  const handleContinue=async()=>{
+    setVerifying(true);setReloadErr("");
+    try{
+      await firebase.auth().currentUser.reload();
+      const refreshed=firebase.auth().currentUser;
+      if(refreshed&&refreshed.emailVerified){
+        setUser(refreshed);
+      } else {
+        setReloadErr("Email not verified yet. Check your inbox and click the link first.");
+      }
+    }catch(e){setReloadErr("Something went wrong. Please try again.");}
+    setVerifying(false);
+  };
+
+  const handleResend=async()=>{
+    try{await firebase.auth().currentUser.sendEmailVerification();}catch(e){}
+    setResent(true);setTimeout(()=>setResent(false),4000);
+  };
+
+  const isEmailPassword=(u)=>u&&u.providerData&&u.providerData[0]&&u.providerData[0].providerId==="password";
+
+  const LoadingScreen=()=>(<div style={{minHeight:"100vh",background:"#0D120F",display:"grid",placeItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#14342A,#0E1F18)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(174,206,94,0.38)"}}><div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #CBDF92, #AECE5E)",boxShadow:"0 0 10px 3px rgba(174,206,94,0.65)"}}/></div><span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span></div></div>);
+
+  if(user===undefined)return <LoadingScreen />;
   if(!user)return <AuthScreen />;
+
+  if(isEmailPassword(user)&&!user.emailVerified){
+    return(
+      <div style={{minHeight:"100vh",background:"#0D120F",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,fontFamily:'"Geist",-apple-system,BlinkMacSystemFont,sans-serif'}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:36}}>
+          <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#14342A,#0E1F18)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(174,206,94,0.38)"}}>
+            <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #CBDF92, #AECE5E)",boxShadow:"0 0 10px 3px rgba(174,206,94,0.65)"}} />
+          </div>
+          <span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span>
+        </div>
+        <div style={{background:"#141A16",border:"1px solid rgba(255,255,255,0.08)",borderRadius:20,padding:"32px 36px",maxWidth:420,width:"100%",textAlign:"center",boxShadow:"0 24px 60px rgba(0,0,0,0.4)"}}>
+          <div style={{width:52,height:52,borderRadius:14,background:"rgba(174,206,94,0.12)",border:"1px solid rgba(174,206,94,0.25)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 20px",color:"#AECE5E"}}>
+            {ic(<><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></>,24)}
+          </div>
+          <div style={{fontSize:20,fontWeight:700,color:"#E8EFE7",marginBottom:10,letterSpacing:"-0.02em"}}>Check your inbox</div>
+          <div style={{fontSize:13.5,color:"rgba(232,239,231,0.6)",lineHeight:1.6,marginBottom:6}}>We sent a verification link to</div>
+          <div style={{fontSize:14,fontWeight:600,color:"#E8EFE7",marginBottom:6}}>{user.email}</div>
+          <div style={{fontSize:13,color:"rgba(232,239,231,0.5)",marginBottom:28}}>Click it, then come back here.</div>
+          {reloadErr&&<div style={{fontSize:12.5,color:"#D9806B",background:"rgba(217,128,107,0.10)",border:"1px solid rgba(217,128,107,0.25)",borderRadius:8,padding:"10px 14px",marginBottom:14}}>{reloadErr}</div>}
+          {resent&&<div style={{fontSize:12.5,color:"#AECE5E",background:"rgba(174,206,94,0.10)",border:"1px solid rgba(174,206,94,0.25)",borderRadius:8,padding:"10px 14px",marginBottom:14}}>Verification email sent. Check your inbox.</div>}
+          <button onClick={handleContinue} disabled={verifying} style={{width:"100%",padding:"13px 0",borderRadius:12,background:"#AECE5E",color:"#0E1F18",border:"none",fontWeight:700,fontSize:15,cursor:"pointer",marginBottom:10,opacity:verifying?0.7:1}}>
+            {verifying?"Checking...":"I've verified — continue"}
+          </button>
+          <button onClick={handleResend} style={{width:"100%",padding:"12px 0",borderRadius:12,background:"transparent",color:"rgba(232,239,231,0.7)",border:"1px solid rgba(255,255,255,0.10)",fontWeight:500,fontSize:14,cursor:"pointer",marginBottom:20}}>
+            Resend verification email
+          </button>
+          <button onClick={()=>firebase.auth().signOut()} style={{background:"none",border:"none",color:"rgba(232,239,231,0.35)",fontSize:13,cursor:"pointer",textDecoration:"underline"}}>
+            Sign out
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return <App />;
 }
 
