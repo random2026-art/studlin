@@ -152,6 +152,7 @@ const Icon = {
   volOff:    ic(<><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></>),
   msgSquare: ic(<><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></>),
   userPlus:  ic(<><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="16" y1="11" x2="22" y2="11"/></>),
+  sparkles:  ic(<><path d="m12 3-1.9 4.6a2.5 2.5 0 0 1-1.5 1.5L4 11l4.6 1.9a2.5 2.5 0 0 1 1.5 1.5L12 19l1.9-4.6a2.5 2.5 0 0 1 1.5-1.5L20 11l-4.6-1.9a2.5 2.5 0 0 1-1.5-1.5L12 3Z"/><path d="M19 3v3M17.5 4.5h3"/></>),
 };
 
 // ─── MOTIVATIONAL QUOTES + BREAK IDEAS ───────────────────────────────────────
@@ -214,6 +215,7 @@ const PROF_TIERS=[
   {title:"CEO",           minXP:300000},
 ];
 function getProfTitle(xp){let t=PROF_TIERS[0];for(const r of PROF_TIERS){if(xp>=r.minXP)t=r;else break;}return t.title;}
+function tierProgressFor(xp){let idx=0;for(let i=0;i<PROF_TIERS.length;i++){if(xp>=PROF_TIERS[i].minXP)idx=i;}const cur=PROF_TIERS[idx],next=PROF_TIERS[idx+1]||null;const pct=next?Math.round(Math.max(0,Math.min(100,(xp-cur.minXP)/(next.minXP-cur.minXP)*100))):100;return {title:cur.title,next,pct};}
 function calcSessionXP(mins){return Math.round(mins*(1+Math.floor(mins/30)*0.1));}
 function awardFlashcardXP(rating){const pts={Mastered:15,Good:8,Hard:3,Missed:0};const gain=pts[rating]||0;if(gain>0)lsSet("xpBonus",(lsGet("xpBonus",0)+gain));return gain;}
 function getWeeklyXP(){const sessions=lsGet("sessions",[]);const weekAgo=Date.now()-6*86400000;const weekSessions=sessions.filter(x=>x.t>=weekAgo);const focusXP=weekSessions.reduce((acc,x)=>acc+calcSessionXP(x.m||0),0);const days=new Set(lsGet("days",[]));let wdays=0;for(let i=0;i<7;i++){const d=new Date();d.setDate(d.getDate()-i);if(days.has(dayKey(d)))wdays++;}return focusXP+wdays*15+Math.min(getStreak(),7)*30;}
@@ -951,7 +953,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
 }
 
 // ─── NAV ICONS MAP ────────────────────────────────────────────────────────────
-const navIcon = {dashboard:Icon.grid,aichat:Icon.chat,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.heart,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,music:Icon.music,settings:Icon.settings,profile:Icon.user};
+const navIcon = {dashboard:Icon.grid,aichat:Icon.sparkles,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.users,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,music:Icon.music,settings:Icon.settings,profile:Icon.user};
 
 // ─── AI CHAT ──────────────────────────────────────────────────────────────────
 function AiChat() {
@@ -3066,20 +3068,38 @@ function TaskTimerModal({task,onClose,onComplete}){
   const [secs,setSecs]=useState(0);
   const [running,setRunning]=useState(false);
   const [soundOn,setSoundOn]=useState(true);
-  const [pausedByViolation,setPausedByViolation]=useState(false);
-  const [violationCount,setViolationCount]=useState(0);
-  const violatedRef=useRef(false);
+  const [completion,setCompletion]=useState(null);
+  const [barFilled,setBarFilled]=useState(false);
+  const [rankRisen,setRankRisen]=useState(false);
 
   const playBeep=()=>{try{const ctx=new(window.AudioContext||window.webkitAudioContext)();const osc=ctx.createOscillator();const gain=ctx.createGain();osc.connect(gain);gain.connect(ctx.destination);osc.frequency.setValueAtTime(880,ctx.currentTime);osc.frequency.exponentialRampToValueAtTime(440,ctx.currentTime+0.3);gain.gain.setValueAtTime(0.3,ctx.currentTime);gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.35);osc.start(ctx.currentTime);osc.stop(ctx.currentTime+0.35);}catch(e){}};
 
-  const enterFullscreen=()=>{try{const el=document.documentElement;const req=el.requestFullscreen||el.webkitRequestFullscreen||el.msRequestFullscreen;if(req)req.call(el).catch(()=>{});}catch(e){}};
-  const exitFullscreenSafe=()=>{try{if(document.fullscreenElement||document.webkitFullscreenElement){const ex=document.exitFullscreen||document.webkitExitFullscreen;if(ex)ex.call(document).catch(()=>{});}}catch(e){}};
-  const isActiveFocusPhase=(p)=>p==="focus1"||p==="focus2";
-  const applyPenalty=(mins)=>violatedRef.current?Math.max(1,Math.floor(mins*0.75)):mins;
-
   const focus2Mins=Math.max(1,totalMins-breakPos-breakMins);
   const fmt=s=>String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0");
-  const circumference=2*Math.PI*52;
+
+  // Logs the session, awards XP, then reveals the reward summary — the modal
+  // stays open (as the "done" screen) until the student dismisses it.
+  const completeSession=(mins)=>{
+    const name=getUserName();
+    const streak=getStreak();
+    const xpBefore=getXP();
+    const rowsBefore=buildLeaderboard(name,xpBefore,streak);
+    const rankBefore=(rowsBefore.find(u=>u.you)||{}).r||rowsBefore.length;
+    if(onComplete)onComplete(mins);
+    const xpAfter=getXP();
+    const rowsAfter=buildLeaderboard(name,xpAfter,streak);
+    const rankAfter=(rowsAfter.find(u=>u.you)||{}).r||rowsAfter.length;
+    setCompletion({
+      mins,
+      gain:Math.max(0,xpAfter-xpBefore),
+      xpAfter,
+      tierBefore:getProfTitle(xpBefore),
+      tierAfter:getProfTitle(xpAfter),
+      rankBefore,rankAfter,rows:rowsAfter,
+    });
+    setPhase("done");
+    setRunning(false);
+  };
 
   useEffect(()=>{
     if(!running)return;
@@ -3092,8 +3112,7 @@ function TaskTimerModal({task,onClose,onComplete}){
         if(phase==="focus1"){setPhase("break");setRunning(false);if(soundOn)playBeep();}
         else if(phase==="break"){setPhase("breakDone");setRunning(false);if(soundOn)playBeep();}
         else if(phase==="focus2"){
-          setPhase("done");setRunning(false);
-          if(onComplete)onComplete(applyPenalty(Math.max(1,Math.round(focusElapsed.current/60))));
+          completeSession(Math.max(1,Math.round(focusElapsed.current/60)));
         }
       }
     },250);
@@ -3104,38 +3123,13 @@ function TaskTimerModal({task,onClose,onComplete}){
         focusStartRef.current=null;
       }
     };
-  },[running,phase,totalMins,onComplete]);
+  },[running,phase,totalMins]);
 
   useEffect(()=>{
     if(phase==="break"){setSecs(breakMins*60);setRunning(true);}
   },[phase,breakMins]);
 
-  // ── FOCUS LOCKDOWN: detect tab-switch / fullscreen exit, pause + flag ─────
-  useEffect(()=>{
-    const onViolation=()=>{
-      if(running&&isActiveFocusPhase(phase)){
-        setRunning(false);
-        setPausedByViolation(true);
-        violatedRef.current=true;
-        setViolationCount(c=>c+1);
-      }
-    };
-    const onVisibility=()=>{if(document.hidden)onViolation();};
-    const onFullscreenChange=()=>{
-      const inFs=!!(document.fullscreenElement||document.webkitFullscreenElement);
-      if(!inFs)onViolation();
-    };
-    document.addEventListener("visibilitychange",onVisibility);
-    document.addEventListener("fullscreenchange",onFullscreenChange);
-    document.addEventListener("webkitfullscreenchange",onFullscreenChange);
-    return()=>{
-      document.removeEventListener("visibilitychange",onVisibility);
-      document.removeEventListener("fullscreenchange",onFullscreenChange);
-      document.removeEventListener("webkitfullscreenchange",onFullscreenChange);
-    };
-  },[running,phase]);
-
-  // ── FOCUS LOCKDOWN: warn before closing the tab mid-session ───────────────
+  // ── Warn before closing the tab mid-session ───────────────────────────────
   useEffect(()=>{
     const sessionLive=phase==="focus1"||phase==="break"||phase==="breakDone"||phase==="focus2";
     if(!sessionLive)return;
@@ -3144,20 +3138,18 @@ function TaskTimerModal({task,onClose,onComplete}){
     return()=>window.removeEventListener("beforeunload",onBeforeUnload);
   },[phase]);
 
-  const resumeFromViolation=()=>{
-    setPausedByViolation(false);
-    enterFullscreen();
-    setRunning(true);
-  };
-
-  useEffect(()=>{if(phase==="done")exitFullscreenSafe();},[phase]);
-  useEffect(()=>()=>{exitFullscreenSafe();},[]);
+  // ── Reward reveal sequence: XP bar fills first, then (if the student
+  // passed classmates) their leaderboard position climbs into view ─────────
+  useEffect(()=>{
+    if(phase!=="done"||!completion)return;
+    setBarFilled(false);setRankRisen(false);
+    const t1=setTimeout(()=>setBarFilled(true),80);
+    const t2=setTimeout(()=>setRankRisen(true),950);
+    return()=>{clearTimeout(t1);clearTimeout(t2);};
+  },[phase,completion]);
 
   const startLockIn=()=>{
     focusElapsed.current=0;
-    violatedRef.current=false;
-    setViolationCount(0);
-    enterFullscreen();
     if(breakOn&&totalMins>=15&&focus2Mins>0){
       setPhase("focus1");setSecs(breakPos*60);setRunning(true);
     }else{
@@ -3165,16 +3157,14 @@ function TaskTimerModal({task,onClose,onComplete}){
     }
   };
 
-  const resume=()=>{enterFullscreen();setPhase("focus2");setSecs(focus2Mins*60);setRunning(true);};
+  const resume=()=>{setPhase("focus2");setSecs(focus2Mins*60);setRunning(true);};
 
   const finishEarly=()=>{
     if(phase!=="break"&&focusStartRef.current){
       focusElapsed.current+=(Date.now()-focusStartRef.current)/1000;
       focusStartRef.current=null;
     }
-    const m=applyPenalty(Math.max(1,Math.round(focusElapsed.current/60)));
-    setPhase("done");setRunning(false);
-    if(onComplete)onComplete(m);
+    completeSession(Math.max(1,Math.round(focusElapsed.current/60)));
   };
 
   const updateBreakPos=(e)=>{
@@ -3230,7 +3220,10 @@ function TaskTimerModal({task,onClose,onComplete}){
           {/* Interactive timeline */}
           <div style={{marginBottom:24,textAlign:"left"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-              <span style={{fontSize:11,fontWeight:600,color:T.muted,letterSpacing:"0.06em",textTransform:"uppercase"}}>Challenge placement</span>
+              <div>
+                <div style={{fontSize:11,fontWeight:600,color:T.muted,letterSpacing:"0.06em",textTransform:"uppercase"}}>Add Break Time</div>
+                <div style={{fontSize:10,color:T.faint,marginTop:2}}>Toggle on to include a timed break.</div>
+              </div>
               <div onClick={()=>setBreakOn(b=>!b)} style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
                 <div style={{width:30,height:17,borderRadius:99,background:breakOn?T.lime:T.faint,position:"relative",transition:"background 0.2s"}}>
                   <div style={{width:13,height:13,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:breakOn?15:2,transition:"left 0.2s"}}/>
@@ -3260,7 +3253,7 @@ function TaskTimerModal({task,onClose,onComplete}){
 
             {breakOn&&(
               <div style={{fontSize:11,color:T.muted,marginTop:8,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
-                <span>Challenge at <strong style={{color:T.amber}}>{breakPos}m</strong> · {breakMins}m · <strong style={{color:T.lime}}>{focus2Mins}m</strong> after</span>
+                <span>Break at <strong style={{color:T.amber}}>{breakPos}m</strong> · {breakMins}m · <strong style={{color:T.lime}}>{focus2Mins}m</strong> after</span>
                 <span style={{fontSize:10,color:T.faint}}>Drag to reposition · double-click to edit duration</span>
               </div>
             )}
@@ -3286,88 +3279,108 @@ function TaskTimerModal({task,onClose,onComplete}){
     );
   }
 
-  // ── DONE SCREEN ───────────────────────────────────────────────────────────
-  if(phase==="done")return(
-    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(10px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:420,background:T.card,borderRadius:20,border:`1px solid ${T.border}`,padding:"40px 36px",textAlign:"center"}}>
-        <h2 style={{fontSize:24,fontWeight:700,color:T.white,margin:"0 0 8px"}}>Session complete</h2>
-        <p style={{fontSize:14,color:T.muted,margin:"0 0 8px"}}>{task.title}</p>
-        <div style={{fontSize:28,fontWeight:700,color:T.lime,fontFamily:T.mono,marginBottom:20}}>{Math.max(1,Math.round(focusElapsed.current/60))} min focused</div>
-        <Btn onClick={onClose} style={{width:"100%",justifyContent:"center"}}>Done</Btn>
-      </div>
-    </div>
-  );
+  // ── XP + LEADERBOARD REWARD SCREEN ────────────────────────────────────────
+  if(phase==="done"){
+    if(!completion)return null;
+    const {mins,gain,xpAfter,tierBefore,tierAfter,rankBefore,rankAfter,rows}=completion;
+    const tieredUp=tierBefore!==tierAfter;
+    const rankRose=rankAfter<rankBefore;
+    const prog=tierProgressFor(xpAfter);
+    const ROW_H=42;
+    const deltaRows=Math.max(0,rankBefore-rankAfter);
+    return(
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(10px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+        <div style={{width:"100%",maxWidth:440,background:T.card,borderRadius:22,border:`1px solid ${T.border}`,padding:"36px 32px",textAlign:"center",position:"relative",overflow:"hidden",animation:"studlinPop 0.25s cubic-bezier(.2,.85,.3,1)"}}>
+          {tieredUp&&<div style={{position:"absolute",inset:0,background:`radial-gradient(circle at 50% 15%, ${T.lime}40, transparent 62%)`,pointerEvents:"none"}}/>}
+          <div style={{position:"relative"}}>
+            <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:T.lime,marginBottom:10}}>Session complete</div>
+            <h2 style={{fontSize:23,fontWeight:700,color:T.white,margin:"0 0 4px"}}>{mins} min focused</h2>
+            <div style={{fontSize:13,color:T.muted,marginBottom:22}}>{task.title}</div>
 
-  // ── ACTIVE TIMER (focus1 | break | breakDone | focus2) ───────────────────
-  const isBreak=phase==="break"||phase==="breakDone";
-  const timerColor=isBreak?T.amber:T.lime;
-  const phaseLabel=phase==="focus1"?"Time until challenge":phase==="break"?"Challenge":phase==="breakDone"?"Challenge complete":"Time remaining";
-  const phaseDuration=phase==="focus1"?breakPos*60:phase==="break"?breakMins*60:focus2Mins*60;
-  const phasePct=Math.max(0,Math.min(1,phaseDuration>0?1-secs/phaseDuration:1));
+            <div style={{background:T.card2,borderRadius:14,padding:"18px 20px",textAlign:"left",marginBottom:tieredUp||rankRose?16:22}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:9}}>
+                <span style={{fontSize:12,color:T.muted,fontWeight:600}}>{tierAfter}</span>
+                <span style={{fontFamily:T.mono,fontSize:16,fontWeight:700,color:T.lime}}>+{gain} XP</span>
+              </div>
+              <div style={{height:6,background:T.border,borderRadius:99,overflow:"hidden"}}>
+                <div style={{height:"100%",width:(barFilled?prog.pct:0)+"%",background:T.lime,borderRadius:99,transition:"width 1.1s cubic-bezier(.2,.8,.2,1)"}}/>
+              </div>
+              <div style={{fontSize:11,color:T.faint,marginTop:7}}>{prog.next?`${(prog.next.minXP-xpAfter).toLocaleString()} XP to ${prog.next.title}`:"Maximum rank achieved"}</div>
+            </div>
 
-  return(
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",backdropFilter:"blur(12px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-      <button onClick={()=>setSoundOn(s=>!s)} title={soundOn?"Mute alarm":"Unmute alarm"} style={{position:"absolute",top:20,right:20,background:"rgba(255,255,255,0.08)",border:"1px solid rgba(255,255,255,0.15)",borderRadius:8,padding:"7px 10px",color:soundOn?"rgba(255,255,255,0.8)":"rgba(255,255,255,0.3)",cursor:"pointer",display:"flex",alignItems:"center",gap:6,fontSize:11,fontWeight:600,fontFamily:T.font,transition:"all 0.15s"}}>
-        {soundOn?Icon.volume:Icon.volOff}
-        <span>{soundOn?"Sound on":"Sound off"}</span>
-      </button>
-      {pausedByViolation&&isActiveFocusPhase(phase)&&(
-        <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.92)",zIndex:1001,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-          <div style={{width:"100%",maxWidth:400,textAlign:"center"}}>
-            <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:T.red,marginBottom:14}}>Focus broken</div>
-            <h2 style={{fontSize:22,fontWeight:700,color:"#fff",margin:"0 0 10px"}}>You left focus mode</h2>
-            <p style={{fontSize:13.5,color:"rgba(255,255,255,0.65)",lineHeight:1.6,margin:"0 0 28px",maxWidth:340,marginLeft:"auto",marginRight:"auto"}}>
-              Your timer is paused. Leaving early reduces the XP you earn for this session. Come back and lock back in, or finish now with what you've got.
-            </p>
-            <Btn onClick={resumeFromViolation} style={{width:"100%",justifyContent:"center",padding:"14px 24px",fontSize:15,marginBottom:10}}>Resume focus</Btn>
-            <Btn variant="ghost" onClick={finishEarly} style={{background:"rgba(255,255,255,0.08)",borderColor:"rgba(255,255,255,0.2)",color:"#fff"}}>End session now</Btn>
-          </div>
-        </div>
-      )}
-      <div style={{width:"100%",maxWidth:400,textAlign:"center"}}>
-        <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:timerColor,marginBottom:16}}>{phaseLabel}</div>
+            {tieredUp&&(
+              <div style={{fontSize:13,fontWeight:700,color:T.lime,marginBottom:rankRose?14:22,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                {Icon.star}Ranked up to {tierAfter}
+              </div>
+            )}
 
-        <div style={{position:"relative",width:180,height:180,margin:"0 auto 20px"}}>
-          <svg viewBox="0 0 120 120" style={{width:180,height:180,transform:"rotate(-90deg)"}}>
-            <circle cx="60" cy="60" r="52" fill="rgba(0,0,0,0.6)" stroke="rgba(255,255,255,0.08)" strokeWidth="6"/>
-            <circle cx="60" cy="60" r="52" fill="none" stroke={timerColor} strokeWidth="6" strokeLinecap="round"
-              strokeDasharray={circumference}
-              strokeDashoffset={circumference*(1-phasePct)}
-              style={{transition:"stroke-dashoffset 0.5s",filter:`drop-shadow(0 0 6px ${timerColor}88)`}}/>
-          </svg>
-          <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
-            <div style={{fontSize:44,fontWeight:800,color:"#FFFFFF",fontFamily:T.mono,letterSpacing:"-0.03em",textShadow:"0 2px 12px rgba(0,0,0,0.6),0 0 30px rgba(255,255,255,0.15)"}}>{fmt(secs)}</div>
-            <div style={{fontSize:10,color:"rgba(255,255,255,0.55)",marginTop:4,letterSpacing:"0.1em",textTransform:"uppercase"}}>
-              {phase==="focus1"?"until challenge":isBreak?"challenge":"remaining"}
+            {rankRose&&(
+              <div style={{background:T.card2,borderRadius:14,padding:"14px 16px",marginBottom:22,textAlign:"left",overflow:"hidden"}}>
+                <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:10}}>Leaderboard</div>
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  {rows.map((u)=>(
+                    <div key={u.n} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 9px",borderRadius:9,background:u.you?T.lime+"14":"transparent",border:`1px solid ${u.you?T.lime+"33":"transparent"}`,transform:u.you&&!rankRisen?`translateY(${deltaRows*ROW_H}px)`:"translateY(0)",transition:"transform 0.9s cubic-bezier(.2,.85,.25,1.05)"}}>
+                      <span style={{width:18,fontFamily:T.mono,fontSize:11,fontWeight:700,color:u.you?T.lime:T.faint}}>{u.r}</span>
+                      <span style={{flex:1,fontSize:12,fontWeight:u.you?700:500,color:u.you?T.white:T.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{u.n}</span>
+                      <span style={{fontFamily:T.mono,fontSize:11,color:u.you?T.lime:T.faint}}>{u.xp.toLocaleString()}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{display:"flex",gap:10}}>
+              <Btn variant="ghost" onClick={onClose} style={{flex:1,justifyContent:"center"}}>Skip</Btn>
+              <Btn onClick={onClose} style={{flex:1,justifyContent:"center"}}>Back to dashboard</Btn>
             </div>
           </div>
         </div>
+      </div>
+    );
+  }
 
-        <div style={{fontSize:15,fontWeight:600,color:T.white,marginBottom:8}}>{task.title}</div>
+  // ── ACTIVE TIMER (focus1 | break | breakDone | focus2) — a persistent
+  // floating widget, not a fullscreen takeover, so the rest of the app stays
+  // visible and interactive while the session keeps ticking in the background.
+  const isBreak=phase==="break"||phase==="breakDone";
+  const timerColor=isBreak?T.amber:T.lime;
+  const phaseLabel=phase==="focus1"?"Time until break":phase==="break"?"Break":phase==="breakDone"?"Break complete":"Time remaining";
+  const phaseDuration=phase==="focus1"?breakPos*60:phase==="break"?breakMins*60:focus2Mins*60;
+  const phasePct=Math.max(0,Math.min(1,phaseDuration>0?1-secs/phaseDuration:1));
+  const widgetR=26;
+  const widgetCirc=2*Math.PI*widgetR;
 
-        {isBreak&&(
-          <div style={{fontSize:13,color:T.amber,margin:"0 auto 20px",padding:"12px 16px",background:T.amber+"12",borderRadius:10,lineHeight:1.5,maxWidth:320}}>
-            {breakIdeaRef.current}
-          </div>
-        )}
-        {phase==="break"&&(
-          <button onClick={resume} style={{display:"block",width:"100%",maxWidth:240,margin:"0 auto 12px",padding:"12px 24px",background:"rgba(255,255,255,0.10)",color:"#ffffff",border:"1px solid rgba(255,255,255,0.25)",borderRadius:12,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:T.font,letterSpacing:"-0.01em"}}>
-            Resume Focus Early
-          </button>
-        )}
+  return(
+    <div style={{position:"fixed",bottom:20,right:20,zIndex:500,width:284,background:T.card,border:`1px solid ${T.border}`,borderRadius:18,boxShadow:"0 20px 50px -14px rgba(0,0,0,0.5)",padding:"14px 16px",fontFamily:T.font,animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
+      <div style={{display:"flex",alignItems:"center",gap:12}}>
+        <div style={{position:"relative",width:48,height:48,flexShrink:0}}>
+          <svg viewBox="0 0 64 64" style={{width:48,height:48,transform:"rotate(-90deg)"}}>
+            <circle cx="32" cy="32" r={widgetR} fill="none" stroke={T.border} strokeWidth="5"/>
+            <circle cx="32" cy="32" r={widgetR} fill="none" stroke={timerColor} strokeWidth="5" strokeLinecap="round"
+              strokeDasharray={widgetCirc}
+              strokeDashoffset={widgetCirc*(1-phasePct)}
+              style={{transition:"stroke-dashoffset 0.5s"}}/>
+          </svg>
+        </div>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.09em",textTransform:"uppercase",color:timerColor,marginBottom:2}}>{phaseLabel}</div>
+          <div style={{fontFamily:T.mono,fontSize:19,fontWeight:800,color:T.white,letterSpacing:"-0.02em"}}>{fmt(secs)}</div>
+          <div style={{fontSize:11,color:T.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{task.title}</div>
+        </div>
+        <button onClick={()=>setSoundOn(s=>!s)} title={soundOn?"Mute alarm":"Unmute alarm"} style={{width:28,height:28,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:soundOn?T.text:T.faint,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{soundOn?Icon.volume:Icon.volOff}</button>
+      </div>
 
-        {phase==="breakDone"&&(
-          <button onClick={resume} style={{display:"block",width:"100%",maxWidth:240,margin:"0 auto 16px",padding:"16px 24px",background:T.lime,color:T.ink,border:"none",borderRadius:12,fontSize:16,fontWeight:700,cursor:"pointer",fontFamily:T.font,letterSpacing:"-0.01em"}}>
-            Resume
-          </button>
-        )}
+      {isBreak&&(
+        <div style={{fontSize:11.5,color:T.amber,margin:"10px 0 0",padding:"9px 11px",background:T.amber+"12",borderRadius:9,lineHeight:1.5}}>
+          {breakIdeaRef.current}
+        </div>
+      )}
 
-        {phase!=="breakDone"&&(
-          <div style={{display:"flex",gap:10,justifyContent:"center",marginTop:phase==="break"?8:24}}>
-            {phase!=="break"&&<Btn variant="ghost" onClick={()=>setRunning(r=>!r)} style={{background:"rgba(255,255,255,0.13)",borderColor:"rgba(255,255,255,0.38)",color:"#ffffff",fontWeight:700}}>{running?"Pause":"Resume"}</Btn>}
-            <Btn variant="danger" onClick={finishEarly}>Finish early</Btn>
-          </div>
-        )}
+      <div style={{display:"flex",gap:8,marginTop:12}}>
+        {phase==="break"&&<BtnSm onClick={resume} style={{flex:1,justifyContent:"center"}}>Resume early</BtnSm>}
+        {phase==="breakDone"&&<BtnSm onClick={resume} style={{flex:1,justifyContent:"center"}}>Resume</BtnSm>}
+        {phase!=="break"&&phase!=="breakDone"&&<BtnSm variant="ghost" onClick={()=>setRunning(r=>!r)} style={{flex:1,justifyContent:"center"}}>{running?"Pause":"Resume"}</BtnSm>}
+        {phase!=="breakDone"&&<BtnSm variant="danger" onClick={finishEarly} style={{flex:1,justifyContent:"center"}}>Finish</BtnSm>}
       </div>
     </div>
   );
@@ -3961,7 +3974,8 @@ function CalendarTab(){
                     </div>
                   </div>
                   <div style={{display:"flex",gap:4,flexShrink:0,alignItems:"center"}}>
-                    {!isDone&&ev.duration&&<button onClick={()=>{if(window._setTimerTask)window._setTimerTask(ev);}} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.lime}44`,background:T.lime+"12",color:T.lime,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Begin</button>}
+                    {!isDone&&ev.duration&&(ev.kind==="study block"||ev.kind==="deadline")&&<button onClick={()=>{if(window._setTimerTask)window._setTimerTask(ev);}} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.lime}44`,background:T.lime+"12",color:T.lime,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Begin</button>}
+                    {!isDone&&(ev.kind==="exam"||ev.kind==="class"||ev.kind==="reminder")&&<button onClick={()=>openEdit(ev)} title="View details" style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Details</button>}
                     {!isDone&&<button onClick={()=>markDone(ev.id)} title="Mark done" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",display:"flex"}}>{Icon.check}</button>}
                     <button onClick={()=>removeEvent(ev.id)} title="Delete" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,padding:2}}>×</button>
                   </div>
@@ -5710,15 +5724,15 @@ function LevelRoadmapModal({open,onClose,currentXP}){
   if(!open)return null;
   return(
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
-      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:460,maxHeight:"86vh",background:T.card,borderRadius:18,border:`1px solid ${T.border}`,overflow:"hidden",display:"flex",flexDirection:"column",boxShadow:"0 28px 70px -20px rgba(0,0,0,0.55)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
-        <div style={{padding:"20px 22px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:460,maxHeight:"80vh",background:T.card,borderRadius:18,border:`1px solid ${T.border}`,overflow:"hidden",display:"flex",flexDirection:"column",boxShadow:"0 28px 70px -20px rgba(0,0,0,0.55)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
+        <div style={{padding:"20px 22px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
           <div>
             <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Career Rank Roadmap</div>
             <div style={{fontSize:12.5,color:T.muted,marginTop:3}}>11 tiers · Intern to CEO</div>
           </div>
           <button onClick={onClose} style={{width:30,height:30,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer",fontSize:15}}>×</button>
         </div>
-        <div style={{padding:"18px 22px",overflowY:"auto"}}>
+        <div style={{padding:"18px 22px",overflowY:"auto",flex:1,minHeight:0}}>
           {PROF_TIERS.map((tier,i)=>{
             const next=PROF_TIERS[i+1]||null;
             const unlocked=currentXP>=tier.minXP;
@@ -6008,7 +6022,10 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
         <div onClick={()=>setActive("profile")} style={{background:T.lime,borderRadius:22,padding:22,cursor:"pointer",border:"none",display:"flex",flexDirection:"column"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(8,12,40,0.6)",fontWeight:600}}>Day Streak</span>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill={T.ink} stroke="none" style={{opacity:0.85}}><path d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
+            <svg width="22" height="22" viewBox="0 0 24 24" stroke="none">
+              <defs><linearGradient id="streakFlameGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#FF5F52"/><stop offset="100%" stopColor="#B3001B"/></linearGradient></defs>
+              <path fill="url(#streakFlameGrad)" d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/>
+            </svg>
           </div>
           <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.ink,margin:"10px 0 2px"}}>{realStreak}<span style={{fontSize:20,color:"rgba(8,12,40,0.55)",marginLeft:6}}>days</span></div>
           <div style={{fontSize:12,color:"rgba(8,12,40,0.7)",marginBottom:4}}>Today{wk.find(d=>d.today)?.on?" · active":"· keep going!"}</div>
@@ -6705,7 +6722,7 @@ function App() {
     {label:"Workspace",items:[
       {id:"dashboard",label:"Dashboard"},
       {id:"calendar",label:"Calendar"},
-      {id:"aichat",label:"Chat"},
+      {id:"aichat",label:"Studlin AI"},
       {id:"writestudio",label:"Write Studio",badge:String(lsGet("essays",[]).length||"")},
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
@@ -6717,7 +6734,7 @@ function App() {
   ];
   const bottomItems=[{id:"settings",label:"Settings"},{id:"profile",label:"Profile"}];
   const pages={aichat:AiChat,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile};
-  const labelOf={dashboard:"Dashboard",aichat:"AI Chat",writestudio:"Write Studio",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve"};
+  const labelOf={dashboard:"Dashboard",aichat:"Studlin AI",writestudio:"Write Studio",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve"};
   const sectionOf={dashboard:"Workspace",aichat:"Workspace",writestudio:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",friends:"Workspace",solve:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
@@ -6988,7 +7005,8 @@ function App() {
         logSession(mins,"Task: "+timerTask.title);
         const next=lsGet("events",[]).map(ev=>ev.id===timerTask.id?{...ev,status:"done",timeSpent:mins,completedAt:Date.now()}:ev);
         lsSet("events",next);
-        setTimerTask(null);
+        // Modal stays open to show the XP/leaderboard reward summary — it
+        // closes itself (setTimerTask(null) via onClose) once dismissed.
       }} />}
 
       {newDayModal&&(
