@@ -1,9 +1,55 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // All Studlin data access goes through Vercel API routes using the
-    // Firebase Admin SDK, which always bypasses these rules. Direct client
-    // reads/writes are never legitimate, so deny everything by default.
+
+    // Private account data: credits, plan, billing, email. Reads still go
+    // exclusively through Vercel API routes using the Firebase Admin SDK
+    // (which bypasses these rules), so this stays unreadable to clients.
+    // Writes are opened up ONLY for the specific onboarding fields the
+    // client sets directly from InitWizard — anything else (credits, plan,
+    // email...) is rejected even if a client tries to sneak it into the
+    // same update, because affectedKeys() must be a subset of this list.
+    match /users/{userId} {
+      allow read: if false;
+      allow write: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status','affiliation','school','workStartTime','bedtime','difficultyPreference','onboarded','updatedAt']);
+    }
+
+    // Public directory entry — just enough to search for and display a
+    // classmate (name/username/school). Any signed-in user can read/query
+    // this (that's what search needs); only the owner can write their own.
+    match /profiles/{userId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Friend requests / relationships between two real users.
+    // - Only readable by the two people involved.
+    // - Only creatable by the authenticated sender, targeting someone else,
+    //   and must start life as 'pending'.
+    // - Only the receiver can flip a pending request to 'accepted'; the
+    //   sender/receiver ids can never change on update.
+    // - Either party may delete (unfriend, cancel a sent request, or
+    //   decline an incoming one).
+    match /friendships/{friendshipId} {
+      allow read: if request.auth != null
+        && (request.auth.uid == resource.data.senderId || request.auth.uid == resource.data.receiverId);
+      allow create: if request.auth != null
+        && request.auth.uid == request.resource.data.senderId
+        && request.resource.data.senderId != request.resource.data.receiverId
+        && request.resource.data.status == 'pending';
+      allow update: if request.auth != null
+        && request.auth.uid == resource.data.receiverId
+        && resource.data.status == 'pending'
+        && request.resource.data.status == 'accepted'
+        && request.resource.data.senderId == resource.data.senderId
+        && request.resource.data.receiverId == resource.data.receiverId;
+      allow delete: if request.auth != null
+        && (request.auth.uid == resource.data.senderId || request.auth.uid == resource.data.receiverId);
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

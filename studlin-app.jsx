@@ -385,6 +385,38 @@ const prioLabel=(v)=>{const p=v/10;return p<=20?"Low":p<=40?"Low–Medium":p<=60
 async function getAuthToken(){try{const u=firebase.auth().currentUser;if(!u)return null;return await u.getIdToken();}catch(e){return null;}}
 async function authFetch(url,opts={}){try{const token=await getAuthToken();const h=Object.assign({},opts.headers||{});if(token)h["Authorization"]="Bearer "+token;return fetch(url,Object.assign({},opts,{headers:h}));}catch(e){return fetch(url,opts);}}
 async function fetchUserProfile(){try{const res=await authFetch("/api/me");if(!res.ok)return null;const d=await res.json();lsSet("credits",d.credits);lsSet("plan",d.plan||"Free");return d;}catch(e){return null;}}
+
+// ─── FIRESTORE (client SDK) — live user directory + friend graph ────────────
+// Everything privacy-sensitive (credits, plan, email) stays server-only via
+// the existing /api/* routes + Admin SDK. This client SDK is used only for
+// the public directory (`profiles`) and the `friendships` relationship graph,
+// per firestore.rules.
+const fsdb=()=>firebase.firestore();
+const slugUsername=(name)=>(name||"").toLowerCase().replace(/[^a-z0-9]/g,"").slice(0,24)||"student";
+// Creates/refreshes this user's public directory entry so they're searchable
+// and their name/school stay current. Safe to call anytime a signed-in user
+// is present — merges rather than overwrites, and never touches private data.
+async function upsertProfile(extra={}){
+  const u=firebase.auth().currentUser;
+  if(!u)return;
+  const prof=getProfile();
+  const name=u.displayName||prof.name||"Student";
+  const username=slugUsername(name);
+  const school=extra.school!==undefined?extra.school:(prof.affiliation||prof.school||"");
+  const status=extra.status!==undefined?extra.status:(prof.status||"");
+  const data={
+    uid:u.uid,
+    name,
+    username,
+    usernameLower:username,
+    nameLower:name.toLowerCase(),
+    school,
+    schoolLower:(school||"").toLowerCase(),
+    status,
+    updatedAt:new Date().toISOString(),
+  };
+  try{await fsdb().collection('profiles').doc(u.uid).set(data,{merge:true});}catch(e){}
+}
 const dayKey=(d)=>{const x=d||new Date();return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");};
 function daysOverdue(ev){if(!ev.deadline)return 0;if(ev.date<=ev.deadline)return 0;const d1=new Date(ev.date),d2=new Date(ev.deadline);return Math.ceil((d1-d2)/86400000);}
 function daysUntilDeadline(ev){if(!ev.deadline)return null;const d1=new Date(ev.deadline),d2=new Date(dayKey());return Math.ceil((d1-d2)/86400000);}
@@ -2532,20 +2564,74 @@ function FriendsChat(){
   const [inviteOpen,setInviteOpen]=useState(false);
   const [createGroupOpen,setCreateGroupOpen]=useState(false);
   const [chatTarget,setChatTarget]=useState(null);
-  const [friendReqs,setFriendReqs]=useState([
-    {id:1,n:"Zoe Martinez",h:"@zoem",s:"Lehigh University"},
-    {id:2,n:"Ethan Woo",h:"@ethanw",s:"Penn State"},
-  ]);
   const me=getUserName()||"You";
   const refCode=me.toLowerCase().replace(/\s+/g,"");
   const inviteLink="https://studlin.app?ref="+refCode;
   const qrUrl="https://api.qrserver.com/v1/create-qr-code/?data="+encodeURIComponent(inviteLink)+"&size=150x150&color=AECE5E&bgcolor=0D120F&margin=10";
+  const myUid=firebase.auth().currentUser?.uid||null;
 
-  const [addedUsers,setAddedUsers]=useState(()=>lsGet("network-added",[]));
-  const toggleAdd=(h)=>{const n=addedUsers.includes(h)?addedUsers.filter(x=>x!==h):[...addedUsers,h];setAddedUsers(n);lsSet("network-added",n);};
+  // ── Live friend graph (Firestore `friendships` + `profiles`) ──────────────
+  const [friends,setFriends]=useState([]); // accepted, either direction — {uid,n,h,s,online,presence}
+  const [incomingReqs,setIncomingReqs]=useState([]); // pending, received by me — {id,senderId,n,h,s}
+  const [outgoingReqIds,setOutgoingReqIds]=useState(()=>new Set()); // uids I've already sent a pending request to
   const [groups,setGroups]=useState(()=>lsGet("network-groups",[]));
   const activeGroups=groups.filter(g=>!g.expiresAt||g.expiresAt>Date.now());
-  const myFriends=NETWORK_DIRECTORY.filter(u=>addedUsers.includes(u.h));
+  const myFriends=friends;
+
+  const profileToFriend=(uid,d)=>({
+    uid,
+    n:(d&&d.name)||"Studlin User",
+    h:"@"+((d&&d.username)||uid.slice(0,6)),
+    s:(d&&d.school)||"",
+    online:false,
+    presence:{state:"idle"},
+  });
+
+  // Incoming pending requests — real-time via onSnapshot.
+  useEffect(()=>{
+    if(!myUid)return;
+    const unsub=fsdb().collection('friendships').where('receiverId','==',myUid).where('status','==','pending')
+      .onSnapshot(async snap=>{
+        const docs=snap.docs.map(d=>({id:d.id,senderId:d.data().senderId}));
+        const withProfiles=await Promise.all(docs.map(async d=>{
+          try{
+            const p=await fsdb().collection('profiles').doc(d.senderId).get();
+            const f=profileToFriend(d.senderId,p.exists?p.data():null);
+            return {id:d.id,senderId:d.senderId,n:f.n,h:f.h,s:f.s};
+          }catch(e){return {id:d.id,senderId:d.senderId,n:"Studlin User",h:"@"+d.senderId.slice(0,6),s:""};}
+        }));
+        setIncomingReqs(withProfiles);
+      },()=>{});
+    return unsub;
+  },[myUid]);
+
+  // Outgoing pending requests — just the target uids, so search can show "Pending".
+  useEffect(()=>{
+    if(!myUid)return;
+    const unsub=fsdb().collection('friendships').where('senderId','==',myUid).where('status','==','pending')
+      .onSnapshot(snap=>setOutgoingReqIds(new Set(snap.docs.map(d=>d.data().receiverId))),()=>{});
+    return unsub;
+  },[myUid]);
+
+  // Accepted friendships (either direction) — real-time via onSnapshot, resolved
+  // against `profiles` for display. This is what powers "My Friends" live on
+  // both sides once the other person accepts, with no manual refresh needed.
+  useEffect(()=>{
+    if(!myUid)return;
+    let asSender=[],asReceiver=[],cancelled=false;
+    const rebuild=async()=>{
+      const ids=[...new Set([...asSender,...asReceiver])];
+      if(ids.length===0){setFriends([]);return;}
+      const docs=await Promise.all(ids.map(uid=>fsdb().collection('profiles').doc(uid).get().catch(()=>null)));
+      if(cancelled)return;
+      setFriends(docs.map((p,i)=>profileToFriend(ids[i],p&&p.exists?p.data():null)));
+    };
+    const unsub1=fsdb().collection('friendships').where('senderId','==',myUid).where('status','==','accepted')
+      .onSnapshot(snap=>{asSender=snap.docs.map(d=>d.data().receiverId);rebuild();},()=>{});
+    const unsub2=fsdb().collection('friendships').where('receiverId','==',myUid).where('status','==','accepted')
+      .onSnapshot(snap=>{asReceiver=snap.docs.map(d=>d.data().senderId);rebuild();},()=>{});
+    return ()=>{cancelled=true;unsub1();unsub2();};
+  },[myUid]);
 
   // ── Unified "All" / "Groups" inbox — combined, chronological ──────────────
   const [inboxTab,setInboxTab]=useState("All");
@@ -2556,25 +2642,40 @@ function FriendsChat(){
   const inboxGroups=activeGroups.map(g=>{const last=lastMsgOf("group:"+g.id);return{kind:"group",key:"group:"+g.id,group:g,lastTs:last?last.ts:0,preview:previewOf(last)};});
   const inboxShown=(inboxTab==="Groups"?inboxGroups:[...inboxDms,...inboxGroups]).slice().sort((a,b)=>b.lastTs-a.lastTs);
 
-  const filtered=NETWORK_DIRECTORY.filter(u=>{
-    const q=searchQ.toLowerCase().trim();
-    if(!q)return true;
-    if(searchFilter==="@username")return u.h.toLowerCase().includes(q);
-    if(searchFilter==="Name")return u.n.toLowerCase().includes(q);
-    if(searchFilter==="School")return u.s.toLowerCase().includes(q);
-    return u.n.toLowerCase().includes(q)||u.h.toLowerCase().includes(q)||u.s.toLowerCase().includes(q);
-  });
-  const noResults=searchQ.trim()&&filtered.length===0;
+  // ── Live search — one-shot Firestore prefix query against `profiles` ──────
+  const [searchResults,setSearchResults]=useState([]);
+  const [searching,setSearching]=useState(false);
+  useEffect(()=>{
+    const q=searchQ.trim().toLowerCase();
+    if(!q){setSearchResults([]);setSearching(false);return;}
+    const field=searchFilter==="School"?"schoolLower":searchFilter==="Name"?"nameLower":"usernameLower";
+    setSearching(true);
+    let active=true;
+    const t=setTimeout(async()=>{
+      try{
+        const snap=await fsdb().collection('profiles').where(field,'>=',q).where(field,'<=',q+String.fromCharCode(0xf8ff)).limit(10).get();
+        if(!active)return;
+        setSearchResults(snap.docs.map(d=>profileToFriend(d.id,d.data())).filter(u=>u.uid!==myUid));
+      }catch(e){if(active)setSearchResults([]);}
+      if(active)setSearching(false);
+    },300);
+    return ()=>{active=false;clearTimeout(t);};
+  },[searchQ,searchFilter,myUid]);
+  const noResults=searchQ.trim()&&!searching&&searchResults.length===0;
 
   const sendEmailInvite=()=>{if(!inviteEmail.trim())return;setEmailSent(true);setTimeout(()=>{setEmailSent(false);setInviteEmail("");},2500);};
   const copyLink=()=>{navigator.clipboard&&navigator.clipboard.writeText(inviteLink);setCopied(true);setTimeout(()=>setCopied(false),2200);};
 
-  const acceptReq=(id)=>{
-    const req=friendReqs.find(r=>r.id===id);
-    setFriendReqs(p=>p.filter(r=>r.id!==id));
-    if(req){const n=[...addedUsers,req.h];setAddedUsers(n);lsSet("network-added",n);}
+  // Sending a request when the other person already has a pending request in
+  // to us just accepts theirs instead of creating a redundant duplicate doc.
+  const sendFriendRequest=async(targetUid)=>{
+    if(!myUid||targetUid===myUid)return;
+    const theirs=incomingReqs.find(r=>r.senderId===targetUid);
+    if(theirs){await acceptReq(theirs.id);return;}
+    try{await fsdb().collection('friendships').add({senderId:myUid,receiverId:targetUid,status:'pending',createdAt:new Date().toISOString()});}catch(e){}
   };
-  const declineReq=(id)=>setFriendReqs(p=>p.filter(r=>r.id!==id));
+  const acceptReq=async(id)=>{try{await fsdb().collection('friendships').doc(id).update({status:'accepted',updatedAt:new Date().toISOString()});}catch(e){}};
+  const declineReq=async(id)=>{try{await fsdb().collection('friendships').doc(id).delete();}catch(e){}};
 
   // ── Co-op "Join Lock-In" — simulated request/accept, then hands off to the
   // global TaskTimerModal (via the same window._setTimerTask bridge Calendar uses)
@@ -2613,7 +2714,12 @@ function FriendsChat(){
       if(cgDuration==="Custom date"&&cgCustomDate)expiresAt=new Date(cgCustomDate+"T23:59:59").getTime();
       else{const dur=GROUP_DURATIONS.find(d=>d.label===cgDuration);expiresAt=dur?Date.now()+dur.days*86400000:null;}
     }
-    const g={id:"g"+Date.now(),name:cgName.trim(),memberHandles:[...cgMembers],type:cgType,createdAt:Date.now(),expiresAt};
+    // Snapshot each member's display name at creation time — group chat is
+    // stored locally, but member handles now refer to real Firestore friends
+    // rather than the old mock directory, so their name won't be resolvable
+    // from a shared lookup table later.
+    const memberNames=Object.fromEntries(cgMembers.map(h=>{const f=myFriends.find(x=>x.h===h);return [h,f?f.n:h];}));
+    const g={id:"g"+Date.now(),name:cgName.trim(),memberHandles:[...cgMembers],memberNames,type:cgType,createdAt:Date.now(),expiresAt};
     const next=[g,...groups];setGroups(next);lsSet("network-groups",next);
     setCreateGroupOpen(false);resetCreateGroup();
   };
@@ -2647,35 +2753,42 @@ function FriendsChat(){
             {searchQ&&<button onClick={()=>setSearchQ("")} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:0,display:"flex",lineHeight:1,flexShrink:0}}>{Icon.xmark}</button>}
           </div>
           <Card style={{padding:0,overflow:"hidden"}}>
-            {!noResults
-              ?(searchQ.trim()?filtered:NETWORK_DIRECTORY.slice(0,6)).map((u,i,arr)=>{
-                  const added=addedUsers.includes(u.h);
-                  return (
-                    <div key={u.h} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
-                      <div style={{position:"relative",flexShrink:0}}>
-                        <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={34} picUrl="" />
-                        <div style={{position:"absolute",bottom:0,right:0,width:9,height:9,borderRadius:"50%",background:u.online?T.teal:T.faint,border:`2px solid ${T.card}`}} />
+            {!searchQ.trim()
+              ?<div style={{padding:24,textAlign:"center",fontSize:12.5,color:T.muted,lineHeight:1.6}}>Search by username, name, or school to find classmates already on Studlin.</div>
+              :searching
+                ?<div style={{padding:24,textAlign:"center",fontSize:12.5,color:T.muted}}>Searching…</div>
+                :!noResults
+                  ?searchResults.map((u,i,arr)=>{
+                      const isFriend=friends.some(f=>f.uid===u.uid);
+                      const incomingFromThem=incomingReqs.find(r=>r.senderId===u.uid);
+                      const isPendingOut=outgoingReqIds.has(u.uid);
+                      const label=isFriend?"Following":incomingFromThem?"Accept":isPendingOut?"Pending":"Add";
+                      const onClickBtn=isFriend||isPendingOut?undefined:incomingFromThem?()=>acceptReq(incomingFromThem.id):()=>sendFriendRequest(u.uid);
+                      return (
+                        <div key={u.uid} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
+                          <div style={{position:"relative",flexShrink:0}}>
+                            <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={34} picUrl="" />
+                          </div>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:13,fontWeight:600,color:T.white}}>{u.n}</div>
+                            <div style={{fontSize:11,color:T.muted}}>{u.h}{u.s&&<> · <span style={{color:T.blue}}>{u.s}</span></>}</div>
+                          </div>
+                          <BtnSm variant={label==="Add"||label==="Accept"?"lime":"subtle"} onClick={onClickBtn} style={{flexShrink:0,opacity:onClickBtn?1:0.7}}>{label}</BtnSm>
+                        </div>
+                      );
+                    })
+                  :<div style={{padding:20}}>
+                      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+                        <div style={{width:34,height:34,borderRadius:9,background:T.blue+"18",border:`1px solid ${T.blue}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.blue,flexShrink:0}}>{Icon.mail}</div>
+                        <div>
+                          <div style={{fontSize:13,fontWeight:700,color:T.white}}>No one found for "{searchQ}"</div>
+                          <div style={{fontSize:11,color:T.muted}}>Invite them to join Studlin via email.</div>
+                        </div>
                       </div>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:13,fontWeight:600,color:T.white}}>{u.n}</div>
-                        <div style={{fontSize:11,color:T.muted}}>{u.h} · <span style={{color:T.blue}}>{u.s}</span></div>
-                      </div>
-                      <BtnSm variant={added?"subtle":"lime"} onClick={()=>toggleAdd(u.h)} style={{flexShrink:0}}>{added?"Following":"Add"}</BtnSm>
+                      <input value={inviteEmail} onChange={e=>setInviteEmail(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")sendEmailInvite();}} placeholder="friend@university.edu" style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",boxSizing:"border-box",marginBottom:10}} />
+                      {emailSent&&<div style={{fontSize:12,color:T.teal,marginBottom:8}}>Invite sent!</div>}
+                      <Btn onClick={sendEmailInvite} style={{width:"100%",justifyContent:"center",opacity:inviteEmail.trim()?1:0.45}}>{Icon.mail} Send invite</Btn>
                     </div>
-                  );
-                })
-              :<div style={{padding:20}}>
-                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
-                    <div style={{width:34,height:34,borderRadius:9,background:T.blue+"18",border:`1px solid ${T.blue}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.blue,flexShrink:0}}>{Icon.mail}</div>
-                    <div>
-                      <div style={{fontSize:13,fontWeight:700,color:T.white}}>No one found for "{searchQ}"</div>
-                      <div style={{fontSize:11,color:T.muted}}>Invite them to join Studlin via email.</div>
-                    </div>
-                  </div>
-                  <input value={inviteEmail} onChange={e=>setInviteEmail(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")sendEmailInvite();}} placeholder="friend@university.edu" style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",boxSizing:"border-box",marginBottom:10}} />
-                  {emailSent&&<div style={{fontSize:12,color:T.teal,marginBottom:8}}>Invite sent!</div>}
-                  <Btn onClick={sendEmailInvite} style={{width:"100%",justifyContent:"center",opacity:inviteEmail.trim()?1:0.45}}>{Icon.mail} Send invite</Btn>
-                </div>
             }
           </Card>
         </div>
@@ -2783,15 +2896,15 @@ function FriendsChat(){
       )}
 
       {/* ── INCOMING FRIEND REQUESTS ── */}
-      {friendReqs.length>0&&(
+      {incomingReqs.length>0&&(
         <div style={{marginBottom:16}}>
           <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8,display:"flex",alignItems:"center",gap:8}}>
             Incoming Requests
-            <span style={{background:T.amber,color:T.ink,fontSize:9,fontWeight:800,borderRadius:4,padding:"1px 6px"}}>{friendReqs.length}</span>
+            <span style={{background:T.amber,color:T.ink,fontSize:9,fontWeight:800,borderRadius:4,padding:"1px 6px"}}>{incomingReqs.length}</span>
           </div>
           <Card style={{padding:0,overflow:"hidden"}}>
-            {friendReqs.map((req,i)=>(
-              <div key={req.id} style={{display:"flex",alignItems:"center",gap:12,padding:"13px 16px",borderBottom:i<friendReqs.length-1?`1px solid ${T.border}`:"none",transition:"background 0.15s"}}>
+            {incomingReqs.map((req,i)=>(
+              <div key={req.id} style={{display:"flex",alignItems:"center",gap:12,padding:"13px 16px",borderBottom:i<incomingReqs.length-1?`1px solid ${T.border}`:"none",transition:"background 0.15s"}}>
                 <Av initials={req.n.split(" ").map(x=>x[0]).join("")} color={T.amber} size={36} picUrl="" />
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontSize:13,fontWeight:600,color:T.white}}>{req.n}</div>
@@ -3162,13 +3275,13 @@ function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
               <div style={{width:7,height:7,borderRadius:"50%",background:isOnlineStatusOn()&&!isIncognitoOn()?T.teal:T.faint,marginLeft:"auto"}} />
             </div>
             {target.group.memberHandles.map(h=>{
-              const u=NETWORK_DIRECTORY.find(x=>x.h===h);
-              if(!u)return null;
+              const fromDirectory=NETWORK_DIRECTORY.find(x=>x.h===h);
+              const name=fromDirectory?fromDirectory.n:(target.group.memberNames&&target.group.memberNames[h])||h;
               return (
                 <div key={h} style={{display:"flex",alignItems:"center",gap:9}}>
-                  <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={28} picUrl="" />
-                  <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>{u.n}</div>
-                  <div style={{width:7,height:7,borderRadius:"50%",background:u.online?T.teal:T.faint,marginLeft:"auto"}} />
+                  <Av initials={name.split(" ").map(x=>x[0]).join("")} color={T.lime} size={28} picUrl="" />
+                  <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>{name}</div>
+                  <div style={{width:7,height:7,borderRadius:"50%",background:fromDirectory&&fromDirectory.online?T.teal:T.faint,marginLeft:"auto"}} />
                 </div>
               );
             })}
@@ -6644,6 +6757,21 @@ function InitWizard({onComplete}){
     const updatedProf = {...getProfile(), status, affiliation, school:affiliation};
     lsSet("profile", updatedProf);
     lsSet("onboarded", true);
+
+    // Live write to the authenticated user's own Firestore document (allowed
+    // directly from the client — firestore.rules restricts this write to
+    // exactly these onboarding fields, nothing private like credits/plan).
+    const u=firebase.auth().currentUser;
+    if(u){
+      fsdb().collection('users').doc(u.uid).set({
+        status, affiliation, school:affiliation,
+        workStartTime:workStart, bedtime, difficultyPreference:difficulty,
+        onboarded:true,
+        updatedAt:new Date().toISOString(),
+      },{merge:true}).catch(()=>{});
+      upsertProfile({status, school:affiliation});
+    }
+
     // Fire welcome email — best-effort, non-blocking
     authFetch("/api/send-welcome", {
       method:"POST",
@@ -6655,6 +6783,11 @@ function InitWizard({onComplete}){
 
   const skip = () => {
     lsSet("onboarded", true);
+    const u=firebase.auth().currentUser;
+    if(u){
+      fsdb().collection('users').doc(u.uid).set({onboarded:true,updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});
+      upsertProfile();
+    }
     onComplete();
   };
 
@@ -6812,7 +6945,7 @@ function AuthScreen(){
 // ─── AUTH GATE ────────────────────────────────────────────────────────────────
 function AuthGate(){
   const [user,setUser]=useState(undefined);
-  useEffect(()=>{return firebase.auth().onAuthStateChanged(u=>{setUser(u||null);if(u)fetchUserProfile();});},[]);
+  useEffect(()=>{return firebase.auth().onAuthStateChanged(u=>{setUser(u||null);if(u){fetchUserProfile();upsertProfile();}});},[]);
   if(user===undefined)return(<div style={{minHeight:"100vh",background:"#0D120F",display:"grid",placeItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#14342A,#0E1F18)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(174,206,94,0.38)"}}><div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #CBDF92, #AECE5E)",boxShadow:"0 0 10px 3px rgba(174,206,94,0.65)"}}/></div><span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span></div></div>);
   if(!user)return <AuthScreen />;
   return <App />;
