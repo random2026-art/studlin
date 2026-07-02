@@ -2532,6 +2532,10 @@ const NETWORK_DIRECTORY=[
   {n:"Riya Mehta",h:"@riyam",s:"Lehigh University",online:true,presence:{state:"idle"}},
 ];
 const GROUP_DURATIONS=[{label:"1 week",days:7},{label:"2 weeks",days:14},{label:"1 month",days:30},{label:"2 months",days:60},{label:"3 months",days:90}];
+// Deterministic id for a 1:1 chat room — both sides compute the same id
+// from their two uids without a lookup, so the room can be created lazily
+// (idempotent merge) the first time either person opens the DM.
+const dmRoomId=(a,b)=>"dm_"+[a,b].sort().join('_');
 const isOnlineStatusOn=()=>lsGet("settings",{}).onlineStatus!==false;
 const isIncognitoOn=()=>lsGet("settings",{}).incognito===true;
 function fmtGroupCountdown(expiresAt){
@@ -2574,8 +2578,9 @@ function FriendsChat(){
   const [friends,setFriends]=useState([]); // accepted, either direction — {uid,n,h,s,online,presence}
   const [incomingReqs,setIncomingReqs]=useState([]); // pending, received by me — {id,senderId,n,h,s}
   const [outgoingReqIds,setOutgoingReqIds]=useState(()=>new Set()); // uids I've already sent a pending request to
-  const [groups,setGroups]=useState(()=>lsGet("network-groups",[]));
-  const activeGroups=groups.filter(g=>!g.expiresAt||g.expiresAt>Date.now());
+  const [myRooms,setMyRooms]=useState({}); // chatRooms I'm a member of, keyed by id — DM rooms only exist once opened
+  const groupRooms=Object.values(myRooms).filter(r=>r.type==="group");
+  const activeGroups=groupRooms.filter(g=>!g.expiresAt||g.expiresAt>Date.now());
   const myFriends=friends;
 
   const profileToFriend=(uid,d)=>({
@@ -2633,13 +2638,27 @@ function FriendsChat(){
     return ()=>{cancelled=true;unsub1();unsub2();};
   },[myUid]);
 
+  // Chat rooms (DMs + groups) I belong to — one query drives the whole inbox
+  // (list + live previews) plus group membership, the same way the
+  // friendship listeners above drive the friend list. This is also what
+  // makes a newly-created group show up in a member's inbox live, with no
+  // refresh — the group doc itself is what they're subscribed to here.
+  useEffect(()=>{
+    if(!myUid){setMyRooms({});return;}
+    const unsub=fsdb().collection('chatRooms').where('memberUids','array-contains',myUid)
+      .onSnapshot(snap=>{
+        const next={};
+        snap.docs.forEach(d=>{next[d.id]={id:d.id,...d.data()};});
+        setMyRooms(next);
+      },()=>{});
+    return unsub;
+  },[myUid]);
+
   // ── Unified "All" / "Groups" inbox — combined, chronological ──────────────
   const [inboxTab,setInboxTab]=useState("All");
-  const networkChats=lsGet("network-chats",{});
-  const lastMsgOf=(id)=>{const arr=networkChats[id];return arr&&arr.length?arr[arr.length-1]:null;};
   const previewOf=(m)=>!m?null:(m.kind==="text"?m.text:m.kind==="calendar"?"Shared free time found":m.kind==="note"?"Note shared":m.kind==="deck"?"Deck shared":"New message");
-  const inboxDms=myFriends.map(u=>{const last=lastMsgOf("dm:"+u.h);return{kind:"dm",key:"dm:"+u.h,user:u,lastTs:last?last.ts:0,preview:previewOf(last)};});
-  const inboxGroups=activeGroups.map(g=>{const last=lastMsgOf("group:"+g.id);return{kind:"group",key:"group:"+g.id,group:g,lastTs:last?last.ts:0,preview:previewOf(last)};});
+  const inboxDms=myFriends.map(u=>{const room=myRooms[dmRoomId(myUid,u.uid)];const last=room&&room.lastMessage;return{kind:"dm",key:"dm:"+u.uid,user:u,lastTs:last?last.ts:0,preview:previewOf(last)};});
+  const inboxGroups=activeGroups.map(g=>{const last=g.lastMessage;return{kind:"group",key:"group:"+g.id,group:g,lastTs:last?last.ts:0,preview:previewOf(last)};});
   const inboxShown=(inboxTab==="Groups"?inboxGroups:[...inboxDms,...inboxGroups]).slice().sort((a,b)=>b.lastTs-a.lastTs);
 
   // ── Live search — one-shot Firestore prefix query against `profiles` ──────
@@ -2726,32 +2745,35 @@ function FriendsChat(){
   const [cgDuration,setCgDuration]=useState("1 month");
   const [cgCustomDate,setCgCustomDate]=useState("");
   const resetCreateGroup=()=>{setCgName("");setCgMembers([]);setCgType("permanent");setCgDuration("1 month");setCgCustomDate("");};
-  const toggleCgMember=(h)=>setCgMembers(m=>m.includes(h)?m.filter(x=>x!==h):[...m,h]);
+  const toggleCgMember=(uid)=>setCgMembers(m=>m.includes(uid)?m.filter(x=>x!==uid):[...m,uid]);
   const cgCustomInvalid=cgType==="temporary"&&cgDuration==="Custom date"&&!cgCustomDate;
-  const submitCreateGroup=()=>{
-    if(!cgName.trim()||cgMembers.length===0||cgCustomInvalid)return;
+  const submitCreateGroup=async()=>{
+    if(!myUid||!cgName.trim()||cgMembers.length===0||cgCustomInvalid)return;
     let expiresAt=null;
     if(cgType==="temporary"){
       if(cgDuration==="Custom date"&&cgCustomDate)expiresAt=new Date(cgCustomDate+"T23:59:59").getTime();
       else{const dur=GROUP_DURATIONS.find(d=>d.label===cgDuration);expiresAt=dur?Date.now()+dur.days*86400000:null;}
     }
-    // Snapshot each member's display name at creation time — group chat is
-    // stored locally, but member handles now refer to real Firestore friends
-    // rather than the old mock directory, so their name won't be resolvable
-    // from a shared lookup table later.
-    const memberNames=Object.fromEntries(cgMembers.map(h=>{const f=myFriends.find(x=>x.h===h);return [h,f?f.n:h];}));
-    const g={id:"g"+Date.now(),name:cgName.trim(),memberHandles:[...cgMembers],memberNames,type:cgType,createdAt:Date.now(),expiresAt};
-    const next=[g,...groups];setGroups(next);lsSet("network-groups",next);
+    // Snapshot each member's display name at creation time (keyed by uid,
+    // the same id used for security-rule membership checks) so the group
+    // settings panel can show names without extra profile reads.
+    const memberNames={[myUid]:me};
+    cgMembers.forEach(uid=>{const f=myFriends.find(x=>x.uid===uid);memberNames[uid]=f?f.n:uid;});
+    const now=new Date().toISOString();
+    try{
+      await fsdb().collection('chatRooms').add({
+        type:"group",memberUids:[myUid,...cgMembers],createdBy:myUid,
+        name:cgName.trim(),groupType:cgType,expiresAt,memberNames,
+        createdAt:now,updatedAt:now,lastMessage:null,
+      });
+    }catch(e){}
     setCreateGroupOpen(false);resetCreateGroup();
   };
-  const makeGroupPermanent=(id)=>{
-    const next=groups.map(g=>g.id===id?{...g,type:"permanent",expiresAt:null}:g);
-    setGroups(next);lsSet("network-groups",next);
-    setChatTarget(t=>(t&&t.kind==="group"&&t.group.id===id)?{...t,group:next.find(g=>g.id===id)}:t);
+  const makeGroupPermanent=async(id)=>{
+    try{await fsdb().collection('chatRooms').doc(id).update({groupType:"permanent",expiresAt:null,updatedAt:new Date().toISOString()});}catch(e){}
   };
-  const deleteGroup=(id)=>{
-    const next=groups.filter(g=>g.id!==id);setGroups(next);lsSet("network-groups",next);
-    const all=lsGet("network-chats",{});delete all["group:"+id];lsSet("network-chats",all);
+  const deleteGroup=async(id)=>{
+    try{await fsdb().collection('chatRooms').doc(id).delete();}catch(e){}
     setChatTarget(t=>(t&&t.kind==="group"&&t.group.id===id)?null:t);
   };
 
@@ -2882,7 +2904,7 @@ function FriendsChat(){
                       <div style={{width:34,height:34,borderRadius:10,background:T.purple+"18",border:`1px solid ${T.purple}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.purple,flexShrink:0}}>{Icon.users}</div>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{fontSize:13,fontWeight:600,color:T.white}}>{g.name}</div>
-                        <div style={{fontSize:11,color:T.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{row.preview||(g.memberHandles.length+1)+" members"}{expiry?<> · <span style={{color:expiry.urgent?T.amber:T.purple}}>Archives in {expiry.label}</span></>:""}</div>
+                        <div style={{fontSize:11,color:T.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{row.preview||g.memberUids.length+" members"}{expiry?<> · <span style={{color:expiry.urgent?T.amber:T.purple}}>Archives in {expiry.label}</span></>:""}</div>
                       </div>
                       <button onClick={e=>{e.stopPropagation();setChatTarget({kind:"group",group:g});}} style={{width:32,height:32,borderRadius:9,border:`1px solid ${T.border}`,background:T.card2,color:T.lime,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.msgSquare}</button>
                     </div>
@@ -2979,9 +3001,9 @@ function FriendsChat(){
         <Field label="Members" hint={myFriends.length===0?"Add friends first to start a group.":null}>
           <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:150,overflowY:"auto"}}>
             {myFriends.map(u=>{
-              const sel=cgMembers.includes(u.h);
+              const sel=cgMembers.includes(u.uid);
               return (
-                <div key={u.h} onClick={()=>toggleCgMember(u.h)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:8,cursor:"pointer",background:sel?T.lime+"10":T.card2,border:`1px solid ${sel?T.lime+"44":T.border}`}}>
+                <div key={u.uid} onClick={()=>toggleCgMember(u.uid)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:8,cursor:"pointer",background:sel?T.lime+"10":T.card2,border:`1px solid ${sel?T.lime+"44":T.border}`}}>
                   <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={26} picUrl="" />
                   <div style={{flex:1,fontSize:12.5,color:T.text,fontWeight:600}}>{u.n}</div>
                   <div style={{width:16,height:16,borderRadius:5,border:`1.5px solid ${sel?T.lime:T.border}`,background:sel?T.lime:"transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -3021,7 +3043,7 @@ function FriendsChat(){
         )}
       </Modal>
 
-      <ChatDrawer open={!!chatTarget} target={chatTarget} onClose={()=>setChatTarget(null)} onMakePermanent={makeGroupPermanent} onDeleteGroup={deleteGroup} />
+      <ChatDrawer open={!!chatTarget} myUid={myUid} target={chatTarget&&chatTarget.kind==="group"&&myRooms[chatTarget.group.id]?{...chatTarget,group:myRooms[chatTarget.group.id]}:chatTarget} onClose={()=>setChatTarget(null)} onMakePermanent={makeGroupPermanent} onDeleteGroup={deleteGroup} />
     </div>
   );
 }
@@ -3039,9 +3061,9 @@ function panelPalette(){
     card2: isLight?"rgba(246,241,230,0.08)":T.card2,
   };
 }
-function ChatBubble({m,onRespond,onSchedule}){
+function ChatBubble({m,myUid,onRespond,onSchedule}){
   const pp=panelPalette();
-  const mine=m.from==="me";
+  const mine=m.senderId===myUid;
   const align=mine?"flex-end":"flex-start";
   const bg=mine?T.lime+"1F":pp.card2;
   const border=mine?T.lime+"40":pp.border;
@@ -3060,7 +3082,7 @@ function ChatBubble({m,onRespond,onSchedule}){
   }
   if(m.kind==="note"||m.kind==="deck"){
     const isNote=m.kind==="note";
-    const incoming=m.direction==="incoming";
+    const incoming=m.senderId!==myUid;
     const pending=m.status==="pending";
     return (
       <div style={{alignSelf:align,maxWidth:"86%",padding:"10px 12px",background:bg,border:`1px solid ${border}`,borderRadius:12}}>
@@ -3088,9 +3110,9 @@ function ChatBubble({m,onRespond,onSchedule}){
 }
 
 // ─── NETWORK: sliding chat drawer (DM + Group, w/ Quick Actions) ─────────────
-function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
+function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
   const isGroup=!!(target&&target.kind==="group");
-  const chatId=target?(isGroup?"group:"+target.group.id:"dm:"+target.user.h):null;
+  const roomId=target?(isGroup?target.group.id:(myUid&&target.user.uid?dmRoomId(myUid,target.user.uid):null)):null;
   const [messages,setMessages]=useState([]);
   const [input,setInput]=useState("");
   const [quickOpen,setQuickOpen]=useState(false);
@@ -3100,11 +3122,26 @@ function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
   const [settingsOpen,setSettingsOpen]=useState(false);
   const scrollRef=useRef(null);
 
+  // Live message thread — a DM room is created lazily (idempotent merge) the
+  // first time it's opened; a group room already exists from creation, so
+  // this is a no-op merge for groups. Only after the room doc exists can the
+  // messages subcollection's security rules (which look up its memberUids)
+  // resolve for reads/writes.
   useEffect(()=>{
-    if(!chatId){setMessages([]);return;}
-    setMessages(lsGet("network-chats",{})[chatId]||[]);
     setInput("");setQuickOpen(false);setNotePicker(false);setDeckPicker(false);setSyncRunning(false);setSettingsOpen(false);
-  },[chatId]);
+    if(!roomId||!myUid){setMessages([]);return;}
+    let cancelled=false;
+    if(!isGroup){
+      const now=new Date().toISOString();
+      fsdb().collection('chatRooms').doc(roomId).set({
+        type:"dm",memberUids:[myUid,target.user.uid].sort(),createdBy:myUid,
+        createdAt:now,updatedAt:now,lastMessage:null,
+      },{merge:true}).catch(()=>{});
+    }
+    const unsub=fsdb().collection('chatRooms').doc(roomId).collection('messages').orderBy('ts','asc')
+      .onSnapshot(snap=>{if(!cancelled)setMessages(snap.docs.map(d=>({id:d.id,...d.data()})));},()=>{});
+    return ()=>{cancelled=true;unsub();};
+  },[roomId]);
 
   useEffect(()=>{if(scrollRef.current)scrollRef.current.scrollTop=scrollRef.current.scrollHeight;},[messages]);
 
@@ -3115,14 +3152,19 @@ function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
     return ()=>window.removeEventListener("keydown",onKey);
   },[open]);
 
-  const persist=(next)=>{
-    setMessages(next);
-    if(!chatId)return;
-    const all=lsGet("network-chats",{});all[chatId]=next;lsSet("network-chats",all);
+  // Every send does two writes: the message itself, then a bump of the
+  // parent room's lastMessage/updatedAt so the inbox preview/sort (driven by
+  // the single chatRooms listener in FriendsChat) updates live for everyone
+  // in the room, not just the sender.
+  const sendMessage=(fields)=>{
+    if(!roomId||!myUid)return;
+    const ts=Date.now();
+    const roomRef=fsdb().collection('chatRooms').doc(roomId);
+    roomRef.collection('messages').add({senderId:myUid,ts,...fields}).catch(()=>{});
+    roomRef.update({lastMessage:{text:fields.text||null,kind:fields.kind,ts,senderId:myUid},updatedAt:new Date().toISOString()}).catch(()=>{});
   };
-  const pushMessage=(msg)=>persist([...messages,{id:Date.now()+"-"+Math.random(),ts:Date.now(),...msg}]);
 
-  const sendText=()=>{if(!input.trim())return;pushMessage({from:"me",kind:"text",text:input.trim()});setInput("");};
+  const sendText=()=>{if(!input.trim())return;sendMessage({kind:"text",text:input.trim()});setInput("");};
   // Scans everyone's schedules for an overlapping free block. There's no real
   // shared-schedule backend behind these mock friends, so the "scan" is
   // simulated, but the resulting slot is real and genuinely bookable below.
@@ -3132,25 +3174,25 @@ function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
   };
   const runCalendarSync=()=>{
     setQuickOpen(false);setSyncRunning(true);
-    setTimeout(()=>{setSyncRunning(false);pushMessage({from:"me",kind:"calendar",status:"unscheduled",meta:findSharedStudyWindow()});},2100);
+    setTimeout(()=>{setSyncRunning(false);sendMessage({kind:"calendar",status:"unscheduled",meta:findSharedStudyWindow()});},2100);
   };
   // Injects the matched window into the current user's own calendar as a
   // study block. (Only this browser's calendar can actually be written to —
   // there's no backend to push the event into other members' accounts too.)
   const scheduleGroupSession=(id)=>{
     const msg=messages.find(x=>x.id===id);
-    if(!msg)return;
+    if(!msg||!roomId)return;
     const w=msg.meta;
     const events=lsGet("events",[]);
     const ev={id:"netsync-"+Date.now(),date:w.date,time:w.time,duration:w.duration,title:peerName+" study session",subject:peerName,kind:"study block"};
     lsSet("events",[...events,ev]);
-    persist(messages.map(x=>x.id===id?{...x,status:"scheduled"}:x));
+    fsdb().collection('chatRooms').doc(roomId).collection('messages').doc(id).update({status:"scheduled"}).catch(()=>{});
   };
   // Sharing a note/deck posts a pending card first — a lightweight one-click
   // confirmation before it actually goes out (mirrors the same verification
   // loop used for incoming shares below).
-  const attachNote=(note)=>{pushMessage({from:"me",kind:"note",direction:"outgoing",status:"pending",meta:{title:note.title,id:note.id,body:note.body}});setNotePicker(false);};
-  const attachDeck=(deck)=>{pushMessage({from:"me",kind:"deck",direction:"outgoing",status:"pending",meta:{name:deck.name,count:deck.cards?deck.cards.length:(deck.count||0),id:deck.id,cards:deck.cards}});setDeckPicker(false);};
+  const attachNote=(note)=>{sendMessage({kind:"note",status:"pending",meta:{title:note.title,id:note.id,body:note.body}});setNotePicker(false);};
+  const attachDeck=(deck)=>{sendMessage({kind:"deck",status:"pending",meta:{name:deck.name,count:deck.cards?deck.cards.length:(deck.count||0),id:deck.id,cards:deck.cards}});setDeckPicker(false);};
 
   const peerName=target?(isGroup?target.group.name:target.user.n):"";
   const peerFirst=peerName.split(" ")[0];
@@ -3159,8 +3201,8 @@ function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
   // copy the shared resource into the recipient's own Notes/Flashcards workspace.
   const respondToShare=(id,decision)=>{
     const msg=messages.find(x=>x.id===id);
-    if(!msg)return;
-    if(decision==="approved"&&msg.direction==="incoming"){
+    if(!msg||!roomId)return;
+    if(decision==="approved"&&msg.senderId!==myUid){
       if(msg.kind==="note"){
         const notes=lsGet("notes",[]);
         const copy={id:String(Date.now()),title:msg.meta.title,body:msg.meta.body||"<p>Shared from "+peerName+".</p>",tag:"Shared",date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now(),source:"shared",sharedFrom:peerName};
@@ -3171,32 +3213,22 @@ function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
         lsSet("decks",[copy,...decks]);
       }
     }
-    persist(messages.map(x=>x.id===id?{...x,status:decision}:x));
+    fsdb().collection('chatRooms').doc(roomId).collection('messages').doc(id).update({status:decision}).catch(()=>{});
   };
 
-  // Simulated incoming share requests — there's no real second Studlin account
-  // behind these mock friends, so the "friend's" response is fabricated locally,
-  // but the approve/decline UI and the copy-into-workspace step are fully real.
-  const requestNote=()=>{
-    setQuickOpen(false);
-    pushMessage({from:"me",kind:"text",text:"Requested notes from "+peerFirst+"."});
-    setTimeout(()=>{
-      pushMessage({from:"them",kind:"note",direction:"incoming",status:"pending",meta:{title:peerFirst+"'s notes",body:"<h3>"+peerFirst+"'s notes</h3><p>Shared from their Studlin workspace.</p>"}});
-    },1600);
-  };
-  const requestDeck=()=>{
-    setQuickOpen(false);
-    pushMessage({from:"me",kind:"text",text:"Requested a flashcard deck from "+peerFirst+"."});
-    setTimeout(()=>{
-      pushMessage({from:"them",kind:"deck",direction:"incoming",status:"pending",meta:{name:peerFirst+"'s deck",cards:[{q:"Sample question from "+peerFirst,a:"Sample answer"},{q:"Second card",a:"Second answer"}]}});
-    },1600);
-  };
+  // Ask the other person to share a note/deck. There's no way to make them
+  // actually respond, so this just sends the request text — no fabricated
+  // reply. (Faking a message "from" them would be spoofing, and the security
+  // rules block a client from writing a message with someone else's senderId
+  // anyway.)
+  const requestNote=()=>{setQuickOpen(false);sendMessage({kind:"text",text:"Requested notes from "+peerFirst+"."});};
+  const requestDeck=()=>{setQuickOpen(false);sendMessage({kind:"text",text:"Requested a flashcard deck from "+peerFirst+"."});};
 
   const notesList=lsGet("notes",[]);
   const decksList=lsGet("decks",[]);
   const expiry=isGroup?fmtGroupCountdown(target.group.expiresAt):null;
   const title=peerName;
-  const subtitle=target?(isGroup?(target.group.memberHandles.length+1)+" members":target.user.h+" · "+target.user.s):"";
+  const subtitle=target?(isGroup?target.group.memberUids.length+" members":target.user.h+" · "+target.user.s):"";
   const pp=panelPalette(); // drawer is a permanently-dark panel (like the sidebar) — needs its own light-on-dark text colors
   const qaBtn={display:"flex",alignItems:"center",gap:10,width:"100%",padding:"10px 11px",borderRadius:9,border:"none",background:"transparent",cursor:"pointer",fontFamily:T.font,fontSize:12.5,fontWeight:600,color:pp.text,textAlign:"left"};
 
@@ -3229,7 +3261,7 @@ function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
 
           <div ref={scrollRef} style={{flex:1,overflowY:"auto",padding:"16px 18px",display:"flex",flexDirection:"column",gap:10}}>
             {messages.length===0&&<div style={{textAlign:"center",color:pp.faint,fontSize:12,marginTop:40}}>No messages yet. Say hi.</div>}
-            {messages.map(m=><ChatBubble key={m.id} m={m} onRespond={respondToShare} onSchedule={scheduleGroupSession} />)}
+            {messages.map(m=><ChatBubble key={m.id} m={m} myUid={myUid} onRespond={respondToShare} onSchedule={scheduleGroupSession} />)}
           </div>
 
           {notePicker&&(
@@ -3295,21 +3327,19 @@ function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
               <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>You</div>
               <div style={{width:7,height:7,borderRadius:"50%",background:isOnlineStatusOn()&&!isIncognitoOn()?T.teal:T.faint,marginLeft:"auto"}} />
             </div>
-            {target.group.memberHandles.map(h=>{
-              const fromDirectory=NETWORK_DIRECTORY.find(x=>x.h===h);
-              const name=fromDirectory?fromDirectory.n:(target.group.memberNames&&target.group.memberNames[h])||h;
+            {target.group.memberUids.filter(uid=>uid!==myUid).map(uid=>{
+              const name=(target.group.memberNames&&target.group.memberNames[uid])||"Studlin User";
               return (
-                <div key={h} style={{display:"flex",alignItems:"center",gap:9}}>
+                <div key={uid} style={{display:"flex",alignItems:"center",gap:9}}>
                   <Av initials={name.split(" ").map(x=>x[0]).join("")} color={T.lime} size={28} picUrl="" />
                   <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>{name}</div>
-                  <div style={{width:7,height:7,borderRadius:"50%",background:fromDirectory&&fromDirectory.online?T.teal:T.faint,marginLeft:"auto"}} />
                 </div>
               );
             })}
           </div>
           <div style={{paddingTop:16,borderTop:`1px solid ${T.border}`}}>
             <Label>Expiration</Label>
-            {target.group.type==="temporary"
+            {target.group.groupType==="temporary"
               ?(<>
                   <div style={{fontSize:12.5,color:T.text,marginBottom:10,lineHeight:1.5}}>
                     {expiry&&expiry.expired?"This group has expired and will archive shortly.":<>Auto-archives on <strong>{new Date(target.group.expiresAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</strong> — {expiry&&expiry.label} left.</>}
@@ -3318,7 +3348,7 @@ function ChatDrawer({open,target,onClose,onMakePermanent,onDeleteGroup}){
                 </>)
               :<div style={{fontSize:12.5,color:T.muted,marginBottom:10}}>This is a standard ongoing group — it will never auto-archive.</div>
             }
-            <Btn variant="danger" onClick={()=>{setSettingsOpen(false);onDeleteGroup(target.group.id);}} style={{width:"100%",justifyContent:"center"}}>{Icon.xmark} Delete group</Btn>
+            {target.group.createdBy===myUid&&<Btn variant="danger" onClick={()=>{setSettingsOpen(false);onDeleteGroup(target.group.id);}} style={{width:"100%",justifyContent:"center"}}>{Icon.xmark} Delete group</Btn>}
           </div>
         </Modal>
       )}
