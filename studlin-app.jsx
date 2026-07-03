@@ -320,6 +320,142 @@ const Modal = ({open, onClose, title, sub, children, footer, width=540}) => {
     </div>
   );
 };
+// ─── GUIDED TAB TOUR ──────────────────────────────────────────────────────────
+// Lightweight first-run coachmark: given targetRef, it draws a spotlight ring
+// around that element (via a single box-shadow-as-backdrop trick — clicks on
+// the rest of the page still pass through, so the user can follow along by
+// actually clicking the highlighted control) and anchors a callout next to
+// it. With no targetRef it renders the same callout as a blocking centered
+// card instead, for steps that aren't about one specific control.
+function TourStep({ targetRef, title, body, step, total, onNext, onSkip, isLast }) {
+  const [rect, setRect] = useState(null);
+  useEffect(() => {
+    setRect(null);
+    if (!targetRef) return;
+    let cancelled = false;
+    let pollId = null;
+    // targetRef.current read here always reflects the *previous* commit —
+    // callers that open a modal to reveal the target do so from their own
+    // effect, one render after this one starts, so a plain "current is
+    // still null" check misses it permanently. Poll briefly until it
+    // mounts instead of depending on ref identity in the deps array.
+    const tryMeasure = () => {
+      if (cancelled) return;
+      if (targetRef.current) setRect(targetRef.current.getBoundingClientRect());
+      else pollId = setTimeout(tryMeasure, 50);
+    };
+    tryMeasure();
+    window.addEventListener("resize", tryMeasure);
+    return () => { cancelled = true; if (pollId) clearTimeout(pollId); window.removeEventListener("resize", tryMeasure); };
+  }, [targetRef, step]);
+
+  const anchored = !!rect;
+  const vw = typeof window!=="undefined"?window.innerWidth:1200;
+  const vh = typeof window!=="undefined"?window.innerHeight:800;
+  const calloutStyle = anchored
+    ? { position:"fixed", top:Math.min(rect.bottom+14, vh-240), left:Math.max(16,Math.min(rect.left, vw-336)), width:320 }
+    : { position:"fixed", top:"50%", left:"50%", transform:"translate(-50%,-50%)", width:380 };
+
+  // Portaled straight to <body> — the tab content wrapper has a CSS
+  // `animation` targeting `transform`, which per spec makes it a permanent
+  // containing block for `position:fixed` descendants (not just while the
+  // animation is actively running). Left in place, this callout's "fixed"
+  // coordinates would be relative to that wrapper's box instead of the
+  // viewport, landing the callout hundreds of pixels off from its target.
+  return ReactDOM.createPortal((
+    <div style={{position:"fixed",inset:0,zIndex:900,animation:"studlinFade 0.18s ease-out"}}>
+      {anchored ? (
+        <div style={{position:"fixed",top:rect.top-8,left:rect.left-8,width:rect.width+16,height:rect.height+16,borderRadius:12,border:`2px solid ${T.lime}`,boxShadow:"0 0 0 4000px rgba(8,12,10,0.6)",pointerEvents:"none"}} />
+      ) : (
+        <div style={{position:"absolute",inset:0,background:"rgba(8,12,10,0.6)",backdropFilter:"blur(4px)"}} />
+      )}
+      <div data-tour-callout style={{...calloutStyle, background:T.card, border:`1px solid ${T.border}`, borderRadius:14, padding:"18px 20px", boxShadow:"0 24px 60px -16px rgba(0,0,0,0.55)", zIndex:910, animation:"studlinPop 0.2s cubic-bezier(.2,.85,.3,1)"}}>
+        <div style={{display:"flex",gap:5,marginBottom:12}}>
+          {Array.from({length: total}).map((_,i)=>(
+            <div key={i} style={{height:3,flex:1,borderRadius:99,background:i<=step?T.lime:T.border}} />
+          ))}
+        </div>
+        <div style={{fontSize:14.5,fontWeight:700,color:T.white,marginBottom:6,letterSpacing:"-0.01em"}}>{title}</div>
+        <div style={{fontSize:12.5,color:T.muted,lineHeight:1.55,marginBottom:16}}>{body}</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <button onClick={onSkip} style={{background:"none",border:"none",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font,padding:0}}>Skip guide</button>
+          <BtnSm onClick={onNext}>{isLast?"Done":"Next"}</BtnSm>
+        </div>
+      </div>
+    </div>
+  ), document.body);
+}
+
+// ─── PRICING PLAN CARDS ───────────────────────────────────────────────────────
+// Shared by the "See Pricing" nav-bar modal and the full-screen post-tour
+// paywall intercept — same 3 plans, same billing-aware pricing (mirrors
+// checkout.html's PLAN_DATA), just rendered inside different wrappers.
+const PRICING_PLANS=(billing)=>([
+  {
+    key:"free",name:"Free",price:"$0",per:"forever",tag:null,
+    desc:"Get organized. No credit card needed.",
+    features:["30 AI credits / month","AI tutor — Standard model","Manual flashcards & notes","Focus timer, calendar & planner","Streaks, XP & basic stats"],
+    cta:"Get started free",variant:"subtle",
+  },
+  {
+    key:"pro",name:"Pro",price:billing==="annual"?"$7.99":"$9.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:"7 DAYS FREE",
+    desc:"The full study OS. Built for serious students.",
+    features:["200 AI credits / month","AI tutor — all models + 4 study modes","Full essay suite + plagiarism check","AI flashcards from notes, PDFs & YouTube","Google Docs sync + AI Rewrite (Humanizer)","Unlimited grammar + readability scores","Squad leaderboards + 2× focus XP"],
+    cta:"Start free trial",variant:"lime",featured:true,
+  },
+  {
+    key:"max",name:"Max",price:billing==="annual"?"$19.99":"$24.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:null,
+    desc:"Maximum firepower. No limits, ever.",
+    features:["500 AI credits / month","Everything in Pro, unlimited","Bulk ops — 100 flashcards at once","Advanced analytics & learning paths","Cosmetics shop + monthly tournaments","Priority support + 3× focus XP"],
+    cta:"Upgrade to Max",variant:"ink",
+  },
+]);
+function PlanCards({ billing, onSelect }) {
+  return (
+    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14}}>
+      {PRICING_PLANS(billing).map((plan,i)=>(
+        <div key={i} style={{
+          background:plan.featured?T.forest:T.card2,
+          border:`1.5px solid ${plan.featured?T.lime+"44":T.border}`,
+          borderRadius:18,
+          padding:24,
+          position:"relative",
+          display:"flex",flexDirection:"column",
+          boxShadow:plan.featured?`0 24px 48px -20px ${T.lime}30`:"none",
+        }}>
+          {plan.tag && (
+            <div style={{position:"absolute",top:-11,left:18,background:T.lime,color:T.ink,fontFamily:T.mono,fontSize:10,fontWeight:700,letterSpacing:"0.14em",padding:"4px 10px",borderRadius:99}}>{plan.tag}</div>
+          )}
+          <div style={{fontSize:18,fontWeight:700,color:plan.featured?T.cream:T.white,letterSpacing:"-0.02em",marginBottom:4}}>{plan.name}</div>
+          <div style={{display:"flex",alignItems:"baseline",gap:5,margin:"8px 0 6px"}}>
+            <span style={{fontFamily:T.hand,fontSize:50,fontWeight:700,lineHeight:0.9,color:plan.featured?T.lime:T.text,letterSpacing:"-0.02em"}}>{plan.price}</span>
+            <span style={{fontSize:13,color:T.muted}}>{plan.per}</span>
+          </div>
+          <div style={{fontSize:13,color:plan.featured?"rgba(246,241,230,0.7)":T.muted,marginBottom:18,lineHeight:1.5}}>{plan.desc}</div>
+          <ul style={{listStyle:"none",padding:0,margin:"0 0 20px",display:"flex",flexDirection:"column",gap:9,flex:1}}>
+            {plan.features.map((f,j)=>(
+              <li key={j} style={{display:"flex",gap:9,fontSize:13,color:plan.featured?T.cream:T.text,lineHeight:1.45,alignItems:"flex-start"}}>
+                <span style={{width:16,height:16,borderRadius:"50%",background:T.lime,color:T.ink,display:"grid",placeItems:"center",flex:"none",marginTop:1}}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                </span>
+                {f}
+              </li>
+            ))}
+          </ul>
+          <button onClick={()=>onSelect(plan.key)} style={{
+            width:"100%",padding:"11px",borderRadius:99,
+            fontWeight:600,fontSize:14,cursor:"pointer",fontFamily:T.font,
+            border:plan.variant==="subtle"?`1px solid ${T.border}`:"none",
+            background:plan.variant==="lime"?T.lime:plan.variant==="ink"?T.ink:T.card,
+            color:plan.variant==="lime"?T.ink:plan.variant==="ink"?T.cream:T.text,
+            transition:"opacity .15s",
+          }}>{plan.cta}</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 const Field = ({label, children, hint}) => (
   <div style={{marginBottom:14}}>
     <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:6}}>{label}</div>
@@ -2676,6 +2812,22 @@ function FriendsChat(){
   const [inviteOpen,setInviteOpen]=useState(false);
   const [createGroupOpen,setCreateGroupOpen]=useState(false);
   const [chatTarget,setChatTarget]=useState(null);
+
+  // First-run Network tour — fires the first time this tab mounts (i.e. the
+  // first manual click into Studlin Network), a simple 3-slide copy-block
+  // carousel since there's no single control to anchor to here.
+  const [netTourStep,setNetTourStep]=useState(()=>lsGet("seenNetworkTour",false)?null:0);
+  const NET_TOUR_STEPS=[
+    {title:"Missed Class Protection",body:"Effortlessly share class notes and lecture materials with verified school peers — never fall behind because you missed a lecture."},
+    {title:"Peer Sync",body:"Real-time study chats and shared digital study sessions, so you're never studying completely alone."},
+    {title:"Flexible Architectures",body:"Spin up agile, temporary study groups for an upcoming exam, or set up a permanent channel for the whole semester."},
+  ];
+  const advanceNetTour=()=>{
+    if(netTourStep>=NET_TOUR_STEPS.length-1){finishNetTour();return;}
+    setNetTourStep(s=>s+1);
+  };
+  const finishNetTour=()=>{lsSet("seenNetworkTour",true);setNetTourStep(null);};
+
   const me=getUserName()||"You";
   const refCode=me.toLowerCase().replace(/\s+/g,"");
   const inviteLink="https://studlin.app?ref="+refCode;
@@ -3154,6 +3306,18 @@ function FriendsChat(){
       </Modal>
 
       <ChatDrawer open={!!chatTarget} myUid={myUid} target={chatTarget&&chatTarget.kind==="group"&&myRooms[chatTarget.group.id]?{...chatTarget,group:myRooms[chatTarget.group.id]}:chatTarget} onClose={()=>setChatTarget(null)} onMakePermanent={makeGroupPermanent} onDeleteGroup={deleteGroup} />
+      {netTourStep!==null&&(
+        <TourStep
+          targetRef={null}
+          title={NET_TOUR_STEPS[netTourStep].title}
+          body={NET_TOUR_STEPS[netTourStep].body}
+          step={netTourStep}
+          total={NET_TOUR_STEPS.length}
+          isLast={netTourStep===NET_TOUR_STEPS.length-1}
+          onNext={advanceNetTour}
+          onSkip={finishNetTour}
+        />
+      )}
     </div>
   );
 }
@@ -4089,12 +4253,31 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
   );
 }
 
-function CalendarTab(){
+function CalendarTab({onTourDone}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.muted},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   const colorOf=(sub)=>{if(!sub||sub==="None"||sub==="")return T.muted;const x=userSubjects.find(s=>s.label===sub);return x?x.color:T.lime;};
   const [subjOnboardOpen,setSubjOnboardOpen]=useState(()=>!lsGet("subjects-configured",false));
   const [onbSubjs,setOnbSubjs]=useState(()=>getSubjects().map(s=>({...s})));
+
+  // First-run Calendar tour — waits for the "Set up your subjects" first-run
+  // modal to be dismissed first (both are first-run overlays; showing them
+  // at once would be a mess), then coachmarks Add Task and subject tagging,
+  // then closes with a note about the peak-window/bedtime-guard scheduling
+  // rule. Finishing (or skipping) hands off to the caller (App) so it can
+  // trigger the paywall intercept right after.
+  const [tourStep,setTourStep]=useState(null);
+  const tourAddTaskRef=useRef(null);
+  const tourSubjectRef=useRef(null);
+  useEffect(()=>{
+    if(subjOnboardOpen)return;
+    if(lsGet("seenCalendarTour",false))return;
+    setTourStep(0);
+  },[subjOnboardOpen]);
+  useEffect(()=>{
+    if(tourStep===1)setNewOpen(true);
+    if(tourStep===2)setNewOpen(false);
+  },[tourStep]);
   const mk=(off,time,title,subject,kind)=>{const d=new Date();d.setDate(d.getDate()+off);return {id:"seed-"+off+"-"+time,date:dayKey(d),time,title,subject,kind};};
   const seed=[
     mk(0,"14:30","Chem quiz · Periodic trends","Chemistry","exam"),
@@ -4158,6 +4341,21 @@ function CalendarTab(){
   const todayK=dayKey();
   const fmtTime=(t)=>{const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
   const niceDate=(k)=>{const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});};
+  const CAL_TOUR_STEPS=[
+    {targetRef:tourAddTaskRef,title:"Add your first task",body:"Click “Add task” to create a study block — Studlin can place it on your calendar automatically, or you can set the date yourself."},
+    {targetRef:tourSubjectRef,title:"Tag it with a subject",body:"Pick a subject and color for each task so your calendar stays organized at a glance. You can add your own classes anytime."},
+    {targetRef:null,title:"Your focus time is protected",body:(()=>{const p=getSchedulePreferences();const win=fmtTime(p.workStartTime)+" – "+fmtTime(p.workEndTime);return p.bedtimeGuardEnabled===false?("Studlin schedules focus blocks inside your peak window ("+win+")."):("Studlin schedules focus blocks inside your peak window ("+win+") and keeps them at least 2 hours before your "+fmtTime(p.bedtime)+" bedtime.");})()},
+  ];
+  const advanceTour=()=>{
+    if(tourStep>=CAL_TOUR_STEPS.length-1){finishTour();return;}
+    setTourStep(s=>s+1);
+  };
+  const finishTour=()=>{
+    lsSet("seenCalendarTour",true);
+    setTourStep(null);
+    setNewOpen(false);
+    if(onTourDone)onTourDone();
+  };
   const relDay=(k)=>{if(k===todayK)return "Today";const t=new Date();t.setDate(t.getDate()+1);if(k===dayKey(t))return "Tomorrow";const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{month:"short",day:"numeric"});};
   const upcoming=events.filter(ev=>ev.date>=todayK).sort((a,b)=>a.date===b.date?(a.time<b.time?-1:1):(a.date<b.date?-1:1)).slice(0,6);
   const dayEvents=(byDay[selDay]||[]).slice().sort((a,b)=>a.time<b.time?-1:1);
@@ -4332,7 +4530,7 @@ function CalendarTab(){
           </div>
         </div>
       )}
-      <PH title="Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><Btn variant="ghost" onClick={()=>{setGroupSyncOpen(true);setGsStep(1);setGsResults(null);}}>{Icon.users} Group Sync</Btn><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></div>} />
+      <PH title="Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><Btn variant="ghost" onClick={()=>{setGroupSyncOpen(true);setGsStep(1);setGsResults(null);}}>{Icon.users} Group Sync</Btn><span ref={tourAddTaskRef} style={{display:"inline-flex"}}><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></span></div>} />
       <div style={{display:"flex",gap:6,marginBottom:20}}>
         {["monthly","weekly"].map(v=>(
           <button key={v} onClick={()=>setCalView(v)} style={{padding:"6px 14px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",background:calView===v?T.lime+"14":"transparent",color:calView===v?T.lime:T.muted,border:`1px solid ${calView===v?T.lime+"44":T.border}`,fontFamily:T.font,transition:"all 0.15s",textTransform:"capitalize"}}>{v}</button>
@@ -4400,7 +4598,7 @@ function CalendarTab(){
           </>
         )}
 
-        <Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field>
+        <div ref={tourSubjectRef}><Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field></div>
         {evSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Drivers ed, SAT prep, club..." value={evCustom} onChange={ev=>setEvCustom(ev.target.value)} /></Field>}
 
         {isTaskKind&&(
@@ -4631,6 +4829,18 @@ function CalendarTab(){
         </div>
       </div>)}
       {calView==="weekly"&&<WeeklyPlanner events={events} setEvents={setEvents} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openNew={openNew} openEdit={openEdit} />}
+      {tourStep!==null&&(
+        <TourStep
+          targetRef={CAL_TOUR_STEPS[tourStep].targetRef}
+          title={CAL_TOUR_STEPS[tourStep].title}
+          body={CAL_TOUR_STEPS[tourStep].body}
+          step={tourStep}
+          total={CAL_TOUR_STEPS.length}
+          isLast={tourStep===CAL_TOUR_STEPS.length-1}
+          onNext={advanceTour}
+          onSkip={finishTour}
+        />
+      )}
     </div>
   );
 }
@@ -7294,7 +7504,14 @@ function NotifPermModal({onAllow=()=>{},onDeny=()=>{}}) {
 function App() {
   seedEventsIfStale();
   const [onboarded,setOnboarded]=useState(()=>!!lsGet("onboarded",false));
-  const [active,setActive]=useState("dashboard");
+  // A freshly-completed onboarding.jsx signup leaves a one-shot flag asking
+  // to land directly on a specific tab (with its first-run tour active)
+  // instead of the default dashboard — consumed once, then cleared.
+  const [active,setActive]=useState(()=>{
+    const pending=lsGet("pendingTour",null);
+    if(pending){try{localStorage.removeItem("studlin-pendingTour");}catch(e){}return pending;}
+    return "dashboard";
+  });
   const [theme,setThemeState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-theme"))||"light");
   const [accent,setAccentState]=useState(()=>{
     if(typeof localStorage!=="undefined"){
@@ -7319,6 +7536,16 @@ function App() {
   window._setTimerTask=setTimerTask;
   const [creditsOpen,setCreditsOpen]=useState(false);
   const [pricingOpen,setPricingOpen]=useState(false);
+  // Strategic paywall intercept — shown once, right when the user finishes
+  // (or skips) their first Calendar tour, the "aha moment" placement instead
+  // of during signup. Gated so it only ever auto-fires this one time.
+  const [paywallOpen,setPaywallOpen]=useState(false);
+  const [paywallBilling,setPaywallBilling]=useState("monthly");
+  const handleCalendarTourDone=()=>{
+    if(lsGet("paywallShown",false))return;
+    lsSet("paywallShown",true);
+    setPaywallOpen(true);
+  };
   const [notifOpen,setNotifOpen]=useState(false);
   const [seriousMode,setSeriousMode]=useState(()=>lsGet("settings",{}).seriousMode||false);
   const [calOnboardDone,setCalOnboardDone]=useState(()=>!!lsGet("cal-onboard-done",false));
@@ -7600,72 +7827,17 @@ function App() {
         <div key={active} data-page style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both"}}>
           {active==="dashboard"?<Dashboard setActive={setActive} focusSecs={focusSecs} focusRunning={focusRunning} setFocusRunning={setFocusRunning} setScheduleSettingsOpen={setScheduleSettingsOpen} seriousMode={seriousMode} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} />:
+           active==="calendar"?<CalendarTab onTourDone={handleCalendarTourDone} />:
            ActivePage?<ActivePage />:null}
         </div>
       </div>
 
       {/* PRICING MODAL */}
       <Modal open={pricingOpen} onClose={()=>setPricingOpen(false)} title="Studlin plans" sub="Start free. Upgrade when you're ready. Cancel anytime." width={820}>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14}}>
-          {[
-            {
-              name:"Free",price:"$0",per:"forever",tag:null,
-              desc:"Get organized. No credit card needed.",
-              features:["30 AI credits / month","AI tutor — Standard model","Manual flashcards & notes","Focus timer, calendar & planner","Streaks, XP & basic stats"],
-              cta:"Get started free",variant:"subtle",
-            },
-            {
-              name:"Pro",price:"$9.99",per:"/mo",tag:"7 DAYS FREE",
-              desc:"The full study OS. Built for serious students.",
-              features:["200 AI credits / month","AI tutor — all models + 4 study modes","Full essay suite + plagiarism check","AI flashcards from notes, PDFs & YouTube","Google Docs sync + AI Rewrite (Humanizer)","Unlimited grammar + readability scores","Squad leaderboards + 2× focus XP"],
-              cta:"Start free trial",variant:"lime",featured:true,
-            },
-            {
-              name:"Max",price:"$24.99",per:"/mo",tag:null,
-              desc:"Maximum firepower. No limits, ever.",
-              features:["500 AI credits / month","Everything in Pro, unlimited","Bulk ops — 100 flashcards at once","Advanced analytics & learning paths","Cosmetics shop + monthly tournaments","Priority support + 3× focus XP"],
-              cta:"Upgrade to Max",variant:"ink",
-            },
-          ].map((plan,i)=>(
-            <div key={i} style={{
-              background:plan.featured?T.forest:T.card2,
-              border:`1.5px solid ${plan.featured?T.lime+"44":T.border}`,
-              borderRadius:18,
-              padding:24,
-              position:"relative",
-              display:"flex",flexDirection:"column",
-              boxShadow:plan.featured?`0 24px 48px -20px ${T.lime}30`:"none",
-            }}>
-              {plan.tag && (
-                <div style={{position:"absolute",top:-11,left:18,background:T.lime,color:T.ink,fontFamily:T.mono,fontSize:10,fontWeight:700,letterSpacing:"0.14em",padding:"4px 10px",borderRadius:99}}>{plan.tag}</div>
-              )}
-              <div style={{fontSize:18,fontWeight:700,color:plan.featured?T.cream:T.white,letterSpacing:"-0.02em",marginBottom:4}}>{plan.name}</div>
-              <div style={{display:"flex",alignItems:"baseline",gap:5,margin:"8px 0 6px"}}>
-                <span style={{fontFamily:T.hand,fontSize:50,fontWeight:700,lineHeight:0.9,color:plan.featured?T.lime:T.text,letterSpacing:"-0.02em"}}>{plan.price}</span>
-                <span style={{fontSize:13,color:T.muted}}>{plan.per}</span>
-              </div>
-              <div style={{fontSize:13,color:plan.featured?"rgba(246,241,230,0.7)":T.muted,marginBottom:18,lineHeight:1.5}}>{plan.desc}</div>
-              <ul style={{listStyle:"none",padding:0,margin:"0 0 20px",display:"flex",flexDirection:"column",gap:9,flex:1}}>
-                {plan.features.map((f,j)=>(
-                  <li key={j} style={{display:"flex",gap:9,fontSize:13,color:plan.featured?T.cream:T.text,lineHeight:1.45,alignItems:"flex-start"}}>
-                    <span style={{width:16,height:16,borderRadius:"50%",background:T.lime,color:T.ink,display:"grid",placeItems:"center",flex:"none",marginTop:1}}>
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                    </span>
-                    {f}
-                  </li>
-                ))}
-              </ul>
-              <button onClick={()=>setPricingOpen(false)} style={{
-                width:"100%",padding:"11px",borderRadius:99,
-                fontWeight:600,fontSize:14,cursor:"pointer",fontFamily:T.font,
-                border:plan.variant==="subtle"?`1px solid ${T.border}`:"none",
-                background:plan.variant==="lime"?T.lime:plan.variant==="ink"?T.ink:T.card,
-                color:plan.variant==="lime"?T.ink:plan.variant==="ink"?T.cream:T.text,
-                transition:"opacity .15s",
-              }}>{plan.cta}</button>
-            </div>
-          ))}
-        </div>
+        <PlanCards billing="monthly" onSelect={(key)=>{
+          setPricingOpen(false);
+          if(key!=="free")window.location.href="checkout.html?plan="+key+"&billing=monthly";
+        }} />
         <div style={{marginTop:20,padding:"16px 18px",background:T.card2,borderRadius:12,border:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
           <div style={{fontSize:13,color:T.text,fontWeight:500}}>
             Grammarly + Quizlet + ChatGPT + Notion = <span style={{color:T.red,fontWeight:700}}>$55/mo</span>.&nbsp;&nbsp;Pro is <span style={{color:T.lime,fontWeight:700}}>$9.99</span>.
@@ -7673,6 +7845,33 @@ function App() {
           <div style={{fontSize:12,color:T.muted}}>All plans include a 14-day money-back guarantee. No credit card for Free or trial.</div>
         </div>
       </Modal>
+      {/* PAYWALL INTERCEPT — full-screen, shown once right after the first Calendar tour finishes/skips */}
+      {paywallOpen && (
+        <div style={{position:"fixed",inset:0,zIndex:1000,background:"rgba(8,12,10,0.82)",backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px",overflowY:"auto"}}>
+          <div style={{width:"100%",maxWidth:900,background:T.surface,border:`1px solid ${T.border}`,borderRadius:22,padding:"40px 40px 32px",boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease",margin:"24px 0"}}>
+            <div style={{textAlign:"center",marginBottom:24}}>
+              <div style={{fontSize:24,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:6}}>Unlock your full potential</div>
+              <div style={{fontSize:13.5,color:T.muted}}>Students on Pro study 2.4× more and report a full letter-grade jump. Try it free for 7 days.</div>
+            </div>
+            <div style={{display:"flex",justifyContent:"center",marginBottom:24}}>
+              <div style={{display:"inline-flex",background:T.card2,border:`1px solid ${T.border}`,borderRadius:99,padding:3,gap:2}}>
+                {["monthly","annual"].map(b=>(
+                  <button key={b} onClick={()=>setPaywallBilling(b)} style={{padding:"8px 18px",borderRadius:99,border:"none",fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,background:paywallBilling===b?T.lime:"transparent",color:paywallBilling===b?T.ink:T.muted,textTransform:"capitalize",display:"flex",alignItems:"center",gap:6}}>
+                    {b}{b==="annual"&&<span style={{fontSize:10,fontWeight:700,color:paywallBilling===b?T.ink:T.lime}}>Save 20%</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <PlanCards billing={paywallBilling} onSelect={(key)=>{
+              setPaywallOpen(false);
+              if(key!=="free")window.location.href="checkout.html?plan="+key+"&billing="+paywallBilling;
+            }} />
+            <div style={{textAlign:"center",marginTop:22}}>
+              <button onClick={()=>setPaywallOpen(false)} style={{background:"none",border:"none",color:T.muted,fontSize:13,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Maybe later — continue with free plan</button>
+            </div>
+          </div>
+        </div>
+      )}
       <Modal open={creditsOpen} onClose={()=>{setCreditsOpen(false);setCreditCheckout(null);setBoughtMsg("");}} title={creditCheckout?"Complete purchase":"AI Credits"} sub={creditCheckout?("Purchase "+creditCheckout.label+" for "+creditCheckout.price):"Every AI action uses credits. Top up, upgrade, or just check your balance."} width={620}
         footer={creditCheckout
           ?<><Btn variant="subtle" onClick={()=>{setCreditCheckout(null);setBoughtMsg("");}}>← Back</Btn><Btn onClick={confirmCreditPurchase} disabled={creditProcessing} style={{background:T.lime,color:T.ink}}>{creditProcessing?"Processing...":"Pay "+creditCheckout.price}</Btn></>

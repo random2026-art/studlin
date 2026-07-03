@@ -74,6 +74,67 @@ function SelectField({ label, value, onChange, options, hint }) {
   );
 }
 
+// Curated, real, verifiable list of well-known universities — not an
+// exhaustive accredited-institution database (no source of truth for that
+// exists here), just enough to cover most signups with genuine schools so
+// "verified" grouping data isn't fabricated. "My school isn't listed" is
+// the escape hatch for everyone else.
+const UNIVERSITIES = [
+  "Harvard University","Yale University","Princeton University","Columbia University","University of Pennsylvania","Brown University","Cornell University","Dartmouth College",
+  "Stanford University","Massachusetts Institute of Technology","California Institute of Technology","Duke University","Northwestern University","Vanderbilt University","Georgetown University","New York University","University of Southern California","Boston University","Boston College","Northeastern University","Carnegie Mellon University","Johns Hopkins University","Rice University","Emory University","Tufts University","Wake Forest University","Washington University in St. Louis","University of Notre Dame","University of Chicago","University of Rochester","Case Western Reserve University","Tulane University","Syracuse University","Fordham University",
+  "University of California, Berkeley","University of California, Los Angeles","University of California, San Diego","University of California, Davis","University of California, Irvine","University of California, Santa Barbara","University of California, Santa Cruz","University of California, Riverside","University of California, Merced",
+  "University of Michigan","University of Virginia","University of North Carolina at Chapel Hill","University of Florida","University of Texas at Austin","University of Wisconsin-Madison","University of Illinois Urbana-Champaign","University of Washington","Ohio State University","Pennsylvania State University","University of Georgia","University of Maryland, College Park","Rutgers University","Indiana University Bloomington","University of Minnesota","Purdue University","Michigan State University","University of Iowa","University of Colorado Boulder","University of Arizona","Arizona State University","University of Utah","University of Oregon","Oregon State University","Washington State University","University of Connecticut","University of Massachusetts Amherst","University of Delaware","University of Pittsburgh","Temple University","Virginia Tech","North Carolina State University","Clemson University","University of South Carolina","Auburn University","University of Alabama","University of Tennessee","University of Kentucky","University of Missouri","University of Kansas","University of Nebraska-Lincoln","Iowa State University","University of Oklahoma","Oklahoma State University","Texas A&M University","Baylor University","Southern Methodist University","Texas Christian University","University of Houston","University of Miami","Florida State University","University of Central Florida","Georgia Institute of Technology","University of Colorado Denver","Colorado State University","University of Nevada, Las Vegas","University of Hawaii at Manoa",
+  "Brigham Young University","University of Denver","San Diego State University","San Jose State University","California Polytechnic State University","University of San Francisco","Santa Clara University","Loyola Marymount University","Pepperdine University","Chapman University",
+  "Howard University","Morehouse College","Spelman College","Amherst College","Williams College","Swarthmore College","Wellesley College","Bowdoin College","Middlebury College","Colby College","Vassar College","Smith College","Hamilton College","Colgate University","Bates College","Bucknell University","Lehigh University","Villanova University","Lafayette College",
+  "University of Toronto","University of British Columbia","McGill University","University of Waterloo","University of Alberta","McMaster University","Queen's University","University of Montreal","University of Ottawa","Simon Fraser University",
+  "University of Oxford","University of Cambridge","Imperial College London","London School of Economics","University College London","King's College London","University of Edinburgh","University of Manchester","University of Bristol","University of Warwick","University of St Andrews","University of Glasgow",
+  "University of Melbourne","University of Sydney","Australian National University","University of Queensland","Monash University","University of New South Wales","University of Auckland",
+];
+
+function AutocompleteField({ label, options, value, otherValue, onSelect, onOtherChange, hint, error }) {
+  const [query, setQuery] = useState(value || "");
+  const [open, setOpen] = useState(false);
+  const [isOther, setIsOther] = useState(!!otherValue && !value);
+  const wrapRef = useRef(null);
+  useEffect(()=>{ if(!isOther) setQuery(value||""); }, [value, isOther]);
+  useEffect(()=>{
+    const onDocClick = e => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", onDocClick);
+    return ()=>document.removeEventListener("mousedown", onDocClick);
+  }, []);
+  const filtered = (query.trim()
+    ? options.filter(o=>o.toLowerCase().includes(query.trim().toLowerCase()))
+    : options
+  ).slice(0,8);
+  const selectOption = (opt) => { setQuery(opt); onSelect(opt); setOpen(false); };
+  const useOther = () => { setIsOther(true); setOpen(false); onSelect(""); };
+  const backToList = () => { setIsOther(false); setQuery(""); onOtherChange(""); };
+  return (
+    <div className="field" ref={wrapRef} style={{position:"relative"}}>
+      <div className={"input-wrap" + ((value||otherValue)?" has-value":"") + (open?" is-focused":"") + (error?" has-error":"")}>
+        <label>{label}</label>
+        {isOther ? (
+          <input value={otherValue||""} onChange={e=>onOtherChange(e.target.value)} placeholder="Type your school's name" autoFocus />
+        ) : (
+          <input value={query} onChange={e=>{setQuery(e.target.value);setOpen(true);if(value)onSelect("");}} onFocus={()=>setOpen(true)} placeholder="Start typing your school…" />
+        )}
+      </div>
+      {isOther && <button type="button" onClick={backToList} style={{marginTop:6,background:"none",border:"none",color:"var(--muted)",fontSize:12,cursor:"pointer",textDecoration:"underline",padding:0}}>← Search the list instead</button>}
+      {open && !isOther && (
+        <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:20,marginTop:4,background:"var(--card)",border:"1px solid var(--border)",borderRadius:10,maxHeight:220,overflowY:"auto",boxShadow:"0 12px 32px -8px rgba(0,0,0,0.25)"}}>
+          {filtered.map(o=>(
+            <div key={o} onMouseDown={()=>selectOption(o)} style={{padding:"10px 14px",fontSize:13,cursor:"pointer",color:"var(--text)"}}>{o}</div>
+          ))}
+          {filtered.length===0 && <div style={{padding:"10px 14px",fontSize:12,color:"var(--muted)"}}>No matches — try another spelling, or:</div>}
+          <div onMouseDown={useOther} style={{padding:"10px 14px",fontSize:13,cursor:"pointer",color:"var(--muted)",borderTop:"1px solid var(--border)"}}>My school isn't listed</div>
+        </div>
+      )}
+      {error && <div className="field-error">{error}</div>}
+      {!error && hint && <div className="field-hint">{hint}</div>}
+    </div>
+  );
+}
+
 // Drop-in replacement for <input type="time"> — same 24h "HH:MM" value/onChange
 // contract, but never invokes the browser's own picker chrome (which on
 // Safari/iOS renders as a scrolling wheel; Chrome/Edge render it as a plain
@@ -130,9 +191,7 @@ function TimeInput({ value, onChange, style }) {
 }
 
 const STEPS = [
-  { name: "Sign up" },{ name: "Basic information" },{ name: "About you" },
-  { name: "Goals" },{ name: "Schedule preferences" },{ name: "Workspace preview" },
-  { name: "Choose plan" },{ name: "Welcome" },
+  { name: "Sign up" },{ name: "Study Setup" },
 ];
 
 function LeftRail({ step, state }) {
@@ -154,7 +213,7 @@ function LeftRail({ step, state }) {
       </aside>
     );
   }
-  const groups = [{ name: "Sign up", from: 0, to: 0 },{ name: "Basic information", from: 1, to: 5 },{ name: "Confirm email", from: 6, to: 7 }];
+  const groups = [{ name: "Sign up", from: 0, to: 0 },{ name: "Study Setup", from: 1, to: 1 }];
   return (
     <aside className="rail">
       <div className="brand">
@@ -182,8 +241,20 @@ function StepSignup({ state, set, advance }) {
   const [loading, setLoading] = useState(false);
   const [authError, setAuthError] = useState("");
 
+  // Required regardless of auth method — checked before either Google OAuth
+  // or email account-creation is allowed to actually run, so both paths end
+  // up with a verified school and accepted terms.
+  const checkIdentityFields = () => {
+    const errs = {};
+    if (!state.university && !(state.universityOther||"").trim()) errs.university = "Select your school, or choose “My school isn't listed.”";
+    if (!state.terms) errs.terms = "You need to accept the Terms of Service and Privacy Policy to continue.";
+    return errs;
+  };
+
   const googleSign = () => {
-    setAuthError("");setLoading(true);
+    const idErrs = checkIdentityFields();
+    if (Object.keys(idErrs).length > 0) { setErrors(idErrs); return; }
+    setErrors({});setAuthError("");setLoading(true);
     if(typeof google==="undefined"||!google.accounts){setAuthError("Google sign-in is still loading. Please try again.");setLoading(false);return;}
     const client = google.accounts.oauth2.initTokenClient({
       client_id:"16831354472-lbsnd5rithhidj57gfh5rqsqvc3cv7as.apps.googleusercontent.com",
@@ -210,7 +281,7 @@ function StepSignup({ state, set, advance }) {
   const allOk = pwOk.len;
 
   const tryAdvance = async () => {
-    const errs = {};
+    const errs = checkIdentityFields();
     if (!state.name?.trim()) errs.name = "Please enter your full name";
     if (!state.email?.trim()) errs.email = "Please enter your email address";
     else if (!/\S+@\S+\.\S+/.test(state.email)) errs.email = "Please enter a valid email address";
@@ -238,6 +309,22 @@ function StepSignup({ state, set, advance }) {
       </div>
 
       {authError && <div style={{fontSize:13,color:"#C4544A",marginBottom:16,padding:"12px 14px",background:"#FCF1EF",borderRadius:10,border:"1px solid #F5D4D0",textAlign:"center"}}>{authError}</div>}
+
+      <AutocompleteField
+        label="Your university or school"
+        options={UNIVERSITIES}
+        value={state.university}
+        otherValue={state.universityOther}
+        onSelect={v=>set({...state, university:v, universityOther:""})}
+        onOtherChange={v=>set({...state, university:"", universityOther:v})}
+        hint={errors.university?null:"Verified schools get grouped into real leaderboards with actual classmates."}
+        error={errors.university}
+      />
+      <label className={"checkbox" + (state.terms ? " is-checked" : "")} onClick={()=>set({...state, terms:!state.terms})} style={{marginBottom:18}}>
+        <span className="box">{Ic.check}</span>
+        <span>I accept the <a>Terms of Service</a> and <a>Privacy Policy</a>.</span>
+      </label>
+      {errors.terms && <div className="field-error" style={{marginTop:-12,marginBottom:14}}>{errors.terms}</div>}
 
       {mode === "providers" && (
         <>
@@ -283,261 +370,51 @@ function StepSignup({ state, set, advance }) {
   );
 }
 
-function StepBasic({ state, set }) {
-  const first = (state.name || "").split(" ")[0];
-  return (
-    <div className="frame">
-      <div className="frame-head">
-        <h2>{first ? <>Hey <em>{first}</em>, let's personalize.</> : <>Let's <em>personalize</em> Studlin.</>}</h2>
-        <p>A few quick questions so we can shape your workspace around you.</p>
-      </div>
-      <TextField label="What should we call you?" value={state.preferredName} onChange={v=>set({...state, preferredName:v})} hint="We'll greet you with this across the app." autoFocus />
-      <SelectField label="Preferred language" value={state.language} onChange={v=>set({...state, language:v})} hint="The interface and AI tutor will speak this." options={["English","Español","Français","Deutsch","Português","हिन्दी","中文","日本語","العربية","Other"]} />
-      <SelectField label="How did you hear about Studlin?" value={state.referral} onChange={v=>set({...state, referral:v})} hint="Helps us know what's working · totally optional." options={["TikTok","Instagram","YouTube","A friend or classmate","Reddit","Google search","Product Hunt","My school or teacher","X (Twitter)","Other"]} />
-      <SelectField label="What describes you best?" value={state.descriptor} onChange={v=>set({...state, descriptor:v})} hint="Sets your default dashboard layout." options={["I'm cramming for exams","I want to stay organised","I write a lot of essays","I'm building a study habit","I teach or tutor others","Just exploring"]} />
-      <label className={"checkbox" + (state.terms ? " is-checked" : "")} onClick={()=>set({...state, terms:!state.terms})}>
-        <span className="box">{Ic.check}</span>
-        <span>I accept the <a>Terms of Service</a> and <a>Privacy Policy</a>.</span>
-      </label>
-    </div>
-  );
-}
-
-function StepRole({ state, set }) {
-  const roles = [
-    { id:"hs", label:"High school student", desc:"Grades 9 to 12, IB, AP, A-Levels", ic:Ic.cap },
-    { id:"uni", label:"University student", desc:"Undergrad, graduate, or PhD", ic:Ic.uni },
-    { id:"teacher", label:"Teacher or educator", desc:"Lesson planning and grading support", ic:Ic.teacher },
-    { id:"pro", label:"Working professional", desc:"Writing, focus, and productivity", ic:Ic.brief },
-    { id:"self", label:"Self-directed learner", desc:"Cert prep, hobby learning, MOOCs", ic:Ic.learn },
-  ];
-  return (
-    <div className="frame">
-      <div className="frame-head"><h2>Who are you, <em>really?</em></h2><p>We'll tune the AI tutor's voice and curriculum suggestions to match.</p></div>
-      <div className="opt-grid full">
-        {roles.map(r=><button key={r.id} className={"opt"+(state.role===r.id?" is-selected":"")} onClick={()=>set({...state, role:r.id})}><span className="ic">{r.ic}</span><span className="body"><span className="lbl">{r.label}</span><span className="desc">{r.desc}</span></span><span className="check">{Ic.check}</span></button>)}
-      </div>
-    </div>
-  );
-}
-
-function StepGoals({ state, set }) {
-  const goals = [{id:"writing",label:"Writing essays",ic:Ic.pen},{id:"flashcards",label:"Memorising material",ic:Ic.cards},{id:"focus",label:"Staying focused",ic:Ic.clock},{id:"schedule",label:"Planning my week",ic:Ic.cal},{id:"notes",label:"Organising notes",ic:Ic.notes},{id:"all",label:"All of the above",ic:Ic.star}];
-  const selected = state.goals||[];
-  const toggle = id => { let next; if(id==="all") next=selected.includes("all")?[]:[id]; else next=selected.includes(id)?selected.filter(g=>g!==id):[...selected.filter(g=>g!=="all"),id]; set({...state, goals:next}); };
-  return (
-    <div className="frame">
-      <div className="frame-head"><h2>What do you need <em>help with?</em></h2><p>Pick everything that applies · we'll prioritise these tools first.</p></div>
-      <div className="opt-grid">
-        {goals.map(g=><button key={g.id} className={"opt"+(selected.includes(g.id)?" is-selected":"")} onClick={()=>toggle(g.id)}><span className="ic">{g.ic}</span><span className="body"><span className="lbl">{g.label}</span></span><span className="check">{Ic.check}</span></button>)}
-      </div>
-    </div>
-  );
-}
-
 function StepSchedulePrefs({ state, set }) {
-  const handleDiffPref = (val) => set({...state, taskDifficultyPreference: val});
   const handleWorkStart = (val) => set({...state, workStartTime: val});
   const handleWorkEnd = (val) => set({...state, workEndTime: val});
   const handleBedtime = (val) => set({...state, bedtime: val});
-  const handleBufferMargin = (val) => set({...state, bufferMarginStrategy: val});
-
-  const diffOptions = [
-    {id:"FIRST",label:"Tackle hard tasks first",desc:"Crush the most challenging work when you're fresh"},
-    {id:"LAST",label:"Save hard tasks for later",desc:"Build momentum with easier wins first"},
-    {id:"NONE",label:"No preference",desc:"Let Studlin decide based on deadlines"},
-  ];
-  
-  const bufferOptions = [
-    {id:"NONE",label:"No buffer",desc:"Back-to-back tasks, no padding"},
-    {id:"15_MIN",label:"15 min buffer",desc:"Breathing room between tasks"},
-    {id:"30_MIN",label:"30 min buffer",desc:"Stretch, grab water, reset focus"},
-  ];
+  const guardOn = state.bedtimeGuardEnabled !== false;
+  const toggleGuard = () => set({...state, bedtimeGuardEnabled: !guardOn});
 
   return (
     <div className="frame">
-      <div className="frame-head"><h2>How do you study <em>best?</em></h2><p>Let's tune your schedule around how you actually work.</p></div>
-      
-      <div style={{marginBottom:24}}>
-        <div style={{fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:10}}>Task difficulty preference</div>
-        <div className="opt-grid" style={{gap:10}}>
-          {diffOptions.map(o=><button key={o.id} className={"opt small"+(state.taskDifficultyPreference===o.id?" is-selected":"")} onClick={()=>handleDiffPref(o.id)} style={{padding:"12px 14px",textAlign:"left"}}><span className="body" style={{display:"block"}}><span className="lbl" style={{display:"block",fontSize:13,fontWeight:600,marginBottom:3}}>{o.label}</span><span className="desc" style={{display:"block",fontSize:11,color:"var(--muted)"}}>{o.desc}</span></span><span className="check" style={{position:"absolute",right:14,top:"50%",transform:"translateY(-50%)"}}>{Ic.check}</span></button>)}
-        </div>
-      </div>
+      <div className="frame-head"><h2>Tune the <em>scheduling algorithm.</em></h2><p>This is the only time you'll set this — Studlin uses it to place every AI-scheduled focus block from here on.</p></div>
 
       <div style={{marginBottom:24}}>
-        <div style={{fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:10}}>Peak productivity window</div>
+        <div style={{fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:10}}>Peak study window</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
           <div>
-            <label style={{fontSize:11,fontWeight:600,textTransform:"uppercase",color:"var(--muted)",display:"block",marginBottom:6}}>Start time</label>
+            <label style={{fontSize:11,fontWeight:600,textTransform:"uppercase",color:"var(--muted)",display:"block",marginBottom:6}}>Peak study start time</label>
             <TimeInput value={state.workStartTime||"10:00"} onChange={handleWorkStart} />
           </div>
           <div>
-            <label style={{fontSize:11,fontWeight:600,textTransform:"uppercase",color:"var(--muted)",display:"block",marginBottom:6}}>End time</label>
+            <label style={{fontSize:11,fontWeight:600,textTransform:"uppercase",color:"var(--muted)",display:"block",marginBottom:6}}>Peak study end time</label>
             <TimeInput value={state.workEndTime||"18:00"} onChange={handleWorkEnd} />
           </div>
         </div>
       </div>
 
-      <div style={{marginBottom:24}}>
-        <div style={{fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:10}}>Sleep schedule</div>
-        <div>
-          <label style={{fontSize:11,fontWeight:600,textTransform:"uppercase",color:"var(--muted)",display:"block",marginBottom:6}}>Bedtime</label>
-          <TimeInput value={state.bedtime||"23:00"} onChange={handleBedtime} style={{maxWidth:180}} />
-        </div>
-      </div>
-
       <div>
-        <div style={{fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:10}}>Buffer margin strategy</div>
-        <div className="opt-grid" style={{gap:10}}>
-          {bufferOptions.map(o=><button key={o.id} className={"opt small"+(state.bufferMarginStrategy===o.id?" is-selected":"")} onClick={()=>handleBufferMargin(o.id)} style={{padding:"12px 14px",textAlign:"left"}}><span className="body" style={{display:"block"}}><span className="lbl" style={{display:"block",fontSize:13,fontWeight:600,marginBottom:3}}>{o.label}</span><span className="desc" style={{display:"block",fontSize:11,color:"var(--muted)"}}>{o.desc}</span></span><span className="check" style={{position:"absolute",right:14,top:"50%",transform:"translateY(-50%)"}}>{Ic.check}</span></button>)}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function StepPreview({ state }) {
-  const first = (state.name||"you").split(" ")[0];
-  const goalsLabel = (state.goals||[]).length===0?"everything":state.goals.includes("all")?"every Studlin tool":state.goals.length===1?state.goals[0]:state.goals.length+" areas";
-  const focusTarget = state.load==="under1"?"30m":state.load==="1to3"?"2h":state.load==="3to5"?"4h":"6h";
-  return (
-    <div className="frame">
-      <div className="frame-head"><h2>Hey <em>{first}.</em> Here's your space.</h2><p>Personalised based on what you just told us. Tweak anything in Settings later.</p></div>
-      <div className="preview">
-        <div className="preview-row">
-          <div className="preview-tile lime"><div className="pt-label">DAILY FOCUS</div><div className="pt-value">{focusTarget}</div><div className="pt-sub">From your study load</div></div>
-          <div className="preview-tile"><div className="pt-label">PRIMARY GOAL</div><div className="pt-value" style={{fontSize:18,fontFamily:"Geist,sans-serif",fontWeight:600}}>{goalsLabel}</div><div className="pt-sub">Pinned to dashboard</div></div>
-          <div className="preview-tile"><div className="pt-label">STREAK</div><div className="pt-value">0</div><div className="pt-sub">Starts today</div></div>
-        </div>
-        <div className="preview-row" style={{gridTemplateColumns:"1fr"}}>
-          <div className="preview-tile" style={{padding:"14px 16px",background:"white"}}>
-            <div className="pt-label" style={{marginBottom:8}}>TUTOR VOICE</div>
-            <div style={{fontSize:13.5,color:"var(--ink)",lineHeight:1.55}}>
-              {state.role==="hs"&&"Encouraging. Breaks topics down step by step. Uses analogies and worked examples."}
-              {state.role==="uni"&&"Socratic. Citation-aware. Calibrated to advanced coursework and seminar discussion."}
-              {state.role==="teacher"&&"Direct. Curriculum-aware. Includes rubric, pedagogy notes, and lesson plans."}
-              {state.role==="pro"&&"Concise. Professional register. Optimised for deliverables and tight deadlines."}
-              {state.role==="self"&&"Patient. Builds from fundamentals. Suggests learning paths and milestone checks."}
-              {!state.role&&"Balanced and adaptive · personalised once you pick your role."}
+        <div style={{fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:10}}>Sleep schedule</div>
+        <div style={{display:"flex",alignItems:"flex-end",gap:20,marginBottom:8,flexWrap:"wrap"}}>
+          <div style={{opacity:guardOn?1:0.4,pointerEvents:guardOn?"auto":"none",transition:"opacity 0.2s",flex:"0 0 180px"}}>
+            <label style={{fontSize:11,fontWeight:600,textTransform:"uppercase",color:"var(--muted)",display:"block",marginBottom:6}}>Target Bedtime</label>
+            <TimeInput value={state.bedtime||"23:00"} onChange={handleBedtime} style={{maxWidth:180}} />
+          </div>
+          <div onClick={toggleGuard} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",paddingBottom:10}}>
+            <div style={{width:36,height:20,borderRadius:10,background:guardOn?"#9EC83D":"var(--border)",position:"relative",transition:"background 0.2s",flexShrink:0}}>
+              <div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:guardOn?18:2,transition:"left 0.2s"}} />
             </div>
+            <span style={{fontSize:12.5,fontWeight:600,color:"var(--text)"}}>Enable Bedtime Guard</span>
           </div>
         </div>
+        <div style={{fontSize:11,color:"var(--muted)",lineHeight:1.5,maxWidth:420}}>
+          {guardOn
+            ? "The AI scheduling algorithm will automatically avoid placing focus blocks within 2 hours of your bedtime to protect your rest."
+            : "Bedtime Guard is off — Studlin can schedule focus blocks up until midnight."}
+        </div>
       </div>
-    </div>
-  );
-}
-
-function StepPlan({ state, set }) {
-  const annual = state.billing!=="monthly";
-  const first = (state.preferredName||state.name||"you").split(" ")[0];
-  return (
-    <div className="frame">
-      <div className="frame-head"><h2>Unlock your full <em>potential.</em></h2><p>{first}, students on Pro study 2.4× more and report a full letter-grade jump. Try it free for 7 days.</p></div>
-      <div className="bill-toggle">
-        <button className={!annual?"on":""} onClick={()=>set({...state, billing:"monthly"})}>Monthly</button>
-        <button className={annual?"on":""} onClick={()=>set({...state, billing:"annual"})}>Annual <span className="save">Save 25%</span></button>
-      </div>
-      <div className="plans">
-        <button className={"plan"+(state.plan==="pro"?" is-selected":"")} onClick={()=>set({...state, plan:"pro"})}>
-          <span className="plan-tag">7 DAYS FREE</span>
-          <h3>Pro</h3>
-          {annual
-            ? <div className="pp"><strong>$95.88</strong> / year<br/><span style={{fontSize:12,color:"var(--muted)"}}>That's just $7.99/mo</span></div>
-            : <div className="pp"><strong>$9.99</strong> / month</div>
-          }
-          <ul>
-            <li><span className="ck">{Ic.check}</span> 200 AI credits / month</li>
-            <li><span className="ck">{Ic.check}</span> AI tutor — all models</li>
-            <li><span className="ck">{Ic.check}</span> Full essay suite + AI Humanizer</li>
-            <li><span className="ck">{Ic.check}</span> AI flashcards from any file</li>
-            <li><span className="ck">{Ic.check}</span> Smart calendar & Weekly Wrapped</li>
-          </ul>
-        </button>
-        <button className={"plan"+(state.plan==="max"?" is-selected":"")} onClick={()=>set({...state, plan:"max"})}>
-          <span className="plan-tag dark">BEST VALUE</span>
-          <h3>Max</h3>
-          {annual
-            ? <div className="pp"><strong>$239.88</strong> / year<br/><span style={{fontSize:12,color:"var(--muted)"}}>That's just $19.99/mo</span></div>
-            : <div className="pp"><strong>$24.99</strong> / month</div>
-          }
-          <ul>
-            <li><span className="ck">{Ic.check}</span> 500 AI credits / month</li>
-            <li><span className="ck">{Ic.check}</span> Everything in Pro</li>
-            <li><span className="ck">{Ic.check}</span> Advanced analytics & learning paths</li>
-            <li><span className="ck">{Ic.check}</span> Priority support + 3× focus XP</li>
-            <li><span className="ck">{Ic.check}</span> Cosmetics shop + tournaments</li>
-          </ul>
-        </button>
-      </div>
-      <div className="paywall-foot">
-        <button className="pw-skip" onClick={()=>set({...state, plan:"free"})}>{state.plan==="free"?"✓ Continuing on the free plan":"Maybe later · continue with limited free plan"}</button>
-      </div>
-    </div>
-  );
-}
-
-const TUT_TASKS=[
-  {id:"dash",text:"Open your personalised dashboard",xp:5,cap:"Your whole day, planned before you sit down."},
-  {id:"focus",text:"Start your first 25-minute focus session",xp:10,cap:"One tap. Phone away. Totally locked in."},
-  {id:"cards",text:"Drop a PDF and generate flashcards",xp:10,cap:"Any file becomes a deck in seconds."},
-  {id:"tutor",text:"Ask the AI tutor your first question",xp:5,cap:"It walks you through it, step by step."},
-  {id:"streak",text:"Complete your first day streak",xp:10,cap:"Show up today. Future you says thanks."},
-];
-
-function useRun(){const[on,setOn]=useState(false);useEffect(()=>{const id=setTimeout(()=>setOn(true),60);return()=>clearTimeout(id);},[]);return on;}
-
-const FlameIc=<svg viewBox="0 0 24 24" width="44" height="44" fill="currentColor"><path d="M12 2c1.2 3.9-2.8 5.6-2.8 9a2.8 2.8 0 0 0 5.6 0c0-1.4-.6-2.5-1.3-3.4C16.2 8.7 18.5 10.9 18.5 14a6.5 6.5 0 0 1-13 0C5.5 9 10.4 6.8 12 2z"/></svg>;
-
-function Demo({kind}){
-  const on=useRun();const cls="demo"+(on?" on":"");
-  if(kind==="dash")return(<div className={cls}><div className="dm-window"><div className="dm-greet"><span className="dm-hi">Good morning</span><span className="dm-pill">3 tasks today</span></div><div className="dm-grid"><div className="dm-tile t1"><div className="dm-tlab">Focus</div><i className="dm-spark"></i></div><div className="dm-tile t2"><div className="dm-tlab">Streak</div><div className="dm-big">12</div></div><div className="dm-tile t3"><div className="dm-tlab">This week</div><i className="dm-bars"><b></b><b></b><b></b><b></b><b></b></i></div></div></div></div>);
-  if(kind==="focus")return(<div className={cls}><div className="dm-focus"><svg viewBox="0 0 120 120" className="dm-timer"><circle cx="60" cy="60" r="52" className="track"></circle><circle cx="60" cy="60" r="52" className="prog"></circle></svg><div className="dm-mid"><div className="dm-time">25:00</div><div className="dm-lab">LOCKED IN</div></div></div></div>);
-  if(kind==="cards")return(<div className={cls}><div className="dm-doc"><span>notes.pdf</span></div><div className="dm-fan"><div className="dm-card c1">What is osmosis?</div><div className="dm-card c2">Define entropy</div><div className="dm-card c3">Mitosis vs meiosis?</div></div></div>);
-  if(kind==="tutor")return(<div className={cls}><div className="dm-chat"><div className="dm-bub me">Why does ice float?</div><div className="dm-bub ai"><span className="dm-dots"><i></i><i></i><i></i></span><span className="dm-ans">Water expands as it freezes, so ice is less dense than liquid water. Less dense floats.</span></div></div></div>);
-  return(<div className={cls}><div className="dm-streak"><div className="dm-flame">{FlameIc}</div><div className="dm-days">{["M","T","W","T","F","S","S"].map((d,i)=><span key={i} className="dm-day" style={{transitionDelay:(0.3+i*0.18)+"s"}}>{d}</span>)}</div><div className="dm-dlab">Day 1 · started</div></div></div>);
-}
-
-function TutTheater({task,onFinish}){
-  const on=useRun();
-  return(<div className={"tut-veil"+(on?" on":"")} onClick={onFinish}><div className="tut-stage" onClick={e=>e.stopPropagation()}><Demo kind={task.id} key={task.id} /><div className="tut-cap">{task.cap}</div><div className="tut-bar"><i></i></div><button className="tut-skip" onClick={onFinish}>Got it · collect +{task.xp} XP</button></div></div>);
-}
-
-function StepWelcome({ state }) {
-  const [done,setDone]=useState({});
-  const [active,setActive]=useState(null);
-  const [justEarned,setJustEarned]=useState(null);
-  const timerRef=useRef(null);
-  const first=(state.preferredName||state.name||"there").split(" ")[0];
-  const max=TUT_TASKS.reduce((s,t)=>s+t.xp,0);
-  const total=TUT_TASKS.reduce((s,t)=>s+(done[t.id]?t.xp:0),0);
-  const allDone=TUT_TASKS.every(t=>done[t.id]);
-
-  const finish=(t)=>{clearTimeout(timerRef.current);setActive(null);setDone(d=>({...d,[t.id]:true}));setJustEarned(t.id);setTimeout(()=>setJustEarned(null),1100);};
-  const open=(t)=>{if(done[t.id])return;setActive(t);clearTimeout(timerRef.current);timerRef.current=setTimeout(()=>finish(t),4000);};
-  useEffect(()=>()=>clearTimeout(timerRef.current),[]);
-
-  return (
-    <div className="frame">
-      <div className="celebrate">
-        <div className="celebrate-glyph"><div style={{width:56,height:56,borderRadius:12,background:"#9EC83D",display:"grid",placeItems:"center",fontSize:28,fontWeight:800,color:"#14342A"}}>S</div></div>
-        <h2 style={{fontSize:32,margin:"0 0 8px",letterSpacing:"-0.025em",fontWeight:600}}>You're in, <em style={{fontFamily:"Instrument Serif,serif",fontStyle:"italic",color:"var(--lime-dk)",fontWeight:400}}>{first}.</em></h2>
-        <p style={{fontSize:15,color:"var(--muted)",margin:"0 auto",maxWidth:440,lineHeight:1.55}}>Tap each one to see how it works · finish all five to unlock a 40 XP bonus and start your streak.</p>
-      </div>
-      <div className="checklist">
-        {TUT_TASKS.map(t=>(
-          <div key={t.id} className={"cl-item"+(done[t.id]?" done":"")} onClick={()=>open(t)}>
-            <span className="box">{Ic.check}</span>
-            <span className="text">{t.text}</span>
-            {!done[t.id]&&<span className="cl-play">Watch<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>}
-            <span className={"reward"+(justEarned===t.id?" pop":"")}>+{t.xp} XP</span>
-          </div>
-        ))}
-      </div>
-      <div className="xp-foot">
-        {allDone?(<div className="bonus-banner">Bonus unlocked · +40 XP · streak started</div>):(<><div className="xp-row"><span>Today's XP</span><strong>{total} / {max}</strong></div><div className="xp-track"><i style={{width:(total/max*100)+"%"}}></i></div></>)}
-      </div>
-      {active&&<TutTheater task={active} onFinish={()=>finish(active)} />}
     </div>
   );
 }
@@ -547,9 +424,15 @@ function App() {
     if(firebase.auth().currentUser){const s=JSON.parse(localStorage.getItem("studlin-onboarding")||"null");return s&&s._step?s._step:1;}
     return 0;
   });
+  // workStartTime/workEndTime/bedtime/bedtimeGuardEnabled need real values in
+  // state from the start, not just display defaults inside StepSchedulePrefs
+  // — isStepValid() checks state directly, so without these the "Continue"
+  // CTA on Study Setup would stay disabled until the user touched every
+  // field, even though the UI already shows filled-in-looking values.
+  const SCHEDULE_DEFAULTS = { workStartTime:"10:00", workEndTime:"18:00", bedtime:"23:00", bedtimeGuardEnabled:true };
   const [state, setState] = useState(() => {
-    try { const saved = JSON.parse(localStorage.getItem("studlin-onboarding")||"null"); if (saved && typeof saved === "object") return {goals:[],plan:"pro",...saved}; } catch(e){}
-    return { goals: [], plan: "pro" };
+    try { const saved = JSON.parse(localStorage.getItem("studlin-onboarding")||"null"); if (saved && typeof saved === "object") return {goals:[],plan:"pro",...SCHEDULE_DEFAULTS,...saved}; } catch(e){}
+    return { goals: [], plan: "pro", ...SCHEDULE_DEFAULTS };
   });
 
   useEffect(()=>{
@@ -566,82 +449,99 @@ function App() {
   }, [state, step]);
 
   const isStepValid = () => {
-    if (step === 0) { return !!firebase.auth().currentUser || !!(state.provider) || !!(state.name && state.email && (state.password||"").length >= 8); }
-    if (step === 1) return !!(state.preferredName && state.language && state.descriptor && state.terms);
-    if (step === 2) return !!state.role;
-    if (step === 3) return (state.goals||[]).length > 0;
-    if (step === 4) return !!(state.taskDifficultyPreference && state.workStartTime && state.workEndTime && state.bedtime && state.bufferMarginStrategy);
-    if (step === 5) return true;
-    if (step === 6) return !!state.plan;
+    if (step === 0) {
+      const identityOk = !!(state.university || (state.universityOther||"").trim()) && !!state.terms;
+      return identityOk && (!!firebase.auth().currentUser || !!(state.provider) || !!(state.name && state.email && (state.password||"").length >= 8));
+    }
+    if (step === 1) return !!(state.workStartTime && state.workEndTime && (state.bedtimeGuardEnabled===false || state.bedtime));
     return true;
   };
 
   const [transitioning, setTransitioning] = useState(false);
-  const [paywallRevealed, setPaywallRevealed] = useState(false);
+  const [finishing, setFinishing] = useState(false);
 
   const next = () => {
     if (!isStepValid()) return;
     const nextStep = Math.min(STEPS.length-1, step+1);
-    if (nextStep === 6) {
-      setTransitioning(true);
-      setTimeout(() => { setStep(nextStep); setTransitioning(false); setTimeout(() => setPaywallRevealed(true), 50); }, 400);
-    } else {
-      setTransitioning(true);
-      setTimeout(() => { setStep(nextStep); setTransitioning(false); }, 250);
-    }
+    setTransitioning(true);
+    setTimeout(() => { setStep(nextStep); setTransitioning(false); }, 250);
   };
-  const back = () => { setTransitioning(true); setPaywallRevealed(false); setTimeout(() => { setStep(s => Math.max(0, s-1)); setTransitioning(false); }, 250); };
+  const back = () => { setTransitioning(true); setTimeout(() => { setStep(s => Math.max(0, s-1)); setTransitioning(false); }, 250); };
+
+  // The real "hand off to the app" step — saves everything collected across
+  // both steps straight to the authenticated user's Firestore doc (this
+  // wizard never wrote to Firestore before; it only cached progress in
+  // localStorage), seeds the same localStorage key the main app's
+  // getSchedulePreferences() reads so scheduling works instantly with no
+  // Firestore round-trip, and sets the flag the main app's own separate
+  // first-run wizard (InitWizard) checks — otherwise a user who just
+  // finished this flow would immediately be asked most of the same
+  // questions again on landing in the app.
+  const finishOnboarding = async () => {
+    if (!isStepValid() || finishing) return;
+    setFinishing(true);
+    const prefs = {
+      workStartTime: state.workStartTime || "10:00",
+      workEndTime: state.workEndTime || "18:00",
+      bedtime: state.bedtimeGuardEnabled===false ? "23:59" : (state.bedtime || "23:00"),
+      bedtimeGuardEnabled: state.bedtimeGuardEnabled !== false,
+      taskDifficultyPreference: "NONE",
+      bufferMarginStrategy: "15_MIN",
+    };
+    try { localStorage.setItem("studlin-schedulePrefs", JSON.stringify(prefs)); } catch(e){}
+    try { localStorage.setItem("studlin-onboarded", "true"); } catch(e){}
+    try { localStorage.setItem("studlin-pendingTour", JSON.stringify("calendar")); } catch(e){}
+    try { localStorage.removeItem("studlin-onboarding"); } catch(e){}
+    const u = firebase.auth().currentUser;
+    if (u) {
+      try {
+        await firebase.firestore().collection('users').doc(u.uid).set({
+          school: state.university || state.universityOther || "",
+          ...prefs,
+          onboarded: true,
+          updatedAt: new Date().toISOString(),
+        }, { merge: true });
+      } catch(e) {}
+    }
+    window.location.href = "Studlin Web App.html";
+  };
 
   useEffect(()=>{
-    const fn = e => { if (e.key === "Enter" && step < STEPS.length-1) next(); if (e.key === "Escape" && step > 0) back(); };
+    const fn = e => {
+      if (e.key === "Enter") { if (step < STEPS.length-1) next(); else finishOnboarding(); }
+      if (e.key === "Escape" && step > 0) back();
+    };
     window.addEventListener("keydown", fn);
     return ()=>window.removeEventListener("keydown", fn);
   });
 
-  const handleCheckout = () => {
-    if (state.plan === "free") { next(); return; }
-    const billing = state.billing === "monthly" ? "monthly" : "annual";
-    window.location.href = "checkout.html?plan=" + state.plan + "&billing=" + billing;
-  };
-
-  const CTA_LABEL = ["Sign up for free","Continue","Continue","Continue","Continue","Looks good",(state.plan==="free"?"Continue with free plan":"Start 7-day free trial"),"Enter Studlin"][step];
-  const isPaywall = step === 6;
+  const CTA_LABEL = ["Sign up for free","Continue"][step];
 
   return (
-    <div className={"shell" + (isPaywall ? " paywall-mode" : "")}>
-      {!isPaywall && <LeftRail step={step} state={state} />}
-      <main className={"stage" + (isPaywall ? " paywall-stage" : "") + (paywallRevealed ? " paywall-revealed" : "")}>
+    <div className="shell">
+      <LeftRail step={step} state={state} />
+      <main className="stage">
         <div className="stage-top">
           {step === 0 ? <>Already have an account? <a href="Studlin Sign In.html">Log in</a></> :
-            <span style={{color:"var(--muted)",fontSize:13}}>Step {Math.min(step+1,7)} of 7</span>}
+            <span style={{color:"var(--muted)",fontSize:13}}>Step {step+1} of {STEPS.length}</span>}
         </div>
         <div className={"step-content" + (transitioning ? " is-leaving" : " is-entering")}>
           {step === 0 && <StepSignup state={state} set={setState} advance={(skip)=>{ if(skip||isStepValid()){ setTransitioning(true); setTimeout(()=>{ setStep(s=>Math.min(STEPS.length-1,s+1)); setTransitioning(false); },250); }}} />}
-          {step === 1 && <StepBasic state={state} set={setState} />}
-          {step === 2 && <StepRole state={state} set={setState} />}
-          {step === 3 && <StepGoals state={state} set={setState} />}
-          {step === 4 && <StepSchedulePrefs state={state} set={setState} />}
-          {step === 5 && <StepPreview state={state} />}
-          {step === 6 && <StepPlan state={state} set={setState} />}
-          {step === 7 && <StepWelcome state={state} />}
+          {step === 1 && <StepSchedulePrefs state={state} set={setState} />}
         </div>
         <div className="stage-foot">
-          {step < STEPS.length-1 ? (
-            <button className="cta" disabled={!isStepValid()} onClick={()=>{
-              if(step===0&&!firebase.auth().currentUser){
-                const btn=document.querySelector('[data-cta="signup"]');
-                if(btn){btn.click();return;}
-              }
-              if(step===6){handleCheckout();return;}
-              next();
-            }}>
-              {CTA_LABEL}<span className="arrow">{Ic.arrow}</span>
-            </button>
-          ) : (
-            <a className="cta lime" href="Studlin Web App.html">Enter Studlin<span className="arrow">{Ic.arrow}</span></a>
-          )}
+          <button className="cta" disabled={!isStepValid()||finishing} onClick={()=>{
+            if(step===0&&!firebase.auth().currentUser){
+              const btn=document.querySelector('[data-cta="signup"]');
+              if(btn){btn.click();return;}
+            }
+            if(step===STEPS.length-1){finishOnboarding();return;}
+            next();
+          }}>
+            {finishing?"Setting up...":CTA_LABEL}<span className="arrow">{Ic.arrow}</span>
+          </button>
           {step === 0 && <div className="stage-links"><a href="#">Privacy Policy</a> · <a href="#">Terms of Service</a></div>}
-          {step > 0 && step < STEPS.length-1 && <div style={{marginTop:14}}><button onClick={back} style={{background:"transparent",border:"none",color:"var(--muted)",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>← Back</button></div>}
+          {step > 0 && <div style={{marginTop:14}}><button onClick={back} style={{background:"transparent",border:"none",color:"var(--muted)",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>← Back</button></div>}
         </div>
       </main>
     </div>

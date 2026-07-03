@@ -14,7 +14,7 @@ service cloud.firestore {
       allow write: if request.auth != null
         && request.auth.uid == userId
         && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['status','affiliation','school','workStartTime','bedtime','difficultyPreference','onboarded','updatedAt','preferences','fcmTokens']);
+             .hasOnly(['status','affiliation','school','workStartTime','workEndTime','bedtime','bedtimeGuardEnabled','difficultyPreference','taskDifficultyPreference','bufferMarginStrategy','onboarded','updatedAt','preferences','fcmTokens']);
     }
 
     // Public directory entry — just enough to search for and display a
