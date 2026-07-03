@@ -4911,13 +4911,20 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
   // never touched — mirrors aiArrange's own "never touch fixed blocks" rule.
   const reconcileRoutineConflicts=(nextRoutines)=>{
     const prefs=getSchedulePreferences();
-    const tk=dayKey();
-    const horizonEnd=(()=>{const d=new Date();d.setDate(d.getDate()+13);return dayKey(d);})();
+    const now=new Date();
+    // No lower bound on date: a still-pending task dated in the past (never
+    // marked done) that overlaps a routine block stays visibly stuck there
+    // forever otherwise — e.g. still rendered mid-"SCHOOL HOURS" in the
+    // current week's grid the day after it was created. findOpenSlotFor
+    // searches forward from the task's own date, so it naturally lands on a
+    // later opening the same day if one exists, or a future day otherwise —
+    // never further in the past.
+    const horizonEnd=(()=>{const d=new Date(now);d.setDate(d.getDate()+13);return dayKey(d);})();
     let changed=false;
     const next=events.map(ev=>{
       if(ev.status==="done"||!ev.time)return ev;
       if(ev.kind==="exam"||ev.kind==="class"||ev.kind==="busy block")return ev;
-      if(ev.date<tk||ev.date>horizonEnd)return ev;
+      if(ev.date>horizonEnd)return ev;
       const duration=ev.duration||30;
       const tMins=timeToMinutes(ev.time);
       // Free periods are open windows, not locked blocks — a task inside one
@@ -4935,6 +4942,11 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
     if(changed){setEvents(next);lsSet("events",next);}
   };
   const persistRoutines=(r)=>{setRoutinesState(r);saveWeeklyRoutine(r);reconcileRoutineConflicts(r);};
+  // Reconciliation above only fires on a routine *change* — it never touches
+  // tasks that were already conflicting before this logic existed, or that
+  // drifted into conflict for any other reason. Run it once on every Calendar
+  // visit too, so stale conflicts don't sit there forever.
+  useEffect(()=>{ reconcileRoutineConflicts(routines); },[]);
   // The reserved "hs-school" rule (synthesized by the Weekly Routine wizard
   // for High School accounts) doubles as the School Hours grid-tint window —
   // no separate profile-status prop needed, since only HS accounts ever get
