@@ -661,8 +661,10 @@ function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration)
   for(let dayOffset=0;dayOffset<14;dayOffset++){
     const d=new Date(desiredDate+"T12:00:00");d.setDate(d.getDate()+dayOffset);
     const dk=dayKey(d);
+    // Free periods are preferred landing spots, not blocks — never treat them
+    // as occupied (matches the Dashboard's scheduling engine).
     const occupied=events.filter(e=>e.date===dk&&e.time)
-      .concat(expandRoutineOccurrences(routines,dk,dk))
+      .concat(expandRoutineOccurrences(routines,dk,dk).filter(o=>o.kind!=="free period"))
       .map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)}));
     const scanStart=dayOffset===0?Math.max(prefStartMins,timeToMinutes(desiredTime)):prefStartMins;
     for(let t=scanStart;t+duration<=prefEndMins;t+=15){
@@ -4429,9 +4431,10 @@ function WizardHsBuilder({schoolStart,setSchoolStart,schoolEnd,setSchoolEnd,item
   const [start,setStart]=useState("15:30");
   const [duration,setDuration]=useState(60);
   const toggleDay=(i)=>setDays(days.includes(i)?days.filter(d=>d!==i):[...days,i]);
+  const isFree=kind==="free";
   const add=()=>{
-    if(!title.trim()||days.length===0)return;
-    addItem({title:title.trim(),kind,days:[...days],startTime:start,duration});
+    if((!isFree&&!title.trim())||days.length===0)return;
+    addItem({title:isFree?(title.trim()||"Free Period"):title.trim(),kind,days:[...days],startTime:start,duration});
     setTitle("");setDays([]);
   };
   return (
@@ -4443,7 +4446,7 @@ function WizardHsBuilder({schoolStart,setSchoolStart,schoolEnd,setSchoolEnd,item
       </div>
       <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:2}}>Free Periods &amp; After-School Shields</div>
       <div style={{fontSize:11,color:T.muted,marginBottom:12}}>Study halls and lunch clear the School Hours background; sports, rehearsals, and shifts stay shielded like a class. Pick the days each one repeats.</div>
-      <Field label="Name"><Input value={title} onChange={e=>setTitle(e.target.value)} style={{flexGrow:1}} /></Field>
+      {!isFree&&<Field label="Name"><Input value={title} onChange={e=>setTitle(e.target.value)} style={{flexGrow:1}} /></Field>}
       <div style={{display:"flex",gap:8,marginBottom:10}}>
         <button type="button" onClick={()=>setKind("free")} style={wizardChipStyle(kind==="free")}>Free Period</button>
         <button type="button" onClick={()=>setKind("busy")} style={wizardChipStyle(kind==="busy")}>After-School Activity</button>
@@ -4741,9 +4744,10 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
   useEffect(()=>{ if(!open)setAddingRoutine(false); },[open]);
   const resetForm=()=>{setTitle("");setKind("class");setDays([]);setStartTime("15:30");setDuration(60);};
   const toggleDay=(i)=>setDays(d=>d.includes(i)?d.filter(x=>x!==i):[...d,i]);
+  const isFree=kind==="free";
   const submitAdd=()=>{
-    if(!title.trim()||days.length===0)return;
-    onAddRoutine({title:title.trim(),kind,days:[...days],startTime,duration});
+    if((!isFree&&!title.trim())||days.length===0)return;
+    onAddRoutine({title:isFree?(title.trim()||"Free Period"):title.trim(),kind,days:[...days],startTime,duration});
     resetForm();
     setAddingRoutine(false);
   };
@@ -4776,7 +4780,7 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
         ? <Btn variant="subtle" onClick={()=>setAddingRoutine(true)} style={{width:"100%",justifyContent:"center"}}>+ Add Recurring Activity</Btn>
         : (
           <div style={{border:`1px solid ${T.border}`,borderRadius:10,padding:14}}>
-            <Field label="Name"><Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="e.g. Track Practice" autoFocus /></Field>
+            {!isFree&&<Field label="Name"><Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="e.g. Track Practice" autoFocus /></Field>}
             <Field label="Type"><SelectChip options={[{value:"class",label:"Class"},{value:"busy",label:"Activity"},{value:"free",label:"Free Period"}]} value={kind} onChange={setKind} /></Field>
             <Field label="Repeats on" hint={days.length===0?"Pick at least one day":undefined}>
               <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
@@ -4792,7 +4796,7 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
             </div>
             <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
               <Btn variant="subtle" onClick={()=>{resetForm();setAddingRoutine(false);}}>Cancel</Btn>
-              <Btn onClick={submitAdd} disabled={!title.trim()||days.length===0} style={{opacity:!title.trim()||days.length===0?0.45:1}}>Add</Btn>
+              <Btn onClick={submitAdd} disabled={(!isFree&&!title.trim())||days.length===0} style={{opacity:(!isFree&&!title.trim())||days.length===0?0.45:1}}>Add</Btn>
             </div>
           </div>
         )}
@@ -4912,7 +4916,10 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
       if(ev.date<tk||ev.date>horizonEnd)return ev;
       const duration=ev.duration||30;
       const tMins=timeToMinutes(ev.time);
+      // Free periods are open windows, not locked blocks — a task inside one
+      // is never a conflict to shuffle away from.
       const occupied=expandRoutineOccurrences(nextRoutines,ev.date,ev.date)
+        .filter(o=>o.kind!=="free period")
         .map(o=>({start:timeToMinutes(o.time),end:timeToMinutes(o.time)+(o.duration||30)}));
       const conflict=occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end));
       if(!conflict)return ev;
@@ -5089,7 +5096,11 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
     const firstAvailDate=todayWindowMins>=perSession?tk:(()=>{const d=new Date(now);d.setDate(d.getDate()+1);return dayKey(d);})();
     const horizonEnd=(()=>{const d=new Date(now);d.setDate(d.getDate()+13);return dayKey(d);})();
     const routineAhead=expandRoutineOccurrences(routines,tk,horizonEnd);
-    const existing=events.filter(ev=>ev.date>=tk).concat(routineAhead).map(ev=>({title:ev.title,date:ev.date,time:ev.time,duration:ev.duration||60}));
+    // Free periods are preferred landing spots (see freeAhead below), not hard
+    // blocks — excluding them here also resolves the prompt's prior internal
+    // contradiction (telling the AI to prefer free windows while also listing
+    // those same windows as forbidden-to-overlap).
+    const existing=events.filter(ev=>ev.date>=tk).concat(routineAhead.filter(r=>r.kind!=="free period")).map(ev=>({title:ev.title,date:ev.date,time:ev.time,duration:ev.duration||60}));
     const freeAhead=routineAhead.filter(r=>r.kind==="free period").map(r=>({date:r.date,time:r.time,duration:r.duration}));
     const priorityLabel=evPriority<200?"Low":evPriority<400?"Medium-Low":evPriority<600?"Medium":evPriority<800?"High":"Urgent";
     // Deterministic hard-lock enforcement — the prompt below asks the LLM to
@@ -5129,7 +5140,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
           // actually overlaps a real event or routine shield, rather than
           // trusting the LLM followed the prompt's rules.
           const occupied=events.filter(e=>e.date===date&&e.time)
-            .concat(getRoutineOccurrencesForDate(date))
+            .concat(getRoutineOccurrencesForDate(date).filter(o=>o.kind!=="free period"))
             .map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)}));
           const tMins=timeToMinutes(time);
           const conflict=occupied.some(o=>!(tMins+perSession<=o.start||tMins>=o.end));
