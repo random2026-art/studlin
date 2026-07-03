@@ -114,9 +114,9 @@ function AutocompleteField({ label, options, value, otherValue, onSelect, onOthe
       <div className={"input-wrap" + ((value||otherValue)?" has-value":"") + (open?" is-focused":"") + (error?" has-error":"")}>
         <label>{label}</label>
         {isOther ? (
-          <input value={otherValue||""} onChange={e=>onOtherChange(e.target.value)} placeholder="Type your school's name" autoFocus />
+          <input value={otherValue||""} onChange={e=>onOtherChange(e.target.value)} autoFocus />
         ) : (
-          <input value={query} onChange={e=>{setQuery(e.target.value);setOpen(true);if(value)onSelect("");}} onFocus={()=>setOpen(true)} placeholder="Start typing your school…" />
+          <input value={query} onChange={e=>{setQuery(e.target.value);setOpen(true);if(value)onSelect("");}} onFocus={()=>setOpen(true)} />
         )}
       </div>
       {isOther && <button type="button" onClick={backToList} style={{marginTop:6,background:"none",border:"none",color:"var(--muted)",fontSize:12,cursor:"pointer",textDecoration:"underline",padding:0}}>← Search the list instead</button>}
@@ -135,56 +135,15 @@ function AutocompleteField({ label, options, value, otherValue, onSelect, onOthe
   );
 }
 
-// Drop-in replacement for <input type="time"> — same 24h "HH:MM" value/onChange
-// contract, but never invokes the browser's own picker chrome (which on
-// Safari/iOS renders as a scrolling wheel; Chrome/Edge render it as a plain
-// box — same code, wildly different UX depending on browser). Typing digits
-// ("930", "1430") or digits+am/pm ("930pm") both parse; an unparseable entry
-// just reverts to the last valid value on blur rather than crashing or left
-// half-typed.
+// Native browser time picker — same 24h "HH:MM" value/onChange contract as
+// before, using the OS/browser's own hour/minute/AM-PM control rather than
+// a typed-text field.
 function TimeInput({ value, onChange, style }) {
-  const to12=(v)=>{
-    if(!v)return "";
-    const p=v.split(":");const h=+p[0],m=+p[1];
-    if(isNaN(h)||isNaN(m))return "";
-    const ap=h>=12?"PM":"AM";const h12=h%12||12;
-    return h12+":"+String(m).padStart(2,"0")+" "+ap;
-  };
-  const parse=(str)=>{
-    const s=(str||"").trim().toLowerCase();
-    if(!s)return null;
-    const ap=/pm/.test(s)?"pm":/am/.test(s)?"am":null;
-    const digits=s.replace(/[^0-9]/g,"");
-    if(!digits)return null;
-    let h,m;
-    if(digits.length<=2){h=+digits;m=0;}
-    else if(digits.length===3){h=+digits.slice(0,1);m=+digits.slice(1);}
-    else{h=+digits.slice(0,2);m=+digits.slice(2,4);}
-    if(m>59)return null;
-    if(ap==="pm"&&h<12)h+=12;
-    if(ap==="am"&&h===12)h=0;
-    if(h>23||h<0)return null;
-    return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
-  };
-  const [draft,setDraft]=useState(()=>to12(value));
-  const [focused,setFocused]=useState(false);
-  useEffect(()=>{if(!focused)setDraft(to12(value));},[value,focused]);
-  const commit=()=>{
-    setFocused(false);
-    const parsed=parse(draft);
-    if(parsed){if(parsed!==value)onChange(parsed);setDraft(to12(parsed));}
-    else setDraft(to12(value));
-  };
   return (
     <input
-      type="text"
-      inputMode="numeric"
-      placeholder="e.g. 9:30 AM"
-      value={draft}
-      onFocus={e=>{setFocused(true);e.target.select();}}
-      onChange={e=>setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
+      type="time"
+      value={value||""}
+      onChange={e=>onChange(e.target.value)}
       style={{width:"100%",padding:"10px 12px",background:"var(--card2)",border:"1px solid var(--border)",borderRadius:8,color:"var(--text)",fontSize:13,fontFamily:"inherit",outline:"none",boxSizing:"border-box",...(style||{})}}
     />
   );

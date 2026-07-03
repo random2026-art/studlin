@@ -469,60 +469,12 @@ const Input = (props) => (
 const Textarea = (props) => (
   <textarea {...props} style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.font,outline:"none",resize:"vertical",minHeight:90,boxSizing:"border-box",...(props.style||{})}} />
 );
-// Drop-in replacement for <input type="time"> — same 24h "HH:MM" value/onChange
-// contract, but never invokes the browser's own picker chrome (which on
-// Safari/iOS renders as a scrolling wheel; Chrome/Edge render it as a plain
-// box — same code, wildly different UX depending on browser). Typing digits
-// ("930", "1430") or digits+am/pm ("930pm") both parse; an unparseable entry
-// just reverts to the last valid value on blur rather than crashing or left
-// half-typed.
-const TimeInput = ({value,onChange,style}) => {
-  const to12=(v)=>{
-    if(!v)return "";
-    const p=v.split(":");const h=+p[0],m=+p[1];
-    if(isNaN(h)||isNaN(m))return "";
-    const ap=h>=12?"PM":"AM";const h12=h%12||12;
-    return h12+":"+String(m).padStart(2,"0")+" "+ap;
-  };
-  const parse=(str)=>{
-    const s=(str||"").trim().toLowerCase();
-    if(!s)return null;
-    const ap=/pm/.test(s)?"pm":/am/.test(s)?"am":null;
-    const digits=s.replace(/[^0-9]/g,"");
-    if(!digits)return null;
-    let h,m;
-    if(digits.length<=2){h=+digits;m=0;}
-    else if(digits.length===3){h=+digits.slice(0,1);m=+digits.slice(1);}
-    else{h=+digits.slice(0,2);m=+digits.slice(2,4);}
-    if(m>59)return null;
-    if(ap==="pm"&&h<12)h+=12;
-    if(ap==="am"&&h===12)h=0;
-    if(h>23||h<0)return null;
-    return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
-  };
-  const [draft,setDraft]=useState(()=>to12(value));
-  const [focused,setFocused]=useState(false);
-  useEffect(()=>{if(!focused)setDraft(to12(value));},[value,focused]);
-  const commit=(e)=>{
-    setFocused(false);
-    const parsed=parse(draft);
-    if(parsed){if(parsed!==value)onChange(parsed);setDraft(to12(parsed));}
-    else setDraft(to12(value));
-  };
-  return (
-    <Input
-      type="text"
-      inputMode="numeric"
-      placeholder="e.g. 9:30 AM"
-      value={draft}
-      onFocus={e=>{setFocused(true);e.target.select();}}
-      onChange={e=>setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
-      style={style}
-    />
-  );
-};
+// Native browser time picker — same 24h "HH:MM" value/onChange contract as
+// before, using the OS/browser's own hour/minute/AM-PM control rather than
+// a typed-text field.
+const TimeInput = ({value,onChange,style}) => (
+  <Input type="time" value={value||""} onChange={e=>onChange(e.target.value)} style={style} />
+);
 // Drop-in replacement for a plain numeric <Input type="number">. The bug it
 // fixes: `onChange={e=>setX(Math.max(min,+e.target.value||fallback))}` snaps
 // back to the fallback on every keystroke (since +"" is 0, a falsy value),
@@ -648,9 +600,44 @@ async function upsertProfile(extra={}){
     school,
     schoolLower:(school||"").toLowerCase(),
     status,
+    xp:getXP(),
+    streak:getStreak(),
     updatedAt:new Date().toISOString(),
   };
   try{await fsdb().collection('profiles').doc(u.uid).set(data,{merge:true});}catch(e){}
+}
+// Top-N public profiles ordered by real XP, straight from Firestore — no
+// mock/seed data. Docs that haven't been through upsertProfile() since xp
+// started being synced (or ever) simply lack the field and are naturally
+// excluded by orderBy, rather than sorting in as a false zero.
+async function fetchTopProfiles(n=8){
+  try{
+    const snap=await fsdb().collection('profiles').orderBy('xp','desc').limit(n).get();
+    return snap.docs.map(d=>d.data());
+  }catch(e){return [];}
+}
+const LB_GRADIENTS=["linear-gradient(135deg,#FFD7B5,#FFC9D2)","linear-gradient(135deg,#BFE3FF,#E2D0FF)","linear-gradient(135deg,#C4F0D8,#FFE99A)","linear-gradient(135deg,#E2D0FF,#FFD7B5)","linear-gradient(135deg,#FFE99A,#C4F0D8)","linear-gradient(135deg,#BFE3FF,#FFD7B5)","linear-gradient(135deg,#C4F0D8,#E2D0FF)"];
+// Merges the signed-in user's own live-accurate xp/streak/name into a
+// fetched top-profiles list (replacing their own possibly-stale doc if it's
+// in there), re-sorts by real XP, and assigns rank + a rotating avatar
+// gradient. Always keeps "you" visible in the returned slice even if your
+// real rank falls outside it, same as the leaderboard has always guaranteed.
+function mergeLeaderboard(profiles, realName, realXP, realStreak, myUid, showCount){
+  const others=(profiles||[]).filter(p=>p.uid&&p.uid!==myUid);
+  const you={uid:myUid,name:realName||"You",xp:Math.max(0,realXP||0),streak:realStreak||0,you:true};
+  const sorted=[...others,you].sort((a,b)=>(b.xp||0)-(a.xp||0)).map((u,i)=>({
+    r:i+1,
+    n:u.name||"Student",
+    xp:u.xp||0,
+    streak:u.streak||0,
+    tier:getProfTitle(u.xp||0),
+    you:!!u.you,
+    grad:LB_GRADIENTS[i%LB_GRADIENTS.length],
+  }));
+  if(!showCount||showCount>=sorted.length)return sorted;
+  const top=sorted.slice(0,showCount);
+  if(top.some(u=>u.you))return top;
+  return [...sorted.slice(0,showCount-1),sorted.find(u=>u.you)];
 }
 const dayKey=(d)=>{const x=d||new Date();return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");};
 function daysOverdue(ev){if(!ev.deadline)return 0;if(ev.date<=ev.deadline)return 0;const d1=new Date(ev.date),d2=new Date(ev.deadline);return Math.ceil((d1-d2)/86400000);}
@@ -676,9 +663,9 @@ function readabilityOf(html){
   var lvl=gradeNum<=6?"Grade 6 or below":gradeNum>=16?"College level":"Grade "+Math.max(1,Math.round(gradeNum));
   return{grade:letter,level:lvl};
 }
-function touchStreak(){const days=lsGet("days",[]);const t=dayKey();if(!days.includes(t)){days.push(t);lsSet("days",days);}}
+function touchStreak(){const days=lsGet("days",[]);const t=dayKey();if(!days.includes(t)){days.push(t);lsSet("days",days);upsertProfile();}}
 function getStreak(){const days=new Set(lsGet("days",[]));let n=0;const d=new Date();while(days.has(dayKey(d))){n++;d.setDate(d.getDate()-1);}return n;}
-function logSession(mins,mode){const s=lsGet("sessions",[]);s.push({d:dayKey(),m:mins,t:Date.now(),mode:mode||"Focus"});lsSet("sessions",s);}
+function logSession(mins,mode){const s=lsGet("sessions",[]);s.push({d:dayKey(),m:mins,t:Date.now(),mode:mode||"Focus"});lsSet("sessions",s);upsertProfile();}
 function sessionStats(){
   const s=lsGet("sessions",[]);
   const weekAgo=Date.now()-6*86400000;
@@ -3730,6 +3717,16 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
 // ─── CALENDAR ─────────────────────────────────────────────────────────────────
 // ─── TASK TIMER MODAL ────────────────────────────────────────────────────────
 function TaskTimerModal({task,onClose,onComplete}){
+  // Snapshot of live leaderboard profiles, fetched once on mount — used for
+  // the before/after rank comparison in the completion screen. A snapshot
+  // is fine here (rather than re-fetching mid-session): competitors' XP
+  // won't meaningfully change in the couple minutes a focus session runs.
+  const [lbProfiles,setLbProfiles]=useState([]);
+  useEffect(()=>{
+    let cancelled=false;
+    fetchTopProfiles(8).then(rows=>{if(!cancelled)setLbProfiles(rows);});
+    return ()=>{cancelled=true;};
+  },[]);
   const totalMins=task.duration||25;
   const quoteRef=useRef(QUOTES[Math.floor(Math.random()*QUOTES.length)]);
   const breakIdeaRef=useRef(BREAK_IDEAS[Math.floor(Math.random()*BREAK_IDEAS.length)]);
@@ -3765,8 +3762,9 @@ function TaskTimerModal({task,onClose,onComplete}){
   const completeSession=(mins)=>{
     const name=getUserName();
     const streak=getStreak();
+    const myUid=firebase.auth().currentUser?.uid||null;
     const xpBefore=getXP();
-    const rowsBefore=buildLeaderboard(name,xpBefore,streak);
+    const rowsBefore=mergeLeaderboard(lbProfiles,name,xpBefore,streak,myUid,5);
     const rankBefore=(rowsBefore.find(u=>u.you)||{}).r||rowsBefore.length;
     if(onComplete)onComplete(mins);
     if(task.coop){
@@ -3775,7 +3773,7 @@ function TaskTimerModal({task,onClose,onComplete}){
       if(bonus>0)lsSet("xpBonus",lsGet("xpBonus",0)+bonus);
     }
     const xpAfter=getXP();
-    const rowsAfter=buildLeaderboard(name,xpAfter,streak);
+    const rowsAfter=mergeLeaderboard(lbProfiles,name,xpAfter,streak,myUid,5);
     const rankAfter=(rowsAfter.find(u=>u.you)||{}).r||rowsAfter.length;
     setCompletion({
       mins,
@@ -4238,7 +4236,7 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
                       onDoubleClick={()=>openEdit(ev)}
                       title="Double-click to edit · Drag to reschedule"
                       style={{position:"absolute",top:topPx,left:2,right:2,height:heightPx,borderRadius:5,padding:"2px 5px",cursor:"grab",overflow:"hidden",zIndex:3,opacity:isDone?0.4:1,boxSizing:"border-box",userSelect:"none",...kindStyle}}>
-                      <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"⚠️ EXAM · ":""}{ev.title}</div>
+                      <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                       {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:1}}>{fmtTime(ev.time)}{dur ? " · "+dur+"m" : ""}</div>}
                     </div>
                   );
@@ -4782,7 +4780,7 @@ function CalendarTab({onTourDone}={}){
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{display:"flex",alignItems:"center",gap:6}}>
                       {ev.priority&&<span style={{width:7,height:7,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority||3],flexShrink:0}} />}
-                      {isExam&&<span style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.04em",color,background:color+"1E",border:`1px solid ${color}55`,borderRadius:5,padding:"1px 6px",flexShrink:0}}>⚠️ EXAM</span>}
+                      {isExam&&<span style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:9.5,fontWeight:800,letterSpacing:"0.04em",color,background:color+"1E",border:`1px solid ${color}55`,borderRadius:5,padding:"1px 6px",flexShrink:0}}><span style={{width:4,height:4,borderRadius:"50%",background:color,flexShrink:0}} />EXAM</span>}
                       <span style={{fontSize:12.5,fontWeight:600,color:titleColor,lineHeight:1.35,textDecoration:isDone?"line-through":"none"}}>{ev.title}</span>
                     </div>
                     <div style={{fontSize:11,color:subColor,marginTop:2,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
@@ -6607,19 +6605,22 @@ function LevelRoadmapModal({open,onClose,currentXP}){
 }
 
 // ─── LEADERBOARD MODAL ───────────────────────────────────────────────────────
-function LeaderboardModal({open,onClose,currentXP}){
+function LeaderboardModal({open,onClose,currentXP,currentName,currentStreak}){
+  // Hooks must run unconditionally on every render (this component stays
+  // mounted with `open` just toggling as a prop, not conditionally
+  // rendered) — so the "closed" bail-out has to come after all of them.
+  const [filter,setFilter]=useState("global");
+  const [profiles,setProfiles]=useState([]);
+  useEffect(()=>{
+    if(!open)return;
+    let cancelled=false;
+    fetchTopProfiles(30).then(rows=>{if(!cancelled)setProfiles(rows);});
+    return ()=>{cancelled=true;};
+  },[open]);
   if(!open)return null;
-  const [filter,setFilter]=React.useState("global");
   const userTier=getProfTitle(currentXP);
-  const allUsers=[
-    {r:1,n:"Maya R.",xp:2140,streak:12,tier:"Associate",you:true,grad:"linear-gradient(135deg,#FFD7B5,#FFC9D2)"},
-    {r:2,n:"Devon K.",xp:1840,streak:8,tier:"Associate",grad:"linear-gradient(135deg,#BFE3FF,#E2D0FF)"},
-    {r:3,n:"Priya S.",xp:1602,streak:5,tier:"Associate",grad:"linear-gradient(135deg,#C4F0D8,#FFE99A)"},
-    {r:4,n:"Jordan T.",xp:1088,streak:0,tier:"Intern",grad:"linear-gradient(135deg,#E2D0FF,#FFD7B5)"},
-    {r:5,n:"Alex W.",xp:980,streak:3,tier:"Intern",grad:"linear-gradient(135deg,#FFE99A,#C4F0D8)"},
-    {r:6,n:"Sam L.",xp:870,streak:1,tier:"Intern",grad:"linear-gradient(135deg,#BFE3FF,#FFD7B5)"},
-    {r:7,n:"Riley M.",xp:640,streak:0,tier:"Intern",grad:"linear-gradient(135deg,#C4F0D8,#E2D0FF)"},
-  ];
+  const myUid=firebase.auth().currentUser?.uid||null;
+  const allUsers=mergeLeaderboard(profiles, currentName, currentXP, currentStreak, myUid);
   const shown=filter==="level"?allUsers.filter(u=>u.tier===userTier||u.you):allUsers;
   const rankColor=(r)=>r===1?"#FFD700":r===2?"#C0C0C0":r===3?"#CD7F32":T.muted;
   const rankBg=(r)=>r===1?"rgba(255,215,0,0.12)":r===2?"rgba(192,192,192,0.08)":r===3?"rgba(205,127,50,0.08)":"transparent";
@@ -6661,31 +6662,21 @@ function LeaderboardModal({open,onClose,currentXP}){
   );
 }
 
-// ─── LEADERBOARD BUILDER ─────────────────────────────────────────────────────
-// Seed profiles fill the board until real users displace them by gaining XP.
-// In production, fetch the real roster from /api/leaderboard and merge below.
-const LB_SEED=[
-  {n:"Devon K.",xp:1840,streak:8,tier:"Associate",grad:"linear-gradient(135deg,#BFE3FF,#E2D0FF)"},
-  {n:"Priya S.",xp:1602,streak:5,tier:"Associate",grad:"linear-gradient(135deg,#C4F0D8,#FFE99A)"},
-  {n:"Jordan T.",xp:1088,streak:0,tier:"Intern",grad:"linear-gradient(135deg,#E2D0FF,#FFD7B5)"},
-  {n:"Alex W.",xp:980,streak:3,tier:"Intern",grad:"linear-gradient(135deg,#FFE99A,#C4F0D8)"},
-  {n:"Sam L.",xp:870,streak:1,tier:"Intern",grad:"linear-gradient(135deg,#BFE3FF,#FFD7B5)"},
-  {n:"Riley M.",xp:640,streak:0,tier:"Intern",grad:"linear-gradient(135deg,#C4F0D8,#E2D0FF)"},
-];
-function buildLeaderboard(realName, realXP, realStreak) {
-  const you={n:realName||"You",xp:Math.max(0,realXP||0),streak:realStreak||0,tier:getProfTitle(realXP||0),you:true,grad:"linear-gradient(135deg,#FFD7B5,#FFC9D2)"};
-  const sorted=[...LB_SEED,you].sort((a,b)=>b.xp-a.xp).map((u,i)=>({...u,r:i+1}));
-  const top5=sorted.slice(0,5);
-  if(top5.some(u=>u.you))return top5;
-  return [...sorted.slice(0,4),sorted.find(u=>u.you)];
-}
-
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRunning=()=>{}, setScheduleSettingsOpen=()=>{}, seriousMode=false}) {
   const realStats=sessionStats();
   const realStreak=Math.max(1,getStreak());
   const lvl=levelInfo();
   const wk=weekStreak();
+  // Live top profiles from Firestore, ranked by real XP — fetched once per
+  // mount; "you" is always merged in fresh on every render below so your own
+  // row never lags behind what you just earned.
+  const [topProfiles,setTopProfiles]=useState([]);
+  useEffect(()=>{
+    let cancelled=false;
+    fetchTopProfiles(8).then(rows=>{if(!cancelled)setTopProfiles(rows);});
+    return ()=>{cancelled=true;};
+  },[]);
   const [,forcePlan]=useState(0);
   const [levelRoadmapOpen,setLevelRoadmapOpen]=useState(false);
   const [leaderboardOpen,setLeaderboardOpen]=useState(false);
@@ -6815,8 +6806,9 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
   const qHash=today.split("").reduce((a,c)=>a+c.charCodeAt(0),0);
   const todayQuote=QUOTES[qHash%QUOTES.length];
   const [quoteCopied,setQuoteCopied]=useState(false);
-  // Dynamic leaderboard — real user ranked among seed profiles by actual XP
-  const lbUsers=buildLeaderboard(firstName, lvl.xp, realStreak);
+  // Dynamic leaderboard — real Firestore profiles ranked by actual XP, "you" merged in live
+  const myUid=firebase.auth().currentUser?.uid||null;
+  const lbUsers=mergeLeaderboard(topProfiles, firstName, lvl.xp, realStreak, myUid, 5);
   const lbRankColor=(r)=>r===1?"#FFD700":r===2?"#C0C0C0":r===3?"#CD7F32":T.muted;
   const lbRankBg=(r)=>r===1?"rgba(255,215,0,0.10)":r===2?"rgba(192,192,192,0.07)":r===3?"rgba(205,127,50,0.07)":"transparent";
   return (
@@ -7208,7 +7200,7 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
 
       {/* Modals */}
       <LevelRoadmapModal open={levelRoadmapOpen} onClose={()=>setLevelRoadmapOpen(false)} currentXP={lvl.xp} />
-      <LeaderboardModal open={leaderboardOpen} onClose={()=>setLeaderboardOpen(false)} currentXP={lvl.xp} />
+      <LeaderboardModal open={leaderboardOpen} onClose={()=>setLeaderboardOpen(false)} currentXP={lvl.xp} currentName={firstName} currentStreak={realStreak} />
     </div>
   );
 }
