@@ -7536,6 +7536,7 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
   const lbRankColor=(r)=>r===1?"#FFD700":r===2?"#C0C0C0":r===3?"#CD7F32":T.muted;
   const lbRankBg=(r)=>r===1?"rgba(255,215,0,0.10)":r===2?"rgba(192,192,192,0.07)":r===3?"rgba(205,127,50,0.07)":"transparent";
   return (
+    <>
     <div style={{display:"flex",flexDirection:"column",gap:16,paddingBottom:40}}>
 
       {/* GREETING STRIP — full 3-col in normal mode, single card in Serious Mode */}
@@ -7922,10 +7923,18 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
         </div>
       </div>}
 
-      {/* Modals */}
-      <LevelRoadmapModal open={levelRoadmapOpen} onClose={()=>setLevelRoadmapOpen(false)} currentXP={lvl.xp} />
-      <LeaderboardModal open={leaderboardOpen} onClose={()=>setLeaderboardOpen(false)} currentXP={lvl.xp} currentName={firstName} currentStreak={realStreak} />
     </div>
+    {/* Modals — rendered as siblings of the scrollable content div above, not
+        nested inside it. [data-page] > * gets a staggered entrance animation
+        (studlinChild) that leaves a non-"none" transform applied even after
+        it finishes; that makes whichever div it lands on a containing block
+        for any position:fixed descendant. Nesting these modals inside the
+        content div put them right behind that wall, breaking their
+        centering into being relative to the (possibly scrolled) content div
+        instead of the real viewport. Siblings of it are unaffected. */}
+    <LevelRoadmapModal open={levelRoadmapOpen} onClose={()=>setLevelRoadmapOpen(false)} currentXP={lvl.xp} />
+    <LeaderboardModal open={leaderboardOpen} onClose={()=>setLeaderboardOpen(false)} currentXP={lvl.xp} currentName={firstName} currentStreak={realStreak} />
+    </>
   );
 }
 
@@ -8538,7 +8547,17 @@ function App() {
         </div>
 
         {/* CONTENT */}
-        <div key={active} data-page style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both"}}>
+        {/* onAnimationEnd clears the animation once the tab-switch entrance
+            plays out. A CSS animation that touches `transform` (studlinRise
+            does, for the rise motion) makes this element a containing block
+            for any `position:fixed` descendant — e.g. a modal opened from a
+            page nested in here — for as long as the animation stays
+            attached, even after it's visually finished and the scrolled
+            container is no longer at the top. That silently breaks every
+            such modal's centering into being relative to this scrolled
+            container instead of the real viewport. Clearing it once done
+            keeps the entrance animation but stops that side effect. */}
+        <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both"}}>
           {active==="dashboard"?<Dashboard setActive={setActive} focusSecs={focusSecs} focusRunning={focusRunning} setFocusRunning={setFocusRunning} setScheduleSettingsOpen={setScheduleSettingsOpen} seriousMode={seriousMode} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} />:
            active==="calendar"?<CalendarTab onTourDone={handleCalendarTourDone} onTaskSaved={askNotifIfNeeded} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} />:
