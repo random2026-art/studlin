@@ -4311,6 +4311,10 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
           {weekDays.map((day, colIdx) => {
             const dk = dayKey(day);
             const colEvs = (byDay[dk] || []).filter(ev => ev.time);
+            // Free periods are an open window, not a task — they only ever
+            // render as the transparent punch-out in the School Hours mask
+            // below, never as their own block.
+            const visibleEvs = colEvs.filter(ev => ev.kind !== "free period");
             const isPastDeadline = !!(wkDragDeadline && dk > wkDragDeadline);
             let ghostEl = null;
             if (wkDragOverDay === dk && wkDropTime) {
@@ -4345,7 +4349,7 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
                     <div style={{position:"sticky",top:6,textAlign:"center",fontSize:8,fontWeight:800,letterSpacing:"0.08em",color:"rgba(217,128,107,0.65)",padding:3}}>PAST DUE</div>
                   </div>
                 )}
-                {colEvs.map(ev => {
+                {visibleEvs.map(ev => {
                   const timeParts = ev.time.split(":").map(Number);
                   const hh = timeParts[0]; const mm = timeParts[1];
                   const topPx = (hh * 60 + mm) * (WK_PX_HR / 60);
@@ -5023,7 +5027,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
   // Computed straight from `events`/routines for `selDay` (rather than the
   // month-grid-scoped `byDay`) so the agenda column stays correct even when
   // `selDay` falls in a week outside the visible month grid (Weekly view).
-  const dayEvents=events.filter(ev=>ev.date===selDay).concat(getRoutineOccurrencesForDate(selDay)).sort((a,b)=>a.time<b.time?-1:1);
+  const dayEvents=events.filter(ev=>ev.date===selDay).concat(getRoutineOccurrencesForDate(selDay).filter(o=>o.kind!=="free period")).sort((a,b)=>a.time<b.time?-1:1);
   // Target Date/Start Time start blank — for tasks/study blocks, blank means
   // "let AI schedule this". The clicked day is remembered so fixed-time kinds
   // (exam/class/reminder), which always need a real date, can still default
@@ -5059,16 +5063,37 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
     setToast(true);setTimeout(()=>setToast(false),2200);
     if(onTaskSaved)onTaskSaved();
   };
+  // Manual entry skipped conflict-avoidance entirely — a hand-typed time that
+  // landed inside school hours (or another locked routine block) just saved
+  // as-is. This mirrors the same hard-lock check aiArrange already trusts,
+  // so a manual pick that collides gets bumped to the nearest open slot
+  // (preferring a free period, then whatever's next) instead of overlapping.
+  // Fixed real-world blocks (exam/class/busy block) are exempt, matching
+  // every other auto-shuffle path in this file.
+  const resolveManualSlot=(date,time,duration)=>{
+    if(evKind==="exam"||evKind==="class"||evKind==="busy block")return {date,time};
+    const occupied=events.filter(e=>e.date===date&&e.time)
+      .concat(expandRoutineOccurrences(routines,date,date).filter(o=>o.kind!=="free period"))
+      .map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)}));
+    const tMins=timeToMinutes(time);
+    const conflict=occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end));
+    return conflict?findOpenSlotFor(events,routines,getSchedulePreferences(),date,time,duration):{date,time};
+  };
   const saveManual=()=>{
     if(!evTitle.trim()||!evDate.trim()||!evTime.trim())return;
     if(evSaveToRoutine&&(evKind==="exam"||evKind==="class"||evKind==="busy block")){saveToRoutineFromForm();return;}
-    if(!evSplitEnabled){commitTasks([buildTask(evDate,evTime)]);return;}
+    if(!evSplitEnabled){
+      const slot=resolveManualSlot(evDate,evTime,evDuration);
+      commitTasks([buildTask(slot.date,slot.time)]);
+      return;
+    }
     const groupId="split-"+Date.now();
     const perSession=Math.round(evDuration/evSplitCount);
     const tasks=[];
     for(let i=0;i<evSplitCount;i++){
       const d=new Date(evDate);d.setDate(d.getDate()+i);
-      tasks.push(buildTask(dayKey(d),evTime," ("+(i+1)+"/"+evSplitCount+")",{splitGroup:groupId,splitIndex:i+1,splitTotal:evSplitCount,duration:perSession}));
+      const slot=resolveManualSlot(dayKey(d),evTime,perSession);
+      tasks.push(buildTask(slot.date,slot.time," ("+(i+1)+"/"+evSplitCount+")",{splitGroup:groupId,splitIndex:i+1,splitTotal:evSplitCount,duration:perSession}));
     }
     commitTasks(tasks);
   };
@@ -5468,7 +5493,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
           <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
             {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((d,i)=><div key={i} style={{fontSize:10,fontWeight:600,color:T.muted,textAlign:"center",padding:"6px 0",letterSpacing:"0.05em"}}>{d}</div>)}
             {cells.map((c,i)=>{
-              const evs=byDay[c.key]||[];
+              const evs=(byDay[c.key]||[]).filter(ev=>ev.kind!=="free period");
               const isToday=c.key===todayK;
               const isSel=c.key===selDay;
               return (
