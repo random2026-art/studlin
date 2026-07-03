@@ -4216,6 +4216,46 @@ function TaskTimerModal({task,onClose,onComplete}){
 // ─── WEEKLY PLANNER ───────────────────────────────────────────────────────────
 const WK_PX_HR = 76; // pixels per hour in weekly grid
 
+// Lays out same-day events that overlap in time side-by-side instead of
+// fully stacking on top of each other at full column width — previously any
+// two things landing in the same window (e.g. a class overlapping a
+// manually-added study block) would render on top of one another, clipping
+// whichever card ended up underneath.
+function layoutDayEvents(evs) {
+  const items = evs.map(ev => {
+    const [hh, mm] = ev.time.split(":").map(Number);
+    const start = hh * 60 + mm;
+    return { ev, start, end: start + (ev.duration || 30) };
+  }).sort((a, b) => a.start - b.start || a.end - b.end);
+
+  const clusters = [];
+  let current = [], currentEnd = -Infinity;
+  items.forEach(item => {
+    if (current.length && item.start >= currentEnd) {
+      clusters.push(current);
+      current = [];
+      currentEnd = -Infinity;
+    }
+    current.push(item);
+    currentEnd = Math.max(currentEnd, item.end);
+  });
+  if (current.length) clusters.push(current);
+
+  const laidOut = [];
+  clusters.forEach(cluster => {
+    const columnEnds = [];
+    cluster.forEach(item => {
+      let col = columnEnds.findIndex(end => item.start >= end);
+      if (col === -1) { col = columnEnds.length; columnEnds.push(item.end); }
+      else columnEnds[col] = item.end;
+      item.col = col;
+    });
+    const totalCols = columnEnds.length;
+    cluster.forEach(item => laidOut.push({ ...item, totalCols }));
+  });
+  return laidOut;
+}
+
 function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay}) {
   const wkColRefs = useRef({});
   const weekScrollRef = useRef(null);
@@ -4354,7 +4394,7 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
                     <div style={{position:"sticky",top:6,textAlign:"center",fontSize:8,fontWeight:800,letterSpacing:"0.08em",color:"rgba(217,128,107,0.65)",padding:3}}>PAST DUE</div>
                   </div>
                 )}
-                {visibleEvs.map(ev => {
+                {layoutDayEvents(visibleEvs).map(({ev, col, totalCols}) => {
                   const timeParts = ev.time.split(":").map(Number);
                   const hh = timeParts[0]; const mm = timeParts[1];
                   const topPx = (hh * 60 + mm) * (WK_PX_HR / 60);
@@ -4376,6 +4416,8 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
                       : {background:color+"1E",borderLeft:`3px solid ${color}`,color};
                   const dimmedByRoutineMode = editRoutineMode && !isRoutine;
                   const highlightedByRoutineMode = editRoutineMode && isRoutine;
+                  const leftPct = (col / totalCols) * 100;
+                  const widthPct = 100 / totalCols;
                   return (
                     <div key={ev.id}
                       draggable={!isRoutine}
@@ -4385,7 +4427,7 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
                       onMouseEnter={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(ev.routineId); }}
                       onMouseLeave={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(null); }}
                       title={isRoutine?"Repeats weekly":"Double-click to edit · Drag to reschedule"}
-                      style={{position:"absolute",top:topPx,left:2,right:2,height:heightPx,borderRadius:5,padding:"2px 5px",cursor:isRoutine?(editRoutineMode?"pointer":"default"):"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isDone?0.4:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{})}}>
+                      style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:5,padding:"2px 5px",cursor:isRoutine?(editRoutineMode?"pointer":"default"):"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isDone?0.4:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{})}}>
                       <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                       {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:1}}>{fmtTime(ev.time)}{dur ? " · "+dur+"m" : ""}</div>}
                       {isRoutine&&editRoutineMode&&hoveredRoutineId===ev.routineId&&(
