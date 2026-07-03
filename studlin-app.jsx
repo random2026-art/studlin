@@ -4313,8 +4313,13 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
             const colEvs = (byDay[dk] || []).filter(ev => ev.time);
             // Free periods are an open window, not a task — they only ever
             // render as the transparent punch-out in the School Hours mask
-            // below, never as their own block.
-            const visibleEvs = colEvs.filter(ev => ev.kind !== "free period");
+            // below, never as their own block. The reserved "hs-school" block
+            // itself is also excluded here for the same reason: its entire
+            // span is already drawn by the School Hours mask below, so
+            // rendering it AGAIN as its own solid card would sit on top of
+            // that mask and visually cover the free-period gap it just
+            // punched out.
+            const visibleEvs = colEvs.filter(ev => ev.kind !== "free period" && ev.routineId !== "hs-school");
             const isPastDeadline = !!(wkDragDeadline && dk > wkDragDeadline);
             let ghostEl = null;
             if (wkDragOverDay === dk && wkDropTime) {
