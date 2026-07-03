@@ -4930,6 +4930,12 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
   const [evPriority,setEvPriority]=useState(500); // 0-1000 continuous scale
   const [evDifficulty,setEvDifficulty]=useState(500); // 0-1000 continuous scale for difficulty
   const [evDeadline,setEvDeadline]=useState("");
+  const [evDeadlineTime,setEvDeadlineTime]=useState("23:59");
+  // Explicit AI-Schedule vs Manual-Placement fork for task-kind entries —
+  // replaces the old implicit "fill in Target Date to go manual" behavior,
+  // which showed both the Target Date and Deadline fields at once and left
+  // users unsure which one they were supposed to fill in.
+  const [taskMode,setTaskMode]=useState("ai");
   const [evDuration,setEvDuration]=useState(60);
   const [evSaveToRoutine,setEvSaveToRoutine]=useState(false);
   const [evSplitEnabled,setEvSplitEnabled]=useState(false);
@@ -5092,7 +5098,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
   // (exam/class/reminder), which always need a real date, can still default
   // to it once the user picks one of those types.
   const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("");setEvSubject("None");setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setNewOpen(true);};
-  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvDate("");setEvTime("");setEvPriority(500);setEvDifficulty(500);setEvDeadline("");setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);};
+  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvDate("");setEvTime("");setEvPriority(500);setEvDifficulty(500);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);};
   const onEvKindChange=(k)=>{setEvKind(k);if((k==="exam"||k==="class"||k==="reminder"||k==="busy block")&&!evDate)setEvDate(evPrefillDate);};
   const buildTask=(date,time,titleSuffix,splitInfo)=>{
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
@@ -5159,7 +5165,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
   const aiArrange=async()=>{
     if(!evTitle.trim())return;
     if(evKind==="exam"||evKind==="class"||evKind==="busy block")return; // fixed real-world blocks — AI never touches these
-    if(evDate.trim()&&evTime.trim())return; // a manual Target Date/Start Time is set — use Save manually instead
+    if(taskMode==="manual")return; // Manual Placement is active — use Save to Calendar instead
     setAiLoading(true);
     const now=new Date();
     const tk=dayKey();
@@ -5191,7 +5197,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
     // avoid conflicts and prefer free-period windows, but "strictly
     // forbidden" needs a real guarantee, not just advisory text.
     const findOpenSlot=(desiredDate,desiredTime,duration)=>findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration);
-    const prompt="You are a scheduling AI. The user's LIVE clock reads "+nowTime+" on "+tk+". Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+priorityLabel+(evDeadline?". Deadline: "+evDeadline:"")+". Existing schedule, including recurring classes/activities that repeat weekly — treat every one of these as a hard block you may NEVER overlap: "+JSON.stringify(existing)+". Free/open windows (free periods or study halls) good for short sub-20-minute sessions specifically: "+JSON.stringify(freeAhead)+". The user's preferred daily study window is "+prefs.workStartTime+"–"+prefs.workEndTime+" — always fill that window first, chronologically from the start, before ever using time outside it. STRICT RULES (violations are forbidden): 1) NEVER place any session before "+earliestTodayTime+" on today ("+tk+") — those slots have already passed. 2) The earliest you may schedule anything today is "+earliestTodayTime+". 3) If today has no open window at or after "+earliestTodayTime+", start from "+firstAvailDate+" instead. 4) Prefer sessions within "+prefs.workStartTime+"-"+prefs.workEndTime+"; only expand outside that range (up to 08:00-22:00) if the preferred window is fully booked that day. 5) Higher priority = earlier slots. 6) Must be before deadline. 7) NEVER overlap anything in the existing schedule, including recurring blocks — this is non-negotiable. 8) If this session is 20 minutes or less, prefer placing it inside one of the free/open windows listed above. 9) Spread splits across days. Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
+    const prompt="You are a scheduling AI. The user's LIVE clock reads "+nowTime+" on "+tk+". Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+priorityLabel+(evDeadline?". Deadline: "+evDeadline+" "+(evDeadlineTime||"23:59"):"")+". Existing schedule, including recurring classes/activities that repeat weekly — treat every one of these as a hard block you may NEVER overlap: "+JSON.stringify(existing)+". Free/open windows (free periods or study halls) good for short sub-20-minute sessions specifically: "+JSON.stringify(freeAhead)+". The user's preferred daily study window is "+prefs.workStartTime+"–"+prefs.workEndTime+" — always fill that window first, chronologically from the start, before ever using time outside it. STRICT RULES (violations are forbidden): 1) NEVER place any session before "+earliestTodayTime+" on today ("+tk+") — those slots have already passed. 2) The earliest you may schedule anything today is "+earliestTodayTime+". 3) If today has no open window at or after "+earliestTodayTime+", start from "+firstAvailDate+" instead. 4) Prefer sessions within "+prefs.workStartTime+"-"+prefs.workEndTime+"; only expand outside that range (up to 08:00-22:00) if the preferred window is fully booked that day. 5) Higher priority = earlier slots. 6) Must be before deadline. 7) NEVER overlap anything in the existing schedule, including recurring blocks — this is non-negotiable. 8) If this session is 20 minutes or less, prefer placing it inside one of the free/open windows listed above. 9) Spread splits across days. Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
     // If the AI call fails or returns nothing usable, fall back to a fully
     // deterministic placement — evDate/evTime are blank in AI mode, so
     // saveManual() isn't usable here.
@@ -5290,8 +5296,14 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
   const isFixedKind=evKind==="exam"||evKind==="class"||evKind==="busy block";
   const isReminderKind=evKind==="reminder";
   const isTaskKind=!isFixedKind&&!isReminderKind;
-  const manualMode=isTaskKind&&evDate.trim()!==""&&evTime.trim()!=="";
-  const aiMode=isTaskKind&&!manualMode&&evDeadline.trim()!=="";
+  const manualMode=isTaskKind&&taskMode==="manual";
+  // Switching modes clears whichever fields the other path owns, so a stale
+  // value left over from the previous mode can't accidentally satisfy a
+  // guard (e.g. aiArrange bailing because evDate still held an old value).
+  const selectTaskMode=(m)=>{
+    setTaskMode(m);
+    if(m==="ai"){setEvDate("");setEvTime("");}
+  };
   return (
     <>
     {/* Main content — this is data-page's direct child, so it's the element
@@ -5417,25 +5429,31 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
         footer={
           isReminderKind||isFixedKind
             ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!(evTitle.trim()&&evDate.trim()&&evTime.trim())} style={{opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>{isReminderKind?"Save reminder":"Save"}</Btn></>
-            : <>
-                <Btn variant="subtle" onClick={resetForm}>Cancel</Btn>
-                <Btn variant="ghost" onClick={saveManual} disabled={!evTitle.trim()||!manualMode} style={{opacity:!evTitle.trim()?0.45:(manualMode?1:0.45)}}>Save manually</Btn>
-                <Btn onClick={aiArrange} disabled={aiLoading||manualMode||!evTitle.trim()} style={{opacity:aiLoading?1:(!evTitle.trim()?0.45:(manualMode?0.45:1))}}>{aiLoading?"Scheduling...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.wand,"AI arrange")}</Btn>
-              </>
+            : taskMode==="manual"
+              ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!evTitle.trim()||!evDate.trim()||!evTime.trim()} style={{flex:1,justifyContent:"center",opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>Save to Calendar</Btn></>
+              : <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={aiArrange} disabled={aiLoading||!evTitle.trim()} style={{flex:1,justifyContent:"center",opacity:aiLoading?1:(!evTitle.trim()?0.45:1)}}>{aiLoading?"Scheduling...":"Add Task with AI"}</Btn></>
         }>
         <Field label="Title"><Input placeholder="e.g. Study Bio chapter 4-6" value={evTitle} onChange={ev=>setEvTitle(ev.target.value)} autoFocus /></Field>
 
-        <Field label="Type" hint={isFixedKind?"Fixed real-world block — Studlin will never move or reschedule this.":"Choose the task type to determine scheduling behavior"}>
-          <SelectChip options={["deadline","exam","class","study block","reminder","busy block"]} value={evKind} onChange={onEvKindChange} />
+        <Field label="Type" hint={isFixedKind?"Fixed real-world block — Studlin will never move or reschedule this.":"Choose what kind of entry this is"}>
+          <SelectChip options={[{value:"deadline",label:"Task"},"exam","class","study block","reminder","busy block"]} value={evKind} onChange={onEvKindChange} />
         </Field>
 
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <Field label={isTaskKind?"Target Date":"Date"} hint={isTaskKind?"Only fill this out for a manual entry. Leave blank to let AI automatically schedule this.":undefined}>
-            <Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} />
+        {isTaskKind&&(
+          <Field label="Scheduling">
+            <div style={{display:"flex",gap:6,padding:3,background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,marginBottom:2}}>
+              <button type="button" onClick={()=>selectTaskMode("ai")} style={{flex:1,padding:"8px 10px",borderRadius:7,border:"none",background:taskMode==="ai"?T.lime:"transparent",color:taskMode==="ai"?T.ink:T.muted,fontSize:12.5,fontWeight:taskMode==="ai"?700:500,cursor:"pointer",fontFamily:T.font,transition:"all 0.15s"}}>AI Schedule Mode</button>
+              <button type="button" onClick={()=>selectTaskMode("manual")} style={{flex:1,padding:"8px 10px",borderRadius:7,border:"none",background:taskMode==="manual"?T.lime:"transparent",color:taskMode==="manual"?T.ink:T.muted,fontSize:12.5,fontWeight:taskMode==="manual"?700:500,cursor:"pointer",fontFamily:T.font,transition:"all 0.15s"}}>Manual Placement</button>
+            </div>
           </Field>
-          <Field label={isReminderKind?"Reminder time":"Start time"}><TimeInput value={evTime} onChange={setEvTime} /></Field>
-        </div>
-        {manualMode&&<div style={{fontSize:11,color:T.amber,fontWeight:600,marginTop:-6,marginBottom:14}}>Using manual date. Clear Target Date to use AI scheduling.</div>}
+        )}
+
+        {!isTaskKind&&(
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <Field label="Date"><Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} /></Field>
+            <Field label={isReminderKind?"Reminder time":"Start time"}><TimeInput value={evTime} onChange={setEvTime} /></Field>
+          </div>
+        )}
 
         {isFixedKind&&(
           <>
@@ -5448,13 +5466,28 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
           </>
         )}
 
-        {isTaskKind&&(
-          <>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-              <Field label="Deadline" hint="When this must be done by"><Input type="date" value={evDeadline} onChange={ev=>setEvDeadline(ev.target.value)} /></Field>
-              <Field label="Duration (minutes)" hint="How long you plan to spend"><NumField min={5} max={480} fallback={5} value={evDuration} onChange={setEvDuration} /></Field>
-            </div>
+        {isTaskKind&&taskMode==="manual"&&(
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <Field label="Date"><Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} /></Field>
+            <Field label="Start Time"><TimeInput value={evTime} onChange={setEvTime} /></Field>
+          </div>
+        )}
 
+        {isTaskKind&&taskMode==="ai"&&(
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <Field label="Due Date & Time" hint="When this must be done by">
+              <Input type="date" value={evDeadline} onChange={ev=>setEvDeadline(ev.target.value)} />
+            </Field>
+            <Field label="Due time"><TimeInput value={evDeadlineTime} onChange={setEvDeadlineTime} /></Field>
+          </div>
+        )}
+
+        {isTaskKind&&(
+          <Field label="Duration (minutes)" hint="How long you plan to spend"><NumField min={5} max={480} fallback={5} value={evDuration} onChange={setEvDuration} /></Field>
+        )}
+
+        {isTaskKind&&taskMode==="ai"&&(
+          <>
             <Field label={`Priority: ${Math.round(evPriority/10)}%`} hint="Higher priority tasks are scheduled earlier">
               <div style={{display:"flex",alignItems:"center",gap:12}}>
                 <span style={{fontSize:11,color:T.muted,width:28}}>Low</span>
@@ -5502,7 +5535,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
       <Modal open={editOpen} onClose={closeEdit} title="Edit task" sub="Update this task's details." width={580}
         footer={<><Btn variant="subtle" onClick={closeEdit}>Cancel</Btn><Btn onClick={saveEdit} disabled={!editTitle.trim()} style={{opacity:editTitle.trim()?1:0.45}}>Save changes</Btn></>}>
         <Field label="Title"><Input value={editTitle} onChange={e=>setEditTitle(e.target.value)} autoFocus /></Field>
-        <Field label="Type"><SelectChip options={["deadline","exam","class","study block","reminder","busy block"]} value={editKind} onChange={setEditKind} /></Field>
+        <Field label="Type"><SelectChip options={[{value:"deadline",label:"Task"},"exam","class","study block","reminder","busy block"]} value={editKind} onChange={setEditKind} /></Field>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
           <Field label="Scheduled date"><Input type="date" value={editDate} onChange={e=>setEditDate(e.target.value)} /></Field>
           <Field label={editKind==="reminder"?"Reminder time":"Start time"}><TimeInput value={editTime} onChange={setEditTime} /></Field>
