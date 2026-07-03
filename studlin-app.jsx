@@ -599,6 +599,45 @@ const DEFAULT_SUBJECTS=[
 ];
 const getSubjects=()=>lsGet("user-subjects",DEFAULT_SUBJECTS);
 const saveSubjects=(s)=>lsSet("user-subjects",s);
+
+// ─── WEEKLY ROUTINE ("Time Shields") ─────────────────────────────────────────
+// A routine rule is a recurring commitment: {id,title,kind,days,startTime,
+// duration,subject}. `days` is Monday-first (0=Mon..6=Sun), matching
+// WeeklyPlanner's own weekDays convention below. Rules are never copied into
+// the one-off `events` array — they're expanded into virtual occurrences on
+// demand for whatever date range is being rendered or scheduled, so editing
+// or deleting one rule instantly and correctly applies to every week without
+// any bulk-update pass.
+const getWeeklyRoutine=()=>lsGet("weeklyRoutine",[]);
+const saveWeeklyRoutine=(r)=>lsSet("weeklyRoutine",r);
+const ROUTINE_KIND_TO_EVENT_KIND={class:"class",busy:"busy block",free:"free period"};
+function expandRoutineOccurrences(routines,startDateKey,endDateKey){
+  const out=[];
+  if(!routines||routines.length===0)return out;
+  const start=new Date(startDateKey+"T00:00:00");
+  const end=new Date(endDateKey+"T00:00:00");
+  for(let d=new Date(start);d<=end;d.setDate(d.getDate()+1)){
+    const dk=dayKey(d);
+    const dow=(d.getDay()+6)%7; // JS Sunday=0 → Monday-first 0..6
+    routines.forEach(r=>{
+      if(!r.days||!r.days.includes(dow))return;
+      out.push({
+        id:"routine-"+r.id+"-"+dk,
+        routineId:r.id,
+        title:r.title,
+        date:dk,
+        time:r.startTime,
+        duration:r.duration||30,
+        kind:ROUTINE_KIND_TO_EVENT_KIND[r.kind]||"class",
+        subject:r.subject||"",
+        status:"pending",
+        isRoutine:true,
+      });
+    });
+  }
+  return out;
+}
+const getRoutineOccurrencesForDate=(dateKey)=>expandRoutineOccurrences(getWeeklyRoutine(),dateKey,dateKey);
 const diffLabel=(v)=>{const p=v/10;return p<=20?"Easy":p<=40?"Moderately Easy":p<=60?"Medium":p<=80?"Moderately Hard":"Hard";};
 const prioLabel=(v)=>{const p=v/10;return p<=20?"Low":p<=40?"Low–Medium":p<=60?"Medium":p<=80?"High":"Urgent";};
 async function getAuthToken(){try{const u=firebase.auth().currentUser;if(!u)return null;return await u.getIdToken();}catch(e){return null;}}
@@ -858,18 +897,15 @@ function chunkTasksWithBreaks(tasks){
 }
 
 // Feature 5: Conflict detection (detect overlaps with hard events)
-function detectConflicts(task,allTasks,startMins){
-  const prefs=getSchedulePreferences();
+// Checks a proposed [startMins, startMins+duration) window against a list of
+// already-occupied {start,end} slots. (This used to check `.time`/`.id`/
+// `.isFlexible` on entries that never had those fields — always `false`,
+// i.e. conflict detection was silently inert. Now it actually does interval
+// overlap math against the shape callers actually pass.)
+function detectConflicts(task,occupiedSlots,startMins){
   const taskDur=task.duration||30;
   const taskEnd=startMins+taskDur;
-  
-  // Check for collisions with hard events (non-flexible tasks)
-  return allTasks.some(other=>{
-    if(other.id===task.id||!other.time||other.isFlexible)return false;
-    const otherStart=timeToMinutes(other.time);
-    const otherEnd=otherStart+(other.duration||30);
-    return!(taskEnd<=otherStart||startMins>=otherEnd);
-  });
+  return occupiedSlots.some(slot=>!(taskEnd<=slot.start||startMins>=slot.end));
 }
 
 // Feature 2+Features 1,3,4,5: Integrated advanced scheduler
@@ -877,12 +913,12 @@ function advancedSchedulePlanner(baseEvents){
   const prefs=getSchedulePreferences();
   const tk=dayKey();
   const done=lsGet("planDone",{});
-  
+
   // Get all events for today
   const events=baseEvents.filter(e=>e.date===tk);
   const now=new Date();
   const nowMins=timeToMinutes(String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0"));
-  
+
   // Time window constraints
   const workStart=timeToMinutes(prefs.workStartTime);
   const workEnd=timeToMinutes(prefs.workEndTime);
@@ -890,50 +926,74 @@ function advancedSchedulePlanner(baseEvents){
   // Separate hard events (fixed time) and flexible tasks
   const hardEvents=events.filter(e=>!e.isFlexible&&e.time);
   const flexibleTasks=events.filter(e=>e.isFlexible||!e.time).sort((a,b)=>calculateTaskPriority(b,events)-calculateTaskPriority(a,events));
-  
+
   // Chunk long flexible tasks and add breaks
   const flexibleChunked=chunkTasksWithBreaks(flexibleTasks);
-  
+
   // Sort hard events by time
   hardEvents.sort((a,b)=>(a.time||"")<(b.time||"")?-1:1);
-  
+
+  // Weekly Routine occurrences for today are absolute shields, folded into
+  // occupiedSlots right alongside real hard events. "Free period" occurrences
+  // are tracked separately as preferred landing spots for short micro-tasks.
+  const routineToday=getRoutineOccurrencesForDate(tk);
+  const shieldOccurrences=routineToday.filter(r=>r.kind!=="free period");
+  const freeWindows=routineToday.filter(r=>r.kind==="free period").map(r=>({start:timeToMinutes(r.time),end:timeToMinutes(r.time)+(r.duration||30)}));
+
   const scheduled=[];
-  const occupiedSlots=hardEvents.map(e=>({
-    start:timeToMinutes(e.time),
-    end:timeToMinutes(e.time)+(e.duration||30),
-    event:e,
-  }));
-  
+  const occupiedSlots=[
+    ...hardEvents.map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30),event:e})),
+    ...shieldOccurrences.map(r=>({start:timeToMinutes(r.time),end:timeToMinutes(r.time)+(r.duration||30),event:r})),
+  ];
+
   // Place hard events
   hardEvents.forEach(e=>{
     scheduled.push({...e,done:!!done[e.id],scheduled:true});
   });
-  
+
   // Place flexible tasks in available windows
   flexibleChunked.forEach(task=>{
     if(task.isBreak){
       scheduled.push(task);
       return;
     }
-    
+
     const dur=task.duration||30;
     let placed=false;
-    
-    // Try to find first available slot within work window
-    for(let timeSlot=workStart;timeSlot+dur<=workEnd;timeSlot+=15){
-      if(!detectConflicts(task,occupiedSlots,timeSlot)){
-        occupiedSlots.push({start:timeSlot,end:timeSlot+dur,task:task});
-        scheduled.push({
-          ...task,
-          time:minutesToTime(timeSlot),
-          done:!!done[task.id],
-          scheduled:true,
-        });
-        placed=true;
-        break;
+
+    // Short tasks (flashcards/quick review, ≤20 min) preferentially land
+    // inside a free-period/study-hall window before using the general peak
+    // window — that's the "Dead Time Activation" the free periods exist for.
+    if(dur<=20){
+      for(const w of freeWindows){
+        for(let timeSlot=w.start;timeSlot+dur<=w.end&&!placed;timeSlot+=15){
+          if(!detectConflicts(task,occupiedSlots,timeSlot)){
+            occupiedSlots.push({start:timeSlot,end:timeSlot+dur,task:task});
+            scheduled.push({...task,time:minutesToTime(timeSlot),done:!!done[task.id],scheduled:true});
+            placed=true;
+          }
+        }
+        if(placed)break;
       }
     }
-    
+
+    // Try to find first available slot within work window
+    if(!placed){
+      for(let timeSlot=workStart;timeSlot+dur<=workEnd;timeSlot+=15){
+        if(!detectConflicts(task,occupiedSlots,timeSlot)){
+          occupiedSlots.push({start:timeSlot,end:timeSlot+dur,task:task});
+          scheduled.push({
+            ...task,
+            time:minutesToTime(timeSlot),
+            done:!!done[task.id],
+            scheduled:true,
+          });
+          placed=true;
+          break;
+        }
+      }
+    }
+
     if(!placed){
       scheduled.push({
         ...task,
@@ -943,7 +1003,7 @@ function advancedSchedulePlanner(baseEvents){
       });
     }
   });
-  
+
   return scheduled;
 }
 
@@ -4105,7 +4165,7 @@ function TaskTimerModal({task,onClose,onComplete}){
 // ─── WEEKLY PLANNER ───────────────────────────────────────────────────────────
 const WK_PX_HR = 64; // pixels per hour in weekly grid
 
-function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit}) {
+function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine}) {
   const wkColRefs = useRef({});
   const weekScrollRef = useRef(null);
   const [wkDragId, setWkDragId] = useState(null);
@@ -4130,6 +4190,10 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
 
   const byDay = {};
   events.forEach(ev => { (byDay[ev.date] = byDay[ev.date] || []).push(ev); });
+  // Merge in virtual Weekly Routine occurrences for the visible week — same
+  // never-persisted expansion CalendarTab does for the Monthly grid.
+  expandRoutineOccurrences(routines||[], dayKey(weekDays[0]), dayKey(weekDays[6]))
+    .forEach(ev => { (byDay[ev.date] = byDay[ev.date] || []).push(ev); });
 
   const handleDragOver = (e, dk) => {
     e.preventDefault();
@@ -4231,6 +4295,7 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
                   const color = over > 0 ? T.red : colorOf(ev.subject);
                   const isStudy = ev.kind === "study block";
                   const isExam = ev.kind === "exam";
+                  const isRoutine = !!ev.isRoutine;
                   // Study blocks: solid subject-color fill. Exams: dark canvas with a
                   // thick glowing subject-color border. Everything else (class,
                   // deadline, reminder): the original thin left-accent strip.
@@ -4239,15 +4304,24 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
                     : isExam
                       ? {background:T.ink,border:`2px solid ${color}`,borderLeft:`2px solid ${color}`,boxShadow:`0 0 10px -1px ${color}, inset 0 0 10px ${color}22`,color:T.cream}
                       : {background:color+"1E",borderLeft:`3px solid ${color}`,color};
+                  const dimmedByRoutineMode = editRoutineMode && !isRoutine;
+                  const highlightedByRoutineMode = editRoutineMode && isRoutine;
                   return (
                     <div key={ev.id}
-                      draggable
-                      onDragStart={()=>{ setWkDragId(ev.id); setWkDragDeadline(ev.deadline||null); }}
-                      onDoubleClick={()=>openEdit(ev)}
-                      title="Double-click to edit · Drag to reschedule"
-                      style={{position:"absolute",top:topPx,left:2,right:2,height:heightPx,borderRadius:5,padding:"2px 5px",cursor:"grab",overflow:"hidden",zIndex:3,opacity:isDone?0.4:1,boxSizing:"border-box",userSelect:"none",...kindStyle}}>
-                      <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"EXAM · ":""}{ev.title}</div>
+                      draggable={!isRoutine}
+                      onDragStart={()=>{ if(!isRoutine){setWkDragId(ev.id); setWkDragDeadline(ev.deadline||null);} }}
+                      onDoubleClick={()=>{ if(!isRoutine)openEdit(ev); }}
+                      onClick={()=>{ if(isRoutine&&editRoutineMode&&onEditRoutine)onEditRoutine(ev.routineId); }}
+                      onMouseEnter={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(ev.routineId); }}
+                      onMouseLeave={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(null); }}
+                      title={isRoutine?"Repeats weekly":"Double-click to edit · Drag to reschedule"}
+                      style={{position:"absolute",top:topPx,left:2,right:2,height:heightPx,borderRadius:5,padding:"2px 5px",cursor:isRoutine?(editRoutineMode?"pointer":"default"):"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isDone?0.4:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{})}}>
+                      <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isRoutine?"↻ ":""}{isExam?"EXAM · ":""}{ev.title}</div>
                       {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:1}}>{fmtTime(ev.time)}{dur ? " · "+dur+"m" : ""}</div>}
+                      {isRoutine&&editRoutineMode&&hoveredRoutineId===ev.routineId&&(
+                        <button onClick={(e)=>{e.stopPropagation();if(onDeleteRoutine)onDeleteRoutine(ev.routineId);if(setHoveredRoutineId)setHoveredRoutineId(null);}} title="Delete this routine block (every week)"
+                          style={{position:"absolute",top:-8,right:-8,width:18,height:18,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.red,fontSize:11,lineHeight:1,cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 4px 10px -2px rgba(0,0,0,0.4)"}}>×</button>
+                      )}
                     </div>
                   );
                 })}
@@ -4310,15 +4384,55 @@ function CalendarTab({onTourDone}={}){
   const [evDifficulty,setEvDifficulty]=useState(500); // 0-1000 continuous scale for difficulty
   const [evDeadline,setEvDeadline]=useState("");
   const [evDuration,setEvDuration]=useState(60);
+  const [evSaveToRoutine,setEvSaveToRoutine]=useState(false);
   const [evSplitEnabled,setEvSplitEnabled]=useState(false);
   const [evSplitCount,setEvSplitCount]=useState(2);
   const [aiLoading,setAiLoading]=useState(false);
   const [toast,setToast]=useState(false);
   const [dragId,setDragId]=useState(null);
-  const [calView,setCalView]=useState("monthly");
+  // Sticky across tab switches — CalendarTab fully remounts every time the
+  // user navigates away and back (key={active} at the App level), so plain
+  // useState would silently reset this to "monthly" every time.
+  const [calView,setCalViewState]=useState(()=>lsGet("calView","monthly"));
+  const setCalView=(v)=>{setCalViewState(v);lsSet("calView",v);};
   const [weekOffset,setWeekOffset]=useState(0);
   const [editOpen,setEditOpen]=useState(false);
   const [editEv,setEditEv]=useState(null);
+  // Weekly Routine ("Time Shields") — recurring rules, kept in React state so
+  // add/edit/delete re-renders immediately, mirrored to localStorage on every
+  // change via saveWeeklyRoutine.
+  const [routines,setRoutinesState]=useState(()=>getWeeklyRoutine());
+  const persistRoutines=(r)=>{setRoutinesState(r);saveWeeklyRoutine(r);};
+  const deleteRoutineItem=(routineId)=>persistRoutines(routines.filter(r=>r.id!==routineId));
+  const [editRoutineMode,setEditRoutineMode]=useState(false);
+  const [hoveredRoutineId,setHoveredRoutineId]=useState(null);
+  const [routineEditItem,setRoutineEditItem]=useState(null); // the underlying rule being edited, or null
+  const [riTitle,setRiTitle]=useState("");
+  const [riKind,setRiKind]=useState("class");
+  const [riDays,setRiDays]=useState([]);
+  const [riStartTime,setRiStartTime]=useState("09:00");
+  const [riDuration,setRiDuration]=useState(50);
+  const [riSubject,setRiSubject]=useState("None");
+  const openRoutineEdit=(rule)=>{
+    setRoutineEditItem(rule);
+    setRiTitle(rule.title||"");
+    setRiKind(rule.kind||"class");
+    setRiDays(rule.days||[]);
+    setRiStartTime(rule.startTime||"09:00");
+    setRiDuration(rule.duration||50);
+    setRiSubject(rule.subject||"None");
+  };
+  const closeRoutineEdit=()=>setRoutineEditItem(null);
+  const saveRoutineEdit=()=>{
+    if(!routineEditItem||!riTitle.trim()||riDays.length===0)return;
+    persistRoutines(routines.map(r=>r.id===routineEditItem.id?{...r,title:riTitle.trim(),kind:riKind,days:riDays,startTime:riStartTime,duration:riDuration,subject:riSubject==="None"?"":riSubject}:r));
+    closeRoutineEdit();
+  };
+  const deleteRoutineEdit=()=>{
+    if(!routineEditItem)return;
+    deleteRoutineItem(routineEditItem.id);
+    closeRoutineEdit();
+  };
   const [groupSyncOpen,setGroupSyncOpen]=useState(false);
   const [gsStep,setGsStep]=useState(1);
   const [gsDueDate,setGsDueDate]=useState(dayKey());
@@ -4346,6 +4460,13 @@ function CalendarTab({onTourDone}={}){
   for(let d=1;d<=dim;d++)cells.push({d,out:false,key:dayKey(new Date(ym.y,ym.m,d))});
   let nx=1;while(cells.length%7!==0){cells.push({d:nx,out:true,key:dayKey(new Date(ym.y,ym.m+1,nx))});nx++;}
   const byDay={};events.forEach(ev=>{(byDay[ev.date]=byDay[ev.date]||[]).push(ev);});
+  // Merge in virtual Weekly Routine occurrences for the visible grid range —
+  // never persisted, just expanded fresh every render so editing/deleting a
+  // rule instantly reflects across every week without any migration pass.
+  if(cells.length>0){
+    expandRoutineOccurrences(routines,cells[0].key,cells[cells.length-1].key)
+      .forEach(ev=>{(byDay[ev.date]=byDay[ev.date]||[]).push(ev);});
+  }
   const todayK=dayKey();
   const fmtTime=(t)=>{const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
   const niceDate=(k)=>{const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});};
@@ -4371,9 +4492,9 @@ function CalendarTab({onTourDone}={}){
   // "let AI schedule this". The clicked day is remembered so fixed-time kinds
   // (exam/class/reminder), which always need a real date, can still default
   // to it once the user picks one of those types.
-  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("");setEvSubject("None");setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setNewOpen(true);};
-  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvDate("");setEvTime("");setEvPriority(500);setEvDifficulty(500);setEvDeadline("");setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);};
-  const onEvKindChange=(k)=>{setEvKind(k);if((k==="exam"||k==="class"||k==="reminder")&&!evDate)setEvDate(evPrefillDate);};
+  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("");setEvSubject("None");setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setNewOpen(true);};
+  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvDate("");setEvTime("");setEvPriority(500);setEvDifficulty(500);setEvDeadline("");setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);};
+  const onEvKindChange=(k)=>{setEvKind(k);if((k==="exam"||k==="class"||k==="reminder"||k==="busy block")&&!evDate)setEvDate(evPrefillDate);};
   const buildTask=(date,time,titleSuffix,splitInfo)=>{
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
     return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,kind:evKind,notes:evNotes,priority:Math.round(evPriority/100),difficulty:Math.round(evDifficulty/100),deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,...(splitInfo||{})};
@@ -4386,8 +4507,23 @@ function CalendarTab({onTourDone}={}){
     const d=newTasks[0].date;if(d.slice(0,7)!==(ym.y+"-"+String(ym.m+1).padStart(2,"0"))){const p=d.split("-");setYm({y:+p[0],m:+p[1]-1});}
     setToast(true);setTimeout(()=>setToast(false),2200);
   };
+  // Turns the current form into a recurring routine rule instead of a
+  // one-off event — used when "Save to my Weekly Routine" is checked. Only
+  // the single day-of-week the picked date falls on is captured; it then
+  // materializes on every matching weekday going forward (today included),
+  // so no separate one-off `events` entry is created alongside it.
+  const saveToRoutineFromForm=()=>{
+    const d=new Date(evDate+"T00:00:00");
+    const dow=(d.getDay()+6)%7;
+    const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
+    const rule={id:String(Date.now()+Math.random()*1000),title:evTitle.trim(),kind:evKind==="class"?"class":"busy",days:[dow],startTime:evTime,duration:evDuration,subject:subj};
+    saveWeeklyRoutine([...getWeeklyRoutine(),rule]);
+    resetForm();setSelDay(evDate);
+    setToast(true);setTimeout(()=>setToast(false),2200);
+  };
   const saveManual=()=>{
     if(!evTitle.trim()||!evDate.trim()||!evTime.trim())return;
+    if(evSaveToRoutine&&(evKind==="exam"||evKind==="class"||evKind==="busy block")){saveToRoutineFromForm();return;}
     if(!evSplitEnabled){commitTasks([buildTask(evDate,evTime)]);return;}
     const groupId="split-"+Date.now();
     const perSession=Math.round(evDuration/evSplitCount);
@@ -4400,7 +4536,7 @@ function CalendarTab({onTourDone}={}){
   };
   const aiArrange=async()=>{
     if(!evTitle.trim())return;
-    if(evKind==="exam"||evKind==="class")return; // fixed real-world blocks — AI never touches these
+    if(evKind==="exam"||evKind==="class"||evKind==="busy block")return; // fixed real-world blocks — AI never touches these
     if(evDate.trim()&&evTime.trim())return; // a manual Target Date/Start Time is set — use Save manually instead
     setAiLoading(true);
     const now=new Date();
@@ -4420,18 +4556,43 @@ function CalendarTab({onTourDone}={}){
     const splitCount=evSplitEnabled?evSplitCount:1;
     const todayWindowMins=Math.max(0,prefEndMins-earliestTodayMins);
     const firstAvailDate=todayWindowMins>=perSession?tk:(()=>{const d=new Date(now);d.setDate(d.getDate()+1);return dayKey(d);})();
-    const existing=events.filter(ev=>ev.date>=tk).map(ev=>({title:ev.title,date:ev.date,time:ev.time,duration:ev.duration||60}));
+    const horizonEnd=(()=>{const d=new Date(now);d.setDate(d.getDate()+13);return dayKey(d);})();
+    const routineAhead=expandRoutineOccurrences(routines,tk,horizonEnd);
+    const existing=events.filter(ev=>ev.date>=tk).concat(routineAhead).map(ev=>({title:ev.title,date:ev.date,time:ev.time,duration:ev.duration||60}));
+    const freeAhead=routineAhead.filter(r=>r.kind==="free period").map(r=>({date:r.date,time:r.time,duration:r.duration}));
     const priorityLabel=evPriority<200?"Low":evPriority<400?"Medium-Low":evPriority<600?"Medium":evPriority<800?"High":"Urgent";
-    const prompt="You are a scheduling AI. The user's LIVE clock reads "+nowTime+" on "+tk+". Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+priorityLabel+(evDeadline?". Deadline: "+evDeadline:"")+". Existing schedule: "+JSON.stringify(existing)+". The user's preferred daily study window is "+prefs.workStartTime+"–"+prefs.workEndTime+" — always fill that window first, chronologically from the start, before ever using time outside it. STRICT RULES (violations are forbidden): 1) NEVER place any session before "+earliestTodayTime+" on today ("+tk+") — those slots have already passed. 2) The earliest you may schedule anything today is "+earliestTodayTime+". 3) If today has no open window at or after "+earliestTodayTime+", start from "+firstAvailDate+" instead. 4) Prefer sessions within "+prefs.workStartTime+"-"+prefs.workEndTime+"; only expand outside that range (up to 08:00-22:00) if the preferred window is fully booked that day. 5) Higher priority = earlier slots. 6) Must be before deadline. 7) Avoid conflicts. 8) Spread splits across days. Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
-    // If the AI call fails or returns nothing usable, fall back to placing
-    // sessions chronologically starting at the earliest available slot —
-    // evDate/evTime are blank in AI mode, so saveManual() isn't usable here.
+    // Deterministic hard-lock enforcement — the prompt below asks the LLM to
+    // avoid conflicts and prefer free-period windows, but "strictly
+    // forbidden" needs a real guarantee, not just advisory text. This scans
+    // forward from a desired date/time for the next slot that's actually
+    // open against both real events and Weekly Routine shields.
+    const findOpenSlot=(desiredDate,desiredTime,duration)=>{
+      for(let dayOffset=0;dayOffset<14;dayOffset++){
+        const d=new Date(desiredDate+"T12:00:00");d.setDate(d.getDate()+dayOffset);
+        const dk=dayKey(d);
+        const occupied=events.filter(e=>e.date===dk&&e.time)
+          .concat(getRoutineOccurrencesForDate(dk))
+          .map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)}));
+        const scanStart=dayOffset===0?Math.max(prefStartMins,timeToMinutes(desiredTime)):prefStartMins;
+        for(let t=scanStart;t+duration<=prefEndMins;t+=15){
+          if(!occupied.some(o=>!(t+duration<=o.start||t>=o.end)))return {date:dk,time:minutesToTime(t)};
+        }
+      }
+      return {date:desiredDate,time:desiredTime}; // nothing open in two weeks — better than silently dropping the task
+    };
+    const prompt="You are a scheduling AI. The user's LIVE clock reads "+nowTime+" on "+tk+". Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+priorityLabel+(evDeadline?". Deadline: "+evDeadline:"")+". Existing schedule, including recurring classes/activities that repeat weekly — treat every one of these as a hard block you may NEVER overlap: "+JSON.stringify(existing)+". Free/open windows (free periods or study halls) good for short sub-20-minute sessions specifically: "+JSON.stringify(freeAhead)+". The user's preferred daily study window is "+prefs.workStartTime+"–"+prefs.workEndTime+" — always fill that window first, chronologically from the start, before ever using time outside it. STRICT RULES (violations are forbidden): 1) NEVER place any session before "+earliestTodayTime+" on today ("+tk+") — those slots have already passed. 2) The earliest you may schedule anything today is "+earliestTodayTime+". 3) If today has no open window at or after "+earliestTodayTime+", start from "+firstAvailDate+" instead. 4) Prefer sessions within "+prefs.workStartTime+"-"+prefs.workEndTime+"; only expand outside that range (up to 08:00-22:00) if the preferred window is fully booked that day. 5) Higher priority = earlier slots. 6) Must be before deadline. 7) NEVER overlap anything in the existing schedule, including recurring blocks — this is non-negotiable. 8) If this session is 20 minutes or less, prefer placing it inside one of the free/open windows listed above. 9) Spread splits across days. Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
+    // If the AI call fails or returns nothing usable, fall back to a fully
+    // deterministic placement — evDate/evTime are blank in AI mode, so
+    // saveManual() isn't usable here.
     const fallbackSchedule=()=>{
       const groupId=splitCount>1?"split-"+Date.now():null;
       const tasks=[];
+      let cursorDate=firstAvailDate,cursorTime=earliestTodayTime;
       for(let i=0;i<splitCount;i++){
-        const d=new Date(firstAvailDate+"T12:00:00");d.setDate(d.getDate()+i);
-        tasks.push(buildTask(dayKey(d),earliestTodayTime,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})));
+        const slot=findOpenSlot(cursorDate,cursorTime,perSession);
+        tasks.push(buildTask(slot.date,slot.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})));
+        const d=new Date(slot.date+"T12:00:00");d.setDate(d.getDate()+1);
+        cursorDate=dayKey(d);cursorTime=prefs.workStartTime;
       }
       commitTasks(tasks);
     };
@@ -4441,13 +4602,22 @@ function CalendarTab({onTourDone}={}){
       const raw=data.reply.replace(/```json?|```/g,"").trim();
       const parsed=JSON.parse(raw);
       if(parsed.sessions&&parsed.sessions.length>0){
-        // Client-side guardrail: if the AI still returned a past slot, push it to the next valid day
         const sanitized=parsed.sessions.map(s=>{
-          if(s.date===tk&&timeToMinutes(s.time)<earliestTodayMins){
+          let date=s.date,time=s.time;
+          // Client-side guardrail: if the AI still returned a past slot, push it to the next valid day
+          if(date===tk&&timeToMinutes(time)<earliestTodayMins){
             const d=new Date(now);d.setDate(d.getDate()+1);
-            return {...s,date:dayKey(d),time:earliestTodayTime};
+            date=dayKey(d);time=earliestTodayTime;
           }
-          return s;
+          // Deterministic conflict check — reject/reshift anything that
+          // actually overlaps a real event or routine shield, rather than
+          // trusting the LLM followed the prompt's rules.
+          const occupied=events.filter(e=>e.date===date&&e.time)
+            .concat(getRoutineOccurrencesForDate(date))
+            .map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)}));
+          const tMins=timeToMinutes(time);
+          const conflict=occupied.some(o=>!(tMins+perSession<=o.start||tMins>=o.end));
+          return conflict?findOpenSlot(date,time,perSession):{date,time};
         });
         const groupId=splitCount>1?"split-"+Date.now():null;
         const tasks=sanitized.slice(0,splitCount).map((s,i)=>buildTask(s.date,s.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})));
@@ -4506,7 +4676,7 @@ function CalendarTab({onTourDone}={}){
   // Fixed real-world blocks (exam/class) only take Day/Start Time/Duration and
   // are never AI-scheduled. Reminders are simple Date/Time markers. Everything
   // else (deadline/study block) is a "task" that can be placed manually or by AI.
-  const isFixedKind=evKind==="exam"||evKind==="class";
+  const isFixedKind=evKind==="exam"||evKind==="class"||evKind==="busy block";
   const isReminderKind=evKind==="reminder";
   const isTaskKind=!isFixedKind&&!isReminderKind;
   const manualMode=isTaskKind&&evDate.trim()!==""&&evTime.trim()!=="";
@@ -4538,7 +4708,12 @@ function CalendarTab({onTourDone}={}){
           </div>
         </div>
       )}
-      <PH title="Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><Btn variant="ghost" onClick={()=>{setGroupSyncOpen(true);setGsStep(1);setGsResults(null);}}>{Icon.users} Group Sync</Btn><span ref={tourAddTaskRef} style={{display:"inline-flex"}}><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></span></div>} />
+      <PH title="Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>{setEditRoutineMode(m=>!m);setHoveredRoutineId(null);}}>⚙️ Edit Routine</Btn><Btn variant="ghost" onClick={()=>{setGroupSyncOpen(true);setGsStep(1);setGsResults(null);}}>{Icon.users} Group Sync</Btn><span ref={tourAddTaskRef} style={{display:"inline-flex"}}><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></span></div>} />
+      {editRoutineMode&&(
+        <div style={{display:"flex",alignItems:"center",gap:8,padding:"9px 14px",background:T.lime+"10",border:`1px solid ${T.lime}33`,borderRadius:10,marginBottom:14,fontSize:12.5,color:T.text}}>
+          Editing your Weekly Routine — one-off tasks are dimmed. Click a routine block to edit it, or hover and tap × to delete it everywhere it repeats.
+        </div>
+      )}
       <div style={{display:"flex",gap:6,marginBottom:20}}>
         {["monthly","weekly"].map(v=>(
           <button key={v} onClick={()=>setCalView(v)} style={{padding:"6px 14px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",background:calView===v?T.lime+"14":"transparent",color:calView===v?T.lime:T.muted,border:`1px solid ${calView===v?T.lime+"44":T.border}`,fontFamily:T.font,transition:"all 0.15s",textTransform:"capitalize"}}>{v}</button>
@@ -4560,7 +4735,7 @@ function CalendarTab({onTourDone}={}){
         <Field label="Title"><Input placeholder="e.g. Study Bio chapter 4-6" value={evTitle} onChange={ev=>setEvTitle(ev.target.value)} autoFocus /></Field>
 
         <Field label="Type" hint={isFixedKind?"Fixed real-world block — Studlin will never move or reschedule this.":"Choose the task type to determine scheduling behavior"}>
-          <SelectChip options={["deadline","exam","class","study block","reminder"]} value={evKind} onChange={onEvKindChange} />
+          <SelectChip options={["deadline","exam","class","study block","reminder","busy block"]} value={evKind} onChange={onEvKindChange} />
         </Field>
 
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
@@ -4572,7 +4747,14 @@ function CalendarTab({onTourDone}={}){
         {manualMode&&<div style={{fontSize:11,color:T.amber,fontWeight:600,marginTop:-6,marginBottom:14}}>Using manual date. Clear Target Date to use AI scheduling.</div>}
 
         {isFixedKind&&(
-          <Field label="Duration (minutes)" hint="How long this occupies on your calendar"><NumField min={5} max={480} fallback={5} value={evDuration} onChange={setEvDuration} /></Field>
+          <>
+            <Field label="Duration (minutes)" hint="How long this occupies on your calendar"><NumField min={5} max={480} fallback={5} value={evDuration} onChange={setEvDuration} /></Field>
+            <label className="checkbox" onClick={()=>setEvSaveToRoutine(s=>!s)} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:14,fontSize:12.5,color:T.text}}>
+              <span style={{width:16,height:16,borderRadius:4,border:`1.5px solid ${evSaveToRoutine?T.lime:T.border}`,background:evSaveToRoutine?T.lime:"transparent",display:"grid",placeItems:"center",flexShrink:0,color:T.ink}}>{evSaveToRoutine&&Icon.check}</span>
+              Save to my Weekly Routine
+              <span style={{color:T.muted,fontWeight:400}}>— repeats every week on this day instead of just once</span>
+            </label>
+          </>
         )}
 
         {isTaskKind&&(
@@ -4629,7 +4811,7 @@ function CalendarTab({onTourDone}={}){
       <Modal open={editOpen} onClose={closeEdit} title="Edit task" sub="Update this task's details." width={580}
         footer={<><Btn variant="subtle" onClick={closeEdit}>Cancel</Btn><Btn onClick={saveEdit} disabled={!editTitle.trim()} style={{opacity:editTitle.trim()?1:0.45}}>Save changes</Btn></>}>
         <Field label="Title"><Input value={editTitle} onChange={e=>setEditTitle(e.target.value)} autoFocus /></Field>
-        <Field label="Type"><SelectChip options={["deadline","exam","class","study block","reminder"]} value={editKind} onChange={setEditKind} /></Field>
+        <Field label="Type"><SelectChip options={["deadline","exam","class","study block","reminder","busy block"]} value={editKind} onChange={setEditKind} /></Field>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
           <Field label="Scheduled date"><Input type="date" value={editDate} onChange={e=>setEditDate(e.target.value)} /></Field>
           <Field label={editKind==="reminder"?"Reminder time":"Start time"}><TimeInput value={editTime} onChange={setEditTime} /></Field>
@@ -4664,6 +4846,32 @@ function CalendarTab({onTourDone}={}){
         )}
         <Field label="Subject"><SelectChip options={SUBJ} value={editSubject} onChange={setEditSubject} /></Field>
         <Field label="Notes (optional)"><Textarea value={editNotes} onChange={e=>setEditNotes(e.target.value)} /></Field>
+      </Modal>
+      <Modal open={!!routineEditItem} onClose={closeRoutineEdit} title="Edit routine block" sub="Changes apply to every week this repeats." width={480}
+        footer={
+          <div style={{display:"flex",width:"100%",justifyContent:"space-between",alignItems:"center"}}>
+            <Btn variant="danger" onClick={deleteRoutineEdit}>Delete</Btn>
+            <div style={{display:"flex",gap:10}}>
+              <Btn variant="subtle" onClick={closeRoutineEdit}>Cancel</Btn>
+              <Btn onClick={saveRoutineEdit} disabled={!riTitle.trim()||riDays.length===0} style={{opacity:!riTitle.trim()||riDays.length===0?0.45:1}}>Save changes</Btn>
+            </div>
+          </div>
+        }>
+        <Field label="Title"><Input value={riTitle} onChange={e=>setRiTitle(e.target.value)} autoFocus /></Field>
+        <Field label="Type"><SelectChip options={[{value:"class",label:"Class"},{value:"busy",label:"Activity"},{value:"free",label:"Free Period"}]} value={riKind} onChange={setRiKind} /></Field>
+        <Field label="Repeats on" hint={riDays.length===0?"Pick at least one day":undefined}>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((d,i)=>{
+              const sel=riDays.includes(i);
+              return <button key={i} type="button" onClick={()=>setRiDays(sel?riDays.filter(x=>x!==i):[...riDays,i])} style={{padding:"6px 12px",borderRadius:7,fontSize:12,fontWeight:sel?600:400,cursor:"pointer",border:`1px solid ${sel?T.lime+"66":T.border}`,background:sel?T.lime+"14":"transparent",color:sel?T.lime:T.muted,fontFamily:T.font}}>{d}</button>;
+            })}
+          </div>
+        </Field>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Field label="Start time"><TimeInput value={riStartTime} onChange={setRiStartTime} /></Field>
+          <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={30} value={riDuration} onChange={setRiDuration} /></Field>
+        </div>
+        <Field label="Subject"><SelectChip options={SUBJ} value={riSubject} onChange={setRiSubject} /></Field>
       </Modal>
       <Modal open={groupSyncOpen} onClose={()=>setGroupSyncOpen(false)} title="Group Smart Match" sub="Find a time slot when everyone is free." width={540}
         footer={gsStep===1?<><Btn variant="subtle" onClick={()=>setGroupSyncOpen(false)}>Cancel</Btn><Btn onClick={runGroupSync} disabled={!gsDueDate.trim()} style={{opacity:gsDueDate.trim()?1:0.45}}>Find slots</Btn></>:<><Btn variant="subtle" onClick={()=>{setGsStep(1);setGsResults(null);}}>← Back</Btn><Btn variant="subtle" onClick={()=>setGroupSyncOpen(false)}>Done</Btn></>}>
@@ -4743,7 +4951,10 @@ function CalendarTab({onTourDone}={}){
                       const over=daysOverdue(ev);
                       const tagColor=over>0?T.red:colorOf(ev.subject);
                       const isExam=ev.kind==="exam";
-                      return <div key={j} style={{fontSize:9,fontWeight:600,color:tagColor,background:tagColor+(isExam?"22":"16"),border:isExam?`1px solid ${tagColor}`:"none",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",display:"flex",alignItems:"center",gap:3}}>
+                      const isRoutine=!!ev.isRoutine;
+                      const dimmedByRoutineMode=editRoutineMode&&!isRoutine;
+                      return <div key={j} style={{fontSize:9,fontWeight:600,color:tagColor,background:tagColor+(isExam?"22":"16"),border:isRoutine&&editRoutineMode?`1px solid ${T.lime}`:isExam?`1px solid ${tagColor}`:"none",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",display:"flex",alignItems:"center",gap:3,opacity:dimmedByRoutineMode?0.3:1}}>
+                        {isRoutine&&<span style={{flexShrink:0}}>↻</span>}
                         {ev.priority&&ev.priority>=4&&<span style={{width:5,height:5,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority],flexShrink:0}} />}
                         {ev.title}
                       </div>;
@@ -4773,6 +4984,7 @@ function CalendarTab({onTourDone}={}){
                 const color=over>0?T.red:colorOf(ev.subject);
                 const isStudy=ev.kind==="study block";
                 const isExam=ev.kind==="exam";
+                const isRoutine=!!ev.isRoutine;
                 // Study blocks: solid subject-color container. Exams: dark canvas
                 // with a thick glowing subject-color border + an explicit tag.
                 // Classes (and everything else): the original thin left strip.
@@ -4784,13 +4996,19 @@ function CalendarTab({onTourDone}={}){
                 const titleColor=isStudy?T.ink:isExam?T.cream:(isDone?T.muted:T.white);
                 const subColor=isStudy?"rgba(14,31,24,0.65)":isExam?color:T.muted;
                 const badgeBg=isStudy?"rgba(14,31,24,0.14)":isExam?color+"22":T.card2;
+                const dimmedByRoutineMode=editRoutineMode&&!isRoutine;
+                const highlightedByRoutineMode=editRoutineMode&&isRoutine;
                 return(
-                <div key={ev.id} draggable onDragStart={()=>setDragId(ev.id)} style={{display:"flex",gap:10,alignItems:"flex-start",opacity:isDone?0.5:1,cursor:"grab",...rowStyle}}>
+                <div key={ev.id} draggable={!isRoutine} onDragStart={()=>{if(!isRoutine)setDragId(ev.id);}}
+                  onMouseEnter={()=>isRoutine&&setHoveredRoutineId(ev.routineId)} onMouseLeave={()=>isRoutine&&setHoveredRoutineId(null)}
+                  onClick={()=>{if(editRoutineMode&&isRoutine){const rule=routines.find(r=>r.id===ev.routineId);if(rule)openRoutineEdit(rule);}}}
+                  style={{position:"relative",display:"flex",gap:10,alignItems:"flex-start",opacity:dimmedByRoutineMode?0.3:(isDone?0.5:1),cursor:isRoutine?(editRoutineMode?"pointer":"default"):"grab",...rowStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:2}:{})}}>
                   {!isStudy&&!isExam&&<div style={{width:3,alignSelf:"stretch",borderRadius:2,background:color,flexShrink:0}} />}
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{display:"flex",alignItems:"center",gap:6}}>
                       {ev.priority&&<span style={{width:7,height:7,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority||3],flexShrink:0}} />}
                       {isExam&&<span style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:9.5,fontWeight:800,letterSpacing:"0.04em",color,background:color+"1E",border:`1px solid ${color}55`,borderRadius:5,padding:"1px 6px",flexShrink:0}}><span style={{width:4,height:4,borderRadius:"50%",background:color,flexShrink:0}} />EXAM</span>}
+                      {isRoutine&&<span title="Repeats weekly" style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:14,height:14,borderRadius:"50%",color,flexShrink:0}}>↻</span>}
                       <span style={{fontSize:12.5,fontWeight:600,color:titleColor,lineHeight:1.35,textDecoration:isDone?"line-through":"none"}}>{ev.title}</span>
                     </div>
                     <div style={{fontSize:11,color:subColor,marginTop:2,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
@@ -4800,12 +5018,18 @@ function CalendarTab({onTourDone}={}){
                       {over>0&&<span style={{color:T.red,fontWeight:600}}>{over}d overdue</span>}
                     </div>
                   </div>
-                  <div style={{display:"flex",gap:4,flexShrink:0,alignItems:"center"}}>
-                    {!isDone&&ev.duration&&(ev.kind==="study block"||ev.kind==="deadline")&&<button onClick={()=>{if(window._setTimerTask)window._setTimerTask(ev);}} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.lime}44`,background:T.lime+"12",color:T.lime,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Begin</button>}
-                    {!isDone&&(ev.kind==="exam"||ev.kind==="class"||ev.kind==="reminder")&&<button onClick={()=>openEdit(ev)} title="View details" style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Details</button>}
-                    {!isDone&&<button onClick={()=>markDone(ev.id)} title="Mark done" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",display:"flex"}}>{Icon.check}</button>}
-                    <button onClick={()=>removeEvent(ev.id)} title="Delete" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,padding:2}}>×</button>
-                  </div>
+                  {!isRoutine&&(
+                    <div style={{display:"flex",gap:4,flexShrink:0,alignItems:"center"}}>
+                      {!isDone&&ev.duration&&(ev.kind==="study block"||ev.kind==="deadline")&&<button onClick={()=>{if(window._setTimerTask)window._setTimerTask(ev);}} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.lime}44`,background:T.lime+"12",color:T.lime,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Begin</button>}
+                      {!isDone&&(ev.kind==="exam"||ev.kind==="class"||ev.kind==="reminder")&&<button onClick={()=>openEdit(ev)} title="View details" style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Details</button>}
+                      {!isDone&&<button onClick={()=>markDone(ev.id)} title="Mark done" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",display:"flex"}}>{Icon.check}</button>}
+                      <button onClick={()=>removeEvent(ev.id)} title="Delete" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,padding:2}}>×</button>
+                    </div>
+                  )}
+                  {isRoutine&&editRoutineMode&&hoveredRoutineId===ev.routineId&&(
+                    <button onClick={(e)=>{e.stopPropagation();deleteRoutineItem(ev.routineId);setHoveredRoutineId(null);}} title="Delete this routine block (every week)"
+                      style={{position:"absolute",top:-8,right:-8,width:22,height:22,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.red,fontSize:13,lineHeight:1,cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 4px 10px -2px rgba(0,0,0,0.4)"}}>×</button>
+                  )}
                 </div>
               );})}
           </Card>
@@ -4836,7 +5060,9 @@ function CalendarTab({onTourDone}={}){
           </div>
         </div>
       </div>)}
-      {calView==="weekly"&&<WeeklyPlanner events={events} setEvents={setEvents} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openNew={openNew} openEdit={openEdit} />}
+      {calView==="weekly"&&<WeeklyPlanner events={events} setEvents={setEvents} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openNew={openNew} openEdit={openEdit}
+        routines={routines} editRoutineMode={editRoutineMode} hoveredRoutineId={hoveredRoutineId} setHoveredRoutineId={setHoveredRoutineId}
+        onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} />}
       {tourStep!==null&&(
         <TourStep
           targetRef={CAL_TOUR_STEPS[tourStep].targetRef}

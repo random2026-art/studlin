@@ -175,7 +175,7 @@ function TimeInput({ value, onChange, style }) {
 }
 
 const STEPS = [
-  { name: "Sign up" },{ name: "Study Setup" },
+  { name: "Sign up" },{ name: "Weekly Routine" },{ name: "Study Setup" },
 ];
 
 function LeftRail({ step, state }) {
@@ -197,7 +197,7 @@ function LeftRail({ step, state }) {
       </aside>
     );
   }
-  const groups = [{ name: "Sign up", from: 0, to: 0 },{ name: "Study Setup", from: 1, to: 1 }];
+  const groups = [{ name: "Sign up", from: 0, to: 0 },{ name: "Weekly Routine", from: 1, to: 1 },{ name: "Study Setup", from: 2, to: 2 }];
   return (
     <aside className="rail">
       <div className="brand">
@@ -354,6 +354,149 @@ function StepSignup({ state, set, advance }) {
   );
 }
 
+// ─── WEEKLY ROUTINE ("Map Your Routine") ─────────────────────────────────────
+const DOW_LABELS=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+const fmtTime12=(t)=>{if(!t)return "";const p=(t||"").split(":");const h=+p[0],m=+p[1];if(isNaN(h)||isNaN(m))return "";const ap=h>=12?"PM":"AM";const h12=h%12||12;return h12+":"+String(m).padStart(2,"0")+" "+ap;};
+const routineChipStyle=(sel)=>({padding:"8px 13px",borderRadius:9,fontSize:12.5,fontWeight:sel?600:500,cursor:"pointer",border:`1.5px solid ${sel?"#9EC83D":"var(--line-strong)"}`,background:sel?"rgba(158,200,61,0.16)":"white",color:sel?"#14342A":"var(--muted)",fontFamily:"inherit"});
+const routineSelectStyle={padding:"12px 10px",borderRadius:12,border:"1.5px solid var(--line-strong)",background:"white",fontSize:13,color:"var(--ink)",fontFamily:"inherit",outline:"none"};
+const routineAddBtnStyle={padding:"12px 18px",borderRadius:12,border:"none",background:"#14342A",color:"#F6F1E6",fontSize:13,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"};
+
+function RoutineList({ items, onRemove }) {
+  if(items.length===0)return null;
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:14}}>
+      {items.map(it=>(
+        <div key={it.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:"white",border:"1px solid var(--line-strong)",borderRadius:10}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:600,color:"var(--ink)"}}>{it.title}</div>
+            <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>{it.days.map(d=>DOW_LABELS[d]).join(", ")} · {fmtTime12(it.startTime)} · {it.duration}m</div>
+          </div>
+          <button type="button" onClick={()=>onRemove(it.id)} style={{background:"none",border:"none",color:"var(--muted)",cursor:"pointer",fontSize:18,lineHeight:1,padding:"2px 6px"}}>×</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function HsRoutineBuilder({ state, set, routines, addRoutine, removeRoutine }) {
+  const [fpTitle,setFpTitle]=useState("");
+  const [fpTime,setFpTime]=useState("10:00");
+  const [fpDuration,setFpDuration]=useState(45);
+  const addFreePeriod=()=>{
+    if(!fpTitle.trim())return;
+    addRoutine({title:fpTitle.trim(),kind:"free",days:[0,1,2,3,4],startTime:fpTime,duration:fpDuration});
+    setFpTitle("");
+  };
+  return (
+    <div>
+      <div style={{fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:10}}>General school day (Mon–Fri)</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:24}}>
+        <div>
+          <label style={{fontSize:11,fontWeight:600,textTransform:"uppercase",color:"var(--muted)",display:"block",marginBottom:6}}>School starts</label>
+          <TimeInput value={state.schoolStart||"08:00"} onChange={v=>set({...state,schoolStart:v})} />
+        </div>
+        <div>
+          <label style={{fontSize:11,fontWeight:600,textTransform:"uppercase",color:"var(--muted)",display:"block",marginBottom:6}}>School ends</label>
+          <TimeInput value={state.schoolEnd||"15:00"} onChange={v=>set({...state,schoolEnd:v})} />
+        </div>
+      </div>
+
+      <div style={{fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:2}}>Free Periods / Study Halls</div>
+      <div style={{fontSize:11,color:"var(--muted)",marginBottom:12}}>Each one repeats every weekday automatically.</div>
+      <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap"}}>
+        <div style={{flex:"1 1 160px",minWidth:140}}>
+          <TextField label="Period name" value={fpTitle} onChange={setFpTitle} />
+        </div>
+        <div style={{width:150}}><TimeInput value={fpTime} onChange={setFpTime} /></div>
+        <select value={fpDuration} onChange={e=>setFpDuration(+e.target.value)} style={routineSelectStyle}>
+          {[30,40,45,50,60].map(m=><option key={m} value={m}>{m} min</option>)}
+        </select>
+        <button type="button" onClick={addFreePeriod} style={routineAddBtnStyle}>+ Add</button>
+      </div>
+      <RoutineList items={routines.filter(r=>r.kind==="free")} onRemove={removeRoutine} />
+    </div>
+  );
+}
+
+function CollegeRoutineBuilder({ routines, addRoutine, removeRoutine }) {
+  const [title,setTitle]=useState("");
+  const [kind,setKind]=useState("class");
+  const [days,setDays]=useState([]);
+  const [time,setTime]=useState("10:00");
+  const [duration,setDuration]=useState(50);
+  const toggleDay=(i)=>setDays(days.includes(i)?days.filter(d=>d!==i):[...days,i]);
+  const addItem=()=>{
+    if(!title.trim()||days.length===0)return;
+    addRoutine({title:title.trim(),kind,days:[...days],startTime:time,duration});
+    setTitle("");setDays([]);
+  };
+  return (
+    <div>
+      <div style={{fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:10}}>Add a class or recurring activity</div>
+      <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:6}}>
+        <TextField label="Title" value={title} onChange={setTitle} />
+        <div style={{display:"flex",gap:8}}>
+          <button type="button" onClick={()=>setKind("class")} style={routineChipStyle(kind==="class")}>Class</button>
+          <button type="button" onClick={()=>setKind("busy")} style={routineChipStyle(kind==="busy")}>Activity</button>
+        </div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          {DOW_LABELS.map((d,i)=>(
+            <button key={i} type="button" onClick={()=>toggleDay(i)} style={routineChipStyle(days.includes(i))}>{d}</button>
+          ))}
+        </div>
+        <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap"}}>
+          <div style={{width:150}}><TimeInput value={time} onChange={setTime} /></div>
+          <select value={duration} onChange={e=>setDuration(+e.target.value)} style={routineSelectStyle}>
+            {[30,45,50,60,75,90,120].map(m=><option key={m} value={m}>{m} min</option>)}
+          </select>
+          <button type="button" onClick={addItem} style={routineAddBtnStyle}>+ Add</button>
+        </div>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6,marginTop:20}}>
+        {DOW_LABELS.map((d,i)=>{
+          const dayItems=routines.filter(r=>r.days.includes(i)).sort((a,b)=>a.startTime<b.startTime?-1:1);
+          return (
+            <div key={i} style={{minHeight:50}}>
+              <div style={{fontSize:10,fontWeight:700,color:"var(--muted)",textAlign:"center",marginBottom:6,letterSpacing:"0.05em"}}>{d}</div>
+              <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                {dayItems.map(it=>(
+                  <div key={it.id} onClick={()=>removeRoutine(it.id)} title="Click to remove" style={{fontSize:9.5,fontWeight:600,padding:"4px 6px",borderRadius:6,background:it.kind==="class"?"rgba(158,200,61,0.18)":"rgba(158,200,61,0.08)",border:"1px solid var(--line-strong)",color:"var(--ink)",cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.title}</div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function StepWeeklyRoutine({ state, set }) {
+  const status=state.status||"";
+  const routines=state.weeklyRoutine||[];
+  const addRoutine=(item)=>set({...state, weeklyRoutine:[...routines, {id:String(Date.now()+Math.random()*1000), ...item}]});
+  const removeRoutine=(id)=>set({...state, weeklyRoutine:routines.filter(r=>r.id!==id)});
+
+  return (
+    <div className="frame">
+      <div className="frame-head">
+        <h2>What's your <em>Weekly Routine?</em></h2>
+        <p>Add your classes, sports, or work shifts once, and our AI will automatically shield those times every single week.</p>
+      </div>
+
+      <div style={{display:"flex",gap:8,marginBottom:22}}>
+        <button type="button" onClick={()=>set({...state,status:"highschool"})} style={routineChipStyle(status==="highschool")}>High School</button>
+        <button type="button" onClick={()=>set({...state,status:"college"})} style={routineChipStyle(status==="college")}>College</button>
+      </div>
+
+      {status==="highschool" && <HsRoutineBuilder state={state} set={set} routines={routines} addRoutine={addRoutine} removeRoutine={removeRoutine} />}
+      {status==="college" && <CollegeRoutineBuilder routines={routines} addRoutine={addRoutine} removeRoutine={removeRoutine} />}
+      {!status && <div style={{fontSize:13,color:"var(--muted)",padding:"20px 0",textAlign:"center"}}>Pick High School or College above to map your routine — or skip this and add it anytime later from your Calendar.</div>}
+    </div>
+  );
+}
+
 function StepSchedulePrefs({ state, set }) {
   const handleWorkStart = (val) => set({...state, workStartTime: val});
   const handleWorkEnd = (val) => set({...state, workEndTime: val});
@@ -413,8 +556,8 @@ function App() {
       const identityOk = !!(state.university || (state.universityOther||"").trim()) && !!state.terms;
       return identityOk && (!!firebase.auth().currentUser || !!(state.provider) || !!(state.name && state.email && (state.password||"").length >= 8));
     }
-    if (step === 1) return !!(state.workStartTime && state.workEndTime);
-    return true;
+    if (step === 2) return !!(state.workStartTime && state.workEndTime);
+    return true; // step 1, Weekly Routine, is always optional — never blocks progress
   };
 
   const [transitioning, setTransitioning] = useState(false);
@@ -446,7 +589,23 @@ function App() {
       taskDifficultyPreference: "NONE",
       bufferMarginStrategy: "15_MIN",
     };
+    // High School's school-day boundary is captured as two plain time
+    // fields while editing (so the two TimeInputs stay simple and don't
+    // need to sync into a routine rule on every keystroke) — synthesized
+    // into one "School" shield block only now, at hand-off.
+    const routine = [...(state.weeklyRoutine || [])];
+    if (state.status === "highschool" && (state.schoolStart || state.schoolEnd)) {
+      routine.push({
+        id: "hs-school", title: "School", kind: "class", days: [0,1,2,3,4],
+        startTime: state.schoolStart || "08:00", duration: 60,
+      });
+      // duration is recomputed as the actual boundary span, not a guess
+      const [sh,sm] = (state.schoolStart||"08:00").split(":").map(Number);
+      const [eh,em] = (state.schoolEnd||"15:00").split(":").map(Number);
+      routine[routine.length-1].duration = Math.max(15, (eh*60+em) - (sh*60+sm));
+    }
     try { localStorage.setItem("studlin-schedulePrefs", JSON.stringify(prefs)); } catch(e){}
+    try { localStorage.setItem("studlin-weeklyRoutine", JSON.stringify(routine)); } catch(e){}
     try { localStorage.setItem("studlin-onboarded", "true"); } catch(e){}
     try { localStorage.setItem("studlin-pendingTour", JSON.stringify("calendar")); } catch(e){}
     try { localStorage.removeItem("studlin-onboarding"); } catch(e){}
@@ -455,6 +614,8 @@ function App() {
       try {
         await firebase.firestore().collection('users').doc(u.uid).set({
           school: state.university || state.universityOther || "",
+          status: state.status || "",
+          affiliation: state.university || state.universityOther || "",
           ...prefs,
           onboarded: true,
           updatedAt: new Date().toISOString(),
@@ -473,7 +634,7 @@ function App() {
     return ()=>window.removeEventListener("keydown", fn);
   });
 
-  const CTA_LABEL = ["Sign up for free","Continue"][step];
+  const CTA_LABEL = ["Sign up for free","Continue","Continue"][step];
 
   return (
     <div className="shell">
@@ -483,8 +644,18 @@ function App() {
           {step > 0 && <span style={{color:"var(--muted)",fontSize:13}}>Step {step+1} of {STEPS.length}</span>}
         </div>
         <div className={"step-content" + (transitioning ? " is-leaving" : " is-entering")}>
-          {step === 0 && <StepSignup state={state} set={setState} advance={(skip)=>{ if(skip||isStepValid()){ setTransitioning(true); setTimeout(()=>{ setStep(s=>Math.min(STEPS.length-1,s+1)); setTransitioning(false); },250); }}} />}
-          {step === 1 && <StepSchedulePrefs state={state} set={setState} />}
+          {/* advance() only ever fires from step 0 right after a successful
+              signup, so its destination is always "step 1" — a fixed
+              setStep(1) rather than a relative s+1 makes this idempotent.
+              (With relative math, this delayed setTimeout could double-fire
+              alongside the auth-state-changed effect's own step bump below,
+              since both react to the same "user just signed in" moment —
+              harmless when there were only 2 steps total (the +1 got
+              clamped to the same value), but a real skip-a-step bug now
+              that there are 3.) */}
+          {step === 0 && <StepSignup state={state} set={setState} advance={(skip)=>{ if(skip||isStepValid()){ setTransitioning(true); setTimeout(()=>{ setStep(1); setTransitioning(false); },250); }}} />}
+          {step === 1 && <StepWeeklyRoutine state={state} set={setState} />}
+          {step === 2 && <StepSchedulePrefs state={state} set={setState} />}
         </div>
         <div className="stage-foot">
           <button className="cta" disabled={!isStepValid()||finishing} onClick={()=>{
