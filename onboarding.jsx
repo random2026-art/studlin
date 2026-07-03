@@ -74,108 +74,8 @@ function SelectField({ label, value, onChange, options, hint }) {
   );
 }
 
-// Curated, real, verifiable list of well-known universities — not an
-// exhaustive accredited-institution database (no source of truth for that
-// exists here), just enough to cover most signups with genuine schools so
-// "verified" grouping data isn't fabricated. "My school isn't listed" is
-// the escape hatch for everyone else.
-const UNIVERSITIES = [
-  "Harvard University","Yale University","Princeton University","Columbia University","University of Pennsylvania","Brown University","Cornell University","Dartmouth College",
-  "Stanford University","Massachusetts Institute of Technology","California Institute of Technology","Duke University","Northwestern University","Vanderbilt University","Georgetown University","New York University","University of Southern California","Boston University","Boston College","Northeastern University","Carnegie Mellon University","Johns Hopkins University","Rice University","Emory University","Tufts University","Wake Forest University","Washington University in St. Louis","University of Notre Dame","University of Chicago","University of Rochester","Case Western Reserve University","Tulane University","Syracuse University","Fordham University",
-  "University of California, Berkeley","University of California, Los Angeles","University of California, San Diego","University of California, Davis","University of California, Irvine","University of California, Santa Barbara","University of California, Santa Cruz","University of California, Riverside","University of California, Merced",
-  "University of Michigan","University of Virginia","University of North Carolina at Chapel Hill","University of Florida","University of Texas at Austin","University of Wisconsin-Madison","University of Illinois Urbana-Champaign","University of Washington","Ohio State University","Pennsylvania State University","University of Georgia","University of Maryland, College Park","Rutgers University","Indiana University Bloomington","University of Minnesota","Purdue University","Michigan State University","University of Iowa","University of Colorado Boulder","University of Arizona","Arizona State University","University of Utah","University of Oregon","Oregon State University","Washington State University","University of Connecticut","University of Massachusetts Amherst","University of Delaware","University of Pittsburgh","Temple University","Virginia Tech","North Carolina State University","Clemson University","University of South Carolina","Auburn University","University of Alabama","University of Tennessee","University of Kentucky","University of Missouri","University of Kansas","University of Nebraska-Lincoln","Iowa State University","University of Oklahoma","Oklahoma State University","Texas A&M University","Baylor University","Southern Methodist University","Texas Christian University","University of Houston","University of Miami","Florida State University","University of Central Florida","Georgia Institute of Technology","University of Colorado Denver","Colorado State University","University of Nevada, Las Vegas","University of Hawaii at Manoa",
-  "Brigham Young University","University of Denver","San Diego State University","San Jose State University","California Polytechnic State University","University of San Francisco","Santa Clara University","Loyola Marymount University","Pepperdine University","Chapman University",
-  "Howard University","Morehouse College","Spelman College","Amherst College","Williams College","Swarthmore College","Wellesley College","Bowdoin College","Middlebury College","Colby College","Vassar College","Smith College","Hamilton College","Colgate University","Bates College","Bucknell University","Lehigh University","Villanova University","Lafayette College",
-  "University of Toronto","University of British Columbia","McGill University","University of Waterloo","University of Alberta","McMaster University","Queen's University","University of Montreal","University of Ottawa","Simon Fraser University",
-  "University of Oxford","University of Cambridge","Imperial College London","London School of Economics","University College London","King's College London","University of Edinburgh","University of Manchester","University of Bristol","University of Warwick","University of St Andrews","University of Glasgow",
-  "University of Melbourne","University of Sydney","Australian National University","University of Queensland","Monash University","University of New South Wales","University of Auckland",
-];
-
-function AutocompleteField({ label, options, value, otherValue, onSelect, onOtherChange, hint, error }) {
-  const [query, setQuery] = useState(value || "");
-  const [open, setOpen] = useState(false);
-  const [isOther, setIsOther] = useState(!!otherValue && !value);
-  const wrapRef = useRef(null);
-  useEffect(()=>{ if(!isOther) setQuery(value||""); }, [value, isOther]);
-  useEffect(()=>{
-    const onDocClick = e => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
-    document.addEventListener("mousedown", onDocClick);
-    return ()=>document.removeEventListener("mousedown", onDocClick);
-  }, []);
-  const filtered = (query.trim()
-    ? options.filter(o=>o.toLowerCase().includes(query.trim().toLowerCase()))
-    : options
-  ).slice(0,8);
-  const selectOption = (opt) => { setQuery(opt); onSelect(opt); setOpen(false); };
-  const useOther = () => { setIsOther(true); setOpen(false); onSelect(""); };
-  const backToList = () => { setIsOther(false); setQuery(""); onOtherChange(""); };
-  return (
-    <div className="field" ref={wrapRef} style={{position:"relative"}}>
-      <div className={"input-wrap" + ((value||otherValue)?" has-value":"") + (open?" is-focused":"") + (error?" has-error":"")}>
-        <label>{label}</label>
-        {isOther ? (
-          <input value={otherValue||""} onChange={e=>onOtherChange(e.target.value)} autoFocus />
-        ) : (
-          <input value={query} onChange={e=>{setQuery(e.target.value);setOpen(true);if(value)onSelect("");}} onFocus={()=>setOpen(true)} />
-        )}
-      </div>
-      {isOther && <button type="button" onClick={backToList} style={{marginTop:6,background:"none",border:"none",color:"var(--muted)",fontSize:12,cursor:"pointer",textDecoration:"underline",padding:0}}>← Search the list instead</button>}
-      {open && !isOther && (
-        <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:20,marginTop:4,background:"var(--card)",border:"1px solid var(--border)",borderRadius:10,maxHeight:220,overflowY:"auto",boxShadow:"0 12px 32px -8px rgba(0,0,0,0.25)"}}>
-          {filtered.map(o=>(
-            <div key={o} onMouseDown={()=>selectOption(o)} style={{padding:"10px 14px",fontSize:13,cursor:"pointer",color:"var(--text)"}}>{o}</div>
-          ))}
-          {filtered.length===0 && <div style={{padding:"10px 14px",fontSize:12,color:"var(--muted)"}}>No matches — try another spelling, or:</div>}
-          <div onMouseDown={useOther} style={{padding:"10px 14px",fontSize:13,cursor:"pointer",color:"var(--muted)",borderTop:"1px solid var(--border)"}}>My school isn't listed</div>
-        </div>
-      )}
-      {error && <div className="field-error">{error}</div>}
-      {!error && hint && <div className="field-hint">{hint}</div>}
-    </div>
-  );
-}
-
-// Custom Hour / Minute / AM-PM dropdown trio — mobile-friendly native
-// <select> controls, no typing required. Same 24h "HH:MM" value/onChange
-// contract as before, so every call site is unaffected.
-const TIME_HOURS_12=Array.from({length:12},(_,i)=>i+1);
-const TIME_MINUTES_5=Array.from({length:12},(_,i)=>i*5);
-function TimeInput({ value, onChange, style }) {
-  let h=9,m=0,ap="AM";
-  if(value){
-    const [hStr,mStr]=value.split(":");
-    const hh=parseInt(hStr,10),mm=parseInt(mStr,10);
-    if(!isNaN(hh)&&!isNaN(mm)){
-      ap=hh>=12?"PM":"AM";
-      h=hh%12||12;
-      m=Math.round(mm/5)*5%60;
-    }
-  }
-  const commit=(nextH,nextM,nextAp)=>{
-    let hh=nextH%12;
-    if(nextAp==="PM")hh+=12;
-    onChange(String(hh).padStart(2,"0")+":"+String(nextM).padStart(2,"0"));
-  };
-  const selStyle={flex:1,minWidth:0,padding:"10px 8px",background:"var(--card2)",border:"1px solid var(--border)",borderRadius:8,color:"var(--text)",fontSize:13,fontFamily:"inherit",outline:"none",cursor:"pointer",boxSizing:"border-box"};
-  return (
-    <div style={{display:"flex",gap:6,alignItems:"center",...(style||{})}}>
-      <select value={h} onChange={e=>commit(+e.target.value,m,ap)} style={selStyle}>
-        {TIME_HOURS_12.map(x=><option key={x} value={x}>{x}</option>)}
-      </select>
-      <span style={{color:"var(--muted)",flexShrink:0}}>:</span>
-      <select value={m} onChange={e=>commit(h,+e.target.value,ap)} style={selStyle}>
-        {TIME_MINUTES_5.map(x=><option key={x} value={x}>{String(x).padStart(2,"0")}</option>)}
-      </select>
-      <select value={ap} onChange={e=>commit(h,m,e.target.value)} style={selStyle}>
-        <option value="AM">AM</option>
-        <option value="PM">PM</option>
-      </select>
-    </div>
-  );
-}
-
 const STEPS = [
-  { name: "Sign up" },{ name: "Weekly Routine" },{ name: "Study Setup" },
+  { name: "Sign up" },{ name: "Profile" },
 ];
 
 function LeftRail({ step, state }) {
@@ -197,7 +97,7 @@ function LeftRail({ step, state }) {
       </aside>
     );
   }
-  const groups = [{ name: "Sign up", from: 0, to: 0 },{ name: "Weekly Routine", from: 1, to: 1 },{ name: "Study Setup", from: 2, to: 2 }];
+  const groups = [{ name: "Sign up", from: 0, to: 0 },{ name: "Profile", from: 1, to: 1 }];
   return (
     <aside className="rail">
       <div className="brand">
@@ -225,12 +125,11 @@ function StepSignup({ state, set, advance }) {
   const [loading, setLoading] = useState(false);
   const [authError, setAuthError] = useState("");
 
-  // Required regardless of auth method — checked before either Google OAuth
-  // or email account-creation is allowed to actually run, so both paths end
-  // up with a verified school and accepted terms.
+  // Only the Terms checkbox gates identity here now — school/status
+  // collection moved to the post-auth Profile step (StepProfile) so this
+  // screen stays a pure auth gate with minimal friction.
   const checkIdentityFields = () => {
     const errs = {};
-    if (!state.university && !(state.universityOther||"").trim()) errs.university = "Select your school, or choose “My school isn't listed.”";
     if (!state.terms) errs.terms = "You need to accept the Terms of Service and Privacy Policy to continue.";
     return errs;
   };
@@ -294,16 +193,6 @@ function StepSignup({ state, set, advance }) {
 
       {authError && <div style={{fontSize:13,color:"#C4544A",marginBottom:16,padding:"12px 14px",background:"#FCF1EF",borderRadius:10,border:"1px solid #F5D4D0",textAlign:"center"}}>{authError}</div>}
 
-      <AutocompleteField
-        label="Your university or school"
-        options={UNIVERSITIES}
-        value={state.university}
-        otherValue={state.universityOther}
-        onSelect={v=>set({...state, university:v, universityOther:""})}
-        onOtherChange={v=>set({...state, university:"", universityOther:v})}
-        hint={errors.university?null:"Verified schools get grouped into real leaderboards with actual classmates."}
-        error={errors.university}
-      />
       <label className={"checkbox" + (state.terms ? " is-checked" : "")} onClick={()=>set({...state, terms:!state.terms})} style={{marginBottom:18}}>
         <span className="box">{Ic.check}</span>
         <span>I accept the <a>Terms of Service</a> and <a>Privacy Policy</a>.</span>
@@ -354,170 +243,27 @@ function StepSignup({ state, set, advance }) {
   );
 }
 
-// ─── WEEKLY ROUTINE ("Map Your Routine") ─────────────────────────────────────
-const DOW_LABELS=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
-const fmtTime12=(t)=>{if(!t)return "";const p=(t||"").split(":");const h=+p[0],m=+p[1];if(isNaN(h)||isNaN(m))return "";const ap=h>=12?"PM":"AM";const h12=h%12||12;return h12+":"+String(m).padStart(2,"0")+" "+ap;};
-const routineChipStyle=(sel)=>({padding:"8px 13px",borderRadius:9,fontSize:12.5,fontWeight:sel?600:500,cursor:"pointer",border:`1.5px solid ${sel?"#9EC83D":"var(--line-strong)"}`,background:sel?"rgba(158,200,61,0.16)":"white",color:sel?"#14342A":"var(--muted)",fontFamily:"inherit"});
-const routineSelectStyle={padding:"12px 10px",borderRadius:12,border:"1.5px solid var(--line-strong)",background:"white",fontSize:13,color:"var(--ink)",fontFamily:"inherit",outline:"none"};
-const routineAddBtnStyle={padding:"12px 18px",borderRadius:12,border:"none",background:"#14342A",color:"#F6F1E6",fontSize:13,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"};
+const statusChipStyle=(sel)=>({flex:1,padding:"16px 14px",borderRadius:14,fontSize:14,fontWeight:600,cursor:"pointer",border:`1.5px solid ${sel?"#9EC83D":"var(--line-strong)"}`,background:sel?"rgba(158,200,61,0.16)":"white",color:sel?"#14342A":"var(--muted)",fontFamily:"inherit",textAlign:"center"});
 
-function RoutineList({ items, onRemove }) {
-  if(items.length===0)return null;
-  return (
-    <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:14}}>
-      {items.map(it=>(
-        <div key={it.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:"white",border:"1px solid var(--line-strong)",borderRadius:10}}>
-          <div style={{flex:1,minWidth:0}}>
-            <div style={{fontSize:13,fontWeight:600,color:"var(--ink)"}}>{it.title}</div>
-            <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>{it.days.map(d=>DOW_LABELS[d]).join(", ")} · {fmtTime12(it.startTime)} · {it.duration}m</div>
-          </div>
-          <button type="button" onClick={()=>onRemove(it.id)} style={{background:"none",border:"none",color:"var(--muted)",cursor:"pointer",fontSize:18,lineHeight:1,padding:"2px 6px"}}>×</button>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function HsRoutineBuilder({ state, set, routines, addRoutine, removeRoutine }) {
-  const [fpTitle,setFpTitle]=useState("");
-  const [fpTime,setFpTime]=useState("10:00");
-  const [fpDuration,setFpDuration]=useState(45);
-  const addFreePeriod=()=>{
-    if(!fpTitle.trim())return;
-    addRoutine({title:fpTitle.trim(),kind:"free",days:[0,1,2,3,4],startTime:fpTime,duration:fpDuration});
-    setFpTitle("");
-  };
-  return (
-    <div>
-      <div style={{fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:10}}>General school day (Mon–Fri)</div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:24}}>
-        <div>
-          <label style={{fontSize:11,fontWeight:600,textTransform:"uppercase",color:"var(--muted)",display:"block",marginBottom:6}}>School starts</label>
-          <TimeInput value={state.schoolStart||"08:00"} onChange={v=>set({...state,schoolStart:v})} />
-        </div>
-        <div>
-          <label style={{fontSize:11,fontWeight:600,textTransform:"uppercase",color:"var(--muted)",display:"block",marginBottom:6}}>School ends</label>
-          <TimeInput value={state.schoolEnd||"15:00"} onChange={v=>set({...state,schoolEnd:v})} />
-        </div>
-      </div>
-
-      <div style={{fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:2}}>Free Periods / Study Halls</div>
-      <div style={{fontSize:11,color:"var(--muted)",marginBottom:12}}>Each one repeats every weekday automatically.</div>
-      <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap"}}>
-        <div style={{flex:"1 1 160px",minWidth:140}}>
-          <TextField label="Period name" value={fpTitle} onChange={setFpTitle} />
-        </div>
-        <div style={{width:150}}><TimeInput value={fpTime} onChange={setFpTime} /></div>
-        <select value={fpDuration} onChange={e=>setFpDuration(+e.target.value)} style={routineSelectStyle}>
-          {[30,40,45,50,60].map(m=><option key={m} value={m}>{m} min</option>)}
-        </select>
-        <button type="button" onClick={addFreePeriod} style={routineAddBtnStyle}>+ Add</button>
-      </div>
-      <RoutineList items={routines.filter(r=>r.kind==="free")} onRemove={removeRoutine} />
-    </div>
-  );
-}
-
-function CollegeRoutineBuilder({ routines, addRoutine, removeRoutine }) {
-  const [title,setTitle]=useState("");
-  const [kind,setKind]=useState("class");
-  const [days,setDays]=useState([]);
-  const [time,setTime]=useState("10:00");
-  const [duration,setDuration]=useState(50);
-  const toggleDay=(i)=>setDays(days.includes(i)?days.filter(d=>d!==i):[...days,i]);
-  const addItem=()=>{
-    if(!title.trim()||days.length===0)return;
-    addRoutine({title:title.trim(),kind,days:[...days],startTime:time,duration});
-    setTitle("");setDays([]);
-  };
-  return (
-    <div>
-      <div style={{fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:10}}>Add a class or recurring activity</div>
-      <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:6}}>
-        <TextField label="Title" value={title} onChange={setTitle} />
-        <div style={{display:"flex",gap:8}}>
-          <button type="button" onClick={()=>setKind("class")} style={routineChipStyle(kind==="class")}>Class</button>
-          <button type="button" onClick={()=>setKind("busy")} style={routineChipStyle(kind==="busy")}>Activity</button>
-        </div>
-        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-          {DOW_LABELS.map((d,i)=>(
-            <button key={i} type="button" onClick={()=>toggleDay(i)} style={routineChipStyle(days.includes(i))}>{d}</button>
-          ))}
-        </div>
-        <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap"}}>
-          <div style={{width:150}}><TimeInput value={time} onChange={setTime} /></div>
-          <select value={duration} onChange={e=>setDuration(+e.target.value)} style={routineSelectStyle}>
-            {[30,45,50,60,75,90,120].map(m=><option key={m} value={m}>{m} min</option>)}
-          </select>
-          <button type="button" onClick={addItem} style={routineAddBtnStyle}>+ Add</button>
-        </div>
-      </div>
-
-      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6,marginTop:20}}>
-        {DOW_LABELS.map((d,i)=>{
-          const dayItems=routines.filter(r=>r.days.includes(i)).sort((a,b)=>a.startTime<b.startTime?-1:1);
-          return (
-            <div key={i} style={{minHeight:50}}>
-              <div style={{fontSize:10,fontWeight:700,color:"var(--muted)",textAlign:"center",marginBottom:6,letterSpacing:"0.05em"}}>{d}</div>
-              <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                {dayItems.map(it=>(
-                  <div key={it.id} onClick={()=>removeRoutine(it.id)} title="Click to remove" style={{fontSize:9.5,fontWeight:600,padding:"4px 6px",borderRadius:6,background:it.kind==="class"?"rgba(158,200,61,0.18)":"rgba(158,200,61,0.08)",border:"1px solid var(--line-strong)",color:"var(--ink)",cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.title}</div>
-                ))}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function StepWeeklyRoutine({ state, set }) {
-  const status=state.status||"";
-  const routines=state.weeklyRoutine||[];
-  const addRoutine=(item)=>set({...state, weeklyRoutine:[...routines, {id:String(Date.now()+Math.random()*1000), ...item}]});
-  const removeRoutine=(id)=>set({...state, weeklyRoutine:routines.filter(r=>r.id!==id)});
-
+// Post-auth profile fork — the only other thing collected before the user
+// lands in the product. Everything else (weekly routine, peak study window)
+// is deferred to the Calendar tab's first-visit wizard, not asked here.
+function StepProfile({ state, set }) {
+  const status = state.status || "";
+  const label = status === "highschool" ? "Enter your High School" : "Enter your University";
   return (
     <div className="frame">
       <div className="frame-head">
-        <h2>What's your <em>Weekly Routine?</em></h2>
-        <p>Add your classes, sports, or work shifts once, and our AI will automatically shield those times every single week.</p>
+        <h2>Select your <em>student status</em></h2>
+        <p>This helps Studlin tailor your calendar and scheduling to how your days actually work.</p>
       </div>
 
-      <div style={{display:"flex",gap:8,marginBottom:22}}>
-        <button type="button" onClick={()=>set({...state,status:"highschool"})} style={routineChipStyle(status==="highschool")}>High School</button>
-        <button type="button" onClick={()=>set({...state,status:"college"})} style={routineChipStyle(status==="college")}>College</button>
+      <div style={{display:"flex",gap:10,marginBottom:22}}>
+        <button type="button" onClick={()=>set({...state,status:"highschool"})} style={statusChipStyle(status==="highschool")}>High School</button>
+        <button type="button" onClick={()=>set({...state,status:"college"})} style={statusChipStyle(status==="college")}>College</button>
       </div>
 
-      {status==="highschool" && <HsRoutineBuilder state={state} set={set} routines={routines} addRoutine={addRoutine} removeRoutine={removeRoutine} />}
-      {status==="college" && <CollegeRoutineBuilder routines={routines} addRoutine={addRoutine} removeRoutine={removeRoutine} />}
-      {!status && <div style={{fontSize:13,color:"var(--muted)",padding:"20px 0",textAlign:"center"}}>Pick High School or College above to map your routine — or skip this and add it anytime later from your Calendar.</div>}
-    </div>
-  );
-}
-
-function StepSchedulePrefs({ state, set }) {
-  const handleWorkStart = (val) => set({...state, workStartTime: val});
-  const handleWorkEnd = (val) => set({...state, workEndTime: val});
-
-  return (
-    <div className="frame">
-      <div className="frame-head"><h2>Tune the <em>scheduling algorithm.</em></h2><p>This is the only time you'll set this — Studlin uses it to place every AI-scheduled focus block from here on.</p></div>
-
-      <div>
-        <div style={{fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:10}}>Peak study window</div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <div>
-            <label style={{fontSize:11,fontWeight:600,textTransform:"uppercase",color:"var(--muted)",display:"block",marginBottom:6}}>Peak study start time</label>
-            <TimeInput value={state.workStartTime||"10:00"} onChange={handleWorkStart} />
-          </div>
-          <div>
-            <label style={{fontSize:11,fontWeight:600,textTransform:"uppercase",color:"var(--muted)",display:"block",marginBottom:6}}>Peak study end time</label>
-            <TimeInput value={state.workEndTime||"18:00"} onChange={handleWorkEnd} />
-          </div>
-        </div>
-      </div>
+      <TextField label={label} value={state.school} onChange={v=>set({...state, school:v})} hint="Just the name — no need to search a list." />
     </div>
   );
 }
@@ -527,15 +273,9 @@ function App() {
     if(firebase.auth().currentUser){const s=JSON.parse(localStorage.getItem("studlin-onboarding")||"null");return s&&s._step?s._step:1;}
     return 0;
   });
-  // workStartTime/workEndTime need real values in state from the start, not
-  // just display defaults inside StepSchedulePrefs — isStepValid() checks
-  // state directly, so without these the "Continue" CTA on Study Setup would
-  // stay disabled until the user touched every field, even though the UI
-  // already shows filled-in-looking values.
-  const SCHEDULE_DEFAULTS = { workStartTime:"10:00", workEndTime:"18:00" };
   const [state, setState] = useState(() => {
-    try { const saved = JSON.parse(localStorage.getItem("studlin-onboarding")||"null"); if (saved && typeof saved === "object") return {goals:[],plan:"pro",...SCHEDULE_DEFAULTS,...saved}; } catch(e){}
-    return { goals: [], plan: "pro", ...SCHEDULE_DEFAULTS };
+    try { const saved = JSON.parse(localStorage.getItem("studlin-onboarding")||"null"); if (saved && typeof saved === "object") return {goals:[],plan:"pro",...saved}; } catch(e){}
+    return { goals: [], plan: "pro" };
   });
 
   useEffect(()=>{
@@ -553,70 +293,42 @@ function App() {
 
   const isStepValid = () => {
     if (step === 0) {
-      const identityOk = !!(state.university || (state.universityOther||"").trim()) && !!state.terms;
-      return identityOk && (!!firebase.auth().currentUser || !!(state.provider) || !!(state.name && state.email && (state.password||"").length >= 8));
+      return !!state.terms && (!!firebase.auth().currentUser || !!(state.provider) || !!(state.name && state.email && (state.password||"").length >= 8));
     }
-    if (step === 2) return !!(state.workStartTime && state.workEndTime);
-    return true; // step 1, Weekly Routine, is always optional — never blocks progress
+    if (step === 1) return !!state.status && !!(state.school||"").trim();
+    return true;
   };
 
   const [transitioning, setTransitioning] = useState(false);
   const [finishing, setFinishing] = useState(false);
 
-  const next = () => {
-    if (!isStepValid()) return;
-    const nextStep = Math.min(STEPS.length-1, step+1);
-    setTransitioning(true);
-    setTimeout(() => { setStep(nextStep); setTransitioning(false); }, 250);
-  };
   const back = () => { setTransitioning(true); setTimeout(() => { setStep(s => Math.max(0, s-1)); setTransitioning(false); }, 250); };
 
-  // The real "hand off to the app" step — saves everything collected across
-  // both steps straight to the authenticated user's Firestore doc (this
-  // wizard never wrote to Firestore before; it only cached progress in
-  // localStorage), seeds the same localStorage key the main app's
-  // getSchedulePreferences() reads so scheduling works instantly with no
-  // Firestore round-trip, and sets the flag the main app's own separate
-  // first-run wizard (InitWizard) checks — otherwise a user who just
-  // finished this flow would immediately be asked most of the same
-  // questions again on landing in the app.
+  // The real "hand off to the app" step — writes the profile fork straight
+  // to the authenticated user's Firestore doc and sets the flag the main
+  // app's own separate first-run wizard (InitWizard) checks. Weekly Routine
+  // and peak-study-window collection are deliberately NOT seeded here
+  // anymore — that's the Calendar tab's first-visit wizard's job now, so the
+  // user lands on the Dashboard, not forced into Calendar.
   const finishOnboarding = async () => {
     if (!isStepValid() || finishing) return;
     setFinishing(true);
-    const prefs = {
-      workStartTime: state.workStartTime || "10:00",
-      workEndTime: state.workEndTime || "18:00",
-      taskDifficultyPreference: "NONE",
-      bufferMarginStrategy: "15_MIN",
-    };
-    // High School's school-day boundary is captured as two plain time
-    // fields while editing (so the two TimeInputs stay simple and don't
-    // need to sync into a routine rule on every keystroke) — synthesized
-    // into one "School" shield block only now, at hand-off.
-    const routine = [...(state.weeklyRoutine || [])];
-    if (state.status === "highschool" && (state.schoolStart || state.schoolEnd)) {
-      routine.push({
-        id: "hs-school", title: "School", kind: "class", days: [0,1,2,3,4],
-        startTime: state.schoolStart || "08:00", duration: 60,
-      });
-      // duration is recomputed as the actual boundary span, not a guess
-      const [sh,sm] = (state.schoolStart||"08:00").split(":").map(Number);
-      const [eh,em] = (state.schoolEnd||"15:00").split(":").map(Number);
-      routine[routine.length-1].duration = Math.max(15, (eh*60+em) - (sh*60+sm));
-    }
-    try { localStorage.setItem("studlin-schedulePrefs", JSON.stringify(prefs)); } catch(e){}
-    try { localStorage.setItem("studlin-weeklyRoutine", JSON.stringify(routine)); } catch(e){}
     try { localStorage.setItem("studlin-onboarded", "true"); } catch(e){}
-    try { localStorage.setItem("studlin-pendingTour", JSON.stringify("calendar")); } catch(e){}
+    // Mirrors the app's own local `profile` object (studlin-app.jsx's
+    // getProfile()/saveProfile()) so status/school are available to the
+    // Calendar's routine wizard immediately, with no Firestore round-trip.
+    try {
+      const prevProfile = JSON.parse(localStorage.getItem("studlin-profile")||"null") || {};
+      localStorage.setItem("studlin-profile", JSON.stringify({ ...prevProfile, status: state.status||"", affiliation: (state.school||"").trim(), school: (state.school||"").trim() }));
+    } catch(e){}
     try { localStorage.removeItem("studlin-onboarding"); } catch(e){}
     const u = firebase.auth().currentUser;
     if (u) {
       try {
         await firebase.firestore().collection('users').doc(u.uid).set({
-          school: state.university || state.universityOther || "",
+          school: (state.school||"").trim(),
           status: state.status || "",
-          affiliation: state.university || state.universityOther || "",
-          ...prefs,
+          affiliation: (state.school||"").trim(),
           onboarded: true,
           updatedAt: new Date().toISOString(),
         }, { merge: true });
@@ -627,14 +339,14 @@ function App() {
 
   useEffect(()=>{
     const fn = e => {
-      if (e.key === "Enter") { if (step < STEPS.length-1) next(); else finishOnboarding(); }
+      if (e.key === "Enter") { if (step < STEPS.length-1) { if(isStepValid()){ setTransitioning(true); setTimeout(()=>{ setStep(s=>Math.min(STEPS.length-1,s+1)); setTransitioning(false); },250); } } else finishOnboarding(); }
       if (e.key === "Escape" && step > 0) back();
     };
     window.addEventListener("keydown", fn);
     return ()=>window.removeEventListener("keydown", fn);
   });
 
-  const CTA_LABEL = ["Sign up for free","Continue","Continue"][step];
+  const CTA_LABEL = ["Sign up for free","Continue"][step];
 
   return (
     <div className="shell">
@@ -646,16 +358,11 @@ function App() {
         <div className={"step-content" + (transitioning ? " is-leaving" : " is-entering")}>
           {/* advance() only ever fires from step 0 right after a successful
               signup, so its destination is always "step 1" — a fixed
-              setStep(1) rather than a relative s+1 makes this idempotent.
-              (With relative math, this delayed setTimeout could double-fire
-              alongside the auth-state-changed effect's own step bump below,
-              since both react to the same "user just signed in" moment —
-              harmless when there were only 2 steps total (the +1 got
-              clamped to the same value), but a real skip-a-step bug now
-              that there are 3.) */}
+              setStep(1) rather than a relative s+1 makes this idempotent
+              against the auth-state-changed effect below, which can also
+              bump the step around the same moment. */}
           {step === 0 && <StepSignup state={state} set={setState} advance={(skip)=>{ if(skip||isStepValid()){ setTransitioning(true); setTimeout(()=>{ setStep(1); setTransitioning(false); },250); }}} />}
-          {step === 1 && <StepWeeklyRoutine state={state} set={setState} />}
-          {step === 2 && <StepSchedulePrefs state={state} set={setState} />}
+          {step === 1 && <StepProfile state={state} set={setState} />}
         </div>
         <div className="stage-foot">
           <button className="cta" disabled={!isStepValid()||finishing} onClick={()=>{
@@ -664,7 +371,7 @@ function App() {
               if(btn){btn.click();return;}
             }
             if(step===STEPS.length-1){finishOnboarding();return;}
-            next();
+            setTransitioning(true); setTimeout(()=>{ setStep(s=>Math.min(STEPS.length-1,s+1)); setTransitioning(false); },250);
           }}>
             {finishing?"Setting up...":CTA_LABEL}<span className="arrow">{Ic.arrow}</span>
           </button>

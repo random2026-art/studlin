@@ -474,7 +474,12 @@ const Textarea = (props) => (
 // contract as before, so every call site is unaffected.
 const TIME_HOURS_12=Array.from({length:12},(_,i)=>i+1);
 const TIME_MINUTES_5=Array.from({length:12},(_,i)=>i*5);
-const TimeInput = ({value,onChange,style}) => {
+// lockedRanges (optional, default none): array of {start,end} in minutes.
+// When given, Hour options whose top-of-hour falls inside any range are
+// grayed out — recomputed against the currently-selected AM/PM so flipping
+// it updates which hours are locked. Fully backward compatible: every
+// existing call site simply doesn't pass it and behaves exactly as before.
+const TimeInput = ({value,onChange,style,lockedRanges}) => {
   let h=9,m=0,ap="AM";
   if(value){
     const [hStr,mStr]=value.split(":");
@@ -490,11 +495,18 @@ const TimeInput = ({value,onChange,style}) => {
     if(nextAp==="PM")hh+=12;
     onChange(String(hh).padStart(2,"0")+":"+String(nextM).padStart(2,"0"));
   };
+  const isHourLocked=(x)=>{
+    if(!lockedRanges||lockedRanges.length===0)return false;
+    let hh=x%12;
+    if(ap==="PM")hh+=12;
+    const mins=hh*60;
+    return lockedRanges.some(r=>mins>=r.start&&mins<r.end);
+  };
   const selStyle={flex:1,minWidth:0,padding:"10px 8px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,color:T.text,fontSize:13.5,fontFamily:T.font,outline:"none",cursor:"pointer",boxSizing:"border-box"};
   return (
-    <div style={{display:"flex",gap:6,alignItems:"center",...(style||{})}}>
+    <div style={{display:"flex",flexDirection:"row",gap:6,alignItems:"center",...(style||{})}}>
       <select value={h} onChange={e=>commit(+e.target.value,m,ap)} style={selStyle}>
-        {TIME_HOURS_12.map(x=><option key={x} value={x}>{x}</option>)}
+        {TIME_HOURS_12.map(x=><option key={x} value={x} disabled={isHourLocked(x)}>{x}{isHourLocked(x)?" (school)":""}</option>)}
       </select>
       <span style={{color:T.muted,flexShrink:0}}>:</span>
       <select value={m} onChange={e=>commit(h,+e.target.value,ap)} style={selStyle}>
@@ -638,6 +650,22 @@ function expandRoutineOccurrences(routines,startDateKey,endDateKey){
   return out;
 }
 const getRoutineOccurrencesForDate=(dateKey)=>expandRoutineOccurrences(getWeeklyRoutine(),dateKey,dateKey);
+// Subtracts a list of {start,end} "holes" out of a single {start,end} base
+// interval, returning the remaining segments — used to punch free-period
+// gaps through the WeeklyPlanner's School Hours background tint.
+function subtractIntervals(base,holes){
+  let segments=[{...base}];
+  (holes||[]).forEach(h=>{
+    segments=segments.flatMap(seg=>{
+      if(h.end<=seg.start||h.start>=seg.end)return [seg];
+      const out=[];
+      if(h.start>seg.start)out.push({start:seg.start,end:Math.min(h.start,seg.end)});
+      if(h.end<seg.end)out.push({start:Math.max(h.end,seg.start),end:seg.end});
+      return out;
+    });
+  });
+  return segments.filter(s=>s.end>s.start);
+}
 const diffLabel=(v)=>{const p=v/10;return p<=20?"Easy":p<=40?"Moderately Easy":p<=60?"Medium":p<=80?"Moderately Hard":"Hard";};
 const prioLabel=(v)=>{const p=v/10;return p<=20?"Low":p<=40?"Low–Medium":p<=60?"Medium":p<=80?"High":"Urgent";};
 async function getAuthToken(){try{const u=firebase.auth().currentUser;if(!u)return null;return await u.getIdToken();}catch(e){return null;}}
@@ -2860,7 +2888,7 @@ function presenceInfo(u,{incognito=false}={}){
   return{color:T.faint,text:"Offline",joinable:false};
 }
 
-function FriendsChat(){
+function FriendsChat({onFriendRequestSent}={}){
   const [searchQ,setSearchQ]=useState("");
   const [searchFilter,setSearchFilter]=useState("All");
   const [inviteEmail,setInviteEmail]=useState("");
@@ -3029,7 +3057,7 @@ function FriendsChat(){
     if(!myUid||targetUid===myUid)return;
     const theirs=incomingReqs.find(r=>r.senderId===targetUid);
     if(theirs){await acceptReq(theirs.id);return;}
-    try{await fsdb().collection('friendships').add({senderId:myUid,receiverId:targetUid,status:'pending',createdAt:new Date().toISOString()});}catch(e){}
+    try{await fsdb().collection('friendships').add({senderId:myUid,receiverId:targetUid,status:'pending',createdAt:new Date().toISOString()});if(onFriendRequestSent)onFriendRequestSent();}catch(e){}
   };
   const acceptReq=async(id)=>{try{await fsdb().collection('friendships').doc(id).update({status:'accepted',updatedAt:new Date().toISOString()});}catch(e){}};
   const declineReq=async(id)=>{try{await fsdb().collection('friendships').doc(id).delete();}catch(e){}};
@@ -4165,7 +4193,7 @@ function TaskTimerModal({task,onClose,onComplete}){
 // ─── WEEKLY PLANNER ───────────────────────────────────────────────────────────
 const WK_PX_HR = 64; // pixels per hour in weekly grid
 
-function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine}) {
+function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow}) {
   const wkColRefs = useRef({});
   const weekScrollRef = useRef(null);
   const [wkDragId, setWkDragId] = useState(null);
@@ -4273,6 +4301,15 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
                 ref={el => { wkColRefs.current[dk] = el; }}
                 onDragOver={e=>handleDragOver(e,dk)}
                 onDrop={e=>handleDrop(e,dk)}>
+                {/* School Hours background mask (High School accounts only,
+                    Mon–Fri) — free periods "punch through" it via
+                    subtractIntervals, so those windows show the normal clear
+                    background instead of the tint. */}
+                {schoolWindow && colIdx<5 && subtractIntervals(schoolWindow, colEvs.filter(ev=>ev.kind==="free period").map(ev=>{const p=ev.time.split(":").map(Number);const start=p[0]*60+p[1];return {start,end:start+(ev.duration||30)};})).map((seg,si)=>(
+                  <div key={"sh"+si} style={{position:"absolute",top:seg.start*(WK_PX_HR/60),left:0,right:0,height:(seg.end-seg.start)*(WK_PX_HR/60),background:T.muted+"0C",pointerEvents:"none",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
+                    {(seg.end-seg.start)>=45 && <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.12em",color:T.muted+"88"}}>SCHOOL HOURS</span>}
+                  </div>
+                ))}
                 {Array.from({length:24}, (_, h) => (
                   <div key={h} style={{position:"absolute",top:h*WK_PX_HR,left:0,right:0,height:WK_PX_HR,borderTop:`1px solid ${T.border}44`,boxSizing:"border-box"}} />
                 ))}
@@ -4316,7 +4353,7 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
                       onMouseLeave={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(null); }}
                       title={isRoutine?"Repeats weekly":"Double-click to edit · Drag to reschedule"}
                       style={{position:"absolute",top:topPx,left:2,right:2,height:heightPx,borderRadius:5,padding:"2px 5px",cursor:isRoutine?(editRoutineMode?"pointer":"default"):"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isDone?0.4:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{})}}>
-                      <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isRoutine?"↻ ":""}{isExam?"EXAM · ":""}{ev.title}</div>
+                      <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                       {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:1}}>{fmtTime(ev.time)}{dur ? " · "+dur+"m" : ""}</div>}
                       {isRoutine&&editRoutineMode&&hoveredRoutineId===ev.routineId&&(
                         <button onClick={(e)=>{e.stopPropagation();if(onDeleteRoutine)onDeleteRoutine(ev.routineId);if(setHoveredRoutineId)setHoveredRoutineId(null);}} title="Delete this routine block (every week)"
@@ -4335,27 +4372,265 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
   );
 }
 
-function CalendarTab({onTourDone}={}){
+// ─── DEFERRED WEEKLY ROUTINE WIZARD (Calendar tab, first-visit) ─────────────
+const ROUTINE_DOW=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+const fmtTimeShort=(t)=>{if(!t)return "";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
+const wizardChipStyle=(sel)=>({padding:"7px 12px",borderRadius:8,fontSize:12,fontWeight:sel?600:400,cursor:"pointer",border:`1px solid ${sel?T.lime+"66":T.border}`,background:sel?T.lime+"14":"transparent",color:sel?T.lime:T.muted,fontFamily:T.font});
+const wizardStatusChipStyle=(sel)=>({flex:1,padding:"16px",borderRadius:12,fontSize:14,fontWeight:600,cursor:"pointer",border:`1.5px solid ${sel?T.lime:T.border}`,background:sel?T.lime+"14":T.card2,color:sel?T.lime:T.muted,fontFamily:T.font,textAlign:"center"});
+const wizardSelectStyle={padding:"10px 8px",borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,fontSize:13,color:T.text,fontFamily:T.font,outline:"none"};
+const wizardAddBtnStyle={padding:"10px 16px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontSize:13,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"};
+
+function WizardRoutineList({items,onRemove}){
+  if(items.length===0)return null;
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:14}}>
+      {items.map(it=>(
+        <div key={it.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:600,color:T.text}}>{it.title}</div>
+            <div style={{fontSize:11,color:T.muted,marginTop:2}}>{it.days.map(d=>ROUTINE_DOW[d]).join(", ")} · {fmtTimeShort(it.startTime)} · {it.duration}m</div>
+          </div>
+          <button type="button" onClick={()=>onRemove(it.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:18,lineHeight:1,padding:"2px 6px"}}>×</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// After-School Shield List — day-specific (unlike a single Mon–Fri
+// assumption), since sports/rehearsals/shifts don't all repeat every
+// weekday the way core school hours do.
+function WizardHsBuilder({schoolStart,setSchoolStart,schoolEnd,setSchoolEnd,items,addItem,removeItem}){
+  const [title,setTitle]=useState("");
+  const [kind,setKind]=useState("busy"); // "busy" (after-school shield) or "free" (free period / study hall — punches through the School Hours tint)
+  const [days,setDays]=useState([]);
+  const [start,setStart]=useState("15:30");
+  const [duration,setDuration]=useState(60);
+  const toggleDay=(i)=>setDays(days.includes(i)?days.filter(d=>d!==i):[...days,i]);
+  const add=()=>{
+    if(!title.trim()||days.length===0)return;
+    addItem({title:title.trim(),kind,days:[...days],startTime:start,duration});
+    setTitle("");setDays([]);
+  };
+  return (
+    <div>
+      <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:10}}>Base School Block (Mon–Fri)</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:22}}>
+        <Field label="School starts"><TimeInput value={schoolStart} onChange={setSchoolStart} /></Field>
+        <Field label="School ends"><TimeInput value={schoolEnd} onChange={setSchoolEnd} /></Field>
+      </div>
+      <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:2}}>Free Periods &amp; After-School Shields</div>
+      <div style={{fontSize:11,color:T.muted,marginBottom:12}}>Study halls and lunch clear the School Hours background; sports, rehearsals, and shifts stay shielded like a class. Pick the days each one repeats.</div>
+      <Field label="Name"><Input value={title} onChange={e=>setTitle(e.target.value)} style={{flexGrow:1}} /></Field>
+      <div style={{display:"flex",gap:8,marginBottom:10}}>
+        <button type="button" onClick={()=>setKind("free")} style={wizardChipStyle(kind==="free")}>Free Period</button>
+        <button type="button" onClick={()=>setKind("busy")} style={wizardChipStyle(kind==="busy")}>After-School Activity</button>
+      </div>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+        {ROUTINE_DOW.map((d,i)=><button key={i} type="button" onClick={()=>toggleDay(i)} style={wizardChipStyle(days.includes(i))}>{d}</button>)}
+      </div>
+      <div style={{display:"flex",gap:8,alignItems:"center",justifyContent:"flex-end"}}>
+        <TimeInput value={start} onChange={setStart} style={{width:"fit-content"}} />
+        <select value={duration} onChange={e=>setDuration(+e.target.value)} style={wizardSelectStyle}>
+          {[30,45,60,90,120].map(m=><option key={m} value={m}>{m} min</option>)}
+        </select>
+        <button type="button" onClick={add} style={wizardAddBtnStyle}>+ Add</button>
+      </div>
+      <WizardRoutineList items={items} onRemove={removeItem} />
+    </div>
+  );
+}
+
+function WizardCollegeBuilder({items,addItem,removeItem}){
+  const [title,setTitle]=useState("");
+  const [kind,setKind]=useState("class");
+  const [days,setDays]=useState([]);
+  const [time,setTime]=useState("10:00");
+  const [duration,setDuration]=useState(50);
+  const toggleDay=(i)=>setDays(days.includes(i)?days.filter(d=>d!==i):[...days,i]);
+  const add=()=>{
+    if(!title.trim()||days.length===0)return;
+    addItem({title:title.trim(),kind,days:[...days],startTime:time,duration});
+    setTitle("");setDays([]);
+  };
+  return (
+    <div>
+      <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:10}}>Add a class or recurring activity</div>
+      <Field label="Title"><Input value={title} onChange={e=>setTitle(e.target.value)} style={{flexGrow:1}} /></Field>
+      <div style={{display:"flex",gap:8,marginBottom:10}}>
+        <button type="button" onClick={()=>setKind("class")} style={wizardChipStyle(kind==="class")}>Class</button>
+        <button type="button" onClick={()=>setKind("busy")} style={wizardChipStyle(kind==="busy")}>Activity</button>
+      </div>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+        {ROUTINE_DOW.map((d,i)=><button key={i} type="button" onClick={()=>toggleDay(i)} style={wizardChipStyle(days.includes(i))}>{d}</button>)}
+      </div>
+      <div style={{display:"flex",gap:8,alignItems:"center",justifyContent:"flex-end"}}>
+        <TimeInput value={time} onChange={setTime} style={{width:"fit-content"}} />
+        <select value={duration} onChange={e=>setDuration(+e.target.value)} style={wizardSelectStyle}>
+          {[30,45,50,60,75,90,120].map(m=><option key={m} value={m}>{m} min</option>)}
+        </select>
+        <button type="button" onClick={add} style={wizardAddBtnStyle}>+ Add</button>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6,marginTop:18}}>
+        {ROUTINE_DOW.map((d,i)=>{
+          const dayItems=items.filter(r=>r.days.includes(i)).sort((a,b)=>a.startTime<b.startTime?-1:1);
+          return (
+            <div key={i} style={{minHeight:50}}>
+              <div style={{fontSize:10,fontWeight:700,color:T.muted,textAlign:"center",marginBottom:6,letterSpacing:"0.05em"}}>{d}</div>
+              <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                {dayItems.map(it=>(
+                  <div key={it.id} onClick={()=>removeItem(it.id)} title="Click to remove" style={{fontSize:9.5,fontWeight:600,padding:"4px 6px",borderRadius:6,background:it.kind==="class"?T.lime+"22":T.lime+"0F",border:`1px solid ${T.border}`,color:T.text,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.title}</div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Multi-step wizard: status fork → HS/College builder → preferred focus
+// window. Deferred to the Calendar tab's first visit rather than living in
+// onboarding, and reopenable anytime via "Manage Routine" (Calendar header
+// or Settings > Calendar Preferences) with existing routines pre-filled.
+function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip}){
+  const [wizStep,setWizStep]=useState("status");
+  const [status,setStatus]=useState(initialStatus||"");
+  const [schoolStart,setSchoolStart]=useState("08:00");
+  const [schoolEnd,setSchoolEnd]=useState("15:00");
+  const [items,setItems]=useState([]);
+  const [workStart,setWorkStart]=useState("10:00");
+  const [workEnd,setWorkEnd]=useState("18:00");
+  const [skipConfirmOpen,setSkipConfirmOpen]=useState(false);
+
+  useEffect(()=>{
+    if(!open)return;
+    setWizStep("status");
+    setStatus(initialStatus||"");
+    const hsRule=(existingRoutines||[]).find(r=>r.id==="hs-school");
+    if(hsRule){
+      setSchoolStart(hsRule.startTime||"08:00");
+      const startMins=timeToMinutes(hsRule.startTime||"08:00")+(hsRule.duration||420);
+      setSchoolEnd(minutesToTime(Math.min(23*60+45,startMins)));
+    }else{setSchoolStart("08:00");setSchoolEnd("15:00");}
+    setItems((existingRoutines||[]).filter(r=>r.id!=="hs-school").map(r=>({...r})));
+    const prefs=getSchedulePreferences();
+    setWorkStart(prefs.workStartTime||"10:00");
+    setWorkEnd(prefs.workEndTime||"18:00");
+    setSkipConfirmOpen(false);
+  },[open]);
+
+  const addItem=(item)=>setItems(prev=>[...prev,{id:String(Date.now()+Math.random()*1000),...item}]);
+  const removeItem=(id)=>setItems(prev=>prev.filter(x=>x.id!==id));
+
+  const goToWindowStep=()=>{
+    if(status==="highschool"&&workStart==="10:00"){
+      const suggested=Math.min(23*60+45,timeToMinutes(schoolEnd)+60);
+      setWorkStart(minutesToTime(suggested));
+    }
+    setWizStep("window");
+  };
+
+  const finish=()=>{
+    const routine=[...items];
+    if(status==="highschool"){
+      routine.push({id:"hs-school",title:"School",kind:"class",days:[0,1,2,3,4],startTime:schoolStart,duration:Math.max(15,timeToMinutes(schoolEnd)-timeToMinutes(schoolStart))});
+    }
+    onFinish(routine,{workStartTime:workStart,workEndTime:workEnd});
+  };
+
+  const lockedRanges=status==="highschool"?[{start:timeToMinutes(schoolStart),end:timeToMinutes(schoolEnd)}]:[];
+
+  return (
+    <>
+      <Modal open={open&&!skipConfirmOpen} onClose={()=>setSkipConfirmOpen(true)}
+        title={wizStep==="status"?"Set up your Weekly Routine?":wizStep==="build"?"Map your schedule":"Preferred Focus Windows"}
+        sub={wizStep==="status"?"Add your classes, sports, or work shifts once, and our AI will automatically shield those times every single week.":wizStep==="window"?"When do you typically prefer to study?":undefined}
+        width={620}
+        footer={
+          <div style={{display:"flex",width:"100%",justifyContent:"space-between",alignItems:"center"}}>
+            <Btn variant="subtle" onClick={()=>setSkipConfirmOpen(true)}>Skip and Setup Later</Btn>
+            <div style={{display:"flex",gap:10}}>
+              {wizStep!=="status"&&<Btn variant="subtle" onClick={()=>setWizStep(wizStep==="window"?"build":"status")}>Back</Btn>}
+              {wizStep==="status"&&<Btn onClick={()=>setWizStep("build")} disabled={!status} style={{opacity:status?1:0.45}}>Map Routine Now</Btn>}
+              {wizStep==="build"&&<Btn onClick={goToWindowStep}>Continue</Btn>}
+              {wizStep==="window"&&<Btn onClick={finish}>Finish</Btn>}
+            </div>
+          </div>
+        }>
+        {wizStep==="status"&&(
+          <div style={{display:"flex",gap:10}}>
+            <button type="button" onClick={()=>setStatus("highschool")} style={wizardStatusChipStyle(status==="highschool")}>High School</button>
+            <button type="button" onClick={()=>setStatus("college")} style={wizardStatusChipStyle(status==="college")}>College</button>
+          </div>
+        )}
+        {wizStep==="build"&&status==="highschool"&&<WizardHsBuilder schoolStart={schoolStart} setSchoolStart={setSchoolStart} schoolEnd={schoolEnd} setSchoolEnd={setSchoolEnd} items={items.filter(i=>i.id!=="hs-school")} addItem={addItem} removeItem={removeItem} />}
+        {wizStep==="build"&&status==="college"&&<WizardCollegeBuilder items={items} addItem={addItem} removeItem={removeItem} />}
+        {wizStep==="window"&&(
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <Field label="Preferred study start"><TimeInput value={workStart} onChange={setWorkStart} lockedRanges={lockedRanges} /></Field>
+            <Field label="Preferred study end"><TimeInput value={workEnd} onChange={setWorkEnd} /></Field>
+          </div>
+        )}
+      </Modal>
+      <Modal open={skipConfirmOpen} onClose={()=>setSkipConfirmOpen(false)} title="Hold up!" width={440}
+        footer={
+          <div style={{display:"flex",gap:10,width:"100%",justifyContent:"flex-end"}}>
+            <Btn variant="subtle" onClick={()=>setSkipConfirmOpen(false)}>Map Routine Now</Btn>
+            <Btn variant="danger" onClick={()=>{setSkipConfirmOpen(false);onSkip();}}>Skip Anyway, I'll Fix it in Settings</Btn>
+          </div>
+        }>
+        <div style={{fontSize:14,color:T.text,lineHeight:1.5}}>Without a routine baseline, the AI might schedule study blocks during your actual classes.</div>
+      </Modal>
+    </>
+  );
+}
+
+function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.muted},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   const colorOf=(sub)=>{if(!sub||sub==="None"||sub==="")return T.muted;const x=userSubjects.find(s=>s.label===sub);return x?x.color:T.lime;};
   const [subjOnboardOpen,setSubjOnboardOpen]=useState(()=>!lsGet("subjects-configured",false));
   const [onbSubjs,setOnbSubjs]=useState(()=>getSubjects().map(s=>({...s})));
 
-  // First-run Calendar tour — waits for the "Set up your subjects" first-run
-  // modal to be dismissed first (both are first-run overlays; showing them
-  // at once would be a mess), then coachmarks Add Task and subject tagging,
-  // then closes with a note about the peak-window scheduling rule.
-  // Finishing (or skipping) hands off to the caller (App) so it can trigger
-  // the paywall intercept right after.
+  // Deferred Weekly Routine wizard — first-visit intercept, gated by its own
+  // one-shot flag (separate from subjects setup), plus a "Manage Routine"
+  // reopen path from the Calendar header and Settings > Calendar Preferences
+  // (the latter arrives via openWizardOnMount, since Settings is a separate
+  // top-level tab with no direct access to this component's state).
+  const [routineWizardOpen,setRoutineWizardOpen]=useState(()=>!lsGet("hasConfiguredRoutine",false));
+  useEffect(()=>{
+    if(openWizardOnMount){setRoutineWizardOpen(true);if(onWizardOpenedFromSettings)onWizardOpenedFromSettings();}
+  },[openWizardOnMount]);
+  const finishRoutineWizard=(routine,prefs)=>{
+    persistRoutines(routine);
+    setSchedulePreferences(prefs);
+    lsSet("hasConfiguredRoutine",true);
+    setRoutineWizardOpen(false);
+  };
+  const skipRoutineWizard=()=>{
+    // Marks the wizard "handled" so it doesn't keep re-intercepting on every
+    // future Calendar visit — the user can still reopen it anytime via
+    // "Manage Routine".
+    lsSet("hasConfiguredRoutine",true);
+    setRoutineWizardOpen(false);
+  };
+
+  // First-run Calendar tour — waits for both the "Set up your subjects" AND
+  // the routine wizard first-run overlays to close first (three first-run
+  // overlays total; showing more than one at once would be a mess), then
+  // coachmarks Add Task and subject tagging, then closes with a note about
+  // the peak-window scheduling rule. Finishing (or skipping) hands off to
+  // the caller (App) so it can trigger the paywall intercept right after.
   const [tourStep,setTourStep]=useState(null);
   const tourAddTaskRef=useRef(null);
   const tourSubjectRef=useRef(null);
   useEffect(()=>{
-    if(subjOnboardOpen)return;
+    if(subjOnboardOpen||routineWizardOpen)return;
     if(lsGet("seenCalendarTour",false))return;
     setTourStep(0);
-  },[subjOnboardOpen]);
+  },[subjOnboardOpen,routineWizardOpen]);
   useEffect(()=>{
     if(tourStep===1)setNewOpen(true);
     if(tourStep===2)setNewOpen(false);
@@ -4403,6 +4678,11 @@ function CalendarTab({onTourDone}={}){
   // change via saveWeeklyRoutine.
   const [routines,setRoutinesState]=useState(()=>getWeeklyRoutine());
   const persistRoutines=(r)=>{setRoutinesState(r);saveWeeklyRoutine(r);};
+  // The reserved "hs-school" rule (synthesized by the Weekly Routine wizard
+  // for High School accounts) doubles as the School Hours grid-tint window —
+  // no separate profile-status prop needed, since only HS accounts ever get
+  // this rule created for them.
+  const schoolWindow=(()=>{const r=routines.find(x=>x.id==="hs-school");if(!r)return null;return {start:timeToMinutes(r.startTime),end:timeToMinutes(r.startTime)+(r.duration||0)};})();
   const deleteRoutineItem=(routineId)=>persistRoutines(routines.filter(r=>r.id!==routineId));
   const [editRoutineMode,setEditRoutineMode]=useState(false);
   const [hoveredRoutineId,setHoveredRoutineId]=useState(null);
@@ -4506,6 +4786,7 @@ function CalendarTab({onTourDone}={}){
     resetForm();setSelDay(newTasks[0].date);
     const d=newTasks[0].date;if(d.slice(0,7)!==(ym.y+"-"+String(ym.m+1).padStart(2,"0"))){const p=d.split("-");setYm({y:+p[0],m:+p[1]-1});}
     setToast(true);setTimeout(()=>setToast(false),2200);
+    if(onTaskSaved)onTaskSaved();
   };
   // Turns the current form into a recurring routine rule instead of a
   // one-off event — used when "Save to my Weekly Routine" is checked. Only
@@ -4520,6 +4801,7 @@ function CalendarTab({onTourDone}={}){
     saveWeeklyRoutine([...getWeeklyRoutine(),rule]);
     resetForm();setSelDay(evDate);
     setToast(true);setTimeout(()=>setToast(false),2200);
+    if(onTaskSaved)onTaskSaved();
   };
   const saveManual=()=>{
     if(!evTitle.trim()||!evDate.trim()||!evTime.trim())return;
@@ -4708,7 +4990,7 @@ function CalendarTab({onTourDone}={}){
           </div>
         </div>
       )}
-      <PH title="Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>{setEditRoutineMode(m=>!m);setHoveredRoutineId(null);}}>⚙️ Edit Routine</Btn><Btn variant="ghost" onClick={()=>{setGroupSyncOpen(true);setGsStep(1);setGsResults(null);}}>{Icon.users} Group Sync</Btn><span ref={tourAddTaskRef} style={{display:"inline-flex"}}><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></span></div>} />
+      <PH title="Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><Btn variant="ghost" onClick={()=>setRoutineWizardOpen(true)}>Manage Routine</Btn><Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>{setEditRoutineMode(m=>!m);setHoveredRoutineId(null);}}>Edit Routine</Btn><Btn variant="ghost" onClick={()=>{setGroupSyncOpen(true);setGsStep(1);setGsResults(null);}}>{Icon.users} Group Sync</Btn><span ref={tourAddTaskRef} style={{display:"inline-flex"}}><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></span></div>} />
       {editRoutineMode&&(
         <div style={{display:"flex",alignItems:"center",gap:8,padding:"9px 14px",background:T.lime+"10",border:`1px solid ${T.lime}33`,borderRadius:10,marginBottom:14,fontSize:12.5,color:T.text}}>
           Editing your Weekly Routine — one-off tasks are dimmed. Click a routine block to edit it, or hover and tap × to delete it everywhere it repeats.
@@ -4847,6 +5129,7 @@ function CalendarTab({onTourDone}={}){
         <Field label="Subject"><SelectChip options={SUBJ} value={editSubject} onChange={setEditSubject} /></Field>
         <Field label="Notes (optional)"><Textarea value={editNotes} onChange={e=>setEditNotes(e.target.value)} /></Field>
       </Modal>
+      <RoutineWizardModal open={routineWizardOpen&&!subjOnboardOpen} initialStatus={getProfile().status} existingRoutines={routines} onFinish={finishRoutineWizard} onSkip={skipRoutineWizard} />
       <Modal open={!!routineEditItem} onClose={closeRoutineEdit} title="Edit routine block" sub="Changes apply to every week this repeats." width={480}
         footer={
           <div style={{display:"flex",width:"100%",justifyContent:"space-between",alignItems:"center"}}>
@@ -4954,7 +5237,6 @@ function CalendarTab({onTourDone}={}){
                       const isRoutine=!!ev.isRoutine;
                       const dimmedByRoutineMode=editRoutineMode&&!isRoutine;
                       return <div key={j} style={{fontSize:9,fontWeight:600,color:tagColor,background:tagColor+(isExam?"22":"16"),border:isRoutine&&editRoutineMode?`1px solid ${T.lime}`:isExam?`1px solid ${tagColor}`:"none",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",display:"flex",alignItems:"center",gap:3,opacity:dimmedByRoutineMode?0.3:1}}>
-                        {isRoutine&&<span style={{flexShrink:0}}>↻</span>}
                         {ev.priority&&ev.priority>=4&&<span style={{width:5,height:5,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority],flexShrink:0}} />}
                         {ev.title}
                       </div>;
@@ -5008,7 +5290,7 @@ function CalendarTab({onTourDone}={}){
                     <div style={{display:"flex",alignItems:"center",gap:6}}>
                       {ev.priority&&<span style={{width:7,height:7,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority||3],flexShrink:0}} />}
                       {isExam&&<span style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:9.5,fontWeight:800,letterSpacing:"0.04em",color,background:color+"1E",border:`1px solid ${color}55`,borderRadius:5,padding:"1px 6px",flexShrink:0}}><span style={{width:4,height:4,borderRadius:"50%",background:color,flexShrink:0}} />EXAM</span>}
-                      {isRoutine&&<span title="Repeats weekly" style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:14,height:14,borderRadius:"50%",color,flexShrink:0}}>↻</span>}
+                      {isRoutine&&<span style={{fontSize:9,fontWeight:800,letterSpacing:"0.04em",color,background:color+"14",border:`1px solid ${color}44`,borderRadius:5,padding:"1px 6px",flexShrink:0}}>WEEKLY</span>}
                       <span style={{fontSize:12.5,fontWeight:600,color:titleColor,lineHeight:1.35,textDecoration:isDone?"line-through":"none"}}>{ev.title}</span>
                     </div>
                     <div style={{fontSize:11,color:subColor,marginTop:2,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
@@ -5062,7 +5344,7 @@ function CalendarTab({onTourDone}={}){
       </div>)}
       {calView==="weekly"&&<WeeklyPlanner events={events} setEvents={setEvents} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openNew={openNew} openEdit={openEdit}
         routines={routines} editRoutineMode={editRoutineMode} hoveredRoutineId={hoveredRoutineId} setHoveredRoutineId={setHoveredRoutineId}
-        onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} />}
+        onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow} />}
       {tourStep!==null&&(
         <TourStep
           targetRef={CAL_TOUR_STEPS[tourStep].targetRef}
@@ -6023,7 +6305,7 @@ function FocusMusic(){
 
 
 // ─── SETTINGS ─────────────────────────────────────────────────────────────────
-function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}}) {
+function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineWizard=()=>{}}) {
   const [active,setActive]=useState("General");
   const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,sr:true,auto:true,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false},...lsGet("settings",{})}));
   const tog=k=>setToggles(t=>{const n={...t,[k]:!t[k]};lsSet("settings",n);return n;});
@@ -6134,6 +6416,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     {id:"Privacy",icon:Icon.shield},
     {id:"Study preferences",icon:Icon.brain},
     {id:"Subjects & Labels",icon:Icon.layers},
+    {id:"Calendar Preferences",icon:Icon.cal},
     {id:"Integrations",icon:Icon.link},
     {id:"Subscription",icon:Icon.zap},
     {id:"Danger zone",icon:Icon.xmark},
@@ -6450,6 +6733,14 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 <Btn variant="subtle" onClick={()=>setMgmtSubjs(DEFAULT_SUBJECTS.map(s=>({...s})))}>Reset to defaults</Btn>
                 {mgmtSaved&&<span style={{fontSize:12,color:T.lime,fontWeight:600}}>✓ Saved</span>}
               </div>
+            </Card>
+          </>)}
+
+          {active==="Calendar Preferences" && (<>
+            <Card>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:3}}>Weekly Routine</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Your classes, sports, and shifts — the times the AI treats as absolute and never schedules over.</div>
+              <Btn onClick={onOpenRoutineWizard}>Manage Routine</Btn>
             </Card>
           </>)}
 
@@ -7772,6 +8063,15 @@ function App() {
   const handleNotifDeny=()=>{
     lsSet("notifAsked",true);setNotifPermModal(false);
   };
+  // Notification permission is asked contextually now, not generically right
+  // after onboarding — the first time it's actually relevant (a task with a
+  // reminder was just saved, or a friend request was just sent), not before.
+  const askNotifIfNeeded=()=>{ if(!lsGet("notifAsked",false)) setNotifPermModal(true); };
+  // Cross-tab deep link for Settings > Calendar Preferences' "Manage Routine"
+  // link — CalendarTab owns the wizard's actual open/closed state, so this
+  // just switches tabs and leaves a one-shot flag for it to pick up on mount.
+  const [pendingRoutineWizard,setPendingRoutineWizard]=useState(false);
+  const openRoutineWizardOnCalendar=()=>{setActive("calendar");setPendingRoutineWizard(true);};
   const myUid=firebase.auth().currentUser?.uid||null;
 
   // Global unread count for the sidebar badge — mounted here (not inside
@@ -7934,7 +8234,7 @@ function App() {
   const sectionOf={dashboard:"Workspace",aichat:"Workspace",writestudio:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",friends:"Workspace",solve:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
-  if (!onboarded) return <InitWizard onComplete={()=>{setOnboarded(true);if(!lsGet("notifAsked",false))setTimeout(()=>setNotifPermModal(true),500);}} />;
+  if (!onboarded) return <InitWizard onComplete={()=>{setOnboarded(true);}} />;
   const sidebarText=isLight?"#F6F1E6":T.text;
   const sidebarMuted=isLight?"rgba(246,241,230,0.55)":T.muted;
   const sidebarFaint=isLight?"rgba(246,241,230,0.35)":T.faint;
@@ -8037,8 +8337,9 @@ function App() {
         {/* CONTENT */}
         <div key={active} data-page style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both"}}>
           {active==="dashboard"?<Dashboard setActive={setActive} focusSecs={focusSecs} focusRunning={focusRunning} setFocusRunning={setFocusRunning} setScheduleSettingsOpen={setScheduleSettingsOpen} seriousMode={seriousMode} />:
-           active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} />:
-           active==="calendar"?<CalendarTab onTourDone={handleCalendarTourDone} />:
+           active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} />:
+           active==="calendar"?<CalendarTab onTourDone={handleCalendarTourDone} onTaskSaved={askNotifIfNeeded} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} />:
+           active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} />:
            ActivePage?<ActivePage />:null}
         </div>
       </div>
