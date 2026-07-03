@@ -469,12 +469,44 @@ const Input = (props) => (
 const Textarea = (props) => (
   <textarea {...props} style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.font,outline:"none",resize:"vertical",minHeight:90,boxSizing:"border-box",...(props.style||{})}} />
 );
-// Native browser time picker — same 24h "HH:MM" value/onChange contract as
-// before, using the OS/browser's own hour/minute/AM-PM control rather than
-// a typed-text field.
-const TimeInput = ({value,onChange,style}) => (
-  <Input type="time" value={value||""} onChange={e=>onChange(e.target.value)} style={style} />
-);
+// Custom Hour / Minute / AM-PM dropdown trio — mobile-friendly native
+// <select> controls, no typing required. Same 24h "HH:MM" value/onChange
+// contract as before, so every call site is unaffected.
+const TIME_HOURS_12=Array.from({length:12},(_,i)=>i+1);
+const TIME_MINUTES_5=Array.from({length:12},(_,i)=>i*5);
+const TimeInput = ({value,onChange,style}) => {
+  let h=9,m=0,ap="AM";
+  if(value){
+    const [hStr,mStr]=value.split(":");
+    const hh=parseInt(hStr,10),mm=parseInt(mStr,10);
+    if(!isNaN(hh)&&!isNaN(mm)){
+      ap=hh>=12?"PM":"AM";
+      h=hh%12||12;
+      m=Math.round(mm/5)*5%60;
+    }
+  }
+  const commit=(nextH,nextM,nextAp)=>{
+    let hh=nextH%12;
+    if(nextAp==="PM")hh+=12;
+    onChange(String(hh).padStart(2,"0")+":"+String(nextM).padStart(2,"0"));
+  };
+  const selStyle={flex:1,minWidth:0,padding:"10px 8px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,color:T.text,fontSize:13.5,fontFamily:T.font,outline:"none",cursor:"pointer",boxSizing:"border-box"};
+  return (
+    <div style={{display:"flex",gap:6,alignItems:"center",...(style||{})}}>
+      <select value={h} onChange={e=>commit(+e.target.value,m,ap)} style={selStyle}>
+        {TIME_HOURS_12.map(x=><option key={x} value={x}>{x}</option>)}
+      </select>
+      <span style={{color:T.muted,flexShrink:0}}>:</span>
+      <select value={m} onChange={e=>commit(h,+e.target.value,ap)} style={selStyle}>
+        {TIME_MINUTES_5.map(x=><option key={x} value={x}>{String(x).padStart(2,"0")}</option>)}
+      </select>
+      <select value={ap} onChange={e=>commit(h,m,e.target.value)} style={selStyle}>
+        <option value="AM">AM</option>
+        <option value="PM">PM</option>
+      </select>
+    </div>
+  );
+};
 // Drop-in replacement for a plain numeric <Input type="number">. The bug it
 // fixes: `onChange={e=>setX(Math.max(min,+e.target.value||fallback))}` snaps
 // back to the fallback on every keystroke (since +"" is 0, a falsy value),
@@ -723,7 +755,6 @@ function getSchedulePreferences(){
   const def={
     workStartTime:"10:00",
     workEndTime:"18:00",
-    bedtime:"23:00",
     taskDifficultyPreference:"NONE",
     bufferMarginStrategy:"15_MIN"
   };
@@ -855,9 +886,7 @@ function advancedSchedulePlanner(baseEvents){
   // Time window constraints
   const workStart=timeToMinutes(prefs.workStartTime);
   const workEnd=timeToMinutes(prefs.workEndTime);
-  const bedtime=timeToMinutes(prefs.bedtime);
-  const softBedtimeBuffer=120; // 2 hours before bedtime
-  
+
   // Separate hard events (fixed time) and flexible tasks
   const hardEvents=events.filter(e=>!e.isFlexible&&e.time);
   const flexibleTasks=events.filter(e=>e.isFlexible||!e.time).sort((a,b)=>calculateTaskPriority(b,events)-calculateTaskPriority(a,events));
@@ -891,7 +920,7 @@ function advancedSchedulePlanner(baseEvents){
     let placed=false;
     
     // Try to find first available slot within work window
-    for(let timeSlot=workStart;timeSlot+dur<=Math.min(workEnd,bedtime-softBedtimeBuffer);timeSlot+=15){
+    for(let timeSlot=workStart;timeSlot+dur<=workEnd;timeSlot+=15){
       if(!detectConflicts(task,occupiedSlots,timeSlot)){
         occupiedSlots.push({start:timeSlot,end:timeSlot+dur,task:task});
         scheduled.push({
@@ -932,9 +961,7 @@ function rearrangeUserTasks(tasks, userPrefs){
   const parseTime=(t)=>{const [h,m]=(t||"10:00").split(":").map(Number);return h*60+m;};
   const workStart=parseTime(prefs.workStartTime);
   const workEnd=parseTime(prefs.workEndTime);
-  const bedtimeMin=parseTime(prefs.bedtime);
-  const bedtimeSoftLimit=bedtimeMin-120; // 2-hour buffer before actual bedtime
-  
+
   // Calculate baseline score (0-1000) with exponential deadline urgency
   const calcScore=(task)=>{
     let score=0;
@@ -994,16 +1021,7 @@ function rearrangeUserTasks(tasks, userPrefs){
     // Scan for first available 15-minute window within work constraints
     for(let mins=workStart;mins<=workEnd-duration;mins+=15){
       const endMins=mins+duration;
-      
-      // Check bedtime constraints
-      if(prefs.taskDifficultyPreference==="LAST"&&(difficulty=>3||task.priority<=2)){
-        // For LAST preference low-priority tasks, scan from workStart
-        if(endMins>bedtimeSoftLimit)continue;
-      }else{
-        // Default: hard limit before bedtime
-        if(endMins>bedtimeSoftLimit)continue;
-      }
-      
+
       // Check no conflict with occupied slots
       const hasConflict=occupiedSlots.some(slot=>
         (mins<slot.end&&endMins>slot.start)
@@ -1079,15 +1097,13 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
   const prefs=getSchedulePreferences();
   const [workStart,setWorkStart]=useState(prefs.workStartTime);
   const [workEnd,setWorkEnd]=useState(prefs.workEndTime);
-  const [bedtime,setBedtime]=useState(prefs.bedtime);
   const [difficulty,setDifficulty]=useState(prefs.difficultyPreference);
   const [saved,setSaved]=useState(false);
-  
+
   const handleSave=()=>{
     const newPrefs={
       workStartTime:workStart,
       workEndTime:workEnd,
-      bedtime:bedtime,
       difficultyPreference:difficulty,
     };
     setSchedulePreferences(newPrefs);
@@ -1119,12 +1135,6 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
             </div>
           </div>
           <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>Tasks will be scheduled within this window. Your study schedule respects these hours.</div>
-        </div>
-        
-        <div style={{marginBottom:22}}>
-          <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>Bedtime (Soft Limit)</label>
-          <TimeInput value={bedtime} onChange={setBedtime} style={{fontFamily:T.mono,maxWidth:200}} />
-          <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>Tasks won't be scheduled in the 2 hours before bedtime. This keeps your evening protected.</div>
         </div>
         
         <div style={{marginBottom:22}}>
@@ -4261,9 +4271,9 @@ function CalendarTab({onTourDone}={}){
   // First-run Calendar tour — waits for the "Set up your subjects" first-run
   // modal to be dismissed first (both are first-run overlays; showing them
   // at once would be a mess), then coachmarks Add Task and subject tagging,
-  // then closes with a note about the peak-window/bedtime-guard scheduling
-  // rule. Finishing (or skipping) hands off to the caller (App) so it can
-  // trigger the paywall intercept right after.
+  // then closes with a note about the peak-window scheduling rule.
+  // Finishing (or skipping) hands off to the caller (App) so it can trigger
+  // the paywall intercept right after.
   const [tourStep,setTourStep]=useState(null);
   const tourAddTaskRef=useRef(null);
   const tourSubjectRef=useRef(null);
@@ -4342,7 +4352,7 @@ function CalendarTab({onTourDone}={}){
   const CAL_TOUR_STEPS=[
     {targetRef:tourAddTaskRef,title:"Add your first task",body:"Click “Add task” to create a study block — Studlin can place it on your calendar automatically, or you can set the date yourself."},
     {targetRef:tourSubjectRef,title:"Tag it with a subject",body:"Pick a subject and color for each task so your calendar stays organized at a glance. You can add your own classes anytime."},
-    {targetRef:null,title:"Your focus time is protected",body:(()=>{const p=getSchedulePreferences();const win=fmtTime(p.workStartTime)+" – "+fmtTime(p.workEndTime);return p.bedtimeGuardEnabled===false?("Studlin schedules focus blocks inside your peak window ("+win+")."):("Studlin schedules focus blocks inside your peak window ("+win+") and keeps them at least 2 hours before your "+fmtTime(p.bedtime)+" bedtime.");})()},
+    {targetRef:null,title:"Your focus time is protected",body:(()=>{const p=getSchedulePreferences();const win=fmtTime(p.workStartTime)+" – "+fmtTime(p.workEndTime);return "Studlin schedules focus blocks inside your peak window ("+win+").";})()},
   ];
   const advanceTour=()=>{
     if(tourStep>=CAL_TOUR_STEPS.length-1){finishTour();return;}
@@ -6346,7 +6356,6 @@ function Profile() {
   const camInputRef=useRef(null);
   const prefs=getSchedulePreferences();
   const [workStart,setWorkStart]=useState(prefs.workStartTime||"09:00");
-  const [bedtime,setBedtime]=useState(prefs.bedtime||"23:00");
   const [difficulty,setDifficulty]=useState(prefs.difficultyPreference||"balanced");
   const [prefSaved,setPrefSaved]=useState(false);
   const lvl=levelInfo();
@@ -6372,7 +6381,7 @@ function Profile() {
     const updated={...getProfile(),status,affiliation,school:affiliation};
     lsSet("profile",updated);
     setProfState(updated);
-    const updatedPrefs={...getSchedulePreferences(),workStartTime:workStart,bedtime,difficultyPreference:difficulty};
+    const updatedPrefs={...getSchedulePreferences(),workStartTime:workStart,difficultyPreference:difficulty};
     setSchedulePreferences(updatedPrefs);
     setPrefSaved(true);
     setTimeout(()=>setPrefSaved(false),2200);
@@ -6443,14 +6452,9 @@ function Profile() {
           </Field>
         )}
 
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <Field label="Study start time" hint="Tasks are scheduled from this hour.">
-            <TimeInput value={workStart} onChange={setWorkStart} />
-          </Field>
-          <Field label="Bedtime" hint="Tasks end 2 hours before this.">
-            <TimeInput value={bedtime} onChange={setBedtime} />
-          </Field>
-        </div>
+        <Field label="Study start time" hint="Tasks are scheduled from this hour.">
+          <TimeInput value={workStart} onChange={setWorkStart} />
+        </Field>
 
         <Field label="Task difficulty order">
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -7213,14 +7217,13 @@ function InitWizard({onComplete}){
   const [status, setStatus] = useState(prof.status||"");
   const [affiliation, setAffiliation] = useState(prof.affiliation||prof.school||"");
   const [workStart, setWorkStart] = useState(prefs.workStartTime||"09:00");
-  const [bedtime, setBedtime] = useState(prefs.bedtime||"23:00");
   const [difficulty, setDifficulty] = useState(prefs.difficultyPreference||"balanced");
 
   const affiliationLabel = status==="highschool" ? "School name" : status==="college" ? "University name" : status==="working" ? "Company name" : "Affiliation";
   const affiliationPlaceholder = status==="highschool" ? "e.g. Lincoln High School" : status==="college" ? "e.g. UCLA, NYU..." : status==="working" ? "e.g. Google, startup..." : "Your school or company";
 
   const save = () => {
-    const updatedPrefs = {...prefs, workStartTime:workStart, bedtime, difficultyPreference:difficulty};
+    const updatedPrefs = {...prefs, workStartTime:workStart, difficultyPreference:difficulty};
     setSchedulePreferences(updatedPrefs);
     const updatedProf = {...getProfile(), status, affiliation, school:affiliation};
     lsSet("profile", updatedProf);
@@ -7233,7 +7236,7 @@ function InitWizard({onComplete}){
     if(u){
       fsdb().collection('users').doc(u.uid).set({
         status, affiliation, school:affiliation,
-        workStartTime:workStart, bedtime, difficultyPreference:difficulty,
+        workStartTime:workStart, difficultyPreference:difficulty,
         onboarded:true,
         updatedAt:new Date().toISOString(),
       },{merge:true}).catch(()=>{});
@@ -7262,7 +7265,6 @@ function InitWizard({onComplete}){
   const STEPS = [
     {key:"status"},
     {key:"workStart"},
-    {key:"bedtime"},
     {key:"difficulty"},
   ];
   const isLast = step === STEPS.length - 1;
@@ -7340,15 +7342,6 @@ function InitWizard({onComplete}){
         )}
 
         {step===2 && (
-          <div>
-            <div style={{fontSize:20,fontWeight:700,color:ink,marginBottom:6,letterSpacing:"-0.01em"}}>What time do you go to bed?</div>
-            <div style={{fontSize:13,color:muted,marginBottom:24}}>We won't schedule tasks within 2 hours of your bedtime.</div>
-            <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:muted,marginBottom:8}}>Bedtime</label>
-            <TimeInput value={bedtime} onChange={setBedtime} style={{background:"#F0EBE0",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,maxWidth:200}} />
-          </div>
-        )}
-
-        {step===3 && (
           <div>
             <div style={{fontSize:20,fontWeight:700,color:ink,marginBottom:6,letterSpacing:"-0.01em"}}>How do you like to tackle tasks?</div>
             <div style={{fontSize:13,color:muted,marginBottom:24}}>Studlin will order your schedule accordingly.</div>

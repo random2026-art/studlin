@@ -135,17 +135,42 @@ function AutocompleteField({ label, options, value, otherValue, onSelect, onOthe
   );
 }
 
-// Native browser time picker — same 24h "HH:MM" value/onChange contract as
-// before, using the OS/browser's own hour/minute/AM-PM control rather than
-// a typed-text field.
+// Custom Hour / Minute / AM-PM dropdown trio — mobile-friendly native
+// <select> controls, no typing required. Same 24h "HH:MM" value/onChange
+// contract as before, so every call site is unaffected.
+const TIME_HOURS_12=Array.from({length:12},(_,i)=>i+1);
+const TIME_MINUTES_5=Array.from({length:12},(_,i)=>i*5);
 function TimeInput({ value, onChange, style }) {
+  let h=9,m=0,ap="AM";
+  if(value){
+    const [hStr,mStr]=value.split(":");
+    const hh=parseInt(hStr,10),mm=parseInt(mStr,10);
+    if(!isNaN(hh)&&!isNaN(mm)){
+      ap=hh>=12?"PM":"AM";
+      h=hh%12||12;
+      m=Math.round(mm/5)*5%60;
+    }
+  }
+  const commit=(nextH,nextM,nextAp)=>{
+    let hh=nextH%12;
+    if(nextAp==="PM")hh+=12;
+    onChange(String(hh).padStart(2,"0")+":"+String(nextM).padStart(2,"0"));
+  };
+  const selStyle={flex:1,minWidth:0,padding:"10px 8px",background:"var(--card2)",border:"1px solid var(--border)",borderRadius:8,color:"var(--text)",fontSize:13,fontFamily:"inherit",outline:"none",cursor:"pointer",boxSizing:"border-box"};
   return (
-    <input
-      type="time"
-      value={value||""}
-      onChange={e=>onChange(e.target.value)}
-      style={{width:"100%",padding:"10px 12px",background:"var(--card2)",border:"1px solid var(--border)",borderRadius:8,color:"var(--text)",fontSize:13,fontFamily:"inherit",outline:"none",boxSizing:"border-box",...(style||{})}}
-    />
+    <div style={{display:"flex",gap:6,alignItems:"center",...(style||{})}}>
+      <select value={h} onChange={e=>commit(+e.target.value,m,ap)} style={selStyle}>
+        {TIME_HOURS_12.map(x=><option key={x} value={x}>{x}</option>)}
+      </select>
+      <span style={{color:"var(--muted)",flexShrink:0}}>:</span>
+      <select value={m} onChange={e=>commit(h,+e.target.value,ap)} style={selStyle}>
+        {TIME_MINUTES_5.map(x=><option key={x} value={x}>{String(x).padStart(2,"0")}</option>)}
+      </select>
+      <select value={ap} onChange={e=>commit(h,m,e.target.value)} style={selStyle}>
+        <option value="AM">AM</option>
+        <option value="PM">PM</option>
+      </select>
+    </div>
   );
 }
 
@@ -332,15 +357,12 @@ function StepSignup({ state, set, advance }) {
 function StepSchedulePrefs({ state, set }) {
   const handleWorkStart = (val) => set({...state, workStartTime: val});
   const handleWorkEnd = (val) => set({...state, workEndTime: val});
-  const handleBedtime = (val) => set({...state, bedtime: val});
-  const guardOn = state.bedtimeGuardEnabled !== false;
-  const toggleGuard = () => set({...state, bedtimeGuardEnabled: !guardOn});
 
   return (
     <div className="frame">
       <div className="frame-head"><h2>Tune the <em>scheduling algorithm.</em></h2><p>This is the only time you'll set this — Studlin uses it to place every AI-scheduled focus block from here on.</p></div>
 
-      <div style={{marginBottom:24}}>
+      <div>
         <div style={{fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:10}}>Peak study window</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
           <div>
@@ -353,27 +375,6 @@ function StepSchedulePrefs({ state, set }) {
           </div>
         </div>
       </div>
-
-      <div>
-        <div style={{fontSize:12.5,fontWeight:600,color:"var(--text)",marginBottom:10}}>Sleep schedule</div>
-        <div style={{display:"flex",alignItems:"flex-end",gap:20,marginBottom:8,flexWrap:"wrap"}}>
-          <div style={{opacity:guardOn?1:0.4,pointerEvents:guardOn?"auto":"none",transition:"opacity 0.2s",flex:"0 0 180px"}}>
-            <label style={{fontSize:11,fontWeight:600,textTransform:"uppercase",color:"var(--muted)",display:"block",marginBottom:6}}>Target Bedtime</label>
-            <TimeInput value={state.bedtime||"23:00"} onChange={handleBedtime} style={{maxWidth:180}} />
-          </div>
-          <div onClick={toggleGuard} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",paddingBottom:10}}>
-            <div style={{width:36,height:20,borderRadius:10,background:guardOn?"#9EC83D":"var(--border)",position:"relative",transition:"background 0.2s",flexShrink:0}}>
-              <div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:guardOn?18:2,transition:"left 0.2s"}} />
-            </div>
-            <span style={{fontSize:12.5,fontWeight:600,color:"var(--text)"}}>Enable Bedtime Guard</span>
-          </div>
-        </div>
-        <div style={{fontSize:11,color:"var(--muted)",lineHeight:1.5,maxWidth:420}}>
-          {guardOn
-            ? "The AI scheduling algorithm will automatically avoid placing focus blocks within 2 hours of your bedtime to protect your rest."
-            : "Bedtime Guard is off — Studlin can schedule focus blocks up until midnight."}
-        </div>
-      </div>
     </div>
   );
 }
@@ -383,12 +384,12 @@ function App() {
     if(firebase.auth().currentUser){const s=JSON.parse(localStorage.getItem("studlin-onboarding")||"null");return s&&s._step?s._step:1;}
     return 0;
   });
-  // workStartTime/workEndTime/bedtime/bedtimeGuardEnabled need real values in
-  // state from the start, not just display defaults inside StepSchedulePrefs
-  // — isStepValid() checks state directly, so without these the "Continue"
-  // CTA on Study Setup would stay disabled until the user touched every
-  // field, even though the UI already shows filled-in-looking values.
-  const SCHEDULE_DEFAULTS = { workStartTime:"10:00", workEndTime:"18:00", bedtime:"23:00", bedtimeGuardEnabled:true };
+  // workStartTime/workEndTime need real values in state from the start, not
+  // just display defaults inside StepSchedulePrefs — isStepValid() checks
+  // state directly, so without these the "Continue" CTA on Study Setup would
+  // stay disabled until the user touched every field, even though the UI
+  // already shows filled-in-looking values.
+  const SCHEDULE_DEFAULTS = { workStartTime:"10:00", workEndTime:"18:00" };
   const [state, setState] = useState(() => {
     try { const saved = JSON.parse(localStorage.getItem("studlin-onboarding")||"null"); if (saved && typeof saved === "object") return {goals:[],plan:"pro",...SCHEDULE_DEFAULTS,...saved}; } catch(e){}
     return { goals: [], plan: "pro", ...SCHEDULE_DEFAULTS };
@@ -412,7 +413,7 @@ function App() {
       const identityOk = !!(state.university || (state.universityOther||"").trim()) && !!state.terms;
       return identityOk && (!!firebase.auth().currentUser || !!(state.provider) || !!(state.name && state.email && (state.password||"").length >= 8));
     }
-    if (step === 1) return !!(state.workStartTime && state.workEndTime && (state.bedtimeGuardEnabled===false || state.bedtime));
+    if (step === 1) return !!(state.workStartTime && state.workEndTime);
     return true;
   };
 
@@ -442,8 +443,6 @@ function App() {
     const prefs = {
       workStartTime: state.workStartTime || "10:00",
       workEndTime: state.workEndTime || "18:00",
-      bedtime: state.bedtimeGuardEnabled===false ? "23:59" : (state.bedtime || "23:00"),
-      bedtimeGuardEnabled: state.bedtimeGuardEnabled !== false,
       taskDifficultyPreference: "NONE",
       bufferMarginStrategy: "15_MIN",
     };
@@ -481,8 +480,7 @@ function App() {
       <LeftRail step={step} state={state} />
       <main className="stage">
         <div className="stage-top">
-          {step === 0 ? <>Already have an account? <a href="Studlin Sign In.html">Log in</a></> :
-            <span style={{color:"var(--muted)",fontSize:13}}>Step {step+1} of {STEPS.length}</span>}
+          {step > 0 && <span style={{color:"var(--muted)",fontSize:13}}>Step {step+1} of {STEPS.length}</span>}
         </div>
         <div className={"step-content" + (transitioning ? " is-leaving" : " is-entering")}>
           {step === 0 && <StepSignup state={state} set={setState} advance={(skip)=>{ if(skip||isStepValid()){ setTransitioning(true); setTimeout(()=>{ setStep(s=>Math.min(STEPS.length-1,s+1)); setTransitioning(false); },250); }}} />}
@@ -500,6 +498,7 @@ function App() {
             {finishing?"Setting up...":CTA_LABEL}<span className="arrow">{Ic.arrow}</span>
           </button>
           {step === 0 && <div className="stage-links"><a href="#">Privacy Policy</a> · <a href="#">Terms of Service</a></div>}
+          {step === 0 && <div style={{marginTop:16,textAlign:"center",fontSize:13,color:"var(--muted)"}}>Already have an account? <a href="Studlin Sign In.html">Log in</a></div>}
           {step > 0 && <div style={{marginTop:14}}><button onClick={back} style={{background:"transparent",border:"none",color:"var(--muted)",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>← Back</button></div>}
         </div>
       </main>

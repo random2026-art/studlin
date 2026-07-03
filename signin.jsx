@@ -99,9 +99,30 @@ function App() {
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [globalError, setGlobalError] = useState("");
+  const [resetMsg, setResetMsg] = useState("");
+  const [resetSending, setResetSending] = useState(false);
 
   const emailOk = /\S+@\S+\.\S+/.test(email);
   const valid = emailOk && password.length >= 1;
+
+  const handleForgotPassword = async (e) => {
+    e.preventDefault();
+    setResetMsg("");
+    if (!email.trim() || !emailOk) {
+      setErrors({...errors, email: "Type your email above first, then click “Forgot password?”"});
+      return;
+    }
+    setErrors({...errors, email: null});
+    setGlobalError("");
+    setResetSending(true);
+    try {
+      await firebase.auth().sendPasswordResetEmail(email);
+      setResetMsg("Password reset link sent to your inbox!");
+    } catch(err) {
+      setGlobalError(ERR_MAP[err.code] || "Couldn't send the reset email. Please try again.");
+    }
+    setResetSending(false);
+  };
 
   const googleSign = () => {
     setGlobalError("");setLoading(true);
@@ -151,10 +172,7 @@ function App() {
     <div className="shell">
       <LeftRail />
       <main className="stage">
-        <div className="stage-top">
-          New to Studlin? <a href="Studlin Onboarding.html">Create an account</a>
-        </div>
-
+        <div className="stage-top"></div>
         <div className="step-content is-entering">
           <div className="frame">
             <div className="frame-head">
@@ -181,7 +199,7 @@ function App() {
 
             {mode === "email" && (
               <React.Fragment>
-                <TextField label="Email address" value={email} onChange={v=>{setEmail(v); if(errors.email) setErrors({...errors,email:null});}}
+                <TextField label="Email address" value={email} onChange={v=>{setEmail(v); if(errors.email) setErrors({...errors,email:null}); if(resetMsg) setResetMsg("");}}
                   hint={errors.email ? null : "The email you signed up with."}
                   error={errors.email} type="email" autoComplete="email" autoFocus onEnter={tryLogin} />
                 <TextField label="Password" value={password} onChange={v=>{setPassword(v); if(errors.password) setErrors({...errors,password:null});}}
@@ -192,8 +210,11 @@ function App() {
                     <span className="box">{Ic.check}</span>
                     <span>Keep me signed in</span>
                   </label>
-                  <a className="forgot" href="#">Forgot password?</a>
+                  <a className="forgot" href="#" onClick={handleForgotPassword}>{resetSending ? "Sending…" : "Forgot password?"}</a>
                 </div>
+                {resetMsg && (
+                  <div style={{fontSize:13,color:"#3E8E5A",marginTop:-6,marginBottom:16,padding:"10px 14px",background:"#EEF7F1",borderRadius:10,border:"1px solid #CFE9D8",textAlign:"center"}}>{resetMsg}</div>
+                )}
                 <div style={{marginTop:18}}>
                   <button className="provider" onClick={()=>{setMode("providers"); setErrors({}); setGlobalError("");}} style={{padding:"10px 14px",fontSize:13}}>← Use Google instead</button>
                 </div>
@@ -212,6 +233,7 @@ function App() {
             <div className="stage-hint">Choose a provider above, or use your email.</div>
           )}
           <div className="stage-links"><a href="#">Privacy Policy</a> · <a href="#">Terms of Service</a></div>
+          <div style={{marginTop:16,textAlign:"center",fontSize:13,color:"var(--muted)"}}>New to Studlin? <a href="Studlin Onboarding.html">Create an account</a></div>
         </div>
       </main>
     </div>
