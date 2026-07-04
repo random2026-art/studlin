@@ -3450,15 +3450,34 @@ function ChatBubble({m,myUid,onRespond,onSchedule}){
   const bg=mine?T.lime+"1F":pp.card2;
   const border=mine?T.lime+"40":pp.border;
   if(m.kind==="calendar"){
-    const w=m.meta;
+    // options falls back to [m.meta] for messages sent before the
+    // multi-slot refactor, which stored a single flat window as meta.
+    const options=m.meta.options||[m.meta];
+    const chosen=options[m.scheduledOption||0];
     return (
       <div style={{alignSelf:"center",width:"100%",padding:"14px 15px",background:T.purple+"1A",border:`1px solid ${T.purple}40`,borderRadius:12}}>
         <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:8,color:T.purple,fontSize:11,fontWeight:700}}>🤖 Studlin Match</div>
-        <div style={{fontSize:12.5,color:pp.text,lineHeight:1.55,marginBottom:12}}>Found an optimal <strong>{w.duration}-minute</strong> study window <strong>{w.dayLabel} at {w.timeLabel}</strong> where everyone is free!</div>
-        {m.status==="scheduled"
-          ?<div style={{fontSize:11.5,color:T.lime,fontWeight:600}}>✓ Scheduled — added to your calendar</div>
-          :<button onClick={()=>onSchedule(m.id)} style={{width:"100%",padding:"9px 0",borderRadius:8,background:T.lime,color:T.bg,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Schedule Group Session</button>
-        }
+        {m.status==="scheduled"?(
+          <>
+            <div style={{fontSize:12.5,color:pp.text,lineHeight:1.55,marginBottom:8}}>Booked <strong>{chosen.duration}-minute</strong> session <strong>{chosen.dayLabel} at {chosen.timeLabel}</strong>.</div>
+            <div style={{fontSize:11.5,color:T.lime,fontWeight:600}}>✓ Scheduled — added to your calendar</div>
+          </>
+        ):(
+          <>
+            <div style={{fontSize:12.5,color:pp.text,lineHeight:1.55,marginBottom:10}}>{options.length>1?`Found ${options.length} windows where everyone's free — pick one:`:<>Found an optimal <strong>{options[0].duration}-minute</strong> study window <strong>{options[0].dayLabel} at {options[0].timeLabel}</strong> where everyone is free!</>}</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {options.map((w,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"9px 11px",borderRadius:8,background:w.isBest?T.lime+"14":pp.card2,border:`1px solid ${w.isBest?T.lime+"55":pp.border}`}}>
+                  <div style={{minWidth:0}}>
+                    {w.isBest&&<div style={{fontSize:9,fontWeight:800,letterSpacing:"0.08em",color:T.lime,marginBottom:2}}>BEST CHOICE</div>}
+                    <div style={{fontSize:12,fontWeight:600,color:pp.text}}>{w.dayLabel} · {w.timeLabel} · {w.duration}m</div>
+                  </div>
+                  <button onClick={()=>onSchedule(m.id,i)} style={{flexShrink:0,padding:"7px 12px",borderRadius:7,background:w.isBest?T.lime:pp.card2,color:w.isBest?T.bg:pp.text,border:w.isBest?"none":`1px solid ${pp.border}`,fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Choose</button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     );
   }
@@ -3571,6 +3590,10 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
   // it genuinely scans for a slot in the chosen window/day-range that's free
   // on the sender's own calendar, same overlap check the real "Group Sync"
   // free-slot finder in CalendarTab uses (runGroupSync).
+  // Returns {options: [...]}, ranked best-first and capped at 3 distinct
+  // days. Scoring favors daytime slots (before 6pm, "saves evening free
+  // time") that fill a gap between two existing events ("dead time") over
+  // slots that just carve into an otherwise wide-open evening block.
   const findSharedStudyWindow=(params)=>{
     const prefStart=params.timeMode==="custom"?timeToMinutes(params.timeFrom):timeToMinutes("08:00");
     const prefEnd=params.timeMode==="custom"?timeToMinutes(params.timeTo):timeToMinutes("22:00");
@@ -3578,27 +3601,53 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
     const duration=params.durationInMinutes;
     const events=lsGet("events",[]);
     const today=new Date();
-    const isFree=(dk,start,end)=>{
-      const occupied=events.filter(e=>e.date===dk).map(e=>({s:timeToMinutes(e.time||"0:00"),e:timeToMinutes(e.time||"0:00")+(e.duration||60)}));
-      return !occupied.some(o=>!(end<=o.s||start>=o.e));
-    };
+    const EVENING_START=18*60;
+    const dayEvents=(dk)=>events.filter(e=>e.date===dk).map(e=>({s:timeToMinutes(e.time||"0:00"),e:timeToMinutes(e.time||"0:00")+(e.duration||60)})).sort((a,b)=>a.s-b.s);
+    const isFree=(occupied,start,end)=>!occupied.some(o=>!(end<=o.s||start>=o.e));
     const labelFor=(offset,d)=>offset===1?"tomorrow":d.toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"});
+    const candidates=[];
     for(let offset=1;offset<=scanDays;offset++){
       const d=new Date(today);d.setDate(today.getDate()+offset);
       const dk=dayKey(d);
+      const occupied=dayEvents(dk);
       for(let start=prefStart;start+duration<=prefEnd;start+=30){
-        if(isFree(dk,start,start+duration)){
-          const time=minutesToTime(start);
-          return{date:dk,time,duration,dayLabel:labelFor(offset,d),timeLabel:fmtTimeLabel(time)};
-        }
+        const end=start+duration;
+        if(!isFree(occupied,start,end))continue;
+        const before=occupied.filter(o=>o.e<=start).sort((a,b)=>b.e-a.e)[0];
+        const after=occupied.filter(o=>o.s>=end).sort((a,b)=>a.s-b.s)[0];
+        const gapBefore=before?start-before.e:null;
+        const gapAfter=after?after.s-end:null;
+        const fillsDeadTimeGap=gapBefore!==null&&gapAfter!==null&&gapBefore<=120&&gapAfter<=120;
+        let score=0;
+        score+=start<EVENING_START?100:-40;
+        score+=fillsDeadTimeGap?60:0;
+        score-=Math.floor((start-prefStart)/30);
+        score-=offset*2;
+        const time=minutesToTime(start);
+        candidates.push({date:dk,time,duration,dayLabel:labelFor(offset,d),timeLabel:fmtTimeLabel(time),score});
       }
     }
-    // Nothing fully free in the whole range — fall back to the start of the
-    // preferred window on the last scanned day, so the feature never
-    // dead-ends with no suggestion at all.
-    const d=new Date(today);d.setDate(today.getDate()+scanDays);
-    const time=minutesToTime(prefStart);
-    return{date:dayKey(d),time,duration,dayLabel:labelFor(scanDays,d),timeLabel:fmtTimeLabel(time)};
+    if(candidates.length===0){
+      // Nothing fully free anywhere in range — fall back to the start of the
+      // preferred window on the last scanned day, so the feature never
+      // dead-ends with no suggestion at all.
+      const d=new Date(today);d.setDate(today.getDate()+scanDays);
+      const time=minutesToTime(prefStart);
+      return{options:[{date:dayKey(d),time,duration,dayLabel:labelFor(scanDays,d),timeLabel:fmtTimeLabel(time),isBest:true}]};
+    }
+    candidates.sort((a,b)=>b.score-a.score);
+    // Cap at one suggestion per day so the options presented are genuinely
+    // distinct choices, not the same day at three slightly different times.
+    const seenDays=new Set();
+    const top=[];
+    for(const c of candidates){
+      if(seenDays.has(c.date))continue;
+      seenDays.add(c.date);
+      top.push(c);
+      if(top.length>=3)break;
+    }
+    top[0].isBest=true;
+    return{options:top};
   };
   const submitFindWindow=()=>{
     setFindWindowOpen(false);setSyncRunning(true);
@@ -3606,22 +3655,35 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
     const params={timeMode:fwTimeMode,timeFrom:fwTimeFrom,timeTo:fwTimeTo,lookAheadDayRange,durationInMinutes:fwDuration};
     setTimeout(()=>{setSyncRunning(false);sendMessage({kind:"calendar",status:"unscheduled",meta:findSharedStudyWindow(params)});},2100);
   };
-  // Injects the matched window into the current user's own calendar as a
+  // Injects the chosen window into the current user's own calendar as a
   // study block. (Only this browser's calendar can actually be written to —
   // there's no backend to push the event into other members' accounts too.)
-  const scheduleGroupSession=(id)=>{
+  // optionIndex picks which suggested slot the user chose; msg.meta.options
+  // falls back to [msg.meta] for older messages sent before the multi-slot
+  // refactor, which had a single flat window object as meta.
+  const scheduleGroupSession=(id,optionIndex=0)=>{
     const msg=messages.find(x=>x.id===id);
     if(!msg||!roomId)return;
-    const w=msg.meta;
+    const w=(msg.meta.options||[msg.meta])[optionIndex];
+    if(!w)return;
     const events=lsGet("events",[]);
     const ev={id:"netsync-"+Date.now(),date:w.date,time:w.time,duration:w.duration,title:peerName+" study session",subject:peerName,kind:"study block"};
     lsSet("events",[...events,ev]);
-    fsdb().collection('chatRooms').doc(roomId).collection('messages').doc(id).update({status:"scheduled"}).catch(()=>{});
+    fsdb().collection('chatRooms').doc(roomId).collection('messages').doc(id).update({status:"scheduled",scheduledOption:optionIndex}).catch(()=>{});
   };
   // Sharing a note/deck posts a pending card first — a lightweight one-click
   // confirmation before it actually goes out (mirrors the same verification
   // loop used for incoming shares below).
-  const attachNote=(note)=>{sendMessage({kind:"note",status:"pending",meta:{title:note.title,id:note.id,body:note.body}});setNotePicker(false);};
+  // Flags/comments live in separate note-flags/note-comments localStorage
+  // maps keyed by note id (see Notes' doAddFlag/doAddComment) — body alone
+  // doesn't carry them, so they're pulled in explicitly here and carried
+  // through respondToShare below so a shared note keeps its tutor context.
+  const attachNote=(note)=>{
+    const flags=lsGet("note-flags",{})[note.id]||[];
+    const comments=lsGet("note-comments",{})[note.id]||[];
+    sendMessage({kind:"note",status:"pending",meta:{title:note.title,id:note.id,body:note.body,flags,comments}});
+    setNotePicker(false);
+  };
   const attachDeck=(deck)=>{sendMessage({kind:"deck",status:"pending",meta:{name:deck.name,count:deck.cards?deck.cards.length:(deck.count||0),id:deck.id,cards:deck.cards}});setDeckPicker(false);};
 
   const peerName=target?(isGroup?target.group.name:target.user.n):"";
@@ -3637,6 +3699,16 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
         const notes=lsGet("notes",[]);
         const copy={id:String(Date.now()),title:msg.meta.title,body:msg.meta.body||"<p>Shared from "+peerName+".</p>",tag:"Shared",date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now(),source:"shared",sharedFrom:peerName};
         lsSet("notes",[copy,...notes]);
+        // Carry the sender's flags/comments over onto the recipient's own
+        // copy (re-keyed to its new id) so tutor context survives the share.
+        if(msg.meta.flags&&msg.meta.flags.length){
+          const nf=lsGet("note-flags",{});
+          lsSet("note-flags",{...nf,[copy.id]:msg.meta.flags});
+        }
+        if(msg.meta.comments&&msg.meta.comments.length){
+          const nc=lsGet("note-comments",{});
+          lsSet("note-comments",{...nc,[copy.id]:msg.meta.comments});
+        }
       }else if(msg.kind==="deck"){
         const decks=lsGet("decks",[]);
         const copy={id:String(Date.now()),name:msg.meta.name,count:(msg.meta.cards||[]).length,done:0,color:T.teal,cards:msg.meta.cards||[],source:"imported",importedFrom:peerName};
@@ -7673,7 +7745,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
             <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,fontWeight:600}}>XP &amp; Rank</span>
             <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.10em",background:T.lime+"22",padding:"3px 9px",borderRadius:99,color:T.lime,border:`1px solid ${T.lime}44`,fontWeight:700}}>{lvl.title.toUpperCase()}</span>
           </div>
-          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.text,margin:"10px 0 2px"}}>{lvl.xp.toLocaleString()}<span style={{fontSize:20,color:T.muted,marginLeft:6}}>xp</span></div>
+          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.text,margin:"10px 0 2px"}}>{fmtH(weeklyFocusMin)||"0m"}<span style={{fontSize:15,color:T.muted,marginLeft:6}}>focused this wk</span></div>
           <div style={{fontSize:12,color:T.muted,marginBottom:4}}>{lvl.nextTier?`${(lvl.nextTier.minXP-lvl.xp).toLocaleString()} XP to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
           <div style={{height:6,background:T.card2,borderRadius:99,marginTop:"auto",overflow:"hidden"}}>
             <div style={{height:"100%",width:lvl.tierPct+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}}/>
@@ -8368,7 +8440,10 @@ function App() {
       {id:"dashboard",label:"Dashboard"},
       {id:"calendar",label:"Calendar"},
       {id:"aichat",label:"Studlin AI"},
-      {id:"writestudio",label:"Writing Suite",badge:String(lsGet("essays",[]).length||"")},
+      // "writestudio" (Writing Suite) intentionally hidden from the active
+      // nav — archived for V2, not deleted. Page, route mapping, and label
+      // all still exist below so nothing breaks for anything that still
+      // links into it (e.g. Dashboard's Essay Writer / Citation quick tools).
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
       {id:"friends",label:"Studlin Network",badge:String(unreadCount||"")},
