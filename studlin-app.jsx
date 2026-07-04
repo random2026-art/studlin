@@ -846,6 +846,7 @@ function getSchedulePreferences(){
   const def={
     workStartTime:"10:00",
     workEndTime:"18:00",
+    bedtime:"23:00",
     taskDifficultyPreference:"NONE",
     bufferMarginStrategy:"15_MIN"
   };
@@ -7965,6 +7966,94 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
   );
 }
 
+// ─── FEEDBACK ─────────────────────────────────────────────────────────────────
+function FeedbackPage() {
+  const [category,setCategory]=useState(null);
+  const [msg,setMsg]=useState("");
+  const [sent,setSent]=useState(false);
+  const [sending,setSending]=useState(false);
+
+  const CATS=[
+    {id:"love",label:"I love something",icon:Icon.heart,color:"#E05757"},
+    {id:"bug",label:"Bug report",icon:Icon.zap,color:T.amber},
+    {id:"feature",label:"Feature request",icon:Icon.sparkles,color:T.lime},
+    {id:"other",label:"Other",icon:Icon.msgSquare,color:T.muted},
+  ];
+
+  const submit=async()=>{
+    if(!category||!msg.trim())return;
+    setSending(true);
+    // Store in localStorage so nothing is lost; best-effort server send
+    const entry={id:Date.now().toString(),category,msg:msg.trim(),created:Date.now()};
+    lsSet("feedback-log",[entry,...lsGet("feedback-log",[])].slice(0,50));
+    try{
+      const tok=firebase.auth().currentUser?await firebase.auth().currentUser.getIdToken():null;
+      if(tok){
+        await fetch("/api/send-note",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+tok},body:JSON.stringify({subject:"App Feedback: "+category,body:msg.trim()})}).catch(()=>{});
+      }
+    }catch(e){}
+    setSending(false);
+    setSent(true);
+  };
+
+  if(sent) return (
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:400,gap:16,textAlign:"center"}}>
+      <div style={{width:64,height:64,borderRadius:"50%",background:T.lime+"18",display:"grid",placeItems:"center",color:T.lime}}>
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+      <div style={{fontFamily:T.hand,fontSize:36,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>Thanks for the feedback.</div>
+      <div style={{fontSize:14,color:T.muted,maxWidth:360,lineHeight:1.6}}>Every note goes straight to the team. We read them all and use them to build what matters to you.</div>
+      <button onClick={()=>{setSent(false);setCategory(null);setMsg("");}} style={{marginTop:8,padding:"10px 22px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Send another</button>
+    </div>
+  );
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16,paddingBottom:40,maxWidth:680}}>
+      <div>
+        <h1 style={{fontFamily:T.hand,fontSize:42,fontWeight:700,color:T.white,margin:"0 0 4px",letterSpacing:"-0.02em",lineHeight:1}}>Feedback</h1>
+        <p style={{fontSize:14,color:T.muted,margin:0}}>Help shape Studlin. Every message goes straight to the founders.</p>
+      </div>
+
+      {/* Category */}
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:24}}>
+        <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,marginBottom:14}}>What kind of feedback?</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          {CATS.map(c=>(
+            <button key={c.id} onClick={()=>setCategory(c.id)} style={{display:"flex",alignItems:"center",gap:12,padding:"14px 16px",borderRadius:14,border:`1.5px solid ${category===c.id?c.color+"80":T.border}`,background:category===c.id?c.color+"0e":T.card2,cursor:"pointer",fontFamily:T.font,textAlign:"left",transition:"all 0.15s"}}>
+              <span style={{width:32,height:32,borderRadius:8,background:c.color+"18",display:"grid",placeItems:"center",color:c.color,flexShrink:0}}>{c.icon}</span>
+              <span style={{fontSize:13,fontWeight:category===c.id?700:500,color:category===c.id?T.white:T.muted}}>{c.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Message */}
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:24}}>
+        <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,marginBottom:14}}>Tell us more</div>
+        <textarea
+          value={msg}
+          onChange={e=>setMsg(e.target.value)}
+          placeholder={category==="bug"?"Describe the bug — what happened, what did you expect?":category==="feature"?"What would you like to see? Describe the problem it solves.":category==="love"?"What specifically made your day?":"Anything on your mind..."}
+          rows={6}
+          style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:12,padding:"14px 16px",color:T.text,fontSize:14,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box",lineHeight:1.6}}
+        />
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:14}}>
+          <span style={{fontSize:12,color:T.faint}}>{msg.length} chars</span>
+          <button onClick={submit} disabled={!category||!msg.trim()||sending} style={{padding:"10px 24px",background:category&&msg.trim()?T.lime:T.card2,color:category&&msg.trim()?T.ink:T.faint,border:"none",borderRadius:99,fontSize:13,fontWeight:700,cursor:category&&msg.trim()?"pointer":"default",fontFamily:T.font,transition:"all 0.2s"}}>
+            {sending?"Sending...":"Send feedback"}
+          </button>
+        </div>
+      </div>
+
+      {/* Footer note */}
+      <div style={{padding:"14px 18px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:14,display:"flex",gap:12,alignItems:"flex-start"}}>
+        <span style={{color:T.lime,flexShrink:0,marginTop:2}}>{Icon.heart}</span>
+        <div style={{fontSize:12.5,color:T.muted,lineHeight:1.6}}>Studlin is built by students, for students. Your feedback directly influences what we build next. We read every message.</div>
+      </div>
+    </div>
+  );
+}
+
 // ─── LECTURES ─────────────────────────────────────────────────────────────────
 function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
   const [recording,setRecording]=useState(false);
@@ -8634,15 +8723,16 @@ function App() {
       {id:"notes",label:"Notes"},
       {id:"lectures",label:"Lectures",badge:"NEW"},
       {id:"friends",label:"Studlin Network",badge:String(unreadCount||"")},
+      {id:"feedback",label:"Feedback"},
     ]},
     {label:"Tools",items:[
       {id:"solve",label:"Solve"},
     ]},
   ];
   const bottomItems=[{id:"settings",label:"Settings"},{id:"profile",label:"Profile"}];
-  const pages={aichat:AiChat,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile,lectures:Lectures};
-  const labelOf={dashboard:"Dashboard",aichat:"Studlin AI",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve",lectures:"Lectures"};
-  const sectionOf={dashboard:"Workspace",aichat:"Workspace",writestudio:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",friends:"Workspace",lectures:"Workspace",solve:"Tools",settings:"Account",profile:"Account"};
+  const pages={aichat:AiChat,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile,lectures:Lectures,feedback:FeedbackPage};
+  const labelOf={dashboard:"Dashboard",aichat:"Studlin AI",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve",lectures:"Lectures",feedback:"Feedback"};
+  const sectionOf={dashboard:"Workspace",aichat:"Workspace",writestudio:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",friends:"Workspace",lectures:"Workspace",feedback:"Workspace",solve:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
   if (!onboarded) return <InitWizard onComplete={()=>{setOnboarded(true);}} />;
