@@ -75,7 +75,7 @@ const T = {...darkT}; // mutable · applyTheme() swaps in place so all component
 const hexA=(hex,a)=>{const h=hex.replace('#','');const r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16);return `rgba(${r},${g},${b},${a})`;};
 // accent palettes — override the lime family per user choice
 const ACCENTS={
-  Lime:  {dk:{lime:"#AECE5E",limeDk:"#8BAE3C",limeLt:"#CBDF92"}, lt:{lime:"#9EC83D",limeDk:"#7FA82A",limeLt:"#CBDF92"}},
+  Lime:  {dk:{lime:"#AECE5E",limeDk:"#8BAE3C",limeLt:"#CBDF92"}, lt:{lime:"#6E9C35",limeDk:"#57802A",limeLt:"#DCE9C0"}},
   Forest:{dk:{lime:"#6FC1A0",limeDk:"#4E9C7B",limeLt:"#A9E0CB"}, lt:{lime:"#2E8E6E",limeDk:"#227056",limeLt:"#A9E0CB"}},
   Sky:   {dk:{lime:"#84BBEA",limeDk:"#5A93C9",limeLt:"#BFE0FA"}, lt:{lime:"#2D74BC",limeDk:"#225A98",limeLt:"#BFE0FA"}},
   Lilac: {dk:{lime:"#B89BE0",limeDk:"#9474C9",limeLt:"#DCCBF5"}, lt:{lime:"#7E5BC0",limeDk:"#634599",limeLt:"#DCCBF5"}},
@@ -118,6 +118,7 @@ const Icon = {
   check:     ic(<><polyline points="20 6 9 17 4 12"/></>),
   refresh:   ic(<><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></>),
   music:     ic(<><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></>),
+  mic:       ic(<><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></>),
   users:     ic(<><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>),
   trophy:    ic(<><polyline points="8 17 12 13 16 17"/><path d="M16 7H8"/><path d="M4 7h16l-1.5 9H5.5L4 7z"/><path d="M9 3.5L7 7h10l-2-3.5"/></>),
   settings:  ic(<><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></>),
@@ -845,6 +846,7 @@ function getSchedulePreferences(){
   const def={
     workStartTime:"10:00",
     workEndTime:"18:00",
+    bedtime:"23:00",
     taskDifficultyPreference:"NONE",
     bufferMarginStrategy:"15_MIN"
   };
@@ -1328,7 +1330,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
 }
 
 // ─── NAV ICONS MAP ────────────────────────────────────────────────────────────
-const navIcon = {dashboard:Icon.grid,aichat:Icon.sparkles,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.users,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,music:Icon.music,settings:Icon.settings,profile:Icon.user};
+const navIcon = {dashboard:Icon.grid,aichat:Icon.sparkles,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.users,lectures:Icon.mic,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,music:Icon.music,feedback:Icon.heart,settings:Icon.settings,profile:Icon.user};
 
 // ─── AI CHAT ──────────────────────────────────────────────────────────────────
 function AiChat() {
@@ -1507,20 +1509,22 @@ function AiChat() {
   if(!hasMessages){
     return(
       <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"calc(100vh - 120px)",padding:"0 24px"}}>
-        <div style={{display:"flex",flexDirection:"column",alignItems:"center",marginBottom:40,animation:"studlinRise 0.5s ease-out"}}>
-          <div style={{width:44,height:44,borderRadius:12,background:T.lime,display:"grid",placeItems:"center",marginBottom:20,fontSize:22,fontWeight:800,color:T.ink||T.bg,fontFamily:T.font}}>S</div>
-          <h1 style={{fontSize:32,fontWeight:700,color:T.white,letterSpacing:"-0.03em",margin:0,textAlign:"center",lineHeight:1.2}}>Welcome, {userName}.</h1>
+        {(()=>{const hr=new Date().getHours();const period=hr<5?"late-night":hr<12?"morning":hr<18?"afternoon":hr<22?"evening":"late-night";const fName=(userName||"there").split(" ")[0];return(
+        <div style={{display:"flex",alignItems:"center",gap:16,marginBottom:34,animation:"studlinRise 0.5s ease-out"}}>
+          <img src="studlin-icon.png" alt="Studlin" style={{width:52,height:52,borderRadius:15,flexShrink:0,boxShadow:"0 6px 20px -8px rgba(0,0,0,0.4)",objectFit:"cover"}} onError={e=>{e.target.style.display="none";}} />
+          <h1 style={{fontFamily:T.hand,fontSize:"clamp(32px,4.8vw,52px)",fontWeight:700,color:T.white,letterSpacing:"-0.02em",margin:0,lineHeight:1.02}}>It's {period}, {fName}.</h1>
         </div>
-        {inputBar(false)}
-        <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"center",marginTop:20,animation:"studlinFade 0.6s ease-out 0.1s both"}}>
+        );})()}
+        <div style={{width:"100%",maxWidth:720}}>{inputBar(false)}</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"center",marginTop:22,maxWidth:660,animation:"studlinFade 0.6s ease-out 0.1s both"}}>
           {quickActions.map(a=>(
-            <button key={a.label} onClick={()=>{setInput(a.prompt);setTimeout(()=>inputRef.current?.focus(),50);}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 16px",borderRadius:99,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontSize:12.5,fontWeight:500,cursor:"pointer",fontFamily:T.font,transition:"all 0.15s"}}>
-              <span style={{display:"inline-flex",color:T.muted}}>{a.icon}</span>
+            <button key={a.label} onClick={()=>{setInput(a.prompt);setTimeout(()=>inputRef.current?.focus(),50);}} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"10px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font,transition:"all 0.15s"}}>
+              <span style={{display:"inline-flex",color:T.lime}}>{a.icon}</span>
               {a.label}
             </button>
           ))}
         </div>
-        <div style={{fontSize:11,color:T.faint,marginTop:24}}><span style={{color:T.muted}}>{curModel.name}</span> · {credits} credits remaining</div>
+        <div style={{fontSize:11,color:T.faint,marginTop:22}}><span style={{color:T.muted}}>{curModel.name}</span> · {credits} credits remaining</div>
       </div>
     );
   }
@@ -7827,7 +7831,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
           <div style={{position:"absolute",right:-40,top:-40,width:240,height:240,background:"radial-gradient(circle,rgba(200,255,90,0.18),transparent 70%)",pointerEvents:"none"}} />
           <div style={{position:"relative"}}>
             <div style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)",marginBottom:6}}>{todayLabel()} · Week {weekNo()}</div>
-            <div style={{fontFamily:T.hand,fontSize:54,lineHeight:0.95,fontWeight:600,color:T.cream,margin:"0 0 4px"}}>{greet}, <span style={{color:T.lime}}>{firstName}.</span></div>
+            <div style={{fontFamily:T.hand,fontSize:54,lineHeight:0.95,fontWeight:600,color:T.cream,margin:"0 0 4px",animation:"studlinRise 0.5s ease-out"}}>{greet}, <span style={{color:T.lime}}>{firstName}.</span></div>
             <p style={{fontSize:13.5,color:"rgba(246,241,230,0.7)",margin:"8px 0 16px",lineHeight:1.5,maxWidth:380}}>{planLeft>0?<>You've got <strong style={{color:T.cream}}>{planLeft} task{planLeft===1?"":"s"} left</strong> on today's plan. Let's lock in.</>:plan.length>0?<>All <strong style={{color:T.cream}}>{plan.length} tasks done</strong> today. Outstanding work.</>:<>Nothing scheduled yet. Add a few tasks and let's lock in.</>}</p>
             <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
               <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",background:T.lime,color:T.ink,borderRadius:99,fontSize:13,fontWeight:600,border:"none",cursor:"pointer",fontFamily:T.font}}>View today's plan</button>
@@ -7890,6 +7894,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
         {/* Today's plan */}
         <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
           <CardHead title="Today's plan" label={planDoneCount+" / "+plan.length+" DONE"} more="Calendar" />
+          {plan.length>0&&<div style={{height:3,background:T.card2,borderRadius:99,marginBottom:14,overflow:"hidden"}}><div style={{height:"100%",width:Math.round(planDoneCount/Math.max(plan.length,1)*100)+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}} /></div>}
           {plan.length===0
             ? <div style={{padding:"22px 8px",textAlign:"center"}}>
                 <div style={{fontSize:13,color:T.muted,marginBottom:14,lineHeight:1.5}}>Nothing scheduled for today. Add events to your calendar and they appear here automatically.</div>
@@ -7921,12 +7926,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
         {/* Ask Studlin */}
         <div style={{background:T.ink,color:T.cream,borderRadius:22,padding:22,display:"flex",flexDirection:"column"}}>
           <CardHead title="Ask Studlin" label="AI TUTOR" more="Open" light />
-          <div style={{fontSize:13,color:"rgba(246,241,230,0.7)",marginBottom:14,lineHeight:1.5}}>I noticed you're stuck on Macbeth Act III · want me to walk through the dagger soliloquy or pull quotes for your essay?</div>
-          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>
-            {["Explain dagger soliloquy","Find quotes for essay","Quiz me on Act III"].map(s=>(
-              <button key={s} onClick={()=>setActive("aichat")} style={{fontSize:11.5,padding:"6px 11px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:"rgba(246,241,230,0.85)",cursor:"pointer",fontFamily:T.font}}>{s}</button>
-            ))}
-          </div>
+          {(()=>{const nt=plan.find(t=>!t.done);const tc=nt?(nt.subject||nt.title):"your subjects";const sug=nt?["Explain "+tc+" concepts","Quiz me on "+tc,"Help me outline this"]:["Summarize my notes","Build a study schedule","Quiz me on any topic"];const ctx=nt?`You have "${nt.title}" up next — want a quick summary, practice quiz, or step-by-step explanation?`:`What are you studying today? I can quiz you, explain concepts, or help you plan your session.`;return(<><div style={{fontSize:13,color:"rgba(246,241,230,0.7)",marginBottom:14,lineHeight:1.5}}>{ctx}</div><div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>{sug.map(s=>(<button key={s} onClick={()=>setActive("aichat")} style={{fontSize:11.5,padding:"6px 11px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:"rgba(246,241,230,0.85)",cursor:"pointer",fontFamily:T.font}}>{s}</button>))}</div></>);})()}
           <div style={{display:"flex",alignItems:"center",gap:10,background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:14,padding:"10px 12px",marginTop:"auto"}}>
             <input placeholder="Ask anything · paste a problem" style={{flex:1,background:"none",border:"none",outline:"none",color:T.cream,fontSize:13,fontFamily:T.font,minWidth:0}}/>
             <button onClick={()=>setActive("aichat")} style={{display:"grid",placeItems:"center",width:30,height:30,borderRadius:8,background:T.lime,color:T.ink,border:"none",cursor:"pointer",flex:"none"}}>
@@ -8066,6 +8066,276 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
       </div>
     )}
     </>
+  );
+}
+
+// ─── FEEDBACK ─────────────────────────────────────────────────────────────────
+function FeedbackPage() {
+  const [category,setCategory]=useState(null);
+  const [msg,setMsg]=useState("");
+  const [sent,setSent]=useState(false);
+  const [sending,setSending]=useState(false);
+
+  const CATS=[
+    {id:"love",label:"I love something",icon:Icon.heart,color:"#E05757"},
+    {id:"bug",label:"Bug report",icon:Icon.zap,color:T.amber},
+    {id:"feature",label:"Feature request",icon:Icon.sparkles,color:T.lime},
+    {id:"other",label:"Other",icon:Icon.msgSquare,color:T.muted},
+  ];
+
+  const submit=async()=>{
+    if(!category||!msg.trim())return;
+    setSending(true);
+    // Store in localStorage so nothing is lost; best-effort server send
+    const entry={id:Date.now().toString(),category,msg:msg.trim(),created:Date.now()};
+    lsSet("feedback-log",[entry,...lsGet("feedback-log",[])].slice(0,50));
+    try{
+      const tok=firebase.auth().currentUser?await firebase.auth().currentUser.getIdToken():null;
+      if(tok){
+        await fetch("/api/send-note",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+tok},body:JSON.stringify({subject:"App Feedback: "+category,body:msg.trim()})}).catch(()=>{});
+      }
+    }catch(e){}
+    setSending(false);
+    setSent(true);
+  };
+
+  if(sent) return (
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:400,gap:16,textAlign:"center"}}>
+      <div style={{width:64,height:64,borderRadius:"50%",background:T.lime+"18",display:"grid",placeItems:"center",color:T.lime}}>
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+      <div style={{fontFamily:T.hand,fontSize:36,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>Thanks for the feedback.</div>
+      <div style={{fontSize:14,color:T.muted,maxWidth:360,lineHeight:1.6}}>Every note goes straight to the team. We read them all and use them to build what matters to you.</div>
+      <button onClick={()=>{setSent(false);setCategory(null);setMsg("");}} style={{marginTop:8,padding:"10px 22px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Send another</button>
+    </div>
+  );
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16,paddingBottom:40,maxWidth:680}}>
+      <div>
+        <h1 style={{fontFamily:T.hand,fontSize:42,fontWeight:700,color:T.white,margin:"0 0 4px",letterSpacing:"-0.02em",lineHeight:1}}>Feedback</h1>
+        <p style={{fontSize:14,color:T.muted,margin:0}}>Help shape Studlin. Every message goes straight to the founders.</p>
+      </div>
+
+      {/* Category */}
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:24}}>
+        <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,marginBottom:14}}>What kind of feedback?</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          {CATS.map(c=>(
+            <button key={c.id} onClick={()=>setCategory(c.id)} style={{display:"flex",alignItems:"center",gap:12,padding:"14px 16px",borderRadius:14,border:`1.5px solid ${category===c.id?c.color+"80":T.border}`,background:category===c.id?c.color+"0e":T.card2,cursor:"pointer",fontFamily:T.font,textAlign:"left",transition:"all 0.15s"}}>
+              <span style={{width:32,height:32,borderRadius:8,background:c.color+"18",display:"grid",placeItems:"center",color:c.color,flexShrink:0}}>{c.icon}</span>
+              <span style={{fontSize:13,fontWeight:category===c.id?700:500,color:category===c.id?T.white:T.muted}}>{c.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Message */}
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:24}}>
+        <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,marginBottom:14}}>Tell us more</div>
+        <textarea
+          value={msg}
+          onChange={e=>setMsg(e.target.value)}
+          placeholder={category==="bug"?"Describe the bug — what happened, what did you expect?":category==="feature"?"What would you like to see? Describe the problem it solves.":category==="love"?"What specifically made your day?":"Anything on your mind..."}
+          rows={6}
+          style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:12,padding:"14px 16px",color:T.text,fontSize:14,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box",lineHeight:1.6}}
+        />
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:14}}>
+          <span style={{fontSize:12,color:T.faint}}>{msg.length} chars</span>
+          <button onClick={submit} disabled={!category||!msg.trim()||sending} style={{padding:"10px 24px",background:category&&msg.trim()?T.lime:T.card2,color:category&&msg.trim()?T.ink:T.faint,border:"none",borderRadius:99,fontSize:13,fontWeight:700,cursor:category&&msg.trim()?"pointer":"default",fontFamily:T.font,transition:"all 0.2s"}}>
+            {sending?"Sending...":"Send feedback"}
+          </button>
+        </div>
+      </div>
+
+      {/* Footer note */}
+      <div style={{padding:"14px 18px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:14,display:"flex",gap:12,alignItems:"flex-start"}}>
+        <span style={{color:T.lime,flexShrink:0,marginTop:2}}>{Icon.heart}</span>
+        <div style={{fontSize:12.5,color:T.muted,lineHeight:1.6}}>Studlin is built by students, for students. Your feedback directly influences what we build next. We read every message.</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── LECTURES ─────────────────────────────────────────────────────────────────
+function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
+  const [recording,setRecording]=useState(false);
+  const [transcript,setTranscript]=useState("");
+  const [ytUrl,setYtUrl]=useState("");
+  const [bars,setBars]=useState(()=>Array(32).fill(3));
+  const [saved,setSaved]=useState(()=>lsGet("lectures",[]));
+  const [selectedLec,setSelectedLec]=useState(null);
+  const recRef=useRef(null);
+  const recogRef=useRef(null);
+  const animRef=useRef(null);
+  const analyserRef=useRef(null);
+  const audioCtxRef=useRef(null);
+  const streamRef=useRef(null);
+
+  const stopAll=()=>{
+    if(recRef.current){try{recRef.current.stop();}catch(e){}recRef.current=null;}
+    if(recogRef.current){try{recogRef.current.stop();}catch(e){}recogRef.current=null;}
+    if(animRef.current){cancelAnimationFrame(animRef.current);animRef.current=null;}
+    if(audioCtxRef.current){try{audioCtxRef.current.close();}catch(e){}audioCtxRef.current=null;}
+    if(streamRef.current){streamRef.current.getTracks().forEach(t=>t.stop());streamRef.current=null;}
+    analyserRef.current=null;
+    setRecording(false);
+    setBars(Array(32).fill(3));
+  };
+  useEffect(()=>()=>{stopAll();},[]);
+
+  const drawBars=()=>{
+    if(!analyserRef.current)return;
+    const d=new Uint8Array(analyserRef.current.frequencyBinCount);
+    analyserRef.current.getByteFrequencyData(d);
+    const step=Math.floor(d.length/32);
+    setBars(Array.from({length:32},(_,i)=>Math.max(3,Math.min(d[i*step]/255*36,36))));
+    animRef.current=requestAnimationFrame(drawBars);
+  };
+
+  const startRecording=async()=>{
+    try{
+      const stream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+      streamRef.current=stream;
+      const ctx=new(window.AudioContext||window.webkitAudioContext)();
+      const src=ctx.createMediaStreamSource(stream);
+      const an=ctx.createAnalyser();
+      an.fftSize=256;
+      src.connect(an);
+      audioCtxRef.current=ctx;
+      analyserRef.current=an;
+      const mr=new MediaRecorder(stream);
+      recRef.current=mr;
+      mr.start();
+      setRecording(true);
+      animRef.current=requestAnimationFrame(drawBars);
+      const SR=window.webkitSpeechRecognition||window.SpeechRecognition;
+      if(SR){
+        const r=new SR();
+        r.continuous=true;
+        r.interimResults=true;
+        r.onresult=(ev)=>{
+          let txt="";
+          for(let i=0;i<ev.results.length;i++)txt+=ev.results[i][0].transcript+" ";
+          setTranscript(txt.trim());
+        };
+        r.onerror=()=>{};
+        r.start();
+        recogRef.current=r;
+      }
+    }catch(e){stopAll();}
+  };
+
+  const stopRecording=()=>{
+    if(transcript.trim()){
+      const lec={id:Date.now().toString(),title:"Lecture "+new Date().toLocaleDateString("en",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}),transcript:transcript.trim(),created:Date.now()};
+      const list=[lec,...lsGet("lectures",[])].slice(0,20);
+      lsSet("lectures",list);
+      setSaved(list);
+      setSelectedLec(lec);
+    }
+    stopAll();
+  };
+
+  const importYt=()=>{if(ytUrl.trim())setActive("notes");};
+  const curTx=selectedLec?selectedLec.transcript:transcript;
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16,paddingBottom:40}}>
+      <div>
+        <h1 style={{fontFamily:T.hand,fontSize:42,fontWeight:700,color:T.white,margin:"0 0 4px",letterSpacing:"-0.02em",lineHeight:1}}>Lectures</h1>
+        <p style={{fontSize:14,color:T.muted,margin:0}}>Record, import, and turn every lecture into a study kit</p>
+      </div>
+
+      {/* Record / import card */}
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:"24px 26px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:18,marginBottom:18}}>
+          <button onClick={recording?stopRecording:startRecording} style={{width:60,height:60,borderRadius:"50%",background:recording?T.red:T.lime,border:"none",cursor:"pointer",display:"grid",placeItems:"center",flexShrink:0,transition:"all 0.2s ease",boxShadow:recording?`0 0 0 10px ${T.red}22,0 8px 24px -8px ${T.red}60`:`0 8px 24px -8px ${T.lime}70`}}>
+            {recording
+              ?<svg width="20" height="20" viewBox="0 0 24 24" fill={T.ink}><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+              :<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={T.ink} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" fill={T.ink} stroke="none"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+            }
+          </button>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:3}}>{recording?"Recording — tap to stop":"Record a lecture"}</div>
+            <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.12em",color:T.muted}}>Audio is saved exactly as spoken</div>
+          </div>
+          <div style={{flex:1,display:"flex",alignItems:"flex-end",gap:2,height:36,overflow:"hidden",paddingLeft:8}}>
+            {bars.map((h,i)=>(
+              <div key={i} style={{flex:1,background:recording?T.lime:T.border,borderRadius:2,height:h,transition:"height 0.08s ease"}}/>
+            ))}
+          </div>
+        </div>
+
+        <div style={{display:"flex",gap:8}}>
+          <div style={{flex:1,display:"flex",alignItems:"center",gap:10,background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"9px 12px"}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={T.muted} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-1.96C18.88 4 12 4 12 4s-6.88 0-8.6.46A2.78 2.78 0 0 0 1.46 6.42 29 29 0 0 0 1 12a29 29 0 0 0 .46 5.58A2.78 2.78 0 0 0 3.4 19.54C5.12 20 12 20 12 20s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-1.96A29 29 0 0 0 23 12a29 29 0 0 0-.46-5.58z"/><polygon points="9.75 15.02 15.5 12 9.75 8.98 9.75 15.02" fill={T.muted} stroke="none"/></svg>
+            <input value={ytUrl} onChange={e=>setYtUrl(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")importYt();}} placeholder="Paste a YouTube link" style={{flex:1,background:"none",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}}/>
+          </div>
+          <button onClick={importYt} style={{padding:"9px 16px",background:ytUrl.trim()?T.lime:T.card2,color:ytUrl.trim()?T.ink:T.muted,border:`1px solid ${ytUrl.trim()?T.lime:T.border}`,borderRadius:10,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font,transition:"all 0.18s"}}>Import</button>
+          <label style={{padding:"9px 16px",background:T.card2,color:T.text,border:`1px solid ${T.border}`,borderRadius:10,fontSize:13,fontWeight:500,cursor:"pointer",fontFamily:T.font,display:"flex",alignItems:"center",gap:7}}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Upload file
+            <input type="file" accept="audio/*,.pdf,.txt,.doc" style={{display:"none"}} onChange={e=>{const f=e.target.files&&e.target.files[0];if(f&&(f.type==="text/plain"||f.name.endsWith(".txt")))f.text().then(txt=>{setTranscript(txt);setSelectedLec(null);});e.target.value="";}}/>
+          </label>
+        </div>
+      </div>
+
+      {/* Saved lectures */}
+      {saved.length>0&&!selectedLec&&(
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:20}}>
+          <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,marginBottom:12}}>Saved lectures</div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {saved.slice(0,5).map(l=>(
+              <div key={l.id} onClick={()=>{setSelectedLec(l);}} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.border}`,cursor:"pointer",background:T.card2}}>
+                <div style={{width:32,height:32,borderRadius:8,background:T.lime+"18",display:"grid",placeItems:"center",color:T.lime,flexShrink:0}}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:600,color:T.white,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{l.title}</div>
+                  <div style={{fontSize:11,color:T.muted,marginTop:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{l.transcript.slice(0,70)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Transcript area */}
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+          <span style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted}}>Live transcript</span>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            {recording&&<span style={{fontFamily:T.mono,fontSize:10,color:T.red,display:"flex",alignItems:"center",gap:5,letterSpacing:"0.08em"}}><span style={{width:6,height:6,borderRadius:"50%",background:T.red,display:"inline-block",animation:"studlinPulse 1s infinite"}}/>LIVE</span>}
+            {(curTx||selectedLec)&&<button onClick={()=>{setSelectedLec(null);setTranscript("");}} style={{fontSize:11,color:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font}}>Clear</button>}
+          </div>
+        </div>
+        {curTx
+          ?<p style={{fontSize:14,lineHeight:1.8,color:T.text,margin:0,whiteSpace:"pre-wrap",maxHeight:280,overflowY:"auto"}}>{curTx}</p>
+          :<div style={{padding:"36px 20px",textAlign:"center"}}>
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke={T.faint} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{margin:"0 auto 10px",display:"block"}}><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+            <div style={{fontSize:13.5,color:T.muted}}>Hit record, paste a link, or drop a file.</div>
+            <div style={{fontSize:12,color:T.faint,marginTop:4}}>Your transcript appears here in real time.</div>
+          </div>
+        }
+      </div>
+
+      {/* Output action cards */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14}}>
+        {[
+          {title:"Flashcards",desc:"Turn key concepts into a spaced-rep deck",icon:Icon.layers,action:()=>setActive("flashcards"),badge:null,color:T.teal},
+          {title:"Practice quiz",desc:"Generate MCQs and short-answer questions",icon:Icon.zap,action:()=>setPricingOpen(true),badge:"PRO",color:T.purple},
+          {title:"Summary",desc:"Get a concise outline of the full lecture",icon:Icon.file,action:()=>setActive("aichat"),badge:null,color:T.amber},
+        ].map((it,i)=>(
+          <div key={i} onClick={()=>it.action()} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:18,padding:20,cursor:"pointer",position:"relative"}}>
+            {it.badge&&<span style={{position:"absolute",top:14,right:14,fontFamily:T.mono,fontSize:9,letterSpacing:"0.08em",padding:"3px 8px",borderRadius:99,background:T.purple+"22",color:T.purple,border:`1px solid ${T.purple}44`,fontWeight:700}}>{it.badge}</span>}
+            <div style={{width:36,height:36,borderRadius:10,background:it.color+"18",border:`1px solid ${it.color}33`,display:"grid",placeItems:"center",color:it.color,marginBottom:12}}>{it.icon}</div>
+            <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>{it.title}</div>
+            <div style={{fontSize:12,color:T.muted,lineHeight:1.4}}>{it.desc}</div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -8270,8 +8540,13 @@ function VerifyEmailScreen({user}){
   const [err,setErr]=useState("");
   const resend=async()=>{
     setStatus("sending");setErr("");
-    try{await user.sendEmailVerification();setStatus("sent");setTimeout(()=>setStatus("idle"),30000);}
-    catch(e){setErr(e.code==="auth/too-many-requests"?"Too many requests — wait a bit before trying again.":"Couldn't send the email. Try again shortly.");setStatus("idle");}
+    try{
+      const res=await authFetch("/api/send-verification",{method:"POST"});
+      const d=await res.json();
+      if(d.ok){setStatus("sent");setTimeout(()=>setStatus("idle"),30000);}
+      else setErr(d.error||"Couldn't send the email. Try again shortly.");
+    }catch(e){setErr("Couldn't send the email. Try again shortly.");}
+    if(status==="sending")setStatus("idle");
   };
   const checkVerified=async()=>{
     setStatus("checking");
@@ -8551,16 +8826,18 @@ function App() {
       // links into it (e.g. Dashboard's Essay Writer / Citation quick tools).
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
+      {id:"lectures",label:"Lectures",badge:"NEW"},
       {id:"friends",label:"Studlin Network",badge:String(unreadCount||"")},
+      {id:"feedback",label:"Feedback"},
     ]},
     // "solve" (Solve) intentionally hidden from the active nav — page, route
     // mapping, and label still exist below so nothing breaks for anything
     // that still references it.
   ];
   const bottomItems=[{id:"settings",label:"Settings"},{id:"profile",label:"Profile"}];
-  const pages={aichat:AiChat,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile};
-  const labelOf={dashboard:"Dashboard",aichat:"Studlin AI",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve"};
-  const sectionOf={dashboard:"Workspace",aichat:"Workspace",writestudio:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",friends:"Workspace",solve:"Tools",settings:"Account",profile:"Account"};
+  const pages={aichat:AiChat,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile,lectures:Lectures,feedback:FeedbackPage};
+  const labelOf={dashboard:"Dashboard",aichat:"Studlin AI",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve",lectures:"Lectures",feedback:"Feedback"};
+  const sectionOf={dashboard:"Workspace",aichat:"Workspace",writestudio:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",friends:"Workspace",lectures:"Workspace",feedback:"Workspace",solve:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
   if (!onboarded) return <InitWizard onComplete={()=>{setOnboarded(true);}} />;
@@ -8695,6 +8972,7 @@ function App() {
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} />:
            active==="calendar"?<CalendarTab onTourDone={handleCalendarTourDone} onTaskSaved={askNotifIfNeeded} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} />:
+           active==="lectures"?<Lectures setActive={setActive} setPricingOpen={setPricingOpen} />:
            ActivePage?<ActivePage />:null}
         </div>
       </div>
