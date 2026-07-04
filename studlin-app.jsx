@@ -320,6 +320,142 @@ const Modal = ({open, onClose, title, sub, children, footer, width=540}) => {
     </div>
   );
 };
+// ─── GUIDED TAB TOUR ──────────────────────────────────────────────────────────
+// Lightweight first-run coachmark: given targetRef, it draws a spotlight ring
+// around that element (via a single box-shadow-as-backdrop trick — clicks on
+// the rest of the page still pass through, so the user can follow along by
+// actually clicking the highlighted control) and anchors a callout next to
+// it. With no targetRef it renders the same callout as a blocking centered
+// card instead, for steps that aren't about one specific control.
+function TourStep({ targetRef, title, body, step, total, onNext, onSkip, isLast }) {
+  const [rect, setRect] = useState(null);
+  useEffect(() => {
+    setRect(null);
+    if (!targetRef) return;
+    let cancelled = false;
+    let pollId = null;
+    // targetRef.current read here always reflects the *previous* commit —
+    // callers that open a modal to reveal the target do so from their own
+    // effect, one render after this one starts, so a plain "current is
+    // still null" check misses it permanently. Poll briefly until it
+    // mounts instead of depending on ref identity in the deps array.
+    const tryMeasure = () => {
+      if (cancelled) return;
+      if (targetRef.current) setRect(targetRef.current.getBoundingClientRect());
+      else pollId = setTimeout(tryMeasure, 50);
+    };
+    tryMeasure();
+    window.addEventListener("resize", tryMeasure);
+    return () => { cancelled = true; if (pollId) clearTimeout(pollId); window.removeEventListener("resize", tryMeasure); };
+  }, [targetRef, step]);
+
+  const anchored = !!rect;
+  const vw = typeof window!=="undefined"?window.innerWidth:1200;
+  const vh = typeof window!=="undefined"?window.innerHeight:800;
+  const calloutStyle = anchored
+    ? { position:"fixed", top:Math.min(rect.bottom+14, vh-240), left:Math.max(16,Math.min(rect.left, vw-336)), width:320 }
+    : { position:"fixed", top:"50%", left:"50%", transform:"translate(-50%,-50%)", width:380 };
+
+  // Portaled straight to <body> — the tab content wrapper has a CSS
+  // `animation` targeting `transform`, which per spec makes it a permanent
+  // containing block for `position:fixed` descendants (not just while the
+  // animation is actively running). Left in place, this callout's "fixed"
+  // coordinates would be relative to that wrapper's box instead of the
+  // viewport, landing the callout hundreds of pixels off from its target.
+  return ReactDOM.createPortal((
+    <div style={{position:"fixed",inset:0,zIndex:900,animation:"studlinFade 0.18s ease-out"}}>
+      {anchored ? (
+        <div style={{position:"fixed",top:rect.top-8,left:rect.left-8,width:rect.width+16,height:rect.height+16,borderRadius:12,border:`2px solid ${T.lime}`,boxShadow:"0 0 0 4000px rgba(8,12,10,0.6)",pointerEvents:"none"}} />
+      ) : (
+        <div style={{position:"absolute",inset:0,background:"rgba(8,12,10,0.6)",backdropFilter:"blur(4px)"}} />
+      )}
+      <div data-tour-callout style={{...calloutStyle, background:T.card, border:`1px solid ${T.border}`, borderRadius:14, padding:"18px 20px", boxShadow:"0 24px 60px -16px rgba(0,0,0,0.55)", zIndex:910, animation:"studlinPop 0.2s cubic-bezier(.2,.85,.3,1)"}}>
+        <div style={{display:"flex",gap:5,marginBottom:12}}>
+          {Array.from({length: total}).map((_,i)=>(
+            <div key={i} style={{height:3,flex:1,borderRadius:99,background:i<=step?T.lime:T.border}} />
+          ))}
+        </div>
+        <div style={{fontSize:14.5,fontWeight:700,color:T.white,marginBottom:6,letterSpacing:"-0.01em"}}>{title}</div>
+        <div style={{fontSize:12.5,color:T.muted,lineHeight:1.55,marginBottom:16}}>{body}</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <button onClick={onSkip} style={{background:"none",border:"none",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font,padding:0}}>Skip guide</button>
+          <BtnSm onClick={onNext}>{isLast?"Done":"Next"}</BtnSm>
+        </div>
+      </div>
+    </div>
+  ), document.body);
+}
+
+// ─── PRICING PLAN CARDS ───────────────────────────────────────────────────────
+// Shared by the "See Pricing" nav-bar modal and the full-screen post-tour
+// paywall intercept — same 3 plans, same billing-aware pricing (mirrors
+// checkout.html's PLAN_DATA), just rendered inside different wrappers.
+const PRICING_PLANS=(billing)=>([
+  {
+    key:"free",name:"Free",price:"$0",per:"forever",tag:null,
+    desc:"Get organized. No credit card needed.",
+    features:["30 AI credits / month","AI tutor — Standard model","Manual flashcards & notes","Focus timer, calendar & planner","Streaks, XP & basic stats"],
+    cta:"Get started free",variant:"subtle",
+  },
+  {
+    key:"pro",name:"Pro",price:billing==="annual"?"$7.99":"$9.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:"7 DAYS FREE",
+    desc:"The full study OS. Built for serious students.",
+    features:["200 AI credits / month","AI tutor — all models + 4 study modes","Full essay suite + plagiarism check","AI flashcards from notes, PDFs & YouTube","Google Docs sync + AI Rewrite (Humanizer)","Unlimited grammar + readability scores","Squad leaderboards + 2× focus XP"],
+    cta:"Start free trial",variant:"lime",featured:true,
+  },
+  {
+    key:"max",name:"Max",price:billing==="annual"?"$19.99":"$24.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:null,
+    desc:"Maximum firepower. No limits, ever.",
+    features:["500 AI credits / month","Everything in Pro, unlimited","Bulk ops — 100 flashcards at once","Advanced analytics & learning paths","Cosmetics shop + monthly tournaments","Priority support + 3× focus XP"],
+    cta:"Upgrade to Max",variant:"ink",
+  },
+]);
+function PlanCards({ billing, onSelect }) {
+  return (
+    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14}}>
+      {PRICING_PLANS(billing).map((plan,i)=>(
+        <div key={i} style={{
+          background:plan.featured?T.forest:T.card2,
+          border:`1.5px solid ${plan.featured?T.lime+"44":T.border}`,
+          borderRadius:18,
+          padding:24,
+          position:"relative",
+          display:"flex",flexDirection:"column",
+          boxShadow:plan.featured?`0 24px 48px -20px ${T.lime}30`:"none",
+        }}>
+          {plan.tag && (
+            <div style={{position:"absolute",top:-11,left:18,background:T.lime,color:T.ink,fontFamily:T.mono,fontSize:10,fontWeight:700,letterSpacing:"0.14em",padding:"4px 10px",borderRadius:99}}>{plan.tag}</div>
+          )}
+          <div style={{fontSize:18,fontWeight:700,color:plan.featured?T.cream:T.white,letterSpacing:"-0.02em",marginBottom:4}}>{plan.name}</div>
+          <div style={{display:"flex",alignItems:"baseline",gap:5,margin:"8px 0 6px"}}>
+            <span style={{fontFamily:T.hand,fontSize:50,fontWeight:700,lineHeight:0.9,color:plan.featured?T.lime:T.text,letterSpacing:"-0.02em"}}>{plan.price}</span>
+            <span style={{fontSize:13,color:T.muted}}>{plan.per}</span>
+          </div>
+          <div style={{fontSize:13,color:plan.featured?"rgba(246,241,230,0.7)":T.muted,marginBottom:18,lineHeight:1.5}}>{plan.desc}</div>
+          <ul style={{listStyle:"none",padding:0,margin:"0 0 20px",display:"flex",flexDirection:"column",gap:9,flex:1}}>
+            {plan.features.map((f,j)=>(
+              <li key={j} style={{display:"flex",gap:9,fontSize:13,color:plan.featured?T.cream:T.text,lineHeight:1.45,alignItems:"flex-start"}}>
+                <span style={{width:16,height:16,borderRadius:"50%",background:T.lime,color:T.ink,display:"grid",placeItems:"center",flex:"none",marginTop:1}}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                </span>
+                {f}
+              </li>
+            ))}
+          </ul>
+          <button onClick={()=>onSelect(plan.key)} style={{
+            width:"100%",padding:"11px",borderRadius:99,
+            fontWeight:600,fontSize:14,cursor:"pointer",fontFamily:T.font,
+            border:plan.variant==="subtle"?`1px solid ${T.border}`:"none",
+            background:plan.variant==="lime"?T.lime:plan.variant==="ink"?T.ink:T.card,
+            color:plan.variant==="lime"?T.ink:plan.variant==="ink"?T.cream:T.text,
+            transition:"opacity .15s",
+          }}>{plan.cta}</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 const Field = ({label, children, hint}) => (
   <div style={{marginBottom:14}}>
     <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:6}}>{label}</div>
@@ -333,58 +469,54 @@ const Input = (props) => (
 const Textarea = (props) => (
   <textarea {...props} style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.font,outline:"none",resize:"vertical",minHeight:90,boxSizing:"border-box",...(props.style||{})}} />
 );
-// Drop-in replacement for <input type="time"> — same 24h "HH:MM" value/onChange
-// contract, but never invokes the browser's own picker chrome (which on
-// Safari/iOS renders as a scrolling wheel; Chrome/Edge render it as a plain
-// box — same code, wildly different UX depending on browser). Typing digits
-// ("930", "1430") or digits+am/pm ("930pm") both parse; an unparseable entry
-// just reverts to the last valid value on blur rather than crashing or left
-// half-typed.
-const TimeInput = ({value,onChange,style}) => {
-  const to12=(v)=>{
-    if(!v)return "";
-    const p=v.split(":");const h=+p[0],m=+p[1];
-    if(isNaN(h)||isNaN(m))return "";
-    const ap=h>=12?"PM":"AM";const h12=h%12||12;
-    return h12+":"+String(m).padStart(2,"0")+" "+ap;
+// Custom Hour / Minute / AM-PM dropdown trio — mobile-friendly native
+// <select> controls, no typing required. Same 24h "HH:MM" value/onChange
+// contract as before, so every call site is unaffected.
+const TIME_HOURS_12=Array.from({length:12},(_,i)=>i+1);
+const TIME_MINUTES_5=Array.from({length:12},(_,i)=>i*5);
+// lockedRanges (optional, default none): array of {start,end} in minutes.
+// When given, Hour options whose top-of-hour falls inside any range are
+// grayed out — recomputed against the currently-selected AM/PM so flipping
+// it updates which hours are locked. Fully backward compatible: every
+// existing call site simply doesn't pass it and behaves exactly as before.
+const TimeInput = ({value,onChange,style,lockedRanges}) => {
+  let h=9,m=0,ap="AM";
+  if(value){
+    const [hStr,mStr]=value.split(":");
+    const hh=parseInt(hStr,10),mm=parseInt(mStr,10);
+    if(!isNaN(hh)&&!isNaN(mm)){
+      ap=hh>=12?"PM":"AM";
+      h=hh%12||12;
+      m=Math.round(mm/5)*5%60;
+    }
+  }
+  const commit=(nextH,nextM,nextAp)=>{
+    let hh=nextH%12;
+    if(nextAp==="PM")hh+=12;
+    onChange(String(hh).padStart(2,"0")+":"+String(nextM).padStart(2,"0"));
   };
-  const parse=(str)=>{
-    const s=(str||"").trim().toLowerCase();
-    if(!s)return null;
-    const ap=/pm/.test(s)?"pm":/am/.test(s)?"am":null;
-    const digits=s.replace(/[^0-9]/g,"");
-    if(!digits)return null;
-    let h,m;
-    if(digits.length<=2){h=+digits;m=0;}
-    else if(digits.length===3){h=+digits.slice(0,1);m=+digits.slice(1);}
-    else{h=+digits.slice(0,2);m=+digits.slice(2,4);}
-    if(m>59)return null;
-    if(ap==="pm"&&h<12)h+=12;
-    if(ap==="am"&&h===12)h=0;
-    if(h>23||h<0)return null;
-    return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
+  const isHourLocked=(x)=>{
+    if(!lockedRanges||lockedRanges.length===0)return false;
+    let hh=x%12;
+    if(ap==="PM")hh+=12;
+    const mins=hh*60;
+    return lockedRanges.some(r=>mins>=r.start&&mins<r.end);
   };
-  const [draft,setDraft]=useState(()=>to12(value));
-  const [focused,setFocused]=useState(false);
-  useEffect(()=>{if(!focused)setDraft(to12(value));},[value,focused]);
-  const commit=(e)=>{
-    setFocused(false);
-    const parsed=parse(draft);
-    if(parsed){if(parsed!==value)onChange(parsed);setDraft(to12(parsed));}
-    else setDraft(to12(value));
-  };
+  const selStyle={flex:1,minWidth:0,padding:"10px 8px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,color:T.text,fontSize:13.5,fontFamily:T.font,outline:"none",cursor:"pointer",boxSizing:"border-box"};
   return (
-    <Input
-      type="text"
-      inputMode="numeric"
-      placeholder="e.g. 9:30 AM"
-      value={draft}
-      onFocus={e=>{setFocused(true);e.target.select();}}
-      onChange={e=>setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
-      style={style}
-    />
+    <div style={{display:"flex",flexDirection:"row",gap:6,alignItems:"center",...(style||{})}}>
+      <select value={h} onChange={e=>commit(+e.target.value,m,ap)} style={selStyle}>
+        {TIME_HOURS_12.map(x=><option key={x} value={x} disabled={isHourLocked(x)}>{x}{isHourLocked(x)?" (school)":""}</option>)}
+      </select>
+      <span style={{color:T.muted,flexShrink:0}}>:</span>
+      <select value={m} onChange={e=>commit(h,+e.target.value,ap)} style={selStyle}>
+        {TIME_MINUTES_5.map(x=><option key={x} value={x}>{String(x).padStart(2,"0")}</option>)}
+      </select>
+      <select value={ap} onChange={e=>commit(h,m,e.target.value)} style={selStyle}>
+        <option value="AM">AM</option>
+        <option value="PM">PM</option>
+      </select>
+    </div>
   );
 };
 // Drop-in replacement for a plain numeric <Input type="number">. The bug it
@@ -479,6 +611,84 @@ const DEFAULT_SUBJECTS=[
 ];
 const getSubjects=()=>lsGet("user-subjects",DEFAULT_SUBJECTS);
 const saveSubjects=(s)=>lsSet("user-subjects",s);
+
+// ─── WEEKLY ROUTINE ("Time Shields") ─────────────────────────────────────────
+// A routine rule is a recurring commitment: {id,title,kind,days,startTime,
+// duration,subject}. `days` is Monday-first (0=Mon..6=Sun), matching
+// WeeklyPlanner's own weekDays convention below. Rules are never copied into
+// the one-off `events` array — they're expanded into virtual occurrences on
+// demand for whatever date range is being rendered or scheduled, so editing
+// or deleting one rule instantly and correctly applies to every week without
+// any bulk-update pass.
+const getWeeklyRoutine=()=>lsGet("weeklyRoutine",[]);
+const saveWeeklyRoutine=(r)=>lsSet("weeklyRoutine",r);
+const ROUTINE_KIND_TO_EVENT_KIND={class:"class",busy:"busy block",free:"free period"};
+function expandRoutineOccurrences(routines,startDateKey,endDateKey){
+  const out=[];
+  if(!routines||routines.length===0)return out;
+  const start=new Date(startDateKey+"T00:00:00");
+  const end=new Date(endDateKey+"T00:00:00");
+  for(let d=new Date(start);d<=end;d.setDate(d.getDate()+1)){
+    const dk=dayKey(d);
+    const dow=(d.getDay()+6)%7; // JS Sunday=0 → Monday-first 0..6
+    routines.forEach(r=>{
+      if(!r.days||!r.days.includes(dow))return;
+      out.push({
+        id:"routine-"+r.id+"-"+dk,
+        routineId:r.id,
+        title:r.title,
+        date:dk,
+        time:r.startTime,
+        duration:r.duration||30,
+        kind:ROUTINE_KIND_TO_EVENT_KIND[r.kind]||"class",
+        subject:r.subject||"",
+        status:"pending",
+        isRoutine:true,
+      });
+    });
+  }
+  return out;
+}
+const getRoutineOccurrencesForDate=(dateKey)=>expandRoutineOccurrences(getWeeklyRoutine(),dateKey,dateKey);
+// Scans forward up to 14 days from a desired date/time for the next slot
+// that's actually open against both real events and Weekly Routine shields,
+// within the user's preferred daily window. Shared by aiArrange's
+// deterministic hard-lock enforcement and the Routine Control Center's
+// conflict reconciliation (relocating a task that a routine edit now overlaps).
+function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration){
+  const prefStartMins=timeToMinutes(prefs.workStartTime);
+  const prefEndMins=timeToMinutes(prefs.workEndTime);
+  for(let dayOffset=0;dayOffset<14;dayOffset++){
+    const d=new Date(desiredDate+"T12:00:00");d.setDate(d.getDate()+dayOffset);
+    const dk=dayKey(d);
+    // Free periods are preferred landing spots, not blocks — never treat them
+    // as occupied (matches the Dashboard's scheduling engine).
+    const occupied=events.filter(e=>e.date===dk&&e.time)
+      .concat(expandRoutineOccurrences(routines,dk,dk).filter(o=>o.kind!=="free period"))
+      .map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)}));
+    const scanStart=dayOffset===0?Math.max(prefStartMins,timeToMinutes(desiredTime)):prefStartMins;
+    for(let t=scanStart;t+duration<=prefEndMins;t+=15){
+      if(!occupied.some(o=>!(t+duration<=o.start||t>=o.end)))return {date:dk,time:minutesToTime(t)};
+    }
+  }
+  return {date:desiredDate,time:desiredTime}; // nothing open in two weeks — better than silently dropping the task
+}
+// Subtracts a list of {start,end} "holes" out of a single {start,end} base
+// interval, returning the remaining segments — used to punch free-period
+// gaps through the WeeklyPlanner's School Hours background tint.
+function subtractIntervals(base,holes){
+  let segments=[{...base}];
+  (holes||[]).forEach(h=>{
+    segments=segments.flatMap(seg=>{
+      if(h.end<=seg.start||h.start>=seg.end)return [seg];
+      const out=[];
+      if(h.start>seg.start)out.push({start:seg.start,end:Math.min(h.start,seg.end)});
+      if(h.end<seg.end)out.push({start:Math.max(h.end,seg.start),end:seg.end});
+      return out;
+    });
+  });
+  return segments.filter(s=>s.end>s.start);
+}
 const diffLabel=(v)=>{const p=v/10;return p<=20?"Easy":p<=40?"Moderately Easy":p<=60?"Medium":p<=80?"Moderately Hard":"Hard";};
 const prioLabel=(v)=>{const p=v/10;return p<=20?"Low":p<=40?"Low–Medium":p<=60?"Medium":p<=80?"High":"Urgent";};
 async function getAuthToken(){try{const u=firebase.auth().currentUser;if(!u)return null;return await u.getIdToken();}catch(e){return null;}}
@@ -512,9 +722,44 @@ async function upsertProfile(extra={}){
     school,
     schoolLower:(school||"").toLowerCase(),
     status,
+    xp:getXP(),
+    streak:getStreak(),
     updatedAt:new Date().toISOString(),
   };
   try{await fsdb().collection('profiles').doc(u.uid).set(data,{merge:true});}catch(e){}
+}
+// Top-N public profiles ordered by real XP, straight from Firestore — no
+// mock/seed data. Docs that haven't been through upsertProfile() since xp
+// started being synced (or ever) simply lack the field and are naturally
+// excluded by orderBy, rather than sorting in as a false zero.
+async function fetchTopProfiles(n=8){
+  try{
+    const snap=await fsdb().collection('profiles').orderBy('xp','desc').limit(n).get();
+    return snap.docs.map(d=>d.data());
+  }catch(e){return [];}
+}
+const LB_GRADIENTS=["linear-gradient(135deg,#FFD7B5,#FFC9D2)","linear-gradient(135deg,#BFE3FF,#E2D0FF)","linear-gradient(135deg,#C4F0D8,#FFE99A)","linear-gradient(135deg,#E2D0FF,#FFD7B5)","linear-gradient(135deg,#FFE99A,#C4F0D8)","linear-gradient(135deg,#BFE3FF,#FFD7B5)","linear-gradient(135deg,#C4F0D8,#E2D0FF)"];
+// Merges the signed-in user's own live-accurate xp/streak/name into a
+// fetched top-profiles list (replacing their own possibly-stale doc if it's
+// in there), re-sorts by real XP, and assigns rank + a rotating avatar
+// gradient. Always keeps "you" visible in the returned slice even if your
+// real rank falls outside it, same as the leaderboard has always guaranteed.
+function mergeLeaderboard(profiles, realName, realXP, realStreak, myUid, showCount){
+  const others=(profiles||[]).filter(p=>p.uid&&p.uid!==myUid);
+  const you={uid:myUid,name:realName||"You",xp:Math.max(0,realXP||0),streak:realStreak||0,you:true};
+  const sorted=[...others,you].sort((a,b)=>(b.xp||0)-(a.xp||0)).map((u,i)=>({
+    r:i+1,
+    n:u.name||"Student",
+    xp:u.xp||0,
+    streak:u.streak||0,
+    tier:getProfTitle(u.xp||0),
+    you:!!u.you,
+    grad:LB_GRADIENTS[i%LB_GRADIENTS.length],
+  }));
+  if(!showCount||showCount>=sorted.length)return sorted;
+  const top=sorted.slice(0,showCount);
+  if(top.some(u=>u.you))return top;
+  return [...sorted.slice(0,showCount-1),sorted.find(u=>u.you)];
 }
 const dayKey=(d)=>{const x=d||new Date();return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");};
 function daysOverdue(ev){if(!ev.deadline)return 0;if(ev.date<=ev.deadline)return 0;const d1=new Date(ev.date),d2=new Date(ev.deadline);return Math.ceil((d1-d2)/86400000);}
@@ -540,9 +785,9 @@ function readabilityOf(html){
   var lvl=gradeNum<=6?"Grade 6 or below":gradeNum>=16?"College level":"Grade "+Math.max(1,Math.round(gradeNum));
   return{grade:letter,level:lvl};
 }
-function touchStreak(){const days=lsGet("days",[]);const t=dayKey();if(!days.includes(t)){days.push(t);lsSet("days",days);}}
+function touchStreak(){const days=lsGet("days",[]);const t=dayKey();if(!days.includes(t)){days.push(t);lsSet("days",days);upsertProfile();}}
 function getStreak(){const days=new Set(lsGet("days",[]));let n=0;const d=new Date();while(days.has(dayKey(d))){n++;d.setDate(d.getDate()-1);}return n;}
-function logSession(mins,mode){const s=lsGet("sessions",[]);s.push({d:dayKey(),m:mins,t:Date.now(),mode:mode||"Focus"});lsSet("sessions",s);}
+function logSession(mins,mode){const s=lsGet("sessions",[]);s.push({d:dayKey(),m:mins,t:Date.now(),mode:mode||"Focus"});lsSet("sessions",s);upsertProfile();}
 function sessionStats(){
   const s=lsGet("sessions",[]);
   const weekAgo=Date.now()-6*86400000;
@@ -600,7 +845,6 @@ function getSchedulePreferences(){
   const def={
     workStartTime:"10:00",
     workEndTime:"18:00",
-    bedtime:"23:00",
     taskDifficultyPreference:"NONE",
     bufferMarginStrategy:"15_MIN"
   };
@@ -704,18 +948,15 @@ function chunkTasksWithBreaks(tasks){
 }
 
 // Feature 5: Conflict detection (detect overlaps with hard events)
-function detectConflicts(task,allTasks,startMins){
-  const prefs=getSchedulePreferences();
+// Checks a proposed [startMins, startMins+duration) window against a list of
+// already-occupied {start,end} slots. (This used to check `.time`/`.id`/
+// `.isFlexible` on entries that never had those fields — always `false`,
+// i.e. conflict detection was silently inert. Now it actually does interval
+// overlap math against the shape callers actually pass.)
+function detectConflicts(task,occupiedSlots,startMins){
   const taskDur=task.duration||30;
   const taskEnd=startMins+taskDur;
-  
-  // Check for collisions with hard events (non-flexible tasks)
-  return allTasks.some(other=>{
-    if(other.id===task.id||!other.time||other.isFlexible)return false;
-    const otherStart=timeToMinutes(other.time);
-    const otherEnd=otherStart+(other.duration||30);
-    return!(taskEnd<=otherStart||startMins>=otherEnd);
-  });
+  return occupiedSlots.some(slot=>!(taskEnd<=slot.start||startMins>=slot.end));
 }
 
 // Feature 2+Features 1,3,4,5: Integrated advanced scheduler
@@ -723,65 +964,87 @@ function advancedSchedulePlanner(baseEvents){
   const prefs=getSchedulePreferences();
   const tk=dayKey();
   const done=lsGet("planDone",{});
-  
+
   // Get all events for today
   const events=baseEvents.filter(e=>e.date===tk);
   const now=new Date();
   const nowMins=timeToMinutes(String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0"));
-  
+
   // Time window constraints
   const workStart=timeToMinutes(prefs.workStartTime);
   const workEnd=timeToMinutes(prefs.workEndTime);
-  const bedtime=timeToMinutes(prefs.bedtime);
-  const softBedtimeBuffer=120; // 2 hours before bedtime
-  
+
   // Separate hard events (fixed time) and flexible tasks
   const hardEvents=events.filter(e=>!e.isFlexible&&e.time);
   const flexibleTasks=events.filter(e=>e.isFlexible||!e.time).sort((a,b)=>calculateTaskPriority(b,events)-calculateTaskPriority(a,events));
-  
+
   // Chunk long flexible tasks and add breaks
   const flexibleChunked=chunkTasksWithBreaks(flexibleTasks);
-  
+
   // Sort hard events by time
   hardEvents.sort((a,b)=>(a.time||"")<(b.time||"")?-1:1);
-  
+
+  // Weekly Routine occurrences for today are absolute shields, folded into
+  // occupiedSlots right alongside real hard events. "Free period" occurrences
+  // are tracked separately as preferred landing spots for short micro-tasks.
+  const routineToday=getRoutineOccurrencesForDate(tk);
+  const shieldOccurrences=routineToday.filter(r=>r.kind!=="free period");
+  const freeWindows=routineToday.filter(r=>r.kind==="free period").map(r=>({start:timeToMinutes(r.time),end:timeToMinutes(r.time)+(r.duration||30)}));
+
   const scheduled=[];
-  const occupiedSlots=hardEvents.map(e=>({
-    start:timeToMinutes(e.time),
-    end:timeToMinutes(e.time)+(e.duration||30),
-    event:e,
-  }));
-  
+  const occupiedSlots=[
+    ...hardEvents.map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30),event:e})),
+    ...shieldOccurrences.map(r=>({start:timeToMinutes(r.time),end:timeToMinutes(r.time)+(r.duration||30),event:r})),
+  ];
+
   // Place hard events
   hardEvents.forEach(e=>{
     scheduled.push({...e,done:!!done[e.id],scheduled:true});
   });
-  
+
   // Place flexible tasks in available windows
   flexibleChunked.forEach(task=>{
     if(task.isBreak){
       scheduled.push(task);
       return;
     }
-    
+
     const dur=task.duration||30;
     let placed=false;
-    
-    // Try to find first available slot within work window
-    for(let timeSlot=workStart;timeSlot+dur<=Math.min(workEnd,bedtime-softBedtimeBuffer);timeSlot+=15){
-      if(!detectConflicts(task,occupiedSlots,timeSlot)){
-        occupiedSlots.push({start:timeSlot,end:timeSlot+dur,task:task});
-        scheduled.push({
-          ...task,
-          time:minutesToTime(timeSlot),
-          done:!!done[task.id],
-          scheduled:true,
-        });
-        placed=true;
-        break;
+
+    // Short tasks (flashcards/quick review, ≤20 min) preferentially land
+    // inside a free-period/study-hall window before using the general peak
+    // window — that's the "Dead Time Activation" the free periods exist for.
+    if(dur<=20){
+      for(const w of freeWindows){
+        for(let timeSlot=w.start;timeSlot+dur<=w.end&&!placed;timeSlot+=15){
+          if(!detectConflicts(task,occupiedSlots,timeSlot)){
+            occupiedSlots.push({start:timeSlot,end:timeSlot+dur,task:task});
+            scheduled.push({...task,time:minutesToTime(timeSlot),done:!!done[task.id],scheduled:true});
+            placed=true;
+          }
+        }
+        if(placed)break;
       }
     }
-    
+
+    // Try to find first available slot within work window
+    if(!placed){
+      for(let timeSlot=workStart;timeSlot+dur<=workEnd;timeSlot+=15){
+        if(!detectConflicts(task,occupiedSlots,timeSlot)){
+          occupiedSlots.push({start:timeSlot,end:timeSlot+dur,task:task});
+          scheduled.push({
+            ...task,
+            time:minutesToTime(timeSlot),
+            done:!!done[task.id],
+            scheduled:true,
+          });
+          placed=true;
+          break;
+        }
+      }
+    }
+
     if(!placed){
       scheduled.push({
         ...task,
@@ -791,7 +1054,7 @@ function advancedSchedulePlanner(baseEvents){
       });
     }
   });
-  
+
   return scheduled;
 }
 
@@ -809,9 +1072,7 @@ function rearrangeUserTasks(tasks, userPrefs){
   const parseTime=(t)=>{const [h,m]=(t||"10:00").split(":").map(Number);return h*60+m;};
   const workStart=parseTime(prefs.workStartTime);
   const workEnd=parseTime(prefs.workEndTime);
-  const bedtimeMin=parseTime(prefs.bedtime);
-  const bedtimeSoftLimit=bedtimeMin-120; // 2-hour buffer before actual bedtime
-  
+
   // Calculate baseline score (0-1000) with exponential deadline urgency
   const calcScore=(task)=>{
     let score=0;
@@ -871,16 +1132,7 @@ function rearrangeUserTasks(tasks, userPrefs){
     // Scan for first available 15-minute window within work constraints
     for(let mins=workStart;mins<=workEnd-duration;mins+=15){
       const endMins=mins+duration;
-      
-      // Check bedtime constraints
-      if(prefs.taskDifficultyPreference==="LAST"&&(difficulty=>3||task.priority<=2)){
-        // For LAST preference low-priority tasks, scan from workStart
-        if(endMins>bedtimeSoftLimit)continue;
-      }else{
-        // Default: hard limit before bedtime
-        if(endMins>bedtimeSoftLimit)continue;
-      }
-      
+
       // Check no conflict with occupied slots
       const hasConflict=occupiedSlots.some(slot=>
         (mins<slot.end&&endMins>slot.start)
@@ -956,15 +1208,13 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
   const prefs=getSchedulePreferences();
   const [workStart,setWorkStart]=useState(prefs.workStartTime);
   const [workEnd,setWorkEnd]=useState(prefs.workEndTime);
-  const [bedtime,setBedtime]=useState(prefs.bedtime);
   const [difficulty,setDifficulty]=useState(prefs.difficultyPreference);
   const [saved,setSaved]=useState(false);
-  
+
   const handleSave=()=>{
     const newPrefs={
       workStartTime:workStart,
       workEndTime:workEnd,
-      bedtime:bedtime,
       difficultyPreference:difficulty,
     };
     setSchedulePreferences(newPrefs);
@@ -996,12 +1246,6 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
             </div>
           </div>
           <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>Tasks will be scheduled within this window. Your study schedule respects these hours.</div>
-        </div>
-        
-        <div style={{marginBottom:22}}>
-          <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>Bedtime (Soft Limit)</label>
-          <TimeInput value={bedtime} onChange={setBedtime} style={{fontFamily:T.mono,maxWidth:200}} />
-          <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>Tasks won't be scheduled in the 2 hours before bedtime. This keeps your evening protected.</div>
         </div>
         
         <div style={{marginBottom:22}}>
@@ -2667,7 +2911,7 @@ function presenceInfo(u,{incognito=false}={}){
   return{color:T.faint,text:"Offline",joinable:false};
 }
 
-function FriendsChat(){
+function FriendsChat({onFriendRequestSent}={}){
   const [searchQ,setSearchQ]=useState("");
   const [searchFilter,setSearchFilter]=useState("All");
   const [inviteEmail,setInviteEmail]=useState("");
@@ -2676,6 +2920,22 @@ function FriendsChat(){
   const [inviteOpen,setInviteOpen]=useState(false);
   const [createGroupOpen,setCreateGroupOpen]=useState(false);
   const [chatTarget,setChatTarget]=useState(null);
+
+  // First-run Network tour — fires the first time this tab mounts (i.e. the
+  // first manual click into Studlin Network), a simple 3-slide copy-block
+  // carousel since there's no single control to anchor to here.
+  const [netTourStep,setNetTourStep]=useState(()=>lsGet("seenNetworkTour",false)?null:0);
+  const NET_TOUR_STEPS=[
+    {title:"Missed Class Protection",body:"Effortlessly share class notes and lecture materials with verified school peers — never fall behind because you missed a lecture."},
+    {title:"Peer Sync",body:"Real-time study chats and shared digital study sessions, so you're never studying completely alone."},
+    {title:"Flexible Architectures",body:"Spin up agile, temporary study groups for an upcoming exam, or set up a permanent channel for the whole semester."},
+  ];
+  const advanceNetTour=()=>{
+    if(netTourStep>=NET_TOUR_STEPS.length-1){finishNetTour();return;}
+    setNetTourStep(s=>s+1);
+  };
+  const finishNetTour=()=>{lsSet("seenNetworkTour",true);setNetTourStep(null);};
+
   const me=getUserName()||"You";
   const refCode=me.toLowerCase().replace(/\s+/g,"");
   const inviteLink="https://studlin.app?ref="+refCode;
@@ -2820,7 +3080,7 @@ function FriendsChat(){
     if(!myUid||targetUid===myUid)return;
     const theirs=incomingReqs.find(r=>r.senderId===targetUid);
     if(theirs){await acceptReq(theirs.id);return;}
-    try{await fsdb().collection('friendships').add({senderId:myUid,receiverId:targetUid,status:'pending',createdAt:new Date().toISOString()});}catch(e){}
+    try{await fsdb().collection('friendships').add({senderId:myUid,receiverId:targetUid,status:'pending',createdAt:new Date().toISOString()});if(onFriendRequestSent)onFriendRequestSent();}catch(e){}
   };
   const acceptReq=async(id)=>{try{await fsdb().collection('friendships').doc(id).update({status:'accepted',updatedAt:new Date().toISOString()});}catch(e){}};
   const declineReq=async(id)=>{try{await fsdb().collection('friendships').doc(id).delete();}catch(e){}};
@@ -3154,6 +3414,18 @@ function FriendsChat(){
       </Modal>
 
       <ChatDrawer open={!!chatTarget} myUid={myUid} target={chatTarget&&chatTarget.kind==="group"&&myRooms[chatTarget.group.id]?{...chatTarget,group:myRooms[chatTarget.group.id]}:chatTarget} onClose={()=>setChatTarget(null)} onMakePermanent={makeGroupPermanent} onDeleteGroup={deleteGroup} />
+      {netTourStep!==null&&(
+        <TourStep
+          targetRef={null}
+          title={NET_TOUR_STEPS[netTourStep].title}
+          body={NET_TOUR_STEPS[netTourStep].body}
+          step={netTourStep}
+          total={NET_TOUR_STEPS.length}
+          isLast={netTourStep===NET_TOUR_STEPS.length-1}
+          onNext={advanceNetTour}
+          onSkip={finishNetTour}
+        />
+      )}
     </div>
   );
 }
@@ -3178,15 +3450,34 @@ function ChatBubble({m,myUid,onRespond,onSchedule}){
   const bg=mine?T.lime+"1F":pp.card2;
   const border=mine?T.lime+"40":pp.border;
   if(m.kind==="calendar"){
-    const w=m.meta;
+    // options falls back to [m.meta] for messages sent before the
+    // multi-slot refactor, which stored a single flat window as meta.
+    const options=m.meta.options||[m.meta];
+    const chosen=options[m.scheduledOption||0];
     return (
       <div style={{alignSelf:"center",width:"100%",padding:"14px 15px",background:T.purple+"1A",border:`1px solid ${T.purple}40`,borderRadius:12}}>
         <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:8,color:T.purple,fontSize:11,fontWeight:700}}>🤖 Studlin Match</div>
-        <div style={{fontSize:12.5,color:pp.text,lineHeight:1.55,marginBottom:12}}>Found an optimal <strong>{w.duration}-minute</strong> study window <strong>{w.dayLabel} at {w.timeLabel}</strong> where everyone is free!</div>
-        {m.status==="scheduled"
-          ?<div style={{fontSize:11.5,color:T.lime,fontWeight:600}}>✓ Scheduled — added to your calendar</div>
-          :<button onClick={()=>onSchedule(m.id)} style={{width:"100%",padding:"9px 0",borderRadius:8,background:T.lime,color:T.bg,border:"none",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Schedule Group Session</button>
-        }
+        {m.status==="scheduled"?(
+          <>
+            <div style={{fontSize:12.5,color:pp.text,lineHeight:1.55,marginBottom:8}}>Booked <strong>{chosen.duration}-minute</strong> session <strong>{chosen.dayLabel} at {chosen.timeLabel}</strong>.</div>
+            <div style={{fontSize:11.5,color:T.lime,fontWeight:600}}>✓ Scheduled — added to your calendar</div>
+          </>
+        ):(
+          <>
+            <div style={{fontSize:12.5,color:pp.text,lineHeight:1.55,marginBottom:10}}>{options.length>1?`Found ${options.length} windows where everyone's free — pick one:`:<>Found an optimal <strong>{options[0].duration}-minute</strong> study window <strong>{options[0].dayLabel} at {options[0].timeLabel}</strong> where everyone is free!</>}</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {options.map((w,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"9px 11px",borderRadius:8,background:w.isBest?T.lime+"14":pp.card2,border:`1px solid ${w.isBest?T.lime+"55":pp.border}`}}>
+                  <div style={{minWidth:0}}>
+                    {w.isBest&&<div style={{fontSize:9,fontWeight:800,letterSpacing:"0.08em",color:T.lime,marginBottom:2}}>BEST CHOICE</div>}
+                    <div style={{fontSize:12,fontWeight:600,color:pp.text}}>{w.dayLabel} · {w.timeLabel} · {w.duration}m</div>
+                  </div>
+                  <button onClick={()=>onSchedule(m.id,i)} style={{flexShrink:0,padding:"7px 12px",borderRadius:7,background:w.isBest?T.lime:pp.card2,color:w.isBest?T.bg:pp.text,border:w.isBest?"none":`1px solid ${pp.border}`,fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Choose</button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     );
   }
@@ -3299,6 +3590,10 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
   // it genuinely scans for a slot in the chosen window/day-range that's free
   // on the sender's own calendar, same overlap check the real "Group Sync"
   // free-slot finder in CalendarTab uses (runGroupSync).
+  // Returns {options: [...]}, ranked best-first and capped at 3 distinct
+  // days. Scoring favors daytime slots (before 6pm, "saves evening free
+  // time") that fill a gap between two existing events ("dead time") over
+  // slots that just carve into an otherwise wide-open evening block.
   const findSharedStudyWindow=(params)=>{
     const prefStart=params.timeMode==="custom"?timeToMinutes(params.timeFrom):timeToMinutes("08:00");
     const prefEnd=params.timeMode==="custom"?timeToMinutes(params.timeTo):timeToMinutes("22:00");
@@ -3306,27 +3601,53 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
     const duration=params.durationInMinutes;
     const events=lsGet("events",[]);
     const today=new Date();
-    const isFree=(dk,start,end)=>{
-      const occupied=events.filter(e=>e.date===dk).map(e=>({s:timeToMinutes(e.time||"0:00"),e:timeToMinutes(e.time||"0:00")+(e.duration||60)}));
-      return !occupied.some(o=>!(end<=o.s||start>=o.e));
-    };
+    const EVENING_START=18*60;
+    const dayEvents=(dk)=>events.filter(e=>e.date===dk).map(e=>({s:timeToMinutes(e.time||"0:00"),e:timeToMinutes(e.time||"0:00")+(e.duration||60)})).sort((a,b)=>a.s-b.s);
+    const isFree=(occupied,start,end)=>!occupied.some(o=>!(end<=o.s||start>=o.e));
     const labelFor=(offset,d)=>offset===1?"tomorrow":d.toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"});
+    const candidates=[];
     for(let offset=1;offset<=scanDays;offset++){
       const d=new Date(today);d.setDate(today.getDate()+offset);
       const dk=dayKey(d);
+      const occupied=dayEvents(dk);
       for(let start=prefStart;start+duration<=prefEnd;start+=30){
-        if(isFree(dk,start,start+duration)){
-          const time=minutesToTime(start);
-          return{date:dk,time,duration,dayLabel:labelFor(offset,d),timeLabel:fmtTimeLabel(time)};
-        }
+        const end=start+duration;
+        if(!isFree(occupied,start,end))continue;
+        const before=occupied.filter(o=>o.e<=start).sort((a,b)=>b.e-a.e)[0];
+        const after=occupied.filter(o=>o.s>=end).sort((a,b)=>a.s-b.s)[0];
+        const gapBefore=before?start-before.e:null;
+        const gapAfter=after?after.s-end:null;
+        const fillsDeadTimeGap=gapBefore!==null&&gapAfter!==null&&gapBefore<=120&&gapAfter<=120;
+        let score=0;
+        score+=start<EVENING_START?100:-40;
+        score+=fillsDeadTimeGap?60:0;
+        score-=Math.floor((start-prefStart)/30);
+        score-=offset*2;
+        const time=minutesToTime(start);
+        candidates.push({date:dk,time,duration,dayLabel:labelFor(offset,d),timeLabel:fmtTimeLabel(time),score});
       }
     }
-    // Nothing fully free in the whole range — fall back to the start of the
-    // preferred window on the last scanned day, so the feature never
-    // dead-ends with no suggestion at all.
-    const d=new Date(today);d.setDate(today.getDate()+scanDays);
-    const time=minutesToTime(prefStart);
-    return{date:dayKey(d),time,duration,dayLabel:labelFor(scanDays,d),timeLabel:fmtTimeLabel(time)};
+    if(candidates.length===0){
+      // Nothing fully free anywhere in range — fall back to the start of the
+      // preferred window on the last scanned day, so the feature never
+      // dead-ends with no suggestion at all.
+      const d=new Date(today);d.setDate(today.getDate()+scanDays);
+      const time=minutesToTime(prefStart);
+      return{options:[{date:dayKey(d),time,duration,dayLabel:labelFor(scanDays,d),timeLabel:fmtTimeLabel(time),isBest:true}]};
+    }
+    candidates.sort((a,b)=>b.score-a.score);
+    // Cap at one suggestion per day so the options presented are genuinely
+    // distinct choices, not the same day at three slightly different times.
+    const seenDays=new Set();
+    const top=[];
+    for(const c of candidates){
+      if(seenDays.has(c.date))continue;
+      seenDays.add(c.date);
+      top.push(c);
+      if(top.length>=3)break;
+    }
+    top[0].isBest=true;
+    return{options:top};
   };
   const submitFindWindow=()=>{
     setFindWindowOpen(false);setSyncRunning(true);
@@ -3334,22 +3655,35 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
     const params={timeMode:fwTimeMode,timeFrom:fwTimeFrom,timeTo:fwTimeTo,lookAheadDayRange,durationInMinutes:fwDuration};
     setTimeout(()=>{setSyncRunning(false);sendMessage({kind:"calendar",status:"unscheduled",meta:findSharedStudyWindow(params)});},2100);
   };
-  // Injects the matched window into the current user's own calendar as a
+  // Injects the chosen window into the current user's own calendar as a
   // study block. (Only this browser's calendar can actually be written to —
   // there's no backend to push the event into other members' accounts too.)
-  const scheduleGroupSession=(id)=>{
+  // optionIndex picks which suggested slot the user chose; msg.meta.options
+  // falls back to [msg.meta] for older messages sent before the multi-slot
+  // refactor, which had a single flat window object as meta.
+  const scheduleGroupSession=(id,optionIndex=0)=>{
     const msg=messages.find(x=>x.id===id);
     if(!msg||!roomId)return;
-    const w=msg.meta;
+    const w=(msg.meta.options||[msg.meta])[optionIndex];
+    if(!w)return;
     const events=lsGet("events",[]);
     const ev={id:"netsync-"+Date.now(),date:w.date,time:w.time,duration:w.duration,title:peerName+" study session",subject:peerName,kind:"study block"};
     lsSet("events",[...events,ev]);
-    fsdb().collection('chatRooms').doc(roomId).collection('messages').doc(id).update({status:"scheduled"}).catch(()=>{});
+    fsdb().collection('chatRooms').doc(roomId).collection('messages').doc(id).update({status:"scheduled",scheduledOption:optionIndex}).catch(()=>{});
   };
   // Sharing a note/deck posts a pending card first — a lightweight one-click
   // confirmation before it actually goes out (mirrors the same verification
   // loop used for incoming shares below).
-  const attachNote=(note)=>{sendMessage({kind:"note",status:"pending",meta:{title:note.title,id:note.id,body:note.body}});setNotePicker(false);};
+  // Flags/comments live in separate note-flags/note-comments localStorage
+  // maps keyed by note id (see Notes' doAddFlag/doAddComment) — body alone
+  // doesn't carry them, so they're pulled in explicitly here and carried
+  // through respondToShare below so a shared note keeps its tutor context.
+  const attachNote=(note)=>{
+    const flags=lsGet("note-flags",{})[note.id]||[];
+    const comments=lsGet("note-comments",{})[note.id]||[];
+    sendMessage({kind:"note",status:"pending",meta:{title:note.title,id:note.id,body:note.body,flags,comments}});
+    setNotePicker(false);
+  };
   const attachDeck=(deck)=>{sendMessage({kind:"deck",status:"pending",meta:{name:deck.name,count:deck.cards?deck.cards.length:(deck.count||0),id:deck.id,cards:deck.cards}});setDeckPicker(false);};
 
   const peerName=target?(isGroup?target.group.name:target.user.n):"";
@@ -3365,6 +3699,16 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
         const notes=lsGet("notes",[]);
         const copy={id:String(Date.now()),title:msg.meta.title,body:msg.meta.body||"<p>Shared from "+peerName+".</p>",tag:"Shared",date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now(),source:"shared",sharedFrom:peerName};
         lsSet("notes",[copy,...notes]);
+        // Carry the sender's flags/comments over onto the recipient's own
+        // copy (re-keyed to its new id) so tutor context survives the share.
+        if(msg.meta.flags&&msg.meta.flags.length){
+          const nf=lsGet("note-flags",{});
+          lsSet("note-flags",{...nf,[copy.id]:msg.meta.flags});
+        }
+        if(msg.meta.comments&&msg.meta.comments.length){
+          const nc=lsGet("note-comments",{});
+          lsSet("note-comments",{...nc,[copy.id]:msg.meta.comments});
+        }
       }else if(msg.kind==="deck"){
         const decks=lsGet("decks",[]);
         const copy={id:String(Date.now()),name:msg.meta.name,count:(msg.meta.cards||[]).length,done:0,color:T.teal,cards:msg.meta.cards||[],source:"imported",importedFrom:peerName};
@@ -3566,6 +3910,16 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
 // ─── CALENDAR ─────────────────────────────────────────────────────────────────
 // ─── TASK TIMER MODAL ────────────────────────────────────────────────────────
 function TaskTimerModal({task,onClose,onComplete}){
+  // Snapshot of live leaderboard profiles, fetched once on mount — used for
+  // the before/after rank comparison in the completion screen. A snapshot
+  // is fine here (rather than re-fetching mid-session): competitors' XP
+  // won't meaningfully change in the couple minutes a focus session runs.
+  const [lbProfiles,setLbProfiles]=useState([]);
+  useEffect(()=>{
+    let cancelled=false;
+    fetchTopProfiles(8).then(rows=>{if(!cancelled)setLbProfiles(rows);});
+    return ()=>{cancelled=true;};
+  },[]);
   const totalMins=task.duration||25;
   const quoteRef=useRef(QUOTES[Math.floor(Math.random()*QUOTES.length)]);
   const breakIdeaRef=useRef(BREAK_IDEAS[Math.floor(Math.random()*BREAK_IDEAS.length)]);
@@ -3601,8 +3955,9 @@ function TaskTimerModal({task,onClose,onComplete}){
   const completeSession=(mins)=>{
     const name=getUserName();
     const streak=getStreak();
+    const myUid=firebase.auth().currentUser?.uid||null;
     const xpBefore=getXP();
-    const rowsBefore=buildLeaderboard(name,xpBefore,streak);
+    const rowsBefore=mergeLeaderboard(lbProfiles,name,xpBefore,streak,myUid,5);
     const rankBefore=(rowsBefore.find(u=>u.you)||{}).r||rowsBefore.length;
     if(onComplete)onComplete(mins);
     if(task.coop){
@@ -3611,7 +3966,7 @@ function TaskTimerModal({task,onClose,onComplete}){
       if(bonus>0)lsSet("xpBonus",lsGet("xpBonus",0)+bonus);
     }
     const xpAfter=getXP();
-    const rowsAfter=buildLeaderboard(name,xpAfter,streak);
+    const rowsAfter=mergeLeaderboard(lbProfiles,name,xpAfter,streak,myUid,5);
     const rankAfter=(rowsAfter.find(u=>u.you)||{}).r||rowsAfter.length;
     setCompletion({
       mins,
@@ -3931,9 +4286,49 @@ function TaskTimerModal({task,onClose,onComplete}){
 }
 
 // ─── WEEKLY PLANNER ───────────────────────────────────────────────────────────
-const WK_PX_HR = 64; // pixels per hour in weekly grid
+const WK_PX_HR = 76; // pixels per hour in weekly grid
 
-function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit}) {
+// Lays out same-day events that overlap in time side-by-side instead of
+// fully stacking on top of each other at full column width — previously any
+// two things landing in the same window (e.g. a class overlapping a
+// manually-added study block) would render on top of one another, clipping
+// whichever card ended up underneath.
+function layoutDayEvents(evs) {
+  const items = evs.map(ev => {
+    const [hh, mm] = ev.time.split(":").map(Number);
+    const start = hh * 60 + mm;
+    return { ev, start, end: start + (ev.duration || 30) };
+  }).sort((a, b) => a.start - b.start || a.end - b.end);
+
+  const clusters = [];
+  let current = [], currentEnd = -Infinity;
+  items.forEach(item => {
+    if (current.length && item.start >= currentEnd) {
+      clusters.push(current);
+      current = [];
+      currentEnd = -Infinity;
+    }
+    current.push(item);
+    currentEnd = Math.max(currentEnd, item.end);
+  });
+  if (current.length) clusters.push(current);
+
+  const laidOut = [];
+  clusters.forEach(cluster => {
+    const columnEnds = [];
+    cluster.forEach(item => {
+      let col = columnEnds.findIndex(end => item.start >= end);
+      if (col === -1) { col = columnEnds.length; columnEnds.push(item.end); }
+      else columnEnds[col] = item.end;
+      item.col = col;
+    });
+    const totalCols = columnEnds.length;
+    cluster.forEach(item => laidOut.push({ ...item, totalCols }));
+  });
+  return laidOut;
+}
+
+function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay}) {
   const wkColRefs = useRef({});
   const weekScrollRef = useRef(null);
   const [wkDragId, setWkDragId] = useState(null);
@@ -3958,6 +4353,10 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
 
   const byDay = {};
   events.forEach(ev => { (byDay[ev.date] = byDay[ev.date] || []).push(ev); });
+  // Merge in virtual Weekly Routine occurrences for the visible week — same
+  // never-persisted expansion CalendarTab does for the Monthly grid.
+  expandRoutineOccurrences(routines||[], dayKey(weekDays[0]), dayKey(weekDays[6]))
+    .forEach(ev => { (byDay[ev.date] = byDay[ev.date] || []).push(ev); });
 
   const handleDragOver = (e, dk) => {
     e.preventDefault();
@@ -4003,15 +4402,16 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
         {weekDays.map((d, i) => {
           const dk = dayKey(d);
           const isToday = dk === todayK;
+          const isSel = selDay!=null && dk === selDay;
           return (
-            <div key={i} style={{textAlign:"center",padding:"7px 4px 9px",borderLeft:`1px solid ${T.border}`}}>
+            <div key={i} onClick={()=>{if(setSelDay)setSelDay(dk);}} style={{textAlign:"center",padding:"7px 4px 9px",borderLeft:`1px solid ${T.border}`,cursor:setSelDay?"pointer":"default",background:isSel?T.card2:"transparent"}}>
               <div style={{fontSize:9,fontWeight:700,letterSpacing:"0.1em",color:T.muted,marginBottom:4}}>{DAY_NAMES[i]}</div>
-              <div onDoubleClick={()=>openNew(dk)} style={{width:28,height:28,borderRadius:"50%",background:isToday?T.lime:"transparent",color:isToday?T.ink:T.white,fontSize:13,fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>{d.getDate()}</div>
+              <div onDoubleClick={(e)=>{e.stopPropagation();openNew(dk);}} style={{width:28,height:28,borderRadius:"50%",background:isToday?T.lime:"transparent",color:isToday?T.ink:T.white,fontSize:13,fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>{d.getDate()}</div>
             </div>
           );
         })}
       </div>
-      <div ref={weekScrollRef} style={{display:"flex",overflowY:"auto",maxHeight:"calc(100vh - 330px)"}} onDragEnd={handleDragEnd}>
+      <div ref={weekScrollRef} style={{display:"flex",overflowY:"auto",maxHeight:"calc(100vh - 260px)"}} onDragEnd={handleDragEnd}>
         <div style={{width:52,flexShrink:0,background:T.card,borderRight:`1px solid ${T.border}`,zIndex:2}}>
           {Array.from({length:24}, (_, h) => (
             <div key={h} style={{height:WK_PX_HR,display:"flex",alignItems:"flex-start",justifyContent:"flex-end",paddingRight:8,paddingTop:3,borderTop:`1px solid ${T.border}44`,boxSizing:"border-box"}}>
@@ -4023,6 +4423,15 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
           {weekDays.map((day, colIdx) => {
             const dk = dayKey(day);
             const colEvs = (byDay[dk] || []).filter(ev => ev.time);
+            // Free periods are an open window, not a task — they only ever
+            // render as the transparent punch-out in the School Hours mask
+            // below, never as their own block. The reserved "hs-school" block
+            // itself is also excluded here for the same reason: its entire
+            // span is already drawn by the School Hours mask below, so
+            // rendering it AGAIN as its own solid card would sit on top of
+            // that mask and visually cover the free-period gap it just
+            // punched out.
+            const visibleEvs = colEvs.filter(ev => ev.kind !== "free period" && ev.routineId !== "hs-school");
             const isPastDeadline = !!(wkDragDeadline && dk > wkDragDeadline);
             let ghostEl = null;
             if (wkDragOverDay === dk && wkDropTime) {
@@ -4037,6 +4446,15 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
                 ref={el => { wkColRefs.current[dk] = el; }}
                 onDragOver={e=>handleDragOver(e,dk)}
                 onDrop={e=>handleDrop(e,dk)}>
+                {/* School Hours background mask (High School accounts only,
+                    Mon–Fri) — free periods "punch through" it via
+                    subtractIntervals, so those windows show the normal clear
+                    background instead of the tint. */}
+                {schoolWindow && colIdx<5 && subtractIntervals(schoolWindow, colEvs.filter(ev=>ev.kind==="free period").map(ev=>{const p=ev.time.split(":").map(Number);const start=p[0]*60+p[1];return {start,end:start+(ev.duration||30)};})).map((seg,si)=>(
+                  <div key={"sh"+si} style={{position:"absolute",top:seg.start*(WK_PX_HR/60),left:0,right:0,height:(seg.end-seg.start)*(WK_PX_HR/60),background:T.muted+"0C",pointerEvents:"none",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
+                    {(seg.end-seg.start)>=45 && <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.12em",color:T.muted+"88"}}>SCHOOL HOURS</span>}
+                  </div>
+                ))}
                 {Array.from({length:24}, (_, h) => (
                   <div key={h} style={{position:"absolute",top:h*WK_PX_HR,left:0,right:0,height:WK_PX_HR,borderTop:`1px solid ${T.border}44`,boxSizing:"border-box"}} />
                 ))}
@@ -4048,7 +4466,7 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
                     <div style={{position:"sticky",top:6,textAlign:"center",fontSize:8,fontWeight:800,letterSpacing:"0.08em",color:"rgba(217,128,107,0.65)",padding:3}}>PAST DUE</div>
                   </div>
                 )}
-                {colEvs.map(ev => {
+                {layoutDayEvents(visibleEvs).map(({ev, col, totalCols}) => {
                   const timeParts = ev.time.split(":").map(Number);
                   const hh = timeParts[0]; const mm = timeParts[1];
                   const topPx = (hh * 60 + mm) * (WK_PX_HR / 60);
@@ -4059,6 +4477,7 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
                   const color = over > 0 ? T.red : colorOf(ev.subject);
                   const isStudy = ev.kind === "study block";
                   const isExam = ev.kind === "exam";
+                  const isRoutine = !!ev.isRoutine;
                   // Study blocks: solid subject-color fill. Exams: dark canvas with a
                   // thick glowing subject-color border. Everything else (class,
                   // deadline, reminder): the original thin left-accent strip.
@@ -4067,15 +4486,26 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
                     : isExam
                       ? {background:T.ink,border:`2px solid ${color}`,borderLeft:`2px solid ${color}`,boxShadow:`0 0 10px -1px ${color}, inset 0 0 10px ${color}22`,color:T.cream}
                       : {background:color+"1E",borderLeft:`3px solid ${color}`,color};
+                  const dimmedByRoutineMode = editRoutineMode && !isRoutine;
+                  const highlightedByRoutineMode = editRoutineMode && isRoutine;
+                  const leftPct = (col / totalCols) * 100;
+                  const widthPct = 100 / totalCols;
                   return (
                     <div key={ev.id}
-                      draggable
-                      onDragStart={()=>{ setWkDragId(ev.id); setWkDragDeadline(ev.deadline||null); }}
-                      onDoubleClick={()=>openEdit(ev)}
-                      title="Double-click to edit · Drag to reschedule"
-                      style={{position:"absolute",top:topPx,left:2,right:2,height:heightPx,borderRadius:5,padding:"2px 5px",cursor:"grab",overflow:"hidden",zIndex:3,opacity:isDone?0.4:1,boxSizing:"border-box",userSelect:"none",...kindStyle}}>
-                      <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"⚠️ EXAM · ":""}{ev.title}</div>
+                      draggable={!isRoutine}
+                      onDragStart={()=>{ if(!isRoutine){setWkDragId(ev.id); setWkDragDeadline(ev.deadline||null);} }}
+                      onDoubleClick={()=>{ if(!isRoutine)openEdit(ev); }}
+                      onClick={()=>{ if(isRoutine&&editRoutineMode&&onEditRoutine)onEditRoutine(ev.routineId); }}
+                      onMouseEnter={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(ev.routineId); }}
+                      onMouseLeave={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(null); }}
+                      title={isRoutine?"Repeats weekly":"Double-click to edit · Drag to reschedule"}
+                      style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:5,padding:"2px 5px",cursor:isRoutine?(editRoutineMode?"pointer":"default"):"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isDone?0.4:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{})}}>
+                      <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                       {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:1}}>{fmtTime(ev.time)}{dur ? " · "+dur+"m" : ""}</div>}
+                      {isRoutine&&editRoutineMode&&hoveredRoutineId===ev.routineId&&(
+                        <button onClick={(e)=>{e.stopPropagation();if(onDeleteRoutine)onDeleteRoutine(ev.routineId);if(setHoveredRoutineId)setHoveredRoutineId(null);}} title="Delete this routine block (every week)"
+                          style={{position:"absolute",top:-8,right:-8,width:18,height:18,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.red,fontSize:11,lineHeight:1,cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 4px 10px -2px rgba(0,0,0,0.4)"}}>×</button>
+                      )}
                     </div>
                   );
                 })}
@@ -4089,12 +4519,466 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
   );
 }
 
-function CalendarTab(){
+// ─── DEFERRED WEEKLY ROUTINE WIZARD (Calendar tab, first-visit) ─────────────
+const ROUTINE_DOW=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+const fmtTimeShort=(t)=>{if(!t)return "";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
+const wizardChipStyle=(sel)=>({padding:"7px 12px",borderRadius:8,fontSize:12,fontWeight:sel?600:400,cursor:"pointer",border:`1px solid ${sel?T.lime+"66":T.border}`,background:sel?T.lime+"14":"transparent",color:sel?T.lime:T.muted,fontFamily:T.font});
+const wizardStatusChipStyle=(sel)=>({flex:1,padding:"16px",borderRadius:12,fontSize:14,fontWeight:600,cursor:"pointer",border:`1.5px solid ${sel?T.lime:T.border}`,background:sel?T.lime+"14":T.card2,color:sel?T.lime:T.muted,fontFamily:T.font,textAlign:"center"});
+const wizardSelectStyle={padding:"10px 8px",borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,fontSize:13,color:T.text,fontFamily:T.font,outline:"none"};
+const wizardAddBtnStyle={padding:"10px 16px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontSize:13,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"};
+
+function WizardRoutineList({items,onRemove}){
+  if(items.length===0)return null;
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:14}}>
+      {items.map(it=>(
+        <div key={it.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:600,color:T.text}}>{it.title}</div>
+            <div style={{fontSize:11,color:T.muted,marginTop:2}}>{it.days.map(d=>ROUTINE_DOW[d]).join(", ")} · {fmtTimeShort(it.startTime)} · {it.duration}m</div>
+          </div>
+          <button type="button" onClick={()=>onRemove(it.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:18,lineHeight:1,padding:"2px 6px"}}>×</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// After-School Shield List — day-specific (unlike a single Mon–Fri
+// assumption), since sports/rehearsals/shifts don't all repeat every
+// weekday the way core school hours do.
+function WizardHsBuilder({schoolStart,setSchoolStart,schoolEnd,setSchoolEnd,items,addItem,removeItem}){
+  const [title,setTitle]=useState("");
+  const [kind,setKind]=useState("busy"); // "busy" (after-school shield) or "free" (free period / study hall — punches through the School Hours tint)
+  const [days,setDays]=useState([]);
+  const [start,setStart]=useState("15:30");
+  const [duration,setDuration]=useState(60);
+  const toggleDay=(i)=>setDays(days.includes(i)?days.filter(d=>d!==i):[...days,i]);
+  const isFree=kind==="free";
+  const add=()=>{
+    if((!isFree&&!title.trim())||days.length===0)return;
+    addItem({title:isFree?(title.trim()||"Free Period"):title.trim(),kind,days:[...days],startTime:start,duration});
+    setTitle("");setDays([]);
+  };
+  return (
+    <div>
+      <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:10}}>Base School Block (Mon–Fri)</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:22}}>
+        <Field label="School starts"><TimeInput value={schoolStart} onChange={setSchoolStart} /></Field>
+        <Field label="School ends"><TimeInput value={schoolEnd} onChange={setSchoolEnd} /></Field>
+      </div>
+      <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:2}}>Free Periods &amp; After-School Shields</div>
+      <div style={{fontSize:11,color:T.muted,marginBottom:12}}>Study halls and lunch clear the School Hours background; sports, rehearsals, and shifts stay shielded like a class. Pick the days each one repeats.</div>
+      {!isFree&&<Field label="Name"><Input value={title} onChange={e=>setTitle(e.target.value)} style={{flexGrow:1}} /></Field>}
+      <div style={{display:"flex",gap:8,marginBottom:10}}>
+        <button type="button" onClick={()=>setKind("free")} style={wizardChipStyle(kind==="free")}>Free Period</button>
+        <button type="button" onClick={()=>setKind("busy")} style={wizardChipStyle(kind==="busy")}>After-School Activity</button>
+      </div>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+        {ROUTINE_DOW.map((d,i)=><button key={i} type="button" onClick={()=>toggleDay(i)} style={wizardChipStyle(days.includes(i))}>{d}</button>)}
+      </div>
+      <div style={{display:"flex",gap:8,alignItems:"center",justifyContent:"flex-end"}}>
+        <TimeInput value={start} onChange={setStart} style={{width:"fit-content"}} />
+        <select value={duration} onChange={e=>setDuration(+e.target.value)} style={wizardSelectStyle}>
+          {[30,45,60,90,120].map(m=><option key={m} value={m}>{m} min</option>)}
+        </select>
+        <button type="button" onClick={add} style={wizardAddBtnStyle}>+ Add</button>
+      </div>
+      <WizardRoutineList items={items} onRemove={removeItem} />
+    </div>
+  );
+}
+
+function WizardCollegeBuilder({items,addItem,removeItem}){
+  const [title,setTitle]=useState("");
+  const [kind,setKind]=useState("class");
+  const [days,setDays]=useState([]);
+  const [time,setTime]=useState("10:00");
+  const [duration,setDuration]=useState(50);
+  const toggleDay=(i)=>setDays(days.includes(i)?days.filter(d=>d!==i):[...days,i]);
+  const add=()=>{
+    if(!title.trim()||days.length===0)return;
+    addItem({title:title.trim(),kind,days:[...days],startTime:time,duration});
+    setTitle("");setDays([]);
+  };
+  return (
+    <div>
+      <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:10}}>Add a class or recurring activity</div>
+      <Field label="Title"><Input value={title} onChange={e=>setTitle(e.target.value)} style={{flexGrow:1}} /></Field>
+      <div style={{display:"flex",gap:8,marginBottom:10}}>
+        <button type="button" onClick={()=>setKind("class")} style={wizardChipStyle(kind==="class")}>Class</button>
+        <button type="button" onClick={()=>setKind("busy")} style={wizardChipStyle(kind==="busy")}>Activity</button>
+      </div>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+        {ROUTINE_DOW.map((d,i)=><button key={i} type="button" onClick={()=>toggleDay(i)} style={wizardChipStyle(days.includes(i))}>{d}</button>)}
+      </div>
+      <div style={{display:"flex",gap:8,alignItems:"center",justifyContent:"flex-end"}}>
+        <TimeInput value={time} onChange={setTime} style={{width:"fit-content"}} />
+        <select value={duration} onChange={e=>setDuration(+e.target.value)} style={wizardSelectStyle}>
+          {[30,45,50,60,75,90,120].map(m=><option key={m} value={m}>{m} min</option>)}
+        </select>
+        <button type="button" onClick={add} style={wizardAddBtnStyle}>+ Add</button>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6,marginTop:18}}>
+        {ROUTINE_DOW.map((d,i)=>{
+          const dayItems=items.filter(r=>r.days.includes(i)).sort((a,b)=>a.startTime<b.startTime?-1:1);
+          return (
+            <div key={i} style={{minHeight:50}}>
+              <div style={{fontSize:10,fontWeight:700,color:T.muted,textAlign:"center",marginBottom:6,letterSpacing:"0.05em"}}>{d}</div>
+              <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                {dayItems.map(it=>(
+                  <div key={it.id} onClick={()=>removeItem(it.id)} title="Click to remove" style={{fontSize:9.5,fontWeight:600,padding:"4px 6px",borderRadius:6,background:it.kind==="class"?T.lime+"22":T.lime+"0F",border:`1px solid ${T.border}`,color:T.text,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.title}</div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Multi-step wizard: status fork → HS/College builder → preferred focus
+// window. Deferred to the Calendar tab's first visit rather than living in
+// onboarding, and reopenable anytime via "Manage Routine" (Calendar header
+// or Settings > Calendar Preferences) with existing routines pre-filled.
+function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip}){
+  const [wizStep,setWizStep]=useState("status");
+  const [status,setStatus]=useState(initialStatus||"");
+  const [schoolStart,setSchoolStart]=useState("08:00");
+  const [schoolEnd,setSchoolEnd]=useState("15:00");
+  const [items,setItems]=useState([]);
+  const [workStart,setWorkStart]=useState("10:00");
+  const [workEnd,setWorkEnd]=useState("18:00");
+  const [skipConfirmOpen,setSkipConfirmOpen]=useState(false);
+
+  useEffect(()=>{
+    if(!open)return;
+    setWizStep("status");
+    setStatus(initialStatus||"");
+    const hsRule=(existingRoutines||[]).find(r=>r.id==="hs-school");
+    if(hsRule){
+      setSchoolStart(hsRule.startTime||"08:00");
+      const startMins=timeToMinutes(hsRule.startTime||"08:00")+(hsRule.duration||420);
+      setSchoolEnd(minutesToTime(Math.min(23*60+45,startMins)));
+    }else{setSchoolStart("08:00");setSchoolEnd("15:00");}
+    setItems((existingRoutines||[]).filter(r=>r.id!=="hs-school").map(r=>({...r})));
+    const prefs=getSchedulePreferences();
+    setWorkStart(prefs.workStartTime||"10:00");
+    setWorkEnd(prefs.workEndTime||"18:00");
+    setSkipConfirmOpen(false);
+  },[open]);
+
+  const addItem=(item)=>setItems(prev=>[...prev,{id:String(Date.now()+Math.random()*1000),...item}]);
+  const removeItem=(id)=>setItems(prev=>prev.filter(x=>x.id!==id));
+
+  const goToWindowStep=()=>{
+    if(status==="highschool"&&workStart==="10:00"){
+      const suggested=Math.min(23*60+45,timeToMinutes(schoolEnd)+60);
+      setWorkStart(minutesToTime(suggested));
+    }
+    setWizStep("window");
+  };
+
+  const finish=()=>{
+    const routine=[...items];
+    if(status==="highschool"){
+      routine.push({id:"hs-school",title:"School",kind:"class",days:[0,1,2,3,4],startTime:schoolStart,duration:Math.max(15,timeToMinutes(schoolEnd)-timeToMinutes(schoolStart))});
+    }
+    onFinish(routine,{workStartTime:workStart,workEndTime:workEnd});
+  };
+
+  const lockedRanges=status==="highschool"?[{start:timeToMinutes(schoolStart),end:timeToMinutes(schoolEnd)}]:[];
+
+  return (
+    <>
+      <Modal open={open&&!skipConfirmOpen} onClose={()=>setSkipConfirmOpen(true)}
+        title={wizStep==="status"?"Set up your Weekly Routine?":wizStep==="build"?"Map your schedule":"Preferred Focus Windows"}
+        sub={wizStep==="status"?"Add your classes, sports, or work shifts once, and our AI will automatically shield those times every single week.":wizStep==="window"?"When do you typically prefer to study?":undefined}
+        width={620}
+        footer={
+          <div style={{display:"flex",width:"100%",justifyContent:"space-between",alignItems:"center"}}>
+            <Btn variant="subtle" onClick={()=>setSkipConfirmOpen(true)}>Skip and Setup Later</Btn>
+            <div style={{display:"flex",gap:10}}>
+              {wizStep!=="status"&&<Btn variant="subtle" onClick={()=>setWizStep(wizStep==="window"?"build":"status")}>Back</Btn>}
+              {wizStep==="status"&&<Btn onClick={()=>setWizStep("build")} disabled={!status} style={{opacity:status?1:0.45}}>Map Routine Now</Btn>}
+              {wizStep==="build"&&<Btn onClick={goToWindowStep}>Continue</Btn>}
+              {wizStep==="window"&&<Btn onClick={finish}>Finish</Btn>}
+            </div>
+          </div>
+        }>
+        {wizStep==="status"&&(
+          <div style={{display:"flex",gap:10}}>
+            <button type="button" onClick={()=>setStatus("highschool")} style={wizardStatusChipStyle(status==="highschool")}>High School</button>
+            <button type="button" onClick={()=>setStatus("college")} style={wizardStatusChipStyle(status==="college")}>College</button>
+          </div>
+        )}
+        {wizStep==="build"&&status==="highschool"&&<WizardHsBuilder schoolStart={schoolStart} setSchoolStart={setSchoolStart} schoolEnd={schoolEnd} setSchoolEnd={setSchoolEnd} items={items.filter(i=>i.id!=="hs-school")} addItem={addItem} removeItem={removeItem} />}
+        {wizStep==="build"&&status==="college"&&<WizardCollegeBuilder items={items} addItem={addItem} removeItem={removeItem} />}
+        {wizStep==="window"&&(
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <Field label="Preferred study start"><TimeInput value={workStart} onChange={setWorkStart} lockedRanges={lockedRanges} /></Field>
+            <Field label="Preferred study end"><TimeInput value={workEnd} onChange={setWorkEnd} /></Field>
+          </div>
+        )}
+      </Modal>
+      <Modal open={skipConfirmOpen} onClose={()=>setSkipConfirmOpen(false)} title="Hold up!" width={440}
+        footer={
+          <div style={{display:"flex",gap:10,width:"100%",justifyContent:"flex-end"}}>
+            <Btn variant="subtle" onClick={()=>setSkipConfirmOpen(false)}>Map Routine Now</Btn>
+            <Btn variant="danger" onClick={()=>{setSkipConfirmOpen(false);onSkip();}}>Skip Anyway, I'll Fix it in Settings</Btn>
+          </div>
+        }>
+        <div style={{fontSize:14,color:T.text,lineHeight:1.5}}>Without a routine baseline, the AI might schedule study blocks during your actual classes.</div>
+      </Modal>
+    </>
+  );
+}
+
+// The "Today"/selected-day + Upcoming agenda column — shared by Monthly and
+// Weekly views so the collapsible panel behaves identically in both.
+function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, colorOf, openNew, openEdit, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, routines, openRoutineEdit, deleteRoutineItem, markDone, removeEvent, setSelDay, setYm, dragId, setDragId}) {
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      <Card style={{padding:16}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div>
+            <div style={{fontSize:13,fontWeight:700,color:T.white}}>{relDay(selDay)}</div>
+            <div style={{fontSize:10.5,color:T.muted,marginTop:1}}>{niceDate(selDay)}</div>
+          </div>
+          <BtnSm variant="subtle" onClick={()=>openNew(selDay)}>+ Add</BtnSm>
+        </div>
+        {dayEvents.length===0
+          ?<div style={{fontSize:12,color:T.muted,padding:"14px 0 6px",textAlign:"center"}}>Nothing scheduled</div>
+          :dayEvents.map(ev=>{
+            const over=daysOverdue(ev);
+            const isDone=ev.status==="done";
+            const color=over>0?T.red:colorOf(ev.subject);
+            const isStudy=ev.kind==="study block";
+            const isExam=ev.kind==="exam";
+            const isRoutine=!!ev.isRoutine;
+            // Study blocks: solid subject-color container. Exams: dark canvas
+            // with a thick glowing subject-color border + an explicit tag.
+            // Classes (and everything else): the original thin left strip.
+            const rowStyle=isStudy
+              ? {background:color,borderRadius:9,padding:"9px 12px",marginBottom:6}
+              : isExam
+                ? {background:T.ink,border:`2px solid ${color}`,boxShadow:`0 0 12px -2px ${color}`,borderRadius:9,padding:"9px 12px",marginBottom:6}
+                : {borderBottom:"1px solid "+T.border,padding:"9px 0"};
+            const titleColor=isStudy?T.ink:isExam?T.cream:(isDone?T.muted:T.white);
+            const subColor=isStudy?"rgba(14,31,24,0.65)":isExam?color:T.muted;
+            const badgeBg=isStudy?"rgba(14,31,24,0.14)":isExam?color+"22":T.card2;
+            const dimmedByRoutineMode=editRoutineMode&&!isRoutine;
+            const highlightedByRoutineMode=editRoutineMode&&isRoutine;
+            return(
+            <div key={ev.id} draggable={!isRoutine} onDragStart={()=>{if(!isRoutine)setDragId(ev.id);}}
+              onMouseEnter={()=>isRoutine&&setHoveredRoutineId(ev.routineId)} onMouseLeave={()=>isRoutine&&setHoveredRoutineId(null)}
+              onClick={()=>{if(editRoutineMode&&isRoutine){const rule=routines.find(r=>r.id===ev.routineId);if(rule)openRoutineEdit(rule);}}}
+              style={{position:"relative",display:"flex",gap:10,alignItems:"flex-start",opacity:dimmedByRoutineMode?0.3:(isDone?0.5:1),cursor:isRoutine?(editRoutineMode?"pointer":"default"):"grab",...rowStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:2}:{})}}>
+              {!isStudy&&!isExam&&<div style={{width:3,alignSelf:"stretch",borderRadius:2,background:color,flexShrink:0}} />}
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  {ev.priority&&<span style={{width:7,height:7,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority||3],flexShrink:0}} />}
+                  {isExam&&<span style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:9.5,fontWeight:800,letterSpacing:"0.04em",color,background:color+"1E",border:`1px solid ${color}55`,borderRadius:5,padding:"1px 6px",flexShrink:0}}><span style={{width:4,height:4,borderRadius:"50%",background:color,flexShrink:0}} />EXAM</span>}
+                  {isRoutine&&<span style={{fontSize:9,fontWeight:800,letterSpacing:"0.04em",color,background:color+"14",border:`1px solid ${color}44`,borderRadius:5,padding:"1px 6px",flexShrink:0}}>WEEKLY</span>}
+                  <span style={{fontSize:12.5,fontWeight:600,color:titleColor,lineHeight:1.35,textDecoration:isDone?"line-through":"none"}}>{ev.title}</span>
+                </div>
+                <div style={{fontSize:11,color:subColor,marginTop:2,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                  <span>{fmtTime(ev.time)}</span>
+                  {ev.duration&&<span style={{background:badgeBg,padding:"1px 6px",borderRadius:4,fontSize:10,fontWeight:600,color:titleColor}}>{ev.duration>=60?Math.floor(ev.duration/60)+"h"+(ev.duration%60?" "+ev.duration%60+"m":""):ev.duration+"m"}</span>}
+                  <span>{ev.subject}</span>
+                  {over>0&&<span style={{color:T.red,fontWeight:600}}>{over}d overdue</span>}
+                </div>
+              </div>
+              {!isRoutine&&(
+                <div style={{display:"flex",gap:4,flexShrink:0,alignItems:"center"}}>
+                  {!isDone&&ev.duration&&(ev.kind==="study block"||ev.kind==="deadline")&&<button onClick={()=>{if(window._setTimerTask)window._setTimerTask(ev);}} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.lime}44`,background:T.lime+"12",color:T.lime,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Begin</button>}
+                  {!isDone&&(ev.kind==="exam"||ev.kind==="class"||ev.kind==="reminder")&&<button onClick={()=>openEdit(ev)} title="View details" style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Details</button>}
+                  {!isDone&&<button onClick={()=>markDone(ev.id)} title="Mark done" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",display:"flex"}}>{Icon.check}</button>}
+                  <button onClick={()=>removeEvent(ev.id)} title="Delete" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,padding:2}}>×</button>
+                </div>
+              )}
+              {isRoutine&&editRoutineMode&&hoveredRoutineId===ev.routineId&&(
+                <button onClick={(e)=>{e.stopPropagation();deleteRoutineItem(ev.routineId);setHoveredRoutineId(null);}} title="Delete this routine block (every week)"
+                  style={{position:"absolute",top:-8,right:-8,width:22,height:22,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.red,fontSize:13,lineHeight:1,cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 4px 10px -2px rgba(0,0,0,0.4)"}}>×</button>
+              )}
+            </div>
+          );})}
+      </Card>
+      <div>
+        <div style={{fontSize:12,fontWeight:600,color:T.muted,letterSpacing:"0.05em",textTransform:"uppercase",marginBottom:10}}>Upcoming</div>
+        {upcoming.length===0&&<Card style={{padding:14,fontSize:12,color:T.muted,textAlign:"center"}}>No upcoming events</Card>}
+        {upcoming.map(ev=>{
+          const dl=daysUntilDeadline(ev);
+          const over=daysOverdue(ev);
+          return(
+          <Card key={ev.id} onClick={()=>{setSelDay(ev.date);const p=ev.date.split("-");setYm({y:+p[0],m:+p[1]-1});}} style={{borderLeft:"2px solid "+(over>0?T.red:colorOf(ev.subject)),marginBottom:8,cursor:"pointer",padding:14}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+              <div style={{fontSize:11,color:T.muted}}>{relDay(ev.date)}</div>
+              <Badge color={over>0?T.red:colorOf(ev.subject)}>{ev.subject}</Badge>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              {ev.priority&&<span style={{width:6,height:6,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority||3]}} />}
+              <span style={{fontSize:13,fontWeight:600,color:T.white}}>{ev.title}</span>
+            </div>
+            <div style={{fontSize:11,color:T.muted,marginTop:4,display:"flex",gap:8}}>
+              <span>{fmtTime(ev.time)}</span>
+              {ev.duration&&<span>{ev.duration}m</span>}
+              {dl!==null&&dl>=0&&dl<=3&&<span style={{color:dl===0?T.red:T.amber,fontWeight:600}}>Due {dl===0?"today":"in "+dl+"d"}</span>}
+              {over>0&&<span style={{color:T.red,fontWeight:600}}>{over}d overdue</span>}
+            </div>
+          </Card>
+        );})}
+      </div>
+    </div>
+  );
+}
+
+// Collapsible wrapper: places `left` (the month grid or weekly planner) next
+// to a shared AgendaColumn, with a chevron toggle pinned to the seam that
+// smoothly collapses the panel to width:0 rather than unmounting it.
+function CollapsibleAgendaLayout({isAgendaCollapsed, setIsAgendaCollapsed, children, agendaProps}) {
+  return (
+    <div style={{display:"flex",gap:isAgendaCollapsed?8:16,position:"relative",alignItems:"flex-start"}}>
+      <div style={{flex:1,minWidth:0}}>{children}</div>
+      <div style={{width:isAgendaCollapsed?0:300,flexShrink:0,opacity:isAgendaCollapsed?0:1,overflow:"hidden",pointerEvents:isAgendaCollapsed?"none":"auto",transition:"width 0.28s cubic-bezier(.2,.85,.3,1), opacity 0.2s ease"}}>
+        <div style={{width:300}}><AgendaColumn {...agendaProps} /></div>
+      </div>
+      <button onClick={()=>setIsAgendaCollapsed(c=>!c)} title={isAgendaCollapsed?"Show agenda":"Hide agenda"}
+        style={{width:26,height:26,marginTop:8,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.muted,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0,boxShadow:"0 4px 10px -2px rgba(0,0,0,0.35)"}}>
+        <span style={{display:"inline-flex",transform:isAgendaCollapsed?"rotate(90deg)":"rotate(-90deg)",transition:"transform 0.22s ease"}}>{Icon.chevDown}</span>
+      </button>
+    </div>
+  );
+}
+
+// Ongoing routine management dashboard (as opposed to RoutineWizardModal,
+// which is only the first-run setup flow). Lists every locked recurring
+// block with Edit/Delete, plus an inline expandable "+ Add Recurring
+// Activity" form — reuses the same fields/components as the existing "Edit
+// routine block" modal for visual consistency.
+function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRoutine, onDeleteRoutine, onAddRoutine}) {
+  const [addingRoutine,setAddingRoutine]=useState(false);
+  const [title,setTitle]=useState("");
+  const [kind,setKind]=useState("class");
+  const [days,setDays]=useState([]);
+  const [startTime,setStartTime]=useState("15:30");
+  const [duration,setDuration]=useState(60);
+  useEffect(()=>{ if(!open)setAddingRoutine(false); },[open]);
+  const resetForm=()=>{setTitle("");setKind("class");setDays([]);setStartTime("15:30");setDuration(60);};
+  const toggleDay=(i)=>setDays(d=>d.includes(i)?d.filter(x=>x!==i):[...d,i]);
+  const isFree=kind==="free";
+  const submitAdd=()=>{
+    if((!isFree&&!title.trim())||days.length===0)return;
+    onAddRoutine({title:isFree?(title.trim()||"Free Period"):title.trim(),kind,days:[...days],startTime,duration});
+    resetForm();
+    setAddingRoutine(false);
+  };
+  const formatDays=(ds)=>{
+    const sorted=[...(ds||[])].sort((a,b)=>a-b);
+    if(sorted.length===7)return "Every day";
+    if(sorted.length===5&&sorted.every((v,i)=>v===i))return "Mon–Fri";
+    return sorted.map(i=>ROUTINE_DOW[i]).join(", ");
+  };
+  return (
+    <Modal open={open} onClose={onClose} title="Manage your Weekly Routine" sub="Locked recurring blocks Studlin always schedules around. Add, edit, or clear one anytime." width={560}>
+      {routines.length===0&&!addingRoutine&&(
+        <div style={{fontSize:12.5,color:T.muted,padding:"10px 0 16px",textAlign:"center"}}>No recurring blocks yet.</div>
+      )}
+      {routines.length>0&&(
+        <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
+          {routines.map(r=>(
+            <div key={r.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,background:T.card2}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:600,color:T.white}}>{r.title}</div>
+                <div style={{fontSize:11,color:T.muted,marginTop:2}}>{formatDays(r.days)} · {fmtTime(r.startTime)} – {fmtTime(minutesToTime(timeToMinutes(r.startTime)+(r.duration||30)))}</div>
+              </div>
+              <BtnSm variant="subtle" onClick={()=>onEditRoutine(r)}>Edit</BtnSm>
+              <BtnSm variant="danger" onClick={()=>onDeleteRoutine(r.id)}>Delete</BtnSm>
+            </div>
+          ))}
+        </div>
+      )}
+      {!addingRoutine
+        ? <Btn variant="subtle" onClick={()=>setAddingRoutine(true)} style={{width:"100%",justifyContent:"center"}}>+ Add Recurring Activity</Btn>
+        : (
+          <div style={{border:`1px solid ${T.border}`,borderRadius:10,padding:14}}>
+            {!isFree&&<Field label="Name"><Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="e.g. Track Practice" autoFocus /></Field>}
+            <Field label="Type"><SelectChip options={[{value:"class",label:"Class"},{value:"busy",label:"Activity"},{value:"free",label:"Free Period"}]} value={kind} onChange={setKind} /></Field>
+            <Field label="Repeats on" hint={days.length===0?"Pick at least one day":undefined}>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {ROUTINE_DOW.map((d,i)=>{
+                  const sel=days.includes(i);
+                  return <button key={i} type="button" onClick={()=>toggleDay(i)} style={{padding:"6px 12px",borderRadius:7,fontSize:12,fontWeight:sel?600:400,cursor:"pointer",border:`1px solid ${sel?T.lime+"66":T.border}`,background:sel?T.lime+"14":"transparent",color:sel?T.lime:T.muted,fontFamily:T.font}}>{d}</button>;
+                })}
+              </div>
+            </Field>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+              <Field label="Start time"><TimeInput value={startTime} onChange={setStartTime} /></Field>
+              <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={30} value={duration} onChange={setDuration} /></Field>
+            </div>
+            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+              <Btn variant="subtle" onClick={()=>{resetForm();setAddingRoutine(false);}}>Cancel</Btn>
+              <Btn onClick={submitAdd} disabled={(!isFree&&!title.trim())||days.length===0} style={{opacity:(!isFree&&!title.trim())||days.length===0?0.45:1}}>Add</Btn>
+            </div>
+          </div>
+        )}
+    </Modal>
+  );
+}
+
+function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.muted},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   const colorOf=(sub)=>{if(!sub||sub==="None"||sub==="")return T.muted;const x=userSubjects.find(s=>s.label===sub);return x?x.color:T.lime;};
   const [subjOnboardOpen,setSubjOnboardOpen]=useState(()=>!lsGet("subjects-configured",false));
   const [onbSubjs,setOnbSubjs]=useState(()=>getSubjects().map(s=>({...s})));
+
+  // Deferred Weekly Routine wizard — first-visit intercept, gated by its own
+  // one-shot flag (separate from subjects setup), plus a "Manage Routine"
+  // reopen path from the Calendar header and Settings > Calendar Preferences
+  // (the latter arrives via openWizardOnMount, since Settings is a separate
+  // top-level tab with no direct access to this component's state).
+  const [routineWizardOpen,setRoutineWizardOpen]=useState(()=>!lsGet("hasConfiguredRoutine",false));
+  // Routine Control Center — the ongoing management dashboard reached via the
+  // gear icon on the Calendar toolbar (as opposed to routineWizardOpen, which
+  // is only the first-run setup flow).
+  const [routineCenterOpen,setRoutineCenterOpen]=useState(false);
+  useEffect(()=>{
+    if(openWizardOnMount){setRoutineWizardOpen(true);if(onWizardOpenedFromSettings)onWizardOpenedFromSettings();}
+  },[openWizardOnMount]);
+  const finishRoutineWizard=(routine,prefs)=>{
+    persistRoutines(routine);
+    setSchedulePreferences(prefs);
+    lsSet("hasConfiguredRoutine",true);
+    setRoutineWizardOpen(false);
+  };
+  const skipRoutineWizard=()=>{
+    // Marks the wizard "handled" so it doesn't keep re-intercepting on every
+    // future Calendar visit — the user can still reopen it anytime via
+    // "Manage Routine".
+    lsSet("hasConfiguredRoutine",true);
+    setRoutineWizardOpen(false);
+  };
+
+  // First-run Calendar tour — waits for both the "Set up your subjects" AND
+  // the routine wizard first-run overlays to close first (three first-run
+  // overlays total; showing more than one at once would be a mess), then
+  // coachmarks Add Task and subject tagging, then closes with a note about
+  // the peak-window scheduling rule. Finishing (or skipping) hands off to
+  // the caller (App) so it can trigger the paywall intercept right after.
+  const [tourStep,setTourStep]=useState(null);
+  const tourAddTaskRef=useRef(null);
+  const tourSubjectRef=useRef(null);
+  useEffect(()=>{
+    if(subjOnboardOpen||routineWizardOpen)return;
+    if(lsGet("seenCalendarTour",false))return;
+    setTourStep(0);
+  },[subjOnboardOpen,routineWizardOpen]);
+  useEffect(()=>{
+    if(tourStep===1)setNewOpen(true);
+    if(tourStep===2)setNewOpen(false);
+  },[tourStep]);
   const mk=(off,time,title,subject,kind)=>{const d=new Date();d.setDate(d.getDate()+off);return {id:"seed-"+off+"-"+time,date:dayKey(d),time,title,subject,kind};};
   const seed=[
     mk(0,"14:30","Chem quiz · Periodic trends","Chemistry","exam"),
@@ -4118,16 +5002,111 @@ function CalendarTab(){
   const [evPriority,setEvPriority]=useState(500); // 0-1000 continuous scale
   const [evDifficulty,setEvDifficulty]=useState(500); // 0-1000 continuous scale for difficulty
   const [evDeadline,setEvDeadline]=useState("");
+  const [evDeadlineTime,setEvDeadlineTime]=useState("23:59");
+  // Explicit AI-Schedule vs Manual-Placement fork for task-kind entries —
+  // replaces the old implicit "fill in Target Date to go manual" behavior,
+  // which showed both the Target Date and Deadline fields at once and left
+  // users unsure which one they were supposed to fill in.
+  const [taskMode,setTaskMode]=useState("ai");
   const [evDuration,setEvDuration]=useState(60);
+  const [evSaveToRoutine,setEvSaveToRoutine]=useState(false);
   const [evSplitEnabled,setEvSplitEnabled]=useState(false);
   const [evSplitCount,setEvSplitCount]=useState(2);
   const [aiLoading,setAiLoading]=useState(false);
   const [toast,setToast]=useState(false);
   const [dragId,setDragId]=useState(null);
-  const [calView,setCalView]=useState("monthly");
+  // Sticky across tab switches — CalendarTab fully remounts every time the
+  // user navigates away and back (key={active} at the App level), so plain
+  // useState would silently reset this to "monthly" every time.
+  const [calView,setCalViewState]=useState(()=>lsGet("calView","monthly"));
+  const setCalView=(v)=>{setCalViewState(v);lsSet("calView",v);};
   const [weekOffset,setWeekOffset]=useState(0);
+  // Collapsible right-hand agenda column — shared across Monthly and Weekly.
+  const [isAgendaCollapsed,setIsAgendaCollapsed]=useState(false);
   const [editOpen,setEditOpen]=useState(false);
   const [editEv,setEditEv]=useState(null);
+  // Weekly Routine ("Time Shields") — recurring rules, kept in React state so
+  // add/edit/delete re-renders immediately, mirrored to localStorage on every
+  // change via saveWeeklyRoutine.
+  const [routines,setRoutinesState]=useState(()=>getWeeklyRoutine());
+  // Bounded conflict reconciliation: whenever routines change, relocate any
+  // already-scheduled *pending*, non-fixed task in the next 14 days that now
+  // overlaps a routine occurrence, using the same conflict/slot logic aiArrange
+  // trusts. Fixed real-world blocks (exam/class/busy block) and done tasks are
+  // never touched — mirrors aiArrange's own "never touch fixed blocks" rule.
+  const reconcileRoutineConflicts=(nextRoutines)=>{
+    const prefs=getSchedulePreferences();
+    const now=new Date();
+    // No lower bound on date: a still-pending task dated in the past (never
+    // marked done) that overlaps a routine block stays visibly stuck there
+    // forever otherwise — e.g. still rendered mid-"SCHOOL HOURS" in the
+    // current week's grid the day after it was created. findOpenSlotFor
+    // searches forward from the task's own date, so it naturally lands on a
+    // later opening the same day if one exists, or a future day otherwise —
+    // never further in the past.
+    const horizonEnd=(()=>{const d=new Date(now);d.setDate(d.getDate()+13);return dayKey(d);})();
+    let changed=false;
+    const next=events.map(ev=>{
+      if(ev.status==="done"||!ev.time)return ev;
+      if(ev.kind==="exam"||ev.kind==="class"||ev.kind==="busy block")return ev;
+      if(ev.date>horizonEnd)return ev;
+      const duration=ev.duration||30;
+      const tMins=timeToMinutes(ev.time);
+      // Free periods are open windows, not locked blocks — a task inside one
+      // is never a conflict to shuffle away from.
+      const occupied=expandRoutineOccurrences(nextRoutines,ev.date,ev.date)
+        .filter(o=>o.kind!=="free period")
+        .map(o=>({start:timeToMinutes(o.time),end:timeToMinutes(o.time)+(o.duration||30)}));
+      const conflict=occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end));
+      if(!conflict)return ev;
+      const slot=findOpenSlotFor(events.filter(e=>e.id!==ev.id),nextRoutines,prefs,ev.date,ev.time,duration);
+      if(slot.date===ev.date&&slot.time===ev.time)return ev;
+      changed=true;
+      return {...ev,date:slot.date,time:slot.time};
+    });
+    if(changed){setEvents(next);lsSet("events",next);}
+  };
+  const persistRoutines=(r)=>{setRoutinesState(r);saveWeeklyRoutine(r);reconcileRoutineConflicts(r);};
+  // Reconciliation above only fires on a routine *change* — it never touches
+  // tasks that were already conflicting before this logic existed, or that
+  // drifted into conflict for any other reason. Run it once on every Calendar
+  // visit too, so stale conflicts don't sit there forever.
+  useEffect(()=>{ reconcileRoutineConflicts(routines); },[]);
+  // The reserved "hs-school" rule (synthesized by the Weekly Routine wizard
+  // for High School accounts) doubles as the School Hours grid-tint window —
+  // no separate profile-status prop needed, since only HS accounts ever get
+  // this rule created for them.
+  const schoolWindow=(()=>{const r=routines.find(x=>x.id==="hs-school");if(!r)return null;return {start:timeToMinutes(r.startTime),end:timeToMinutes(r.startTime)+(r.duration||0)};})();
+  const deleteRoutineItem=(routineId)=>persistRoutines(routines.filter(r=>r.id!==routineId));
+  const [editRoutineMode,setEditRoutineMode]=useState(false);
+  const [hoveredRoutineId,setHoveredRoutineId]=useState(null);
+  const [routineEditItem,setRoutineEditItem]=useState(null); // the underlying rule being edited, or null
+  const [riTitle,setRiTitle]=useState("");
+  const [riKind,setRiKind]=useState("class");
+  const [riDays,setRiDays]=useState([]);
+  const [riStartTime,setRiStartTime]=useState("09:00");
+  const [riDuration,setRiDuration]=useState(50);
+  const [riSubject,setRiSubject]=useState("None");
+  const openRoutineEdit=(rule)=>{
+    setRoutineEditItem(rule);
+    setRiTitle(rule.title||"");
+    setRiKind(rule.kind||"class");
+    setRiDays(rule.days||[]);
+    setRiStartTime(rule.startTime||"09:00");
+    setRiDuration(rule.duration||50);
+    setRiSubject(rule.subject||"None");
+  };
+  const closeRoutineEdit=()=>setRoutineEditItem(null);
+  const saveRoutineEdit=()=>{
+    if(!routineEditItem||!riTitle.trim()||riDays.length===0)return;
+    persistRoutines(routines.map(r=>r.id===routineEditItem.id?{...r,title:riTitle.trim(),kind:riKind,days:riDays,startTime:riStartTime,duration:riDuration,subject:riSubject==="None"?"":riSubject}:r));
+    closeRoutineEdit();
+  };
+  const deleteRoutineEdit=()=>{
+    if(!routineEditItem)return;
+    deleteRoutineItem(routineEditItem.id);
+    closeRoutineEdit();
+  };
   const [groupSyncOpen,setGroupSyncOpen]=useState(false);
   const [gsStep,setGsStep]=useState(1);
   const [gsDueDate,setGsDueDate]=useState(dayKey());
@@ -4155,19 +5134,44 @@ function CalendarTab(){
   for(let d=1;d<=dim;d++)cells.push({d,out:false,key:dayKey(new Date(ym.y,ym.m,d))});
   let nx=1;while(cells.length%7!==0){cells.push({d:nx,out:true,key:dayKey(new Date(ym.y,ym.m+1,nx))});nx++;}
   const byDay={};events.forEach(ev=>{(byDay[ev.date]=byDay[ev.date]||[]).push(ev);});
+  // Merge in virtual Weekly Routine occurrences for the visible grid range —
+  // never persisted, just expanded fresh every render so editing/deleting a
+  // rule instantly reflects across every week without any migration pass.
+  if(cells.length>0){
+    expandRoutineOccurrences(routines,cells[0].key,cells[cells.length-1].key)
+      .forEach(ev=>{(byDay[ev.date]=byDay[ev.date]||[]).push(ev);});
+  }
   const todayK=dayKey();
   const fmtTime=(t)=>{const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
   const niceDate=(k)=>{const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});};
+  const CAL_TOUR_STEPS=[
+    {targetRef:tourAddTaskRef,title:"Add your first task",body:"Click “Add task” to create a study block — Studlin can place it on your calendar automatically, or you can set the date yourself."},
+    {targetRef:tourSubjectRef,title:"Tag it with a subject",body:"Pick a subject and color for each task so your calendar stays organized at a glance. You can add your own classes anytime."},
+    {targetRef:null,title:"Your focus time is protected",body:(()=>{const p=getSchedulePreferences();const win=fmtTime(p.workStartTime)+" – "+fmtTime(p.workEndTime);return "Studlin schedules focus blocks inside your peak window ("+win+").";})()},
+  ];
+  const advanceTour=()=>{
+    if(tourStep>=CAL_TOUR_STEPS.length-1){finishTour();return;}
+    setTourStep(s=>s+1);
+  };
+  const finishTour=()=>{
+    lsSet("seenCalendarTour",true);
+    setTourStep(null);
+    setNewOpen(false);
+    if(onTourDone)onTourDone();
+  };
   const relDay=(k)=>{if(k===todayK)return "Today";const t=new Date();t.setDate(t.getDate()+1);if(k===dayKey(t))return "Tomorrow";const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{month:"short",day:"numeric"});};
   const upcoming=events.filter(ev=>ev.date>=todayK).sort((a,b)=>a.date===b.date?(a.time<b.time?-1:1):(a.date<b.date?-1:1)).slice(0,6);
-  const dayEvents=(byDay[selDay]||[]).slice().sort((a,b)=>a.time<b.time?-1:1);
+  // Computed straight from `events`/routines for `selDay` (rather than the
+  // month-grid-scoped `byDay`) so the agenda column stays correct even when
+  // `selDay` falls in a week outside the visible month grid (Weekly view).
+  const dayEvents=events.filter(ev=>ev.date===selDay).concat(getRoutineOccurrencesForDate(selDay).filter(o=>o.kind!=="free period")).sort((a,b)=>a.time<b.time?-1:1);
   // Target Date/Start Time start blank — for tasks/study blocks, blank means
   // "let AI schedule this". The clicked day is remembered so fixed-time kinds
   // (exam/class/reminder), which always need a real date, can still default
   // to it once the user picks one of those types.
-  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("");setEvSubject("None");setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setNewOpen(true);};
-  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvDate("");setEvTime("");setEvPriority(500);setEvDifficulty(500);setEvDeadline("");setEvDuration(60);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);};
-  const onEvKindChange=(k)=>{setEvKind(k);if((k==="exam"||k==="class"||k==="reminder")&&!evDate)setEvDate(evPrefillDate);};
+  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("");setEvSubject("None");setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setNewOpen(true);};
+  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvDate("");setEvTime("");setEvPriority(500);setEvDifficulty(500);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);};
+  const onEvKindChange=(k)=>{setEvKind(k);if((k==="exam"||k==="class"||k==="reminder"||k==="busy block")&&!evDate)setEvDate(evPrefillDate);};
   const buildTask=(date,time,titleSuffix,splitInfo)=>{
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
     return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,kind:evKind,notes:evNotes,priority:Math.round(evPriority/100),difficulty:Math.round(evDifficulty/100),deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,...(splitInfo||{})};
@@ -4179,23 +5183,61 @@ function CalendarTab(){
     resetForm();setSelDay(newTasks[0].date);
     const d=newTasks[0].date;if(d.slice(0,7)!==(ym.y+"-"+String(ym.m+1).padStart(2,"0"))){const p=d.split("-");setYm({y:+p[0],m:+p[1]-1});}
     setToast(true);setTimeout(()=>setToast(false),2200);
+    if(onTaskSaved)onTaskSaved();
+  };
+  // Turns the current form into a recurring routine rule instead of a
+  // one-off event — used when "Save to my Weekly Routine" is checked. Only
+  // the single day-of-week the picked date falls on is captured; it then
+  // materializes on every matching weekday going forward (today included),
+  // so no separate one-off `events` entry is created alongside it.
+  const saveToRoutineFromForm=()=>{
+    const d=new Date(evDate+"T00:00:00");
+    const dow=(d.getDay()+6)%7;
+    const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
+    const rule={id:String(Date.now()+Math.random()*1000),title:evTitle.trim(),kind:evKind==="class"?"class":"busy",days:[dow],startTime:evTime,duration:evDuration,subject:subj};
+    saveWeeklyRoutine([...getWeeklyRoutine(),rule]);
+    resetForm();setSelDay(evDate);
+    setToast(true);setTimeout(()=>setToast(false),2200);
+    if(onTaskSaved)onTaskSaved();
+  };
+  // Manual entry skipped conflict-avoidance entirely — a hand-typed time that
+  // landed inside school hours (or another locked routine block) just saved
+  // as-is. This mirrors the same hard-lock check aiArrange already trusts,
+  // so a manual pick that collides gets bumped to the nearest open slot
+  // (preferring a free period, then whatever's next) instead of overlapping.
+  // Fixed real-world blocks (exam/class/busy block) are exempt, matching
+  // every other auto-shuffle path in this file.
+  const resolveManualSlot=(date,time,duration)=>{
+    if(evKind==="exam"||evKind==="class"||evKind==="busy block")return {date,time};
+    const occupied=events.filter(e=>e.date===date&&e.time)
+      .concat(expandRoutineOccurrences(routines,date,date).filter(o=>o.kind!=="free period"))
+      .map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)}));
+    const tMins=timeToMinutes(time);
+    const conflict=occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end));
+    return conflict?findOpenSlotFor(events,routines,getSchedulePreferences(),date,time,duration):{date,time};
   };
   const saveManual=()=>{
     if(!evTitle.trim()||!evDate.trim()||!evTime.trim())return;
-    if(!evSplitEnabled){commitTasks([buildTask(evDate,evTime)]);return;}
+    if(evSaveToRoutine&&(evKind==="exam"||evKind==="class"||evKind==="busy block")){saveToRoutineFromForm();return;}
+    if(!evSplitEnabled){
+      const slot=resolveManualSlot(evDate,evTime,evDuration);
+      commitTasks([buildTask(slot.date,slot.time)]);
+      return;
+    }
     const groupId="split-"+Date.now();
     const perSession=Math.round(evDuration/evSplitCount);
     const tasks=[];
     for(let i=0;i<evSplitCount;i++){
       const d=new Date(evDate);d.setDate(d.getDate()+i);
-      tasks.push(buildTask(dayKey(d),evTime," ("+(i+1)+"/"+evSplitCount+")",{splitGroup:groupId,splitIndex:i+1,splitTotal:evSplitCount,duration:perSession}));
+      const slot=resolveManualSlot(dayKey(d),evTime,perSession);
+      tasks.push(buildTask(slot.date,slot.time," ("+(i+1)+"/"+evSplitCount+")",{splitGroup:groupId,splitIndex:i+1,splitTotal:evSplitCount,duration:perSession}));
     }
     commitTasks(tasks);
   };
   const aiArrange=async()=>{
     if(!evTitle.trim())return;
-    if(evKind==="exam"||evKind==="class")return; // fixed real-world blocks — AI never touches these
-    if(evDate.trim()&&evTime.trim())return; // a manual Target Date/Start Time is set — use Save manually instead
+    if(evKind==="exam"||evKind==="class"||evKind==="busy block")return; // fixed real-world blocks — AI never touches these
+    if(taskMode==="manual")return; // Manual Placement is active — use Save to Calendar instead
     setAiLoading(true);
     const now=new Date();
     const tk=dayKey();
@@ -4214,18 +5256,32 @@ function CalendarTab(){
     const splitCount=evSplitEnabled?evSplitCount:1;
     const todayWindowMins=Math.max(0,prefEndMins-earliestTodayMins);
     const firstAvailDate=todayWindowMins>=perSession?tk:(()=>{const d=new Date(now);d.setDate(d.getDate()+1);return dayKey(d);})();
-    const existing=events.filter(ev=>ev.date>=tk).map(ev=>({title:ev.title,date:ev.date,time:ev.time,duration:ev.duration||60}));
+    const horizonEnd=(()=>{const d=new Date(now);d.setDate(d.getDate()+13);return dayKey(d);})();
+    const routineAhead=expandRoutineOccurrences(routines,tk,horizonEnd);
+    // Free periods are preferred landing spots (see freeAhead below), not hard
+    // blocks — excluding them here also resolves the prompt's prior internal
+    // contradiction (telling the AI to prefer free windows while also listing
+    // those same windows as forbidden-to-overlap).
+    const existing=events.filter(ev=>ev.date>=tk).concat(routineAhead.filter(r=>r.kind!=="free period")).map(ev=>({title:ev.title,date:ev.date,time:ev.time,duration:ev.duration||60}));
+    const freeAhead=routineAhead.filter(r=>r.kind==="free period").map(r=>({date:r.date,time:r.time,duration:r.duration}));
     const priorityLabel=evPriority<200?"Low":evPriority<400?"Medium-Low":evPriority<600?"Medium":evPriority<800?"High":"Urgent";
-    const prompt="You are a scheduling AI. The user's LIVE clock reads "+nowTime+" on "+tk+". Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+priorityLabel+(evDeadline?". Deadline: "+evDeadline:"")+". Existing schedule: "+JSON.stringify(existing)+". The user's preferred daily study window is "+prefs.workStartTime+"–"+prefs.workEndTime+" — always fill that window first, chronologically from the start, before ever using time outside it. STRICT RULES (violations are forbidden): 1) NEVER place any session before "+earliestTodayTime+" on today ("+tk+") — those slots have already passed. 2) The earliest you may schedule anything today is "+earliestTodayTime+". 3) If today has no open window at or after "+earliestTodayTime+", start from "+firstAvailDate+" instead. 4) Prefer sessions within "+prefs.workStartTime+"-"+prefs.workEndTime+"; only expand outside that range (up to 08:00-22:00) if the preferred window is fully booked that day. 5) Higher priority = earlier slots. 6) Must be before deadline. 7) Avoid conflicts. 8) Spread splits across days. Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
-    // If the AI call fails or returns nothing usable, fall back to placing
-    // sessions chronologically starting at the earliest available slot —
-    // evDate/evTime are blank in AI mode, so saveManual() isn't usable here.
+    // Deterministic hard-lock enforcement — the prompt below asks the LLM to
+    // avoid conflicts and prefer free-period windows, but "strictly
+    // forbidden" needs a real guarantee, not just advisory text.
+    const findOpenSlot=(desiredDate,desiredTime,duration)=>findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration);
+    const prompt="You are a scheduling AI. The user's LIVE clock reads "+nowTime+" on "+tk+". Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+priorityLabel+(evDeadline?". Deadline: "+evDeadline+" "+(evDeadlineTime||"23:59"):"")+". Existing schedule, including recurring classes/activities that repeat weekly — treat every one of these as a hard block you may NEVER overlap: "+JSON.stringify(existing)+". Free/open windows (free periods or study halls) good for short sub-20-minute sessions specifically: "+JSON.stringify(freeAhead)+". The user's preferred daily study window is "+prefs.workStartTime+"–"+prefs.workEndTime+" — always fill that window first, chronologically from the start, before ever using time outside it. STRICT RULES (violations are forbidden): 1) NEVER place any session before "+earliestTodayTime+" on today ("+tk+") — those slots have already passed. 2) The earliest you may schedule anything today is "+earliestTodayTime+". 3) If today has no open window at or after "+earliestTodayTime+", start from "+firstAvailDate+" instead. 4) Prefer sessions within "+prefs.workStartTime+"-"+prefs.workEndTime+"; only expand outside that range (up to 08:00-22:00) if the preferred window is fully booked that day. 5) Higher priority = earlier slots. 6) Must be before deadline. 7) NEVER overlap anything in the existing schedule, including recurring blocks — this is non-negotiable. 8) If this session is 20 minutes or less, prefer placing it inside one of the free/open windows listed above. 9) Spread splits across days. Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
+    // If the AI call fails or returns nothing usable, fall back to a fully
+    // deterministic placement — evDate/evTime are blank in AI mode, so
+    // saveManual() isn't usable here.
     const fallbackSchedule=()=>{
       const groupId=splitCount>1?"split-"+Date.now():null;
       const tasks=[];
+      let cursorDate=firstAvailDate,cursorTime=earliestTodayTime;
       for(let i=0;i<splitCount;i++){
-        const d=new Date(firstAvailDate+"T12:00:00");d.setDate(d.getDate()+i);
-        tasks.push(buildTask(dayKey(d),earliestTodayTime,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})));
+        const slot=findOpenSlot(cursorDate,cursorTime,perSession);
+        tasks.push(buildTask(slot.date,slot.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})));
+        const d=new Date(slot.date+"T12:00:00");d.setDate(d.getDate()+1);
+        cursorDate=dayKey(d);cursorTime=prefs.workStartTime;
       }
       commitTasks(tasks);
     };
@@ -4235,13 +5291,22 @@ function CalendarTab(){
       const raw=data.reply.replace(/```json?|```/g,"").trim();
       const parsed=JSON.parse(raw);
       if(parsed.sessions&&parsed.sessions.length>0){
-        // Client-side guardrail: if the AI still returned a past slot, push it to the next valid day
         const sanitized=parsed.sessions.map(s=>{
-          if(s.date===tk&&timeToMinutes(s.time)<earliestTodayMins){
+          let date=s.date,time=s.time;
+          // Client-side guardrail: if the AI still returned a past slot, push it to the next valid day
+          if(date===tk&&timeToMinutes(time)<earliestTodayMins){
             const d=new Date(now);d.setDate(d.getDate()+1);
-            return {...s,date:dayKey(d),time:earliestTodayTime};
+            date=dayKey(d);time=earliestTodayTime;
           }
-          return s;
+          // Deterministic conflict check — reject/reshift anything that
+          // actually overlaps a real event or routine shield, rather than
+          // trusting the LLM followed the prompt's rules.
+          const occupied=events.filter(e=>e.date===date&&e.time)
+            .concat(getRoutineOccurrencesForDate(date).filter(o=>o.kind!=="free period"))
+            .map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)}));
+          const tMins=timeToMinutes(time);
+          const conflict=occupied.some(o=>!(tMins+perSession<=o.start||tMins>=o.end));
+          return conflict?findOpenSlot(date,time,perSession):{date,time};
         });
         const groupId=splitCount>1?"split-"+Date.now():null;
         const tasks=sanitized.slice(0,splitCount).map((s,i)=>buildTask(s.date,s.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})));
@@ -4300,13 +5365,110 @@ function CalendarTab(){
   // Fixed real-world blocks (exam/class) only take Day/Start Time/Duration and
   // are never AI-scheduled. Reminders are simple Date/Time markers. Everything
   // else (deadline/study block) is a "task" that can be placed manually or by AI.
-  const isFixedKind=evKind==="exam"||evKind==="class";
+  const isFixedKind=evKind==="exam"||evKind==="class"||evKind==="busy block";
   const isReminderKind=evKind==="reminder";
   const isTaskKind=!isFixedKind&&!isReminderKind;
-  const manualMode=isTaskKind&&evDate.trim()!==""&&evTime.trim()!=="";
-  const aiMode=isTaskKind&&!manualMode&&evDeadline.trim()!=="";
+  const manualMode=isTaskKind&&taskMode==="manual";
+  // Switching modes clears whichever fields the other path owns, so a stale
+  // value left over from the previous mode can't accidentally satisfy a
+  // guard (e.g. aiArrange bailing because evDate still held an old value).
+  const selectTaskMode=(m)=>{
+    setTaskMode(m);
+    if(m==="ai"){setEvDate("");setEvTime("");}
+  };
   return (
+    <>
+    {/* Main content — this is data-page's direct child, so it's the element
+        [data-page] > * applies the (never-cleared) studlinChild entrance
+        animation to. That leaves it a permanent CSS containing block for any
+        position:fixed descendant (see the Dashboard modal fix for the same
+        bug one level up). Every overlay below is rendered as a sibling of
+        this div instead of nested inside it, so it centers against the real
+        viewport regardless of scroll position or animation state. */}
     <div>
+      <PH title="Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><Btn variant="ghost" onClick={()=>setRoutineCenterOpen(true)}>{Icon.settings} Manage Routine</Btn><Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>{setEditRoutineMode(m=>!m);setHoveredRoutineId(null);}}>Edit Routine</Btn><Btn variant="ghost" onClick={()=>{setGroupSyncOpen(true);setGsStep(1);setGsResults(null);}}>{Icon.users} Group Sync</Btn><span ref={tourAddTaskRef} style={{display:"inline-flex"}}><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></span></div>} />
+      {editRoutineMode&&(
+        <div style={{display:"flex",alignItems:"center",gap:8,padding:"9px 14px",background:T.lime+"10",border:`1px solid ${T.lime}33`,borderRadius:10,marginBottom:14,fontSize:12.5,color:T.text}}>
+          Editing your Weekly Routine — one-off tasks are dimmed. Click a routine block to edit it, or hover and tap × to delete it everywhere it repeats.
+        </div>
+      )}
+      <div style={{display:"flex",gap:6,marginBottom:20}}>
+        {["monthly","weekly"].map(v=>(
+          <button key={v} onClick={()=>setCalView(v)} style={{padding:"6px 14px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",background:calView===v?T.lime+"14":"transparent",color:calView===v?T.lime:T.muted,border:`1px solid ${calView===v?T.lime+"44":T.border}`,fontFamily:T.font,transition:"all 0.15s",textTransform:"capitalize"}}>{v}</button>
+        ))}
+      </div>
+      {calView==="monthly"&&(<CollapsibleAgendaLayout isAgendaCollapsed={isAgendaCollapsed} setIsAgendaCollapsed={setIsAgendaCollapsed}
+        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,markDone,removeEvent,setSelDay,setYm,dragId,setDragId}}>
+        <Card style={{padding:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,padding:"4px 6px"}}>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <select value={ym.m} onChange={e=>setYm(c=>({...c,m:+e.target.value}))} style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 10px",color:T.white,fontSize:15,fontWeight:700,fontFamily:T.font,outline:"none",cursor:"pointer",letterSpacing:"-0.01em"}}>
+                {monthNames.map((mn,i)=><option key={i} value={i}>{mn}</option>)}
+              </select>
+              <select value={ym.y} onChange={e=>setYm(c=>({...c,y:+e.target.value}))} style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 10px",color:T.muted,fontSize:15,fontFamily:T.font,outline:"none",cursor:"pointer"}}>
+                {Array.from({length:31},(_,i)=>2015+i).map(y=><option key={y} value={y}>{y}</option>)}
+              </select>
+            </div>
+            <div style={{display:"flex",gap:6}}>
+              <BtnSm variant="ghost" onClick={()=>nav(-1)}>←</BtnSm>
+              <BtnSm variant="ghost" onClick={()=>{setYm({y:now.getFullYear(),m:now.getMonth()});setSelDay(todayK);}}>Today</BtnSm>
+              <BtnSm variant="ghost" onClick={()=>nav(1)}>→</BtnSm>
+            </div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
+            {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((d,i)=><div key={i} style={{fontSize:10,fontWeight:600,color:T.muted,textAlign:"center",padding:"6px 0",letterSpacing:"0.05em"}}>{d}</div>)}
+            {cells.map((c,i)=>{
+              const evs=(byDay[c.key]||[]).filter(ev=>ev.kind!=="free period");
+              const isToday=c.key===todayK;
+              const isSel=c.key===selDay;
+              return (
+                <div key={i} onClick={()=>{setSelDay(c.key);}} onDoubleClick={()=>openNew(c.key)}
+                  onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(dragId){moveEvent(dragId,c.key);setDragId(null);}}}
+                  style={{minHeight:64,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.card2:"transparent",border:"1px solid "+(isSel?T.lime+"55":"transparent"),transition:"all 0.12s",opacity:c.out?0.35:1}}>
+                  <div style={{display:"flex",justifyContent:"flex-start"}}>
+                    <span style={{width:22,height:22,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:isToday?700:500,background:isToday?T.lime:"transparent",color:isToday?T.ink:c.out?T.faint:T.text}}>{c.d}</span>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:2,marginTop:3}}>
+                    {evs.slice(0,2).map((ev,j)=>{
+                      const over=daysOverdue(ev);
+                      const tagColor=over>0?T.red:colorOf(ev.subject);
+                      const isExam=ev.kind==="exam";
+                      const isRoutine=!!ev.isRoutine;
+                      const dimmedByRoutineMode=editRoutineMode&&!isRoutine;
+                      return <div key={j} style={{fontSize:9,fontWeight:600,color:tagColor,background:tagColor+(isExam?"22":"16"),border:isRoutine&&editRoutineMode?`1px solid ${T.lime}`:isExam?`1px solid ${tagColor}`:"none",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",display:"flex",alignItems:"center",gap:3,opacity:dimmedByRoutineMode?0.3:1}}>
+                        {ev.priority&&ev.priority>=4&&<span style={{width:5,height:5,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority],flexShrink:0}} />}
+                        {ev.title}
+                      </div>;
+                    })}
+                    {evs.length>2&&<div style={{fontSize:9,color:T.muted,paddingLeft:5}}>+{evs.length-2} more</div>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{fontSize:10.5,color:T.faint,marginTop:10,paddingLeft:6}}>Click a day to see its schedule · double-click to add a task · drag tasks between days</div>
+        </Card>
+      </CollapsibleAgendaLayout>)}
+      {calView==="weekly"&&(<CollapsibleAgendaLayout isAgendaCollapsed={isAgendaCollapsed} setIsAgendaCollapsed={setIsAgendaCollapsed}
+        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,markDone,removeEvent,setSelDay,setYm,dragId,setDragId}}>
+        <WeeklyPlanner events={events} setEvents={setEvents} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openNew={openNew} openEdit={openEdit}
+          routines={routines} editRoutineMode={editRoutineMode} hoveredRoutineId={hoveredRoutineId} setHoveredRoutineId={setHoveredRoutineId}
+          onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
+          selDay={selDay} setSelDay={setSelDay} />
+      </CollapsibleAgendaLayout>)}
+      {tourStep!==null&&(
+        <TourStep
+          targetRef={CAL_TOUR_STEPS[tourStep].targetRef}
+          title={CAL_TOUR_STEPS[tourStep].title}
+          body={CAL_TOUR_STEPS[tourStep].body}
+          step={tourStep}
+          total={CAL_TOUR_STEPS.length}
+          isLast={tourStep===CAL_TOUR_STEPS.length-1}
+          onNext={advanceTour}
+          onSkip={finishTour}
+        />
+      )}
+    </div>
       {subjOnboardOpen&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}}>
           <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:20,padding:28,width:520,maxWidth:"90vw",maxHeight:"82vh",overflowY:"auto",boxShadow:"0 32px 64px -16px rgba(0,0,0,0.6)"}}>
@@ -4332,12 +5494,6 @@ function CalendarTab(){
           </div>
         </div>
       )}
-      <PH title="Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><Btn variant="ghost" onClick={()=>{setGroupSyncOpen(true);setGsStep(1);setGsResults(null);}}>{Icon.users} Group Sync</Btn><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></div>} />
-      <div style={{display:"flex",gap:6,marginBottom:20}}>
-        {["monthly","weekly"].map(v=>(
-          <button key={v} onClick={()=>setCalView(v)} style={{padding:"6px 14px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",background:calView===v?T.lime+"14":"transparent",color:calView===v?T.lime:T.muted,border:`1px solid ${calView===v?T.lime+"44":T.border}`,fontFamily:T.font,transition:"all 0.15s",textTransform:"capitalize"}}>{v}</button>
-        ))}
-      </div>
       {toast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} Task added</div>
       )}
@@ -4345,37 +5501,65 @@ function CalendarTab(){
         footer={
           isReminderKind||isFixedKind
             ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!(evTitle.trim()&&evDate.trim()&&evTime.trim())} style={{opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>{isReminderKind?"Save reminder":"Save"}</Btn></>
-            : <>
-                <Btn variant="subtle" onClick={resetForm}>Cancel</Btn>
-                <Btn variant="ghost" onClick={saveManual} disabled={!evTitle.trim()||!manualMode} style={{opacity:!evTitle.trim()?0.45:(manualMode?1:0.45)}}>Save manually</Btn>
-                <Btn onClick={aiArrange} disabled={aiLoading||manualMode||!evTitle.trim()} style={{opacity:aiLoading?1:(!evTitle.trim()?0.45:(manualMode?0.45:1))}}>{aiLoading?"Scheduling...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.wand,"AI arrange")}</Btn>
-              </>
+            : taskMode==="manual"
+              ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!evTitle.trim()||!evDate.trim()||!evTime.trim()} style={{flex:1,justifyContent:"center",opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>Save to Calendar</Btn></>
+              : <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={aiArrange} disabled={aiLoading||!evTitle.trim()} style={{flex:1,justifyContent:"center",opacity:aiLoading?1:(!evTitle.trim()?0.45:1)}}>{aiLoading?"Scheduling...":"Add Task with AI"}</Btn></>
         }>
         <Field label="Title"><Input placeholder="e.g. Study Bio chapter 4-6" value={evTitle} onChange={ev=>setEvTitle(ev.target.value)} autoFocus /></Field>
 
-        <Field label="Type" hint={isFixedKind?"Fixed real-world block — Studlin will never move or reschedule this.":"Choose the task type to determine scheduling behavior"}>
-          <SelectChip options={["deadline","exam","class","study block","reminder"]} value={evKind} onChange={onEvKindChange} />
+        <Field label="Type" hint={isFixedKind?"Fixed real-world block — Studlin will never move or reschedule this.":"Choose what kind of entry this is"}>
+          <SelectChip options={[{value:"deadline",label:"Task"},"exam","class","study block","reminder","busy block"]} value={evKind} onChange={onEvKindChange} />
         </Field>
 
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <Field label={isTaskKind?"Target Date":"Date"} hint={isTaskKind?"Only fill this out for a manual entry. Leave blank to let AI automatically schedule this.":undefined}>
-            <Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} />
+        {isTaskKind&&(
+          <Field label="Scheduling">
+            <div style={{display:"flex",gap:6,padding:3,background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,marginBottom:2}}>
+              <button type="button" onClick={()=>selectTaskMode("ai")} style={{flex:1,padding:"8px 10px",borderRadius:7,border:"none",background:taskMode==="ai"?T.lime:"transparent",color:taskMode==="ai"?T.ink:T.muted,fontSize:12.5,fontWeight:taskMode==="ai"?700:500,cursor:"pointer",fontFamily:T.font,transition:"all 0.15s"}}>AI Schedule Mode</button>
+              <button type="button" onClick={()=>selectTaskMode("manual")} style={{flex:1,padding:"8px 10px",borderRadius:7,border:"none",background:taskMode==="manual"?T.lime:"transparent",color:taskMode==="manual"?T.ink:T.muted,fontSize:12.5,fontWeight:taskMode==="manual"?700:500,cursor:"pointer",fontFamily:T.font,transition:"all 0.15s"}}>Manual Placement</button>
+            </div>
           </Field>
-          <Field label={isReminderKind?"Reminder time":"Start time"}><TimeInput value={evTime} onChange={setEvTime} /></Field>
-        </div>
-        {manualMode&&<div style={{fontSize:11,color:T.amber,fontWeight:600,marginTop:-6,marginBottom:14}}>Using manual date. Clear Target Date to use AI scheduling.</div>}
+        )}
+
+        {!isTaskKind&&(
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <Field label="Date"><Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} /></Field>
+            <Field label={isReminderKind?"Reminder time":"Start time"}><TimeInput value={evTime} onChange={setEvTime} /></Field>
+          </div>
+        )}
 
         {isFixedKind&&(
-          <Field label="Duration (minutes)" hint="How long this occupies on your calendar"><NumField min={5} max={480} fallback={5} value={evDuration} onChange={setEvDuration} /></Field>
+          <>
+            <Field label="Duration (minutes)" hint="How long this occupies on your calendar"><NumField min={5} max={480} fallback={5} value={evDuration} onChange={setEvDuration} /></Field>
+            <label className="checkbox" onClick={()=>setEvSaveToRoutine(s=>!s)} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:14,fontSize:12.5,color:T.text}}>
+              <span style={{width:16,height:16,borderRadius:4,border:`1.5px solid ${evSaveToRoutine?T.lime:T.border}`,background:evSaveToRoutine?T.lime:"transparent",display:"grid",placeItems:"center",flexShrink:0,color:T.ink}}>{evSaveToRoutine&&Icon.check}</span>
+              Save to my Weekly Routine
+              <span style={{color:T.muted,fontWeight:400}}>— repeats every week on this day instead of just once</span>
+            </label>
+          </>
+        )}
+
+        {isTaskKind&&taskMode==="manual"&&(
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <Field label="Date"><Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} /></Field>
+            <Field label="Start Time"><TimeInput value={evTime} onChange={setEvTime} /></Field>
+          </div>
+        )}
+
+        {isTaskKind&&taskMode==="ai"&&(
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <Field label="Due Date & Time" hint="When this must be done by">
+              <Input type="date" value={evDeadline} onChange={ev=>setEvDeadline(ev.target.value)} />
+            </Field>
+            <Field label="Due time"><TimeInput value={evDeadlineTime} onChange={setEvDeadlineTime} /></Field>
+          </div>
         )}
 
         {isTaskKind&&(
-          <>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-              <Field label="Deadline" hint="When this must be done by"><Input type="date" value={evDeadline} onChange={ev=>setEvDeadline(ev.target.value)} /></Field>
-              <Field label="Duration (minutes)" hint="How long you plan to spend"><NumField min={5} max={480} fallback={5} value={evDuration} onChange={setEvDuration} /></Field>
-            </div>
+          <Field label="Duration (minutes)" hint="How long you plan to spend"><NumField min={5} max={480} fallback={5} value={evDuration} onChange={setEvDuration} /></Field>
+        )}
 
+        {isTaskKind&&taskMode==="ai"&&(
+          <>
             <Field label={`Priority: ${Math.round(evPriority/10)}%`} hint="Higher priority tasks are scheduled earlier">
               <div style={{display:"flex",alignItems:"center",gap:12}}>
                 <span style={{fontSize:11,color:T.muted,width:28}}>Low</span>
@@ -4400,7 +5584,7 @@ function CalendarTab(){
           </>
         )}
 
-        <Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field>
+        <div ref={tourSubjectRef}><Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field></div>
         {evSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Drivers ed, SAT prep, club..." value={evCustom} onChange={ev=>setEvCustom(ev.target.value)} /></Field>}
 
         {isTaskKind&&(
@@ -4423,7 +5607,7 @@ function CalendarTab(){
       <Modal open={editOpen} onClose={closeEdit} title="Edit task" sub="Update this task's details." width={580}
         footer={<><Btn variant="subtle" onClick={closeEdit}>Cancel</Btn><Btn onClick={saveEdit} disabled={!editTitle.trim()} style={{opacity:editTitle.trim()?1:0.45}}>Save changes</Btn></>}>
         <Field label="Title"><Input value={editTitle} onChange={e=>setEditTitle(e.target.value)} autoFocus /></Field>
-        <Field label="Type"><SelectChip options={["deadline","exam","class","study block","reminder"]} value={editKind} onChange={setEditKind} /></Field>
+        <Field label="Type"><SelectChip options={[{value:"deadline",label:"Task"},"exam","class","study block","reminder","busy block"]} value={editKind} onChange={setEditKind} /></Field>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
           <Field label="Scheduled date"><Input type="date" value={editDate} onChange={e=>setEditDate(e.target.value)} /></Field>
           <Field label={editKind==="reminder"?"Reminder time":"Start time"}><TimeInput value={editTime} onChange={setEditTime} /></Field>
@@ -4458,6 +5642,36 @@ function CalendarTab(){
         )}
         <Field label="Subject"><SelectChip options={SUBJ} value={editSubject} onChange={setEditSubject} /></Field>
         <Field label="Notes (optional)"><Textarea value={editNotes} onChange={e=>setEditNotes(e.target.value)} /></Field>
+      </Modal>
+      <RoutineWizardModal open={routineWizardOpen&&!subjOnboardOpen} initialStatus={getProfile().status} existingRoutines={routines} onFinish={finishRoutineWizard} onSkip={skipRoutineWizard} />
+      <RoutineControlCenterModal open={routineCenterOpen} onClose={()=>setRoutineCenterOpen(false)} routines={routines} fmtTime={fmtTime}
+        onEditRoutine={openRoutineEdit} onDeleteRoutine={deleteRoutineItem}
+        onAddRoutine={(rule)=>persistRoutines([...routines,{id:String(Date.now()+Math.random()*1000),...rule,subject:""}])} />
+      <Modal open={!!routineEditItem} onClose={closeRoutineEdit} title="Edit routine block" sub="Changes apply to every week this repeats." width={480}
+        footer={
+          <div style={{display:"flex",width:"100%",justifyContent:"space-between",alignItems:"center"}}>
+            <Btn variant="danger" onClick={deleteRoutineEdit}>Delete</Btn>
+            <div style={{display:"flex",gap:10}}>
+              <Btn variant="subtle" onClick={closeRoutineEdit}>Cancel</Btn>
+              <Btn onClick={saveRoutineEdit} disabled={!riTitle.trim()||riDays.length===0} style={{opacity:!riTitle.trim()||riDays.length===0?0.45:1}}>Save changes</Btn>
+            </div>
+          </div>
+        }>
+        <Field label="Title"><Input value={riTitle} onChange={e=>setRiTitle(e.target.value)} autoFocus /></Field>
+        <Field label="Type"><SelectChip options={[{value:"class",label:"Class"},{value:"busy",label:"Activity"},{value:"free",label:"Free Period"}]} value={riKind} onChange={setRiKind} /></Field>
+        <Field label="Repeats on" hint={riDays.length===0?"Pick at least one day":undefined}>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((d,i)=>{
+              const sel=riDays.includes(i);
+              return <button key={i} type="button" onClick={()=>setRiDays(sel?riDays.filter(x=>x!==i):[...riDays,i])} style={{padding:"6px 12px",borderRadius:7,fontSize:12,fontWeight:sel?600:400,cursor:"pointer",border:`1px solid ${sel?T.lime+"66":T.border}`,background:sel?T.lime+"14":"transparent",color:sel?T.lime:T.muted,fontFamily:T.font}}>{d}</button>;
+            })}
+          </div>
+        </Field>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Field label="Start time"><TimeInput value={riStartTime} onChange={setRiStartTime} /></Field>
+          <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={30} value={riDuration} onChange={setRiDuration} /></Field>
+        </div>
+        <Field label="Subject"><SelectChip options={SUBJ} value={riSubject} onChange={setRiSubject} /></Field>
       </Modal>
       <Modal open={groupSyncOpen} onClose={()=>setGroupSyncOpen(false)} title="Group Smart Match" sub="Find a time slot when everyone is free." width={540}
         footer={gsStep===1?<><Btn variant="subtle" onClick={()=>setGroupSyncOpen(false)}>Cancel</Btn><Btn onClick={runGroupSync} disabled={!gsDueDate.trim()} style={{opacity:gsDueDate.trim()?1:0.45}}>Find slots</Btn></>:<><Btn variant="subtle" onClick={()=>{setGsStep(1);setGsResults(null);}}>← Back</Btn><Btn variant="subtle" onClick={()=>setGroupSyncOpen(false)}>Done</Btn></>}>
@@ -4502,136 +5716,7 @@ function CalendarTab(){
           </div>
         )}
       </Modal>
-      {calView==="monthly"&&(<div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:16}}>
-        <Card style={{padding:16}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,padding:"4px 6px"}}>
-            <div style={{display:"flex",gap:8,alignItems:"center"}}>
-              <select value={ym.m} onChange={e=>setYm(c=>({...c,m:+e.target.value}))} style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 10px",color:T.white,fontSize:15,fontWeight:700,fontFamily:T.font,outline:"none",cursor:"pointer",letterSpacing:"-0.01em"}}>
-                {monthNames.map((mn,i)=><option key={i} value={i}>{mn}</option>)}
-              </select>
-              <select value={ym.y} onChange={e=>setYm(c=>({...c,y:+e.target.value}))} style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 10px",color:T.muted,fontSize:15,fontFamily:T.font,outline:"none",cursor:"pointer"}}>
-                {Array.from({length:31},(_,i)=>2015+i).map(y=><option key={y} value={y}>{y}</option>)}
-              </select>
-            </div>
-            <div style={{display:"flex",gap:6}}>
-              <BtnSm variant="ghost" onClick={()=>nav(-1)}>←</BtnSm>
-              <BtnSm variant="ghost" onClick={()=>{setYm({y:now.getFullYear(),m:now.getMonth()});setSelDay(todayK);}}>Today</BtnSm>
-              <BtnSm variant="ghost" onClick={()=>nav(1)}>→</BtnSm>
-            </div>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
-            {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((d,i)=><div key={i} style={{fontSize:10,fontWeight:600,color:T.muted,textAlign:"center",padding:"6px 0",letterSpacing:"0.05em"}}>{d}</div>)}
-            {cells.map((c,i)=>{
-              const evs=byDay[c.key]||[];
-              const isToday=c.key===todayK;
-              const isSel=c.key===selDay;
-              return (
-                <div key={i} onClick={()=>{setSelDay(c.key);}} onDoubleClick={()=>openNew(c.key)}
-                  onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(dragId){moveEvent(dragId,c.key);setDragId(null);}}}
-                  style={{minHeight:64,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.card2:"transparent",border:"1px solid "+(isSel?T.lime+"55":"transparent"),transition:"all 0.12s",opacity:c.out?0.35:1}}>
-                  <div style={{display:"flex",justifyContent:"flex-start"}}>
-                    <span style={{width:22,height:22,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:isToday?700:500,background:isToday?T.lime:"transparent",color:isToday?T.ink:c.out?T.faint:T.text}}>{c.d}</span>
-                  </div>
-                  <div style={{display:"flex",flexDirection:"column",gap:2,marginTop:3}}>
-                    {evs.slice(0,2).map((ev,j)=>{
-                      const over=daysOverdue(ev);
-                      const tagColor=over>0?T.red:colorOf(ev.subject);
-                      const isExam=ev.kind==="exam";
-                      return <div key={j} style={{fontSize:9,fontWeight:600,color:tagColor,background:tagColor+(isExam?"22":"16"),border:isExam?`1px solid ${tagColor}`:"none",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",display:"flex",alignItems:"center",gap:3}}>
-                        {ev.priority&&ev.priority>=4&&<span style={{width:5,height:5,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority],flexShrink:0}} />}
-                        {ev.title}
-                      </div>;
-                    })}
-                    {evs.length>2&&<div style={{fontSize:9,color:T.muted,paddingLeft:5}}>+{evs.length-2} more</div>}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <div style={{fontSize:10.5,color:T.faint,marginTop:10,paddingLeft:6}}>Click a day to see its schedule · double-click to add a task · drag tasks between days</div>
-        </Card>
-        <div style={{display:"flex",flexDirection:"column",gap:14}}>
-          <Card style={{padding:16}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-              <div>
-                <div style={{fontSize:13,fontWeight:700,color:T.white}}>{relDay(selDay)}</div>
-                <div style={{fontSize:10.5,color:T.muted,marginTop:1}}>{niceDate(selDay)}</div>
-              </div>
-              <BtnSm variant="subtle" onClick={()=>openNew(selDay)}>+ Add</BtnSm>
-            </div>
-            {dayEvents.length===0
-              ?<div style={{fontSize:12,color:T.muted,padding:"14px 0 6px",textAlign:"center"}}>Nothing scheduled</div>
-              :dayEvents.map(ev=>{
-                const over=daysOverdue(ev);
-                const isDone=ev.status==="done";
-                const color=over>0?T.red:colorOf(ev.subject);
-                const isStudy=ev.kind==="study block";
-                const isExam=ev.kind==="exam";
-                // Study blocks: solid subject-color container. Exams: dark canvas
-                // with a thick glowing subject-color border + an explicit tag.
-                // Classes (and everything else): the original thin left strip.
-                const rowStyle=isStudy
-                  ? {background:color,borderRadius:9,padding:"9px 12px",marginBottom:6}
-                  : isExam
-                    ? {background:T.ink,border:`2px solid ${color}`,boxShadow:`0 0 12px -2px ${color}`,borderRadius:9,padding:"9px 12px",marginBottom:6}
-                    : {borderBottom:"1px solid "+T.border,padding:"9px 0"};
-                const titleColor=isStudy?T.ink:isExam?T.cream:(isDone?T.muted:T.white);
-                const subColor=isStudy?"rgba(14,31,24,0.65)":isExam?color:T.muted;
-                const badgeBg=isStudy?"rgba(14,31,24,0.14)":isExam?color+"22":T.card2;
-                return(
-                <div key={ev.id} draggable onDragStart={()=>setDragId(ev.id)} style={{display:"flex",gap:10,alignItems:"flex-start",opacity:isDone?0.5:1,cursor:"grab",...rowStyle}}>
-                  {!isStudy&&!isExam&&<div style={{width:3,alignSelf:"stretch",borderRadius:2,background:color,flexShrink:0}} />}
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{display:"flex",alignItems:"center",gap:6}}>
-                      {ev.priority&&<span style={{width:7,height:7,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority||3],flexShrink:0}} />}
-                      {isExam&&<span style={{fontSize:9.5,fontWeight:800,letterSpacing:"0.04em",color,background:color+"1E",border:`1px solid ${color}55`,borderRadius:5,padding:"1px 6px",flexShrink:0}}>⚠️ EXAM</span>}
-                      <span style={{fontSize:12.5,fontWeight:600,color:titleColor,lineHeight:1.35,textDecoration:isDone?"line-through":"none"}}>{ev.title}</span>
-                    </div>
-                    <div style={{fontSize:11,color:subColor,marginTop:2,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-                      <span>{fmtTime(ev.time)}</span>
-                      {ev.duration&&<span style={{background:badgeBg,padding:"1px 6px",borderRadius:4,fontSize:10,fontWeight:600,color:titleColor}}>{ev.duration>=60?Math.floor(ev.duration/60)+"h"+(ev.duration%60?" "+ev.duration%60+"m":""):ev.duration+"m"}</span>}
-                      <span>{ev.subject}</span>
-                      {over>0&&<span style={{color:T.red,fontWeight:600}}>{over}d overdue</span>}
-                    </div>
-                  </div>
-                  <div style={{display:"flex",gap:4,flexShrink:0,alignItems:"center"}}>
-                    {!isDone&&ev.duration&&(ev.kind==="study block"||ev.kind==="deadline")&&<button onClick={()=>{if(window._setTimerTask)window._setTimerTask(ev);}} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.lime}44`,background:T.lime+"12",color:T.lime,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Begin</button>}
-                    {!isDone&&(ev.kind==="exam"||ev.kind==="class"||ev.kind==="reminder")&&<button onClick={()=>openEdit(ev)} title="View details" style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Details</button>}
-                    {!isDone&&<button onClick={()=>markDone(ev.id)} title="Mark done" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",display:"flex"}}>{Icon.check}</button>}
-                    <button onClick={()=>removeEvent(ev.id)} title="Delete" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,padding:2}}>×</button>
-                  </div>
-                </div>
-              );})}
-          </Card>
-          <div>
-            <div style={{fontSize:12,fontWeight:600,color:T.muted,letterSpacing:"0.05em",textTransform:"uppercase",marginBottom:10}}>Upcoming</div>
-            {upcoming.length===0&&<Card style={{padding:14,fontSize:12,color:T.muted,textAlign:"center"}}>No upcoming events</Card>}
-            {upcoming.map(ev=>{
-              const dl=daysUntilDeadline(ev);
-              const over=daysOverdue(ev);
-              return(
-              <Card key={ev.id} onClick={()=>{setSelDay(ev.date);const p=ev.date.split("-");setYm({y:+p[0],m:+p[1]-1});}} style={{borderLeft:"2px solid "+(over>0?T.red:colorOf(ev.subject)),marginBottom:8,cursor:"pointer",padding:14}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
-                  <div style={{fontSize:11,color:T.muted}}>{relDay(ev.date)}</div>
-                  <Badge color={over>0?T.red:colorOf(ev.subject)}>{ev.subject}</Badge>
-                </div>
-                <div style={{display:"flex",alignItems:"center",gap:6}}>
-                  {ev.priority&&<span style={{width:6,height:6,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority||3]}} />}
-                  <span style={{fontSize:13,fontWeight:600,color:T.white}}>{ev.title}</span>
-                </div>
-                <div style={{fontSize:11,color:T.muted,marginTop:4,display:"flex",gap:8}}>
-                  <span>{fmtTime(ev.time)}</span>
-                  {ev.duration&&<span>{ev.duration}m</span>}
-                  {dl!==null&&dl>=0&&dl<=3&&<span style={{color:dl===0?T.red:T.amber,fontWeight:600}}>Due {dl===0?"today":"in "+dl+"d"}</span>}
-                  {over>0&&<span style={{color:T.red,fontWeight:600}}>{over}d overdue</span>}
-                </div>
-              </Card>
-            );})}
-          </div>
-        </div>
-      </div>)}
-      {calView==="weekly"&&<WeeklyPlanner events={events} setEvents={setEvents} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openNew={openNew} openEdit={openEdit} />}
-    </div>
+    </>
   );
 }
 
@@ -5579,7 +6664,7 @@ function FocusMusic(){
 
 
 // ─── SETTINGS ─────────────────────────────────────────────────────────────────
-function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}}) {
+function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineWizard=()=>{}}) {
   const [active,setActive]=useState("General");
   const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,sr:true,auto:true,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false},...lsGet("settings",{})}));
   const tog=k=>setToggles(t=>{const n={...t,[k]:!t[k]};lsSet("settings",n);return n;});
@@ -5690,6 +6775,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     {id:"Privacy",icon:Icon.shield},
     {id:"Study preferences",icon:Icon.brain},
     {id:"Subjects & Labels",icon:Icon.layers},
+    {id:"Calendar Preferences",icon:Icon.cal},
     {id:"Integrations",icon:Icon.link},
     {id:"Subscription",icon:Icon.zap},
     {id:"Danger zone",icon:Icon.xmark},
@@ -6009,6 +7095,14 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             </Card>
           </>)}
 
+          {active==="Calendar Preferences" && (<>
+            <Card>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:3}}>Weekly Routine</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Your classes, sports, and shifts — the times the AI treats as absolute and never schedules over.</div>
+              <Btn onClick={onOpenRoutineWizard}>Manage Routine</Btn>
+            </Card>
+          </>)}
+
           {active==="Integrations" && (<>
             {integrationToast&&(
               <div style={{position:"fixed",top:20,right:20,zIndex:999,padding:"11px 18px",borderRadius:10,background:integrationToast.type==="error"?T.red:T.teal,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
@@ -6138,7 +7232,6 @@ function Profile() {
   const camInputRef=useRef(null);
   const prefs=getSchedulePreferences();
   const [workStart,setWorkStart]=useState(prefs.workStartTime||"09:00");
-  const [bedtime,setBedtime]=useState(prefs.bedtime||"23:00");
   const [difficulty,setDifficulty]=useState(prefs.difficultyPreference||"balanced");
   const [prefSaved,setPrefSaved]=useState(false);
   const lvl=levelInfo();
@@ -6164,7 +7257,7 @@ function Profile() {
     const updated={...getProfile(),status,affiliation,school:affiliation};
     lsSet("profile",updated);
     setProfState(updated);
-    const updatedPrefs={...getSchedulePreferences(),workStartTime:workStart,bedtime,difficultyPreference:difficulty};
+    const updatedPrefs={...getSchedulePreferences(),workStartTime:workStart,difficultyPreference:difficulty};
     setSchedulePreferences(updatedPrefs);
     setPrefSaved(true);
     setTimeout(()=>setPrefSaved(false),2200);
@@ -6235,14 +7328,9 @@ function Profile() {
           </Field>
         )}
 
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <Field label="Study start time" hint="Tasks are scheduled from this hour.">
-            <TimeInput value={workStart} onChange={setWorkStart} />
-          </Field>
-          <Field label="Bedtime" hint="Tasks end 2 hours before this.">
-            <TimeInput value={bedtime} onChange={setBedtime} />
-          </Field>
-        </div>
+        <Field label="Study start time" hint="Tasks are scheduled from this hour.">
+          <TimeInput value={workStart} onChange={setWorkStart} />
+        </Field>
 
         <Field label="Task difficulty order">
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -6397,19 +7485,22 @@ function LevelRoadmapModal({open,onClose,currentXP}){
 }
 
 // ─── LEADERBOARD MODAL ───────────────────────────────────────────────────────
-function LeaderboardModal({open,onClose,currentXP}){
+function LeaderboardModal({open,onClose,currentXP,currentName,currentStreak}){
+  // Hooks must run unconditionally on every render (this component stays
+  // mounted with `open` just toggling as a prop, not conditionally
+  // rendered) — so the "closed" bail-out has to come after all of them.
+  const [filter,setFilter]=useState("global");
+  const [profiles,setProfiles]=useState([]);
+  useEffect(()=>{
+    if(!open)return;
+    let cancelled=false;
+    fetchTopProfiles(30).then(rows=>{if(!cancelled)setProfiles(rows);});
+    return ()=>{cancelled=true;};
+  },[open]);
   if(!open)return null;
-  const [filter,setFilter]=React.useState("global");
   const userTier=getProfTitle(currentXP);
-  const allUsers=[
-    {r:1,n:"Maya R.",xp:2140,streak:12,tier:"Associate",you:true,grad:"linear-gradient(135deg,#FFD7B5,#FFC9D2)"},
-    {r:2,n:"Devon K.",xp:1840,streak:8,tier:"Associate",grad:"linear-gradient(135deg,#BFE3FF,#E2D0FF)"},
-    {r:3,n:"Priya S.",xp:1602,streak:5,tier:"Associate",grad:"linear-gradient(135deg,#C4F0D8,#FFE99A)"},
-    {r:4,n:"Jordan T.",xp:1088,streak:0,tier:"Intern",grad:"linear-gradient(135deg,#E2D0FF,#FFD7B5)"},
-    {r:5,n:"Alex W.",xp:980,streak:3,tier:"Intern",grad:"linear-gradient(135deg,#FFE99A,#C4F0D8)"},
-    {r:6,n:"Sam L.",xp:870,streak:1,tier:"Intern",grad:"linear-gradient(135deg,#BFE3FF,#FFD7B5)"},
-    {r:7,n:"Riley M.",xp:640,streak:0,tier:"Intern",grad:"linear-gradient(135deg,#C4F0D8,#E2D0FF)"},
-  ];
+  const myUid=firebase.auth().currentUser?.uid||null;
+  const allUsers=mergeLeaderboard(profiles, currentName, currentXP, currentStreak, myUid);
   const shown=filter==="level"?allUsers.filter(u=>u.tier===userTier||u.you):allUsers;
   const rankColor=(r)=>r===1?"#FFD700":r===2?"#C0C0C0":r===3?"#CD7F32":T.muted;
   const rankBg=(r)=>r===1?"rgba(255,215,0,0.12)":r===2?"rgba(192,192,192,0.08)":r===3?"rgba(205,127,50,0.08)":"transparent";
@@ -6451,35 +7542,27 @@ function LeaderboardModal({open,onClose,currentXP}){
   );
 }
 
-// ─── LEADERBOARD BUILDER ─────────────────────────────────────────────────────
-// Seed profiles fill the board until real users displace them by gaining XP.
-// In production, fetch the real roster from /api/leaderboard and merge below.
-const LB_SEED=[
-  {n:"Devon K.",xp:1840,streak:8,tier:"Associate",grad:"linear-gradient(135deg,#BFE3FF,#E2D0FF)"},
-  {n:"Priya S.",xp:1602,streak:5,tier:"Associate",grad:"linear-gradient(135deg,#C4F0D8,#FFE99A)"},
-  {n:"Jordan T.",xp:1088,streak:0,tier:"Intern",grad:"linear-gradient(135deg,#E2D0FF,#FFD7B5)"},
-  {n:"Alex W.",xp:980,streak:3,tier:"Intern",grad:"linear-gradient(135deg,#FFE99A,#C4F0D8)"},
-  {n:"Sam L.",xp:870,streak:1,tier:"Intern",grad:"linear-gradient(135deg,#BFE3FF,#FFD7B5)"},
-  {n:"Riley M.",xp:640,streak:0,tier:"Intern",grad:"linear-gradient(135deg,#C4F0D8,#E2D0FF)"},
-];
-function buildLeaderboard(realName, realXP, realStreak) {
-  const you={n:realName||"You",xp:Math.max(0,realXP||0),streak:realStreak||0,tier:getProfTitle(realXP||0),you:true,grad:"linear-gradient(135deg,#FFD7B5,#FFC9D2)"};
-  const sorted=[...LB_SEED,you].sort((a,b)=>b.xp-a.xp).map((u,i)=>({...u,r:i+1}));
-  const top5=sorted.slice(0,5);
-  if(top5.some(u=>u.you))return top5;
-  return [...sorted.slice(0,4),sorted.find(u=>u.you)];
-}
-
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRunning=()=>{}, setScheduleSettingsOpen=()=>{}, seriousMode=false}) {
+// Disabled "for now" per request — flip back to true to restore the inline
+// Global Leaderboard card on the dashboard.
+const SHOW_GLOBAL_LEADERBOARD=false;
+function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false}) {
   const realStats=sessionStats();
   const realStreak=Math.max(1,getStreak());
   const lvl=levelInfo();
   const wk=weekStreak();
+  // Live top profiles from Firestore, ranked by real XP — fetched once per
+  // mount; "you" is always merged in fresh on every render below so your own
+  // row never lags behind what you just earned.
+  const [topProfiles,setTopProfiles]=useState([]);
+  useEffect(()=>{
+    let cancelled=false;
+    fetchTopProfiles(8).then(rows=>{if(!cancelled)setTopProfiles(rows);});
+    return ()=>{cancelled=true;};
+  },[]);
   const [,forcePlan]=useState(0);
   const [levelRoadmapOpen,setLevelRoadmapOpen]=useState(false);
   const [leaderboardOpen,setLeaderboardOpen]=useState(false);
-  const [shareMsg,setShareMsg]=useState("");
   const plan=todaysPlan();
   const planDoneCount=plan.filter(t=>t.done).length;
   const planLeft=Math.max(0,plan.length-planDoneCount);
@@ -6490,11 +7573,6 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
   const firstName=(prof.name||"there").split(" ")[0];
   const hr=new Date().getHours();
   const greet=hr<12?"Good morning":hr<18?"Good afternoon":"Good evening";
-  const fm=String(Math.floor(focusSecs/60)).padStart(2,"0");
-  const fs=String(focusSecs%60).padStart(2,"0");
-  const fmtTime=`${fm}:${fs}`;
-  const focusTotalSecs=25*60;
-  const focusPct=Math.max(0,Math.min(100,((focusTotalSecs-focusSecs)/focusTotalSecs)*100));
   // Real deck data from localStorage
   const rawDecks=lsGet("decks",[]);
   const realDecks=rawDecks.slice(0,6).map(d=>({
@@ -6540,9 +7618,7 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
       };
     });
   // Real weekly wrapped stats
-  const weeklyXP=getWeeklyXP();
   const weeklyFocusMin=realStats.weekMin;
-  const lbRank=1;
   // Real cards mastered + words written totals
   const cardsMasteredTotal=rawDecks.reduce((a,d)=>a+(d.done||0),0);
   const stripHtml=(html)=>(html||"").replace(/<[^>]*>/g," ");
@@ -6552,24 +7628,9 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
     const txt=stripHtml(e.content).trim();
     return a+(txt?txt.split(/\s+/).length:0);
   },0);
-  // Real session activity for the last 7 days, bucketed by inferred category
+  // Real session activity for the last 7 days
   const allSessions=lsGet("sessions",[]);
-  const catOf=(mode)=>{
-    const m=(mode||"").toLowerCase();
-    if(m.includes("flashcard")||m.includes("deck")||m.includes("card"))return"flash";
-    if(m.includes("essay")||m.includes("writ"))return"write";
-    return"read";
-  };
   const weekDays7=(()=>{const arr=[];const now=new Date();const dow=(now.getDay()+6)%7;const mon=new Date(now);mon.setDate(now.getDate()-dow);for(let i=0;i<7;i++){const d=new Date(mon);d.setDate(mon.getDate()+i);arr.push(d);}return arr;})();
-  const weekBars=weekDays7.map((d,di)=>{
-    const k=dayKey(d);
-    const daySessions=allSessions.filter(s=>s.d===k);
-    const read=daySessions.filter(s=>catOf(s.mode)==="read").reduce((a,s)=>a+(s.m||0),0);
-    const flash=daySessions.filter(s=>catOf(s.mode)==="flash").reduce((a,s)=>a+(s.m||0),0);
-    const write=daySessions.filter(s=>catOf(s.mode)==="write").reduce((a,s)=>a+(s.m||0),0);
-    return {lab:["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][di],read,flash,write,total:read+flash+write,future:k>dayKey(),isToday:k===dayKey()};
-  });
-  const weekBarMax=Math.max(60,...weekBars.map(b=>b.total));
   // Top subject this week — from completed plan tasks' subject field
   const subjCounts={};
   allEvents.filter(ev=>ev.status==="done"&&ev.date>=dayKey(weekDays7[0])).forEach(ev=>{subjCounts[ev.subject]=(subjCounts[ev.subject]||0)+1;});
@@ -6601,15 +7662,21 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
     </div>
   );
   const isLight=T.mode==="light";
-  // Daily unique quote — deterministic from today's date
-  const qHash=today.split("").reduce((a,c)=>a+c.charCodeAt(0),0);
-  const todayQuote=QUOTES[qHash%QUOTES.length];
-  const [quoteCopied,setQuoteCopied]=useState(false);
-  // Dynamic leaderboard — real user ranked among seed profiles by actual XP
-  const lbUsers=buildLeaderboard(firstName, lvl.xp, realStreak);
+  // Weekly Wrapped is no longer a permanent dashboard card — it now surfaces
+  // once as a full-screen popup during the Sunday/Monday evening window
+  // (>=6pm), gated by a per-week localStorage flag so it doesn't reappear
+  // once dismissed, but comes back fresh next week.
+  const wrappedWeekKey=today.slice(0,4)+"-"+weekNo();
+  const isWrappedWindow=(()=>{const d=new Date();const day=d.getDay();return(day===0||day===1)&&d.getHours()>=18;})();
+  const [wrappedOpen,setWrappedOpen]=useState(()=>isWrappedWindow&&!lsGet("wrapped-dismissed-"+wrappedWeekKey,false));
+  const dismissWrapped=()=>{lsSet("wrapped-dismissed-"+wrappedWeekKey,true);setWrappedOpen(false);};
+  // Dynamic leaderboard — real Firestore profiles ranked by actual XP, "you" merged in live
+  const myUid=firebase.auth().currentUser?.uid||null;
+  const lbUsers=mergeLeaderboard(topProfiles, firstName, lvl.xp, realStreak, myUid, 5);
   const lbRankColor=(r)=>r===1?"#FFD700":r===2?"#C0C0C0":r===3?"#CD7F32":T.muted;
   const lbRankBg=(r)=>r===1?"rgba(255,215,0,0.10)":r===2?"rgba(192,192,192,0.07)":r===3?"rgba(205,127,50,0.07)":"transparent";
   return (
+    <>
     <div style={{display:"flex",flexDirection:"column",gap:16,paddingBottom:40}}>
 
       {/* GREETING STRIP — full 3-col in normal mode, single card in Serious Mode */}
@@ -6636,13 +7703,7 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
             <div style={{fontFamily:T.hand,fontSize:54,lineHeight:0.95,fontWeight:600,color:T.cream,margin:"0 0 4px"}}>{greet}, <span style={{color:T.lime}}>{firstName}.</span></div>
             <p style={{fontSize:13.5,color:"rgba(246,241,230,0.7)",margin:"8px 0 16px",lineHeight:1.5,maxWidth:380}}>{planLeft>0?<>You've got <strong style={{color:T.cream}}>{planLeft} task{planLeft===1?"":"s"} left</strong> on today's plan. Let's lock in.</>:plan.length>0?<>All <strong style={{color:T.cream}}>{plan.length} tasks done</strong> today. Outstanding work.</>:<>Nothing scheduled yet. Add a few tasks and let's lock in.</>}</p>
             <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-              <button onClick={()=>setFocusRunning(r=>!r)} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",background:T.lime,color:T.ink,borderRadius:99,fontSize:13,fontWeight:600,border:"none",cursor:"pointer",fontFamily:T.font}}>
-                {focusRunning
-                  ?<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
-                  :<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg>}
-                {focusRunning?"Pause focus session":"Resume focus session"}
-              </button>
-              <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",color:T.cream,border:"1px solid rgba(246,241,230,0.18)",background:"transparent",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>View today's plan</button>
+              <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",background:T.lime,color:T.ink,borderRadius:99,fontSize:13,fontWeight:600,border:"none",cursor:"pointer",fontFamily:T.font}}>View today's plan</button>
               <button onClick={()=>setScheduleSettingsOpen(true)} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",color:T.cream,border:"1px solid rgba(246,241,230,0.18)",background:"transparent",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Customize schedule</button>
             </div>
           </div>
@@ -6684,7 +7745,7 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
             <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,fontWeight:600}}>XP &amp; Rank</span>
             <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.10em",background:T.lime+"22",padding:"3px 9px",borderRadius:99,color:T.lime,border:`1px solid ${T.lime}44`,fontWeight:700}}>{lvl.title.toUpperCase()}</span>
           </div>
-          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.text,margin:"10px 0 2px"}}>{lvl.xp.toLocaleString()}<span style={{fontSize:20,color:T.muted,marginLeft:6}}>xp</span></div>
+          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.text,margin:"10px 0 2px"}}>{fmtH(weeklyFocusMin)||"0m"}<span style={{fontSize:15,color:T.muted,marginLeft:6}}>focused this wk</span></div>
           <div style={{fontSize:12,color:T.muted,marginBottom:4}}>{lvl.nextTier?`${(lvl.nextTier.minXP-lvl.xp).toLocaleString()} XP to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
           <div style={{height:6,background:T.card2,borderRadius:99,marginTop:"auto",overflow:"hidden"}}>
             <div style={{height:"100%",width:lvl.tierPct+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}}/>
@@ -6697,29 +7758,8 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
       </div>
       )} {/* end seriousMode ternary */}
 
-      {/* ROW 2: QUOTE OF THE DAY */}
-      <div style={{background:T.butter,borderRadius:22,padding:"28px 32px",position:"relative",overflow:"hidden"}}>
-        <span style={{fontFamily:T.serif,fontSize:160,lineHeight:0.65,color:"rgba(8,12,40,0.10)",position:"absolute",top:-8,left:18,fontStyle:"italic",pointerEvents:"none"}}>"</span>
-        <div style={{position:"relative",display:"flex",flexDirection:"column",gap:14}}>
-          <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.16em",textTransform:"uppercase",color:"rgba(8,12,40,0.45)"}}>Quote of the Day</div>
-          <div style={{fontFamily:T.serif,fontStyle:"italic",fontSize:26,lineHeight:1.3,color:T.ink,maxWidth:780}}>{todayQuote.text}</div>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
-            <div style={{fontFamily:T.mono,fontSize:12,letterSpacing:"0.10em",textTransform:"uppercase",color:"rgba(8,12,40,0.55)"}}>— {todayQuote.author}</div>
-            <button onClick={()=>{
-              const txt=`"${todayQuote.text}" — ${todayQuote.author}`;
-              navigator.clipboard&&navigator.clipboard.writeText(txt).then(()=>{setQuoteCopied(true);setTimeout(()=>setQuoteCopied(false),2500);});
-            }} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",background:quoteCopied?T.forest:T.ink,color:T.cream,border:"none",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font,transition:"background 0.2s",flexShrink:0}}>
-              {quoteCopied
-                ?<><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Copied!</>
-                :<><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg> Share Quote</>
-              }
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* ROW 3: Today's plan + Focus + Ask Studlin (5/3/4) */}
-      <div style={{display:"grid",gridTemplateColumns:"5fr 3fr 4fr",gap:16}}>
+      {/* ROW 2: Today's plan + Ask Studlin */}
+      <div style={{display:"grid",gridTemplateColumns:"7fr 5fr",gap:16}}>
         {/* Today's plan */}
         <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
           <CardHead title="Today's plan" label={planDoneCount+" / "+plan.length+" DONE"} more="Calendar" />
@@ -6751,36 +7791,6 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
             );})}
         </div>
 
-        {/* Focus Pomodoro */}
-        <div style={{background:`linear-gradient(180deg, ${T.forest} 0%, #0B201A 100%)`,color:T.cream,borderRadius:22,padding:22,position:"relative",overflow:"hidden",display:"flex",flexDirection:"column"}}>
-          <div style={{position:"absolute",right:-60,bottom:-60,width:220,height:220,background:"radial-gradient(circle,rgba(200,255,90,0.15),transparent 65%)"}} />
-          <div style={{position:"relative",zIndex:1}}>
-            <CardHead title="Focus" label="POMODORO" light />
-            <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)"}}>Session 3 of 4</div>
-            <div style={{fontFamily:T.hand,fontSize:88,lineHeight:0.85,fontWeight:700,color:T.lime,margin:"8px 0 4px",fontVariantNumeric:"tabular-nums"}}>{fmtTime}</div>
-            <div style={{fontSize:12.5,color:"rgba(246,241,230,0.7)",marginBottom:16}}>{focusRunning?`Break in ${fm} min · then 5 min off`:"Session paused · tap play to resume"}</div>
-            <div style={{height:6,background:"rgba(246,241,230,0.12)",borderRadius:99,marginBottom:18,overflow:"hidden"}}><div style={{height:"100%",width:focusPct+"%",background:T.lime,transition:"width 1s linear"}}/></div>
-            <div style={{display:"flex",gap:8}}>
-              <button onClick={()=>setFocusRunning(r=>!r)} style={{width:48,height:48,borderRadius:"50%",background:T.lime,color:T.ink,border:"none",display:"grid",placeItems:"center",cursor:"pointer"}}>
-                {focusRunning
-                  ?<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
-                  :<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg>
-                }
-              </button>
-              {[
-                <svg key="s" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>,
-                <svg key="m" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>,
-              ].map((ic,i)=>(
-                <button key={i} style={{width:38,height:38,borderRadius:"50%",background:"rgba(246,241,230,0.08)",color:T.cream,border:"1px solid rgba(246,241,230,0.14)",display:"grid",placeItems:"center",cursor:"pointer"}}>{ic}</button>
-              ))}
-            </div>
-            <div style={{display:"inline-flex",alignItems:"center",gap:8,padding:"7px 12px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,fontSize:12,marginTop:14}}>
-              <span style={{width:8,height:8,borderRadius:"50%",background:T.butter}}/>
-              English IV · Macbeth essay
-            </div>
-          </div>
-        </div>
-
         {/* Ask Studlin */}
         <div style={{background:T.ink,color:T.cream,borderRadius:22,padding:22,display:"flex",flexDirection:"column"}}>
           <CardHead title="Ask Studlin" label="AI TUTOR" more="Open" light />
@@ -6803,52 +7813,10 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
         </div>
       </div>
 
-      {/* ROW: This week's focus (bar chart) + compact Weekly Wrapped — hidden in Serious Mode */}
-      {!seriousMode && <div style={{display:"grid",gridTemplateColumns:"8fr 4fr",gap:16}}>
-        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
-          <CardHead title="This week's focus" label={fmtH(weeklyFocusMin)+" this week · tracked live"} />
-          <div style={{display:"flex",alignItems:"flex-end",gap:14,height:150,marginTop:4}}>
-            {weekBars.map((b,i)=>(
-              <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:8,height:"100%",justifyContent:"flex-end",opacity:b.future?0.35:1}}>
-                <div style={{width:"100%",maxWidth:38,display:"flex",flexDirection:"column-reverse",borderRadius:6,overflow:"hidden"}}>
-                  {b.write>0&&<div style={{height:Math.max(4,b.write/weekBarMax*130),background:T.butter}} />}
-                  {b.flash>0&&<div style={{height:Math.max(4,b.flash/weekBarMax*130),background:T.lime}} />}
-                  {b.read>0&&<div style={{height:Math.max(4,b.read/weekBarMax*130),background:T.forest}} />}
-                  {b.total===0&&<div style={{height:4,background:T.card2,width:"100%"}} />}
-                </div>
-                <span style={{fontSize:10.5,fontFamily:T.mono,color:b.isToday?T.lime:T.muted,fontWeight:600}}>{b.lab}</span>
-              </div>
-            ))}
-          </div>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:16,flexWrap:"wrap",gap:10}}>
-            <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
-              {[{c:T.forest,l:"Reading & notes"},{c:T.lime,l:"Flashcards"},{c:T.butter,l:"Writing"}].map((it,i)=>(
-                <div key={i} style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:T.muted}}><span style={{width:9,height:9,borderRadius:2,background:it.c}}/>{it.l}</div>
-              ))}
-            </div>
-            {topSubjectThisWeek&&<div style={{fontSize:11.5,color:T.muted,fontFamily:T.mono}}>Top subject: <span style={{color:T.lime,fontWeight:700}}>{topSubjectThisWeek.slice(0,4).toUpperCase()}</span></div>}
-          </div>
-        </div>
-        <div style={{background:T.forest,color:T.cream,borderRadius:22,padding:20}}>
-          <CardHead title="Weekly Wrapped" label={"WEEK "+weekNo()} more="View full" light />
-          <div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {[
-              {ln:"Focus hours",vn:fmtH(weeklyFocusMin)||"0m"},
-              {ln:"Cards mastered",vn:cardsMasteredTotal},
-              {ln:"Words written",vn:wordsWrittenTotal.toLocaleString()},
-            ].map((ins,i)=>(
-              <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:10,padding:"9px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <span style={{fontSize:11,color:"rgba(246,241,230,0.55)",fontFamily:T.mono,letterSpacing:"0.04em",textTransform:"uppercase"}}>{ins.ln}</span>
-                <span style={{fontFamily:T.hand,fontSize:20,fontWeight:600,color:T.lime}}>{ins.vn}</span>
-              </div>
-            ))}
-          </div>
-          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:12}}>
-            <span style={{fontSize:10.5,padding:"5px 10px",background:"rgba(246,241,230,0.08)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:T.cream,fontWeight:600}}>{realStreak}-day streak</span>
-            {topSubjectThisWeek&&<span style={{fontSize:10.5,padding:"5px 10px",background:"rgba(246,241,230,0.08)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:T.cream,fontWeight:600}}>{topSubjectThisWeek} focus</span>}
-          </div>
-        </div>
-      </div>}
+      {/* The "This week's focus" bar chart used to render here. Removed as
+          redundant with Study streak / Weekly Wrapped popup below; the
+          underlying data (weeklyFocusMin, topSubjectThisWeek) still feeds
+          the Weekly Wrapped popup. */}
 
       {/* ROW: Quick tools — always visible, pure utility */}
       <div style={{display:"grid",gridTemplateColumns:seriousMode?"1fr":"8fr 4fr",gap:16}}>
@@ -6929,8 +7897,11 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
         </div>
       </div>
 
-      {/* ROW 4: GLOBAL LEADERBOARD — hidden in Serious Mode */}
-      {!seriousMode && <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+      {/* ROW 4: GLOBAL LEADERBOARD — conditionally hidden (SHOW_GLOBAL_LEADERBOARD)
+          rather than deleted, per request to disable it "for now." Flip the
+          flag back to true to restore it; lbUsers/lbRankColor/lbRankBg and
+          LeaderboardModal are left fully intact. */}
+      {SHOW_GLOBAL_LEADERBOARD && !seriousMode && <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18,gap:12,flexWrap:"wrap"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <Hand>Global Leaderboard</Hand>
@@ -6956,50 +7927,42 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
         </div>
       </div>}
 
-      {/* ROW 5: WEEKLY WRAPPED — hidden in Serious Mode */}
-      {!seriousMode && <div style={{background:T.forest,color:T.cream,borderRadius:22,padding:22}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:12,flexWrap:"wrap"}}>
-          <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
-            <Hand style={{color:T.cream}}>This week, you…</Hand>
-            <Eye style={{color:"rgba(246,241,230,0.6)",borderColor:"rgba(246,241,230,0.18)"}}>{"WRAPPED · WEEK "+weekNo()}</Eye>
-          </div>
-          <button onClick={()=>{
-            const txt=`📊 My Studlin Week ${weekNo()}\n\nFocus time: ${fmtH(weeklyFocusMin)||"0m"}\nXP earned: ${weeklyXP.toLocaleString()} XP\nDay streak: ${realStreak} days\nRank: #${lbRank} Global\n\nstudlin.app`;
-            navigator.clipboard&&navigator.clipboard.writeText(txt).then(()=>{setShareMsg("Copied to clipboard!");setTimeout(()=>setShareMsg(""),2500);});
-          }} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"8px 16px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,flexShrink:0}}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-            Share Wrapped
-          </button>
-        </div>
-        {shareMsg&&<div style={{fontSize:12,color:T.lime,fontWeight:600,marginBottom:12,display:"flex",alignItems:"center",gap:6}}>✓ {shareMsg}</div>}
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginTop:4}}>
-          {[
-            {ln:"Focus hours",vn:fmtH(weeklyFocusMin)||"0m"},
-            {ln:"XP earned",vn:weeklyXP.toLocaleString()+" xp"},
-            {ln:"Leaderboard rank",vn:"#"+lbRank+" Global"},
-          ].map((ins,i)=>(
-            <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:12,padding:"12px 14px"}}>
-              <div style={{fontSize:11,color:"rgba(246,241,230,0.55)",fontFamily:T.mono,letterSpacing:"0.06em",textTransform:"uppercase"}}>{ins.ln}</div>
-              <div style={{fontFamily:T.hand,fontSize:32,lineHeight:1,fontWeight:600,color:T.lime,marginTop:4}}>{ins.vn}</div>
-            </div>
-          ))}
-        </div>
-        <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:18,alignItems:"center"}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.12)",borderRadius:99,fontSize:12,fontWeight:500,color:T.cream}}>
-            <span style={{width:22,height:22,borderRadius:"50%",background:T.lime,display:"grid",placeItems:"center",fontFamily:T.hand,fontWeight:700,fontSize:13,color:T.ink,flex:"none"}}>{realStreak}</span>
-            {realStreak}-day streak
-          </div>
-          <button onClick={()=>setLeaderboardOpen(true)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.12)",borderRadius:99,fontSize:12,fontWeight:500,color:T.cream,cursor:"pointer",fontFamily:T.font}}>
-            <span style={{width:22,height:22,borderRadius:"50%",background:T.lime,display:"grid",placeItems:"center",fontWeight:700,fontSize:13,color:T.ink,flex:"none"}}>#1</span>
-            Global leaderboard
-          </button>
-        </div>
-      </div>}
-
-      {/* Modals */}
-      <LevelRoadmapModal open={levelRoadmapOpen} onClose={()=>setLevelRoadmapOpen(false)} currentXP={lvl.xp} />
-      <LeaderboardModal open={leaderboardOpen} onClose={()=>setLeaderboardOpen(false)} currentXP={lvl.xp} />
     </div>
+    {/* Modals — rendered as siblings of the scrollable content div above, not
+        nested inside it. [data-page] > * gets a staggered entrance animation
+        (studlinChild) that leaves a non-"none" transform applied even after
+        it finishes; that makes whichever div it lands on a containing block
+        for any position:fixed descendant. Nesting these modals inside the
+        content div put them right behind that wall, breaking their
+        centering into being relative to the (possibly scrolled) content div
+        instead of the real viewport. Siblings of it are unaffected. */}
+    <LevelRoadmapModal open={levelRoadmapOpen} onClose={()=>setLevelRoadmapOpen(false)} currentXP={lvl.xp} />
+    <LeaderboardModal open={leaderboardOpen} onClose={()=>setLeaderboardOpen(false)} currentXP={lvl.xp} currentName={firstName} currentStreak={realStreak} />
+    {wrappedOpen&&!seriousMode&&(
+      <div onClick={dismissWrapped} style={{position:"fixed",inset:0,background:"rgba(8,12,10,0.72)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
+        <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:420,background:T.forest,color:T.cream,borderRadius:22,padding:28,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
+          <CardHead title="Weekly Wrapped" label={"WEEK "+weekNo()} light />
+          <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:8}}>
+            {[
+              {ln:"Focus hours",vn:fmtH(weeklyFocusMin)||"0m"},
+              {ln:"Cards mastered",vn:cardsMasteredTotal},
+              {ln:"Words written",vn:wordsWrittenTotal.toLocaleString()},
+            ].map((ins,i)=>(
+              <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:10,padding:"9px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:11,color:"rgba(246,241,230,0.55)",fontFamily:T.mono,letterSpacing:"0.04em",textTransform:"uppercase"}}>{ins.ln}</span>
+                <span style={{fontFamily:T.hand,fontSize:20,fontWeight:600,color:T.lime}}>{ins.vn}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:12,marginBottom:20}}>
+            <span style={{fontSize:10.5,padding:"5px 10px",background:"rgba(246,241,230,0.08)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:T.cream,fontWeight:600}}>{realStreak}-day streak</span>
+            {topSubjectThisWeek&&<span style={{fontSize:10.5,padding:"5px 10px",background:"rgba(246,241,230,0.08)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:T.cream,fontWeight:600}}>{topSubjectThisWeek} focus</span>}
+          </div>
+          <button onClick={dismissWrapped} style={{width:"100%",padding:"11px 0",borderRadius:99,background:T.lime,color:T.ink,border:"none",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Done</button>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 
@@ -7011,14 +7974,13 @@ function InitWizard({onComplete}){
   const [status, setStatus] = useState(prof.status||"");
   const [affiliation, setAffiliation] = useState(prof.affiliation||prof.school||"");
   const [workStart, setWorkStart] = useState(prefs.workStartTime||"09:00");
-  const [bedtime, setBedtime] = useState(prefs.bedtime||"23:00");
   const [difficulty, setDifficulty] = useState(prefs.difficultyPreference||"balanced");
 
   const affiliationLabel = status==="highschool" ? "School name" : status==="college" ? "University name" : status==="working" ? "Company name" : "Affiliation";
   const affiliationPlaceholder = status==="highschool" ? "e.g. Lincoln High School" : status==="college" ? "e.g. UCLA, NYU..." : status==="working" ? "e.g. Google, startup..." : "Your school or company";
 
   const save = () => {
-    const updatedPrefs = {...prefs, workStartTime:workStart, bedtime, difficultyPreference:difficulty};
+    const updatedPrefs = {...prefs, workStartTime:workStart, difficultyPreference:difficulty};
     setSchedulePreferences(updatedPrefs);
     const updatedProf = {...getProfile(), status, affiliation, school:affiliation};
     lsSet("profile", updatedProf);
@@ -7031,7 +7993,7 @@ function InitWizard({onComplete}){
     if(u){
       fsdb().collection('users').doc(u.uid).set({
         status, affiliation, school:affiliation,
-        workStartTime:workStart, bedtime, difficultyPreference:difficulty,
+        workStartTime:workStart, difficultyPreference:difficulty,
         onboarded:true,
         updatedAt:new Date().toISOString(),
       },{merge:true}).catch(()=>{});
@@ -7060,7 +8022,6 @@ function InitWizard({onComplete}){
   const STEPS = [
     {key:"status"},
     {key:"workStart"},
-    {key:"bedtime"},
     {key:"difficulty"},
   ];
   const isLast = step === STEPS.length - 1;
@@ -7138,15 +8099,6 @@ function InitWizard({onComplete}){
         )}
 
         {step===2 && (
-          <div>
-            <div style={{fontSize:20,fontWeight:700,color:ink,marginBottom:6,letterSpacing:"-0.01em"}}>What time do you go to bed?</div>
-            <div style={{fontSize:13,color:muted,marginBottom:24}}>We won't schedule tasks within 2 hours of your bedtime.</div>
-            <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:muted,marginBottom:8}}>Bedtime</label>
-            <TimeInput value={bedtime} onChange={setBedtime} style={{background:"#F0EBE0",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,maxWidth:200}} />
-          </div>
-        )}
-
-        {step===3 && (
           <div>
             <div style={{fontSize:20,fontWeight:700,color:ink,marginBottom:6,letterSpacing:"-0.01em"}}>How do you like to tackle tasks?</div>
             <div style={{fontSize:13,color:muted,marginBottom:24}}>Studlin will order your schedule accordingly.</div>
@@ -7294,7 +8246,14 @@ function NotifPermModal({onAllow=()=>{},onDeny=()=>{}}) {
 function App() {
   seedEventsIfStale();
   const [onboarded,setOnboarded]=useState(()=>!!lsGet("onboarded",false));
-  const [active,setActive]=useState("dashboard");
+  // A freshly-completed onboarding.jsx signup leaves a one-shot flag asking
+  // to land directly on a specific tab (with its first-run tour active)
+  // instead of the default dashboard — consumed once, then cleared.
+  const [active,setActive]=useState(()=>{
+    const pending=lsGet("pendingTour",null);
+    if(pending){try{localStorage.removeItem("studlin-pendingTour");}catch(e){}return pending;}
+    return "dashboard";
+  });
   const [theme,setThemeState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-theme"))||"light");
   const [accent,setAccentState]=useState(()=>{
     if(typeof localStorage!=="undefined"){
@@ -7308,10 +8267,6 @@ function App() {
   const setTheme=(name)=>{ setThemeState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-theme",name); };
   const setAccent=(name)=>{ setAccentState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-accent",name); };
   const setDensity=(name)=>{ setDensityState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-density",name); };
-  const [focusSecs,setFocusSecs]=useState(22*60+10);
-  const [focusRunning,setFocusRunning]=useState(true);
-  const [focusMode,setFocusMode]=useState("Focus");
-  const [focusTotal,setFocusTotal]=useState(25*60);
   const [timerTask,setTimerTask]=useState(null);
   const [newDayModal,setNewDayModal]=useState(false);
   const [overdueForModal,setOverdueForModal]=useState([]);
@@ -7319,6 +8274,16 @@ function App() {
   window._setTimerTask=setTimerTask;
   const [creditsOpen,setCreditsOpen]=useState(false);
   const [pricingOpen,setPricingOpen]=useState(false);
+  // Strategic paywall intercept — shown once, right when the user finishes
+  // (or skips) their first Calendar tour, the "aha moment" placement instead
+  // of during signup. Gated so it only ever auto-fires this one time.
+  const [paywallOpen,setPaywallOpen]=useState(false);
+  const [paywallBilling,setPaywallBilling]=useState("monthly");
+  const handleCalendarTourDone=()=>{
+    if(lsGet("paywallShown",false))return;
+    lsSet("paywallShown",true);
+    setPaywallOpen(true);
+  };
   const [notifOpen,setNotifOpen]=useState(false);
   const [seriousMode,setSeriousMode]=useState(()=>lsGet("settings",{}).seriousMode||false);
   const [calOnboardDone,setCalOnboardDone]=useState(()=>!!lsGet("cal-onboard-done",false));
@@ -7334,6 +8299,15 @@ function App() {
   const handleNotifDeny=()=>{
     lsSet("notifAsked",true);setNotifPermModal(false);
   };
+  // Notification permission is asked contextually now, not generically right
+  // after onboarding — the first time it's actually relevant (a task with a
+  // reminder was just saved, or a friend request was just sent), not before.
+  const askNotifIfNeeded=()=>{ if(!lsGet("notifAsked",false)) setNotifPermModal(true); };
+  // Cross-tab deep link for Settings > Calendar Preferences' "Manage Routine"
+  // link — CalendarTab owns the wizard's actual open/closed state, so this
+  // just switches tabs and leaves a one-shot flag for it to pick up on mount.
+  const [pendingRoutineWizard,setPendingRoutineWizard]=useState(false);
+  const openRoutineWizardOnCalendar=()=>{setActive("calendar");setPendingRoutineWizard(true);};
   const myUid=firebase.auth().currentUser?.uid||null;
 
   // Global unread count for the sidebar badge — mounted here (not inside
@@ -7448,14 +8422,6 @@ function App() {
     const list=[{icon:Icon.flame,title:getStreak()+"-day streak going",sub:"Study today to keep it alive",color:T.amber}].concat(up);
     return list;
   })();
-  useEffect(()=>{
-    if(!focusRunning) return;
-    const endTime=Date.now()+focusSecs*1000;
-    const id=setInterval(()=>{
-      setFocusSecs(Math.max(0,Math.round((endTime-Date.now())/1000)));
-    },250);
-    return ()=>clearInterval(id);
-  },[focusRunning]);
   useEffect(()=>{ touchStreak(); },[]);
   useEffect(()=>{
     const lastDay=lsGet("lastLoginDay","");
@@ -7469,19 +8435,15 @@ function App() {
     const od=cleaned.filter(ev=>ev.status==="pending"&&ev.date<today&&!(ev.deadline&&ev.deadline<today));
     if(od.length>0){setOverdueForModal(od);setNewDayModal(true);}
   },[]);
-  useEffect(()=>{
-    if(focusSecs===0&&focusRunning){
-      setFocusRunning(false);
-      if(focusMode==="Focus"){ logSession(Math.max(1,Math.round(focusTotal/60)),"Focus"); }
-      setFocusSecs(focusTotal);
-    }
-  },[focusSecs,focusRunning,focusMode,focusTotal]);
   const navSections=[
     {label:"Workspace",items:[
       {id:"dashboard",label:"Dashboard"},
       {id:"calendar",label:"Calendar"},
       {id:"aichat",label:"Studlin AI"},
-      {id:"writestudio",label:"Writing Suite",badge:String(lsGet("essays",[]).length||"")},
+      // "writestudio" (Writing Suite) intentionally hidden from the active
+      // nav — archived for V2, not deleted. Page, route mapping, and label
+      // all still exist below so nothing breaks for anything that still
+      // links into it (e.g. Dashboard's Essay Writer / Citation quick tools).
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
       {id:"friends",label:"Studlin Network",badge:String(unreadCount||"")},
@@ -7496,7 +8458,7 @@ function App() {
   const sectionOf={dashboard:"Workspace",aichat:"Workspace",writestudio:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",friends:"Workspace",solve:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
-  if (!onboarded) return <InitWizard onComplete={()=>{setOnboarded(true);if(!lsGet("notifAsked",false))setTimeout(()=>setNotifPermModal(true),500);}} />;
+  if (!onboarded) return <InitWizard onComplete={()=>{setOnboarded(true);}} />;
   const sidebarText=isLight?"#F6F1E6":T.text;
   const sidebarMuted=isLight?"rgba(246,241,230,0.55)":T.muted;
   const sidebarFaint=isLight?"rgba(246,241,230,0.35)":T.faint;
@@ -7597,75 +8559,31 @@ function App() {
         </div>
 
         {/* CONTENT */}
-        <div key={active} data-page style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both"}}>
-          {active==="dashboard"?<Dashboard setActive={setActive} focusSecs={focusSecs} focusRunning={focusRunning} setFocusRunning={setFocusRunning} setScheduleSettingsOpen={setScheduleSettingsOpen} seriousMode={seriousMode} />:
-           active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} />:
+        {/* onAnimationEnd clears the animation once the tab-switch entrance
+            plays out. A CSS animation that touches `transform` (studlinRise
+            does, for the rise motion) makes this element a containing block
+            for any `position:fixed` descendant — e.g. a modal opened from a
+            page nested in here — for as long as the animation stays
+            attached, even after it's visually finished and the scrolled
+            container is no longer at the top. That silently breaks every
+            such modal's centering into being relative to this scrolled
+            container instead of the real viewport. Clearing it once done
+            keeps the entrance animation but stops that side effect. */}
+        <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both"}}>
+          {active==="dashboard"?<Dashboard setActive={setActive} setScheduleSettingsOpen={setScheduleSettingsOpen} seriousMode={seriousMode} />:
+           active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} />:
+           active==="calendar"?<CalendarTab onTourDone={handleCalendarTourDone} onTaskSaved={askNotifIfNeeded} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} />:
+           active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} />:
            ActivePage?<ActivePage />:null}
         </div>
       </div>
 
       {/* PRICING MODAL */}
       <Modal open={pricingOpen} onClose={()=>setPricingOpen(false)} title="Studlin plans" sub="Start free. Upgrade when you're ready. Cancel anytime." width={820}>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14}}>
-          {[
-            {
-              name:"Free",price:"$0",per:"forever",tag:null,
-              desc:"Get organized. No credit card needed.",
-              features:["30 AI credits / month","AI tutor — Standard model","Manual flashcards & notes","Focus timer, calendar & planner","Streaks, XP & basic stats"],
-              cta:"Get started free",variant:"subtle",
-            },
-            {
-              name:"Pro",price:"$9.99",per:"/mo",tag:"7 DAYS FREE",
-              desc:"The full study OS. Built for serious students.",
-              features:["200 AI credits / month","AI tutor — all models + 4 study modes","Full essay suite + plagiarism check","AI flashcards from notes, PDFs & YouTube","Google Docs sync + AI Rewrite (Humanizer)","Unlimited grammar + readability scores","Squad leaderboards + 2× focus XP"],
-              cta:"Start free trial",variant:"lime",featured:true,
-            },
-            {
-              name:"Max",price:"$24.99",per:"/mo",tag:null,
-              desc:"Maximum firepower. No limits, ever.",
-              features:["500 AI credits / month","Everything in Pro, unlimited","Bulk ops — 100 flashcards at once","Advanced analytics & learning paths","Cosmetics shop + monthly tournaments","Priority support + 3× focus XP"],
-              cta:"Upgrade to Max",variant:"ink",
-            },
-          ].map((plan,i)=>(
-            <div key={i} style={{
-              background:plan.featured?T.forest:T.card2,
-              border:`1.5px solid ${plan.featured?T.lime+"44":T.border}`,
-              borderRadius:18,
-              padding:24,
-              position:"relative",
-              display:"flex",flexDirection:"column",
-              boxShadow:plan.featured?`0 24px 48px -20px ${T.lime}30`:"none",
-            }}>
-              {plan.tag && (
-                <div style={{position:"absolute",top:-11,left:18,background:T.lime,color:T.ink,fontFamily:T.mono,fontSize:10,fontWeight:700,letterSpacing:"0.14em",padding:"4px 10px",borderRadius:99}}>{plan.tag}</div>
-              )}
-              <div style={{fontSize:18,fontWeight:700,color:plan.featured?T.cream:T.white,letterSpacing:"-0.02em",marginBottom:4}}>{plan.name}</div>
-              <div style={{display:"flex",alignItems:"baseline",gap:5,margin:"8px 0 6px"}}>
-                <span style={{fontFamily:T.hand,fontSize:50,fontWeight:700,lineHeight:0.9,color:plan.featured?T.lime:T.text,letterSpacing:"-0.02em"}}>{plan.price}</span>
-                <span style={{fontSize:13,color:T.muted}}>{plan.per}</span>
-              </div>
-              <div style={{fontSize:13,color:plan.featured?"rgba(246,241,230,0.7)":T.muted,marginBottom:18,lineHeight:1.5}}>{plan.desc}</div>
-              <ul style={{listStyle:"none",padding:0,margin:"0 0 20px",display:"flex",flexDirection:"column",gap:9,flex:1}}>
-                {plan.features.map((f,j)=>(
-                  <li key={j} style={{display:"flex",gap:9,fontSize:13,color:plan.featured?T.cream:T.text,lineHeight:1.45,alignItems:"flex-start"}}>
-                    <span style={{width:16,height:16,borderRadius:"50%",background:T.lime,color:T.ink,display:"grid",placeItems:"center",flex:"none",marginTop:1}}>
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                    </span>
-                    {f}
-                  </li>
-                ))}
-              </ul>
-              <button onClick={()=>setPricingOpen(false)} style={{
-                width:"100%",padding:"11px",borderRadius:99,
-                fontWeight:600,fontSize:14,cursor:"pointer",fontFamily:T.font,
-                border:plan.variant==="subtle"?`1px solid ${T.border}`:"none",
-                background:plan.variant==="lime"?T.lime:plan.variant==="ink"?T.ink:T.card,
-                color:plan.variant==="lime"?T.ink:plan.variant==="ink"?T.cream:T.text,
-                transition:"opacity .15s",
-              }}>{plan.cta}</button>
-            </div>
-          ))}
-        </div>
+        <PlanCards billing="monthly" onSelect={(key)=>{
+          setPricingOpen(false);
+          if(key!=="free")window.location.href="checkout.html?plan="+key+"&billing=monthly";
+        }} />
         <div style={{marginTop:20,padding:"16px 18px",background:T.card2,borderRadius:12,border:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
           <div style={{fontSize:13,color:T.text,fontWeight:500}}>
             Grammarly + Quizlet + ChatGPT + Notion = <span style={{color:T.red,fontWeight:700}}>$55/mo</span>.&nbsp;&nbsp;Pro is <span style={{color:T.lime,fontWeight:700}}>$9.99</span>.
@@ -7673,6 +8591,33 @@ function App() {
           <div style={{fontSize:12,color:T.muted}}>All plans include a 14-day money-back guarantee. No credit card for Free or trial.</div>
         </div>
       </Modal>
+      {/* PAYWALL INTERCEPT — full-screen, shown once right after the first Calendar tour finishes/skips */}
+      {paywallOpen && (
+        <div style={{position:"fixed",inset:0,zIndex:1000,background:"rgba(8,12,10,0.82)",backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px",overflowY:"auto"}}>
+          <div style={{width:"100%",maxWidth:900,background:T.surface,border:`1px solid ${T.border}`,borderRadius:22,padding:"40px 40px 32px",boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease",margin:"24px 0"}}>
+            <div style={{textAlign:"center",marginBottom:24}}>
+              <div style={{fontSize:24,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:6}}>Unlock your full potential</div>
+              <div style={{fontSize:13.5,color:T.muted}}>Students on Pro study 2.4× more and report a full letter-grade jump. Try it free for 7 days.</div>
+            </div>
+            <div style={{display:"flex",justifyContent:"center",marginBottom:24}}>
+              <div style={{display:"inline-flex",background:T.card2,border:`1px solid ${T.border}`,borderRadius:99,padding:3,gap:2}}>
+                {["monthly","annual"].map(b=>(
+                  <button key={b} onClick={()=>setPaywallBilling(b)} style={{padding:"8px 18px",borderRadius:99,border:"none",fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,background:paywallBilling===b?T.lime:"transparent",color:paywallBilling===b?T.ink:T.muted,textTransform:"capitalize",display:"flex",alignItems:"center",gap:6}}>
+                    {b}{b==="annual"&&<span style={{fontSize:10,fontWeight:700,color:paywallBilling===b?T.ink:T.lime}}>Save 20%</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <PlanCards billing={paywallBilling} onSelect={(key)=>{
+              setPaywallOpen(false);
+              if(key!=="free")window.location.href="checkout.html?plan="+key+"&billing="+paywallBilling;
+            }} />
+            <div style={{textAlign:"center",marginTop:22}}>
+              <button onClick={()=>setPaywallOpen(false)} style={{background:"none",border:"none",color:T.muted,fontSize:13,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Maybe later — continue with free plan</button>
+            </div>
+          </div>
+        </div>
+      )}
       <Modal open={creditsOpen} onClose={()=>{setCreditsOpen(false);setCreditCheckout(null);setBoughtMsg("");}} title={creditCheckout?"Complete purchase":"AI Credits"} sub={creditCheckout?("Purchase "+creditCheckout.label+" for "+creditCheckout.price):"Every AI action uses credits. Top up, upgrade, or just check your balance."} width={620}
         footer={creditCheckout
           ?<><Btn variant="subtle" onClick={()=>{setCreditCheckout(null);setBoughtMsg("");}}>← Back</Btn><Btn onClick={confirmCreditPurchase} disabled={creditProcessing} style={{background:T.lime,color:T.ink}}>{creditProcessing?"Processing...":"Pay "+creditCheckout.price}</Btn></>
