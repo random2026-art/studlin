@@ -3233,6 +3233,21 @@ const isRoomUnread=(room,myUid)=>{
 };
 const isOnlineStatusOn=()=>lsGet("settings",{}).onlineStatus!==false;
 const isIncognitoOn=()=>lsGet("settings",{}).incognito===true;
+// Short two-tone chat chime — same raw Web Audio oscillator technique as
+// TaskTimerModal's playBeep, but a distinct, lighter tone so a new message
+// never sounds like the Pomodoro alarm.
+const playChatChime=()=>{
+  try{
+    const ctx=new(window.AudioContext||window.webkitAudioContext)();
+    const osc=ctx.createOscillator();const gain=ctx.createGain();
+    osc.connect(gain);gain.connect(ctx.destination);
+    osc.frequency.setValueAtTime(660,ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(880,ctx.currentTime+0.12);
+    gain.gain.setValueAtTime(0.22,ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.22);
+    osc.start(ctx.currentTime);osc.stop(ctx.currentTime+0.22);
+  }catch(e){}
+};
 function fmtGroupCountdown(expiresAt){
   if(!expiresAt)return null;
   const ms=expiresAt-Date.now();
@@ -3253,7 +3268,7 @@ function presenceInfo(u,{incognito=false}={}){
   return{color:T.faint,text:"Offline",joinable:false};
 }
 
-function FriendsChat({onFriendRequestSent}={}){
+function FriendsChat({onFriendRequestSent,onActiveChatChange}={}){
   const [searchQ,setSearchQ]=useState("");
   const [searchFilter,setSearchFilter]=useState("All");
   const [inviteEmail,setInviteEmail]=useState("");
@@ -3283,6 +3298,15 @@ function FriendsChat({onFriendRequestSent}={}){
   const inviteLink="https://studlin.app?ref="+refCode;
   const qrUrl="https://api.qrserver.com/v1/create-qr-code/?data="+encodeURIComponent(inviteLink)+"&size=150x150&color=AECE5E&bgcolor=0D120F&margin=10";
   const myUid=firebase.auth().currentUser?.uid||null;
+
+  // Reports which thread (if any) is actively open up to App(), so its
+  // cross-tab notification listener can suppress alerts for a thread the
+  // user is already looking at (Rule 1 of the notification router).
+  const roomIdOf=(target)=>target?(target.kind==="group"?target.group.id:(myUid&&target.user.uid?dmRoomId(myUid,target.user.uid):null)):null;
+  useEffect(()=>{
+    if(onActiveChatChange)onActiveChatChange(roomIdOf(chatTarget));
+    return ()=>{if(onActiveChatChange)onActiveChatChange(null);};
+  },[chatTarget,myUid]);
 
   // ── Live friend graph (Firestore `friendships` + `profiles`) ──────────────
   const [friends,setFriends]=useState([]); // accepted, either direction — {uid,n,h,s,online,presence}
@@ -4549,6 +4573,11 @@ function TaskTimerModal({task,onClose,onComplete}){
   const [completion,setCompletion]=useState(null);
   const [barFilled,setBarFilled]=useState(false);
   const [rankRisen,setRankRisen]=useState(false);
+  // Collapsible floating widget — tucks itself away during a focus block so
+  // it doesn't block the dashboard/calendar, and auto-expands the moment a
+  // break starts so the student notices they can step away.
+  const [collapsed,setCollapsed]=useState(false);
+  useEffect(()=>{ if(phase==="break"||phase==="breakDone")setCollapsed(false); },[phase]);
 
   const playBeep=()=>{try{const ctx=new(window.AudioContext||window.webkitAudioContext)();const osc=ctx.createOscillator();const gain=ctx.createGain();osc.connect(gain);gain.connect(ctx.destination);osc.frequency.setValueAtTime(880,ctx.currentTime);osc.frequency.exponentialRampToValueAtTime(440,ctx.currentTime+0.3);gain.gain.setValueAtTime(0.3,ctx.currentTime);gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.35);osc.start(ctx.currentTime);osc.stop(ctx.currentTime+0.35);}catch(e){}};
 
@@ -4641,7 +4670,7 @@ function TaskTimerModal({task,onClose,onComplete}){
     }
   };
 
-  const resume=()=>{setPhase("focus2");setSecs(focus2Mins*60);setRunning(true);};
+  const resume=()=>{setPhase("focus2");setSecs(focus2Mins*60);setRunning(true);setCollapsed(true);};
 
   const finishEarly=()=>{
     if(phase!=="break"&&focusStartRef.current){
@@ -4852,40 +4881,59 @@ function TaskTimerModal({task,onClose,onComplete}){
   const widgetCirc=2*Math.PI*widgetR;
 
   return(
-    <div style={{position:"fixed",bottom:20,right:20,zIndex:500,width:284,background:T.card,border:`1px solid ${T.border}`,borderRadius:18,boxShadow:"0 20px 50px -14px rgba(0,0,0,0.5)",padding:"14px 16px",fontFamily:T.font,animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
-      <div style={{display:"flex",alignItems:"center",gap:12}}>
-        <div style={{position:"relative",width:48,height:48,flexShrink:0}}>
-          <svg viewBox="0 0 64 64" style={{width:48,height:48,transform:"rotate(-90deg)"}}>
-            <circle cx="32" cy="32" r={widgetR} fill="none" stroke={T.border} strokeWidth="5"/>
-            <circle cx="32" cy="32" r={widgetR} fill="none" stroke={timerColor} strokeWidth="5" strokeLinecap="round"
-              strokeDasharray={widgetCirc}
-              strokeDashoffset={widgetCirc*(1-phasePct)}
-              style={{transition:"stroke-dashoffset 0.5s"}}/>
-          </svg>
-          {task.coop&&(
-            <div title={"Locked in with "+task.coop.name} style={{position:"absolute",bottom:-3,right:-3,width:20,height:20,borderRadius:"50%",background:T.teal,border:`2px solid ${T.card}`,display:"grid",placeItems:"center",fontSize:8.5,fontWeight:800,color:T.ink}}>{task.coop.initials}</div>
-          )}
-        </div>
-        <div style={{flex:1,minWidth:0}}>
-          <div style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.09em",textTransform:"uppercase",color:timerColor,marginBottom:2}}>{phaseLabel}{task.coop&&" · 1.2× XP"}</div>
-          <div style={{fontFamily:T.mono,fontSize:19,fontWeight:800,color:T.white,letterSpacing:"-0.02em"}}>{fmt(secs)}</div>
-          <div style={{fontSize:11,color:T.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{task.coop?"With "+task.coop.name:task.title}</div>
-        </div>
-        <button onClick={()=>setSoundOn(s=>!s)} title={soundOn?"Mute alarm":"Unmute alarm"} style={{width:28,height:28,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:soundOn?T.text:T.faint,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{soundOn?Icon.volume:Icon.volOff}</button>
-      </div>
+    <div style={{position:"fixed",bottom:20,right:collapsed?8:20,zIndex:500,width:collapsed?64:284,background:T.card,border:`1px solid ${T.border}`,borderRadius:18,boxShadow:"0 20px 50px -14px rgba(0,0,0,0.5)",padding:collapsed?"30px 8px 14px":"14px 16px",fontFamily:T.font,animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)",transition:"width 0.28s cubic-bezier(.2,.85,.3,1), padding 0.28s cubic-bezier(.2,.85,.3,1), right 0.28s cubic-bezier(.2,.85,.3,1)",overflow:"hidden",boxSizing:"border-box"}}>
+      <button onClick={()=>setCollapsed(c=>!c)} title={collapsed?"Expand timer":"Collapse timer"} style={{position:"absolute",top:10,right:10,width:22,height:22,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer",zIndex:1,padding:0}}>
+        <span style={{display:"inline-flex",transform:collapsed?"rotate(180deg)":"none",transition:"transform 0.22s ease"}}>{Icon.arrowR}</span>
+      </button>
 
-      {isBreak&&(
-        <div style={{fontSize:11.5,color:T.amber,margin:"10px 0 0",padding:"9px 11px",background:T.amber+"12",borderRadius:9,lineHeight:1.5}}>
-          {breakIdeaRef.current}
+      {collapsed ? (
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+          <div style={{position:"relative",width:40,height:40}}>
+            <svg viewBox="0 0 64 64" style={{width:40,height:40,transform:"rotate(-90deg)"}}>
+              <circle cx="32" cy="32" r={widgetR} fill="none" stroke={T.border} strokeWidth="5"/>
+              <circle cx="32" cy="32" r={widgetR} fill="none" stroke={timerColor} strokeWidth="5" strokeLinecap="round"
+                strokeDasharray={widgetCirc}
+                strokeDashoffset={widgetCirc*(1-phasePct)}
+                style={{transition:"stroke-dashoffset 0.5s"}}/>
+            </svg>
+          </div>
+          <div style={{fontFamily:T.mono,fontSize:11,fontWeight:800,color:timerColor,letterSpacing:"-0.02em"}}>{fmt(secs)}</div>
         </div>
-      )}
+      ) : (<>
+        <div style={{display:"flex",alignItems:"center",gap:12,paddingRight:26}}>
+          <div style={{position:"relative",width:48,height:48,flexShrink:0}}>
+            <svg viewBox="0 0 64 64" style={{width:48,height:48,transform:"rotate(-90deg)"}}>
+              <circle cx="32" cy="32" r={widgetR} fill="none" stroke={T.border} strokeWidth="5"/>
+              <circle cx="32" cy="32" r={widgetR} fill="none" stroke={timerColor} strokeWidth="5" strokeLinecap="round"
+                strokeDasharray={widgetCirc}
+                strokeDashoffset={widgetCirc*(1-phasePct)}
+                style={{transition:"stroke-dashoffset 0.5s"}}/>
+            </svg>
+            {task.coop&&(
+              <div title={"Locked in with "+task.coop.name} style={{position:"absolute",bottom:-3,right:-3,width:20,height:20,borderRadius:"50%",background:T.teal,border:`2px solid ${T.card}`,display:"grid",placeItems:"center",fontSize:8.5,fontWeight:800,color:T.ink}}>{task.coop.initials}</div>
+            )}
+          </div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.09em",textTransform:"uppercase",color:timerColor,marginBottom:2}}>{phaseLabel}{task.coop&&" · 1.2× XP"}</div>
+            <div style={{fontFamily:T.mono,fontSize:19,fontWeight:800,color:T.white,letterSpacing:"-0.02em"}}>{fmt(secs)}</div>
+            <div style={{fontSize:11,color:T.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{task.coop?"With "+task.coop.name:task.title}</div>
+          </div>
+          <button onClick={()=>setSoundOn(s=>!s)} title={soundOn?"Mute alarm":"Unmute alarm"} style={{width:28,height:28,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:soundOn?T.text:T.faint,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{soundOn?Icon.volume:Icon.volOff}</button>
+        </div>
 
-      <div style={{display:"flex",gap:8,marginTop:12}}>
-        {phase==="break"&&<BtnSm onClick={resume} style={{flex:1,justifyContent:"center"}}>Resume early</BtnSm>}
-        {phase==="breakDone"&&<BtnSm onClick={resume} style={{flex:1,justifyContent:"center"}}>Resume</BtnSm>}
-        {phase!=="break"&&phase!=="breakDone"&&<BtnSm variant="ghost" onClick={()=>setRunning(r=>!r)} style={{flex:1,justifyContent:"center"}}>{running?"Pause":"Resume"}</BtnSm>}
-        {phase!=="breakDone"&&<BtnSm variant="danger" onClick={finishEarly} style={{flex:1,justifyContent:"center"}}>Finish</BtnSm>}
-      </div>
+        {isBreak&&(
+          <div style={{fontSize:11.5,color:T.amber,margin:"10px 0 0",padding:"9px 11px",background:T.amber+"12",borderRadius:9,lineHeight:1.5}}>
+            {breakIdeaRef.current}
+          </div>
+        )}
+
+        <div style={{display:"flex",gap:8,marginTop:12}}>
+          {phase==="break"&&<BtnSm onClick={resume} style={{flex:1,justifyContent:"center"}}>Resume early</BtnSm>}
+          {phase==="breakDone"&&<BtnSm onClick={resume} style={{flex:1,justifyContent:"center"}}>Resume</BtnSm>}
+          {phase!=="break"&&phase!=="breakDone"&&<BtnSm variant="ghost" onClick={()=>setRunning(r=>!r)} style={{flex:1,justifyContent:"center"}}>{running?"Pause":"Resume"}</BtnSm>}
+          {phase!=="breakDone"&&<BtnSm variant="danger" onClick={finishEarly} style={{flex:1,justifyContent:"center"}}>Finish</BtnSm>}
+        </div>
+      </>)}
     </div>
   );
 }
@@ -7277,7 +7325,7 @@ function FocusMusic(){
 // ─── SETTINGS ─────────────────────────────────────────────────────────────────
 function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineWizard=()=>{}}) {
   const [active,setActive]=useState("General");
-  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,sr:true,auto:true,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false},...lsGet("settings",{})}));
+  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,sr:true,auto:true,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true},...lsGet("settings",{})}));
   const tog=k=>setToggles(t=>{const n={...t,[k]:!t[k]};lsSet("settings",n);return n;});
   const [sysPushStatus,setSysPushStatus]=useState(()=>{
     if(typeof Notification==="undefined")return "unsupported";
@@ -7576,28 +7624,31 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 
           {active==="Notifications" && (<>
             <Card style={{marginBottom:12}}>
-              <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:14,marginBottom:14}}>
-                <div style={{flex:1}}>
-                  <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:3}}>System Notifications</div>
-                  <div style={{fontSize:12,color:T.muted,lineHeight:1.5}}>Receive native desktop alerts for incoming chat messages and study session updates — even when this tab is closed or in the background.</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Notification Preferences</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Control how incoming chat messages reach you — a soft chime, a native desktop alert, or both, depending on what you're doing.</div>
+              <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:14,padding:"13px 0",borderBottom:`1px solid ${T.border}`}}>
+                <div style={{flex:1,marginRight:14}}>
+                  <div style={{fontSize:13,color:T.text,fontWeight:500}}>Enable Desktop Notifications</div>
+                  <div style={{fontSize:11.5,color:T.muted,marginTop:2,lineHeight:1.45}}>Native desktop alerts for incoming chat messages and study session updates — even when this tab is closed or in the background.</div>
                 </div>
                 <div onClick={handleSysPushToggle} style={{width:38,height:20,borderRadius:10,background:toggles.sysPush?T.lime:T.card2,border:`1px solid ${toggles.sysPush?T.lime:T.border}`,position:"relative",cursor:sysPushStatus==="denied"?"not-allowed":"pointer",transition:"all 0.2s",flexShrink:0,opacity:sysPushStatus==="unsupported"?0.45:1}}>
                   <div style={{width:14,height:14,borderRadius:"50%",background:toggles.sysPush?T.bg:"#fff",position:"absolute",top:2,left:toggles.sysPush?21:2,transition:"left 0.2s"}} />
                 </div>
               </div>
               {sysPushStatus==="denied"&&(
-                <div style={{fontSize:11.5,color:T.amber,background:T.amber+"10",border:`1px solid ${T.amber}22`,borderRadius:7,padding:"9px 12px",lineHeight:1.5}}>
+                <div style={{fontSize:11.5,color:T.amber,background:T.amber+"10",border:`1px solid ${T.amber}22`,borderRadius:7,padding:"9px 12px",lineHeight:1.5,marginTop:10}}>
                   Notifications are blocked in your browser. Open browser site settings and allow notifications for this site, then refresh.
                 </div>
               )}
               {sysPushStatus==="unsupported"&&(
-                <div style={{fontSize:11.5,color:T.muted,lineHeight:1.5}}>Your browser does not support desktop push notifications.</div>
+                <div style={{fontSize:11.5,color:T.muted,lineHeight:1.5,marginTop:10}}>Your browser does not support desktop push notifications.</div>
               )}
               {sysPushStatus==="granted"&&toggles.sysPush&&(
-                <div style={{fontSize:11.5,color:T.teal,background:T.teal+"10",border:`1px solid ${T.teal}22`,borderRadius:7,padding:"9px 12px",lineHeight:1.5}}>
+                <div style={{fontSize:11.5,color:T.teal,background:T.teal+"10",border:`1px solid ${T.teal}22`,borderRadius:7,padding:"9px 12px",lineHeight:1.5,marginTop:10}}>
                   Active · Studlin will send alerts to your desktop even when this tab is in the background.
                 </div>
               )}
+              <Row label="Enable Message Audio Chimes" sub="A soft chime when a message arrives while you're elsewhere in Studlin. Muted automatically during a lock-in session." k="chatChimes" />
             </Card>
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Task &amp; App Notifications</div>
@@ -9158,14 +9209,59 @@ function App() {
 
   // Global unread count for the sidebar badge — mounted here (not inside
   // FriendsChat) so it stays live even while the user is on a different tab,
-  // the same chatRooms query FriendsChat uses for its own inbox.
+  // the same chatRooms query FriendsChat uses for its own inbox. This same
+  // listener also drives the context-aware chat notification/chime router
+  // below, since it's the only Firestore subscription that survives tab
+  // switches (FriendsChat's own listeners tear down the moment the user
+  // navigates away).
   const [unreadCount,setUnreadCount]=useState(0);
+  // Which thread (if any) FriendsChat currently has open — reported up via
+  // onActiveChatChange, since chatTarget itself is local to FriendsChat and
+  // unmounts with it.
+  const [openChatRoomId,setOpenChatRoomId]=useState(null);
+  // This effect's dependency array is [myUid] only, by design (re-subscribing
+  // to Firestore on every tab switch or lock-in start/stop would be
+  // wasteful) — so active/timerTask/openChatRoomId must never be read
+  // directly inside the onSnapshot callback below, or they'd be frozen at
+  // whatever they were when the listener was created. Mirror each into a
+  // ref, updated inline every render, and read .current inside the callback.
+  const activeRef=useRef(active);activeRef.current=active;
+  const timerTaskRef=useRef(timerTask);timerTaskRef.current=timerTask;
+  const openChatRoomIdRef=useRef(openChatRoomId);openChatRoomIdRef.current=openChatRoomId;
+  const lastMsgRef=useRef({}); // roomId -> last seen lastMessage.ts, for new-message dedup
   useEffect(()=>{
     if(!myUid){setUnreadCount(0);return;}
     const unsub=fsdb().collection('chatRooms').where('memberUids','array-contains',myUid)
       .onSnapshot(snap=>{
         let n=0;
-        snap.docs.forEach(d=>{if(isRoomUnread(d.data(),myUid))n++;});
+        snap.docs.forEach(d=>{
+          const room=d.data();
+          if(isRoomUnread(room,myUid))n++;
+          const last=room.lastMessage;
+          if(!last||last.senderId===myUid)return;
+          const prevTs=lastMsgRef.current[d.id];
+          if(prevTs===undefined){
+            // First time we've ever seen this room — just seed the
+            // baseline. Without this guard, every pre-existing unread
+            // message would fire a notification the moment the app loads.
+            lastMsgRef.current[d.id]=last.ts;
+            return;
+          }
+          if(last.ts<=prevTs)return;
+          lastMsgRef.current[d.id]=last.ts;
+          // ── Context-aware notification/chime router (4 rules) ──────────
+          if(timerTaskRef.current)return; // Rule 4: lock-in overrules everything
+          const settings=lsGet("settings",{});
+          const chimesOn=settings.chatChimes!==false;
+          const away=document.visibilityState!=="visible";
+          if(!away&&activeRef.current==="friends"&&openChatRoomIdRef.current===d.id)return; // Rule 1: viewing this exact thread
+          if(chimesOn)playChatChime(); // Rules 2 & 3 both chime
+          if(away&&settings.sysPush===true&&typeof Notification!=="undefined"&&Notification.permission==="granted"){
+            // Rule 3 only: away/background also gets the desktop overlay
+            const body=room.type==="group"?"New message in "+(room.name||"group chat"):"New message";
+            new Notification("Studlin",{body});
+          }
+        });
         setUnreadCount(n);
       },()=>{});
     return unsub;
@@ -9324,8 +9420,12 @@ function App() {
       </div>
     );
   };
+  // Ambient lock-in glow — a subtle ring tinted to the active task's subject
+  // color, framing the viewport for as long as a lock-in session is running
+  // (including its break) so the interface itself signals "deep work."
+  const lockInGlowColor=timerTask?(getSubjects().find(s=>s.label===timerTask.subject)?.color||T.lime):null;
   return (
-    <div style={{display:"flex",height:"100vh",overflow:"hidden",background:isLight?T.bg:`radial-gradient(1200px 600px at 78% -8%, ${T.glow}, transparent 60%), ${T.bg}`,fontFamily:T.font,color:T.text}}>
+    <div style={{display:"flex",height:"100vh",overflow:"hidden",background:isLight?T.bg:`radial-gradient(1200px 600px at 78% -8%, ${T.glow}, transparent 60%), ${T.bg}`,fontFamily:T.font,color:T.text,boxShadow:lockInGlowColor?`inset 0 0 0 3px ${lockInGlowColor}22, inset 0 0 40px 0 ${lockInGlowColor}14`:"none",transition:"box-shadow 0.6s ease"}}>
       {/* SIDEBAR */}
       <div style={{width:navCollapsed?68:230,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #18241D 0%, #0D120F00 60%)",backgroundColor:isLight?T.surface:T.surface,display:"flex",flexDirection:"column",padding:navCollapsed?"20px 10px":"20px 12px",borderRight:`1px solid ${isLight?"transparent":T.border}`,overflowY:"auto",overflowX:"hidden",transition:"width 0.22s cubic-bezier(.2,.8,.2,1), padding 0.22s cubic-bezier(.2,.8,.2,1)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 6px",marginBottom:20,justifyContent:navCollapsed?"center":"space-between"}}>
@@ -9439,7 +9539,7 @@ function App() {
           {active==="dashboard"?<Dashboard setActive={setActive} setScheduleSettingsOpen={setScheduleSettingsOpen} seriousMode={seriousMode} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} />:
            active==="calendar"?<CalendarTab onTourDone={handleCalendarTourDone} onTaskSaved={askNotifIfNeeded} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} />:
-           active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} />:
+           active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} />:
            active==="lectures"?<Lectures setActive={setActive} setPricingOpen={setPricingOpen} />:
            active==="profile"?<Profile setActive={setActive} />:
            ActivePage?<ActivePage />:null}
