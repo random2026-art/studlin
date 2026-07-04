@@ -9,24 +9,25 @@
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 /* ============================================================
-   STUDLIN — LANDING (kinetic editorial · dark forest + lime)
+   STUDLIN, LANDING (kinetic editorial · dark forest + lime)
    ============================================================ */
 :root{
-  --bg:#0C1410;
-  --bg-2:#0F1A14;
-  --forest:#17271F;
-  --forest-deep:#0D1410;
-  --panel:#141713;
-  --panel-2:#1A1E18;
-  --cream:#F4EFE3;
-  --cream-dim:rgba(244,239,227,0.62);
-  --cream-faint:rgba(244,239,227,0.38);
-  --lime:#B8E04A;
-  --lime-bright:#C9F25A;
-  --lime-deep:#8FB832;
+  --bg:#FAF9F5;
+  --bg-2:#F2F0E8;
+  --forest:#EAF0E2;
+  --forest-deep:#E4EBD9;
+  --panel:#FFFFFF;
+  --panel-2:#F6F4ED;
+  --cream:#16241C;
+  --cream-dim:rgba(22,36,28,0.62);
+  --cream-faint:rgba(22,36,28,0.38);
+  --lime:#173D2D;        /* was neon #B8E04A, now forest (matches Get Started) */
+  --lime-bright:#1E4A38;
+  --lime-deep:#122E22;
+  --spark:#B8E04A;        /* true lime kept only for logo + hero underline */
   --ink:#0A1310;
-  --line:rgba(244,239,227,0.10);
-  --line-2:rgba(244,239,227,0.06);
+  --line:rgba(22,36,28,0.10);
+  --line-2:rgba(22,36,28,0.06);
   /* accent pastels (used sparingly, desaturated) */
   --peach:#E9B98C;
   --sky:#8FBEDB;
@@ -58,9 +59,9 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 
 /* grain overlay */
 body::after{
-  content:"";position:fixed;inset:0;z-index:9999;pointer-events:none;opacity:0.04;
+  content:"";position:fixed;inset:0;z-index:9999;pointer-events:none;opacity:0.02;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  mix-blend-mode:overlay;
+  mix-blend-mode:multiply;
 }
 
 .wrap{max-width:1280px;margin:0 auto;padding:0 32px;}
@@ -122,7 +123,7 @@ body::after{
 .brand img{width:30px;height:30px;border-radius:8px;}
 .nav-links{display:flex;gap:6px;}
 .nav-links a{font-size:14.5px;color:var(--cream-dim);padding:9px 15px;border-radius:99px;transition:color .15s,background .15s;}
-.nav-links a:hover{color:var(--cream);background:rgba(244,239,227,0.05);}
+.nav-links a:hover{color:var(--cream);background:rgba(22,36,28,0.05);}
 .nav-cta{display:flex;align-items:center;gap:8px;}
 
 /* ============ HERO ============ */
@@ -148,10 +149,10 @@ body::after{
 .hero-sky{position:absolute;inset:0;z-index:0;pointer-events:none;overflow:hidden;
   mask-image:radial-gradient(ellipse 95% 80% at 50% 26%,black 60%,transparent 100%);
   -webkit-mask-image:radial-gradient(ellipse 95% 80% at 50% 26%,black 60%,transparent 100%);}
-.hero-sky .tw{position:absolute;border-radius:50%;background:var(--cream);box-shadow:0 0 5px rgba(244,239,227,0.5);animation:twinkle 3s ease-in-out infinite;}
+.hero-sky .tw{position:absolute;border-radius:50%;background:var(--cream);box-shadow:0 0 5px rgba(22,36,28,0.5);animation:twinkle 3s ease-in-out infinite;}
 .hero-sky .tw.lime{background:var(--lime);box-shadow:0 0 6px rgba(184,224,74,0.7);}
 .hero-sky .shoot{position:absolute;width:150px;height:1.6px;border-radius:99px;
-  background:linear-gradient(90deg,rgba(184,224,74,0) 0%,rgba(184,224,74,0.5) 55%,rgba(244,239,227,0.98) 100%);
+  background:linear-gradient(90deg,rgba(184,224,74,0) 0%,rgba(184,224,74,0.5) 55%,rgba(22,36,28,0.98) 100%);
   filter:drop-shadow(0 0 6px rgba(184,224,74,0.6));opacity:0;
   animation:shoot 6s ease-in infinite;}
 @media (prefers-reduced-motion: reduce){.hero-sky .shoot,.hero-sky .tw{animation:none;}.hero-sky .shoot{opacity:0;}}
@@ -186,7 +187,7 @@ body::after{
   filter:drop-shadow(0 6px 30px rgba(184,224,74,0.2));
 }
 
-/* rotating word — clean 3D card-flip swap, one word at a time (no blur, no clip window) */
+/* rotating word, clean 3D card-flip swap, one word at a time (no blur, no clip window) */
 .hl-modern.rotor{display:inline-block;vertical-align:bottom;perspective:760px;perspective-origin:50% 45%;}
 .rotor .col{display:inline-grid;justify-items:center;transform-style:preserve-3d;}
 .rotor .col span{
@@ -236,7 +237,7 @@ body::after{
 
 /* floating app fragments */
 .frag{position:absolute;z-index:3;border-radius:16px;background:transparent;will-change:transform;}
-.frag .fin{border-radius:16px;padding:14px 16px;background:rgba(17,32,26,0.72);border:1px solid var(--line);backdrop-filter:blur(8px);box-shadow:0 24px 60px -28px rgba(0,0,0,0.6);}
+.frag .fin{border-radius:16px;padding:14px 16px;background:rgba(255,255,255,0.72);border:1px solid var(--line);backdrop-filter:blur(8px);box-shadow:0 24px 60px -28px rgba(0,0,0,0.6);}
 .frag .fl{font-family:var(--mono);font-size:9.5px;letter-spacing:0.14em;text-transform:uppercase;color:var(--cream-faint);display:flex;align-items:center;gap:6px;}
 .frag .fv{font-family:var(--display);font-weight:700;font-size:30px;line-height:1;color:var(--lime);margin-top:4px;}
 .frag .fv.mono-num{font-family:var(--mono);font-size:26px;letter-spacing:-0.02em;}
@@ -250,17 +251,17 @@ body::after{
 
 /* fragment internals */
 .fdays{display:flex;gap:4px;margin-top:9px;}
-.fdays i{width:9px;height:9px;border-radius:50%;background:rgba(244,239,227,0.12);}
+.fdays i{width:9px;height:9px;border-radius:50%;background:rgba(22,36,28,0.12);}
 .fdays i.on{background:var(--lime);}
 .livepip{width:6px;height:6px;border-radius:50%;background:var(--lime);animation:pipPulse 1.6s ease-in-out infinite;}
 @keyframes pipPulse{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(184,224,74,0.5);}50%{opacity:.6;box-shadow:0 0 0 5px rgba(184,224,74,0);}}
-.fbar{height:4px;border-radius:99px;background:rgba(244,239,227,0.1);margin-top:10px;overflow:hidden;}
+.fbar{height:4px;border-radius:99px;background:rgba(22,36,28,0.1);margin-top:10px;overflow:hidden;}
 .fbar i{display:block;height:100%;width:18%;background:var(--lime);border-radius:99px;transition:width 1s linear;}
 .frow{display:flex;align-items:flex-end;gap:12px;}
 .fbars{display:flex;align-items:flex-end;gap:3px;height:30px;}
 .fbars b{width:6px;background:rgba(184,224,74,0.4);border-radius:2px 2px 0 0;}
 .fbars b:last-child{background:var(--lime);}
-.fchat{font-size:11.5px;line-height:1.4;color:var(--cream);background:rgba(244,239,227,0.08);border-radius:10px 10px 10px 3px;padding:7px 10px;margin-top:8px;max-width:190px;}
+.fchat{font-size:11.5px;line-height:1.4;color:var(--cream);background:rgba(22,36,28,0.08);border-radius:10px 10px 10px 3px;padding:7px 10px;margin-top:8px;max-width:190px;}
 .fchat.ai{background:rgba(184,224,74,0.14);border-radius:10px 10px 3px 10px;color:var(--cream-dim);}
 .fevent{display:flex;align-items:center;gap:10px;margin-top:9px;}
 .edot{width:8px;height:8px;border-radius:3px;background:var(--lime);flex:none;}
@@ -274,10 +275,10 @@ body::after{
 .fcardwrap .fin{padding:0;background:transparent;border:none;box-shadow:none;backdrop-filter:none;}
 .fcard3d{position:relative;width:200px;min-height:108px;transform-style:preserve-3d;transition:transform .7s cubic-bezier(.3,.9,.3,1.05);cursor:pointer;}
 .fcard3d.flip{transform:rotateY(180deg);}
-.fcard3d .face{position:absolute;inset:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;border-radius:16px;padding:13px 15px;background:rgba(17,32,26,0.85);border:1px solid var(--line);box-shadow:0 24px 60px -28px rgba(0,0,0,0.6);}
-.fcard3d .face.back{transform:rotateY(180deg);background:rgba(34,52,22,0.92);border-color:rgba(184,224,74,0.35);}
+.fcard3d .face{position:absolute;inset:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;border-radius:16px;padding:13px 15px;background:rgba(255,255,255,0.85);border:1px solid var(--line);box-shadow:0 24px 60px -28px rgba(0,0,0,0.6);}
+.fcard3d .face.back{transform:rotateY(180deg);background:rgba(226,240,200,0.92);border-color:rgba(184,224,74,0.35);}
 
-/* gentle bob — inner so parallax transform on .frag survives */
+/* gentle bob, inner so parallax transform on .frag survives */
 .frag .fin,.fcard3d{animation:fragBob 7s ease-in-out infinite;}
 .frag.f2 .fin{animation-delay:-2.2s;}
 .frag.f3 .fcard3d{animation:none;}
@@ -301,6 +302,7 @@ body::after{
 .marq-track{display:flex;gap:56px;align-items:center;white-space:nowrap;animation:scroll 32s linear infinite;padding-right:56px;}
 .marq:hover .marq-track{animation-play-state:paused;}
 @keyframes scroll{to{transform:translateX(calc(-50% - 28px));}}
+@keyframes tscroll{to{transform:translate3d(calc(-50% - 8px),0,0);}}
 .marq-item{font-family:var(--display);font-weight:600;font-size:26px;letter-spacing:-0.02em;color:var(--cream-dim);display:flex;align-items:center;gap:14px;}
 .marq-item .x{color:var(--lime);font-size:16px;}
 
@@ -385,7 +387,7 @@ body::after{
 .dg-card.c1{top:8px;right:30px;transform:rotate(-7deg);}
 .dg-card.c2{top:54px;right:12px;transform:rotate(3deg);}
 .dg-card.c3{top:100px;right:38px;transform:rotate(-4deg);}
-.dg-progress{position:absolute;left:8px;right:8px;bottom:-12px;height:3px;border-radius:3px;background:rgba(244,239,227,0.1);overflow:hidden;}
+.dg-progress{position:absolute;left:8px;right:8px;bottom:-12px;height:3px;border-radius:3px;background:rgba(22,36,28,0.1);overflow:hidden;}
 .dg-progress i{display:block;height:100%;width:100%;border-radius:3px;background:linear-gradient(90deg,var(--lime-deep),var(--lime-bright));transform-origin:left;}
 
 @media (prefers-reduced-motion: no-preference){
@@ -434,12 +436,12 @@ body::after{
 .show-stage{perspective:1600px;display:flex;justify-content:center;transform-style:preserve-3d;}
 .device{
   width:340px;border-radius:46px;background:#060d0a;padding:13px;
-  border:1px solid rgba(244,239,227,0.14);
+  border:1px solid rgba(22,36,28,0.14);
   box-shadow:0 60px 120px -40px rgba(0,0,0,0.8),0 0 0 1px rgba(0,0,0,0.4);
   transform-style:preserve-3d;transition:transform .45s cubic-bezier(.2,.8,.2,1);will-change:transform;position:relative;
 }
 .device::after{content:"";position:absolute;inset:0;border-radius:46px;pointer-events:none;z-index:8;
-  background:radial-gradient(420px circle at var(--gx,50%) var(--gy,40%),rgba(244,239,227,0.16),transparent 60%);
+  background:radial-gradient(420px circle at var(--gx,50%) var(--gy,40%),rgba(22,36,28,0.16),transparent 60%);
   mix-blend-mode:soft-light;opacity:.9;}
 .device .screen{border-radius:34px;overflow:hidden;background:var(--bg);position:relative;aspect-ratio:340/720;}
 .notch{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:104px;height:30px;background:#060d0a;border-radius:18px;z-index:6;}
@@ -451,7 +453,7 @@ body::after{
 .scr-card.dark{background:linear-gradient(160deg,var(--forest),var(--forest-deep));}
 .scr-timer{font-family:var(--display);font-weight:700;font-size:52px;line-height:0.85;color:var(--lime);letter-spacing:-0.03em;}
 
-.show-float{position:absolute;border-radius:16px;padding:13px 15px;background:rgba(17,32,26,0.85);border:1px solid var(--line);backdrop-filter:blur(10px);box-shadow:0 24px 50px -22px rgba(0,0,0,0.6);will-change:transform;transition:transform .4s cubic-bezier(.2,.8,.2,1);}
+.show-float{position:absolute;border-radius:16px;padding:13px 15px;background:rgba(255,255,255,0.85);border:1px solid var(--line);backdrop-filter:blur(10px);box-shadow:0 24px 50px -22px rgba(0,0,0,0.6);will-change:transform;transition:transform .4s cubic-bezier(.2,.8,.2,1);}
 .show-float.s1{top:12%;left:6%;}
 .show-float.s2{bottom:16%;right:5%;}
 @media(max-width:980px){.show-float{display:none;}}
@@ -459,8 +461,8 @@ body::after{
 /* ============ TESTIMONIALS ============ */
 .tmarq{display:flex;flex-direction:column;gap:16px;}
 .trow{display:flex;gap:16px;}
-.trow .marq-track{gap:16px;padding-right:16px;}
-.trow.rev .marq-track{animation-direction:reverse;animation-duration:38s;}
+.trow .marq-track{gap:16px;padding-right:16px;animation-name:tscroll;animation-duration:46s;will-change:transform;transform:translateZ(0);backface-visibility:hidden;}
+.trow.rev .marq-track{animation-direction:reverse;animation-duration:54s;}
 .tcard{width:380px;flex:none;background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:24px;white-space:normal;}
 .tcard.lime{background:var(--lime);}
 .tcard.lime .tq,.tcard.lime .tn{color:var(--ink);}
@@ -472,6 +474,15 @@ body::after{
 .tcard .tn{font-weight:600;font-size:13.5px;}
 .tcard .tr{font-size:12px;color:var(--cream-faint);}
 .tcard.lime .tr{color:rgba(10,19,16,0.6);}
+.tcard .tcat{display:inline-flex;align-items:center;font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#3d5a10;background:rgba(184,224,74,0.22);padding:3px 8px;border-radius:99px;margin-top:4px;}
+.tcard.lime .tcat{color:#D8F29A;background:rgba(184,224,74,0.18);}
+.tcard .stars .s-off{opacity:.26;}
+.uni-row{display:flex;align-items:center;gap:30px 34px;justify-content:center;flex-wrap:wrap;}
+.uni-row .lbl{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--cream-faint);}
+.uni{display:inline-flex;align-items:center;gap:10px;opacity:.86;transition:opacity .2s,transform .2s;}
+.uni:hover{opacity:1;transform:translateY(-2px);}
+.uni .crest{width:23px;height:27px;flex:none;}
+.uni .un{font-family:'Instrument Serif',Georgia,serif;font-weight:400;font-size:24px;line-height:1;color:var(--cream-dim);letter-spacing:.01em;}
 
 /* ============ COMPARISON ============ */
 .cmp{max-width:1000px;margin:56px auto 0;border:1px solid var(--line);border-radius:26px;overflow:hidden;background:var(--panel);box-shadow:0 40px 90px -50px rgba(0,0,0,0.7);}
@@ -492,7 +503,7 @@ body::after{
 .cmp-mark{width:20px;height:20px;border-radius:50%;flex:none;display:grid;place-items:center;margin-top:1px;}
 .cmp-mark svg{width:11px;height:11px;}
 .cmp-cell.good .cmp-mark{background:var(--lime);color:var(--ink);}
-.cmp-cell.bad .cmp-mark{background:rgba(244,239,227,0.07);color:var(--cream-faint);}
+.cmp-cell.bad .cmp-mark{background:rgba(22,36,28,0.07);color:var(--cream-faint);}
 .cmp-mob{display:none;font-family:var(--mono);font-size:10.5px;letter-spacing:0.14em;text-transform:uppercase;margin-bottom:3px;}
 .cmp-cell.good .cmp-mob{color:var(--lime);}
 .cmp-cell.bad .cmp-mob{color:var(--cream-faint);}
@@ -533,7 +544,7 @@ body::after{
 .cpt-v.col-pro.txt{color:var(--lime);}
 .cpt-yes{width:25px;height:25px;border-radius:50%;background:var(--lime);color:var(--ink);display:grid;place-items:center;}
 .cpt-yes svg{width:13px;height:13px;}
-.cpt-no{width:15px;height:2px;border-radius:2px;background:rgba(244,239,227,0.2);}
+.cpt-no{width:15px;height:2px;border-radius:2px;background:rgba(22,36,28,0.2);}
 .cpt-foot{padding:24px 20px;border-left:1px solid var(--line-2);display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:8px;}
 .cpt-foot.lbl{border-left:none;align-items:flex-start;justify-content:center;}
 .cpt-foot .fnote{font-size:13px;color:var(--cream-dim);line-height:1.5;}
@@ -568,7 +579,7 @@ body::after{
 .qitem{background:var(--panel);border:1px solid var(--line);border-radius:18px;overflow:hidden;transition:border-color .25s;}
 .qitem.open{border-color:rgba(184,224,74,0.3);}
 .qq{display:flex;align-items:center;justify-content:space-between;gap:24px;width:100%;padding:22px 26px;font-size:17px;font-weight:500;color:var(--cream);text-align:left;}
-.qq .ic{width:30px;height:30px;flex:none;border-radius:50%;background:rgba(244,239,227,0.06);display:grid;place-items:center;transition:all .3s;}
+.qq .ic{width:30px;height:30px;flex:none;border-radius:50%;background:rgba(22,36,28,0.06);display:grid;place-items:center;transition:all .3s;}
 .qitem.open .qq .ic{transform:rotate(45deg);background:var(--lime);color:var(--ink);}
 .qa{max-height:0;overflow:hidden;transition:max-height .4s cubic-bezier(.2,.8,.2,1);}
 .qitem.open .qa{max-height:240px;}
@@ -591,13 +602,13 @@ body::after{
 .foot ul a:hover{color:var(--lime);}
 .foot-bottom{border-top:1px solid var(--line);padding-top:28px;display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--cream-faint);flex-wrap:wrap;gap:14px;}
 .foot-social{display:flex;gap:10px;}
-.foot-social a{width:38px;height:38px;border-radius:50%;background:rgba(244,239,227,0.05);border:1px solid var(--line);display:grid;place-items:center;color:var(--cream-dim);transition:all .18s;}
+.foot-social a{width:38px;height:38px;border-radius:50%;background:rgba(22,36,28,0.05);border:1px solid var(--line);display:grid;place-items:center;color:var(--cream-dim);transition:all .18s;}
 .foot-social a svg{width:17px;height:17px;}
 .foot-social a:hover{background:var(--lime);color:var(--ink);border-color:var(--lime);transform:translateY(-2px);}
 
 /* ============ HOW IT WORKS (scroll-stack) ============ */
 .hiw{position:relative;background:var(--bg-2);border-top:1px solid var(--line);border-bottom:1px solid var(--line);overflow:clip;}
-/* pinned scroll sequence — view locks, cards swap in place */
+/* pinned scroll sequence, view locks, cards swap in place */
 .hiw-track{position:relative;height:440vh;}
 .hiw-pin{position:relative;position:sticky;top:0;height:100vh;z-index:0;overflow:hidden;display:grid;place-items:center;}
 .hiw-pin .hiw-eyebrow{position:absolute;top:11.5vh;left:0;right:0;text-align:center;font-family:var(--mono);font-size:13px;letter-spacing:.22em;text-transform:uppercase;color:var(--lime);z-index:3;}
@@ -605,33 +616,33 @@ body::after{
 .hiw-sky::before{content:"";position:absolute;width:60%;height:70%;left:-12%;top:-12%;background:radial-gradient(circle,rgba(184,224,74,0.09),transparent 64%);filter:blur(48px);animation:nebDrift 28s ease-in-out infinite;}
 .hiw-sky::after{content:"";position:absolute;width:54%;height:64%;right:-12%;bottom:-16%;background:radial-gradient(circle,rgba(143,203,169,0.08),transparent 64%);filter:blur(54px);animation:nebDrift 34s ease-in-out infinite reverse;}
 @keyframes nebDrift{0%,100%{transform:translate(0,0);}50%{transform:translate(44px,30px);}}
-.hiw-sky .tw{position:absolute;border-radius:50%;background:var(--cream);box-shadow:0 0 4px rgba(244,239,227,0.45);animation:twinkle 3s ease-in-out infinite;}
+.hiw-sky .tw{position:absolute;border-radius:50%;background:var(--cream);box-shadow:0 0 4px rgba(22,36,28,0.45);animation:twinkle 3s ease-in-out infinite;}
 @keyframes twinkle{0%,100%{opacity:.12;transform:scale(.7);}50%{opacity:.85;transform:scale(1);}}
-.hiw-sky .shoot{position:absolute;width:var(--len,180px);height:2px;border-radius:99px;background:linear-gradient(90deg,rgba(184,224,74,0) 0%,rgba(184,224,74,0.5) 52%,rgba(244,239,227,0.98) 100%);filter:drop-shadow(0 0 6px rgba(184,224,74,0.6));opacity:0;transform:rotate(var(--ang,18deg)) translateX(0) scaleX(.3);animation:shoot var(--dur,6s) cubic-bezier(.42,0,.62,1) infinite;animation-delay:var(--delay,0s);}
-.hiw-sky .shoot::after{content:"";position:absolute;right:-1px;top:50%;width:4px;height:4px;border-radius:50%;background:#fff;transform:translateY(-50%);box-shadow:0 0 7px 1px rgba(244,239,227,0.7);}
+.hiw-sky .shoot{position:absolute;width:var(--len,180px);height:2px;border-radius:99px;background:linear-gradient(90deg,rgba(184,224,74,0) 0%,rgba(184,224,74,0.5) 52%,rgba(22,36,28,0.98) 100%);filter:drop-shadow(0 0 6px rgba(184,224,74,0.6));opacity:0;transform:rotate(var(--ang,18deg)) translateX(0) scaleX(.3);animation:shoot var(--dur,6s) cubic-bezier(.42,0,.62,1) infinite;animation-delay:var(--delay,0s);}
+.hiw-sky .shoot::after{content:"";position:absolute;right:-1px;top:50%;width:4px;height:4px;border-radius:50%;background:#fff;transform:translateY(-50%);box-shadow:0 0 7px 1px rgba(22,36,28,0.7);}
 @keyframes shoot{0%{opacity:0;transform:rotate(var(--ang,18deg)) translateX(0) scaleX(.25);}6%{opacity:1;}54%{opacity:1;}74%{opacity:0;transform:rotate(var(--ang,18deg)) translateX(var(--dist,560px)) scaleX(1);}100%{opacity:0;}}
-/* giant outline word — large + spaced */
+/* giant outline word, large + spaced */
 .hiw-mega{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);white-space:nowrap;display:flex;gap:clamp(28px,6vw,118px);z-index:1;pointer-events:none;}
-.hiw-mega span{font-family:var(--display);font-weight:800;font-size:clamp(130px,18vw,460px);line-height:.8;letter-spacing:-.04em;-webkit-text-stroke:1.5px rgba(244,239,227,0.06);color:transparent;}
-.hiw-mega span.lit{color:rgba(244,239,227,0.06);-webkit-text-stroke:0;}
-/* the stage — a panel that slides left→right with scroll */
-.hiw-stage{position:relative;z-index:2;width:min(96%,1300px);min-height:clamp(360px,50vh,500px);display:flex;align-items:center;}
+.hiw-mega span{font-family:var(--display);font-weight:800;font-size:clamp(130px,18vw,460px);line-height:.8;letter-spacing:-.04em;-webkit-text-stroke:1.5px rgba(22,36,28,0.06);color:transparent;}
+.hiw-mega span.lit{color:rgba(22,36,28,0.06);-webkit-text-stroke:0;}
+/* the stage, a panel that slides left→right with scroll */
+.hiw-stage{position:relative;z-index:2;width:min(96%,1400px);min-height:clamp(400px,54vh,560px);display:flex;align-items:center;}
 .hiw-guide{position:absolute;left:0;right:0;top:50%;height:1px;transform:translateY(-.5px);background:linear-gradient(90deg,transparent,rgba(184,224,74,0.16) 16%,rgba(184,224,74,0.16) 84%,transparent);}
 .hiw-guide::before,.hiw-guide::after{content:"";position:absolute;top:50%;width:7px;height:7px;border-radius:50%;background:var(--lime);transform:translateY(-50%);box-shadow:0 0 10px rgba(184,224,74,0.6);}
 .hiw-guide::before{left:-1px;} .hiw-guide::after{right:-1px;}
-.hiw-slider{position:relative;display:grid;width:min(780px,76vw);min-height:300px;transform:translateX(var(--tx,0));transition:transform .14s cubic-bezier(.33,1,.68,1);will-change:transform;}
-.hiw-card{grid-area:1/1;display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto auto auto;column-gap:clamp(30px,3.6vw,56px);row-gap:12px;align-content:center;padding:clamp(36px,3.6vw,54px);border-radius:26px;background:linear-gradient(160deg,rgba(23,40,31,0.98),rgba(8,14,11,0.99));border:1px solid rgba(184,224,74,0.18);box-shadow:0 40px 100px -50px rgba(0,0,0,0.92),0 24px 70px -40px rgba(184,224,74,0.2);opacity:0;transform:scale(.985);transition:opacity .5s ease,transform .5s ease;pointer-events:none;}
+.hiw-slider{position:relative;display:grid;width:min(880px,82vw);min-height:340px;transform:translateX(var(--tx,0));transition:transform .14s cubic-bezier(.33,1,.68,1);will-change:transform;}
+.hiw-card{grid-area:1/1;display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto auto auto;column-gap:clamp(30px,3.6vw,56px);row-gap:12px;align-content:center;padding:clamp(36px,3.6vw,54px);border-radius:26px;background:linear-gradient(160deg,rgba(255,255,255,0.98),rgba(244,242,235,0.99));border:1px solid rgba(184,224,74,0.18);box-shadow:0 40px 100px -50px rgba(0,0,0,0.92),0 24px 70px -40px rgba(184,224,74,0.2);opacity:0;transform:scale(.985);transition:opacity .5s ease,transform .5s ease;pointer-events:none;}
 .hiw-card.active{opacity:1;transform:none;pointer-events:auto;}
-.hiw-card::before{content:"";position:absolute;inset:0;border-radius:26px;pointer-events:none;background:linear-gradient(180deg,rgba(244,239,227,0.05),transparent 26%);}
+.hiw-card::before{content:"";position:absolute;inset:0;border-radius:26px;pointer-events:none;background:linear-gradient(180deg,rgba(22,36,28,0.05),transparent 26%);}
 .hiw-card .glow{position:absolute;inset:-6% -8%;z-index:-1;border-radius:42px;background:radial-gradient(60% 70% at 50% 60%,rgba(184,224,74,0.12),transparent 70%);filter:blur(46px);opacity:.6;animation:glowPulse 7s ease-in-out infinite;}
 @keyframes glowPulse{0%,100%{opacity:.45;}50%{opacity:.65;}}
-.si{grid-column:1;grid-row:1/4;align-self:center;font-family:var(--display);font-weight:800;font-size:clamp(58px,5.2vw,92px);line-height:.8;letter-spacing:-.05em;color:var(--lime);text-shadow:0 0 28px rgba(184,224,74,0.16);}
+.si{grid-column:1;grid-row:1/4;align-self:center;font-family:var(--display);font-weight:800;font-size:clamp(64px,5.6vw,102px);line-height:.8;letter-spacing:-.05em;color:var(--lime);text-shadow:0 0 28px rgba(184,224,74,0.16);}
 .si small{display:block;font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:.26em;color:var(--cream-faint);margin-top:12px;text-shadow:none;}
-.hiw-card h3{grid-column:2;grid-row:1;font-family:var(--display);font-weight:600;font-size:clamp(26px,2.5vw,38px);line-height:1.08;letter-spacing:-.03em;margin:0;color:var(--cream);text-wrap:balance;}
-.hiw-card p{grid-column:2;grid-row:2;font-size:clamp(14.5px,1vw,16.5px);line-height:1.6;color:var(--cream-dim);margin:0;max-width:48ch;}
+.hiw-card h3{grid-column:2;grid-row:1;font-family:var(--display);font-weight:600;font-size:clamp(30px,2.9vw,44px);line-height:1.08;letter-spacing:-.03em;margin:0;color:var(--cream);text-wrap:balance;}
+.hiw-card p{grid-column:2;grid-row:2;font-size:clamp(16px,1.15vw,18.5px);line-height:1.6;color:var(--cream-dim);margin:0;max-width:52ch;}
 .hiw-card .stip{grid-column:2;grid-row:3;justify-self:start;margin-top:6px;display:inline-flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12px;color:var(--lime);padding:9px 15px;border:1px solid rgba(184,224,74,0.3);border-radius:999px;background:rgba(184,224,74,0.06);}
 .hiw-prog{position:absolute;left:50%;bottom:-52px;transform:translateX(-50%);display:flex;gap:10px;z-index:4;}
-.hiw-prog i{width:34px;height:4px;border-radius:99px;background:rgba(244,239,227,0.14);transition:.45s;}
+.hiw-prog i{width:34px;height:4px;border-radius:99px;background:rgba(22,36,28,0.14);transition:.45s;}
 .hiw-prog i.on{background:var(--lime);width:48px;box-shadow:0 0 12px rgba(184,224,74,0.5);}
 @media (prefers-reduced-motion: reduce){.hiw-card{transition:none;}.hiw-sky .shoot,.hiw-sky .tw{animation:none;}}
 @media(max-width:760px){
@@ -681,7 +692,7 @@ body::after{
 
 </style>
 <style>
-/* critical rotor rules — crossfade word swap (no clipping window; inlined + !important to beat any cached stylesheet) */
+/* critical rotor rules, crossfade word swap (no clipping window; inlined + !important to beat any cached stylesheet) */
 .hl-modern.rotor{display:inline-block!important;height:auto!important;overflow:visible!important;vertical-align:bottom;perspective:760px!important;perspective-origin:50% 45%!important;}
 .rotor .col{display:inline-grid!important;justify-items:center;animation:none!important;transform:none!important;transform-style:preserve-3d!important;}
 .rotor .col span{grid-area:1/1;height:auto!important;line-height:1;flex:none;opacity:0;padding-right:0.09em!important;margin-right:-0.09em!important;backface-visibility:hidden!important;transform-origin:center center!important;}
@@ -702,6 +713,219 @@ body::after{
   26%,100%{opacity:0;transform:rotateY(104deg) rotateX(-20deg) translateZ(-220px) scale(.7);}
 }
 </style>
+<style id="hero-img1">
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@1&display=swap');
+/* ===== HERO → image 1 ===== */
+.hero-pill{display:inline-flex;align-items:center;gap:11px;padding:7px 16px 7px 11px;border-radius:99px;background:#fff;border:1px solid rgba(22,36,28,0.10);box-shadow:0 8px 24px -12px rgba(22,36,28,0.20);text-decoration:none;margin-bottom:30px;}
+.hero-pill .hp-dot{width:8px;height:8px;border-radius:50%;background:var(--lime);box-shadow:0 0 0 4px rgba(184,224,74,0.20);flex:none;}
+.hero-pill .hp-key{font-size:11.5px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#16241C;}
+.hero-pill .hp-sep{width:1px;height:15px;background:rgba(22,36,28,0.14);}
+.hero-pill .hp-desc{font-size:13.5px;color:#5C6B60;}
+@media (prefers-reduced-motion: no-preference){.hero-pill{animation:fadein .7s ease both .04s;}}
+
+.hero .hero-inner h1{font-size:clamp(40px,6.4vw,76px);line-height:1.05;letter-spacing:-0.03em;font-weight:800;}
+.hero h1 .line{white-space:normal;overflow:visible;}
+.hero h1 .serif{font-family:'Instrument Serif',Georgia,serif;font-style:italic;font-weight:400;letter-spacing:0;}
+@media (prefers-reduced-motion: no-preference){
+  .hero h1 .reveal-up{animation:riseSoft .85s cubic-bezier(.2,.85,.25,1) both;}
+  .hero h1 .line:nth-child(1) .reveal-up{animation-delay:.15s;}
+  .hero h1 .line:nth-child(2) .reveal-up{animation-delay:.30s;}
+}
+.ul-lime{position:relative;white-space:nowrap;}
+.ul-lime::after{content:"";position:absolute;left:-1.5%;right:-1.5%;bottom:-0.15em;height:0.3em;pointer-events:none;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 26' preserveAspectRatio='none'%3E%3Cpath d='M6 17 C 70 6 150 5 210 10 S 300 18 314 12' fill='none' stroke='%23B8E04A' stroke-width='8' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat center/100% 100%;clip-path:inset(0 0 0 0);}
+@media (prefers-reduced-motion: no-preference){.ul-lime::after{clip-path:inset(0 100% 0 0);animation:drawUL .8s cubic-bezier(.4,0,.2,1) both .9s;}}
+@keyframes drawUL{to{clip-path:inset(0 0 0 0);}}
+.hero-ctas .pi{display:inline-block;margin-right:8px;font-size:.72em;transform:translateY(-1px);color:#16241C;}
+
+/* ===== DETUNE NEON \u2014 lime reserved for tiny accents only ===== */
+/* section eyebrows -> forest */
+.sec-eyebrow{color:#2C5E45 !important;}
+/* marquee \u00d7 separators -> faint ink */
+.marq-item .x{color:rgba(22,36,28,0.26) !important;}
+/* checkmarks (plans + compare table) -> forest w/ cream tick */
+.plan li .ck2,.cpt-yes{background:#173D2D !important;color:#F3F1E7 !important;box-shadow:none !important;}
+/* pricing popular badges + pro accents -> forest */
+.plan-tag,.cpt-h .rec{background:#173D2D !important;color:#F3F1E7 !important;}
+.cpt-h.col-pro{box-shadow:inset 0 3px 0 0 #173D2D !important;}
+.cpt-h.col-pro .pname,.cpt-v.col-pro.txt{color:#2C5E45 !important;}
+.col-pro{background:linear-gradient(180deg,rgba(23,61,45,0.06),rgba(23,61,45,0.018)) !important;}
+.cpt-cat .cn{background:#7FB646 !important;box-shadow:0 0 7px rgba(127,182,70,0.5) !important;}
+/* coming-soon labels -> forest, calm dot */
+.coming-pill{color:#2C5E45 !important;border-color:rgba(23,61,45,0.26) !important;}
+.coming-pill .pulse{background:#7FB646 !important;box-shadow:0 0 8px rgba(127,182,70,0.5) !important;}
+/* feature-plan card (dark forest) keep, soften lime border */
+.plan.feat{border-color:rgba(243,241,231,0.14) !important;}
+/* ===== final CTA band: full-lime -> forest green, cream text ===== */
+.cta{background:linear-gradient(165deg,#173D2D,#0F2A1F) !important;}
+.cta::before{background:radial-gradient(circle at 50% 122%,rgba(184,224,74,0.12),transparent 60%) !important;}
+.cta .tag{background:rgba(255,255,255,0.08) !important;color:#CDE9B4 !important;border-color:rgba(255,255,255,0.18) !important;}
+.cta h2{color:#F3F1E7 !important;}
+.cta p{color:rgba(243,241,231,0.74) !important;}
+.cta .btn-ink{background:#F3F1E7 !important;color:#173D2D !important;}
+.cta .btn-ink .ar{color:#7FB646 !important;}
+
+/* ===== FOREST DETUNE v2, all lime accents now flow forest via --lime; fix bg/contrast cases ===== */
+/* primary lime button -> solid forest like “Get Started” */
+.btn-lime{background:#173D2D !important;color:#F3F1E7 !important;box-shadow:0 12px 30px -14px rgba(22,54,42,0.55) !important;}
+.btn-lime:hover{background:#1E4A38 !important;box-shadow:0 18px 44px -16px rgba(22,54,42,0.6) !important;}
+.btn-lime .ar{color:#F3F1E7 !important;}
+/* lime-background cards -> forest + cream text */
+.card.lime{background:linear-gradient(160deg,#173D2D,#0F2A1F) !important;border-color:transparent !important;}
+.card.lime .knum{color:rgba(243,241,231,0.55) !important;}
+.card.lime h3{color:#F3F1E7 !important;}
+/* bright-lime accent cards (features bento) — real lime mixed with the forest */
+.card.spark{background:#B8E04A !important;border-color:transparent !important;box-shadow:0 18px 40px -18px rgba(184,224,74,0.5) !important;}
+.card.spark .knum{color:rgba(10,19,16,0.6) !important;}
+.card.spark h3{color:#0A1310 !important;}
+.card.spark p{color:rgba(10,19,16,0.72) !important;}
+.card.spark::before{display:none !important;}
+/* review cards: forest-green hairline borders for a lime+forest mix */
+.tcard:not(.lime){border-color:rgba(23,61,45,0.20) !important;}
+.card.lime p{color:rgba(243,241,231,0.80) !important;}
+/* CTA inside a forest card -> bright lime so it pops on the deep bg */
+.card.lime .btn-lime{background:#B8E04A !important;color:#0A1310 !important;box-shadow:0 14px 34px -14px rgba(184,224,74,0.55) !important;}
+.card.lime .btn-lime:hover{background:#C4E85E !important;}
+.card.lime .btn-lime .ar{color:#0A1310 !important;}
+.tcard.lime{background:#B8E04A !important;}
+.tcard.lime .tq,.tcard.lime .tn{color:#13251C !important;}
+.tcard.lime .stars{color:#2C5E45 !important;}
+.tcard.lime .tcat{color:#2C5E45 !important;background:rgba(19,37,28,0.12) !important;}
+/* focus timer sits on a dark card -> pale mint, not forest-on-forest */
+.scr-timer{color:#EAF4D8 !important;}
+/* popular badge star: lime -> cream */
+.pc-badge svg{fill:#B8E04A !important;}
+/* hero pill dot -> forest */
+.hero-pill .hp-dot{background:#173D2D !important;box-shadow:0 0 0 4px rgba(23,61,45,0.16) !important;}
+/* selection + faint tints */
+::selection{background:#173D2D;color:#F3F1E7;}
+.fchat.ai{background:rgba(23,61,45,0.10) !important;color:var(--cream-dim) !important;}
+.fcard3d .face.back{background:rgba(224,236,214,0.92) !important;border-color:rgba(23,61,45,0.22) !important;}
+/* dampen the green aurora + card hover glow */
+.aurora{opacity:.13 !important;}
+.aurora .a1{background:radial-gradient(circle,rgba(23,61,45,0.30),transparent 64%) !important;}
+.aurora .a2{background:radial-gradient(circle,rgba(45,94,69,0.24),transparent 64%) !important;}
+.aurora .a3{background:radial-gradient(circle,rgba(184,224,74,0.30),transparent 64%) !important;}
+/* kill remaining neon accents -> forest/cream (lime kept only in the logo) */
+.btn-lime .ar{color:#B8E04A !important;}
+.card:hover{border-color:rgba(23,61,45,0.28) !important;}
+.fbars b{background:rgba(23,61,45,0.35) !important;}
+.fbars b:last-child{background:#2E7D46 !important;}
+.pc-badge svg{fill:#B8E04A !important;}
+.tag .pip{background:#B8E04A !important;box-shadow:0 0 10px rgba(184,224,74,0.5) !important;}
+.hero-pill .hp-dot{background:#B8E04A !important;box-shadow:0 0 0 4px rgba(184,224,74,0.22) !important;}
+::selection{background:#163A2C !important;color:#F5F2EA !important;}
+.card::before{background:radial-gradient(circle,rgba(23,61,45,0.12),transparent 60%) !important;}
+
+/* ===== PRICING COMPONENT ===== */
+.pricing-desc{max-width:560px;margin:18px auto 0;font-size:16px;line-height:1.55;color:var(--cream-dim);}
+.bill-switch{display:inline-flex;align-items:center;gap:13px;margin-top:28px;}
+.bill-switch .bs-label{font-size:14px;font-weight:600;color:var(--cream-dim);transition:color .25s;}
+.bill-switch .bs-label.on{color:#16241C;}
+.bill-switch .bs-save{display:inline-block;margin-left:7px;font-size:11px;font-weight:700;color:#3d5a10;background:rgba(184,224,74,0.22);padding:2px 8px;border-radius:99px;vertical-align:middle;}
+.switch{width:52px;height:30px;border-radius:99px;background:rgba(22,36,28,0.18);border:1px solid rgba(22,36,28,0.10);position:relative;cursor:pointer;transition:background .28s;flex:none;padding:0;}
+.switch[aria-checked="true"]{background:#173D2D;border-color:#173D2D;}
+.switch .knob{position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.22);transition:transform .28s cubic-bezier(.4,0,.2,1);}
+.switch[aria-checked="true"] .knob{transform:translateX(22px);}
+
+.pricing-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:center;max-width:1000px;margin:54px auto 0;}
+.pc{position:relative;background:#fff;border:1px solid var(--line);padding:34px 28px;display:flex;flex-direction:column;text-align:center;border-radius:22px;transform:perspective(1200px) translate3d(var(--tx,0),var(--ty,0),0) rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg)) rotateZ(var(--rz,0deg)) scale(var(--s,1));transform-style:preserve-3d;transition:transform .28s cubic-bezier(.2,.7,.3,1),box-shadow .35s ease,opacity .5s ease;will-change:transform;}
+.pc:hover{box-shadow:0 46px 92px -48px rgba(22,54,42,0.5);z-index:4;}
+.pc-popular:hover{box-shadow:0 52px 100px -44px rgba(22,54,42,0.62);}
+.pc-popular{z-index:3;border:2px solid #173D2D;box-shadow:0 42px 90px -46px rgba(22,54,42,0.55);}
+.pc-badge{position:absolute;top:0;right:0;display:inline-flex;align-items:center;gap:5px;background:#173D2D;color:#F3F1E7;font-size:11px;font-weight:700;padding:6px 12px;border-radius:0 20px 0 12px;}
+.pc-badge svg{width:12px;height:12px;fill:#B8E04A;}
+.pc-badge{overflow:hidden;}
+.pc-badge::after{content:"";position:absolute;top:0;left:-70%;width:45%;height:100%;background:linear-gradient(105deg,transparent,rgba(255,255,255,0.5),transparent);transform:skewX(-18deg);pointer-events:none;}
+@media (prefers-reduced-motion: no-preference){.pc-badge::after{animation:badgeShine 3.4s cubic-bezier(.5,0,.4,1) infinite;}}
+@keyframes badgeShine{0%{left:-70%;}42%{left:150%;}100%{left:150%;}}
+.pc-name{font-size:15px;font-weight:700;color:var(--cream-dim);}
+.pc-price{margin-top:18px;display:flex;align-items:flex-start;justify-content:center;color:#16241C;}
+.pc-cur{font-size:24px;font-weight:700;margin-top:9px;}
+.pc-amt{font-size:52px;font-weight:800;line-height:1;letter-spacing:-0.03em;font-variant-numeric:tabular-nums;}
+.pc-per{align-self:flex-end;font-size:13px;color:var(--cream-dim);margin:0 0 9px 5px;}
+.pc-billed{margin-top:8px;font-size:12px;color:var(--cream-faint);min-height:16px;}
+.pc-feats{list-style:none;margin:22px 0 0;padding:0;display:flex;flex-direction:column;gap:11px;text-align:left;}
+.pc-feats li{display:flex;gap:10px;align-items:flex-start;font-size:13.5px;color:var(--cream);line-height:1.4;}
+.pc-ck{width:18px;height:18px;border-radius:50%;background:rgba(23,61,45,0.10);color:#173D2D;display:grid;place-items:center;flex:none;margin-top:1px;font-size:11px;font-weight:800;}
+.pc-hr{border:none;border-top:1px solid var(--line);margin:22px 0;width:100%;}
+.pc-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:12px 18px;border-radius:12px;font-weight:600;font-size:14px;border:1px solid #173D2D;color:#173D2D;background:transparent;transition:background .2s,color .2s,transform .2s;text-decoration:none;cursor:pointer;}
+.pc-btn:hover{background:#173D2D;color:#F3F1E7;transform:translateY(-1px);}
+.pc-btn:active{transform:scale(.97);}
+.pc-btn-primary{background:#173D2D;color:#F3F1E7;}
+.pc-btn-primary:hover{background:#1E4A38;}
+.pc-desc{margin-top:16px;font-size:12px;color:var(--cream-faint);line-height:1.5;}
+.pricing-foot{text-align:center;margin-top:34px;font-size:14px;color:var(--cream-faint);}
+.pricing-foot b{color:var(--cream);font-weight:600;}
+@media(min-width:861px){
+  .pc:nth-child(1){border-radius:22px 0 0 22px;--s:.955;}
+  .pc:nth-child(3){border-radius:0 22px 22px 0;--s:.955;}
+  .pc-popular{--s:1.05;margin:0 -8px;}
+}
+@media (prefers-reduced-motion: no-preference){
+  .pricing-cards.js .pc{opacity:0;transition:opacity .6s ease, transform .8s cubic-bezier(.22,1,.36,1);}
+  .pricing-cards.js .pc:not(.pc-in){--ty:56px;--s:.9;}
+  .pricing-cards.js .pc.pc-in{opacity:1;}
+}
+@media (min-width:861px) and (prefers-reduced-motion: no-preference){
+  .pricing-cards.js .pc:nth-child(1):not(.pc-in){--tx:52px;--ty:38px;--s:.84;--rz:2deg;}
+  .pricing-cards.js .pc:nth-child(3):not(.pc-in){--tx:-52px;--ty:38px;--s:.84;--rz:-2deg;}
+  .pricing-cards.js .pc-popular:not(.pc-in){--tx:0px;--ty:64px;--s:.86;}
+}
+@media(max-width:860px){
+  .pricing-cards{grid-template-columns:1fr;max-width:400px;gap:16px;}
+  .pc-popular{margin:0;}
+}
+</style>
+<style id="light-theme-refine">
+/* ===== LIGHT THEME REFINEMENTS ===== */
+/* clean hero, drop dark-mode starfield / cursor glow */
+.hero-sky,.hiw-sky,.hero-spot{display:none!important;}
+.aurora{opacity:.4;}
+
+/* primary buttons -> deep forest green w/ cream text (matches reference header) */
+.btn-lime{background:#163A2C;color:#F5F2EA;box-shadow:0 12px 30px -14px rgba(22,54,42,0.42);}
+.btn-lime:hover{background:#1E4A38;box-shadow:0 18px 46px -16px rgba(22,54,42,0.55);}
+.btn-lime .ar{color:#B8E04A;}
+.btn-ink{color:#F5F2EA;}
+.btn-ghost{border-color:rgba(22,36,28,0.22);}
+.btn-ghost:hover{border-color:#163A2C;color:#163A2C;background:rgba(22,36,28,0.03);}
+
+/* hero eyebrow pill -> white card */
+.tag{background:#FFFFFF;border-color:rgba(22,36,28,0.10);color:#16241C;box-shadow:0 6px 20px -10px rgba(22,36,28,0.14);}
+
+/* readable green rotating word on cream */
+.rotor .col span{background:linear-gradient(108deg,#4E9E39 8%,#3B8F54 52%,#2E7D46 92%)!important;-webkit-background-clip:text!important;background-clip:text!important;}
+.hl-modern{filter:none;}
+
+/* toggle active + paper doc graphic + card stat tiles */
+.toggle button.active{background:#163A2C;color:#F5F2EA;}
+.dg-doc{background:#FFFFFF;}
+.stat{background:#FFFFFF;}
+.frag .fv{color:#2E7D46;}
+
+/* soft elevation for light cards */
+.card,.plan,.tcard,.qitem{box-shadow:0 1px 2px rgba(22,36,28,0.04),0 14px 34px -22px rgba(22,36,28,0.12);}
+.card.lime{box-shadow:0 16px 36px -18px rgba(184,224,74,0.42);}
+.plan.feat{box-shadow:0 30px 70px -40px rgba(22,54,42,0.26);}
+.device{box-shadow:0 60px 120px -46px rgba(22,36,28,0.34),0 0 0 1px rgba(22,36,28,0.06);}
+
+/* ===== FLOATING PILL NAV ===== */
+.nav{position:fixed;top:0;left:0;right:0;z-index:100;padding:18px clamp(16px,3vw,30px);transition:padding .3s ease;}
+.nav.scrolled{padding-top:10px;background:transparent;border-bottom-color:transparent;backdrop-filter:none;-webkit-backdrop-filter:none;}
+.nav .row{
+  display:flex;align-items:center;justify-content:space-between;gap:22px;
+  max-width:1180px;margin:0 auto;
+  padding:11px 12px 11px 24px;
+  background:rgba(255,255,255,0.80);
+  -webkit-backdrop-filter:blur(20px) saturate(180%);backdrop-filter:blur(20px) saturate(180%);
+  border:1px solid rgba(22,36,28,0.07);
+  border-radius:22px;
+  box-shadow:0 10px 34px -14px rgba(22,36,28,0.20),0 2px 6px -2px rgba(22,36,28,0.05);
+  transition:box-shadow .3s ease,background .3s ease;
+}
+.nav.scrolled .row{background:rgba(255,255,255,0.92);box-shadow:0 14px 40px -12px rgba(22,36,28,0.26),0 3px 8px -2px rgba(22,36,28,0.06);}
+</style>
 </head>
 <body>
 <template id="__bundler_thumbnail">
@@ -718,15 +942,12 @@ body::after{
     <div class="nav-links">
       <a href="#features">Features</a>
       <a href="#how">How it works</a>
-      <a href="#loved">Students</a>
       <a href="#pricing">Pricing</a>
-      <a href="#faq">FAQ</a>
       <a href="#careers">Careers</a>
     </div>
     <div class="nav-cta">
-      <a href="Studlin Sign In.html" class="btn btn-ghost">Sign in</a>
-      <a href="Studlin Onboarding.html" class="btn btn-lime magnetic">Start free <span class="ar">
-</span></a>
+      <a href="/app" class="btn btn-ghost">Sign in</a>
+      <a href="/app" class="btn btn-lime magnetic">Get Started</a>
     </div>
   </div>
 </nav>
@@ -738,7 +959,7 @@ body::after{
   <div class="hero-grid"></div>
   <div class="hero-spot" id="heroSpot"></div>
 
-  <!-- floating fragments — mini live UI -->
+  <!-- floating fragments, mini live UI -->
   <div class="frag f1" data-depth="0.04"><div class="fin">
     <div class="fl">Day streak</div><div class="fv">12</div>
     <div class="fdays"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></div>
@@ -768,17 +989,20 @@ body::after{
   </div></div>
 
   <div class="wrap hero-inner">
+    <a class="hero-pill" href="#showcase">
+      <span class="hp-dot"></span>
+      <span class="hp-key">AI Study OS</span>
+      <span class="hp-sep"></span>
+      <span class="hp-desc">The calm workspace for how you actually study</span>
+    </a>
     <h1>
-      <span class="line"><span class="reveal-up">Everything you</span></span>
-      <span class="line"><span class="reveal-up">study, in one</span></span>
-      <span class="line" style="font-size: 108px; font-weight: 700; width: 900px; height: 133px"><span class="reveal-up"><span class="hl-modern rotor"><span class="col" style="font-weight: 800"><span>place.</span><span>flow.</span><span>app.</span><span style="font-weight: 900">tab.</span><span>OS.</span></span></span></span></span>
+      <span class="line"><span class="reveal-up">Everything you need to <em class="serif">study.</em></span></span>
+      <span class="line"><span class="reveal-up"><span class="ul-lime">One app.</span></span></span>
     </h1>
-    <p class="sub">Writing tools, AI tutoring, flashcards, smart scheduling, focus mode and gamified streaks, fused into one calm command center built for how you actually study.</p>
+    <p class="sub">AI tutor, smart planner, flashcards, essay polish, focus mode and streaks, fused into one intelligent operating system. Replace the six apps that ignore each other.</p>
     <div class="hero-ctas">
-      <a href="Studlin Onboarding.html" class="btn btn-lime btn-lg magnetic">Start free
-
-</a>
-      <a href="#showcase" class="btn btn-ghost btn-lg">See it move</a>
+      <a href="/app" class="btn btn-lime btn-lg magnetic">Start free <span class="ar">→</span></a>
+      <a href="Studlin Demo.html" class="btn btn-ghost btn-lg"><span class="pi">▶</span>Watch demo</a>
     </div>
     <div class="hero-trust">
       <div class="avstack">
@@ -846,7 +1070,7 @@ body::after{
             <div class="chiprow">
               <span class="ck" style="background:var(--peach);color:var(--ink);">Spelling → corrodes</span>
               <span class="ck" style="background:var(--mint);color:var(--ink);">Strong thesis</span>
-              <span class="ck" style="background:var(--lime);color:var(--ink);">0% AI detected</span>
+              <span class="ck" style="background:var(--spark);color:var(--ink);">0% AI detected</span>
             </div>
           </div>
         </div>
@@ -858,7 +1082,7 @@ body::after{
         <h3>"I have a chem test Friday." Done.</h3>
         <p>Describe a conflict in plain English. Studlin re-plans your week, blocks focus time, reshuffles every deadline.</p>
         <div class="canvas">
-          <div style="background:var(--ink);color:var(--cream);border-radius:13px;padding:13px 15px;font-family:var(--mono);font-size:12.5px;">
+          <div style="background:#163A2C;color:#F5F2EA;border-radius:13px;padding:13px 15px;font-family:var(--mono);font-size:12.5px;">
             <div style="opacity:.55;font-size:10px;margin-bottom:5px;">YOU</div>move my history essay so i can study for chem
           </div>
           <div style="background:#fff;color:var(--ink);border-radius:13px;padding:13px 15px;margin-top:8px;font-size:12.5px;line-height:1.5;">
@@ -890,13 +1114,13 @@ body::after{
         <div class="canvas">
           <div style="display:flex;flex-direction:column;gap:8px;">
             <div style="align-self:flex-end;background:var(--bg);border:1px solid var(--line);padding:10px 14px;border-radius:14px 14px 4px 14px;font-size:13px;max-width:78%;">why is sin(2x) = 2sin(x)cos(x)?</div>
-            <div style="align-self:flex-start;background:var(--panel-2);border:1px solid var(--line);padding:10px 14px;border-radius:14px 14px 14px 4px;font-size:13px;max-width:82%;line-height:1.5;">Start with sin(A+B) = sin A cos B + cos A sin B. Now set A = B = x… <span class="mono" style="background:var(--lime);color:var(--ink);padding:1px 6px;border-radius:4px;">your turn →</span></div>
+            <div style="align-self:flex-start;background:var(--panel-2);border:1px solid var(--line);padding:10px 14px;border-radius:14px 14px 14px 4px;font-size:13px;max-width:82%;line-height:1.5;">Start with sin(A+B) = sin A cos B + cos A sin B. Now set A = B = x… <span class="mono" style="background:var(--spark);color:var(--ink);padding:1px 6px;border-radius:4px;">your turn →</span></div>
           </div>
         </div>
       </div>
 
       <!-- streaks -->
-      <div class="card col-4 reveal" data-spot>
+      <div class="card col-4 reveal spark" data-spot>
         <div class="knum">05 · Streaks</div>
         <h3>The reason you'll show up.</h3>
         <p>Daily streaks, milestones, and a Weekly Wrapped that's actually fun to share.</p>
@@ -918,49 +1142,49 @@ body::after{
       </div>
 
       <!-- wrapped -->
-      <div class="card col-4 reveal d2" data-spot>
+      <div class="card col-4 reveal d2 lime" data-spot>
         <div class="knum">07 · Wrapped</div>
         <h3>Spotify Wrapped, for studying.</h3>
         <p>Weekly recaps of your wins, focus hours, and exactly where you slipped.</p>
         <div class="canvas">
           <div class="mini" style="background:var(--bg-deep);">
             <div class="mono" style="font-size:10px;color:var(--cream-faint);letter-spacing:0.1em;">WEEK 18 · WRAPPED</div>
-            <div style="font-family:var(--display);font-weight:700;font-size:36px;color:var(--lime);margin:4px 0;letter-spacing:-0.03em;">14h 22m</div>
+            <div style="font-family:var(--display);font-weight:700;font-size:36px;color:var(--spark);margin:4px 0;letter-spacing:-0.03em;">14h 22m</div>
             <div style="font-size:12px;color:var(--cream-dim);">+3.2h vs last week</div>
           </div>
         </div>
       </div>
 
       <!-- focus music wide -->
-      <div class="card col-12 reveal" style="padding:44px;" data-spot>
+      <div class="card col-12 reveal lime" style="padding:44px;" data-spot>
         <div style="display:grid;grid-template-columns:1fr 1.15fr;gap:48px;align-items:center;">
           <div>
             <div class="knum">08 · Focus, scored.</div>
             <h3 style="font-size:46px;line-height:1.0;">Sounds your brain agrees with.</h3>
             <p>AI-curated soundscapes tuned to what you're working on. Lo-fi for reading, binaural for math, brown noise when it's crunch time. One tap and you're in the zone.</p>
-            <a href="Studlin Onboarding.html" class="btn btn-lime magnetic">Start a focus session <span class="ar">→</span></a>
+            <a href="/app" class="btn btn-lime magnetic">Start a focus session <span class="ar">→</span></a>
           </div>
           <div style="background:var(--bg-deep);border:1px solid var(--line);border-radius:18px;padding:22px;">
             <div class="mono" style="font-size:10.5px;color:var(--cream-faint);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:16px;">Now playing · Deep Focus</div>
             <div style="display:flex;align-items:flex-end;gap:4px;height:90px;margin-bottom:18px;">
-              <div style="flex:1;background:var(--lime);border-radius:3px 3px 0 0;height:30%;"></div>
-              <div style="flex:1;background:var(--lime);border-radius:3px 3px 0 0;height:55%;"></div>
-              <div style="flex:1;background:var(--lime);border-radius:3px 3px 0 0;height:80%;"></div>
-              <div style="flex:1;background:var(--lime);border-radius:3px 3px 0 0;height:45%;"></div>
-              <div style="flex:1;background:var(--lime);border-radius:3px 3px 0 0;height:70%;"></div>
-              <div style="flex:1;background:var(--lime);border-radius:3px 3px 0 0;height:95%;"></div>
-              <div style="flex:1;background:var(--lime);border-radius:3px 3px 0 0;height:60%;"></div>
-              <div style="flex:1;background:rgba(244,239,227,0.18);border-radius:3px 3px 0 0;height:35%;"></div>
-              <div style="flex:1;background:rgba(244,239,227,0.18);border-radius:3px 3px 0 0;height:50%;"></div>
-              <div style="flex:1;background:rgba(244,239,227,0.18);border-radius:3px 3px 0 0;height:25%;"></div>
-              <div style="flex:1;background:rgba(244,239,227,0.18);border-radius:3px 3px 0 0;height:65%;"></div>
-              <div style="flex:1;background:rgba(244,239,227,0.18);border-radius:3px 3px 0 0;height:40%;"></div>
+              <div style="flex:1;background:var(--spark);border-radius:3px 3px 0 0;height:30%;"></div>
+              <div style="flex:1;background:var(--spark);border-radius:3px 3px 0 0;height:55%;"></div>
+              <div style="flex:1;background:var(--spark);border-radius:3px 3px 0 0;height:80%;"></div>
+              <div style="flex:1;background:var(--spark);border-radius:3px 3px 0 0;height:45%;"></div>
+              <div style="flex:1;background:var(--spark);border-radius:3px 3px 0 0;height:70%;"></div>
+              <div style="flex:1;background:var(--spark);border-radius:3px 3px 0 0;height:95%;"></div>
+              <div style="flex:1;background:var(--spark);border-radius:3px 3px 0 0;height:60%;"></div>
+              <div style="flex:1;background:rgba(22,36,28,0.18);border-radius:3px 3px 0 0;height:35%;"></div>
+              <div style="flex:1;background:rgba(22,36,28,0.18);border-radius:3px 3px 0 0;height:50%;"></div>
+              <div style="flex:1;background:rgba(22,36,28,0.18);border-radius:3px 3px 0 0;height:25%;"></div>
+              <div style="flex:1;background:rgba(22,36,28,0.18);border-radius:3px 3px 0 0;height:65%;"></div>
+              <div style="flex:1;background:rgba(22,36,28,0.18);border-radius:3px 3px 0 0;height:40%;"></div>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
-              <span class="mono" style="font-size:10px;background:var(--lime);color:var(--ink);padding:6px 12px;border-radius:99px;font-weight:700;">LO-FI</span>
-              <span class="mono" style="font-size:10px;background:rgba(244,239,227,0.06);color:var(--cream-dim);padding:6px 12px;border-radius:99px;border:1px solid var(--line);">BINAURAL</span>
-              <span class="mono" style="font-size:10px;background:rgba(244,239,227,0.06);color:var(--cream-dim);padding:6px 12px;border-radius:99px;border:1px solid var(--line);">BROWN NOISE</span>
-              <span class="mono" style="font-size:10px;background:rgba(244,239,227,0.06);color:var(--cream-dim);padding:6px 12px;border-radius:99px;border:1px solid var(--line);">NATURE</span>
+              <span class="mono" style="font-size:10px;background:var(--spark);color:var(--ink);padding:6px 12px;border-radius:99px;font-weight:700;">LO-FI</span>
+              <span class="mono" style="font-size:10px;background:rgba(22,36,28,0.06);color:var(--cream-dim);padding:6px 12px;border-radius:99px;border:1px solid var(--line);">BINAURAL</span>
+              <span class="mono" style="font-size:10px;background:rgba(22,36,28,0.06);color:var(--cream-dim);padding:6px 12px;border-radius:99px;border:1px solid var(--line);">BROWN NOISE</span>
+              <span class="mono" style="font-size:10px;background:rgba(22,36,28,0.06);color:var(--cream-dim);padding:6px 12px;border-radius:99px;border:1px solid var(--line);">NATURE</span>
             </div>
           </div>
         </div>
@@ -992,7 +1216,7 @@ body::after{
             <div class="glow"></div>
             <div class="si">02<small>PLAN</small></div>
             <h3>Wake up to a plan that already works.</h3>
-            <p>Every morning Studlin lays out the day — what to review, what to write, when to focus. Change one thing and the week reshuffles itself.</p>
+            <p>Every morning Studlin lays out the day, what to review, what to write, when to focus. Change one thing and the week reshuffles itself.</p>
             <span class="stip">Smart Reschedule built in</span>
           </article>
 
@@ -1030,35 +1254,112 @@ body::after{
   <div class="tmarq">
     <div class="trow marq">
       <div class="marq-track">
-        <div class="tcard lime"><div class="stars">★★★★★</div><div class="tq">"I went from cramming the night before to actually <em>knowing</em> the material. The streaks are addictive in a good way."</div><div class="tm"><div class="tav">MR</div><div><div class="tn">Maya</div><div class="tr">Pre-med, UCLA</div></div></div></div>
-        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"I switched from a stack of five different apps and saved $50/month. Everything's in one place now."</div><div class="tm"><div class="tav">DK</div><div><div class="tn">Devon</div><div class="tr">Junior, NYU Stern</div></div></div></div>
-        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"Told it I caught the flu and it just… fixed my whole week. No anxiety spiral. Unreal."</div><div class="tm"><div class="tav">PS</div><div><div class="tn">Priya</div><div class="tr">IB Senior, Singapore</div></div></div></div>
-        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"My GPA went from 3.2 to 3.8 in a semester. The tutor explains things the way my professor never could."</div><div class="tm"><div class="tav">JT</div><div><div class="tn">Jordan</div><div class="tr">Sophomore, UT Austin</div></div></div></div>
-        <div class="tcard lime"><div class="stars">★★★★★</div><div class="tq">"I went from cramming the night before to actually <em>knowing</em> the material. The streaks are addictive in a good way."</div><div class="tm"><div class="tav">MR</div><div><div class="tn">Maya</div><div class="tr">Pre-med, UCLA</div></div></div></div>
-        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"I switched from a stack of five different apps and saved $50/month. Everything's in one place now."</div><div class="tm"><div class="tav">DK</div><div><div class="tn">Devon</div><div class="tr">Junior, NYU Stern</div></div></div></div>
+        <div class="tcard lime"><div class="stars">★★★★★</div><div class="tq">"My GPA went from 3.2 to 3.8 in one semester. The tutor explains things the way my professor never could."</div><div class="tm"><div class="tav">JT</div><div><div class="tn">Jordan T.</div><span class="tcat">GPA boost</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"I dropped five separate apps and got my evenings back. Everything lives in one place now."</div><div class="tm"><div class="tav">DK</div><div><div class="tn">Devon K.</div><span class="tcat">Time saved</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"Up 210 points on my SAT. The practice sets actually adapt to the questions I keep missing."</div><div class="tm"><div class="tav">PS</div><div><div class="tn">Priya S.</div><span class="tcat">SAT prep</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★<span class="s-off">★</span></div><div class="tq">"I get more done in two focused hours than I used to in a whole night of cramming."</div><div class="tm"><div class="tav">MR</div><div><div class="tn">Maya R.</div><span class="tcat">Productivity</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"The focus timer and music combo is unreal. I finally stopped checking my phone every five minutes."</div><div class="tm"><div class="tav">AC</div><div><div class="tn">Aisha C.</div><span class="tcat">Focus</span></div></div></div>
+        <div class="tcard lime"><div class="stars">★★★★★</div><div class="tq">"My GPA went from 3.2 to 3.8 in one semester. The tutor explains things the way my professor never could."</div><div class="tm"><div class="tav">JT</div><div><div class="tn">Jordan T.</div><span class="tcat">GPA boost</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"I dropped five separate apps and got my evenings back. Everything lives in one place now."</div><div class="tm"><div class="tav">DK</div><div><div class="tn">Devon K.</div><span class="tcat">Time saved</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"Up 210 points on my SAT. The practice sets actually adapt to the questions I keep missing."</div><div class="tm"><div class="tav">PS</div><div><div class="tn">Priya S.</div><span class="tcat">SAT prep</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★<span class="s-off">★</span></div><div class="tq">"I get more done in two focused hours than I used to in a whole night of cramming."</div><div class="tm"><div class="tav">MR</div><div><div class="tn">Maya R.</div><span class="tcat">Productivity</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"The focus timer and music combo is unreal. I finally stopped checking my phone every five minutes."</div><div class="tm"><div class="tav">AC</div><div><div class="tn">Aisha C.</div><span class="tcat">Focus</span></div></div></div>
       </div>
     </div>
     <div class="trow rev marq">
       <div class="marq-track">
-        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"Weekly Wrapped is the only social media I post anymore. My friends roast my focus hours."</div><div class="tm"><div class="tav">AC</div><div><div class="tn">Aisha C.</div><div class="tr">Freshman, Cornell</div></div></div></div>
-        <div class="tcard lime"><div class="stars">★★★★★</div><div class="tq">"The flashcard generator turned my 80-page bio PDF into a deck in ten seconds. I almost cried."</div><div class="tm"><div class="tav">LW</div><div><div class="tn">Leo W.</div><div class="tr">Pre-vet, UC Davis</div></div></div></div>
-        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"Finally something built for how my brain actually works. The focus timer plus music combo is unbeatable."</div><div class="tm"><div class="tav">NR</div><div><div class="tn">Nadia R.</div><div class="tr">Law, Georgetown</div></div></div></div>
-        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"I run my whole study group off the streak graph now. Nobody wants to break their streak on Sunday night."</div><div class="tm"><div class="tav">TK</div><div><div class="tn">Theo K.</div><div class="tr">CS, Waterloo</div></div></div></div>
-        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"Weekly Wrapped is the only social media I post anymore. My friends roast my focus hours."</div><div class="tm"><div class="tav">AC</div><div><div class="tn">Aisha C.</div><div class="tr">Freshman, Cornell</div></div></div></div>
-        <div class="tcard lime"><div class="stars">★★★★★</div><div class="tq">"The flashcard generator turned my 80-page bio PDF into a deck in ten seconds. I almost cried."</div><div class="tm"><div class="tav">LW</div><div><div class="tn">Leo W.</div><div class="tr">Pre-vet, UC Davis</div></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"It turned my 80-page bio PDF into a full deck in about ten seconds. I almost cried."</div><div class="tm"><div class="tav">LW</div><div><div class="tn">Leo W.</div><span class="tcat">Flashcards</span></div></div></div>
+        <div class="tcard lime"><div class="stars">★★★★★</div><div class="tq">"I told it I caught the flu and it rebuilt my entire week. No anxiety spiral."</div><div class="tm"><div class="tav">NR</div><div><div class="tn">Nadia R.</div><span class="tcat">Organized</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★<span class="s-off">★</span></div><div class="tq">"I run my whole study group off the streak graph. Nobody breaks their streak on a Sunday night."</div><div class="tm"><div class="tav">TK</div><div><div class="tn">Theo K.</div><span class="tcat">Streaks</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"Saves me at least ten hours a week. That is a part time job's worth of time handed back to me."</div><div class="tm"><div class="tav">SD</div><div><div class="tn">Sam D.</div><span class="tcat">Time saved</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"Went from academic probation to the Dean's List. I am not exaggerating."</div><div class="tm"><div class="tav">RM</div><div><div class="tn">Riley M.</div><span class="tcat">GPA boost</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"It turned my 80-page bio PDF into a full deck in about ten seconds. I almost cried."</div><div class="tm"><div class="tav">LW</div><div><div class="tn">Leo W.</div><span class="tcat">Flashcards</span></div></div></div>
+        <div class="tcard lime"><div class="stars">★★★★★</div><div class="tq">"I told it I caught the flu and it rebuilt my entire week. No anxiety spiral."</div><div class="tm"><div class="tav">NR</div><div><div class="tn">Nadia R.</div><span class="tcat">Organized</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★<span class="s-off">★</span></div><div class="tq">"I run my whole study group off the streak graph. Nobody breaks their streak on a Sunday night."</div><div class="tm"><div class="tav">TK</div><div><div class="tn">Theo K.</div><span class="tcat">Streaks</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"Saves me at least ten hours a week. That is a part time job's worth of time handed back to me."</div><div class="tm"><div class="tav">SD</div><div><div class="tn">Sam D.</div><span class="tcat">Time saved</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"Went from academic probation to the Dean's List. I am not exaggerating."</div><div class="tm"><div class="tav">RM</div><div><div class="tn">Riley M.</div><span class="tcat">GPA boost</span></div></div></div>
       </div>
     </div>
   </div>
   <div class="wrap" style="margin-top:64px;">
-    <div style="display:flex;align-items:center;gap:38px;justify-content:center;flex-wrap:wrap;">
-      <span class="mono" style="font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--cream-faint);">Used at</span>
-      <span class="display" style="font-weight:600;font-size:22px;color:var(--cream-dim);">Stanford</span>
-      <span class="display" style="font-weight:600;font-size:22px;color:var(--cream-dim);">MIT</span>
-      <span class="display" style="font-weight:600;font-size:22px;color:var(--cream-dim);">Berkeley</span>
-      <span class="display" style="font-weight:600;font-size:22px;color:var(--cream-dim);">Cambridge</span>
-      <span class="display" style="font-weight:600;font-size:22px;color:var(--cream-dim);">Yale</span>
-      <span class="display" style="font-weight:600;font-size:22px;color:var(--cream-dim);">NUS</span>
+    <div class="uni-row">
+      <span class="lbl">Used at</span>
+      <span class="uni"><svg class="crest" viewBox="0 0 24 28" fill="none"><path d="M12 1 L23 4.5 V14 C23 21 18 25.5 12 27.5 C6 25.5 1 21 1 14 V4.5 Z" stroke="#173D2D" stroke-width="1.5"/><path d="M5.5 10.5 H18.5 M12 6 V22" stroke="#B8E04A" stroke-width="1.3"/></svg><span class="un">Harvard</span></span>
+      <span class="uni"><svg class="crest" viewBox="0 0 24 28" fill="none"><path d="M12 1 L23 4.5 V14 C23 21 18 25.5 12 27.5 C6 25.5 1 21 1 14 V4.5 Z" stroke="#173D2D" stroke-width="1.5"/><path d="M12 5.5 L14 10 L18.5 10.4 L15 13.4 L16.2 18 L12 15.4 L7.8 18 L9 13.4 L5.5 10.4 L10 10 Z" fill="#B8E04A" stroke="none"/></svg><span class="un">Princeton</span></span>
+      <span class="uni"><svg class="crest" viewBox="0 0 24 28" fill="none"><path d="M12 1 L23 4.5 V14 C23 21 18 25.5 12 27.5 C6 25.5 1 21 1 14 V4.5 Z" stroke="#173D2D" stroke-width="1.5"/><path d="M5.5 10.5 H18.5 M12 6 V22" stroke="#B8E04A" stroke-width="1.3"/></svg><span class="un">Stanford</span></span>
+      <span class="uni"><svg class="crest" viewBox="0 0 24 28" fill="none"><path d="M12 1 L23 4.5 V14 C23 21 18 25.5 12 27.5 C6 25.5 1 21 1 14 V4.5 Z" stroke="#173D2D" stroke-width="1.5"/><path d="M7.5 18 V10 L12 14 L16.5 10 V18" stroke="#B8E04A" stroke-width="1.3"/></svg><span class="un">MIT</span></span>
+      <span class="uni"><svg class="crest" viewBox="0 0 24 28" fill="none"><path d="M12 1 L23 4.5 V14 C23 21 18 25.5 12 27.5 C6 25.5 1 21 1 14 V4.5 Z" stroke="#173D2D" stroke-width="1.5"/><path d="M12 5.5 L14 10 L18.5 10.4 L15 13.4 L16.2 18 L12 15.4 L7.8 18 L9 13.4 L5.5 10.4 L10 10 Z" fill="#B8E04A" stroke="none"/></svg><span class="un">Yale</span></span>
+      <span class="uni"><svg class="crest" viewBox="0 0 24 28" fill="none"><path d="M12 1 L23 4.5 V14 C23 21 18 25.5 12 27.5 C6 25.5 1 21 1 14 V4.5 Z" stroke="#173D2D" stroke-width="1.5"/><path d="M5.5 10.5 H18.5 M12 6 V22" stroke="#B8E04A" stroke-width="1.3"/></svg><span class="un">Cambridge</span></span>
     </div>
+  </div>
+</section>
+
+<!-- ============ PRICING ============ -->
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+<section class="sec" id="pricing">
+  <div class="wrap">
+    <div class="head center">
+      <span class="sec-eyebrow">// Pricing</span>
+      <h2>Simple, <span class="dim">student-friendly</span> pricing</h2>
+      <p class="pricing-desc">Start free, upgrade when you need more. Every plan includes the full study OS, AI tutoring, and cross-device sync.</p>
+      <div class="bill-switch">
+        <span class="bs-label" id="bsMonthly">Monthly</span>
+        <button class="switch" id="billSwitch" role="switch" aria-checked="false" aria-label="Toggle annual billing"><span class="knob"></span></button>
+        <span class="bs-label" id="bsAnnual">Annual billing <span class="bs-save">Save 20%</span></span>
+      </div>
+    </div>
+    <div class="pricing-cards">
+      <div class="pc" data-plan="free">
+        <div class="pc-name">Free</div>
+        <div class="pc-price"><span class="pc-cur">$</span><span class="pc-amt" data-m="0" data-a="0" data-dec="0">0</span><span class="pc-per">/forever</span></div>
+        <div class="pc-billed" data-m="Free, forever" data-a="Free, forever">Free, forever</div>
+        <ul class="pc-feats">
+          <li><span class="pc-ck">✓</span> 30 AI credits / month</li>
+          <li><span class="pc-ck">✓</span> AI tutor, Standard model, Research mode</li>
+          <li><span class="pc-ck">✓</span> Manual flashcards &amp; notes</li>
+          <li><span class="pc-ck">✓</span> Focus timer, calendar &amp; planner</li>
+          <li><span class="pc-ck">✓</span> Streaks, XP &amp; basic stats</li>
+        </ul>
+        <hr class="pc-hr">
+        <a href="/app" class="pc-btn">Start free</a>
+        <div class="pc-desc">Everything you need to get organized.</div>
+      </div>
+      <div class="pc pc-popular" data-plan="pro">
+        <div class="pc-badge"><svg viewBox="0 0 24 24"><path d="M12 2l2.9 6.3 6.9.7-5.2 4.6 1.5 6.8L12 17.8 5.9 21.2l1.5-6.8L2.2 9.8l6.9-.7z"></path></svg> Popular</div>
+        <div class="pc-name">Pro</div>
+        <div class="pc-price"><span class="pc-cur">$</span><span class="pc-amt" data-m="9.99" data-a="7.99" data-dec="2">9.99</span><span class="pc-per">/month</span></div>
+        <div class="pc-billed" data-m="7-day free trial, then billed monthly" data-a="billed annually · save $24/yr">7-day free trial, then billed monthly</div>
+        <ul class="pc-feats">
+          <li><span class="pc-ck">✓</span> 200 AI credits / month</li>
+          <li><span class="pc-ck">✓</span> AI tutor, all models + 4 study modes</li>
+          <li><span class="pc-ck">✓</span> Full essay suite + plagiarism check</li>
+          <li><span class="pc-ck">✓</span> AI flashcards from notes, PDFs &amp; YouTube</li>
+          <li><span class="pc-ck">✓</span> Google Docs sync + AI Rewrite (Humanizer)</li>
+          <li><span class="pc-ck">✓</span> Unlimited grammar checks + readability</li>
+          <li><span class="pc-ck">✓</span> Study groups + co-op focus sessions</li>
+        </ul>
+        <hr class="pc-hr">
+        <a href="/app" class="pc-btn pc-btn-primary magnetic">Start free trial <span class="ar">→</span></a>
+        <div class="pc-desc">Unlock the full study OS. Built for serious students.</div>
+      </div>
+      <div class="pc" data-plan="max">
+        <div class="pc-name">Max</div>
+        <div class="pc-price"><span class="pc-cur">$</span><span class="pc-amt" data-m="24.99" data-a="19.99" data-dec="2">24.99</span><span class="pc-per">/month</span></div>
+        <div class="pc-billed" data-m="billed monthly" data-a="billed annually · save $60/yr">billed monthly</div>
+        <ul class="pc-feats">
+          <li><span class="pc-ck">✓</span> 500 AI credits / month</li>
+          <li><span class="pc-ck">✓</span> Everything in Pro, unlimited</li>
+          <li><span class="pc-ck">✓</span> Bulk ops, 100 flashcards at once</li>
+          <li><span class="pc-ck">✓</span> Advanced analytics &amp; learning paths</li>
+          <li><span class="pc-ck">✓</span> Cosmetics shop + monthly tournaments</li>
+          <li><span class="pc-ck">✓</span> Priority support + 3× focus XP</li>
+        </ul>
+        <hr class="pc-hr">
+        <a href="/app" class="pc-btn">Go Max</a>
+        <div class="pc-desc">Maximum firepower. No limits, ever.</div>
+      </div>
+    </div>
+    <div class="pricing-foot">Most students juggle 4–6 apps. Studlin is all of them in one, starting at <b>$0</b>.</div>
   </div>
 </section>
 
@@ -1128,65 +1429,7 @@ body::after{
   </div>
 </section>
 
-<!-- ============ PRICING ============ -->
-<section class="sec" id="pricing">
-  <div class="wrap">
-    <div class="head center">
-      <span class="sec-eyebrow">// Pricing</span>
-      <h2>One subscription.<br><span class="dim">Replaces six.</span></h2>
-      <div class="toggle">
-        <button class="active" data-bill="monthly">Monthly</button>
-        <button data-bill="annual">Annual <span class="save">−25%</span></button>
-      </div>
-    </div>
-    <div class="plans">
-      <div class="plan reveal">
-        <h3>Free</h3>
-        <div class="price"><span class="num">$0</span><span class="per">/forever</span></div>
-        <p class="pdesc">Everything you need to get organized. Free, forever.</p>
-        <ul>
-          <li><span class="ck2">✓</span> 30 AI credits / month</li>
-          <li><span class="ck2">✓</span> AI tutor — Standard model, Research mode</li>
-          <li><span class="ck2">✓</span> Manual flashcards &amp; notes</li>
-          <li><span class="ck2">✓</span> Focus timer, calendar &amp; planner</li>
-          <li><span class="ck2">✓</span> Streaks, XP &amp; basic stats</li>
-        </ul>
-        <a href="Studlin Onboarding.html" class="btn btn-ghost">Start free</a>
-      </div>
-      <div class="plan feat reveal d1">
-        <div class="plan-tag">7 DAYS FREE</div>
-        <h3>Pro</h3>
-        <div class="price"><span class="num" data-monthly="$9.99" data-annual="$7.99">$9.99</span><span class="per" id="proPer">/month</span></div>
-        <p class="pdesc">Unlock the full study OS. Built for serious students.</p>
-        <ul>
-          <li><span class="ck2">✓</span> 200 AI credits / month</li>
-          <li><span class="ck2">✓</span> AI tutor — all models + 4 study modes</li>
-          <li><span class="ck2">✓</span> Full essay suite + plagiarism check</li>
-          <li><span class="ck2">✓</span> AI flashcards from notes, PDFs &amp; YouTube</li>
-          <li><span class="ck2">✓</span> Google Docs sync + AI Rewrite (Humanizer)</li>
-          <li><span class="ck2">✓</span> Unlimited grammar checks + readability scores</li>
-          <li><span class="ck2">✓</span> Squad leaderboards + 2× focus XP</li>
-        </ul>
-        <a href="Studlin Onboarding.html" class="btn btn-lime magnetic">Start free trial <span class="ar">→</span></a>
-      </div>
-      <div class="plan reveal d2">
-        <h3>Max</h3>
-        <div class="price"><span class="num" data-monthly="$24.99" data-annual="$19.99">$24.99</span><span class="per" id="elitePer">/month</span></div>
-        <p class="pdesc">Maximum firepower. No limits, ever.</p>
-        <ul>
-          <li><span class="ck2">✓</span> 500 AI credits / month</li>
-          <li><span class="ck2">✓</span> Everything in Pro, unlimited</li>
-          <li><span class="ck2">✓</span> Bulk ops — 100 flashcards at once</li>
-          <li><span class="ck2">✓</span> Advanced analytics &amp; learning paths</li>
-          <li><span class="ck2">✓</span> Cosmetics shop + monthly tournaments</li>
-          <li><span class="ck2">✓</span> Priority support + 3× focus XP</li>
-        </ul>
-        <a href="Studlin Onboarding.html" class="btn btn-ghost">Go Max</a>
-      </div>
-    </div>
-    <div style="text-align:center;margin-top:30px;font-size:14px;color:var(--cream-faint);">Most students juggle 4–6 apps. Studlin is all of them in one. Starts at just <span style="color:var(--cream);">$9.99/mo</span>.</div>
-  </div>
-</section>
+
 
 <!-- ============ COMPARE PLANS ============ -->
 <section class="sec" id="compare-plans" style="padding-top:30px;">
@@ -1346,7 +1589,7 @@ body::after{
         <div class="cpt-v"><span class="cpt-no"></span></div>
         <div class="cpt-v col-pro"><span class="cpt-no"></span></div>
         <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-f">Squad leaderboards</div>
+        <div class="cpt-f">Study groups &amp; co-op focus</div>
         <div class="cpt-v"><span class="cpt-no"></span></div>
         <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
         <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
@@ -1372,9 +1615,9 @@ body::after{
 
         <!-- FOOTER CTA -->
         <div class="cpt-foot lbl"><span class="fnote">Cancel anytime.<br>Built for student budgets.</span></div>
-        <div class="cpt-foot"><a href="Studlin Onboarding.html" class="btn btn-ghost">Start free</a></div>
-        <div class="cpt-foot col-pro"><a href="Studlin Onboarding.html" class="btn btn-lime magnetic">Start 7-day trial</a></div>
-        <div class="cpt-foot"><a href="Studlin Onboarding.html" class="btn btn-ghost">Go Max</a></div>
+        <div class="cpt-foot"><a href="/app" class="btn btn-ghost">Start free</a></div>
+        <div class="cpt-foot col-pro"><a href="/app" class="btn btn-lime magnetic">Start 7-day trial</a></div>
+        <div class="cpt-foot"><a href="/app" class="btn btn-ghost">Go Max</a></div>
 
       </div>
     </div>
@@ -1392,7 +1635,7 @@ body::after{
       <div class="qitem open"><button class="qq">Will my professors know I used AI?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Studlin's AI Detector is the same one most universities deploy, and the Humanizer rewrites in your voice from your past writing. You can also toggle AI off entirely for honor-code-strict assignments.</div></div></div>
       <div class="qitem"><button class="qq">How does Studlin compare to other study tools?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Most competing tools do one thing well. Studlin integrates writing, flashcards, scheduling, AI tutoring, and focus tracking into a single workspace designed for real student workflows.</div></div></div>
       <div class="qitem"><button class="qq">What subjects does the AI Tutor support?<span class="ic">+</span></button><div class="qa"><div class="qa-in">All of them. Math with full LaTeX, sciences, humanities, languages, coding, business, including IB, AP, A Levels, IGCSE, SAT and MCAT exam boards.</div></div></div>
-      <div class="qitem"><button class="qq">Can I import my existing notes and flashcards?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Yes. Studlin imports from all major study platforms and file formats — PDFs, spreadsheets, audio files, and more.</div></div></div>
+      <div class="qitem"><button class="qq">Can I import my existing notes and flashcards?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Yes. Studlin imports from all major study platforms and file formats, PDFs, spreadsheets, audio files, and more.</div></div></div>
       <div class="qitem"><button class="qq">Is there a student discount?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Studlin is already built for students. Pro is $7.99/mo billed annually, cheaper than most single-purpose tools it replaces.</div></div></div>
     </div>
   </div>
@@ -1404,7 +1647,7 @@ body::after{
     <span class="tag">// Final exam season starts now</span>
     <h2>Stop juggling tabs.<br>Start locking in.</h2>
     <p>Join 24,000+ students who study smarter, not harder.</p>
-    <a href="Studlin Onboarding.html" class="btn btn-ink btn-lg magnetic">Start free, 7 days of Pro <span class="ar">→</span></a>
+    <a href="/app" class="btn btn-ink btn-lg magnetic">Start free, 7 days of Pro <span class="ar">→</span></a>
   </div>
 </section>
 
@@ -1416,8 +1659,8 @@ body::after{
     <h2 style="font-size:clamp(32px,5.2vw,56px);font-weight:700;line-height:1.06;margin:0 0 14px;color:var(--cream);letter-spacing:-0.03em;">The Studlin mobile app</h2>
     <p style="font-size:17px;line-height:1.55;color:var(--cream-dim);max-width:520px;margin:0 auto;">Everything you love on desktop, optimized for your pocket. Be the first to know when we launch.</p>
     <div style="margin-top:24px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
-      <input type="email" placeholder="your@email.com" style="flex:0 1 300px;padding:12px 18px;border:1px solid var(--line);border-radius:99px;background:rgba(244,239,227,0.04);color:var(--cream);font-family:inherit;font-size:14px;outline:none;" />
-      <button style="padding:12px 26px;border:none;background:var(--lime);color:var(--ink);border-radius:99px;font-weight:700;font-family:inherit;font-size:14px;cursor:pointer;transition:all .2s;">Notify me</button>
+      <input type="email" placeholder="your@email.com" style="flex:0 1 300px;padding:12px 18px;border:1px solid var(--line);border-radius:99px;background:rgba(22,36,28,0.04);color:var(--cream);font-family:inherit;font-size:14px;outline:none;" />
+      <button style="padding:12px 26px;border:none;background:var(--spark);color:var(--ink);border-radius:99px;font-weight:700;font-family:inherit;font-size:14px;cursor:pointer;transition:all .2s;">Notify me</button>
     </div>
   </div>
 </section>
@@ -1453,7 +1696,7 @@ body::after{
   const nav=document.getElementById('nav');
   addEventListener('scroll',()=>{nav.classList.toggle('scrolled',scrollY>20);},{passive:true});
 
-  // reveal on scroll — auto-tag section content so each block rises in as you scroll
+  // reveal on scroll, auto-tag section content so each block rises in as you scroll
   (function(){
     // group selector -> children to stagger (or the element itself)
     const groups=[
@@ -1499,17 +1742,56 @@ body::after{
   // FAQ
   document.querySelectorAll('.qitem').forEach(it=>{it.querySelector('.qq').addEventListener('click',()=>{const o=it.classList.contains('open');document.querySelectorAll('.qitem').forEach(x=>x.classList.remove('open'));if(!o)it.classList.add('open');});});
 
-  // pricing toggle
-  const bills=document.querySelectorAll('.toggle button');
-  bills.forEach(b=>b.addEventListener('click',()=>{
-    bills.forEach(x=>x.classList.remove('active'));b.classList.add('active');
-    const annual=b.dataset.bill==='annual';
-    document.querySelectorAll('.num[data-monthly]').forEach(n=>{n.textContent=annual?n.dataset.annual:n.dataset.monthly;});
-    document.getElementById('proPer').textContent=annual?'/mo billed yearly':'/month';
-    document.getElementById('elitePer').textContent=annual?'/mo billed yearly':'/month';
-  }));
+  // pricing switch, count-up prices + confetti on annual
+  (function(){
+    const sw=document.getElementById('billSwitch');
+    if(!sw) return;
+    const mLbl=document.getElementById('bsMonthly'), aLbl=document.getElementById('bsAnnual');
+    const amts=[...document.querySelectorAll('.pc-amt')];
+    const billed=[...document.querySelectorAll('.pc-billed')];
+    let annual=false; mLbl.classList.add('on');
+    const ease=t=>1-Math.pow(1-t,3);
+    function animAmt(el,to,dec){
+      const from=parseFloat(el.textContent.replace(/,/g,''))||0;
+      if(Math.abs(from-to)<0.001){el.textContent=to.toFixed(dec);return;}
+      const dur=520, t0=performance.now();
+      (function step(now){const p=Math.min(1,(now-t0)/dur);el.textContent=(from+(to-from)*ease(p)).toFixed(dec);if(p<1)requestAnimationFrame(step);})(t0);
+    }
+    function apply(){
+      amts.forEach(el=>animAmt(el,parseFloat(annual?el.dataset.a:el.dataset.m),+(el.dataset.dec||0)));
+      billed.forEach(el=>{el.textContent=annual?(el.dataset.a||'billed annually'):(el.dataset.m||'billed monthly');});
+      sw.setAttribute('aria-checked',annual?'true':'false');
+      mLbl.classList.toggle('on',!annual); aLbl.classList.toggle('on',annual);
+    }
+    sw.addEventListener('click',()=>{
+      annual=!annual; apply();
+      if(annual && window.confetti){
+        const r=sw.getBoundingClientRect();
+        window.confetti({particleCount:72,spread:66,startVelocity:34,scalar:.9,ticks:160,
+          origin:{x:(r.left+r.width/2)/innerWidth,y:(r.top+r.height/2)/innerHeight},
+          colors:['#173D2D','#1E4A38','#2C5E45','#8FCBA9','#F3F1E7']});
+      }
+    });
+    const cards=document.querySelector('.pricing-cards');
+    const reduceP=!matchMedia('(prefers-reduced-motion: no-preference)').matches;
+    if(cards){
+      cards.classList.add('js');
+      const pcs=[...cards.querySelectorAll('.pc')];
+      if(reduceP){ pcs.forEach(p=>p.classList.add('pc-in')); }
+      else {
+        // progressive reveal — each card enters on its own as you scroll (staggered bottom margins)
+        const marg=['-6%','-16%','-26%'];
+        pcs.forEach((pc,i)=>{
+          new IntersectionObserver((es)=>{es.forEach(e=>{
+            if(e.isIntersecting) pc.classList.add('pc-in');
+            else if(e.boundingClientRect.top>0) pc.classList.remove('pc-in'); // re-arm only when scrolled back above
+          });},{rootMargin:`0px 0px ${marg[i]||'-16%'} 0px`, threshold:0.06}).observe(pc);
+        });
+      }
+    }
+  })();
 
-  // magnetic buttons — pull + lift
+  // magnetic buttons, pull + lift
   document.querySelectorAll('.magnetic').forEach(btn=>{
     btn.addEventListener('mousemove',e=>{const r=btn.getBoundingClientRect();const x=e.clientX-r.left-r.width/2,y=e.clientY-r.top-r.height/2;btn.style.transform=`translate(${x*0.28}px,${y*0.4}px) scale(1.045)`;});
     btn.addEventListener('mouseleave',()=>{btn.style.transform='';});
@@ -1522,7 +1804,7 @@ body::after{
     addEventListener('scroll',upd,{passive:true});addEventListener('resize',upd);upd();
   }
 
-  // hero fragment parallax — scroll + mouse, combined
+  // hero fragment parallax, scroll + mouse, combined
   const frags=document.querySelectorAll('.frag');
   const hero=document.querySelector('.hero');
   let pmx=0,pmy=0;
@@ -1559,7 +1841,7 @@ body::after{
     },1000);
   }
 
-  // hero flashcard — click to flip; auto-flip stops once you interact
+  // hero flashcard, click to flip; auto-flip stops once you interact
   const heroCard=document.getElementById('heroCard');
   if(heroCard){
     let autoFlip=null;
@@ -1575,7 +1857,7 @@ body::after{
   // card spotlight follow
   document.querySelectorAll('[data-spot]').forEach(c=>{c.addEventListener('mousemove',e=>{const r=c.getBoundingClientRect();c.style.setProperty('--mx',(e.clientX-r.left)+'px');c.style.setProperty('--my',(e.clientY-r.top)+'px');});});
 
-  // device 3D tilt — smooth lerp follows the mouse across the showcase
+  // device 3D tilt, smooth lerp follows the mouse across the showcase
   const dev=document.getElementById('device');
   if(dev && matchMedia('(prefers-reduced-motion: no-preference)').matches){
     const stage=dev.closest('.show-stage')||dev.parentElement;
@@ -1596,12 +1878,12 @@ body::after{
     stage.addEventListener('mouseleave',()=>{tx=0;ty=0;if(!raf)raf=requestAnimationFrame(devLoop);});
   }
 
-  // (flashcard bento scene is pure CSS — see .deckgen in landing.css)
+  // (flashcard bento scene is pure CSS, see .deckgen in landing.css)
 
-  // seamless marquee loop — duplicate track content so it never runs out
+  // seamless marquee loop, duplicate track content so it never runs out
   document.querySelectorAll('.marq-track').forEach(t=>{ t.innerHTML += t.innerHTML; });
 
-  // HERO — twinkling starfield + shooting stars
+  // HERO, twinkling starfield + shooting stars
   (function(){
     const sky=document.getElementById('heroSky');
     if(!sky) return;
@@ -1624,7 +1906,7 @@ body::after{
     }
   })();
 
-  // HOW IT WORKS — fixed atmosphere + scroll-stack reveal
+  // HOW IT WORKS, fixed atmosphere + scroll-stack reveal
   (function(){
     const sky=document.getElementById('hiwSky');
     if(sky){
