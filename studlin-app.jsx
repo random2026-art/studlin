@@ -7471,7 +7471,7 @@ function LeaderboardModal({open,onClose,currentXP,currentName,currentStreak}){
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRunning=()=>{}, setScheduleSettingsOpen=()=>{}, seriousMode=false}) {
+function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false}) {
   const realStats=sessionStats();
   const realStreak=Math.max(1,getStreak());
   const lvl=levelInfo();
@@ -7499,11 +7499,6 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
   const firstName=(prof.name||"there").split(" ")[0];
   const hr=new Date().getHours();
   const greet=hr<12?"Good morning":hr<18?"Good afternoon":"Good evening";
-  const fm=String(Math.floor(focusSecs/60)).padStart(2,"0");
-  const fs=String(focusSecs%60).padStart(2,"0");
-  const fmtTime=`${fm}:${fs}`;
-  const focusTotalSecs=25*60;
-  const focusPct=Math.max(0,Math.min(100,((focusTotalSecs-focusSecs)/focusTotalSecs)*100));
   // Real deck data from localStorage
   const rawDecks=lsGet("decks",[]);
   const realDecks=rawDecks.slice(0,6).map(d=>({
@@ -7610,10 +7605,14 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
     </div>
   );
   const isLight=T.mode==="light";
-  // Daily unique quote — deterministic from today's date
-  const qHash=today.split("").reduce((a,c)=>a+c.charCodeAt(0),0);
-  const todayQuote=QUOTES[qHash%QUOTES.length];
-  const [quoteCopied,setQuoteCopied]=useState(false);
+  // Weekly Wrapped is no longer a permanent dashboard card — it now surfaces
+  // once as a full-screen popup during the Sunday/Monday evening window
+  // (>=6pm), gated by a per-week localStorage flag so it doesn't reappear
+  // once dismissed, but comes back fresh next week.
+  const wrappedWeekKey=today.slice(0,4)+"-"+weekNo();
+  const isWrappedWindow=(()=>{const d=new Date();const day=d.getDay();return(day===0||day===1)&&d.getHours()>=18;})();
+  const [wrappedOpen,setWrappedOpen]=useState(()=>isWrappedWindow&&!lsGet("wrapped-dismissed-"+wrappedWeekKey,false));
+  const dismissWrapped=()=>{lsSet("wrapped-dismissed-"+wrappedWeekKey,true);setWrappedOpen(false);};
   // Dynamic leaderboard — real Firestore profiles ranked by actual XP, "you" merged in live
   const myUid=firebase.auth().currentUser?.uid||null;
   const lbUsers=mergeLeaderboard(topProfiles, firstName, lvl.xp, realStreak, myUid, 5);
@@ -7647,13 +7646,7 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
             <div style={{fontFamily:T.hand,fontSize:54,lineHeight:0.95,fontWeight:600,color:T.cream,margin:"0 0 4px"}}>{greet}, <span style={{color:T.lime}}>{firstName}.</span></div>
             <p style={{fontSize:13.5,color:"rgba(246,241,230,0.7)",margin:"8px 0 16px",lineHeight:1.5,maxWidth:380}}>{planLeft>0?<>You've got <strong style={{color:T.cream}}>{planLeft} task{planLeft===1?"":"s"} left</strong> on today's plan. Let's lock in.</>:plan.length>0?<>All <strong style={{color:T.cream}}>{plan.length} tasks done</strong> today. Outstanding work.</>:<>Nothing scheduled yet. Add a few tasks and let's lock in.</>}</p>
             <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-              <button onClick={()=>setFocusRunning(r=>!r)} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",background:T.lime,color:T.ink,borderRadius:99,fontSize:13,fontWeight:600,border:"none",cursor:"pointer",fontFamily:T.font}}>
-                {focusRunning
-                  ?<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
-                  :<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg>}
-                {focusRunning?"Pause focus session":"Resume focus session"}
-              </button>
-              <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",color:T.cream,border:"1px solid rgba(246,241,230,0.18)",background:"transparent",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>View today's plan</button>
+              <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",background:T.lime,color:T.ink,borderRadius:99,fontSize:13,fontWeight:600,border:"none",cursor:"pointer",fontFamily:T.font}}>View today's plan</button>
               <button onClick={()=>setScheduleSettingsOpen(true)} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",color:T.cream,border:"1px solid rgba(246,241,230,0.18)",background:"transparent",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Customize schedule</button>
             </div>
           </div>
@@ -7708,29 +7701,8 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
       </div>
       )} {/* end seriousMode ternary */}
 
-      {/* ROW 2: QUOTE OF THE DAY */}
-      <div style={{background:T.butter,borderRadius:22,padding:"28px 32px",position:"relative",overflow:"hidden"}}>
-        <span style={{fontFamily:T.serif,fontSize:160,lineHeight:0.65,color:"rgba(8,12,40,0.10)",position:"absolute",top:-8,left:18,fontStyle:"italic",pointerEvents:"none"}}>"</span>
-        <div style={{position:"relative",display:"flex",flexDirection:"column",gap:14}}>
-          <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.16em",textTransform:"uppercase",color:"rgba(8,12,40,0.45)"}}>Quote of the Day</div>
-          <div style={{fontFamily:T.serif,fontStyle:"italic",fontSize:26,lineHeight:1.3,color:T.ink,maxWidth:780}}>{todayQuote.text}</div>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
-            <div style={{fontFamily:T.mono,fontSize:12,letterSpacing:"0.10em",textTransform:"uppercase",color:"rgba(8,12,40,0.55)"}}>— {todayQuote.author}</div>
-            <button onClick={()=>{
-              const txt=`"${todayQuote.text}" — ${todayQuote.author}`;
-              navigator.clipboard&&navigator.clipboard.writeText(txt).then(()=>{setQuoteCopied(true);setTimeout(()=>setQuoteCopied(false),2500);});
-            }} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",background:quoteCopied?T.forest:T.ink,color:T.cream,border:"none",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font,transition:"background 0.2s",flexShrink:0}}>
-              {quoteCopied
-                ?<><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Copied!</>
-                :<><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg> Share Quote</>
-              }
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* ROW 3: Today's plan + Focus + Ask Studlin (5/3/4) */}
-      <div style={{display:"grid",gridTemplateColumns:"5fr 3fr 4fr",gap:16}}>
+      {/* ROW 2: Today's plan + Ask Studlin */}
+      <div style={{display:"grid",gridTemplateColumns:"7fr 5fr",gap:16}}>
         {/* Today's plan */}
         <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
           <CardHead title="Today's plan" label={planDoneCount+" / "+plan.length+" DONE"} more="Calendar" />
@@ -7762,36 +7734,6 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
             );})}
         </div>
 
-        {/* Focus Pomodoro */}
-        <div style={{background:`linear-gradient(180deg, ${T.forest} 0%, #0B201A 100%)`,color:T.cream,borderRadius:22,padding:22,position:"relative",overflow:"hidden",display:"flex",flexDirection:"column"}}>
-          <div style={{position:"absolute",right:-60,bottom:-60,width:220,height:220,background:"radial-gradient(circle,rgba(200,255,90,0.15),transparent 65%)"}} />
-          <div style={{position:"relative",zIndex:1}}>
-            <CardHead title="Focus" label="POMODORO" light />
-            <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)"}}>Session 3 of 4</div>
-            <div style={{fontFamily:T.hand,fontSize:88,lineHeight:0.85,fontWeight:700,color:T.lime,margin:"8px 0 4px",fontVariantNumeric:"tabular-nums"}}>{fmtTime}</div>
-            <div style={{fontSize:12.5,color:"rgba(246,241,230,0.7)",marginBottom:16}}>{focusRunning?`Break in ${fm} min · then 5 min off`:"Session paused · tap play to resume"}</div>
-            <div style={{height:6,background:"rgba(246,241,230,0.12)",borderRadius:99,marginBottom:18,overflow:"hidden"}}><div style={{height:"100%",width:focusPct+"%",background:T.lime,transition:"width 1s linear"}}/></div>
-            <div style={{display:"flex",gap:8}}>
-              <button onClick={()=>setFocusRunning(r=>!r)} style={{width:48,height:48,borderRadius:"50%",background:T.lime,color:T.ink,border:"none",display:"grid",placeItems:"center",cursor:"pointer"}}>
-                {focusRunning
-                  ?<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
-                  :<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg>
-                }
-              </button>
-              {[
-                <svg key="s" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>,
-                <svg key="m" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>,
-              ].map((ic,i)=>(
-                <button key={i} style={{width:38,height:38,borderRadius:"50%",background:"rgba(246,241,230,0.08)",color:T.cream,border:"1px solid rgba(246,241,230,0.14)",display:"grid",placeItems:"center",cursor:"pointer"}}>{ic}</button>
-              ))}
-            </div>
-            <div style={{display:"inline-flex",alignItems:"center",gap:8,padding:"7px 12px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,fontSize:12,marginTop:14}}>
-              <span style={{width:8,height:8,borderRadius:"50%",background:T.butter}}/>
-              English IV · Macbeth essay
-            </div>
-          </div>
-        </div>
-
         {/* Ask Studlin */}
         <div style={{background:T.ink,color:T.cream,borderRadius:22,padding:22,display:"flex",flexDirection:"column"}}>
           <CardHead title="Ask Studlin" label="AI TUTOR" more="Open" light />
@@ -7814,50 +7756,32 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
         </div>
       </div>
 
-      {/* ROW: This week's focus (bar chart) + compact Weekly Wrapped — hidden in Serious Mode */}
-      {!seriousMode && <div style={{display:"grid",gridTemplateColumns:"8fr 4fr",gap:16}}>
-        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
-          <CardHead title="This week's focus" label={fmtH(weeklyFocusMin)+" this week · tracked live"} />
-          <div style={{display:"flex",alignItems:"flex-end",gap:14,height:150,marginTop:4}}>
-            {weekBars.map((b,i)=>(
-              <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:8,height:"100%",justifyContent:"flex-end",opacity:b.future?0.35:1}}>
-                <div style={{width:"100%",maxWidth:38,display:"flex",flexDirection:"column-reverse",borderRadius:6,overflow:"hidden"}}>
-                  {b.write>0&&<div style={{height:Math.max(4,b.write/weekBarMax*130),background:T.butter}} />}
-                  {b.flash>0&&<div style={{height:Math.max(4,b.flash/weekBarMax*130),background:T.lime}} />}
-                  {b.read>0&&<div style={{height:Math.max(4,b.read/weekBarMax*130),background:T.forest}} />}
-                  {b.total===0&&<div style={{height:4,background:T.card2,width:"100%"}} />}
-                </div>
-                <span style={{fontSize:10.5,fontFamily:T.mono,color:b.isToday?T.lime:T.muted,fontWeight:600}}>{b.lab}</span>
+      {/* ROW: This week's focus (bar chart) — hidden in Serious Mode. Weekly
+          Wrapped used to live here as a permanent compact card; it now only
+          appears as the full-screen popup below, during its Sun/Mon evening
+          window. */}
+      {!seriousMode && <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+        <CardHead title="This week's focus" label={fmtH(weeklyFocusMin)+" this week · tracked live"} />
+        <div style={{display:"flex",alignItems:"flex-end",gap:14,height:150,marginTop:4}}>
+          {weekBars.map((b,i)=>(
+            <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:8,height:"100%",justifyContent:"flex-end",opacity:b.future?0.35:1}}>
+              <div style={{width:"100%",maxWidth:38,display:"flex",flexDirection:"column-reverse",borderRadius:6,overflow:"hidden"}}>
+                {b.write>0&&<div style={{height:Math.max(4,b.write/weekBarMax*130),background:T.butter}} />}
+                {b.flash>0&&<div style={{height:Math.max(4,b.flash/weekBarMax*130),background:T.lime}} />}
+                {b.read>0&&<div style={{height:Math.max(4,b.read/weekBarMax*130),background:T.forest}} />}
+                {b.total===0&&<div style={{height:4,background:T.card2,width:"100%"}} />}
               </div>
-            ))}
-          </div>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:16,flexWrap:"wrap",gap:10}}>
-            <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
-              {[{c:T.forest,l:"Reading & notes"},{c:T.lime,l:"Flashcards"},{c:T.butter,l:"Writing"}].map((it,i)=>(
-                <div key={i} style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:T.muted}}><span style={{width:9,height:9,borderRadius:2,background:it.c}}/>{it.l}</div>
-              ))}
+              <span style={{fontSize:10.5,fontFamily:T.mono,color:b.isToday?T.lime:T.muted,fontWeight:600}}>{b.lab}</span>
             </div>
-            {topSubjectThisWeek&&<div style={{fontSize:11.5,color:T.muted,fontFamily:T.mono}}>Top subject: <span style={{color:T.lime,fontWeight:700}}>{topSubjectThisWeek.slice(0,4).toUpperCase()}</span></div>}
-          </div>
+          ))}
         </div>
-        <div style={{background:T.forest,color:T.cream,borderRadius:22,padding:20}}>
-          <CardHead title="Weekly Wrapped" label={"WEEK "+weekNo()} more="View full" light />
-          <div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {[
-              {ln:"Focus hours",vn:fmtH(weeklyFocusMin)||"0m"},
-              {ln:"Cards mastered",vn:cardsMasteredTotal},
-              {ln:"Words written",vn:wordsWrittenTotal.toLocaleString()},
-            ].map((ins,i)=>(
-              <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:10,padding:"9px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <span style={{fontSize:11,color:"rgba(246,241,230,0.55)",fontFamily:T.mono,letterSpacing:"0.04em",textTransform:"uppercase"}}>{ins.ln}</span>
-                <span style={{fontFamily:T.hand,fontSize:20,fontWeight:600,color:T.lime}}>{ins.vn}</span>
-              </div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:16,flexWrap:"wrap",gap:10}}>
+          <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
+            {[{c:T.forest,l:"Reading & notes"},{c:T.lime,l:"Flashcards"},{c:T.butter,l:"Writing"}].map((it,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:T.muted}}><span style={{width:9,height:9,borderRadius:2,background:it.c}}/>{it.l}</div>
             ))}
           </div>
-          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:12}}>
-            <span style={{fontSize:10.5,padding:"5px 10px",background:"rgba(246,241,230,0.08)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:T.cream,fontWeight:600}}>{realStreak}-day streak</span>
-            {topSubjectThisWeek&&<span style={{fontSize:10.5,padding:"5px 10px",background:"rgba(246,241,230,0.08)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:T.cream,fontWeight:600}}>{topSubjectThisWeek} focus</span>}
-          </div>
+          {topSubjectThisWeek&&<div style={{fontSize:11.5,color:T.muted,fontFamily:T.mono}}>Top subject: <span style={{color:T.lime,fontWeight:700}}>{topSubjectThisWeek.slice(0,4).toUpperCase()}</span></div>}
         </div>
       </div>}
 
@@ -8018,6 +7942,30 @@ function Dashboard({setActive, focusSecs=22*60+10, focusRunning=true, setFocusRu
         instead of the real viewport. Siblings of it are unaffected. */}
     <LevelRoadmapModal open={levelRoadmapOpen} onClose={()=>setLevelRoadmapOpen(false)} currentXP={lvl.xp} />
     <LeaderboardModal open={leaderboardOpen} onClose={()=>setLeaderboardOpen(false)} currentXP={lvl.xp} currentName={firstName} currentStreak={realStreak} />
+    {wrappedOpen&&!seriousMode&&(
+      <div onClick={dismissWrapped} style={{position:"fixed",inset:0,background:"rgba(8,12,10,0.72)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
+        <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:420,background:T.forest,color:T.cream,borderRadius:22,padding:28,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
+          <CardHead title="Weekly Wrapped" label={"WEEK "+weekNo()} light />
+          <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:8}}>
+            {[
+              {ln:"Focus hours",vn:fmtH(weeklyFocusMin)||"0m"},
+              {ln:"Cards mastered",vn:cardsMasteredTotal},
+              {ln:"Words written",vn:wordsWrittenTotal.toLocaleString()},
+            ].map((ins,i)=>(
+              <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:10,padding:"9px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:11,color:"rgba(246,241,230,0.55)",fontFamily:T.mono,letterSpacing:"0.04em",textTransform:"uppercase"}}>{ins.ln}</span>
+                <span style={{fontFamily:T.hand,fontSize:20,fontWeight:600,color:T.lime}}>{ins.vn}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:12,marginBottom:20}}>
+            <span style={{fontSize:10.5,padding:"5px 10px",background:"rgba(246,241,230,0.08)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:T.cream,fontWeight:600}}>{realStreak}-day streak</span>
+            {topSubjectThisWeek&&<span style={{fontSize:10.5,padding:"5px 10px",background:"rgba(246,241,230,0.08)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:T.cream,fontWeight:600}}>{topSubjectThisWeek} focus</span>}
+          </div>
+          <button onClick={dismissWrapped} style={{width:"100%",padding:"11px 0",borderRadius:99,background:T.lime,color:T.ink,border:"none",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Done</button>
+        </div>
+      </div>
+    )}
     </>
   );
 }
@@ -8323,10 +8271,6 @@ function App() {
   const setTheme=(name)=>{ setThemeState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-theme",name); };
   const setAccent=(name)=>{ setAccentState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-accent",name); };
   const setDensity=(name)=>{ setDensityState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-density",name); };
-  const [focusSecs,setFocusSecs]=useState(22*60+10);
-  const [focusRunning,setFocusRunning]=useState(true);
-  const [focusMode,setFocusMode]=useState("Focus");
-  const [focusTotal,setFocusTotal]=useState(25*60);
   const [timerTask,setTimerTask]=useState(null);
   const [newDayModal,setNewDayModal]=useState(false);
   const [overdueForModal,setOverdueForModal]=useState([]);
@@ -8482,14 +8426,6 @@ function App() {
     const list=[{icon:Icon.flame,title:getStreak()+"-day streak going",sub:"Study today to keep it alive",color:T.amber}].concat(up);
     return list;
   })();
-  useEffect(()=>{
-    if(!focusRunning) return;
-    const endTime=Date.now()+focusSecs*1000;
-    const id=setInterval(()=>{
-      setFocusSecs(Math.max(0,Math.round((endTime-Date.now())/1000)));
-    },250);
-    return ()=>clearInterval(id);
-  },[focusRunning]);
   useEffect(()=>{ touchStreak(); },[]);
   useEffect(()=>{
     const lastDay=lsGet("lastLoginDay","");
@@ -8503,13 +8439,6 @@ function App() {
     const od=cleaned.filter(ev=>ev.status==="pending"&&ev.date<today&&!(ev.deadline&&ev.deadline<today));
     if(od.length>0){setOverdueForModal(od);setNewDayModal(true);}
   },[]);
-  useEffect(()=>{
-    if(focusSecs===0&&focusRunning){
-      setFocusRunning(false);
-      if(focusMode==="Focus"){ logSession(Math.max(1,Math.round(focusTotal/60)),"Focus"); }
-      setFocusSecs(focusTotal);
-    }
-  },[focusSecs,focusRunning,focusMode,focusTotal]);
   const navSections=[
     {label:"Workspace",items:[
       {id:"dashboard",label:"Dashboard"},
@@ -8642,7 +8571,7 @@ function App() {
             container instead of the real viewport. Clearing it once done
             keeps the entrance animation but stops that side effect. */}
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both"}}>
-          {active==="dashboard"?<Dashboard setActive={setActive} focusSecs={focusSecs} focusRunning={focusRunning} setFocusRunning={setFocusRunning} setScheduleSettingsOpen={setScheduleSettingsOpen} seriousMode={seriousMode} />:
+          {active==="dashboard"?<Dashboard setActive={setActive} setScheduleSettingsOpen={setScheduleSettingsOpen} seriousMode={seriousMode} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} />:
            active==="calendar"?<CalendarTab onTourDone={handleCalendarTourDone} onTaskSaved={askNotifIfNeeded} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} />:
