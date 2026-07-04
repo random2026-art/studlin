@@ -202,12 +202,6 @@ function StepSignup({ state, set, advance }) {
 
       {authError && <div style={{fontSize:13,color:"#C4544A",marginBottom:16,padding:"12px 14px",background:"#FCF1EF",borderRadius:10,border:"1px solid #F5D4D0",textAlign:"center"}}>{authError}</div>}
 
-      <label className={"checkbox" + (state.terms ? " is-checked" : "")} onClick={()=>set({...state, terms:!state.terms})} style={{marginBottom:18}}>
-        <span className="box">{Ic.check}</span>
-        <span>I accept the <a href="terms.html" target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}>Terms of Service</a> and <a href="privacy.html" target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}>Privacy Policy</a>.</span>
-      </label>
-      {errors.terms && <div className="field-error" style={{marginTop:-12,marginBottom:14}}>{errors.terms}</div>}
-
       {mode === "providers" && (
         <>
           <div className="providers">
@@ -248,6 +242,12 @@ function StepSignup({ state, set, advance }) {
           <button data-cta="signup" onClick={tryAdvance} style={{display:"none"}}></button>
         </>
       )}
+
+      <label className={"checkbox" + (state.terms ? " is-checked" : "")} onClick={()=>set({...state, terms:!state.terms})} style={{marginTop:22}}>
+        <span className="box">{Ic.check}</span>
+        <span>I accept the <a href="terms.html" target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}>Terms of Service</a> and <a href="privacy.html" target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}>Privacy Policy</a>.</span>
+      </label>
+      {errors.terms && <div className="field-error" style={{marginTop:8}}>{errors.terms}</div>}
     </div>
   );
 }
