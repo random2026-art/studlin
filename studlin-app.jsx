@@ -613,6 +613,135 @@ const DEFAULT_SUBJECTS=[
 const getSubjects=()=>lsGet("user-subjects",DEFAULT_SUBJECTS);
 const saveSubjects=(s)=>lsSet("user-subjects",s);
 
+// ─── SCHOOL DIRECTORY (mock, for the searchable school picker) ──────────────
+// Flat mock list, same shape/convention as NETWORK_DIRECTORY below. Exactly
+// two entries (DEMO_SCHOOL_COLLEGE, DEMO_SCHOOL_HS — see the institutional
+// demo section) are wired to real mock class data; every other entry here is
+// just a selectable name with no further behavior.
+const SCHOOL_DIRECTORY=[
+  "Harvard University","Lincoln High School","Stanford University","New York University",
+  "UC Berkeley","UCLA","MIT","Lehigh University","University of Michigan",
+  "Ohio State University","Georgia Tech","Boston University",
+  "Roosevelt High School","Jefferson High School","Central High School",
+  "Riverside High School","Franklin High School","University of Texas at Austin",
+  "Penn State University","Arizona State University","Northwestern University",
+  "Washington High School","University of Florida","Miami Dade College",
+];
+// Searchable school picker — type-to-filter + click-to-select, same shape as
+// the friend-search pattern used in Studlin Network (text input + filtered
+// list). Typing always calls onChange immediately, so a school that isn't in
+// the mock directory is never blocked — the "fallback" is structural, not a
+// separate confirm step, which matters since most real students' schools
+// won't be in this small demo list.
+const SchoolSelect=({value,onChange,placeholder,theme})=>{
+  const [q,setQ]=useState(value||"");
+  const [open,setOpen]=useState(false);
+  useEffect(()=>{setQ(value||"");},[value]);
+  const matches=(q.trim()?SCHOOL_DIRECTORY.filter(s=>s.toLowerCase().includes(q.toLowerCase())):[]).slice(0,6);
+  const th=theme||{bg:T.card2,border:T.border,text:T.text,muted:T.muted};
+  const pick=(name)=>{setQ(name);onChange(name);setOpen(false);};
+  return (
+    <div style={{position:"relative"}}>
+      <input
+        value={q}
+        onChange={e=>{setQ(e.target.value);onChange(e.target.value);setOpen(true);}}
+        onFocus={()=>setOpen(true)}
+        onBlur={()=>setTimeout(()=>setOpen(false),150)}
+        placeholder={placeholder||"Search or type your school"}
+        style={{width:"100%",background:th.bg,border:`1px solid ${th.border}`,borderRadius:8,padding:"10px 12px",color:th.text,fontSize:13.5,fontFamily:T.font,outline:"none",boxSizing:"border-box"}}
+      />
+      {open&&q.trim()&&(
+        <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,zIndex:20,background:th.bg,border:`1px solid ${th.border}`,borderRadius:8,overflow:"hidden",boxShadow:"0 12px 28px -12px rgba(0,0,0,0.35)"}}>
+          {matches.length>0
+            ? matches.map(name=>(
+                <div key={name} onMouseDown={e=>e.preventDefault()} onClick={()=>pick(name)} style={{padding:"9px 12px",fontSize:13,color:th.text,cursor:"pointer",borderBottom:`1px solid ${th.border}`}}>{name}</div>
+              ))
+            : <div onMouseDown={e=>e.preventDefault()} onClick={()=>setOpen(false)} style={{padding:"9px 12px",fontSize:12.5,color:th.muted,cursor:"pointer"}}>Can't find your school? Use "{q}" instead</div>
+          }
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── INSTITUTIONAL LIVE-DEMO CLASS ENGINE ────────────────────────────────────
+// Pitch/demo material for university and high-school conversations — wired to
+// exactly these two SCHOOL_DIRECTORY entries. Every other school is just a
+// name with no further behavior (see ExploreClassesCard's mount point in
+// Profile(), gated on an exact affiliation match against these two strings).
+const DEMO_SCHOOL_COLLEGE="Harvard University";
+const DEMO_SCHOOL_HS="Lincoln High School";
+
+// Event dates are stored as `dayOffset` (days from "today") and resolved to a
+// real date only at render/inject time, so the demo never looks stale no
+// matter when someone opens the app.
+const resolveDemoDate=(dayOffset)=>dayKey(new Date(Date.now()+dayOffset*86400000));
+const fmtDemoDate=(k)=>{const p=k.split("-");return MON_SHORT[+p[1]-1]+" "+(+p[2]);};
+
+const DEMO_CLASSES_COLLEGE=[
+  {code:"ME 101",title:"Intro to Mechanical Engineering",instructor:"Prof. Alan Reyes",events:[
+    {title:"Syllabus Quiz",dayOffset:2,time:"09:00",kind:"deadline"},
+    {title:"Problem Set 1 Due",dayOffset:5,time:"23:59",kind:"deadline"},
+    {title:"Lab 1 — Statics",dayOffset:7,time:"14:00",kind:"class",duration:120},
+    {title:"Midterm Exam 1",dayOffset:14,time:"10:00",kind:"exam",duration:90},
+    {title:"Problem Set 2 Due",dayOffset:19,time:"23:59",kind:"deadline"},
+    {title:"Lab 2 — Dynamics",dayOffset:21,time:"14:00",kind:"class",duration:120},
+    {title:"Problem Set 3 Due",dayOffset:26,time:"23:59",kind:"deadline"},
+    {title:"Midterm Exam 2",dayOffset:35,time:"10:00",kind:"exam",duration:90},
+    {title:"Lab 3 — Thermodynamics",dayOffset:38,time:"14:00",kind:"class",duration:120},
+    {title:"Problem Set 4 Due",dayOffset:42,time:"23:59",kind:"deadline"},
+    {title:"Design Project Proposal Due",dayOffset:47,time:"23:59",kind:"deadline"},
+    {title:"Lab 4 — Fluid Mechanics",dayOffset:49,time:"14:00",kind:"class",duration:120},
+    {title:"Project 1",dayOffset:52,time:"23:59",kind:"deadline"},
+    {title:"Final Exam",dayOffset:63,time:"09:00",kind:"exam",duration:120},
+    {title:"Final Project Presentation",is_TBD:true,kind:"deadline"},
+  ]},
+  {code:"BUS 210",title:"Business Management",instructor:"Prof. Diane Cho",events:[
+    {title:"Syllabus Acknowledgement",dayOffset:1,time:"23:59",kind:"deadline"},
+    {title:"Case Study 1 Due",dayOffset:6,time:"23:59",kind:"deadline"},
+    {title:"Group Formation Deadline",dayOffset:8,time:"23:59",kind:"deadline"},
+    {title:"Midterm Exam 1",dayOffset:15,time:"11:00",kind:"exam",duration:90},
+    {title:"Case Study 2 Due",dayOffset:20,time:"23:59",kind:"deadline"},
+    {title:"Guest Speaker Session",dayOffset:23,time:"13:00",kind:"class",duration:75},
+    {title:"Case Study 3 Due",dayOffset:27,time:"23:59",kind:"deadline"},
+    {title:"Midterm Exam 2",dayOffset:36,time:"11:00",kind:"exam",duration:90},
+    {title:"Team Strategy Memo Due",dayOffset:41,time:"23:59",kind:"deadline"},
+    {title:"Case Study 4 Due",dayOffset:44,time:"23:59",kind:"deadline"},
+    {title:"Project 1",dayOffset:52,time:"23:59",kind:"deadline"},
+    {title:"Peer Evaluation Due",dayOffset:55,time:"23:59",kind:"deadline"},
+    {title:"Final Exam",dayOffset:64,time:"11:00",kind:"exam",duration:120},
+    {title:"Capstone Deck Due",dayOffset:66,time:"23:59",kind:"deadline"},
+    {title:"Final Project Presentation",is_TBD:true,kind:"deadline"},
+  ]},
+  {code:"CS 50",title:"Introduction to Computer Science",instructor:"Prof. Meredith Okoye",events:[
+    {title:"Problem Set 0",dayOffset:4,time:"23:59",kind:"deadline"},
+    {title:"Problem Set 1",dayOffset:11,time:"23:59",kind:"deadline"},
+    {title:"Midterm Exam",dayOffset:22,time:"09:00",kind:"exam",duration:90},
+    {title:"Problem Set 2",dayOffset:29,time:"23:59",kind:"deadline"},
+    {title:"Final Project Proposal",is_TBD:true,kind:"deadline"},
+  ]},
+];
+
+// High-school syllabus events are week-scoped, not semester-scoped — framed
+// as a "Teacher's Weekly Agenda" that refreshes rather than a fixed plan.
+const DEMO_CLASSES_HS=[
+  {code:"AP-PHYS",title:"AP Physics",instructor:"Mr. Dale Whitfield",events:[
+    {title:"Momentum Problem Set",dayOffset:1,time:"23:59",kind:"deadline"},
+    {title:"Lab: Projectile Motion",dayOffset:2,time:"10:00",kind:"class",duration:50},
+    {title:"Reading: Ch. 9 Rotational Motion",dayOffset:3,time:"23:59",kind:"deadline"},
+    {title:"Quiz: Energy Conservation",dayOffset:4,time:"09:00",kind:"exam",duration:30},
+    {title:"Lab Report Due",dayOffset:5,time:"23:59",kind:"deadline"},
+  ]},
+  {code:"HON-ENG",title:"Honors English",instructor:"Ms. Priya Nair",events:[
+    {title:"Reading: The Great Gatsby Ch. 4-6",dayOffset:1,time:"23:59",kind:"deadline"},
+    {title:"Socratic Seminar",dayOffset:2,time:"11:00",kind:"class",duration:45},
+    {title:"Essay Draft 1 Due",dayOffset:4,time:"23:59",kind:"deadline"},
+    {title:"Vocabulary Quiz",dayOffset:5,time:"09:30",kind:"exam",duration:20},
+  ]},
+];
+
+const DEMO_CLASSES_BY_SCHOOL={[DEMO_SCHOOL_COLLEGE]:DEMO_CLASSES_COLLEGE,[DEMO_SCHOOL_HS]:DEMO_CLASSES_HS};
+
 // ─── WEEKLY ROUTINE ("Time Shields") ─────────────────────────────────────────
 // A routine rule is a recurring commitment: {id,title,kind,days,startTime,
 // duration,subject}. `days` is Monday-first (0=Mon..6=Sun), matching
@@ -3574,6 +3703,207 @@ function panelPalette(){
     card2: isLight?"rgba(246,241,230,0.08)":T.card2,
   };
 }
+
+// ─── INSTITUTIONAL LIVE-DEMO: class explorer, preview drawer, injection ──────
+// Standalone pill switch — the real `Toggle` component (used in Settings) is
+// closure-bound to that component's own `toggles` state, so it can't be
+// reused here; this is the same 38x20 visual, taking on/onClick directly.
+const MiniToggle=({on,onClick})=>(
+  <div onClick={onClick} style={{width:38,height:20,borderRadius:10,background:on?T.lime:T.card2,border:`1px solid ${on?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+    <div style={{width:14,height:14,borderRadius:"50%",background:on?T.bg:"#fff",position:"absolute",top:2,left:on?21:2,transition:"left 0.2s"}} />
+  </div>
+);
+
+// Injects the non-TBD events of the given classes into the student's real
+// events array. Runs outside CalendarTab's React state, so it reads/writes
+// localStorage directly (same lsGet→concat→lsSet shape CalendarTab's own
+// commitTasks uses). Each event's id is tagged "class-<code>-<index>" so a
+// second click for the same class never double-injects. Returns the events
+// that were actually newly added (empty array if everything was a dup).
+function injectClassEvents(selectedClasses){
+  const existing=lsGet("events",[]);
+  const existingIds=new Set(existing.map(e=>e.id));
+  const newEvents=[];
+  selectedClasses.forEach(cls=>{
+    cls.events.forEach((ev,idx)=>{
+      if(ev.is_TBD)return; // no real date to schedule yet
+      const id="class-"+cls.code+"-"+idx;
+      if(existingIds.has(id))return;
+      newEvents.push({
+        id,
+        title:ev.title,
+        date:resolveDemoDate(ev.dayOffset),
+        time:ev.time||"09:00",
+        subject:cls.title,
+        kind:ev.kind==="exam"?"exam":(ev.kind==="class"?"class":"deadline"),
+        notes:"",
+        priority:3,
+        difficulty:3,
+        deadline:null,
+        duration:ev.duration||60,
+        status:"pending",
+        timeSpent:0,
+        completedAt:null,
+      });
+    });
+  });
+  if(newEvents.length>0)lsSet("events",existing.concat(newEvents));
+  return newEvents;
+}
+
+// How many of the student's existing study blocks now time-overlap the
+// newly-injected class events — used to surface a safe, reviewable count
+// instead of silently auto-moving the student's real study time.
+function countStudyBlockConflicts(newEvents){
+  const events=lsGet("events",[]);
+  const toMin=(t)=>{const p=(t||"00:00").split(":").map(Number);return p[0]*60+p[1];};
+  const overlaps=(a,b)=>{
+    if(a.date!==b.date)return false;
+    const aStart=toMin(a.time),aEnd=aStart+(a.duration||30);
+    const bStart=toMin(b.time),bEnd=bStart+(b.duration||30);
+    return aStart<bEnd&&bStart<aEnd;
+  };
+  return events.filter(e=>e.kind==="study block"&&newEvents.some(ne=>overlaps(e,ne))).length;
+}
+
+// Right-side slide-in preview — modeled directly on ChatDrawer's shell
+// (portal + backdrop + translateX panel), z-index bumped above it so the two
+// never visually collide (they can't both be open in practice).
+function ClassPreviewDrawer({open,cls,events,onClose,isHS,simOn,onToggleSimulate}){
+  const pp=panelPalette();
+  useEffect(()=>{
+    if(!open)return;
+    const onKey=e=>{if(e.key==="Escape")onClose();};
+    window.addEventListener("keydown",onKey);
+    return ()=>window.removeEventListener("keydown",onKey);
+  },[open]);
+  if(!cls)return null;
+  return ReactDOM.createPortal(
+    <>
+      <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(8,12,10,0.5)",zIndex:410,opacity:open?1:0,pointerEvents:open?"auto":"none",transition:"opacity 0.25s"}} />
+      <div style={{position:"fixed",top:0,right:0,height:"100vh",width:400,maxWidth:"92vw",background:T.surface,borderLeft:`1px solid ${pp.border}`,boxShadow:"-24px 0 60px -20px rgba(0,0,0,0.5)",zIndex:411,display:"flex",flexDirection:"column",transform:open?"translateX(0)":"translateX(100%)",transition:"transform 0.28s cubic-bezier(.2,.85,.3,1)"}}>
+        <div style={{padding:"18px 18px 14px",borderBottom:`1px solid ${pp.border}`,display:"flex",alignItems:"center",gap:12}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:14,fontWeight:700,color:pp.text}}>{cls.code}: {cls.title}</div>
+            <div style={{fontSize:11,color:pp.muted}}>{cls.instructor}</div>
+          </div>
+          <button onClick={onClose} style={{width:30,height:30,borderRadius:8,border:`1px solid ${pp.border}`,background:pp.card2,color:pp.muted,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.xmark}</button>
+        </div>
+
+        <div style={{padding:"12px 18px",borderBottom:`1px solid ${pp.border}`,display:"flex",alignItems:"center",gap:8,background:T.amber+"0F"}}>
+          <span style={{color:T.amber,display:"flex",flexShrink:0}}>{Icon.shield}</span>
+          <span style={{fontSize:11.5,color:pp.text,lineHeight:1.4}}>Only <strong>{cls.instructor}</strong> can change these dates.</span>
+        </div>
+
+        <div style={{padding:"12px 18px",borderBottom:`1px solid ${pp.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+          <div>
+            <div style={{fontSize:12.5,fontWeight:600,color:pp.text}}>Simulate Professor Update</div>
+            <div style={{fontSize:10.5,color:pp.muted,marginTop:1}}>Preview: move "Project 1" from Friday to Monday</div>
+          </div>
+          <MiniToggle on={simOn} onClick={onToggleSimulate} />
+        </div>
+
+        <div style={{flex:1,overflowY:"auto",padding:"14px 18px"}}>
+          {isHS&&<div style={{fontSize:10,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:pp.faint,marginBottom:10}}>Teacher's Weekly Agenda</div>}
+          {events.map((ev,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:`1px solid ${pp.border}`}}>
+              <span style={{color:ev.is_TBD?pp.faint:T.lime,flexShrink:0}}>{ev.is_TBD?Icon.clock:Icon.check}</span>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:12.5,color:pp.text,fontWeight:500}}>{ev.title}</div>
+                <div style={{fontSize:10.5,color:pp.muted,marginTop:1}}>
+                  {ev.is_TBD?"TBD — coming soon":(isHS?"This week":fmtDemoDate(resolveDemoDate(ev.dayOffset)))+(ev.time?" · "+ev.time:"")}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </>,
+    document.body
+  );
+}
+
+// Mounted conditionally in Profile() — only when the student's own
+// affiliation exactly matches one of the two seeded demo schools, so the
+// ~99% of real users on other schools never see any trace of this.
+function ExploreClassesCard({school,classes,setActive}){
+  const [selectedCodes,setSelectedCodes]=useState([]);
+  const [previewCls,setPreviewCls]=useState(null);
+  const [simOn,setSimOn]=useState({});
+  const [toast,setToast]=useState("");
+  const [reOptModal,setReOptModal]=useState(null);
+  const isHS=school===DEMO_SCHOOL_HS;
+
+  const toggleSelect=(code)=>setSelectedCodes(prev=>prev.includes(code)?prev.filter(c=>c!==code):[...prev,code]);
+  const showToast=(msg)=>{setToast(msg);setTimeout(()=>setToast(""),2600);};
+  const findProjectIdx=(cls)=>cls.events.findIndex(e=>e.title==="Project 1");
+  const effectiveEvents=(cls)=>{
+    const idx=findProjectIdx(cls);
+    if(idx<0||!simOn[cls.code])return cls.events;
+    return cls.events.map((e,i)=>i===idx?{...e,dayOffset:e.dayOffset+3}:e);
+  };
+
+  const onToggleSimulate=(cls)=>{
+    const turningOn=!simOn[cls.code];
+    setSimOn(prev=>({...prev,[cls.code]:turningOn}));
+    const idx=findProjectIdx(cls);
+    if(idx<0)return;
+    // Keep any already-injected real calendar event in sync with the toggle
+    // in both directions, so switching it back off doesn't leave a stale
+    // "moved" date behind on the student's real calendar.
+    const injectedId="class-"+cls.code+"-"+idx;
+    const evs=lsGet("events",[]);
+    const already=evs.some(e=>e.id===injectedId);
+    const newDate=resolveDemoDate(cls.events[idx].dayOffset+(turningOn?3:0));
+    if(already)lsSet("events",evs.map(e=>e.id===injectedId?{...e,date:newDate}:e));
+    if(turningOn){
+      showToast(cls.instructor+" moved \"Project 1\" to Monday"+(already?" — your calendar has been updated.":" (preview only — add this class to your plan to sync it)."));
+    }
+  };
+
+  const onOptimize=()=>{
+    const chosen=classes.filter(c=>selectedCodes.includes(c.code)).map(c=>({...c,events:effectiveEvents(c)}));
+    const newEvents=injectClassEvents(chosen);
+    if(newEvents.length>0)setReOptModal({conflictCount:countStudyBlockConflicts(newEvents)});
+  };
+
+  return (
+    <Card style={{marginBottom:16}}>
+      <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Explore Classes — {school}</div>
+      <div style={{fontSize:12,color:T.muted,marginBottom:16}}>{isHS?"Live demo: sync your teachers' weekly agendas straight into Studlin.":"Live demo: sync your official course syllabus straight into Studlin."}</div>
+      {classes.map(cls=>(
+        <div key={cls.code} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 2px",borderBottom:`1px solid ${T.border}`}}>
+          <input type="checkbox" checked={selectedCodes.includes(cls.code)} onClick={e=>e.stopPropagation()} onChange={()=>toggleSelect(cls.code)} style={{width:16,height:16,cursor:"pointer",flexShrink:0}} />
+          <div onClick={()=>setPreviewCls(cls)} style={{flex:1,cursor:"pointer",minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:600,color:T.white}}>{cls.code}: {cls.title}</div>
+            <div style={{fontSize:11,color:T.muted,marginTop:1}}>{cls.instructor}</div>
+          </div>
+        </div>
+      ))}
+      <div style={{marginTop:14}}>
+        <Btn onClick={onOptimize} disabled={selectedCodes.length===0}>Optimize Into My Plan</Btn>
+      </div>
+
+      <ClassPreviewDrawer open={!!previewCls} cls={previewCls} events={previewCls?effectiveEvents(previewCls):[]} onClose={()=>setPreviewCls(null)} isHS={isHS}
+        simOn={previewCls?!!simOn[previewCls.code]:false} onToggleSimulate={()=>previewCls&&onToggleSimulate(previewCls)} />
+
+      <Modal open={!!reOptModal} onClose={()=>setReOptModal(null)} title="Studlin AI detected new course events"
+        footer={<Btn onClick={()=>{setReOptModal(null);if(setActive)setActive("calendar");}}>Let's Re-Optimize</Btn>}>
+        <div style={{fontSize:13.5,color:T.text,lineHeight:1.6}}>
+          Studlin AI detected new course events from your synchronized classes. Would you like to automatically re-route your daytime study blocks to accommodate these updates and maximize your free time?
+        </div>
+        {reOptModal&&reOptModal.conflictCount>0&&(
+          <div style={{marginTop:14,fontSize:12.5,color:T.amber}}>We've flagged {reOptModal.conflictCount} study block{reOptModal.conflictCount!==1?"s":""} that now conflict — open Calendar to review.</div>
+        )}
+      </Modal>
+
+      {toast&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,padding:"10px 18px",borderRadius:99,fontSize:12.5,fontWeight:600,boxShadow:"0 12px 28px -10px rgba(0,0,0,0.4)"}}>{toast}</div>
+      )}
+    </Card>
+  );
+}
+
 function ChatBubble({m,myUid,onRespond,onSchedule}){
   const pp=panelPalette();
   const mine=m.senderId===myUid;
@@ -4417,7 +4747,9 @@ function TaskTimerModal({task,onClose,onComplete}){
 }
 
 // ─── WEEKLY PLANNER ───────────────────────────────────────────────────────────
-const WK_PX_HR = 76; // pixels per hour in weekly grid
+// WK_PX_HR (pixels per hour) now lives inside WeeklyPlanner as a local const
+// driven by isAgendaCollapsed, so the grid gains height (not just width) when
+// the Today panel is hidden — see the component body below.
 
 // Lays out same-day events that overlap in time side-by-side instead of
 // fully stacking on top of each other at full column width — previously any
@@ -4459,7 +4791,11 @@ function layoutDayEvents(evs) {
   return laidOut;
 }
 
-function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay}) {
+function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, isAgendaCollapsed}) {
+  // Taller per-hour scale when the Today agenda panel is hidden, so the grid
+  // gains height (not just the width the freed-up column would otherwise
+  // just stretch into) and doesn't flatten out.
+  const WK_PX_HR = isAgendaCollapsed ? 92 : 76;
   const wkColRefs = useRef({});
   const weekScrollRef = useRef(null);
   const [wkDragId, setWkDragId] = useState(null);
@@ -4542,7 +4878,7 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
           );
         })}
       </div>
-      <div ref={weekScrollRef} style={{display:"flex",overflowY:"auto",maxHeight:"calc(100vh - 260px)"}} onDragEnd={handleDragEnd}>
+      <div ref={weekScrollRef} style={{display:"flex",overflowY:"auto",maxHeight:isAgendaCollapsed?"calc(100vh - 200px)":"calc(100vh - 260px)"}} onDragEnd={handleDragEnd}>
         <div style={{width:52,flexShrink:0,background:T.card,borderRight:`1px solid ${T.border}`,zIndex:2}}>
           {Array.from({length:24}, (_, h) => (
             <div key={h} style={{height:WK_PX_HR,display:"flex",alignItems:"flex-start",justifyContent:"flex-end",paddingRight:8,paddingTop:3,borderTop:`1px solid ${T.border}44`,boxSizing:"border-box"}}>
@@ -5517,7 +5853,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
         this div instead of nested inside it, so it centers against the real
         viewport regardless of scroll position or animation state. */}
     <div>
-      <PH title="Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><Btn variant="ghost" onClick={()=>setRoutineCenterOpen(true)}>{Icon.settings} Manage Routine</Btn><Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>{setEditRoutineMode(m=>!m);setHoveredRoutineId(null);}}>Edit Routine</Btn><Btn variant="ghost" onClick={()=>{setGroupSyncOpen(true);setGsStep(1);setGsResults(null);}}>{Icon.users} Group Sync</Btn><span ref={tourAddTaskRef} style={{display:"inline-flex"}}><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></span></div>} />
+      <PH title="Studlin Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><Btn variant="ghost" onClick={()=>setRoutineCenterOpen(true)}>Manage Routine</Btn><Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>{setEditRoutineMode(m=>!m);setHoveredRoutineId(null);}}>Edit Routine</Btn><Btn variant="ghost" onClick={()=>{setGroupSyncOpen(true);setGsStep(1);setGsResults(null);}}>{Icon.users} Group Sync</Btn><span ref={tourAddTaskRef} style={{display:"inline-flex"}}><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></span></div>} />
       {editRoutineMode&&(
         <div style={{display:"flex",alignItems:"center",gap:8,padding:"9px 14px",background:T.lime+"10",border:`1px solid ${T.lime}33`,borderRadius:10,marginBottom:14,fontSize:12.5,color:T.text}}>
           Editing your Weekly Routine — one-off tasks are dimmed. Click a routine block to edit it, or hover and tap × to delete it everywhere it repeats.
@@ -5585,7 +5921,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
         <WeeklyPlanner events={events} setEvents={setEvents} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openNew={openNew} openEdit={openEdit}
           routines={routines} editRoutineMode={editRoutineMode} hoveredRoutineId={hoveredRoutineId} setHoveredRoutineId={setHoveredRoutineId}
           onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
-          selDay={selDay} setSelDay={setSelDay} />
+          selDay={selDay} setSelDay={setSelDay} isAgendaCollapsed={isAgendaCollapsed} />
       </CollapsibleAgendaLayout>)}
       {tourStep!==null&&(
         <TourStep
@@ -6994,7 +7330,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <div style={{fontSize:12,color:T.muted,marginBottom:16}}>How you appear across Studlin.</div>
               <Field label="Display name"><Input value={profile.name} onChange={e=>updProfile({name:e.target.value})} /></Field>
               <Field label="Email"><Input value={profile.email} onChange={e=>updProfile({email:e.target.value})} type="email" /></Field>
-              <Field label="School or affiliation"><Input value={profile.school} onChange={e=>updProfile({school:e.target.value})} /></Field>
+              <Field label="School or affiliation"><SchoolSelect value={profile.school} onChange={v=>updProfile({school:v})} placeholder="Search or type your school" /></Field>
               <Field label="Time zone">
                 <select value={profile.tz} onChange={e=>updProfile({tz:e.target.value})} style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.font,outline:"none"}}>
                   <option>America/Los_Angeles</option><option>America/New_York</option><option>Europe/London</option><option>Asia/Singapore</option>
@@ -7353,7 +7689,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 
 
 // ─── PROFILE ──────────────────────────────────────────────────────────────────
-function Profile() {
+function Profile({setActive}={}) {
   const [prof,setProfState]=useState(()=>getProfile());
   const [picUrl,setPicUrl]=useState(()=>getUserPicUrl());
   const [status,setStatus]=useState(prof.status||"");
@@ -7455,7 +7791,7 @@ function Profile() {
 
         {status&&(
           <Field label={affiliationLabel} hint="Visible to classmates on leaderboards.">
-            <Input value={affiliation} onChange={e=>setAffiliation(e.target.value)} placeholder={affiliationPlaceholder} />
+            <SchoolSelect value={affiliation} onChange={setAffiliation} placeholder={affiliationPlaceholder} />
           </Field>
         )}
 
@@ -7476,6 +7812,13 @@ function Profile() {
           {prefSaved&&<span style={{fontSize:12,color:T.lime,fontWeight:600}}>Saved.</span>}
         </div>
       </Card>
+
+      {/* ── Explore Classes — institutional live-demo, gated to exactly the
+          two seeded demo schools (see DEMO_CLASSES_BY_SCHOOL). Renders
+          nothing at all for every other school. */}
+      {DEMO_CLASSES_BY_SCHOOL[affiliation] && (
+        <ExploreClassesCard school={affiliation} classes={DEMO_CLASSES_BY_SCHOOL[affiliation]} setActive={setActive} />
+      )}
 
       {/* ── Stats (real data only) */}
       {(()=>{
@@ -8455,7 +8798,7 @@ function InitWizard({onComplete}){
             {status && (
               <div style={{marginTop:4}}>
                 <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:muted,marginBottom:8}}>{affiliationLabel}</label>
-                <input value={affiliation} onChange={e=>setAffiliation(e.target.value)} placeholder={affiliationPlaceholder} style={{width:"100%",background:"#F0EBE0",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:13.5,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",boxSizing:"border-box"}} />
+                <SchoolSelect value={affiliation} onChange={setAffiliation} placeholder={affiliationPlaceholder} theme={{bg:"#F0EBE0",border,text:ink,muted}} />
                 <div style={{fontSize:11,color:muted,marginTop:6}}>Visible to classmates on leaderboards.</div>
               </div>
             )}
@@ -8818,7 +9161,7 @@ function App() {
   const navSections=[
     {label:"Workspace",items:[
       {id:"dashboard",label:"Dashboard"},
-      {id:"calendar",label:"Calendar"},
+      {id:"calendar",label:"Studlin Calendar"},
       {id:"aichat",label:"Studlin AI"},
       // "writestudio" (Writing Suite) intentionally hidden from the active
       // nav — archived for V2, not deleted. Page, route mapping, and label
@@ -8838,7 +9181,7 @@ function App() {
   ];
   const bottomItems=[{id:"settings",label:"Settings"},{id:"profile",label:"Profile"}];
   const pages={aichat:AiChat,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile,lectures:Lectures,feedback:FeedbackPage};
-  const labelOf={dashboard:"Dashboard",aichat:"Studlin AI",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve",lectures:"Lectures",feedback:"Feedback"};
+  const labelOf={dashboard:"Dashboard",aichat:"Studlin AI",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Studlin Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve",lectures:"Lectures",feedback:"Feedback"};
   const sectionOf={dashboard:"Workspace",aichat:"Workspace",writestudio:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",friends:"Workspace",lectures:"Workspace",feedback:"Workspace",solve:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
@@ -8975,6 +9318,7 @@ function App() {
            active==="calendar"?<CalendarTab onTourDone={handleCalendarTourDone} onTaskSaved={askNotifIfNeeded} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} />:
            active==="lectures"?<Lectures setActive={setActive} setPricingOpen={setPricingOpen} />:
+           active==="profile"?<Profile setActive={setActive} />:
            ActivePage?<ActivePage />:null}
         </div>
       </div>
