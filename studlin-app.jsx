@@ -2231,6 +2231,53 @@ function Flashcards() {
     setTimeout(()=>{setSendDeckOpen(false);setSendDeckTarget("");setSendDeckId(null);setSendDeckStatus("");},1800);
   };
 
+  // Live username autocomplete for "Send deck to a friend" — same
+  // prefix-range Firestore query pattern Studlin Network's own search uses,
+  // so typing "v" toward "vene" narrows to real registered usernames.
+  const [sendDeckResults,setSendDeckResults]=useState([]);
+  const [sendDeckSearching,setSendDeckSearching]=useState(false);
+  const [sendDeckDropdownOpen,setSendDeckDropdownOpen]=useState(false);
+  useEffect(()=>{
+    const raw=sendDeckTarget.trim().toLowerCase().replace(/^@/,"");
+    if(!raw){setSendDeckResults([]);setSendDeckSearching(false);return;}
+    setSendDeckSearching(true);
+    let active=true;
+    const myUid=firebase.auth().currentUser?.uid||null;
+    const t=setTimeout(async()=>{
+      try{
+        const snap=await fsdb().collection('profiles').where('usernameLower','>=',raw).where('usernameLower','<=',raw+String.fromCharCode(0xf8ff)).limit(6).get();
+        if(!active)return;
+        setSendDeckResults(snap.docs.map(d=>({uid:d.id,...d.data()})).filter(u=>u.uid!==myUid));
+      }catch(e){if(active)setSendDeckResults([]);}
+      if(active)setSendDeckSearching(false);
+    },250);
+    return ()=>{active=false;clearTimeout(t);};
+  },[sendDeckTarget]);
+
+  // Edit deck — rename + correct individual front/back card pairs, opened via
+  // the card's Edit button or a double-click on its title.
+  const [editDeckOpen,setEditDeckOpen]=useState(false);
+  const [editDeckId,setEditDeckId]=useState(null);
+  const [editDeckName,setEditDeckName]=useState("");
+  const [editDeckCards,setEditDeckCards]=useState([]);
+  const openEditDeck=(deck)=>{
+    setEditDeckId(deck.id);
+    setEditDeckName(deck.name);
+    setEditDeckCards((deck.cards||[]).map(c=>({...c})));
+    setEditDeckOpen(true);
+  };
+  const updateEditCard=(i,field,value)=>setEditDeckCards(prev=>prev.map((c,idx)=>idx===i?{...c,[field]:value}:c));
+  const deleteEditCard=(i)=>setEditDeckCards(prev=>prev.filter((_,idx)=>idx!==i));
+  const addEditCard=()=>setEditDeckCards(prev=>[...prev,{q:"",a:""}]);
+  const saveEditDeck=()=>{
+    const name=editDeckName.trim()||"Untitled deck";
+    const cards=editDeckCards.filter(c=>c.q.trim()||c.a.trim());
+    const next=deckList.map(d=>d.id===editDeckId?{...d,name,cards,count:cards.length}:d);
+    setDeckList(next);lsSet("decks",next);
+    if(studyDeck&&studyDeck.id===editDeckId)setStudyDeck({...studyDeck,name,cards});
+    setEditDeckOpen(false);
+  };
+
   const studyCards=studyDeck?studyDeck.cards:[];
   const curCard=studyCards[idx];
 
@@ -2248,10 +2295,51 @@ function Flashcards() {
           :<>
               {sendDeckId&&(()=>{const d=deckList.find(x=>x.id===sendDeckId);return d?<div style={{padding:"12px 14px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`,marginBottom:14}}><div style={{fontSize:12,fontWeight:600,color:T.white,marginBottom:2}}>{d.name}</div><div style={{fontSize:11,color:T.muted}}>{d.cards?d.cards.length:0} cards</div></div>:null;})()}
               <Field label="Friend's Studlin username or email">
-                <Input placeholder="e.g. @alex or alex@school.edu" value={sendDeckTarget} onChange={e=>setSendDeckTarget(e.target.value)} autoFocus />
+                <div style={{position:"relative"}}>
+                  <Input placeholder="e.g. @alex or alex@school.edu" value={sendDeckTarget}
+                    onChange={e=>{setSendDeckTarget(e.target.value);setSendDeckDropdownOpen(true);}}
+                    onFocus={()=>setSendDeckDropdownOpen(true)}
+                    onBlur={()=>setTimeout(()=>setSendDeckDropdownOpen(false),150)}
+                    autoFocus />
+                  {sendDeckDropdownOpen&&sendDeckTarget.trim()&&(
+                    <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,zIndex:20,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,overflow:"hidden",boxShadow:"0 12px 28px -12px rgba(0,0,0,0.35)"}}>
+                      {sendDeckSearching
+                        ? <div style={{padding:"10px 12px",fontSize:12,color:T.muted}}>Searching…</div>
+                        : sendDeckResults.length>0
+                          ? sendDeckResults.map(u=>(
+                              <div key={u.uid} onMouseDown={e=>e.preventDefault()} onClick={()=>{setSendDeckTarget("@"+(u.username||u.uid));setSendDeckDropdownOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",cursor:"pointer",borderBottom:`1px solid ${T.border}`}}>
+                                <Av initials={(u.name||"S").split(" ").map(x=>x[0]).join("")} color={T.lime} size={26} picUrl="" />
+                                <div style={{minWidth:0}}>
+                                  <div style={{fontSize:12.5,fontWeight:600,color:T.white}}>{u.name||"Studlin User"}</div>
+                                  <div style={{fontSize:10.5,color:T.muted}}>@{u.username}{u.school?" · "+u.school:""}</div>
+                                </div>
+                              </div>
+                            ))
+                          : <div style={{padding:"10px 12px",fontSize:12,color:T.muted}}>No matches.</div>
+                      }
+                    </div>
+                  )}
+                </div>
               </Field>
             </>
         }
+      </Modal>
+      <Modal open={editDeckOpen} onClose={()=>setEditDeckOpen(false)} title="Edit deck" sub="Rename the deck or fix any card." width={540}
+        footer={<><Btn variant="subtle" onClick={()=>setEditDeckOpen(false)}>Cancel</Btn><Btn onClick={saveEditDeck}>Save changes</Btn></>}>
+        <Field label="Deck title"><Input value={editDeckName} onChange={e=>setEditDeckName(e.target.value)} autoFocus /></Field>
+        <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,margin:"14px 0 8px"}}>Cards ({editDeckCards.length})</div>
+        <div style={{maxHeight:320,overflowY:"auto",display:"flex",flexDirection:"column",gap:8}}>
+          {editDeckCards.map((c,i)=>(
+            <div key={i} style={{display:"flex",gap:6,alignItems:"flex-start",padding:8,background:T.card2,borderRadius:8,border:`1px solid ${T.border}`}}>
+              <div style={{flex:1,display:"flex",flexDirection:"column",gap:6}}>
+                <Textarea value={c.q} onChange={e=>updateEditCard(i,"q",e.target.value)} placeholder="Front" style={{minHeight:44}} />
+                <Textarea value={c.a} onChange={e=>updateEditCard(i,"a",e.target.value)} placeholder="Back" style={{minHeight:44}} />
+              </div>
+              <button onClick={()=>deleteEditCard(i)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,padding:4,flexShrink:0}}>×</button>
+            </div>
+          ))}
+        </div>
+        <BtnSm variant="subtle" onClick={addEditCard} style={{marginTop:10}}>{Icon.plus} Add card</BtnSm>
       </Modal>
       <Modal open={newOpen} onClose={()=>{setNewOpen(false);stopRec();}} title="Create a flashcard deck" sub="Build manually, from a file, YouTube video, or recorded lecture." width={580}
         footer={<><Btn variant="subtle" onClick={()=>{setNewOpen(false);stopRec();}}>Cancel</Btn><Btn onClick={createDeck} disabled={aiLoading||ytFetching}>{aiLoading?"Generating cards...":ytFetching?"Detecting video...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.layers,"Create deck")}</Btn></>}>
@@ -2339,10 +2427,11 @@ function Flashcards() {
             const renderDeckCard=(d,i)=>(
               <Card key={d.id||i} style={{cursor:"pointer",position:"relative"}}>
                 <button onClick={(e)=>{e.stopPropagation();deleteDeck(d.id);}} style={{position:"absolute",top:12,right:12,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14}}>x</button>
-                <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>{d.name}</div>
+                <div onDoubleClick={(e)=>{e.stopPropagation();openEditDeck(d);}} title="Double-click to edit" style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>{d.name}</div>
                 <div style={{fontSize:11,color:T.muted,marginBottom:14}}>{d.cards?d.cards.length:d.count} cards{d.source==="imported"&&<span style={{color:T.teal,fontWeight:600}}> · from {d.importedFrom}</span>}</div>
                 <div style={{display:"flex",gap:6}}>
                   <BtnSm onClick={()=>{setStudyDeck(d);setTab("study");setIdx(0);setFlipped(false);}}>Study now</BtnSm>
+                  <BtnSm variant="ghost" onClick={(e)=>{e.stopPropagation();openEditDeck(d);}}>{Icon.pen} Edit</BtnSm>
                   <BtnSm variant="ghost" onClick={(e)=>{e.stopPropagation();sendDeck(d);}}>{Icon.send} Send</BtnSm>
                 </div>
               </Card>
@@ -5908,7 +5997,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
         this div instead of nested inside it, so it centers against the real
         viewport regardless of scroll position or animation state. */}
     <div>
-      <PH title="Studlin Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><Btn variant="ghost" onClick={()=>setRoutineCenterOpen(true)}>Manage Routine</Btn><Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>{setEditRoutineMode(m=>!m);setHoveredRoutineId(null);}}>Edit Routine</Btn><Btn variant="ghost" onClick={()=>{setGroupSyncOpen(true);setGsStep(1);setGsResults(null);}}>{Icon.users} Group Sync</Btn><span ref={tourAddTaskRef} style={{display:"inline-flex"}}><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></span></div>} />
+      <PH title="Studlin Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><Btn variant="ghost" onClick={()=>setRoutineCenterOpen(true)}>Manage Routine</Btn><Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>{setEditRoutineMode(m=>!m);setHoveredRoutineId(null);}}>Edit Routine</Btn><span ref={tourAddTaskRef} style={{display:"inline-flex"}}><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></span></div>} />
       {editRoutineMode&&(
         <div style={{display:"flex",alignItems:"center",gap:8,padding:"9px 14px",background:T.lime+"10",border:`1px solid ${T.lime}33`,borderRadius:10,marginBottom:14,fontSize:12.5,color:T.text}}>
           Editing your Weekly Routine — one-off tasks are dimmed. Click a routine block to edit it, or hover and tap × to delete it everywhere it repeats.
