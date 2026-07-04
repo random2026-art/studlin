@@ -8826,9 +8826,11 @@ function App() {
       // links into it (e.g. Dashboard's Essay Writer / Citation quick tools).
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
-      {id:"lectures",label:"Lectures",badge:"NEW"},
       {id:"friends",label:"Studlin Network",badge:String(unreadCount||"")},
-      {id:"feedback",label:"Feedback"},
+      // "lectures" (Lectures) and "feedback" (Feedback) intentionally hidden
+      // from the active nav — same archive treatment as writestudio/solve.
+      // Page, route mapping, and label all still exist below so nothing
+      // breaks for anything that still references them.
     ]},
     // "solve" (Solve) intentionally hidden from the active nav — page, route
     // mapping, and label still exist below so nothing breaks for anything
