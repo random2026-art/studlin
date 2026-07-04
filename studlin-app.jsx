@@ -7965,6 +7965,188 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
   );
 }
 
+// ─── LECTURES ─────────────────────────────────────────────────────────────────
+function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
+  const [recording,setRecording]=useState(false);
+  const [transcript,setTranscript]=useState("");
+  const [ytUrl,setYtUrl]=useState("");
+  const [bars,setBars]=useState(()=>Array(32).fill(3));
+  const [saved,setSaved]=useState(()=>lsGet("lectures",[]));
+  const [selectedLec,setSelectedLec]=useState(null);
+  const recRef=useRef(null);
+  const recogRef=useRef(null);
+  const animRef=useRef(null);
+  const analyserRef=useRef(null);
+  const audioCtxRef=useRef(null);
+  const streamRef=useRef(null);
+
+  const stopAll=()=>{
+    if(recRef.current){try{recRef.current.stop();}catch(e){}recRef.current=null;}
+    if(recogRef.current){try{recogRef.current.stop();}catch(e){}recogRef.current=null;}
+    if(animRef.current){cancelAnimationFrame(animRef.current);animRef.current=null;}
+    if(audioCtxRef.current){try{audioCtxRef.current.close();}catch(e){}audioCtxRef.current=null;}
+    if(streamRef.current){streamRef.current.getTracks().forEach(t=>t.stop());streamRef.current=null;}
+    analyserRef.current=null;
+    setRecording(false);
+    setBars(Array(32).fill(3));
+  };
+  useEffect(()=>()=>{stopAll();},[]);
+
+  const drawBars=()=>{
+    if(!analyserRef.current)return;
+    const d=new Uint8Array(analyserRef.current.frequencyBinCount);
+    analyserRef.current.getByteFrequencyData(d);
+    const step=Math.floor(d.length/32);
+    setBars(Array.from({length:32},(_,i)=>Math.max(3,Math.min(d[i*step]/255*36,36))));
+    animRef.current=requestAnimationFrame(drawBars);
+  };
+
+  const startRecording=async()=>{
+    try{
+      const stream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+      streamRef.current=stream;
+      const ctx=new(window.AudioContext||window.webkitAudioContext)();
+      const src=ctx.createMediaStreamSource(stream);
+      const an=ctx.createAnalyser();
+      an.fftSize=256;
+      src.connect(an);
+      audioCtxRef.current=ctx;
+      analyserRef.current=an;
+      const mr=new MediaRecorder(stream);
+      recRef.current=mr;
+      mr.start();
+      setRecording(true);
+      animRef.current=requestAnimationFrame(drawBars);
+      const SR=window.webkitSpeechRecognition||window.SpeechRecognition;
+      if(SR){
+        const r=new SR();
+        r.continuous=true;
+        r.interimResults=true;
+        r.onresult=(ev)=>{
+          let txt="";
+          for(let i=0;i<ev.results.length;i++)txt+=ev.results[i][0].transcript+" ";
+          setTranscript(txt.trim());
+        };
+        r.onerror=()=>{};
+        r.start();
+        recogRef.current=r;
+      }
+    }catch(e){stopAll();}
+  };
+
+  const stopRecording=()=>{
+    if(transcript.trim()){
+      const lec={id:Date.now().toString(),title:"Lecture "+new Date().toLocaleDateString("en",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}),transcript:transcript.trim(),created:Date.now()};
+      const list=[lec,...lsGet("lectures",[])].slice(0,20);
+      lsSet("lectures",list);
+      setSaved(list);
+      setSelectedLec(lec);
+    }
+    stopAll();
+  };
+
+  const importYt=()=>{if(ytUrl.trim())setActive("notes");};
+  const curTx=selectedLec?selectedLec.transcript:transcript;
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16,paddingBottom:40}}>
+      <div>
+        <h1 style={{fontFamily:T.hand,fontSize:42,fontWeight:700,color:T.white,margin:"0 0 4px",letterSpacing:"-0.02em",lineHeight:1}}>Lectures</h1>
+        <p style={{fontSize:14,color:T.muted,margin:0}}>Record, import, and turn every lecture into a study kit</p>
+      </div>
+
+      {/* Record / import card */}
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:"24px 26px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:18,marginBottom:18}}>
+          <button onClick={recording?stopRecording:startRecording} style={{width:60,height:60,borderRadius:"50%",background:recording?T.red:T.lime,border:"none",cursor:"pointer",display:"grid",placeItems:"center",flexShrink:0,transition:"all 0.2s ease",boxShadow:recording?`0 0 0 10px ${T.red}22,0 8px 24px -8px ${T.red}60`:`0 8px 24px -8px ${T.lime}70`}}>
+            {recording
+              ?<svg width="20" height="20" viewBox="0 0 24 24" fill={T.ink}><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+              :<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={T.ink} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" fill={T.ink} stroke="none"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+            }
+          </button>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:3}}>{recording?"Recording — tap to stop":"Record a lecture"}</div>
+            <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.12em",color:T.muted}}>Audio is saved exactly as spoken</div>
+          </div>
+          <div style={{flex:1,display:"flex",alignItems:"flex-end",gap:2,height:36,overflow:"hidden",paddingLeft:8}}>
+            {bars.map((h,i)=>(
+              <div key={i} style={{flex:1,background:recording?T.lime:T.border,borderRadius:2,height:h,transition:"height 0.08s ease"}}/>
+            ))}
+          </div>
+        </div>
+
+        <div style={{display:"flex",gap:8}}>
+          <div style={{flex:1,display:"flex",alignItems:"center",gap:10,background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"9px 12px"}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={T.muted} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-1.96C18.88 4 12 4 12 4s-6.88 0-8.6.46A2.78 2.78 0 0 0 1.46 6.42 29 29 0 0 0 1 12a29 29 0 0 0 .46 5.58A2.78 2.78 0 0 0 3.4 19.54C5.12 20 12 20 12 20s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-1.96A29 29 0 0 0 23 12a29 29 0 0 0-.46-5.58z"/><polygon points="9.75 15.02 15.5 12 9.75 8.98 9.75 15.02" fill={T.muted} stroke="none"/></svg>
+            <input value={ytUrl} onChange={e=>setYtUrl(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")importYt();}} placeholder="Paste a YouTube link" style={{flex:1,background:"none",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}}/>
+          </div>
+          <button onClick={importYt} style={{padding:"9px 16px",background:ytUrl.trim()?T.lime:T.card2,color:ytUrl.trim()?T.ink:T.muted,border:`1px solid ${ytUrl.trim()?T.lime:T.border}`,borderRadius:10,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font,transition:"all 0.18s"}}>Import</button>
+          <label style={{padding:"9px 16px",background:T.card2,color:T.text,border:`1px solid ${T.border}`,borderRadius:10,fontSize:13,fontWeight:500,cursor:"pointer",fontFamily:T.font,display:"flex",alignItems:"center",gap:7}}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Upload file
+            <input type="file" accept="audio/*,.pdf,.txt,.doc" style={{display:"none"}} onChange={e=>{const f=e.target.files&&e.target.files[0];if(f&&(f.type==="text/plain"||f.name.endsWith(".txt")))f.text().then(txt=>{setTranscript(txt);setSelectedLec(null);});e.target.value="";}}/>
+          </label>
+        </div>
+      </div>
+
+      {/* Saved lectures */}
+      {saved.length>0&&!selectedLec&&(
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:20}}>
+          <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,marginBottom:12}}>Saved lectures</div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {saved.slice(0,5).map(l=>(
+              <div key={l.id} onClick={()=>{setSelectedLec(l);}} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.border}`,cursor:"pointer",background:T.card2}}>
+                <div style={{width:32,height:32,borderRadius:8,background:T.lime+"18",display:"grid",placeItems:"center",color:T.lime,flexShrink:0}}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:600,color:T.white,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{l.title}</div>
+                  <div style={{fontSize:11,color:T.muted,marginTop:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{l.transcript.slice(0,70)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Transcript area */}
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+          <span style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted}}>Live transcript</span>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            {recording&&<span style={{fontFamily:T.mono,fontSize:10,color:T.red,display:"flex",alignItems:"center",gap:5,letterSpacing:"0.08em"}}><span style={{width:6,height:6,borderRadius:"50%",background:T.red,display:"inline-block",animation:"studlinPulse 1s infinite"}}/>LIVE</span>}
+            {(curTx||selectedLec)&&<button onClick={()=>{setSelectedLec(null);setTranscript("");}} style={{fontSize:11,color:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font}}>Clear</button>}
+          </div>
+        </div>
+        {curTx
+          ?<p style={{fontSize:14,lineHeight:1.8,color:T.text,margin:0,whiteSpace:"pre-wrap",maxHeight:280,overflowY:"auto"}}>{curTx}</p>
+          :<div style={{padding:"36px 20px",textAlign:"center"}}>
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke={T.faint} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{margin:"0 auto 10px",display:"block"}}><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+            <div style={{fontSize:13.5,color:T.muted}}>Hit record, paste a link, or drop a file.</div>
+            <div style={{fontSize:12,color:T.faint,marginTop:4}}>Your transcript appears here in real time.</div>
+          </div>
+        }
+      </div>
+
+      {/* Output action cards */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14}}>
+        {[
+          {title:"Flashcards",desc:"Turn key concepts into a spaced-rep deck",icon:Icon.layers,action:()=>setActive("flashcards"),badge:null,color:T.teal},
+          {title:"Practice quiz",desc:"Generate MCQs and short-answer questions",icon:Icon.zap,action:()=>setPricingOpen(true),badge:"PRO",color:T.purple},
+          {title:"Summary",desc:"Get a concise outline of the full lecture",icon:Icon.file,action:()=>setActive("aichat"),badge:null,color:T.amber},
+        ].map((it,i)=>(
+          <div key={i} onClick={()=>it.action()} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:18,padding:20,cursor:"pointer",position:"relative"}}>
+            {it.badge&&<span style={{position:"absolute",top:14,right:14,fontFamily:T.mono,fontSize:9,letterSpacing:"0.08em",padding:"3px 8px",borderRadius:99,background:T.purple+"22",color:T.purple,border:`1px solid ${T.purple}44`,fontWeight:700}}>{it.badge}</span>}
+            <div style={{width:36,height:36,borderRadius:10,background:it.color+"18",border:`1px solid ${it.color}33`,display:"grid",placeItems:"center",color:it.color,marginBottom:12}}>{it.icon}</div>
+            <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>{it.title}</div>
+            <div style={{fontSize:12,color:T.muted,lineHeight:1.4}}>{it.desc}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── INIT WIZARD ─────────────────────────────────────────────────────────────
 function InitWizard({onComplete}){
   const prefs = getSchedulePreferences();
@@ -8450,6 +8632,7 @@ function App() {
       // links into it (e.g. Dashboard's Essay Writer / Citation quick tools).
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
+      {id:"lectures",label:"Lectures",badge:"NEW"},
       {id:"friends",label:"Studlin Network",badge:String(unreadCount||"")},
     ]},
     {label:"Tools",items:[
@@ -8457,9 +8640,9 @@ function App() {
     ]},
   ];
   const bottomItems=[{id:"settings",label:"Settings"},{id:"profile",label:"Profile"}];
-  const pages={aichat:AiChat,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile};
-  const labelOf={dashboard:"Dashboard",aichat:"Studlin AI",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve"};
-  const sectionOf={dashboard:"Workspace",aichat:"Workspace",writestudio:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",friends:"Workspace",solve:"Tools",settings:"Account",profile:"Account"};
+  const pages={aichat:AiChat,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile,lectures:Lectures};
+  const labelOf={dashboard:"Dashboard",aichat:"Studlin AI",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve",lectures:"Lectures"};
+  const sectionOf={dashboard:"Workspace",aichat:"Workspace",writestudio:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",friends:"Workspace",lectures:"Workspace",solve:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
   if (!onboarded) return <InitWizard onComplete={()=>{setOnboarded(true);}} />;
@@ -8578,6 +8761,7 @@ function App() {
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} />:
            active==="calendar"?<CalendarTab onTourDone={handleCalendarTourDone} onTaskSaved={askNotifIfNeeded} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} />:
+           active==="lectures"?<Lectures setActive={setActive} setPricingOpen={setPricingOpen} />:
            ActivePage?<ActivePage />:null}
         </div>
       </div>
