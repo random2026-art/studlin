@@ -7703,7 +7703,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
           <div style={{position:"absolute",right:-40,top:-40,width:240,height:240,background:"radial-gradient(circle,rgba(200,255,90,0.18),transparent 70%)",pointerEvents:"none"}} />
           <div style={{position:"relative"}}>
             <div style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)",marginBottom:6}}>{todayLabel()} · Week {weekNo()}</div>
-            <div style={{fontFamily:T.hand,fontSize:54,lineHeight:0.95,fontWeight:600,color:T.cream,margin:"0 0 4px"}}>{greet}, <span style={{color:T.lime}}>{firstName}.</span></div>
+            <div style={{fontFamily:T.hand,fontSize:54,lineHeight:0.95,fontWeight:600,color:T.cream,margin:"0 0 4px",animation:"studlinRise 0.5s ease-out"}}>{greet}, <span style={{color:T.lime}}>{firstName}.</span></div>
             <p style={{fontSize:13.5,color:"rgba(246,241,230,0.7)",margin:"8px 0 16px",lineHeight:1.5,maxWidth:380}}>{planLeft>0?<>You've got <strong style={{color:T.cream}}>{planLeft} task{planLeft===1?"":"s"} left</strong> on today's plan. Let's lock in.</>:plan.length>0?<>All <strong style={{color:T.cream}}>{plan.length} tasks done</strong> today. Outstanding work.</>:<>Nothing scheduled yet. Add a few tasks and let's lock in.</>}</p>
             <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
               <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",background:T.lime,color:T.ink,borderRadius:99,fontSize:13,fontWeight:600,border:"none",cursor:"pointer",fontFamily:T.font}}>View today's plan</button>
@@ -7766,6 +7766,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
         {/* Today's plan */}
         <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
           <CardHead title="Today's plan" label={planDoneCount+" / "+plan.length+" DONE"} more="Calendar" />
+          {plan.length>0&&<div style={{height:3,background:T.card2,borderRadius:99,marginBottom:14,overflow:"hidden"}}><div style={{height:"100%",width:Math.round(planDoneCount/Math.max(plan.length,1)*100)+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}} /></div>}
           {plan.length===0
             ? <div style={{padding:"22px 8px",textAlign:"center"}}>
                 <div style={{fontSize:13,color:T.muted,marginBottom:14,lineHeight:1.5}}>Nothing scheduled for today. Add events to your calendar and they appear here automatically.</div>
@@ -7797,12 +7798,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
         {/* Ask Studlin */}
         <div style={{background:T.ink,color:T.cream,borderRadius:22,padding:22,display:"flex",flexDirection:"column"}}>
           <CardHead title="Ask Studlin" label="AI TUTOR" more="Open" light />
-          <div style={{fontSize:13,color:"rgba(246,241,230,0.7)",marginBottom:14,lineHeight:1.5}}>I noticed you're stuck on Macbeth Act III · want me to walk through the dagger soliloquy or pull quotes for your essay?</div>
-          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>
-            {["Explain dagger soliloquy","Find quotes for essay","Quiz me on Act III"].map(s=>(
-              <button key={s} onClick={()=>setActive("aichat")} style={{fontSize:11.5,padding:"6px 11px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:"rgba(246,241,230,0.85)",cursor:"pointer",fontFamily:T.font}}>{s}</button>
-            ))}
-          </div>
+          {(()=>{const nt=plan.find(t=>!t.done);const tc=nt?(nt.subject||nt.title):"your subjects";const sug=nt?["Explain "+tc+" concepts","Quiz me on "+tc,"Help me outline this"]:["Summarize my notes","Build a study schedule","Quiz me on any topic"];const ctx=nt?`You have "${nt.title}" up next — want a quick summary, practice quiz, or step-by-step explanation?`:`What are you studying today? I can quiz you, explain concepts, or help you plan your session.`;return(<><div style={{fontSize:13,color:"rgba(246,241,230,0.7)",marginBottom:14,lineHeight:1.5}}>{ctx}</div><div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>{sug.map(s=>(<button key={s} onClick={()=>setActive("aichat")} style={{fontSize:11.5,padding:"6px 11px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:"rgba(246,241,230,0.85)",cursor:"pointer",fontFamily:T.font}}>{s}</button>))}</div></>);})()}
           <div style={{display:"flex",alignItems:"center",gap:10,background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:14,padding:"10px 12px",marginTop:"auto"}}>
             <input placeholder="Ask anything · paste a problem" style={{flex:1,background:"none",border:"none",outline:"none",color:T.cream,fontSize:13,fontFamily:T.font,minWidth:0}}/>
             <button onClick={()=>setActive("aichat")} style={{display:"grid",placeItems:"center",width:30,height:30,borderRadius:8,background:T.lime,color:T.ink,border:"none",cursor:"pointer",flex:"none"}}>
@@ -7838,7 +7834,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
             ].map((tool,i)=>(
               <div key={i} onClick={()=>setActive(tool.go)} style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:14,padding:14,cursor:"pointer",position:"relative"}}>
                 {tool.badge&&<span style={{position:"absolute",top:10,right:10,fontSize:8.5,fontWeight:700,letterSpacing:"0.06em",padding:"2px 7px",borderRadius:99,background:T.purple+"22",color:T.purple,border:`1px solid ${T.purple}44`}}>{tool.badge}</span>}
-                <div style={{width:30,height:30,borderRadius:8,background:T.card,display:"grid",placeItems:"center",color:T.lime,marginBottom:10}}>{tool.icon}</div>
+                {(()=>{const tc=[T.lime,T.teal,T.amber,T.blue,T.purple,T.red,T.teal,T.amber][i%8];return <div style={{width:30,height:30,borderRadius:8,background:tc+"22",border:`1px solid ${tc}33`,display:"grid",placeItems:"center",color:tc,marginBottom:10}}>{tool.icon}</div>;})()}
                 <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>{tool.title}</div>
                 <div style={{fontSize:11,color:T.muted,lineHeight:1.4}}>{tool.desc}</div>
               </div>
