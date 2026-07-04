@@ -7471,6 +7471,9 @@ function LeaderboardModal({open,onClose,currentXP,currentName,currentStreak}){
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
+// Disabled "for now" per request — flip back to true to restore the inline
+// Global Leaderboard card on the dashboard.
+const SHOW_GLOBAL_LEADERBOARD=false;
 function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false}) {
   const realStats=sessionStats();
   const realStreak=Math.max(1,getStreak());
@@ -7488,7 +7491,6 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
   const [,forcePlan]=useState(0);
   const [levelRoadmapOpen,setLevelRoadmapOpen]=useState(false);
   const [leaderboardOpen,setLeaderboardOpen]=useState(false);
-  const [shareMsg,setShareMsg]=useState("");
   const plan=todaysPlan();
   const planDoneCount=plan.filter(t=>t.done).length;
   const planLeft=Math.max(0,plan.length-planDoneCount);
@@ -7544,9 +7546,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
       };
     });
   // Real weekly wrapped stats
-  const weeklyXP=getWeeklyXP();
   const weeklyFocusMin=realStats.weekMin;
-  const lbRank=1;
   // Real cards mastered + words written totals
   const cardsMasteredTotal=rawDecks.reduce((a,d)=>a+(d.done||0),0);
   const stripHtml=(html)=>(html||"").replace(/<[^>]*>/g," ");
@@ -7556,24 +7556,9 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
     const txt=stripHtml(e.content).trim();
     return a+(txt?txt.split(/\s+/).length:0);
   },0);
-  // Real session activity for the last 7 days, bucketed by inferred category
+  // Real session activity for the last 7 days
   const allSessions=lsGet("sessions",[]);
-  const catOf=(mode)=>{
-    const m=(mode||"").toLowerCase();
-    if(m.includes("flashcard")||m.includes("deck")||m.includes("card"))return"flash";
-    if(m.includes("essay")||m.includes("writ"))return"write";
-    return"read";
-  };
   const weekDays7=(()=>{const arr=[];const now=new Date();const dow=(now.getDay()+6)%7;const mon=new Date(now);mon.setDate(now.getDate()-dow);for(let i=0;i<7;i++){const d=new Date(mon);d.setDate(mon.getDate()+i);arr.push(d);}return arr;})();
-  const weekBars=weekDays7.map((d,di)=>{
-    const k=dayKey(d);
-    const daySessions=allSessions.filter(s=>s.d===k);
-    const read=daySessions.filter(s=>catOf(s.mode)==="read").reduce((a,s)=>a+(s.m||0),0);
-    const flash=daySessions.filter(s=>catOf(s.mode)==="flash").reduce((a,s)=>a+(s.m||0),0);
-    const write=daySessions.filter(s=>catOf(s.mode)==="write").reduce((a,s)=>a+(s.m||0),0);
-    return {lab:["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][di],read,flash,write,total:read+flash+write,future:k>dayKey(),isToday:k===dayKey()};
-  });
-  const weekBarMax=Math.max(60,...weekBars.map(b=>b.total));
   // Top subject this week — from completed plan tasks' subject field
   const subjCounts={};
   allEvents.filter(ev=>ev.status==="done"&&ev.date>=dayKey(weekDays7[0])).forEach(ev=>{subjCounts[ev.subject]=(subjCounts[ev.subject]||0)+1;});
@@ -7756,34 +7741,10 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
         </div>
       </div>
 
-      {/* ROW: This week's focus (bar chart) — hidden in Serious Mode. Weekly
-          Wrapped used to live here as a permanent compact card; it now only
-          appears as the full-screen popup below, during its Sun/Mon evening
-          window. */}
-      {!seriousMode && <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
-        <CardHead title="This week's focus" label={fmtH(weeklyFocusMin)+" this week · tracked live"} />
-        <div style={{display:"flex",alignItems:"flex-end",gap:14,height:150,marginTop:4}}>
-          {weekBars.map((b,i)=>(
-            <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:8,height:"100%",justifyContent:"flex-end",opacity:b.future?0.35:1}}>
-              <div style={{width:"100%",maxWidth:38,display:"flex",flexDirection:"column-reverse",borderRadius:6,overflow:"hidden"}}>
-                {b.write>0&&<div style={{height:Math.max(4,b.write/weekBarMax*130),background:T.butter}} />}
-                {b.flash>0&&<div style={{height:Math.max(4,b.flash/weekBarMax*130),background:T.lime}} />}
-                {b.read>0&&<div style={{height:Math.max(4,b.read/weekBarMax*130),background:T.forest}} />}
-                {b.total===0&&<div style={{height:4,background:T.card2,width:"100%"}} />}
-              </div>
-              <span style={{fontSize:10.5,fontFamily:T.mono,color:b.isToday?T.lime:T.muted,fontWeight:600}}>{b.lab}</span>
-            </div>
-          ))}
-        </div>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:16,flexWrap:"wrap",gap:10}}>
-          <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
-            {[{c:T.forest,l:"Reading & notes"},{c:T.lime,l:"Flashcards"},{c:T.butter,l:"Writing"}].map((it,i)=>(
-              <div key={i} style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:T.muted}}><span style={{width:9,height:9,borderRadius:2,background:it.c}}/>{it.l}</div>
-            ))}
-          </div>
-          {topSubjectThisWeek&&<div style={{fontSize:11.5,color:T.muted,fontFamily:T.mono}}>Top subject: <span style={{color:T.lime,fontWeight:700}}>{topSubjectThisWeek.slice(0,4).toUpperCase()}</span></div>}
-        </div>
-      </div>}
+      {/* The "This week's focus" bar chart used to render here. Removed as
+          redundant with Study streak / Weekly Wrapped popup below; the
+          underlying data (weeklyFocusMin, topSubjectThisWeek) still feeds
+          the Weekly Wrapped popup. */}
 
       {/* ROW: Quick tools — always visible, pure utility */}
       <div style={{display:"grid",gridTemplateColumns:seriousMode?"1fr":"8fr 4fr",gap:16}}>
@@ -7864,8 +7825,11 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
         </div>
       </div>
 
-      {/* ROW 4: GLOBAL LEADERBOARD — hidden in Serious Mode */}
-      {!seriousMode && <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+      {/* ROW 4: GLOBAL LEADERBOARD — conditionally hidden (SHOW_GLOBAL_LEADERBOARD)
+          rather than deleted, per request to disable it "for now." Flip the
+          flag back to true to restore it; lbUsers/lbRankColor/lbRankBg and
+          LeaderboardModal are left fully intact. */}
+      {SHOW_GLOBAL_LEADERBOARD && !seriousMode && <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18,gap:12,flexWrap:"wrap"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <Hand>Global Leaderboard</Hand>
@@ -7888,46 +7852,6 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
               </div>
             </div>
           ))}
-        </div>
-      </div>}
-
-      {/* ROW 5: WEEKLY WRAPPED — hidden in Serious Mode */}
-      {!seriousMode && <div style={{background:T.forest,color:T.cream,borderRadius:22,padding:22}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:12,flexWrap:"wrap"}}>
-          <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
-            <Hand style={{color:T.cream}}>This week, you…</Hand>
-            <Eye style={{color:"rgba(246,241,230,0.6)",borderColor:"rgba(246,241,230,0.18)"}}>{"WRAPPED · WEEK "+weekNo()}</Eye>
-          </div>
-          <button onClick={()=>{
-            const txt=`📊 My Studlin Week ${weekNo()}\n\nFocus time: ${fmtH(weeklyFocusMin)||"0m"}\nXP earned: ${weeklyXP.toLocaleString()} XP\nDay streak: ${realStreak} days\nRank: #${lbRank} Global\n\nstudlin.app`;
-            navigator.clipboard&&navigator.clipboard.writeText(txt).then(()=>{setShareMsg("Copied to clipboard!");setTimeout(()=>setShareMsg(""),2500);});
-          }} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"8px 16px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,flexShrink:0}}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-            Share Wrapped
-          </button>
-        </div>
-        {shareMsg&&<div style={{fontSize:12,color:T.lime,fontWeight:600,marginBottom:12,display:"flex",alignItems:"center",gap:6}}>✓ {shareMsg}</div>}
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginTop:4}}>
-          {[
-            {ln:"Focus hours",vn:fmtH(weeklyFocusMin)||"0m"},
-            {ln:"XP earned",vn:weeklyXP.toLocaleString()+" xp"},
-            {ln:"Leaderboard rank",vn:"#"+lbRank+" Global"},
-          ].map((ins,i)=>(
-            <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:12,padding:"12px 14px"}}>
-              <div style={{fontSize:11,color:"rgba(246,241,230,0.55)",fontFamily:T.mono,letterSpacing:"0.06em",textTransform:"uppercase"}}>{ins.ln}</div>
-              <div style={{fontFamily:T.hand,fontSize:32,lineHeight:1,fontWeight:600,color:T.lime,marginTop:4}}>{ins.vn}</div>
-            </div>
-          ))}
-        </div>
-        <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:18,alignItems:"center"}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.12)",borderRadius:99,fontSize:12,fontWeight:500,color:T.cream}}>
-            <span style={{width:22,height:22,borderRadius:"50%",background:T.lime,display:"grid",placeItems:"center",fontFamily:T.hand,fontWeight:700,fontSize:13,color:T.ink,flex:"none"}}>{realStreak}</span>
-            {realStreak}-day streak
-          </div>
-          <button onClick={()=>setLeaderboardOpen(true)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.12)",borderRadius:99,fontSize:12,fontWeight:500,color:T.cream,cursor:"pointer",fontFamily:T.font}}>
-            <span style={{width:22,height:22,borderRadius:"50%",background:T.lime,display:"grid",placeItems:"center",fontWeight:700,fontSize:13,color:T.ink,flex:"none"}}>#1</span>
-            Global leaderboard
-          </button>
         </div>
       </div>}
 
