@@ -2279,6 +2279,12 @@ function Notes(){
   const [tutorInput,setTutorInput]=useState("");
   const [tutorSending,setTutorSending]=useState(false);
 
+  // AI study-tools panel — turn the active note into flashcards, a quiz, or a summary
+  const [panelLoading,setPanelLoading]=useState(null); // "cards" | "quiz" | "summary" | null
+  const [panelMsg,setPanelMsg]=useState("");
+  const [quizOverlay,setQuizOverlay]=useState(null); // {questions,idx,picked,score,done}
+  const [summaryOverlay,setSummaryOverlay]=useState(null); // array of bullet strings
+
   useEffect(()=>{if(!rec)return;const id=setInterval(()=>setRecSecs(x=>x+1),1000);return()=>clearInterval(id);},[rec]);
   const fmtRec=(x)=>String(Math.floor(x/60)).padStart(2,"0")+":"+String(x%60).padStart(2,"0");
 
@@ -2550,6 +2556,69 @@ function Notes(){
     lsSet("tutor-flags",lsGet("tutor-flags",[]).filter(f=>f.id!==fid));
   };
 
+  // Plain-text extraction of the active note's canvas content, for feeding to the AI
+  const getNotePlainText=()=>{
+    if(sel===null||!editorRef.current)return "";
+    const tmp=document.createElement("div");tmp.innerHTML=editorRef.current.innerHTML;
+    return (tmp.textContent||tmp.innerText||"").trim();
+  };
+
+  const genFlashcardsFromNote=async()=>{
+    const text=getNotePlainText();
+    if(!text){setPanelMsg("This note is empty — write something first.");return;}
+    setPanelLoading("cards");setPanelMsg("");
+    try{
+      const prompt="Create 10 flashcards from these study notes. Format them as a JSON array where each card has a \"q\" key for the question and an \"a\" key for the answer. Return only the JSON array, no markdown fences.\n\n"+text.slice(0,15000);
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+      const data=await res.json();
+      let raw=(data.reply||"").replace(/```json?|```/g,"").trim();
+      const s=raw.indexOf("["),e=raw.lastIndexOf("]");
+      if(s>=0&&e>s)raw=raw.slice(s,e+1);
+      let cards=[];
+      try{const parsed=JSON.parse(raw);cards=Array.isArray(parsed)?parsed:[];}catch(pe){cards=[];}
+      if(cards.length===0){setPanelMsg("Couldn't generate cards. Try again.");setPanelLoading(null);return;}
+      const nd={id:String(Date.now()),name:activeNote.title,count:cards.length,done:0,color:colorOf(activeNote.tag),cards};
+      const decks=lsGet("decks",[]);
+      lsSet("decks",[nd,...decks]);
+      setPanelMsg("✓ Saved "+cards.length+" cards to Flashcards — \""+nd.name+"\"");
+    }catch(e){setPanelMsg("Something went wrong. Try again.");}
+    setPanelLoading(null);
+  };
+
+  const genQuizFromNote=async()=>{
+    const text=getNotePlainText();
+    if(!text){setPanelMsg("This note is empty — write something first.");return;}
+    setPanelLoading("quiz");setPanelMsg("");
+    try{
+      const prompt="Create a 5-question multiple-choice practice quiz from these study notes. Format as a JSON array where each item has \"question\" (string), \"options\" (array of exactly 4 strings), and \"correct\" (0-based index of the right option). Return only the JSON array, no markdown fences.\n\n"+text.slice(0,15000);
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+      const data=await res.json();
+      let raw=(data.reply||"").replace(/```json?|```/g,"").trim();
+      const s=raw.indexOf("["),e=raw.lastIndexOf("]");
+      if(s>=0&&e>s)raw=raw.slice(s,e+1);
+      let qs=[];
+      try{const parsed=JSON.parse(raw);qs=Array.isArray(parsed)?parsed.filter(q=>q&&q.question&&Array.isArray(q.options)&&q.options.length>=2):[];}catch(pe){qs=[];}
+      if(qs.length===0){setPanelMsg("Couldn't generate a quiz. Try again.");setPanelLoading(null);return;}
+      setQuizOverlay({questions:qs,idx:0,picked:null,score:0,done:false});
+    }catch(e){setPanelMsg("Something went wrong. Try again.");}
+    setPanelLoading(null);
+  };
+
+  const genSummaryFromNote=async()=>{
+    const text=getNotePlainText();
+    if(!text){setPanelMsg("This note is empty — write something first.");return;}
+    setPanelLoading("summary");setPanelMsg("");
+    try{
+      const prompt="Summarize these study notes into a concise, high-level bulleted summary for quick review — no more than 8 bullet points. Return only the bullet points as plain text lines, each starting with \"- \". No markdown headers, no extra commentary.\n\n"+text.slice(0,15000);
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
+      const data=await res.json();
+      const raw=(data.reply||"").trim();
+      const bullets=raw.split("\n").map(l=>l.replace(/^[-*•]\s*/,"").trim()).filter(Boolean);
+      setSummaryOverlay(bullets.length?bullets:["No summary available."]);
+    }catch(e){setPanelMsg("Something went wrong. Try again.");}
+    setPanelLoading(null);
+  };
+
   const activeNote=sel!==null?notes[sel]:null;
   const nid=activeNote?.id;
   const activeComments=nid?noteComments[nid]||[]:[];
@@ -2639,6 +2708,55 @@ function Notes(){
             {ytLoading&&<div style={{fontSize:11,color:T.lime,marginTop:4}}>Detecting video…</div>}
           </Field>
         )}
+      </Modal>
+
+      {/* ── PRACTICE QUIZ OVERLAY — generated from the active note ── */}
+      <Modal open={!!quizOverlay} onClose={()=>setQuizOverlay(null)} title="Practice Quiz" sub={activeNote?activeNote.title:""} width={520}>
+        {quizOverlay&&!quizOverlay.done&&(()=>{
+          const q=quizOverlay.questions[quizOverlay.idx];
+          const picked=quizOverlay.picked;
+          return (
+            <div>
+              <div style={{fontSize:11,color:T.muted,marginBottom:8}}>Question {quizOverlay.idx+1} of {quizOverlay.questions.length}</div>
+              <div style={{fontSize:14,fontWeight:600,color:T.white,marginBottom:14,lineHeight:1.5}}>{q.question}</div>
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {q.options.map((opt,i)=>{
+                  const isCorrect=i===q.correct;
+                  const show=picked!==null;
+                  let border=T.border,bg=T.card2,color=T.text;
+                  if(show&&isCorrect){border=T.teal;bg=T.teal+"18";color=T.teal;}
+                  else if(show&&picked===i&&!isCorrect){border=T.red;bg=T.red+"14";color=T.red;}
+                  return (
+                    <button key={i} disabled={picked!==null} onClick={()=>setQuizOverlay(qo=>({...qo,picked:i,score:qo.score+(i===q.correct?1:0)}))} style={{textAlign:"left",padding:"10px 14px",borderRadius:8,border:`1px solid ${border}`,background:bg,color,cursor:picked!==null?"default":"pointer",fontFamily:T.font,fontSize:13}}>{opt}</button>
+                  );
+                })}
+              </div>
+              {picked!==null&&(
+                <div style={{marginTop:16,display:"flex",justifyContent:"flex-end"}}>
+                  <Btn onClick={()=>{
+                    const isLast=quizOverlay.idx>=quizOverlay.questions.length-1;
+                    if(isLast)setQuizOverlay(qo=>({...qo,done:true}));
+                    else setQuizOverlay(qo=>({...qo,idx:qo.idx+1,picked:null}));
+                  }}>{quizOverlay.idx>=quizOverlay.questions.length-1?"See results":"Next question →"}</Btn>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+        {quizOverlay&&quizOverlay.done&&(
+          <div style={{textAlign:"center",padding:"20px 0"}}>
+            <div style={{fontSize:32,fontWeight:800,color:T.lime,marginBottom:6}}>{quizOverlay.score}/{quizOverlay.questions.length}</div>
+            <div style={{fontSize:13,color:T.muted,marginBottom:16}}>Nice work — quiz complete.</div>
+            <Btn variant="subtle" onClick={()=>setQuizOverlay(null)}>Close</Btn>
+          </div>
+        )}
+      </Modal>
+
+      {/* ── SUMMARY OVERLAY — generated from the active note ── */}
+      <Modal open={!!summaryOverlay} onClose={()=>setSummaryOverlay(null)} title="Summary" sub={activeNote?activeNote.title:""} width={480}>
+        <ul style={{margin:0,paddingLeft:18,display:"flex",flexDirection:"column",gap:9}}>
+          {(summaryOverlay||[]).map((b,i)=><li key={i} style={{fontSize:13,color:T.text,lineHeight:1.5}}>{b}</li>)}
+        </ul>
       </Modal>
 
       {/* ── MAIN WORKSPACE LAYOUT ── */}
@@ -2776,6 +2894,15 @@ function Notes(){
                     style={{minHeight:380,padding:"20px 28px 40px",fontSize:14.5,lineHeight:1.85,color:T.text,outline:"none",fontFamily:T.font,boxSizing:"border-box"}}
                   />
                   {/* Placeholder hint when empty */}
+                </div>
+
+                {/* ── AI STUDY TOOLS — turn this note into flashcards, a quiz, or a summary ── */}
+                <div style={{display:"flex",alignItems:"center",gap:8,padding:"12px 20px",borderTop:`1px solid ${T.border}`,background:T.card2,flexWrap:"wrap"}}>
+                  <span style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.faint,marginRight:2}}>Turn into</span>
+                  <BtnSm variant="subtle" onClick={genFlashcardsFromNote} disabled={panelLoading!==null}>{panelLoading==="cards"?"Generating…":<>{Icon.layers} Create Flashcards</>}</BtnSm>
+                  <BtnSm variant="subtle" onClick={genQuizFromNote} disabled={panelLoading!==null}>{panelLoading==="quiz"?"Generating…":<>{Icon.check} Create Practice Quiz</>}</BtnSm>
+                  <BtnSm variant="subtle" onClick={genSummaryFromNote} disabled={panelLoading!==null}>{panelLoading==="summary"?"Generating…":<>{Icon.file} Generate Summary</>}</BtnSm>
+                  {panelMsg&&<span style={{fontSize:11,color:panelMsg.startsWith("✓")?T.teal:T.red,marginLeft:4}}>{panelMsg}</span>}
                 </div>
               </>
             ):(
@@ -7818,44 +7945,20 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
           underlying data (weeklyFocusMin, topSubjectThisWeek) still feeds
           the Weekly Wrapped popup. */}
 
-      {/* ROW: Quick tools — always visible, pure utility */}
-      <div style={{display:"grid",gridTemplateColumns:seriousMode?"1fr":"8fr 4fr",gap:16}}>
-        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
-          <CardHead title="Quick tools" label="JUMP RIGHT IN" more="Browse all" />
-          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
-            {[
-              {icon:Icon.pen,title:"Essay Writer",desc:"Draft, outline, intro & conclusion from a prompt",go:"essays"},
-              {icon:Icon.layers,title:"Flashcards from file",desc:"Drop a PDF · spaced-rep deck in 10s",go:"flashcards"},
-              {icon:Icon.scan,title:"Plagiarism check",desc:"Scan against academic databases",go:"grammar"},
-              {icon:Icon.link,title:"Citation generator",desc:"MLA · APA · Chicago · from a URL",go:"essays"},
-              {icon:Icon.wand,title:"AI Humanizer",desc:"Rewrite in your voice · beat detectors",go:"humanizer",badge:"SCHOLAR"},
-              {icon:Icon.zap,title:"Equation solver",desc:"Step-by-step math with explanations",go:"solve",badge:null},
-              {icon:Icon.msgSquare,title:"YouTube summarizer",desc:"Paste a lecture URL · get key points",go:"notes",badge:"ELITE"},
-              {icon:Icon.brain,title:"Exam prep mode",desc:"Practice tests & MCQs from your notes",go:"aitutor",badge:"ELITE"},
-            ].map((tool,i)=>(
-              <div key={i} onClick={()=>setActive(tool.go)} style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:14,padding:14,cursor:"pointer",position:"relative"}}>
-                {tool.badge&&<span style={{position:"absolute",top:10,right:10,fontSize:8.5,fontWeight:700,letterSpacing:"0.06em",padding:"2px 7px",borderRadius:99,background:T.purple+"22",color:T.purple,border:`1px solid ${T.purple}44`}}>{tool.badge}</span>}
-                <div style={{width:30,height:30,borderRadius:8,background:T.card,display:"grid",placeItems:"center",color:T.lime,marginBottom:10}}>{tool.icon}</div>
-                <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>{tool.title}</div>
-                <div style={{fontSize:11,color:T.muted,lineHeight:1.4}}>{tool.desc}</div>
-              </div>
-            ))}
-          </div>
+      {/* ROW: Study streak — full width now that Quick tools has been removed */}
+      {!seriousMode && <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+        <CardHead title="Study streak" label="LAST 91 DAYS" />
+        <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:14}}>
+          <span style={{fontFamily:T.hand,fontSize:44,fontWeight:600,color:T.text}}>{realStreak}</span>
+          <span style={{fontSize:13,color:T.muted}}>day streak</span>
+          <span style={{marginLeft:"auto",fontSize:11,color:T.faint,fontFamily:T.mono}}>LONGEST<br/><span style={{fontSize:16,color:T.text,fontWeight:700}}>{Math.max(realStreak,getStreak())}</span></span>
         </div>
-        {!seriousMode && <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
-          <CardHead title="Study streak" label="LAST 91 DAYS" />
-          <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:14}}>
-            <span style={{fontFamily:T.hand,fontSize:44,fontWeight:600,color:T.text}}>{realStreak}</span>
-            <span style={{fontSize:13,color:T.muted}}>day streak</span>
-            <span style={{marginLeft:"auto",fontSize:11,color:T.faint,fontFamily:T.mono}}>LONGEST<br/><span style={{fontSize:16,color:T.text,fontWeight:700}}>{Math.max(realStreak,getStreak())}</span></span>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(13,1fr)",gap:3}}>
-            {heatmapCells.map((lvl,i)=>(
-              <div key={i} style={{aspectRatio:"1",borderRadius:3,background:cellColor(lvl)}} />
-            ))}
-          </div>
-        </div>}
-      </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(13,1fr)",gap:3}}>
+          {heatmapCells.map((lvl,i)=>(
+            <div key={i} style={{aspectRatio:"1",borderRadius:3,background:cellColor(lvl)}} />
+          ))}
+        </div>
+      </div>}
 
       {/* ROW: Upcoming + Pick up where you left off — always visible, pure utility */}
       <div style={{display:"grid",gridTemplateColumns:"5fr 7fr",gap:16}}>
@@ -8271,6 +8374,8 @@ function App() {
   const [newDayModal,setNewDayModal]=useState(false);
   const [overdueForModal,setOverdueForModal]=useState([]);
   const [scheduleSettingsOpen,setScheduleSettingsOpen]=useState(false);
+  const [navCollapsed,setNavCollapsed]=useState(()=>lsGet("navCollapsed",false));
+  const toggleNavCollapsed=()=>{setNavCollapsed(v=>{lsSet("navCollapsed",!v);return !v;});};
   window._setTimerTask=setTimerTask;
   const [creditsOpen,setCreditsOpen]=useState(false);
   const [pricingOpen,setPricingOpen]=useState(false);
@@ -8448,9 +8553,9 @@ function App() {
       {id:"notes",label:"Notes"},
       {id:"friends",label:"Studlin Network",badge:String(unreadCount||"")},
     ]},
-    {label:"Tools",items:[
-      {id:"solve",label:"Solve"},
-    ]},
+    // "solve" (Solve) intentionally hidden from the active nav — page, route
+    // mapping, and label still exist below so nothing breaks for anything
+    // that still references it.
   ];
   const bottomItems=[{id:"settings",label:"Settings"},{id:"profile",label:"Profile"}];
   const pages={aichat:AiChat,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile};
@@ -8467,30 +8572,40 @@ function App() {
   const NavItem=({item})=>{
     const act=active===item.id;
     return (
-      <div onClick={()=>setActive(item.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 11px",borderRadius:9,cursor:"pointer",fontSize:12.5,background:act?(isLight?"rgba(246,241,230,0.95)":`linear-gradient(100deg, ${T.lime}1c, ${T.lime}08)`):"transparent",color:act?(isLight?T.ink:T.lime):sidebarMuted,fontWeight:act?600:400,marginBottom:2,border:`1px solid ${act?(isLight?"transparent":T.lime+"30"):"transparent"}`,boxShadow:act&&!isLight?`0 4px 14px -8px ${T.lime}70`:"none",transition:"all 0.18s cubic-bezier(.2,.8,.2,1)"}}>
+      <div onClick={()=>setActive(item.id)} title={navCollapsed?item.label:undefined} style={{display:"flex",alignItems:"center",gap:10,padding:navCollapsed?"9px 0":"9px 11px",justifyContent:navCollapsed?"center":"flex-start",borderRadius:9,cursor:"pointer",fontSize:12.5,background:act?(isLight?"rgba(246,241,230,0.95)":`linear-gradient(100deg, ${T.lime}1c, ${T.lime}08)`):"transparent",color:act?(isLight?T.ink:T.lime):sidebarMuted,fontWeight:act?600:400,marginBottom:2,border:`1px solid ${act?(isLight?"transparent":T.lime+"30"):"transparent"}`,boxShadow:act&&!isLight?`0 4px 14px -8px ${T.lime}70`:"none",transition:"all 0.18s cubic-bezier(.2,.8,.2,1)"}}>
         <span style={{width:16,height:16,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:act?(isLight?T.ink:T.lime):sidebarFaint}}>{navIcon[item.id]}</span>
-        <span style={{flex:1,letterSpacing:"0.01em"}}>{item.label}</span>
-        {item.badge&&<span style={{background:T.lime+(act?"":"18"),color:act?T.ink:T.lime,fontSize:9,fontWeight:700,padding:"2px 6px",borderRadius:4,letterSpacing:"0.03em"}}>{item.badge}</span>}
+        {!navCollapsed&&<span style={{flex:1,letterSpacing:"0.01em",whiteSpace:"nowrap"}}>{item.label}</span>}
+        {!navCollapsed&&item.badge&&<span style={{background:T.lime+(act?"":"18"),color:act?T.ink:T.lime,fontSize:9,fontWeight:700,padding:"2px 6px",borderRadius:4,letterSpacing:"0.03em"}}>{item.badge}</span>}
       </div>
     );
   };
   return (
     <div style={{display:"flex",height:"100vh",overflow:"hidden",background:isLight?T.bg:`radial-gradient(1200px 600px at 78% -8%, ${T.glow}, transparent 60%), ${T.bg}`,fontFamily:T.font,color:T.text}}>
       {/* SIDEBAR */}
-      <div style={{width:230,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #18241D 0%, #0D120F00 60%)",backgroundColor:isLight?T.surface:T.surface,display:"flex",flexDirection:"column",padding:"20px 12px",borderRight:`1px solid ${isLight?"transparent":T.border}`,overflowY:"auto"}}>
-        <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 6px",marginBottom:20}}>
-          <div style={{width:28,height:28,background:T.lime,borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-            <span style={{fontSize:15,fontWeight:800,color:T.ink,fontFamily:T.font}}>S</span>
-          </div>
-          <span style={{fontSize:16,fontWeight:700,color:sidebarText,letterSpacing:"-0.02em",fontFamily:T.font}}>Studlin</span>
+      <div style={{width:navCollapsed?68:230,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #18241D 0%, #0D120F00 60%)",backgroundColor:isLight?T.surface:T.surface,display:"flex",flexDirection:"column",padding:navCollapsed?"20px 10px":"20px 12px",borderRight:`1px solid ${isLight?"transparent":T.border}`,overflowY:"auto",overflowX:"hidden",transition:"width 0.22s cubic-bezier(.2,.8,.2,1), padding 0.22s cubic-bezier(.2,.8,.2,1)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 6px",marginBottom:20,justifyContent:navCollapsed?"center":"space-between"}}>
+          {!navCollapsed&&(
+            <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
+              <div style={{width:28,height:28,background:T.lime,borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                <span style={{fontSize:15,fontWeight:800,color:T.ink,fontFamily:T.font}}>S</span>
+              </div>
+              <span style={{fontSize:16,fontWeight:700,color:sidebarText,letterSpacing:"-0.02em",fontFamily:T.font,whiteSpace:"nowrap"}}>Studlin</span>
+            </div>
+          )}
+          <button onClick={toggleNavCollapsed} title={navCollapsed?"Expand sidebar":"Collapse sidebar"} style={{width:28,height:28,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${sidebarBorder}`,borderRadius:7,color:sidebarMuted,cursor:"pointer",padding:0}}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{transform:navCollapsed?"rotate(180deg)":"none",transition:"transform 0.22s"}}>
+              <polyline points="11 17 6 12 11 7" /><polyline points="18 17 13 12 18 7" />
+            </svg>
+          </button>
         </div>
-        <div onClick={()=>setActive("profile")} style={{background:sidebarCardBg,borderRadius:8,padding:"10px 12px",marginBottom:16,display:"flex",alignItems:"center",gap:10,cursor:"pointer",border:`1px solid ${sidebarBorder}`}}>
+        <div onClick={()=>setActive("profile")} title={navCollapsed?getUserName():undefined} style={{background:sidebarCardBg,borderRadius:8,padding:navCollapsed?"8px":"10px 12px",marginBottom:16,display:"flex",alignItems:"center",justifyContent:navCollapsed?"center":"flex-start",gap:10,cursor:"pointer",border:`1px solid ${sidebarBorder}`}}>
           <Av initials={getUserInitials()} color={T.lime} size={30} />
-          <div><div style={{fontSize:12,fontWeight:600,color:sidebarText}}>{getUserName()}</div><div style={{fontSize:10,color:sidebarMuted}}>{getPlan()}</div></div>
+          {!navCollapsed&&<div><div style={{fontSize:12,fontWeight:600,color:sidebarText,whiteSpace:"nowrap"}}>{getUserName()}</div><div style={{fontSize:10,color:sidebarMuted}}>{getPlan()}</div></div>}
         </div>
         {navSections.map(sec=>(
           <div key={sec.label}>
-            <div style={{fontSize:9,fontWeight:700,letterSpacing:"0.1em",color:sidebarFaint,textTransform:"uppercase",padding:"0 6px",margin:"14px 0 5px"}}>{sec.label}</div>
+            {!navCollapsed&&<div style={{fontSize:9,fontWeight:700,letterSpacing:"0.1em",color:sidebarFaint,textTransform:"uppercase",padding:"0 6px",margin:"14px 0 5px"}}>{sec.label}</div>}
+            {navCollapsed&&<div style={{height:1,background:sidebarBorder,margin:"14px 4px 10px"}} />}
             {sec.items.map(item=><NavItem key={item.id} item={item} />)}
           </div>
         ))}
@@ -8498,7 +8613,13 @@ function App() {
           {bottomItems.map(item=><NavItem key={item.id} item={item} />)}
         </div>
         {/* AI credits card */}
-        {(()=>{const cr=getCredits();const lim=Math.max(cr,getCreditLimit());const plan=getPlan();const daysLeft=(()=>{const n=new Date();const e=new Date(n.getFullYear(),n.getMonth()+1,1);return Math.ceil((e-n)/86400000);})();const pct=Math.min(100,Math.round(cr/lim*100));return(
+        {(()=>{const cr=getCredits();const lim=Math.max(cr,getCreditLimit());const plan=getPlan();const daysLeft=(()=>{const n=new Date();const e=new Date(n.getFullYear(),n.getMonth()+1,1);return Math.ceil((e-n)/86400000);})();const pct=Math.min(100,Math.round(cr/lim*100));
+        if(navCollapsed){return(
+        <div onClick={()=>setCreditsOpen(true)} title={cr+" / "+getCreditLimit()+" AI credits"} style={{background:T.lime,borderRadius:10,padding:"8px 0",marginTop:"auto",border:`1px solid ${T.limeDk}`,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+          <span style={{fontFamily:T.hand,fontSize:18,fontWeight:700,color:T.ink,lineHeight:1}}>{cr}</span>
+          <div style={{width:"60%",height:3,background:"rgba(8,12,40,0.15)",borderRadius:99,overflow:"hidden"}}><div style={{height:"100%",width:pct+"%",background:T.ink,borderRadius:99}} /></div>
+        </div>);}
+        return(
         <div onClick={()=>setCreditsOpen(true)} style={{background:T.lime,borderRadius:12,padding:"12px 14px",marginTop:"auto",border:`1px solid ${T.limeDk}`,cursor:"pointer",position:"relative",overflow:"hidden",boxShadow:`0 12px 24px -12px ${T.lime}80`}}>
           <div style={{position:"absolute",right:-30,top:-30,width:90,height:90,background:"radial-gradient(circle,rgba(255,255,255,0.5),transparent 70%)",pointerEvents:"none"}} />
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
