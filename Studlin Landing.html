@@ -1,0 +1,1950 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Studlin · The study OS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   STUDLIN, LANDING (kinetic editorial · dark forest + lime)
+   ============================================================ */
+:root{
+  --bg:#FAF9F5;
+  --bg-2:#F2F0E8;
+  --forest:#EAF0E2;
+  --forest-deep:#E4EBD9;
+  --panel:#FFFFFF;
+  --panel-2:#F6F4ED;
+  --cream:#16241C;
+  --cream-dim:rgba(22,36,28,0.62);
+  --cream-faint:rgba(22,36,28,0.38);
+  --lime:#173D2D;        /* was neon #B8E04A, now forest (matches Get Started) */
+  --lime-bright:#1E4A38;
+  --lime-deep:#122E22;
+  --spark:#B8E04A;        /* true lime kept only for logo + hero underline */
+  --ink:#0A1310;
+  --line:rgba(22,36,28,0.10);
+  --line-2:rgba(22,36,28,0.06);
+  /* accent pastels (used sparingly, desaturated) */
+  --peach:#E9B98C;
+  --sky:#8FBEDB;
+  --mint:#8FCBA9;
+  --lilac:#B6A4D9;
+  --display:'Bricolage Grotesque',-apple-system,system-ui,sans-serif;
+  --body:'Geist',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,monospace;
+}
+
+*{box-sizing:border-box;}
+html,body{scrollbar-width:none;}
+html::-webkit-scrollbar,body::-webkit-scrollbar{display:none;}
+html{scroll-behavior:smooth;}
+body{
+  margin:0;padding:0;
+  background:var(--bg);
+  color:var(--cream);
+  font-family:var(--body);
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+  overflow-x:clip;
+  scrollbar-width:none;
+}
+img{max-width:100%;display:block;}
+a{color:inherit;text-decoration:none;}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit;}
+::selection{background:var(--lime);color:var(--ink);}
+
+/* grain overlay */
+body::after{
+  content:"";position:fixed;inset:0;z-index:9999;pointer-events:none;opacity:0.02;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode:multiply;
+}
+
+.wrap{max-width:1280px;margin:0 auto;padding:0 32px;}
+.mono{font-family:var(--mono);}
+.display{font-family:var(--display);}
+
+/* eyebrow tag */
+.tag{
+  display:inline-flex;align-items:center;gap:9px;
+  font-family:var(--mono);font-size:11.5px;letter-spacing:0.18em;text-transform:uppercase;
+  color:var(--lime);
+  padding:7px 14px;border:1px solid rgba(184,224,74,0.28);border-radius:999px;
+  background:rgba(184,224,74,0.06);
+}
+.tag .pip{width:6px;height:6px;border-radius:50%;background:var(--lime);box-shadow:0 0 10px var(--lime);animation:pip 1.7s infinite;}
+@keyframes pip{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.7)}}
+
+/* buttons */
+.btn{
+  display:inline-flex;align-items:center;gap:9px;
+  padding:14px 24px;border-radius:999px;font-weight:600;font-size:15px;letter-spacing:-0.01em;
+  transition:transform .18s cubic-bezier(.2,.8,.2,1),background .18s,color .18s,box-shadow .25s;
+  white-space:nowrap;will-change:transform;
+}
+.btn-lime{background:var(--lime);color:var(--ink);box-shadow:0 10px 30px -10px rgba(184,224,74,0.5);position:relative;overflow:hidden;isolation:isolate;}
+.btn-lime:hover{background:var(--lime-bright);box-shadow:0 18px 50px -12px rgba(184,224,74,0.78);}
+.btn-lime::after{content:"";position:absolute;inset:0;z-index:2;pointer-events:none;background:linear-gradient(105deg,transparent 30%,rgba(255,255,255,0.6) 48%,transparent 62%);transform:translateX(-130%);}
+.btn-lime:hover::after{animation:btnSheen .85s cubic-bezier(.4,0,.2,1);}
+@keyframes btnSheen{to{transform:translateX(130%);}}
+.btn-ghost{color:var(--cream);border:1px solid var(--line);}
+.btn-ghost:hover{border-color:var(--lime);color:var(--lime);}
+.btn-ink{background:var(--ink);color:var(--cream);}
+.btn-lg{padding:17px 30px;font-size:16px;}
+.btn .ar{transition:transform .2s;}
+.btn:hover .ar{transform:translateX(4px);}
+
+/* ============ NAV ============ */
+/* scroll progress rail */
+.scroll-rail{display:none;}
+.scroll-rail i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--lime-deep),var(--lime-bright));box-shadow:0 0 12px rgba(184,224,74,0.65);border-radius:0 3px 3px 0;}
+
+/* hero cursor light */
+.hero-spot{position:absolute;inset:0;z-index:1;pointer-events:none;opacity:0;transition:opacity .45s ease;mix-blend-mode:screen;
+  background:radial-gradient(420px circle at var(--sx,50%) var(--sy,50%),rgba(184,224,74,0.18),rgba(143,203,169,0.08) 40%,transparent 66%);}
+
+.nav{
+  position:fixed;top:0;left:0;right:0;z-index:100;
+  transition:background .3s,border-color .3s,backdrop-filter .3s;
+  border-bottom:1px solid transparent;
+}
+.nav.scrolled{
+  background:rgba(10,19,16,0.72);
+  backdrop-filter:blur(18px) saturate(160%);
+  -webkit-backdrop-filter:blur(18px) saturate(160%);
+  border-bottom-color:var(--line);
+}
+.nav .row{display:flex;align-items:center;justify-content:space-between;padding:18px 32px;max-width:1440px;margin:0 auto;}
+.brand{display:flex;align-items:center;gap:11px;font-weight:700;font-size:20px;letter-spacing:-0.03em;}
+.brand img{width:30px;height:30px;border-radius:8px;}
+.nav-links{display:flex;gap:6px;}
+.nav-links a{font-size:14.5px;color:var(--cream-dim);padding:9px 15px;border-radius:99px;transition:color .15s,background .15s;}
+.nav-links a:hover{color:var(--cream);background:rgba(22,36,28,0.05);}
+.nav-cta{display:flex;align-items:center;gap:8px;}
+
+/* ============ HERO ============ */
+.hero{position:relative;padding:180px 0 90px;overflow:hidden;}
+.aurora{position:absolute;inset:-20% -10% auto -10%;height:120%;z-index:0;pointer-events:none;filter:blur(80px);opacity:.32;}
+.aurora i{position:absolute;border-radius:50%;mix-blend-mode:screen;}
+.aurora .a1{width:620px;height:620px;left:-6%;top:-22%;background:radial-gradient(circle,rgba(143,184,50,0.38),transparent 64%);animation:drift1 18s ease-in-out infinite;}
+.aurora .a2{width:480px;height:480px;right:-4%;top:-8%;background:radial-gradient(circle,rgba(143,203,169,0.28),transparent 64%);animation:drift2 22s ease-in-out infinite;}
+.aurora .a3{width:400px;height:400px;left:40%;top:18%;background:radial-gradient(circle,rgba(184,224,74,0.22),transparent 64%);animation:drift3 26s ease-in-out infinite;}
+@keyframes drift1{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(60px,40px) scale(1.12)}}
+@keyframes drift2{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-50px,50px) scale(1.08)}}
+@keyframes drift3{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(30px,-40px) scale(1.15)}}
+
+.hero-grid{
+  position:absolute;inset:0;z-index:0;pointer-events:none;
+  background-image:linear-gradient(var(--line-2) 1px,transparent 1px),linear-gradient(90deg,var(--line-2) 1px,transparent 1px);
+  background-size:58px 58px;
+  mask-image:radial-gradient(ellipse 80% 60% at 50% 30%,black,transparent 80%);
+  -webkit-mask-image:radial-gradient(ellipse 80% 60% at 50% 30%,black,transparent 80%);
+}
+
+/* hero starfield + shooting stars */
+.hero-sky{position:absolute;inset:0;z-index:0;pointer-events:none;overflow:hidden;
+  mask-image:radial-gradient(ellipse 95% 80% at 50% 26%,black 60%,transparent 100%);
+  -webkit-mask-image:radial-gradient(ellipse 95% 80% at 50% 26%,black 60%,transparent 100%);}
+.hero-sky .tw{position:absolute;border-radius:50%;background:var(--cream);box-shadow:0 0 5px rgba(22,36,28,0.5);animation:twinkle 3s ease-in-out infinite;}
+.hero-sky .tw.lime{background:var(--lime);box-shadow:0 0 6px rgba(184,224,74,0.7);}
+.hero-sky .shoot{position:absolute;width:150px;height:1.6px;border-radius:99px;
+  background:linear-gradient(90deg,rgba(184,224,74,0) 0%,rgba(184,224,74,0.5) 55%,rgba(22,36,28,0.98) 100%);
+  filter:drop-shadow(0 0 6px rgba(184,224,74,0.6));opacity:0;
+  animation:shoot 6s ease-in infinite;}
+@media (prefers-reduced-motion: reduce){.hero-sky .shoot,.hero-sky .tw{animation:none;}.hero-sky .shoot{opacity:0;}}
+
+.hero-inner{position:relative;z-index:2;text-align:center;}
+.hero h1{
+  font-family:var(--display);
+  font-weight:700;
+  font-size:clamp(46px,8.2vw,108px);
+  line-height:0.95;letter-spacing:-0.04em;
+  margin:26px auto 0;max-width:14ch;
+  color:var(--cream);
+}
+.hero h1 .line{display:block;overflow:hidden;white-space:nowrap;}
+.hero h1 .reveal-up{display:inline-block;opacity:1;transform:none;}
+@media (prefers-reduced-motion: no-preference){
+  .hero h1 .reveal-up{animation:rise .85s cubic-bezier(.2,.85,.25,1) both;}
+  .hero .tag{animation:fadein .7s ease both .05s;}
+  .hero .sub{animation:riseSoft .8s cubic-bezier(.2,.85,.25,1) both .5s;}
+  .hero-ctas{animation:riseSoft .8s cubic-bezier(.2,.85,.25,1) both .62s;}
+  .hero-trust{animation:fadein .9s ease both .8s;}
+}
+@keyframes riseSoft{from{opacity:0;transform:translateY(22px);}to{opacity:1;transform:none;}}
+.hero h1 .line:nth-child(1) .reveal-up{animation-delay:.15s;}
+.hero h1 .line:nth-child(2) .reveal-up{animation-delay:.28s;}
+.hero h1 .line:nth-child(3) .reveal-up{animation-delay:.41s;}
+@keyframes rise{from{transform:translateY(110%);opacity:0;}to{transform:translateY(0);opacity:1;}}
+
+/* modern gradient word */
+.hl-modern{
+  display:inline-block;
+  filter:drop-shadow(0 6px 30px rgba(184,224,74,0.2));
+}
+
+/* rotating word, clean 3D card-flip swap, one word at a time (no blur, no clip window) */
+.hl-modern.rotor{display:inline-block;vertical-align:bottom;perspective:760px;perspective-origin:50% 45%;}
+.rotor .col{display:inline-grid;justify-items:center;transform-style:preserve-3d;}
+.rotor .col span{
+  grid-area:1/1;line-height:1;opacity:0;
+  /* paint-box padding: negative letter-spacing lets the period's ink overhang the box; without this the gradient (background-clip:text) stops at the edge and the dot gets cut */
+  padding-right:0.09em;margin-right:-0.09em;
+  backface-visibility:hidden;transform-origin:center center;
+  background:linear-gradient(108deg,var(--lime-bright) 12%,var(--lime) 45%,var(--mint) 88%);
+  -webkit-background-clip:text;background-clip:text;
+  color:transparent;-webkit-text-fill-color:transparent;
+}
+@supports not ((-webkit-background-clip:text) or (background-clip:text)){
+  .rotor .col span{color:var(--lime);-webkit-text-fill-color:var(--lime);background:none;}
+}
+.rotor .col span:first-child{opacity:1;}
+@media (prefers-reduced-motion: no-preference){
+  .rotor .col span{animation:wordSwap 13s cubic-bezier(.2,.72,.18,1.04) infinite;}
+  .rotor .col span:nth-child(2){animation-delay:2.5s;}
+  .rotor .col span:nth-child(3){animation-delay:5s;}
+  .rotor .col span:nth-child(4){animation-delay:7.5s;}
+  .rotor .col span:nth-child(5){animation-delay:10s;}
+}
+/* crazy 3D barrel-roll spin-in: word swings in from deep space on Y+X axes,
+   scales toward viewer with a slight overshoot, locks flat & crisp, then spins out */
+@keyframes wordSwap{
+  0%   {opacity:0;transform:rotateY(-108deg) rotateX(24deg) translateZ(-260px) scale(.66);}
+  4%   {opacity:.45;}
+  9%   {transform:rotateY(6deg) rotateX(-2deg) translateZ(20px) scale(1.04);}
+  12%,17%{opacity:1;transform:rotateY(0deg) rotateX(0deg) translateZ(0) scale(1);}
+  21%  {opacity:0;}
+  26%,100%{opacity:0;transform:rotateY(104deg) rotateX(-20deg) translateZ(-220px) scale(.7);}
+}
+
+.hero .sub{
+  max-width:560px;margin:30px auto 0;font-size:19px;line-height:1.55;color:var(--cream-dim);
+  opacity:1;transform:none;
+}
+.hero-ctas{display:inline-flex;gap:13px;flex-wrap:wrap;justify-content:center;margin-top:38px;opacity:1;transform:none;}
+@keyframes fadein{from{opacity:0;}to{opacity:1;}}
+
+.hero-trust{margin-top:40px;display:flex;gap:18px;align-items:center;justify-content:center;flex-wrap:wrap;opacity:1;transform:none;}
+.avstack{display:flex;}
+.avstack .av{width:34px;height:34px;border-radius:50%;border:2px solid var(--bg);margin-left:-10px;background-size:cover;}
+.avstack .av:first-child{margin-left:0;}
+.hero-trust .txt{font-size:13.5px;color:var(--cream-faint);}
+.hero-trust .txt b{color:var(--cream);font-weight:600;}
+
+/* floating app fragments */
+.frag{position:absolute;z-index:3;border-radius:16px;background:transparent;will-change:transform;}
+.frag .fin{border-radius:16px;padding:14px 16px;background:rgba(255,255,255,0.72);border:1px solid var(--line);backdrop-filter:blur(8px);box-shadow:0 24px 60px -28px rgba(0,0,0,0.6);}
+.frag .fl{font-family:var(--mono);font-size:9.5px;letter-spacing:0.14em;text-transform:uppercase;color:var(--cream-faint);display:flex;align-items:center;gap:6px;}
+.frag .fv{font-family:var(--display);font-weight:700;font-size:30px;line-height:1;color:var(--lime);margin-top:4px;}
+.frag .fv.mono-num{font-family:var(--mono);font-size:26px;letter-spacing:-0.02em;}
+.frag.f1{top:20%;left:3%;}
+.frag.f2{top:30%;right:3.5%;}
+.frag.f3{bottom:8%;left:6%;}
+.frag.f4{bottom:16%;right:7%;}
+.frag.f5{top:54%;left:1.5%;max-width:215px;}
+.frag.f6{top:62%;right:2.5%;}
+@media(max-width:1080px){.frag{display:none;}}
+
+/* fragment internals */
+.fdays{display:flex;gap:4px;margin-top:9px;}
+.fdays i{width:9px;height:9px;border-radius:50%;background:rgba(22,36,28,0.12);}
+.fdays i.on{background:var(--lime);}
+.livepip{width:6px;height:6px;border-radius:50%;background:var(--lime);animation:pipPulse 1.6s ease-in-out infinite;}
+@keyframes pipPulse{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(184,224,74,0.5);}50%{opacity:.6;box-shadow:0 0 0 5px rgba(184,224,74,0);}}
+.fbar{height:4px;border-radius:99px;background:rgba(22,36,28,0.1);margin-top:10px;overflow:hidden;}
+.fbar i{display:block;height:100%;width:18%;background:var(--lime);border-radius:99px;transition:width 1s linear;}
+.frow{display:flex;align-items:flex-end;gap:12px;}
+.fbars{display:flex;align-items:flex-end;gap:3px;height:30px;}
+.fbars b{width:6px;background:rgba(184,224,74,0.4);border-radius:2px 2px 0 0;}
+.fbars b:last-child{background:var(--lime);}
+.fchat{font-size:11.5px;line-height:1.4;color:var(--cream);background:rgba(22,36,28,0.08);border-radius:10px 10px 10px 3px;padding:7px 10px;margin-top:8px;max-width:190px;}
+.fchat.ai{background:rgba(184,224,74,0.14);border-radius:10px 10px 3px 10px;color:var(--cream-dim);}
+.fevent{display:flex;align-items:center;gap:10px;margin-top:9px;}
+.edot{width:8px;height:8px;border-radius:3px;background:var(--lime);flex:none;}
+.fq{font-size:13px;font-weight:600;color:var(--cream);line-height:1.35;margin-top:6px;}
+.fq.sm{margin-top:0;}
+.fhint{font-family:var(--mono);font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--cream-faint);margin-top:8px;}
+.fhint.good{color:var(--lime);}
+
+/* 3D flip flashcard */
+.fcardwrap{perspective:700px;}
+.fcardwrap .fin{padding:0;background:transparent;border:none;box-shadow:none;backdrop-filter:none;}
+.fcard3d{position:relative;width:200px;min-height:108px;transform-style:preserve-3d;transition:transform .7s cubic-bezier(.3,.9,.3,1.05);cursor:pointer;}
+.fcard3d.flip{transform:rotateY(180deg);}
+.fcard3d .face{position:absolute;inset:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;border-radius:16px;padding:13px 15px;background:rgba(255,255,255,0.85);border:1px solid var(--line);box-shadow:0 24px 60px -28px rgba(0,0,0,0.6);}
+.fcard3d .face.back{transform:rotateY(180deg);background:rgba(226,240,200,0.92);border-color:rgba(184,224,74,0.35);}
+
+/* gentle bob, inner so parallax transform on .frag survives */
+.frag .fin,.fcard3d{animation:fragBob 7s ease-in-out infinite;}
+.frag.f2 .fin{animation-delay:-2.2s;}
+.frag.f3 .fcard3d{animation:none;}
+.frag.f4 .fin{animation-delay:-4.5s;}
+.frag.f5 .fin{animation-delay:-1.3s;}
+.frag.f6 .fin{animation-delay:-3.4s;}
+@keyframes fragBob{0%,100%{transform:translateY(0) rotate(0deg);}50%{transform:translateY(-9px) rotate(.6deg);}}
+
+/* fragment entrance */
+@media (prefers-reduced-motion: no-preference){
+  .frag{opacity:0;animation:fragIn 1s cubic-bezier(.2,.85,.3,1.1) both;}
+  .frag.f1{animation-delay:.55s;}.frag.f2{animation-delay:.7s;}.frag.f3{animation-delay:.85s;}
+  .frag.f4{animation-delay:.95s;}.frag.f5{animation-delay:1.1s;}.frag.f6{animation-delay:1.2s;}
+}
+@keyframes fragIn{from{opacity:0;transform:translateY(40px) scale(.85);}to{opacity:1;transform:none;}}
+
+/* ============ MARQUEE STRIP ============ */
+.strip{border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:26px 0;background:var(--bg-2);overflow:hidden;}
+.strip .lab{text-align:center;font-family:var(--mono);font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:var(--cream-faint);margin-bottom:18px;}
+.marq{display:flex;overflow:hidden;-webkit-mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent);mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent);}
+.marq-track{display:flex;gap:56px;align-items:center;white-space:nowrap;animation:scroll 32s linear infinite;padding-right:56px;}
+.marq:hover .marq-track{animation-play-state:paused;}
+@keyframes scroll{to{transform:translateX(calc(-50% - 28px));}}
+@keyframes tscroll{to{transform:translate3d(calc(-50% - 8px),0,0);}}
+.marq-item{font-family:var(--display);font-weight:600;font-size:26px;letter-spacing:-0.02em;color:var(--cream-dim);display:flex;align-items:center;gap:14px;}
+.marq-item .x{color:var(--lime);font-size:16px;}
+
+/* ============ SECTION SCAFFOLD ============ */
+.sec{position:relative;padding:120px 0;}
+.sec-eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:0.2em;text-transform:uppercase;color:var(--lime);}
+.sec h2{font-family:var(--display);font-weight:700;font-size:clamp(36px,5vw,68px);line-height:1.0;letter-spacing:-0.035em;margin:18px 0 0;color:var(--cream);}
+.sec h2 .dim{color:var(--cream-faint);}
+.sec .lead{font-size:18px;line-height:1.55;color:var(--cream-dim);max-width:520px;}
+.head{display:flex;align-items:flex-end;justify-content:space-between;gap:40px;margin-bottom:56px;}
+.head.center{flex-direction:column;align-items:center;text-align:center;}
+.head.center .lead{margin:18px auto 0;}
+
+/* reveal on scroll */
+.reveal{opacity:0;transform:translateY(34px);transition:opacity .9s cubic-bezier(.2,.8,.2,1),transform .9s cubic-bezier(.2,.8,.2,1);}
+.reveal.in{opacity:1;transform:none;}
+.reveal.d1{transition-delay:.08s;}
+.reveal.d2{transition-delay:.16s;}
+.reveal.d3{transition-delay:.24s;}
+
+/* ============ STATS ============ */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:24px;overflow:hidden;}
+.stat{background:var(--bg);padding:40px 30px;}
+.stat .n{font-family:var(--display);font-weight:700;font-size:clamp(40px,4.5vw,64px);line-height:1;color:var(--cream);letter-spacing:-0.03em;}
+.stat .n .u{color:var(--lime);}
+.stat .l{font-family:var(--mono);font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:var(--cream-faint);margin-top:12px;}
+
+/* ============ BENTO ============ */
+.bento{display:grid;grid-template-columns:repeat(12,1fr);gap:16px;}
+.card{
+  position:relative;background:var(--panel);border:1px solid var(--line);border-radius:24px;padding:28px;overflow:hidden;
+  transition:transform .4s cubic-bezier(.2,.8,.2,1),border-color .3s;
+}
+.card::before{
+  content:"";position:absolute;width:340px;height:340px;border-radius:50%;
+  background:radial-gradient(circle,rgba(184,224,74,0.16),transparent 60%);
+  left:var(--mx,50%);top:var(--my,0%);transform:translate(-50%,-50%);
+  opacity:0;transition:opacity .4s;pointer-events:none;
+}
+.card:hover{transform:translateY(-5px);border-color:rgba(184,224,74,0.3);}
+.card:hover::before{opacity:1;}
+.card .knum{font-family:var(--mono);font-size:11px;letter-spacing:0.15em;color:var(--lime);text-transform:uppercase;}
+.card h3{font-family:var(--display);font-weight:600;font-size:27px;line-height:1.05;letter-spacing:-0.025em;margin:14px 0 8px;color:var(--cream);}
+.card p{font-size:14.5px;line-height:1.55;color:var(--cream-dim);margin:0 0 20px;}
+.card .canvas{margin-top:auto;}
+.col-7{grid-column:span 7;}.col-5{grid-column:span 5;}.col-4{grid-column:span 4;}.col-6{grid-column:span 6;}.col-8{grid-column:span 8;}.col-12{grid-column:span 12;}
+.card.lime{background:var(--lime);border-color:transparent;}
+.card.lime .knum{color:rgba(10,19,16,0.55);}
+.card.lime h3{color:var(--ink);}
+.card.lime p{color:rgba(10,19,16,0.7);}
+.card.lime::before{display:none;}
+
+/* mini ui bits inside cards */
+.mini{background:var(--forest-deep);border:1px solid var(--line);border-radius:14px;padding:16px;font-size:13px;line-height:1.55;color:var(--cream-dim);}
+.chiprow{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px;}
+.ck{display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;font-size:11px;font-weight:600;}
+.hl{padding:1px 3px;border-radius:3px;}
+.bars{display:flex;align-items:flex-end;gap:4px;height:64px;}
+.bars i{flex:1;background:var(--lime-deep);border-radius:3px 3px 0 0;display:block;}
+.bars i.hi{background:var(--lime);}
+.deckwrap{position:relative;height:150px;}
+
+/* ── PDF → deck generator scene ── */
+.deckgen{overflow:visible;}
+.dg-doc{
+  position:absolute;left:8px;top:50%;transform:translateY(-50%);
+  width:66px;height:86px;background:var(--cream);border-radius:9px;
+  box-shadow:0 16px 34px -14px rgba(0,0,0,0.55);
+  display:flex;align-items:flex-end;justify-content:center;padding-bottom:8px;
+}
+.dg-doc::before{content:"";position:absolute;top:0;right:0;width:16px;height:16px;background:var(--mint);border-radius:0 9px 0 9px;opacity:.85;}
+.dg-doc i{position:absolute;left:10px;right:10px;height:3px;border-radius:2px;background:rgba(10,19,16,0.16);}
+.dg-doc .l1{top:16px;}.dg-doc .l2{top:25px;right:22px;}.dg-doc .l3{top:34px;right:16px;}
+.dg-doc .mono{font-size:8.5px;letter-spacing:.04em;color:rgba(10,19,16,0.5);}
+.dg-stream{position:absolute;left:84px;top:50%;width:46px;height:2px;}
+.dg-stream i{position:absolute;top:-2px;width:6px;height:6px;border-radius:50%;background:var(--lime);box-shadow:0 0 8px var(--lime);opacity:0;}
+.dg-card{
+  position:absolute;background:#fff;color:var(--ink);border-radius:11px;
+  padding:11px 14px;font-family:var(--display);font-weight:600;font-size:14px;letter-spacing:-0.01em;
+  box-shadow:0 18px 36px -16px rgba(0,0,0,0.6);white-space:nowrap;
+}
+.dg-card.c1{top:8px;right:30px;transform:rotate(-7deg);}
+.dg-card.c2{top:54px;right:12px;transform:rotate(3deg);}
+.dg-card.c3{top:100px;right:38px;transform:rotate(-4deg);}
+.dg-progress{position:absolute;left:8px;right:8px;bottom:-12px;height:3px;border-radius:3px;background:rgba(22,36,28,0.1);overflow:hidden;}
+.dg-progress i{display:block;height:100%;width:100%;border-radius:3px;background:linear-gradient(90deg,var(--lime-deep),var(--lime-bright));transform-origin:left;}
+
+@media (prefers-reduced-motion: no-preference){
+  .dg-doc{animation:dgDoc 6.5s ease-in-out infinite;}
+  .dg-card.c1{animation:dgF1 6.5s cubic-bezier(.3,.8,.3,1) infinite;}
+  .dg-card.c2{animation:dgF2 6.5s cubic-bezier(.3,.8,.3,1) infinite;}
+  .dg-card.c3{animation:dgF3 6.5s cubic-bezier(.3,.8,.3,1) infinite;}
+  .dg-stream i:nth-child(1){animation:dgDot 1.3s linear infinite;}
+  .dg-stream i:nth-child(2){animation:dgDot 1.3s linear .45s infinite;}
+  .dg-stream i:nth-child(3){animation:dgDot 1.3s linear .9s infinite;}
+  .dg-progress i{animation:dgProg 6.5s linear infinite;}
+}
+@keyframes dgDoc{0%,100%{transform:translateY(-50%);}4%,12%,20%{transform:translateY(-50%) scale(1.04);}8%,16%{transform:translateY(-50%) scale(0.98);}}
+@keyframes dgDot{0%{left:0;opacity:0;}15%{opacity:1;}85%{opacity:1;}100%{left:100%;opacity:0;}}
+@keyframes dgProg{from{transform:scaleX(0);}88%,to{transform:scaleX(1);}}
+@keyframes dgF1{
+  0%{transform:translate(-150px,42px) rotate(-22deg) scale(0.25);opacity:0;}
+  5%{opacity:1;}
+  14%,90%{transform:rotate(-7deg) scale(1);opacity:1;}
+  97%,100%{transform:rotate(-7deg) translateY(-8px);opacity:0;}
+}
+@keyframes dgF2{
+  0%,10%{transform:translate(-170px,-6px) rotate(18deg) scale(0.25);opacity:0;}
+  15%{opacity:1;}
+  24%,90%{transform:rotate(3deg) scale(1);opacity:1;}
+  97%,100%{transform:rotate(3deg) translateY(-8px);opacity:0;}
+}
+@keyframes dgF3{
+  0%,20%{transform:translate(-145px,-52px) rotate(-16deg) scale(0.25);opacity:0;}
+  25%{opacity:1;}
+  34%,90%{transform:rotate(-4deg) scale(1);opacity:1;}
+  97%,100%{transform:rotate(-4deg) translateY(-8px);opacity:0;}
+}
+.streakbig{font-family:var(--display);font-weight:700;font-size:88px;line-height:0.82;color:var(--ink);letter-spacing:-0.04em;}
+
+/* leaderboard rows */
+.lbrow{display:flex;align-items:center;gap:13px;padding:11px 14px;border-radius:13px;margin-bottom:8px;}
+.lbrow .rk{font-family:var(--display);font-weight:700;font-size:22px;width:22px;text-align:center;}
+.lbrow .av{width:34px;height:34px;border-radius:50%;flex:none;}
+.lbrow .nm{font-weight:600;font-size:14px;}
+.lbrow .mt{font-size:11.5px;opacity:.6;}
+.lbrow .sc{font-family:var(--mono);font-size:13px;font-weight:600;margin-left:auto;}
+
+/* ============ SHOWCASE (app tilt) ============ */
+.showcase{position:relative;}
+.show-stage{perspective:1600px;display:flex;justify-content:center;transform-style:preserve-3d;}
+.device{
+  width:340px;border-radius:46px;background:#060d0a;padding:13px;
+  border:1px solid rgba(22,36,28,0.14);
+  box-shadow:0 60px 120px -40px rgba(0,0,0,0.8),0 0 0 1px rgba(0,0,0,0.4);
+  transform-style:preserve-3d;transition:transform .45s cubic-bezier(.2,.8,.2,1);will-change:transform;position:relative;
+}
+.device::after{content:"";position:absolute;inset:0;border-radius:46px;pointer-events:none;z-index:8;
+  background:radial-gradient(420px circle at var(--gx,50%) var(--gy,40%),rgba(22,36,28,0.16),transparent 60%);
+  mix-blend-mode:soft-light;opacity:.9;}
+.device .screen{border-radius:34px;overflow:hidden;background:var(--bg);position:relative;aspect-ratio:340/720;}
+.notch{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:104px;height:30px;background:#060d0a;border-radius:18px;z-index:6;}
+.scr-pad{padding:46px 18px 18px;}
+.scr-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
+.scr-title{font-family:var(--display);font-weight:700;font-size:26px;letter-spacing:-0.02em;color:var(--cream);}
+.scr-av{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--peach),var(--lilac));}
+.scr-card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:16px;margin-bottom:11px;}
+.scr-card.dark{background:linear-gradient(160deg,var(--forest),var(--forest-deep));}
+.scr-timer{font-family:var(--display);font-weight:700;font-size:52px;line-height:0.85;color:var(--lime);letter-spacing:-0.03em;}
+
+.show-float{position:absolute;border-radius:16px;padding:13px 15px;background:rgba(255,255,255,0.85);border:1px solid var(--line);backdrop-filter:blur(10px);box-shadow:0 24px 50px -22px rgba(0,0,0,0.6);will-change:transform;transition:transform .4s cubic-bezier(.2,.8,.2,1);}
+.show-float.s1{top:12%;left:6%;}
+.show-float.s2{bottom:16%;right:5%;}
+@media(max-width:980px){.show-float{display:none;}}
+
+/* ============ TESTIMONIALS ============ */
+.tmarq{display:flex;flex-direction:column;gap:16px;}
+.trow{display:flex;gap:16px;}
+.trow .marq-track{gap:16px;padding-right:16px;animation-name:tscroll;animation-duration:46s;will-change:transform;transform:translateZ(0);backface-visibility:hidden;}
+.trow.rev .marq-track{animation-direction:reverse;animation-duration:54s;}
+.tcard{width:380px;flex:none;background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:24px;white-space:normal;}
+.tcard.lime{background:var(--lime);}
+.tcard.lime .tq,.tcard.lime .tn{color:var(--ink);}
+.tcard .stars{color:var(--lime);letter-spacing:3px;font-size:13px;}
+.tcard.lime .stars{color:var(--ink);}
+.tcard .tq{font-size:15.5px;line-height:1.55;margin:14px 0 18px;color:var(--cream);}
+.tcard .tm{display:flex;align-items:center;gap:11px;}
+.tcard .tav{width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,var(--peach),var(--lilac));display:grid;place-items:center;font-weight:700;font-size:13px;color:var(--ink);}
+.tcard .tn{font-weight:600;font-size:13.5px;}
+.tcard .tr{font-size:12px;color:var(--cream-faint);}
+.tcard.lime .tr{color:rgba(10,19,16,0.6);}
+.tcard .tcat{display:inline-flex;align-items:center;font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#3d5a10;background:rgba(184,224,74,0.22);padding:3px 8px;border-radius:99px;margin-top:4px;}
+.tcard.lime .tcat{color:#D8F29A;background:rgba(184,224,74,0.18);}
+.tcard .stars .s-off{opacity:.26;}
+.uni-row{display:flex;align-items:center;gap:30px 34px;justify-content:center;flex-wrap:wrap;}
+.uni-row .lbl{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--cream-faint);}
+.uni{display:inline-flex;align-items:center;gap:10px;opacity:.86;transition:opacity .2s,transform .2s;}
+.uni:hover{opacity:1;transform:translateY(-2px);}
+.uni .crest{width:23px;height:27px;flex:none;}
+.uni .un{font-family:'Instrument Serif',Georgia,serif;font-weight:400;font-size:24px;line-height:1;color:var(--cream-dim);letter-spacing:.01em;}
+
+/* ============ COMPARISON ============ */
+.cmp{max-width:1000px;margin:56px auto 0;border:1px solid var(--line);border-radius:26px;overflow:hidden;background:var(--panel);box-shadow:0 40px 90px -50px rgba(0,0,0,0.7);}
+.cmp-row{display:grid;grid-template-columns:0.9fr 1.15fr 1.15fr;border-top:1px solid var(--line);}
+.cmp-row:first-child{border-top:none;}
+.cmp-head{background:var(--bg-2);}
+.cmp-head .cmp-cat{color:var(--cream-faint);font-family:var(--mono);font-size:11px;letter-spacing:0.16em;text-transform:uppercase;font-weight:500;}
+.cmp-head .cmp-col{padding:22px 30px;font-family:var(--display);font-weight:700;font-size:21px;letter-spacing:-0.02em;display:flex;align-items:center;gap:9px;border-left:1px solid var(--line);}
+.cmp-col.studlin{color:var(--ink);background:var(--lime);}
+.cmp-col.trad{color:var(--cream-faint);}
+.cmp-col .lo{width:22px;height:22px;border-radius:6px;}
+.cmp-cat{padding:24px 30px;display:flex;align-items:center;font-family:var(--display);font-weight:600;font-size:17px;letter-spacing:-0.02em;color:var(--cream);}
+.cmp-cell{padding:22px 30px;display:flex;flex-direction:column;gap:13px;border-left:1px solid var(--line);}
+.cmp-cell.good{background:linear-gradient(180deg,rgba(184,224,74,0.045),transparent 80%);}
+.cmp-cell .ci{display:flex;gap:11px;align-items:flex-start;font-size:14px;line-height:1.45;}
+.cmp-cell.good .ci{color:var(--cream);}
+.cmp-cell.bad .ci{color:var(--cream-faint);}
+.cmp-mark{width:20px;height:20px;border-radius:50%;flex:none;display:grid;place-items:center;margin-top:1px;}
+.cmp-mark svg{width:11px;height:11px;}
+.cmp-cell.good .cmp-mark{background:var(--lime);color:var(--ink);}
+.cmp-cell.bad .cmp-mark{background:rgba(22,36,28,0.07);color:var(--cream-faint);}
+.cmp-mob{display:none;font-family:var(--mono);font-size:10.5px;letter-spacing:0.14em;text-transform:uppercase;margin-bottom:3px;}
+.cmp-cell.good .cmp-mob{color:var(--lime);}
+.cmp-cell.bad .cmp-mob{color:var(--cream-faint);}
+@media(max-width:760px){
+  .cmp-row{grid-template-columns:1fr;}
+  .cmp-head{display:none;}
+  .cmp-cat{padding:20px 24px 6px;font-size:18px;}
+  .cmp-cell{border-left:none;padding:10px 24px 20px;}
+  .cmp-mob{display:block;}
+}
+
+/* ============ COMPARE PLANS TABLE ============ */
+.cpt-wrap{max-width:1120px;margin:60px auto 0;}
+.cpt{position:relative;display:grid;grid-template-columns:minmax(230px,1.75fr) repeat(3,minmax(120px,1fr));border:1px solid var(--line);border-radius:26px;background:var(--panel);box-shadow:0 50px 110px -55px rgba(0,0,0,0.8);overflow:hidden;}
+/* header cells */
+.cpt-h{padding:38px 20px 22px;display:flex;flex-direction:column;gap:5px;align-items:center;text-align:center;border-bottom:1px solid var(--line);position:relative;}
+.cpt-h.lbl{align-items:flex-start;justify-content:flex-end;text-align:left;gap:9px;padding-top:30px;}
+.cpt-h .cpt-kick{font-family:var(--mono);font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:var(--lime);}
+.cpt-h .cpt-lead{font-family:var(--display);font-weight:700;font-size:30px;line-height:0.98;letter-spacing:-0.03em;color:var(--cream);}
+.cpt-h .pname{font-family:var(--display);font-weight:700;font-size:19px;letter-spacing:-0.02em;color:var(--cream);}
+.cpt-h .pprice{font-family:var(--display);font-weight:700;font-size:34px;line-height:0.9;letter-spacing:-0.035em;color:var(--cream);display:flex;align-items:baseline;gap:3px;}
+.cpt-h .pprice .per{font-family:var(--body);font-weight:400;font-size:13px;letter-spacing:0;color:var(--cream-faint);}
+.cpt-h .pnote{font-family:var(--mono);font-size:9.5px;letter-spacing:0.07em;text-transform:uppercase;color:var(--cream-faint);}
+.cpt-h .pcta{margin-top:11px;width:100%;justify-content:center;padding:11px 14px;font-size:13px;}
+/* pro column tint + cap */
+.col-pro{background:linear-gradient(180deg,rgba(184,224,74,0.08),rgba(184,224,74,0.022));}
+.cpt-h.col-pro{box-shadow:inset 0 3px 0 0 var(--lime);}
+.cpt-h.col-pro .pname{color:var(--lime);}
+.cpt-h .rec{position:absolute;top:12px;left:50%;transform:translateX(-50%);background:var(--lime);color:var(--ink);font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;padding:5px 12px;border-radius:99px;white-space:nowrap;box-shadow:0 8px 20px -8px rgba(184,224,74,0.7);}
+/* category band */
+.cpt-cat{grid-column:1/-1;background:var(--bg-2);border-bottom:1px solid var(--line);border-top:1px solid var(--line);padding:13px 22px;font-family:var(--mono);font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--cream);display:flex;align-items:center;gap:10px;}
+.cpt-cat .cn{width:6px;height:6px;border-radius:50%;background:var(--lime);box-shadow:0 0 9px var(--lime);flex:none;}
+/* feature label + value cells */
+.cpt-f{padding:15px 22px;font-size:14px;color:var(--cream);display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line-2);line-height:1.35;}
+.cpt-f .info{font-size:11.5px;color:var(--cream-faint);font-weight:400;}
+.cpt-v{padding:15px 12px;display:flex;align-items:center;justify-content:center;text-align:center;border-bottom:1px solid var(--line-2);border-left:1px solid var(--line-2);font-size:13px;color:var(--cream-dim);}
+.cpt-v.txt{font-family:var(--mono);font-size:12px;letter-spacing:-0.01em;color:var(--cream);}
+.cpt-v.col-pro.txt{color:var(--lime);}
+.cpt-yes{width:25px;height:25px;border-radius:50%;background:var(--lime);color:var(--ink);display:grid;place-items:center;}
+.cpt-yes svg{width:13px;height:13px;}
+.cpt-no{width:15px;height:2px;border-radius:2px;background:rgba(22,36,28,0.2);}
+.cpt-foot{padding:24px 20px;border-left:1px solid var(--line-2);display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:8px;}
+.cpt-foot.lbl{border-left:none;align-items:flex-start;justify-content:center;}
+.cpt-foot .fnote{font-size:13px;color:var(--cream-dim);line-height:1.5;}
+.cpt-foot .btn{width:100%;justify-content:center;padding:12px 14px;font-size:13px;}
+@media(max-width:820px){
+  .cpt-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:26px;}
+  .cpt{min-width:720px;}
+}
+
+/* ============ PRICING ============ */
+.toggle{display:inline-flex;background:var(--panel);border:1px solid var(--line);padding:5px;border-radius:999px;gap:4px;margin-top:26px;}
+.toggle button{padding:10px 22px;border-radius:999px;font-size:14px;font-weight:500;color:var(--cream-dim);transition:all .2s;}
+.toggle button.active{background:var(--cream);color:var(--ink);}
+.toggle .save{font-family:var(--mono);font-size:10px;background:var(--lime);color:var(--ink);padding:2px 7px;border-radius:99px;margin-left:7px;font-weight:700;}
+.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:52px;}
+.plan{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:24px;padding:32px;display:flex;flex-direction:column;transition:transform .35s,border-color .3s;}
+.plan:hover{transform:translateY(-5px);}
+.plan.feat{background:linear-gradient(165deg,var(--forest),var(--forest-deep));border-color:rgba(184,224,74,0.32);box-shadow:0 40px 90px -40px rgba(184,224,74,0.25);}
+.plan-tag{position:absolute;top:-12px;left:32px;background:var(--lime);color:var(--ink);font-family:var(--mono);font-size:10.5px;font-weight:700;letter-spacing:0.12em;padding:5px 12px;border-radius:999px;}
+.plan h3{font-family:var(--display);font-weight:600;font-size:24px;margin:0;letter-spacing:-0.02em;}
+.plan .price{display:flex;align-items:baseline;gap:6px;margin:16px 0 6px;}
+.plan .price .num{font-family:var(--display);font-weight:700;font-size:62px;line-height:0.85;letter-spacing:-0.04em;}
+.plan .price .per{font-size:13px;color:var(--cream-faint);}
+.plan .pdesc{font-size:14px;color:var(--cream-dim);margin-bottom:24px;line-height:1.5;}
+.plan ul{list-style:none;margin:0 0 28px;padding:0;display:flex;flex-direction:column;gap:11px;}
+.plan li{display:flex;gap:10px;font-size:14px;align-items:flex-start;color:var(--cream);}
+.plan li .ck2{width:19px;height:19px;border-radius:50%;background:var(--lime);color:var(--ink);display:grid;place-items:center;flex:none;margin-top:1px;}
+.plan .btn{margin-top:auto;justify-content:center;width:100%;}
+
+/* ============ FAQ ============ */
+.faq{max-width:820px;margin:52px auto 0;display:flex;flex-direction:column;gap:12px;}
+.qitem{background:var(--panel);border:1px solid var(--line);border-radius:18px;overflow:hidden;transition:border-color .25s;}
+.qitem.open{border-color:rgba(184,224,74,0.3);}
+.qq{display:flex;align-items:center;justify-content:space-between;gap:24px;width:100%;padding:22px 26px;font-size:17px;font-weight:500;color:var(--cream);text-align:left;}
+.qq .ic{width:30px;height:30px;flex:none;border-radius:50%;background:rgba(22,36,28,0.06);display:grid;place-items:center;transition:all .3s;}
+.qitem.open .qq .ic{transform:rotate(45deg);background:var(--lime);color:var(--ink);}
+.qa{max-height:0;overflow:hidden;transition:max-height .4s cubic-bezier(.2,.8,.2,1);}
+.qitem.open .qa{max-height:240px;}
+.qa-in{padding:0 26px 24px;font-size:15px;line-height:1.65;color:var(--cream-dim);}
+
+/* ============ CTA ============ */
+.cta{position:relative;overflow:hidden;border-radius:32px;background:var(--lime);padding:90px 40px;text-align:center;margin:0 32px;}
+.cta::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 50% 120%,rgba(10,19,16,0.18),transparent 60%);}
+.cta .tag{background:var(--ink);color:var(--lime);border-color:var(--ink);position:relative;}
+.cta h2{font-family:var(--display);font-weight:700;font-size:clamp(38px,6vw,76px);line-height:0.95;letter-spacing:-0.04em;color:var(--ink);margin:22px 0 14px;position:relative;}
+.cta p{font-size:18px;color:rgba(10,19,16,0.7);margin:0 0 30px;position:relative;}
+.cta .btn-ink{position:relative;}
+
+/* ============ FOOTER ============ */
+.foot{padding:90px 0 40px;border-top:1px solid var(--line);margin-top:120px;}
+.foot-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr;gap:40px;margin-bottom:64px;}
+.foot h4{font-family:var(--mono);font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:var(--lime);margin:0 0 18px;}
+.foot ul{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:11px;}
+.foot ul a{font-size:14px;color:var(--cream-dim);transition:color .15s;}
+.foot ul a:hover{color:var(--lime);}
+.foot-bottom{border-top:1px solid var(--line);padding-top:28px;display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--cream-faint);flex-wrap:wrap;gap:14px;}
+.foot-social{display:flex;gap:10px;}
+.foot-social a{width:38px;height:38px;border-radius:50%;background:rgba(22,36,28,0.05);border:1px solid var(--line);display:grid;place-items:center;color:var(--cream-dim);transition:all .18s;}
+.foot-social a svg{width:17px;height:17px;}
+.foot-social a:hover{background:var(--lime);color:var(--ink);border-color:var(--lime);transform:translateY(-2px);}
+
+/* ============ HOW IT WORKS (scroll-stack) ============ */
+.hiw{position:relative;background:var(--bg-2);border-top:1px solid var(--line);border-bottom:1px solid var(--line);overflow:clip;}
+/* pinned scroll sequence, view locks, cards swap in place */
+.hiw-track{position:relative;height:440vh;}
+.hiw-pin{position:relative;position:sticky;top:0;height:100vh;z-index:0;overflow:hidden;display:grid;place-items:center;}
+.hiw-pin .hiw-eyebrow{position:absolute;top:11.5vh;left:0;right:0;text-align:center;font-family:var(--mono);font-size:13px;letter-spacing:.22em;text-transform:uppercase;color:var(--lime);z-index:3;}
+.hiw-sky{position:absolute;inset:0;overflow:hidden;}
+.hiw-sky::before{content:"";position:absolute;width:60%;height:70%;left:-12%;top:-12%;background:radial-gradient(circle,rgba(184,224,74,0.09),transparent 64%);filter:blur(48px);animation:nebDrift 28s ease-in-out infinite;}
+.hiw-sky::after{content:"";position:absolute;width:54%;height:64%;right:-12%;bottom:-16%;background:radial-gradient(circle,rgba(143,203,169,0.08),transparent 64%);filter:blur(54px);animation:nebDrift 34s ease-in-out infinite reverse;}
+@keyframes nebDrift{0%,100%{transform:translate(0,0);}50%{transform:translate(44px,30px);}}
+.hiw-sky .tw{position:absolute;border-radius:50%;background:var(--cream);box-shadow:0 0 4px rgba(22,36,28,0.45);animation:twinkle 3s ease-in-out infinite;}
+@keyframes twinkle{0%,100%{opacity:.12;transform:scale(.7);}50%{opacity:.85;transform:scale(1);}}
+.hiw-sky .shoot{position:absolute;width:var(--len,180px);height:2px;border-radius:99px;background:linear-gradient(90deg,rgba(184,224,74,0) 0%,rgba(184,224,74,0.5) 52%,rgba(22,36,28,0.98) 100%);filter:drop-shadow(0 0 6px rgba(184,224,74,0.6));opacity:0;transform:rotate(var(--ang,18deg)) translateX(0) scaleX(.3);animation:shoot var(--dur,6s) cubic-bezier(.42,0,.62,1) infinite;animation-delay:var(--delay,0s);}
+.hiw-sky .shoot::after{content:"";position:absolute;right:-1px;top:50%;width:4px;height:4px;border-radius:50%;background:#fff;transform:translateY(-50%);box-shadow:0 0 7px 1px rgba(22,36,28,0.7);}
+@keyframes shoot{0%{opacity:0;transform:rotate(var(--ang,18deg)) translateX(0) scaleX(.25);}6%{opacity:1;}54%{opacity:1;}74%{opacity:0;transform:rotate(var(--ang,18deg)) translateX(var(--dist,560px)) scaleX(1);}100%{opacity:0;}}
+/* giant outline word, large + spaced */
+.hiw-mega{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);white-space:nowrap;display:flex;gap:clamp(28px,6vw,118px);z-index:1;pointer-events:none;}
+.hiw-mega span{font-family:var(--display);font-weight:800;font-size:clamp(130px,18vw,460px);line-height:.8;letter-spacing:-.04em;-webkit-text-stroke:1.5px rgba(22,36,28,0.06);color:transparent;}
+.hiw-mega span.lit{color:rgba(22,36,28,0.06);-webkit-text-stroke:0;}
+/* the stage, a panel that slides left→right with scroll */
+.hiw-stage{position:relative;z-index:2;width:min(96%,1400px);min-height:clamp(400px,54vh,560px);display:flex;align-items:center;}
+.hiw-guide{position:absolute;left:0;right:0;top:50%;height:1px;transform:translateY(-.5px);background:linear-gradient(90deg,transparent,rgba(184,224,74,0.16) 16%,rgba(184,224,74,0.16) 84%,transparent);}
+.hiw-guide::before,.hiw-guide::after{content:"";position:absolute;top:50%;width:7px;height:7px;border-radius:50%;background:var(--lime);transform:translateY(-50%);box-shadow:0 0 10px rgba(184,224,74,0.6);}
+.hiw-guide::before{left:-1px;} .hiw-guide::after{right:-1px;}
+.hiw-slider{position:relative;display:grid;width:min(880px,82vw);min-height:340px;transform:translateX(var(--tx,0));transition:transform .14s cubic-bezier(.33,1,.68,1);will-change:transform;}
+.hiw-card{grid-area:1/1;display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto auto auto;column-gap:clamp(30px,3.6vw,56px);row-gap:12px;align-content:center;padding:clamp(36px,3.6vw,54px);border-radius:26px;background:linear-gradient(160deg,rgba(255,255,255,0.98),rgba(244,242,235,0.99));border:1px solid rgba(184,224,74,0.18);box-shadow:0 40px 100px -50px rgba(0,0,0,0.92),0 24px 70px -40px rgba(184,224,74,0.2);opacity:0;transform:scale(.985);transition:opacity .5s ease,transform .5s ease;pointer-events:none;}
+.hiw-card.active{opacity:1;transform:none;pointer-events:auto;}
+.hiw-card::before{content:"";position:absolute;inset:0;border-radius:26px;pointer-events:none;background:linear-gradient(180deg,rgba(22,36,28,0.05),transparent 26%);}
+.hiw-card .glow{position:absolute;inset:-6% -8%;z-index:-1;border-radius:42px;background:radial-gradient(60% 70% at 50% 60%,rgba(184,224,74,0.12),transparent 70%);filter:blur(46px);opacity:.6;animation:glowPulse 7s ease-in-out infinite;}
+@keyframes glowPulse{0%,100%{opacity:.45;}50%{opacity:.65;}}
+.si{grid-column:1;grid-row:1/4;align-self:center;font-family:var(--display);font-weight:800;font-size:clamp(64px,5.6vw,102px);line-height:.8;letter-spacing:-.05em;color:var(--lime);text-shadow:0 0 28px rgba(184,224,74,0.16);}
+.si small{display:block;font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:.26em;color:var(--cream-faint);margin-top:12px;text-shadow:none;}
+.hiw-card h3{grid-column:2;grid-row:1;font-family:var(--display);font-weight:600;font-size:clamp(30px,2.9vw,44px);line-height:1.08;letter-spacing:-.03em;margin:0;color:var(--cream);text-wrap:balance;}
+.hiw-card p{grid-column:2;grid-row:2;font-size:clamp(16px,1.15vw,18.5px);line-height:1.6;color:var(--cream-dim);margin:0;max-width:52ch;}
+.hiw-card .stip{grid-column:2;grid-row:3;justify-self:start;margin-top:6px;display:inline-flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12px;color:var(--lime);padding:9px 15px;border:1px solid rgba(184,224,74,0.3);border-radius:999px;background:rgba(184,224,74,0.06);}
+.hiw-prog{position:absolute;left:50%;bottom:-52px;transform:translateX(-50%);display:flex;gap:10px;z-index:4;}
+.hiw-prog i{width:34px;height:4px;border-radius:99px;background:rgba(22,36,28,0.14);transition:.45s;}
+.hiw-prog i.on{background:var(--lime);width:48px;box-shadow:0 0 12px rgba(184,224,74,0.5);}
+@media (prefers-reduced-motion: reduce){.hiw-card{transition:none;}.hiw-sky .shoot,.hiw-sky .tw{animation:none;}}
+@media(max-width:760px){
+  .hiw-slider{width:90vw;min-height:440px;}
+  .hiw-card{grid-template-columns:1fr;grid-template-rows:auto auto auto auto;text-align:center;justify-items:center;row-gap:14px;padding:38px 26px;}
+  .si{grid-column:1;grid-row:1;}
+  .hiw-card h3,.hiw-card p,.hiw-card .stip{grid-column:1;}
+  .hiw-card h3{grid-row:2;} .hiw-card p{grid-row:3;} .hiw-card .stip{grid-row:4;justify-self:center;}
+  .si{font-size:64px;}
+  .hiw-mega span{font-size:40vw;}
+}
+
+@keyframes float-in{from{transform:translateY(120px);opacity:0;}to{transform:translateY(0);opacity:1;}}
+.card[data-spot]{opacity:1;transform:none;}
+.card[data-spot]:nth-child(1){animation-delay:.1s;}
+.card[data-spot]:nth-child(2){animation-delay:.2s;}
+.card[data-spot]:nth-child(3){animation-delay:.3s;}
+.card[data-spot]:nth-child(4){animation-delay:.4s;}
+.card[data-spot]:nth-child(5){animation-delay:.5s;}
+.card[data-spot]:nth-child(6){animation-delay:.6s;}
+.card[data-spot]:nth-child(7){animation-delay:.7s;}
+.card[data-spot]:nth-child(8){animation-delay:.8s;}
+
+
+
+/* coming soon pill */
+.coming-pill{display:inline-flex;align-items:center;gap:9px;font-family:var(--mono);font-size:11.5px;letter-spacing:0.14em;text-transform:uppercase;color:var(--lime);border:1px solid rgba(184,224,74,0.35);background:rgba(184,224,74,0.07);padding:8px 16px;border-radius:999px;margin-bottom:16px;}
+.coming-pill .pulse{width:7px;height:7px;border-radius:50%;background:var(--lime);box-shadow:0 0 10px var(--lime);}
+
+/* scroll cue */
+.scroll-cue{position:absolute;bottom:30px;left:50%;transform:translateX(-50%);font-family:var(--mono);font-size:10.5px;letter-spacing:0.2em;text-transform:uppercase;color:var(--cream-faint);display:flex;flex-direction:column;align-items:center;gap:10px;z-index:2;}
+.scroll-cue .ln{width:1px;height:34px;background:linear-gradient(var(--lime),transparent);animation:cue 2s ease-in-out infinite;}
+@keyframes cue{0%,100%{opacity:.3;transform:scaleY(.6)}50%{opacity:1;transform:scaleY(1)}}
+
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;}.reveal{opacity:1;transform:none;}.hero h1 .reveal-up{opacity:1!important;transform:none!important;}.hero .tag,.hero .sub,.hero-ctas,.hero-trust{opacity:1!important;}}
+
+@media(max-width:980px){
+  .nav-links{display:none;}
+  .bento{display:flex;flex-direction:column;gap:16px;}
+  .col-7,.col-5,.col-8,.col-4,.col-6{grid-column:span 6;}
+  .stats{grid-template-columns:repeat(2,1fr);}
+  .plans{grid-template-columns:1fr;}
+  .foot-grid{grid-template-columns:1fr 1fr;}
+  .head{flex-direction:column;align-items:flex-start;}
+}
+@media(max-width:560px){.wrap{padding:0 20px;}.stats{grid-template-columns:1fr;}.foot-grid{grid-template-columns:1fr;}}
+
+</style>
+<style>
+/* critical rotor rules, crossfade word swap (no clipping window; inlined + !important to beat any cached stylesheet) */
+.hl-modern.rotor{display:inline-block!important;height:auto!important;overflow:visible!important;vertical-align:bottom;perspective:760px!important;perspective-origin:50% 45%!important;}
+.rotor .col{display:inline-grid!important;justify-items:center;animation:none!important;transform:none!important;transform-style:preserve-3d!important;}
+.rotor .col span{grid-area:1/1;height:auto!important;line-height:1;flex:none;opacity:0;padding-right:0.09em!important;margin-right:-0.09em!important;backface-visibility:hidden!important;transform-origin:center center!important;}
+.rotor .col span:first-child{opacity:1;}
+@media (prefers-reduced-motion: no-preference){
+  .rotor .col span{animation:wordSwap 13s cubic-bezier(.2,.72,.18,1.04) infinite!important;}
+  .rotor .col span:nth-child(2){animation-delay:2.5s!important;}
+  .rotor .col span:nth-child(3){animation-delay:5s!important;}
+  .rotor .col span:nth-child(4){animation-delay:7.5s!important;}
+  .rotor .col span:nth-child(5){animation-delay:10s!important;}
+}
+@keyframes wordSwap{
+  0%   {opacity:0;transform:rotateY(-108deg) rotateX(24deg) translateZ(-260px) scale(.66);}
+  4%   {opacity:.45;}
+  9%   {transform:rotateY(6deg) rotateX(-2deg) translateZ(20px) scale(1.04);} /* overshoot toward viewer */
+  12%,17%{opacity:1;transform:rotateY(0deg) rotateX(0deg) translateZ(0) scale(1);} /* locked flat + crisp */
+  21%  {opacity:0;}
+  26%,100%{opacity:0;transform:rotateY(104deg) rotateX(-20deg) translateZ(-220px) scale(.7);}
+}
+</style>
+<style id="hero-img1">
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@1&display=swap');
+/* ===== HERO → image 1 ===== */
+.hero-pill{display:inline-flex;align-items:center;gap:11px;padding:7px 16px 7px 11px;border-radius:99px;background:#fff;border:1px solid rgba(22,36,28,0.10);box-shadow:0 8px 24px -12px rgba(22,36,28,0.20);text-decoration:none;margin-bottom:30px;}
+.hero-pill .hp-dot{width:8px;height:8px;border-radius:50%;background:var(--lime);box-shadow:0 0 0 4px rgba(184,224,74,0.20);flex:none;}
+.hero-pill .hp-key{font-size:11.5px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#16241C;}
+.hero-pill .hp-sep{width:1px;height:15px;background:rgba(22,36,28,0.14);}
+.hero-pill .hp-desc{font-size:13.5px;color:#5C6B60;}
+@media (prefers-reduced-motion: no-preference){.hero-pill{animation:fadein .7s ease both .04s;}}
+
+.hero .hero-inner h1{font-size:clamp(40px,6.4vw,76px);line-height:1.05;letter-spacing:-0.03em;font-weight:800;}
+.hero h1 .line{white-space:normal;overflow:visible;}
+.hero h1 .serif{font-family:'Instrument Serif',Georgia,serif;font-style:italic;font-weight:400;letter-spacing:0;}
+@media (prefers-reduced-motion: no-preference){
+  .hero h1 .reveal-up{animation:riseSoft .85s cubic-bezier(.2,.85,.25,1) both;}
+  .hero h1 .line:nth-child(1) .reveal-up{animation-delay:.15s;}
+  .hero h1 .line:nth-child(2) .reveal-up{animation-delay:.30s;}
+}
+.ul-lime{position:relative;white-space:nowrap;}
+.ul-lime::after{content:"";position:absolute;left:-1.5%;right:-1.5%;bottom:-0.15em;height:0.3em;pointer-events:none;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 26' preserveAspectRatio='none'%3E%3Cpath d='M6 17 C 70 6 150 5 210 10 S 300 18 314 12' fill='none' stroke='%23B8E04A' stroke-width='8' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat center/100% 100%;clip-path:inset(0 0 0 0);}
+@media (prefers-reduced-motion: no-preference){.ul-lime::after{clip-path:inset(0 100% 0 0);animation:drawUL .8s cubic-bezier(.4,0,.2,1) both .9s;}}
+@keyframes drawUL{to{clip-path:inset(0 0 0 0);}}
+.hero-ctas .pi{display:inline-block;margin-right:8px;font-size:.72em;transform:translateY(-1px);color:#16241C;}
+
+/* ===== DETUNE NEON \u2014 lime reserved for tiny accents only ===== */
+/* section eyebrows -> forest */
+.sec-eyebrow{color:#2C5E45 !important;}
+/* marquee \u00d7 separators -> faint ink */
+.marq-item .x{color:rgba(22,36,28,0.26) !important;}
+/* checkmarks (plans + compare table) -> forest w/ cream tick */
+.plan li .ck2,.cpt-yes{background:#173D2D !important;color:#F3F1E7 !important;box-shadow:none !important;}
+/* pricing popular badges + pro accents -> forest */
+.plan-tag,.cpt-h .rec{background:#173D2D !important;color:#F3F1E7 !important;}
+.cpt-h.col-pro{box-shadow:inset 0 3px 0 0 #173D2D !important;}
+.cpt-h.col-pro .pname,.cpt-v.col-pro.txt{color:#2C5E45 !important;}
+.col-pro{background:linear-gradient(180deg,rgba(23,61,45,0.06),rgba(23,61,45,0.018)) !important;}
+.cpt-cat .cn{background:#7FB646 !important;box-shadow:0 0 7px rgba(127,182,70,0.5) !important;}
+/* coming-soon labels -> forest, calm dot */
+.coming-pill{color:#2C5E45 !important;border-color:rgba(23,61,45,0.26) !important;}
+.coming-pill .pulse{background:#7FB646 !important;box-shadow:0 0 8px rgba(127,182,70,0.5) !important;}
+/* feature-plan card (dark forest) keep, soften lime border */
+.plan.feat{border-color:rgba(243,241,231,0.14) !important;}
+/* ===== final CTA band: full-lime -> forest green, cream text ===== */
+.cta{background:linear-gradient(165deg,#173D2D,#0F2A1F) !important;}
+.cta::before{background:radial-gradient(circle at 50% 122%,rgba(184,224,74,0.12),transparent 60%) !important;}
+.cta .tag{background:rgba(255,255,255,0.08) !important;color:#CDE9B4 !important;border-color:rgba(255,255,255,0.18) !important;}
+.cta h2{color:#F3F1E7 !important;}
+.cta p{color:rgba(243,241,231,0.74) !important;}
+.cta .btn-ink{background:#F3F1E7 !important;color:#173D2D !important;}
+.cta .btn-ink .ar{color:#7FB646 !important;}
+
+/* ===== FOREST DETUNE v2, all lime accents now flow forest via --lime; fix bg/contrast cases ===== */
+/* primary lime button -> solid forest like “Get Started” */
+.btn-lime{background:#173D2D !important;color:#F3F1E7 !important;box-shadow:0 12px 30px -14px rgba(22,54,42,0.55) !important;}
+.btn-lime:hover{background:#1E4A38 !important;box-shadow:0 18px 44px -16px rgba(22,54,42,0.6) !important;}
+.btn-lime .ar{color:#F3F1E7 !important;}
+/* lime-background cards -> forest + cream text */
+.card.lime{background:linear-gradient(160deg,#173D2D,#0F2A1F) !important;border-color:transparent !important;}
+.card.lime .knum{color:rgba(243,241,231,0.55) !important;}
+.card.lime h3{color:#F3F1E7 !important;}
+/* bright-lime accent cards (features bento) — real lime mixed with the forest */
+.card.spark{background:#B8E04A !important;border-color:transparent !important;box-shadow:0 18px 40px -18px rgba(184,224,74,0.5) !important;}
+.card.spark .knum{color:rgba(10,19,16,0.6) !important;}
+.card.spark h3{color:#0A1310 !important;}
+.card.spark p{color:rgba(10,19,16,0.72) !important;}
+.card.spark::before{display:none !important;}
+/* review cards: forest-green hairline borders for a lime+forest mix */
+.tcard:not(.lime){border-color:rgba(23,61,45,0.20) !important;}
+.card.lime p{color:rgba(243,241,231,0.80) !important;}
+/* CTA inside a forest card -> bright lime so it pops on the deep bg */
+.card.lime .btn-lime{background:#B8E04A !important;color:#0A1310 !important;box-shadow:0 14px 34px -14px rgba(184,224,74,0.55) !important;}
+.card.lime .btn-lime:hover{background:#C4E85E !important;}
+.card.lime .btn-lime .ar{color:#0A1310 !important;}
+.tcard.lime{background:#B8E04A !important;}
+.tcard.lime .tq,.tcard.lime .tn{color:#13251C !important;}
+.tcard.lime .stars{color:#2C5E45 !important;}
+.tcard.lime .tcat{color:#2C5E45 !important;background:rgba(19,37,28,0.12) !important;}
+/* focus timer sits on a dark card -> pale mint, not forest-on-forest */
+.scr-timer{color:#EAF4D8 !important;}
+/* popular badge star: lime -> cream */
+.pc-badge svg{fill:#B8E04A !important;}
+/* hero pill dot -> forest */
+.hero-pill .hp-dot{background:#173D2D !important;box-shadow:0 0 0 4px rgba(23,61,45,0.16) !important;}
+/* selection + faint tints */
+::selection{background:#173D2D;color:#F3F1E7;}
+.fchat.ai{background:rgba(23,61,45,0.10) !important;color:var(--cream-dim) !important;}
+.fcard3d .face.back{background:rgba(224,236,214,0.92) !important;border-color:rgba(23,61,45,0.22) !important;}
+/* dampen the green aurora + card hover glow */
+.aurora{opacity:.13 !important;}
+.aurora .a1{background:radial-gradient(circle,rgba(23,61,45,0.30),transparent 64%) !important;}
+.aurora .a2{background:radial-gradient(circle,rgba(45,94,69,0.24),transparent 64%) !important;}
+.aurora .a3{background:radial-gradient(circle,rgba(184,224,74,0.30),transparent 64%) !important;}
+/* kill remaining neon accents -> forest/cream (lime kept only in the logo) */
+.btn-lime .ar{color:#B8E04A !important;}
+.card:hover{border-color:rgba(23,61,45,0.28) !important;}
+.fbars b{background:rgba(23,61,45,0.35) !important;}
+.fbars b:last-child{background:#2E7D46 !important;}
+.pc-badge svg{fill:#B8E04A !important;}
+.tag .pip{background:#B8E04A !important;box-shadow:0 0 10px rgba(184,224,74,0.5) !important;}
+.hero-pill .hp-dot{background:#B8E04A !important;box-shadow:0 0 0 4px rgba(184,224,74,0.22) !important;}
+::selection{background:#163A2C !important;color:#F5F2EA !important;}
+.card::before{background:radial-gradient(circle,rgba(23,61,45,0.12),transparent 60%) !important;}
+
+/* ===== PRICING COMPONENT ===== */
+.pricing-desc{max-width:560px;margin:18px auto 0;font-size:16px;line-height:1.55;color:var(--cream-dim);}
+.bill-switch{display:inline-flex;align-items:center;gap:13px;margin-top:28px;}
+.bill-switch .bs-label{font-size:14px;font-weight:600;color:var(--cream-dim);transition:color .25s;}
+.bill-switch .bs-label.on{color:#16241C;}
+.bill-switch .bs-save{display:inline-block;margin-left:7px;font-size:11px;font-weight:700;color:#3d5a10;background:rgba(184,224,74,0.22);padding:2px 8px;border-radius:99px;vertical-align:middle;}
+.switch{width:52px;height:30px;border-radius:99px;background:rgba(22,36,28,0.18);border:1px solid rgba(22,36,28,0.10);position:relative;cursor:pointer;transition:background .28s;flex:none;padding:0;}
+.switch[aria-checked="true"]{background:#173D2D;border-color:#173D2D;}
+.switch .knob{position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.22);transition:transform .28s cubic-bezier(.4,0,.2,1);}
+.switch[aria-checked="true"] .knob{transform:translateX(22px);}
+
+.pricing-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:center;max-width:1000px;margin:54px auto 0;}
+.pc{position:relative;background:#fff;border:1px solid var(--line);padding:34px 28px;display:flex;flex-direction:column;text-align:center;border-radius:22px;transform:perspective(1200px) translate3d(var(--tx,0),var(--ty,0),0) rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg)) rotateZ(var(--rz,0deg)) scale(var(--s,1));transform-style:preserve-3d;transition:transform .28s cubic-bezier(.2,.7,.3,1),box-shadow .35s ease,opacity .5s ease;will-change:transform;}
+.pc:hover{box-shadow:0 46px 92px -48px rgba(22,54,42,0.5);z-index:4;}
+.pc-popular:hover{box-shadow:0 52px 100px -44px rgba(22,54,42,0.62);}
+.pc-popular{z-index:3;border:2px solid #173D2D;box-shadow:0 42px 90px -46px rgba(22,54,42,0.55);}
+.pc-badge{position:absolute;top:0;right:0;display:inline-flex;align-items:center;gap:5px;background:#173D2D;color:#F3F1E7;font-size:11px;font-weight:700;padding:6px 12px;border-radius:0 20px 0 12px;}
+.pc-badge svg{width:12px;height:12px;fill:#B8E04A;}
+.pc-badge{overflow:hidden;}
+.pc-badge::after{content:"";position:absolute;top:0;left:-70%;width:45%;height:100%;background:linear-gradient(105deg,transparent,rgba(255,255,255,0.5),transparent);transform:skewX(-18deg);pointer-events:none;}
+@media (prefers-reduced-motion: no-preference){.pc-badge::after{animation:badgeShine 3.4s cubic-bezier(.5,0,.4,1) infinite;}}
+@keyframes badgeShine{0%{left:-70%;}42%{left:150%;}100%{left:150%;}}
+.pc-name{font-size:15px;font-weight:700;color:var(--cream-dim);}
+.pc-price{margin-top:18px;display:flex;align-items:flex-start;justify-content:center;color:#16241C;}
+.pc-cur{font-size:24px;font-weight:700;margin-top:9px;}
+.pc-amt{font-size:52px;font-weight:800;line-height:1;letter-spacing:-0.03em;font-variant-numeric:tabular-nums;}
+.pc-per{align-self:flex-end;font-size:13px;color:var(--cream-dim);margin:0 0 9px 5px;}
+.pc-billed{margin-top:8px;font-size:12px;color:var(--cream-faint);min-height:16px;}
+.pc-feats{list-style:none;margin:22px 0 0;padding:0;display:flex;flex-direction:column;gap:11px;text-align:left;}
+.pc-feats li{display:flex;gap:10px;align-items:flex-start;font-size:13.5px;color:var(--cream);line-height:1.4;}
+.pc-ck{width:18px;height:18px;border-radius:50%;background:rgba(23,61,45,0.10);color:#173D2D;display:grid;place-items:center;flex:none;margin-top:1px;font-size:11px;font-weight:800;}
+.pc-hr{border:none;border-top:1px solid var(--line);margin:22px 0;width:100%;}
+.pc-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:12px 18px;border-radius:12px;font-weight:600;font-size:14px;border:1px solid #173D2D;color:#173D2D;background:transparent;transition:background .2s,color .2s,transform .2s;text-decoration:none;cursor:pointer;}
+.pc-btn:hover{background:#173D2D;color:#F3F1E7;transform:translateY(-1px);}
+.pc-btn:active{transform:scale(.97);}
+.pc-btn-primary{background:#173D2D;color:#F3F1E7;}
+.pc-btn-primary:hover{background:#1E4A38;}
+.pc-desc{margin-top:16px;font-size:12px;color:var(--cream-faint);line-height:1.5;}
+.pricing-foot{text-align:center;margin-top:34px;font-size:14px;color:var(--cream-faint);}
+.pricing-foot b{color:var(--cream);font-weight:600;}
+@media(min-width:861px){
+  .pc:nth-child(1){border-radius:22px 0 0 22px;--s:.955;}
+  .pc:nth-child(3){border-radius:0 22px 22px 0;--s:.955;}
+  .pc-popular{--s:1.05;margin:0 -8px;}
+}
+@media (prefers-reduced-motion: no-preference){
+  .pricing-cards.js .pc{opacity:0;transition:opacity .6s ease, transform .8s cubic-bezier(.22,1,.36,1);}
+  .pricing-cards.js .pc:not(.pc-in){--ty:56px;--s:.9;}
+  .pricing-cards.js .pc.pc-in{opacity:1;}
+}
+@media (min-width:861px) and (prefers-reduced-motion: no-preference){
+  .pricing-cards.js .pc:nth-child(1):not(.pc-in){--tx:52px;--ty:38px;--s:.84;--rz:2deg;}
+  .pricing-cards.js .pc:nth-child(3):not(.pc-in){--tx:-52px;--ty:38px;--s:.84;--rz:-2deg;}
+  .pricing-cards.js .pc-popular:not(.pc-in){--tx:0px;--ty:64px;--s:.86;}
+}
+@media(max-width:860px){
+  .pricing-cards{grid-template-columns:1fr;max-width:400px;gap:16px;}
+  .pc-popular{margin:0;}
+}
+</style>
+<style id="light-theme-refine">
+/* ===== LIGHT THEME REFINEMENTS ===== */
+/* clean hero, drop dark-mode starfield / cursor glow */
+.hero-sky,.hiw-sky,.hero-spot{display:none!important;}
+.aurora{opacity:.4;}
+
+/* primary buttons -> deep forest green w/ cream text (matches reference header) */
+.btn-lime{background:#163A2C;color:#F5F2EA;box-shadow:0 12px 30px -14px rgba(22,54,42,0.42);}
+.btn-lime:hover{background:#1E4A38;box-shadow:0 18px 46px -16px rgba(22,54,42,0.55);}
+.btn-lime .ar{color:#B8E04A;}
+.btn-ink{color:#F5F2EA;}
+.btn-ghost{border-color:rgba(22,36,28,0.22);}
+.btn-ghost:hover{border-color:#163A2C;color:#163A2C;background:rgba(22,36,28,0.03);}
+
+/* hero eyebrow pill -> white card */
+.tag{background:#FFFFFF;border-color:rgba(22,36,28,0.10);color:#16241C;box-shadow:0 6px 20px -10px rgba(22,36,28,0.14);}
+
+/* readable green rotating word on cream */
+.rotor .col span{background:linear-gradient(108deg,#4E9E39 8%,#3B8F54 52%,#2E7D46 92%)!important;-webkit-background-clip:text!important;background-clip:text!important;}
+.hl-modern{filter:none;}
+
+/* toggle active + paper doc graphic + card stat tiles */
+.toggle button.active{background:#163A2C;color:#F5F2EA;}
+.dg-doc{background:#FFFFFF;}
+.stat{background:#FFFFFF;}
+.frag .fv{color:#2E7D46;}
+
+/* soft elevation for light cards */
+.card,.plan,.tcard,.qitem{box-shadow:0 1px 2px rgba(22,36,28,0.04),0 14px 34px -22px rgba(22,36,28,0.12);}
+.card.lime{box-shadow:0 16px 36px -18px rgba(184,224,74,0.42);}
+.plan.feat{box-shadow:0 30px 70px -40px rgba(22,54,42,0.26);}
+.device{box-shadow:0 60px 120px -46px rgba(22,36,28,0.34),0 0 0 1px rgba(22,36,28,0.06);}
+
+/* ===== FLOATING PILL NAV ===== */
+.nav{position:fixed;top:0;left:0;right:0;z-index:100;padding:18px clamp(16px,3vw,30px);transition:padding .3s ease;}
+.nav.scrolled{padding-top:10px;background:transparent;border-bottom-color:transparent;backdrop-filter:none;-webkit-backdrop-filter:none;}
+.nav .row{
+  display:flex;align-items:center;justify-content:space-between;gap:22px;
+  max-width:1180px;margin:0 auto;
+  padding:11px 12px 11px 24px;
+  background:rgba(255,255,255,0.80);
+  -webkit-backdrop-filter:blur(20px) saturate(180%);backdrop-filter:blur(20px) saturate(180%);
+  border:1px solid rgba(22,36,28,0.07);
+  border-radius:22px;
+  box-shadow:0 10px 34px -14px rgba(22,36,28,0.20),0 2px 6px -2px rgba(22,36,28,0.05);
+  transition:box-shadow .3s ease,background .3s ease;
+}
+.nav.scrolled .row{background:rgba(255,255,255,0.92);box-shadow:0 14px 40px -12px rgba(22,36,28,0.26),0 3px 8px -2px rgba(22,36,28,0.06);}
+</style>
+</head>
+<body>
+<template id="__bundler_thumbnail">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#0E1F18"></rect><rect x="30" y="30" width="40" height="40" rx="10" fill="#C8F53E"></rect><rect x="42" y="42" width="16" height="16" rx="4" fill="#0E1F18"></rect></svg>
+</template>
+
+<!-- scroll progress rail -->
+<div class="scroll-rail"><i id="scrollBar"></i></div>
+
+<!-- ============ NAV ============ -->
+<nav class="nav" id="nav">
+  <div class="row">
+    <a href="#" class="brand"><img src="data:image/png;base64,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" alt="Studlin"><span>Studlin</span></a>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#careers">Careers</a>
+    </div>
+    <div class="nav-cta">
+      <a href="Studlin Sign In.html" class="btn btn-ghost">Sign in</a>
+      <a href="Studlin Onboarding.html" class="btn btn-lime magnetic">Get Started</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ============ HERO ============ -->
+<header class="hero">
+  <div class="aurora"><i class="a1"></i><i class="a2"></i><i class="a3"></i></div>
+  <div class="hero-sky" id="heroSky"></div>
+  <div class="hero-grid"></div>
+  <div class="hero-spot" id="heroSpot"></div>
+
+  <!-- floating fragments, mini live UI -->
+  <div class="frag f1" data-depth="0.04"><div class="fin">
+    <div class="fl">Day streak</div><div class="fv">12</div>
+    <div class="fdays"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></div>
+  </div></div>
+  <div class="frag f2" data-depth="-0.05"><div class="fin">
+    <div class="fl"><span class="livepip"></span>Focus session</div><div class="fv mono-num" id="fragTimer">24:59</div>
+    <div class="fbar"><i id="fragBar"></i></div>
+  </div></div>
+  <div class="frag f3 fcardwrap" data-depth="0.06"><div class="fin">
+    <div class="fcard3d" id="heroCard">
+      <div class="face front"><div class="fl">Flashcard · Bio 201</div><div class="fq">What carries oxygen in blood?</div><div class="fhint">tap to flip</div></div>
+      <div class="face back"><div class="fl">Answer</div><div class="fq">Hemoglobin</div><div class="fhint good">+1 mastered</div></div>
+    </div>
+  </div></div>
+  <div class="frag f4" data-depth="-0.035"><div class="fin">
+    <div class="fl">Grade avg</div>
+    <div class="frow"><div class="fv">A−</div><div class="fbars"><b style="height:40%"></b><b style="height:55%"></b><b style="height:48%"></b><b style="height:70%"></b><b style="height:88%"></b></div></div>
+  </div></div>
+  <div class="frag f5" data-depth="0.045"><div class="fin">
+    <div class="fl">AI Tutor</div>
+    <div class="fchat">Explain entropy like I'm 12</div>
+    <div class="fchat ai">Imagine your room getting messy on its own…</div>
+  </div></div>
+  <div class="frag f6" data-depth="-0.04"><div class="fin">
+    <div class="fl">Up next</div>
+    <div class="fevent"><span class="edot"></span><div><div class="fq sm">Bio midterm review</div><div class="fhint">Fri · 9:00 AM</div></div></div>
+  </div></div>
+
+  <div class="wrap hero-inner">
+    <a class="hero-pill" href="#showcase">
+      <span class="hp-dot"></span>
+      <span class="hp-key">AI Study OS</span>
+      <span class="hp-sep"></span>
+      <span class="hp-desc">The calm workspace for how you actually study</span>
+    </a>
+    <h1>
+      <span class="line"><span class="reveal-up">Everything you need to <em class="serif">study.</em></span></span>
+      <span class="line"><span class="reveal-up"><span class="ul-lime">One app.</span></span></span>
+    </h1>
+    <p class="sub">AI tutor, smart planner, flashcards, essay polish, focus mode and streaks, fused into one intelligent operating system. Replace the six apps that ignore each other.</p>
+    <div class="hero-ctas">
+      <a href="Studlin Onboarding.html" class="btn btn-lime btn-lg magnetic">Start free <span class="ar">→</span></a>
+      <a href="Studlin Demo.html" class="btn btn-ghost btn-lg"><span class="pi">▶</span>Watch demo</a>
+    </div>
+    <div class="hero-trust">
+      <div class="avstack">
+        <div class="av" style="background:linear-gradient(135deg,#E9B98C,#FFC9D2)"></div>
+        <div class="av" style="background:linear-gradient(135deg,#8FBEDB,#B6A4D9)"></div>
+        <div class="av" style="background:linear-gradient(135deg,#8FCBA9,#FFE99A)"></div>
+        <div class="av" style="background:linear-gradient(135deg,#B6A4D9,#E9B98C)"></div>
+      </div>
+      <div class="txt">Loved by <b>24,000+ students</b> at <b>600+ universities</b></div>
+    </div>
+  </div>
+
+  <div class="scroll-cue">Scroll<div class="ln"></div></div>
+</header>
+
+<!-- ============ REPLACES MARQUEE ============ -->
+<section class="strip">
+  <div class="lab">One subscription · replaces your entire stack</div>
+  <div class="marq">
+    <div class="marq-track" id="replaceMarq">
+      <span class="marq-item">Writing Suite <span class="x">×</span></span>
+      <span class="marq-item">Flashcard Generator <span class="x">×</span></span>
+      <span class="marq-item">AI Tutor <span class="x">×</span></span>
+      <span class="marq-item">Focus Timer <span class="x">×</span></span>
+      <span class="marq-item">Smart Calendar <span class="x">×</span></span>
+      <span class="marq-item">Grade Tracker <span class="x">×</span></span>
+      <span class="marq-item">Study Planner <span class="x">×</span></span>
+    </div>
+  </div>
+</section>
+
+<!-- ============ STATS ============ -->
+<section class="sec" style="padding-bottom:0;">
+  <div class="wrap">
+    <div class="stats reveal">
+      <div class="stat"><div class="n" data-count="24000">0</div><div class="l">Active students</div></div>
+      <div class="stat"><div class="n" data-count="1.4" data-suffix="M"><span class="u">0</span></div><div class="l">Flashcards mastered</div></div>
+      <div class="stat"><div class="n" data-count="92" data-suffix="%">0</div><div class="l">Higher grade avg</div></div>
+      <div class="stat"><div class="n" data-count="38" data-suffix="K">0</div><div class="l">Essays polished</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FEATURES BENTO ============ -->
+<section class="sec" id="features">
+  <div class="wrap">
+    <div class="head">
+      <div>
+        <span class="sec-eyebrow">// Everything you need</span>
+        <h2>Eight tools.<br><span class="dim">One tab.</span></h2>
+      </div>
+      <p class="lead">Stop paying for six apps that ignore each other. Studlin replaces the whole stack, and every tool knows what the others are doing.</p>
+    </div>
+
+    <div class="bento">
+      <!-- writing -->
+      <div class="card col-7 reveal" data-spot>
+        <div class="knum">01 · AI Writing Suite</div>
+        <h3>Write, polish, humanize and cite, without leaving the page.</h3>
+        <p>Grammar checker, AI detector, plagiarism scan, citation generator, word counter. The full writing stack, live on every doc.</p>
+        <div class="canvas">
+          <div class="mini">
+            <div class="mono" style="font-size:10px;color:var(--lime);letter-spacing:0.1em;margin-bottom:10px;">DRAFT · ESSAY · 1,247 WORDS</div>
+            In <em>Macbeth</em>, Shakespeare shows how unchecked <span class="hl" style="background:rgba(233,185,140,0.22);border-bottom:2px solid var(--peach);">ambition corodes</span> moral judgment. The protagonist's <span class="hl" style="background:rgba(143,203,169,0.22);border-bottom:2px solid var(--mint);">descent into tyranny</span> is foreshadowed in Act I…
+            <div class="chiprow">
+              <span class="ck" style="background:var(--peach);color:var(--ink);">Spelling → corrodes</span>
+              <span class="ck" style="background:var(--mint);color:var(--ink);">Strong thesis</span>
+              <span class="ck" style="background:var(--spark);color:var(--ink);">0% AI detected</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- reschedule -->
+      <div class="card col-5 lime reveal d1">
+        <div class="knum">02 · Smart Reschedule</div>
+        <h3>"I have a chem test Friday." Done.</h3>
+        <p>Describe a conflict in plain English. Studlin re-plans your week, blocks focus time, reshuffles every deadline.</p>
+        <div class="canvas">
+          <div style="background:#163A2C;color:#F5F2EA;border-radius:13px;padding:13px 15px;font-family:var(--mono);font-size:12.5px;">
+            <div style="opacity:.55;font-size:10px;margin-bottom:5px;">YOU</div>move my history essay so i can study for chem
+          </div>
+          <div style="background:#fff;color:var(--ink);border-radius:13px;padding:13px 15px;margin-top:8px;font-size:12.5px;line-height:1.5;">
+            <div class="mono" style="opacity:.5;font-size:10px;margin-bottom:5px;">STUDLIN</div>Pushed essay to <strong>Sat 10am</strong>. Added 4×45m chem blocks. Synced to Google Cal.
+          </div>
+        </div>
+      </div>
+
+      <!-- flashcards -->
+      <div class="card col-5 reveal" data-spot>
+        <div class="knum">03 · Flashcards</div>
+        <h3>Drop a PDF. Get a deck.</h3>
+        <p>Upload notes, lectures, textbooks. AI builds spaced-repetition cards tuned to your exam.</p>
+        <div class="canvas deckwrap deckgen" aria-hidden="true">
+          <div class="dg-doc"><i class="l1"></i><i class="l2"></i><i class="l3"></i><span class="mono">notes.pdf</span></div>
+          <div class="dg-stream"><i></i><i></i><i></i></div>
+          <div class="dg-card c1">What is osmosis?</div>
+          <div class="dg-card c2">Define entropy</div>
+          <div class="dg-card c3">Mitosis vs meiosis?</div>
+          <div class="dg-progress"><i></i></div>
+        </div>
+      </div>
+
+      <!-- tutor -->
+      <div class="card col-7 reveal d1" data-spot>
+        <div class="knum">04 · AI Tutor for every subject</div>
+        <h3>Upload anything. Ask anything.</h3>
+        <p>Snap a worksheet, drop a recording, paste a problem. The tutor walks you through it Socratically. It never just hands over answers.</p>
+        <div class="canvas">
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <div style="align-self:flex-end;background:var(--bg);border:1px solid var(--line);padding:10px 14px;border-radius:14px 14px 4px 14px;font-size:13px;max-width:78%;">why is sin(2x) = 2sin(x)cos(x)?</div>
+            <div style="align-self:flex-start;background:var(--panel-2);border:1px solid var(--line);padding:10px 14px;border-radius:14px 14px 14px 4px;font-size:13px;max-width:82%;line-height:1.5;">Start with sin(A+B) = sin A cos B + cos A sin B. Now set A = B = x… <span class="mono" style="background:var(--spark);color:var(--ink);padding:1px 6px;border-radius:4px;">your turn →</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- streaks -->
+      <div class="card col-4 reveal spark" data-spot>
+        <div class="knum">05 · Streaks</div>
+        <h3>The reason you'll show up.</h3>
+        <p>Daily streaks, milestones, and a Weekly Wrapped that's actually fun to share.</p>
+        <div class="canvas" style="display:flex;align-items:flex-end;gap:12px;">
+          <span class="streakbig" style="color:var(--lime);">12</span>
+          <div style="padding-bottom:10px;"><div style="font-weight:600;font-size:13px;">day streak</div><div style="font-size:11.5px;color:var(--cream-faint);">longest: 31</div></div>
+        </div>
+      </div>
+
+      <!-- music -->
+      <div class="card col-4 reveal d1" data-spot>
+        <div class="knum">06 · Focus Music</div>
+        <h3>Sounds your brain agrees with.</h3>
+        <p>AI-curated soundscapes. Lo-fi for reading, binaural for math.</p>
+        <div class="canvas">
+          <div class="bars" id="eqBars"></div>
+          <div class="mono" style="font-size:11px;margin-top:10px;color:var(--cream-dim);">▶ Deep Focus · 45 min left</div>
+        </div>
+      </div>
+
+      <!-- wrapped -->
+      <div class="card col-4 reveal d2 lime" data-spot>
+        <div class="knum">07 · Wrapped</div>
+        <h3>Spotify Wrapped, for studying.</h3>
+        <p>Weekly recaps of your wins, focus hours, and exactly where you slipped.</p>
+        <div class="canvas">
+          <div class="mini" style="background:var(--bg-deep);">
+            <div class="mono" style="font-size:10px;color:var(--cream-faint);letter-spacing:0.1em;">WEEK 18 · WRAPPED</div>
+            <div style="font-family:var(--display);font-weight:700;font-size:36px;color:var(--spark);margin:4px 0;letter-spacing:-0.03em;">14h 22m</div>
+            <div style="font-size:12px;color:var(--cream-dim);">+3.2h vs last week</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- focus music wide -->
+      <div class="card col-12 reveal lime" style="padding:44px;" data-spot>
+        <div style="display:grid;grid-template-columns:1fr 1.15fr;gap:48px;align-items:center;">
+          <div>
+            <div class="knum">08 · Focus, scored.</div>
+            <h3 style="font-size:46px;line-height:1.0;">Sounds your brain agrees with.</h3>
+            <p>AI-curated soundscapes tuned to what you're working on. Lo-fi for reading, binaural for math, brown noise when it's crunch time. One tap and you're in the zone.</p>
+            <a href="Studlin Onboarding.html" class="btn btn-lime magnetic">Start a focus session <span class="ar">→</span></a>
+          </div>
+          <div style="background:var(--bg-deep);border:1px solid var(--line);border-radius:18px;padding:22px;">
+            <div class="mono" style="font-size:10.5px;color:var(--cream-faint);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:16px;">Now playing · Deep Focus</div>
+            <div style="display:flex;align-items:flex-end;gap:4px;height:90px;margin-bottom:18px;">
+              <div style="flex:1;background:var(--spark);border-radius:3px 3px 0 0;height:30%;"></div>
+              <div style="flex:1;background:var(--spark);border-radius:3px 3px 0 0;height:55%;"></div>
+              <div style="flex:1;background:var(--spark);border-radius:3px 3px 0 0;height:80%;"></div>
+              <div style="flex:1;background:var(--spark);border-radius:3px 3px 0 0;height:45%;"></div>
+              <div style="flex:1;background:var(--spark);border-radius:3px 3px 0 0;height:70%;"></div>
+              <div style="flex:1;background:var(--spark);border-radius:3px 3px 0 0;height:95%;"></div>
+              <div style="flex:1;background:var(--spark);border-radius:3px 3px 0 0;height:60%;"></div>
+              <div style="flex:1;background:rgba(22,36,28,0.18);border-radius:3px 3px 0 0;height:35%;"></div>
+              <div style="flex:1;background:rgba(22,36,28,0.18);border-radius:3px 3px 0 0;height:50%;"></div>
+              <div style="flex:1;background:rgba(22,36,28,0.18);border-radius:3px 3px 0 0;height:25%;"></div>
+              <div style="flex:1;background:rgba(22,36,28,0.18);border-radius:3px 3px 0 0;height:65%;"></div>
+              <div style="flex:1;background:rgba(22,36,28,0.18);border-radius:3px 3px 0 0;height:40%;"></div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <span class="mono" style="font-size:10px;background:var(--spark);color:var(--ink);padding:6px 12px;border-radius:99px;font-weight:700;">LO-FI</span>
+              <span class="mono" style="font-size:10px;background:rgba(22,36,28,0.06);color:var(--cream-dim);padding:6px 12px;border-radius:99px;border:1px solid var(--line);">BINAURAL</span>
+              <span class="mono" style="font-size:10px;background:rgba(22,36,28,0.06);color:var(--cream-dim);padding:6px 12px;border-radius:99px;border:1px solid var(--line);">BROWN NOISE</span>
+              <span class="mono" style="font-size:10px;background:rgba(22,36,28,0.06);color:var(--cream-dim);padding:6px 12px;border-radius:99px;border:1px solid var(--line);">NATURE</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ HOW IT WORKS ============ -->
+<section class="hiw" id="how">
+  <div class="hiw-track" id="hiwTrack">
+    <div class="hiw-pin">
+      <div class="hiw-sky" id="hiwSky"></div>
+      <div class="hiw-mega" id="hiwMega" aria-hidden="true"><span>How</span><span class="lit">it</span><span>works</span></div>
+      <div class="hiw-eyebrow">// From zero to locked-in, in four moves</div>
+
+      <div class="hiw-stage" id="hiwStage">
+        <div class="hiw-guide" aria-hidden="true"></div>
+        <div class="hiw-slider" id="hiwSlider">
+          <article class="hiw-card active" data-step="0">
+            <div class="glow"></div>
+            <div class="si">01<small>SET UP</small></div>
+            <h3>Tell it what you're studying.</h3>
+            <p>Pick your subjects, drop your syllabus, link your calendar. Studlin reads it all and builds a plan around your real deadlines in seconds.</p>
+            <span class="stip">Imports from all major study tools</span>
+          </article>
+
+          <article class="hiw-card" data-step="1">
+            <div class="glow"></div>
+            <div class="si">02<small>PLAN</small></div>
+            <h3>Wake up to a plan that already works.</h3>
+            <p>Every morning Studlin lays out the day, what to review, what to write, when to focus. Change one thing and the week reshuffles itself.</p>
+            <span class="stip">Smart Reschedule built in</span>
+          </article>
+
+          <article class="hiw-card" data-step="2">
+            <div class="glow"></div>
+            <div class="si">03<small>LOCK IN</small></div>
+            <h3>Do the work without leaving the page.</h3>
+            <p>Writing tools, AI tutor, flashcards and focus music in one window. Hit the timer, play the music, watch the streak climb.</p>
+            <span class="stip">One tab replaces eight apps</span>
+          </article>
+
+          <article class="hiw-card" data-step="3">
+            <div class="glow"></div>
+            <div class="si">04<small>LEVEL UP</small></div>
+            <h3>Watch the grades follow.</h3>
+            <p>Weekly Wrapped shows your wins, the streak graph keeps you honest, and your grades climb. Studying that finally compounds.</p>
+            <span class="stip">Wrapped insights every Sunday</span>
+          </article>
+        </div>
+
+        <div class="hiw-prog" aria-hidden="true"><i class="on"></i><i></i><i></i><i></i></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ TESTIMONIALS ============ -->
+<section class="sec" id="loved" style="background:var(--bg-2);border-top:1px solid var(--line);border-bottom:1px solid var(--line);">
+  <div class="wrap">
+    <div class="head center">
+      <span class="sec-eyebrow">// Loved by</span>
+      <h2>Real students. <span class="dim">Real grades.</span></h2>
+    </div>
+  </div>
+  <div class="tmarq">
+    <div class="trow marq">
+      <div class="marq-track">
+        <div class="tcard lime"><div class="stars">★★★★★</div><div class="tq">"My GPA went from 3.2 to 3.8 in one semester. The tutor explains things the way my professor never could."</div><div class="tm"><div class="tav">JT</div><div><div class="tn">Jordan T.</div><span class="tcat">GPA boost</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"I dropped five separate apps and got my evenings back. Everything lives in one place now."</div><div class="tm"><div class="tav">DK</div><div><div class="tn">Devon K.</div><span class="tcat">Time saved</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"Up 210 points on my SAT. The practice sets actually adapt to the questions I keep missing."</div><div class="tm"><div class="tav">PS</div><div><div class="tn">Priya S.</div><span class="tcat">SAT prep</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★<span class="s-off">★</span></div><div class="tq">"I get more done in two focused hours than I used to in a whole night of cramming."</div><div class="tm"><div class="tav">MR</div><div><div class="tn">Maya R.</div><span class="tcat">Productivity</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"The focus timer and music combo is unreal. I finally stopped checking my phone every five minutes."</div><div class="tm"><div class="tav">AC</div><div><div class="tn">Aisha C.</div><span class="tcat">Focus</span></div></div></div>
+        <div class="tcard lime"><div class="stars">★★★★★</div><div class="tq">"My GPA went from 3.2 to 3.8 in one semester. The tutor explains things the way my professor never could."</div><div class="tm"><div class="tav">JT</div><div><div class="tn">Jordan T.</div><span class="tcat">GPA boost</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"I dropped five separate apps and got my evenings back. Everything lives in one place now."</div><div class="tm"><div class="tav">DK</div><div><div class="tn">Devon K.</div><span class="tcat">Time saved</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"Up 210 points on my SAT. The practice sets actually adapt to the questions I keep missing."</div><div class="tm"><div class="tav">PS</div><div><div class="tn">Priya S.</div><span class="tcat">SAT prep</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★<span class="s-off">★</span></div><div class="tq">"I get more done in two focused hours than I used to in a whole night of cramming."</div><div class="tm"><div class="tav">MR</div><div><div class="tn">Maya R.</div><span class="tcat">Productivity</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"The focus timer and music combo is unreal. I finally stopped checking my phone every five minutes."</div><div class="tm"><div class="tav">AC</div><div><div class="tn">Aisha C.</div><span class="tcat">Focus</span></div></div></div>
+      </div>
+    </div>
+    <div class="trow rev marq">
+      <div class="marq-track">
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"It turned my 80-page bio PDF into a full deck in about ten seconds. I almost cried."</div><div class="tm"><div class="tav">LW</div><div><div class="tn">Leo W.</div><span class="tcat">Flashcards</span></div></div></div>
+        <div class="tcard lime"><div class="stars">★★★★★</div><div class="tq">"I told it I caught the flu and it rebuilt my entire week. No anxiety spiral."</div><div class="tm"><div class="tav">NR</div><div><div class="tn">Nadia R.</div><span class="tcat">Organized</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★<span class="s-off">★</span></div><div class="tq">"I run my whole study group off the streak graph. Nobody breaks their streak on a Sunday night."</div><div class="tm"><div class="tav">TK</div><div><div class="tn">Theo K.</div><span class="tcat">Streaks</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"Saves me at least ten hours a week. That is a part time job's worth of time handed back to me."</div><div class="tm"><div class="tav">SD</div><div><div class="tn">Sam D.</div><span class="tcat">Time saved</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"Went from academic probation to the Dean's List. I am not exaggerating."</div><div class="tm"><div class="tav">RM</div><div><div class="tn">Riley M.</div><span class="tcat">GPA boost</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"It turned my 80-page bio PDF into a full deck in about ten seconds. I almost cried."</div><div class="tm"><div class="tav">LW</div><div><div class="tn">Leo W.</div><span class="tcat">Flashcards</span></div></div></div>
+        <div class="tcard lime"><div class="stars">★★★★★</div><div class="tq">"I told it I caught the flu and it rebuilt my entire week. No anxiety spiral."</div><div class="tm"><div class="tav">NR</div><div><div class="tn">Nadia R.</div><span class="tcat">Organized</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★<span class="s-off">★</span></div><div class="tq">"I run my whole study group off the streak graph. Nobody breaks their streak on a Sunday night."</div><div class="tm"><div class="tav">TK</div><div><div class="tn">Theo K.</div><span class="tcat">Streaks</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"Saves me at least ten hours a week. That is a part time job's worth of time handed back to me."</div><div class="tm"><div class="tav">SD</div><div><div class="tn">Sam D.</div><span class="tcat">Time saved</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"Went from academic probation to the Dean's List. I am not exaggerating."</div><div class="tm"><div class="tav">RM</div><div><div class="tn">Riley M.</div><span class="tcat">GPA boost</span></div></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="wrap" style="margin-top:64px;">
+    <div class="uni-row">
+      <span class="lbl">Used at</span>
+      <span class="uni"><svg class="crest" viewBox="0 0 24 28" fill="none"><path d="M12 1 L23 4.5 V14 C23 21 18 25.5 12 27.5 C6 25.5 1 21 1 14 V4.5 Z" stroke="#173D2D" stroke-width="1.5"/><path d="M5.5 10.5 H18.5 M12 6 V22" stroke="#B8E04A" stroke-width="1.3"/></svg><span class="un">Harvard</span></span>
+      <span class="uni"><svg class="crest" viewBox="0 0 24 28" fill="none"><path d="M12 1 L23 4.5 V14 C23 21 18 25.5 12 27.5 C6 25.5 1 21 1 14 V4.5 Z" stroke="#173D2D" stroke-width="1.5"/><path d="M12 5.5 L14 10 L18.5 10.4 L15 13.4 L16.2 18 L12 15.4 L7.8 18 L9 13.4 L5.5 10.4 L10 10 Z" fill="#B8E04A" stroke="none"/></svg><span class="un">Princeton</span></span>
+      <span class="uni"><svg class="crest" viewBox="0 0 24 28" fill="none"><path d="M12 1 L23 4.5 V14 C23 21 18 25.5 12 27.5 C6 25.5 1 21 1 14 V4.5 Z" stroke="#173D2D" stroke-width="1.5"/><path d="M5.5 10.5 H18.5 M12 6 V22" stroke="#B8E04A" stroke-width="1.3"/></svg><span class="un">Stanford</span></span>
+      <span class="uni"><svg class="crest" viewBox="0 0 24 28" fill="none"><path d="M12 1 L23 4.5 V14 C23 21 18 25.5 12 27.5 C6 25.5 1 21 1 14 V4.5 Z" stroke="#173D2D" stroke-width="1.5"/><path d="M7.5 18 V10 L12 14 L16.5 10 V18" stroke="#B8E04A" stroke-width="1.3"/></svg><span class="un">MIT</span></span>
+      <span class="uni"><svg class="crest" viewBox="0 0 24 28" fill="none"><path d="M12 1 L23 4.5 V14 C23 21 18 25.5 12 27.5 C6 25.5 1 21 1 14 V4.5 Z" stroke="#173D2D" stroke-width="1.5"/><path d="M12 5.5 L14 10 L18.5 10.4 L15 13.4 L16.2 18 L12 15.4 L7.8 18 L9 13.4 L5.5 10.4 L10 10 Z" fill="#B8E04A" stroke="none"/></svg><span class="un">Yale</span></span>
+      <span class="uni"><svg class="crest" viewBox="0 0 24 28" fill="none"><path d="M12 1 L23 4.5 V14 C23 21 18 25.5 12 27.5 C6 25.5 1 21 1 14 V4.5 Z" stroke="#173D2D" stroke-width="1.5"/><path d="M5.5 10.5 H18.5 M12 6 V22" stroke="#B8E04A" stroke-width="1.3"/></svg><span class="un">Cambridge</span></span>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PRICING ============ -->
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+<section class="sec" id="pricing">
+  <div class="wrap">
+    <div class="head center">
+      <span class="sec-eyebrow">// Pricing</span>
+      <h2>Simple, <span class="dim">student-friendly</span> pricing</h2>
+      <p class="pricing-desc">Start free, upgrade when you need more. Every plan includes the full study OS, AI tutoring, and cross-device sync.</p>
+      <div class="bill-switch">
+        <span class="bs-label" id="bsMonthly">Monthly</span>
+        <button class="switch" id="billSwitch" role="switch" aria-checked="false" aria-label="Toggle annual billing"><span class="knob"></span></button>
+        <span class="bs-label" id="bsAnnual">Annual billing <span class="bs-save">Save 20%</span></span>
+      </div>
+    </div>
+    <div class="pricing-cards">
+      <div class="pc" data-plan="free">
+        <div class="pc-name">Free</div>
+        <div class="pc-price"><span class="pc-cur">$</span><span class="pc-amt" data-m="0" data-a="0" data-dec="0">0</span><span class="pc-per">/forever</span></div>
+        <div class="pc-billed" data-m="Free, forever" data-a="Free, forever">Free, forever</div>
+        <ul class="pc-feats">
+          <li><span class="pc-ck">✓</span> 30 AI credits / month</li>
+          <li><span class="pc-ck">✓</span> AI tutor, Standard model, Research mode</li>
+          <li><span class="pc-ck">✓</span> Manual flashcards &amp; notes</li>
+          <li><span class="pc-ck">✓</span> Focus timer, calendar &amp; planner</li>
+          <li><span class="pc-ck">✓</span> Streaks, XP &amp; basic stats</li>
+        </ul>
+        <hr class="pc-hr">
+        <a href="Studlin Onboarding.html" class="pc-btn">Start free</a>
+        <div class="pc-desc">Everything you need to get organized.</div>
+      </div>
+      <div class="pc pc-popular" data-plan="pro">
+        <div class="pc-badge"><svg viewBox="0 0 24 24"><path d="M12 2l2.9 6.3 6.9.7-5.2 4.6 1.5 6.8L12 17.8 5.9 21.2l1.5-6.8L2.2 9.8l6.9-.7z"></path></svg> Popular</div>
+        <div class="pc-name">Pro</div>
+        <div class="pc-price"><span class="pc-cur">$</span><span class="pc-amt" data-m="9.99" data-a="7.99" data-dec="2">9.99</span><span class="pc-per">/month</span></div>
+        <div class="pc-billed" data-m="7-day free trial, then billed monthly" data-a="billed annually · save $24/yr">7-day free trial, then billed monthly</div>
+        <ul class="pc-feats">
+          <li><span class="pc-ck">✓</span> 200 AI credits / month</li>
+          <li><span class="pc-ck">✓</span> AI tutor, all models + 4 study modes</li>
+          <li><span class="pc-ck">✓</span> Full essay suite + plagiarism check</li>
+          <li><span class="pc-ck">✓</span> AI flashcards from notes, PDFs &amp; YouTube</li>
+          <li><span class="pc-ck">✓</span> Google Docs sync + AI Rewrite (Humanizer)</li>
+          <li><span class="pc-ck">✓</span> Unlimited grammar checks + readability</li>
+          <li><span class="pc-ck">✓</span> Study groups + co-op focus sessions</li>
+        </ul>
+        <hr class="pc-hr">
+        <a href="Studlin Onboarding.html" class="pc-btn pc-btn-primary magnetic">Start free trial <span class="ar">→</span></a>
+        <div class="pc-desc">Unlock the full study OS. Built for serious students.</div>
+      </div>
+      <div class="pc" data-plan="max">
+        <div class="pc-name">Max</div>
+        <div class="pc-price"><span class="pc-cur">$</span><span class="pc-amt" data-m="24.99" data-a="19.99" data-dec="2">24.99</span><span class="pc-per">/month</span></div>
+        <div class="pc-billed" data-m="billed monthly" data-a="billed annually · save $60/yr">billed monthly</div>
+        <ul class="pc-feats">
+          <li><span class="pc-ck">✓</span> 500 AI credits / month</li>
+          <li><span class="pc-ck">✓</span> Everything in Pro, unlimited</li>
+          <li><span class="pc-ck">✓</span> Bulk ops, 100 flashcards at once</li>
+          <li><span class="pc-ck">✓</span> Advanced analytics &amp; learning paths</li>
+          <li><span class="pc-ck">✓</span> Cosmetics shop + monthly tournaments</li>
+          <li><span class="pc-ck">✓</span> Priority support + 3× focus XP</li>
+        </ul>
+        <hr class="pc-hr">
+        <a href="Studlin Onboarding.html" class="pc-btn">Go Max</a>
+        <div class="pc-desc">Maximum firepower. No limits, ever.</div>
+      </div>
+    </div>
+    <div class="pricing-foot">Most students juggle 4–6 apps. Studlin is all of them in one, starting at <b>$0</b>.</div>
+  </div>
+</section>
+
+<!-- ============ COMPARISON ============ -->
+<section class="sec" id="compare" style="padding-bottom:0;">
+  <div class="wrap">
+    <div class="head center">
+      <span class="sec-eyebrow">// Studlin vs the old way</span>
+      <h2>Why students <span class="dim">never go back.</span></h2>
+      <p class="lead">The same hours, a completely different result. Here's how an AI-native workspace stacks up against the patchwork most students still fight with.</p>
+    </div>
+    <div class="cmp">
+      <div class="cmp-row cmp-head">
+        <div class="cmp-cat">The difference</div>
+        <div class="cmp-col studlin"><span class="lo"><img src="data:image/png;base64,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" alt="" style="width:22px;height:22px;border-radius:6px;"></span> Studlin</div>
+        <div class="cmp-col trad">The old way</div>
+      </div>
+
+      <div class="cmp-row">
+        <div class="cmp-cat">How you learn</div>
+        <div class="cmp-cell good">
+          <span class="cmp-mob">Studlin</span>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>Active recall and spaced repetition built into every deck</div>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>Instant, mark-by-mark feedback on every answer</div>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>Adapts to exactly what you keep getting wrong</div>
+        </div>
+        <div class="cmp-cell bad">
+          <span class="cmp-mob">The old way</span>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></span>Passive re-reading and highlighting</div>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></span>No feedback until the grade comes back</div>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></span>One-size-fits-all worksheets</div>
+        </div>
+      </div>
+
+      <div class="cmp-row">
+        <div class="cmp-cat">Your time</div>
+        <div class="cmp-cell good">
+          <span class="cmp-mob">Studlin</span>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>Notes become flashcards and summaries in seconds</div>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>One workspace, zero app-switching</div>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>Plans your week around real deadlines automatically</div>
+        </div>
+        <div class="cmp-cell bad">
+          <span class="cmp-mob">The old way</span>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></span>Hours spent making materials by hand</div>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></span>Six disconnected apps and a wall of tabs</div>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></span>Paper planners that fall apart by week three</div>
+        </div>
+      </div>
+
+      <div class="cmp-row">
+        <div class="cmp-cat">Your money</div>
+        <div class="cmp-cell good">
+          <span class="cmp-mob">Studlin</span>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>One subscription covers the entire stack</div>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>Tutor-grade help on demand, around the clock</div>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>Study anywhere, any time, on any device</div>
+        </div>
+        <div class="cmp-cell bad">
+          <span class="cmp-mob">The old way</span>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></span>Private tutors at $50–100 an hour</div>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></span>Paying for five separate subscriptions</div>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></span>Limited to office hours and scheduling gaps</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+
+<!-- ============ COMPARE PLANS ============ -->
+<section class="sec" id="compare-plans" style="padding-top:30px;">
+  <div class="wrap">
+    <div class="head center">
+      <span class="sec-eyebrow">// The whole picture</span>
+      <h2>Compare <span class="dim">every plan.</span></h2>
+    </div>
+    <div class="cpt-wrap reveal">
+      <div class="cpt">
+
+        <!-- HEADER -->
+        <div class="cpt-h lbl">
+          <span class="cpt-kick">// Compare plans</span>
+          <span class="cpt-lead">Every feature,<br>side by side.</span>
+        </div>
+        <div class="cpt-h">
+          <span class="pname">Free</span>
+          <span class="pprice">$0</span>
+          <span class="pnote">Forever, no card</span>
+        </div>
+        <div class="cpt-h col-pro">
+          <span class="rec">Most popular</span>
+          <span class="pname">Pro</span>
+          <span class="pprice">$9.99<span class="per">/mo</span></span>
+          <span class="pnote">or $7.99 billed annually</span>
+        </div>
+        <div class="cpt-h">
+          <span class="pname">Max</span>
+          <span class="pprice">$24.99<span class="per">/mo</span></span>
+          <span class="pnote">or $19.99 billed annually</span>
+        </div>
+
+        <!-- AI TUTOR & CREDITS -->
+        <div class="cpt-cat"><span class="cn"></span> AI Tutor &amp; Credits</div>
+        <div class="cpt-f">Monthly AI credits</div>
+        <div class="cpt-v txt">30</div>
+        <div class="cpt-v col-pro txt">200</div>
+        <div class="cpt-v txt">500</div>
+        <div class="cpt-f">AI chat tutor</div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">AI models</div>
+        <div class="cpt-v txt">Standard</div>
+        <div class="cpt-v col-pro txt">All models</div>
+        <div class="cpt-v txt">All + priority</div>
+        <div class="cpt-f">Study modes <span class="info">· Research, Essay Coach, Exam Prep, Concept Review</span></div>
+        <div class="cpt-v txt">Research</div>
+        <div class="cpt-v col-pro txt">All 4</div>
+        <div class="cpt-v txt">All 4</div>
+        <div class="cpt-f">Reasoning model</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Credit top-up packs</div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+
+        <!-- WRITING & ESSAYS -->
+        <div class="cpt-cat"><span class="cn"></span> Writing &amp; Essays</div>
+        <div class="cpt-f">Essay editor</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Google Docs sync</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">AI-assisted writing</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Feedback &amp; readability scores</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Grammar &amp; polish checks</div>
+        <div class="cpt-v txt">2 / mo</div>
+        <div class="cpt-v col-pro txt">Unlimited</div>
+        <div class="cpt-v txt">Unlimited</div>
+        <div class="cpt-f">Plagiarism detection</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">AI Rewrite (Humanizer)</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+
+        <!-- FLASHCARDS & NOTES -->
+        <div class="cpt-cat"><span class="cn"></span> Flashcards &amp; Notes</div>
+        <div class="cpt-f">Manual flashcards &amp; notes</div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">AI flashcard generation</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Document scanning</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Lecture recording</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">YouTube import</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Searchable library</div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+
+        <!-- FOCUS & PLANNING -->
+        <div class="cpt-cat"><span class="cn"></span> Focus &amp; Planning</div>
+        <div class="cpt-f">Focus timer + burnout alerts</div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Smart calendar &amp; planner</div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">AI video tutor suggestions</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Bulk operations</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-no"></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Focus session XP boost</div>
+        <div class="cpt-v txt">1&times;</div>
+        <div class="cpt-v col-pro txt">2&times;</div>
+        <div class="cpt-v txt">3&times;</div>
+
+        <!-- PROFILE & GAMIFICATION -->
+        <div class="cpt-cat"><span class="cn"></span> Profile &amp; Gamification</div>
+        <div class="cpt-f">Streaks, XP &amp; levels</div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Achievements</div>
+        <div class="cpt-v txt">Basic</div>
+        <div class="cpt-v col-pro txt">Advanced</div>
+        <div class="cpt-v txt">Advanced</div>
+        <div class="cpt-f">Subject-specific analytics</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Long-term trends &amp; learning paths</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-no"></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Study groups &amp; co-op focus</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Streak credit bonuses</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+
+        <!-- PERKS & SUPPORT -->
+        <div class="cpt-cat"><span class="cn"></span> Perks &amp; Support</div>
+        <div class="cpt-f">Cosmetics shop <span class="info">· badges, frames, titles</span></div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-no"></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Monthly tournaments</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-no"></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-f">Priority support</div>
+        <div class="cpt-v"><span class="cpt-no"></span></div>
+        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
+
+        <!-- FOOTER CTA -->
+        <div class="cpt-foot lbl"><span class="fnote">Cancel anytime.<br>Built for student budgets.</span></div>
+        <div class="cpt-foot"><a href="Studlin Onboarding.html" class="btn btn-ghost">Start free</a></div>
+        <div class="cpt-foot col-pro"><a href="Studlin Onboarding.html" class="btn btn-lime magnetic">Start 7-day trial</a></div>
+        <div class="cpt-foot"><a href="Studlin Onboarding.html" class="btn btn-ghost">Go Max</a></div>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FAQ ============ -->
+<section class="sec" id="faq" style="padding-top:0;">
+  <div class="wrap">
+    <div class="head center">
+      <span class="sec-eyebrow">// FAQ</span>
+      <h2>Ask us <span class="dim">anything.</span></h2>
+    </div>
+    <div class="faq">
+      <div class="qitem open"><button class="qq">Will my professors know I used AI?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Studlin's AI Detector is the same one most universities deploy, and the Humanizer rewrites in your voice from your past writing. You can also toggle AI off entirely for honor-code-strict assignments.</div></div></div>
+      <div class="qitem"><button class="qq">How does Studlin compare to other study tools?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Most competing tools do one thing well. Studlin integrates writing, flashcards, scheduling, AI tutoring, and focus tracking into a single workspace designed for real student workflows.</div></div></div>
+      <div class="qitem"><button class="qq">What subjects does the AI Tutor support?<span class="ic">+</span></button><div class="qa"><div class="qa-in">All of them. Math with full LaTeX, sciences, humanities, languages, coding, business, including IB, AP, A Levels, IGCSE, SAT and MCAT exam boards.</div></div></div>
+      <div class="qitem"><button class="qq">Can I import my existing notes and flashcards?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Yes. Studlin imports from all major study platforms and file formats, PDFs, spreadsheets, audio files, and more.</div></div></div>
+      <div class="qitem"><button class="qq">Is there a student discount?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Studlin is already built for students. Pro is $7.99/mo billed annually, cheaper than most single-purpose tools it replaces.</div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CTA ============ -->
+<section class="sec" style="padding-bottom:0;">
+  <div class="cta reveal">
+    <span class="tag">// Final exam season starts now</span>
+    <h2>Stop juggling tabs.<br>Start locking in.</h2>
+    <p>Join 24,000+ students who study smarter, not harder.</p>
+    <a href="Studlin Onboarding.html" class="btn btn-ink btn-lg magnetic">Start free, 7 days of Pro <span class="ar">→</span></a>
+  </div>
+</section>
+
+<!-- ============ MOBILE APP COMING SOON ============ -->
+<section style="position:relative;padding:90px 0;background:var(--bg-2);border-top:1px solid var(--line);overflow:hidden;">
+  <div style="position:absolute;inset:0;background:radial-gradient(600px circle at 50% 60%,rgba(184,224,74,0.06),transparent 70%);pointer-events:none;"></div>
+  <div class="wrap" style="text-align:center;position:relative;z-index:1;">
+    <div class="mono" style="font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:var(--lime);margin-bottom:14px;">Coming Soon</div>
+    <h2 style="font-size:clamp(32px,5.2vw,56px);font-weight:700;line-height:1.06;margin:0 0 14px;color:var(--cream);letter-spacing:-0.03em;">The Studlin mobile app</h2>
+    <p style="font-size:17px;line-height:1.55;color:var(--cream-dim);max-width:520px;margin:0 auto;">Everything you love on desktop, optimized for your pocket. Be the first to know when we launch.</p>
+    <div style="margin-top:24px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+      <input type="email" placeholder="your@email.com" style="flex:0 1 300px;padding:12px 18px;border:1px solid var(--line);border-radius:99px;background:rgba(22,36,28,0.04);color:var(--cream);font-family:inherit;font-size:14px;outline:none;" />
+      <button style="padding:12px 26px;border:none;background:var(--spark);color:var(--ink);border-radius:99px;font-weight:700;font-family:inherit;font-size:14px;cursor:pointer;transition:all .2s;">Notify me</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FOOTER ============ -->
+<footer class="foot" id="careers">
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <a href="#" class="brand" style="margin-bottom:18px;"><img src="data:image/png;base64,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" alt="Studlin"><span>Studlin</span></a>
+        <p style="font-size:14px;line-height:1.6;color:var(--cream-dim);max-width:280px;margin:0 0 20px;">Your entire study life in one calm command center. Built by students, for students.</p>
+        <div class="foot-social">
+          <a href="https://www.instagram.com/studlin.ai/" target="_blank" rel="noopener" aria-label="Instagram"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="2.5" y="2.5" width="19" height="19" rx="5.4"></rect><circle cx="12" cy="12" r="4.2"></circle><circle cx="17.4" cy="6.6" r="1.15" fill="currentColor" stroke="none"></circle></svg></a>
+          <a href="#" aria-label="TikTok"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16.5 2c.3 2.2 1.5 3.9 3.5 4.3v3.1c-1.3.1-2.5-.2-3.6-.8v6.6c0 3.4-2.6 5.8-5.9 5.8-3 0-5.5-2.3-5.5-5.4 0-3.3 2.7-5.5 6.2-5.1v3.2c-.4-.1-.9-.2-1.3-.2-1.4 0-2.5 1-2.5 2.3s1 2.3 2.4 2.3c1.5 0 2.6-1.1 2.6-2.9V2h3.6Z"></path></svg></a>
+          <a href="#" aria-label="LinkedIn"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4.98 3.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5ZM3 9h4v12H3V9Zm6 0h3.8v1.7h.05c.53-1 1.83-2.05 3.77-2.05 4.03 0 4.78 2.65 4.78 6.1V21h-4v-5.5c0-1.3-.02-3-1.83-3-1.83 0-2.1 1.43-2.1 2.9V21H9V9Z"></path></svg></a>
+          <a href="#" aria-label="X"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2H21.5l-7.5 8.57L23 22h-6.59l-4.7-6.14L6.3 22H3.04l8.02-9.17L2 2h6.76l4.24 5.6L18.244 2Zm-2.31 18h1.83L7.04 3.9H5.07L15.934 20Z"></path></svg></a>
+        </div>
+      </div>
+      <div><h4>Product</h4><ul><li><a href="#features">Features</a></li><li><a href="#pricing">Pricing</a></li><li><a href="#">Changelog</a></li><li><a href="#">Roadmap</a></li></ul></div>
+      <div><h4>Tools</h4><ul><li><a href="#">Writing Suite</a></li><li><a href="#">Flashcards</a></li><li><a href="#">AI Tutor</a></li><li><a href="#">Focus Timer</a></li></ul></div>
+      <div><h4>For</h4><ul><li><a href="#">Students</a></li><li><a href="#">Teachers</a></li><li><a href="#">Professionals</a></li><li><a href="#">Schools</a></li></ul></div>
+      <div><h4>Company</h4><ul><li><a href="#">About</a></li><li><a href="#">Blog</a></li><li><a href="#">Careers</a></li><li><a href="#">Contact</a></li></ul></div>
+    </div>
+    <div class="foot-bottom">
+      <span>© 2026 Studlin Labs, Inc. · Made in Brooklyn</span>
+      <span style="display:flex;gap:18px;"><a href="#">Terms</a><a href="#">Privacy</a><a href="#">Cookies</a></span>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // nav scroll state
+  const nav=document.getElementById('nav');
+  addEventListener('scroll',()=>{nav.classList.toggle('scrolled',scrollY>20);},{passive:true});
+
+  // reveal on scroll, auto-tag section content so each block rises in as you scroll
+  (function(){
+    // group selector -> children to stagger (or the element itself)
+    const groups=[
+      ['#features .head'],
+      ['#showcase .head'],
+      ['#loved .head'],
+      ['#compare .head'],['#compare .cmp-row'],
+      ['#pricing .head'],
+      ['#faq .head'],['#faq .qitem'],
+    ];
+    groups.forEach(([sel])=>{
+      const els=document.querySelectorAll(sel);
+      els.forEach((el,i)=>{
+        if(el.classList.contains('reveal'))return;
+        el.classList.add('reveal');
+        const d=i%4; if(d) el.classList.add('d'+d);
+      });
+    });
+    // any standalone section .wrap content not already covered (mobile coming-soon etc.)
+    document.querySelectorAll('section .wrap > .coming, section [data-reveal]').forEach(el=>el.classList.add('reveal'));
+  })();
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}});},{threshold:0.12,rootMargin:'0px 0px -8% 0px'});
+  document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+
+  // count up
+  const cio=new IntersectionObserver(es=>{es.forEach(e=>{
+    if(!e.isIntersecting)return;
+    const el=e.target,target=parseFloat(el.dataset.count),suf=el.dataset.suffix||'',isInt=Number.isInteger(target),dur=1500,st=performance.now();
+    const u=el.querySelector('.u');
+    function tick(now){const t=Math.min(1,(now-st)/dur),k=1-Math.pow(1-t,3),v=target*k;
+      const txt=(isInt?Math.round(v).toLocaleString():v.toFixed(1))+suf;
+      if(u){u.textContent=txt;}else{el.textContent=txt;}
+      if(t<1)requestAnimationFrame(tick);}
+    requestAnimationFrame(tick);cio.unobserve(el);
+  });},{threshold:0.4});
+  document.querySelectorAll('[data-count]').forEach(el=>cio.observe(el));
+
+  // equalizer bars
+  const eq=document.getElementById('eqBars');
+  if(eq){const hs=[30,55,80,45,65,90,70,35,55,75,50,25,60,85,40];hs.forEach((h,i)=>{const b=document.createElement('i');b.style.height=h+'%';if(h>72)b.classList.add('hi');b.style.animation=`eqp ${0.7+(i%5)*0.12}s ease-in-out ${i*0.05}s infinite alternate`;eq.appendChild(b);});
+    const s=document.createElement('style');s.textContent='@keyframes eqp{from{transform:scaleY(.4)}to{transform:scaleY(1)}}.bars i{transform-origin:bottom;}';document.head.appendChild(s);}
+
+  // FAQ
+  document.querySelectorAll('.qitem').forEach(it=>{it.querySelector('.qq').addEventListener('click',()=>{const o=it.classList.contains('open');document.querySelectorAll('.qitem').forEach(x=>x.classList.remove('open'));if(!o)it.classList.add('open');});});
+
+  // pricing switch, count-up prices + confetti on annual
+  (function(){
+    const sw=document.getElementById('billSwitch');
+    if(!sw) return;
+    const mLbl=document.getElementById('bsMonthly'), aLbl=document.getElementById('bsAnnual');
+    const amts=[...document.querySelectorAll('.pc-amt')];
+    const billed=[...document.querySelectorAll('.pc-billed')];
+    let annual=false; mLbl.classList.add('on');
+    const ease=t=>1-Math.pow(1-t,3);
+    function animAmt(el,to,dec){
+      const from=parseFloat(el.textContent.replace(/,/g,''))||0;
+      if(Math.abs(from-to)<0.001){el.textContent=to.toFixed(dec);return;}
+      const dur=520, t0=performance.now();
+      (function step(now){const p=Math.min(1,(now-t0)/dur);el.textContent=(from+(to-from)*ease(p)).toFixed(dec);if(p<1)requestAnimationFrame(step);})(t0);
+    }
+    function apply(){
+      amts.forEach(el=>animAmt(el,parseFloat(annual?el.dataset.a:el.dataset.m),+(el.dataset.dec||0)));
+      billed.forEach(el=>{el.textContent=annual?(el.dataset.a||'billed annually'):(el.dataset.m||'billed monthly');});
+      sw.setAttribute('aria-checked',annual?'true':'false');
+      mLbl.classList.toggle('on',!annual); aLbl.classList.toggle('on',annual);
+    }
+    sw.addEventListener('click',()=>{
+      annual=!annual; apply();
+      if(annual && window.confetti){
+        const r=sw.getBoundingClientRect();
+        window.confetti({particleCount:72,spread:66,startVelocity:34,scalar:.9,ticks:160,
+          origin:{x:(r.left+r.width/2)/innerWidth,y:(r.top+r.height/2)/innerHeight},
+          colors:['#173D2D','#1E4A38','#2C5E45','#8FCBA9','#F3F1E7']});
+      }
+    });
+    const cards=document.querySelector('.pricing-cards');
+    const reduceP=!matchMedia('(prefers-reduced-motion: no-preference)').matches;
+    if(cards){
+      cards.classList.add('js');
+      const pcs=[...cards.querySelectorAll('.pc')];
+      if(reduceP){ pcs.forEach(p=>p.classList.add('pc-in')); }
+      else {
+        // progressive reveal — each card enters on its own as you scroll (staggered bottom margins)
+        const marg=['-6%','-16%','-26%'];
+        pcs.forEach((pc,i)=>{
+          new IntersectionObserver((es)=>{es.forEach(e=>{
+            if(e.isIntersecting) pc.classList.add('pc-in');
+            else if(e.boundingClientRect.top>0) pc.classList.remove('pc-in'); // re-arm only when scrolled back above
+          });},{rootMargin:`0px 0px ${marg[i]||'-16%'} 0px`, threshold:0.06}).observe(pc);
+        });
+      }
+    }
+  })();
+
+  // magnetic buttons, pull + lift
+  document.querySelectorAll('.magnetic').forEach(btn=>{
+    btn.addEventListener('mousemove',e=>{const r=btn.getBoundingClientRect();const x=e.clientX-r.left-r.width/2,y=e.clientY-r.top-r.height/2;btn.style.transform=`translate(${x*0.28}px,${y*0.4}px) scale(1.045)`;});
+    btn.addEventListener('mouseleave',()=>{btn.style.transform='';});
+  });
+
+  // scroll progress rail
+  const scrollBar=document.getElementById('scrollBar');
+  if(scrollBar){
+    const upd=()=>{const max=document.documentElement.scrollHeight-innerHeight;scrollBar.style.width=(max>0?(scrollY/max*100):0)+'%';};
+    addEventListener('scroll',upd,{passive:true});addEventListener('resize',upd);upd();
+  }
+
+  // hero fragment parallax, scroll + mouse, combined
+  const frags=document.querySelectorAll('.frag');
+  const hero=document.querySelector('.hero');
+  let pmx=0,pmy=0;
+  function setFrags(){
+    const y=Math.min(scrollY,900);
+    frags.forEach(f=>{
+      const d=parseFloat(f.dataset.depth);
+      f.style.transform=`translate3d(${pmx*d*220}px,${y*d*-1 + pmy*d*160}px,0)`;
+    });
+  }
+  addEventListener('scroll',setFrags,{passive:true});
+  if(hero && matchMedia('(prefers-reduced-motion: no-preference)').matches){
+    const heroSpot=document.getElementById('heroSpot');
+    hero.addEventListener('mousemove',e=>{
+      const r=hero.getBoundingClientRect();
+      pmx=(e.clientX-r.left)/r.width-0.5;
+      pmy=(e.clientY-r.top)/r.height-0.5;
+      if(heroSpot){heroSpot.style.setProperty('--sx',(e.clientX-r.left)+'px');heroSpot.style.setProperty('--sy',(e.clientY-r.top)+'px');heroSpot.style.opacity='1';}
+      setFrags();
+    });
+    hero.addEventListener('mouseleave',()=>{pmx=0;pmy=0;if(heroSpot)heroSpot.style.opacity='0';setFrags();});
+  }
+
+  // live focus timer fragment
+  const fragTimer=document.getElementById('fragTimer');
+  const fragBar=document.getElementById('fragBar');
+  if(fragTimer){
+    let secs=24*60+59;
+    setInterval(()=>{
+      secs=secs>0?secs-1:25*60;
+      const m=String(Math.floor(secs/60)).padStart(2,'0'), s=String(secs%60).padStart(2,'0');
+      fragTimer.textContent=m+':'+s;
+      if(fragBar)fragBar.style.width=((1-secs/(25*60))*100)+'%';
+    },1000);
+  }
+
+  // hero flashcard, click to flip; auto-flip stops once you interact
+  const heroCard=document.getElementById('heroCard');
+  if(heroCard){
+    let autoFlip=null;
+    heroCard.addEventListener('click',()=>{
+      heroCard.classList.toggle('flip');
+      if(autoFlip){clearInterval(autoFlip);autoFlip=null;}
+    });
+    if(matchMedia('(prefers-reduced-motion: no-preference)').matches){
+      autoFlip=setInterval(()=>heroCard.classList.toggle('flip'),5200);
+    }
+  }
+
+  // card spotlight follow
+  document.querySelectorAll('[data-spot]').forEach(c=>{c.addEventListener('mousemove',e=>{const r=c.getBoundingClientRect();c.style.setProperty('--mx',(e.clientX-r.left)+'px');c.style.setProperty('--my',(e.clientY-r.top)+'px');});});
+
+  // device 3D tilt, smooth lerp follows the mouse across the showcase
+  const dev=document.getElementById('device');
+  if(dev && matchMedia('(prefers-reduced-motion: no-preference)').matches){
+    const stage=dev.closest('.show-stage')||dev.parentElement;
+    dev.style.transition='none';
+    let tx=0,ty=0,cx=0,cy=0,raf=null;
+    function devLoop(){
+      cx+=(tx-cx)*0.1;cy+=(ty-cy)*0.1;
+      dev.style.transform=`rotateY(${cx.toFixed(2)}deg) rotateX(${cy.toFixed(2)}deg)`;
+      if(Math.abs(tx-cx)>0.02||Math.abs(ty-cy)>0.02){raf=requestAnimationFrame(devLoop);}else{raf=null;}
+    }
+    stage.addEventListener('mousemove',e=>{
+      const r=stage.getBoundingClientRect();
+      const px=(e.clientX-r.left)/r.width,py=(e.clientY-r.top)/r.height;
+      tx=(px-0.5)*18;ty=-(py-0.5)*13;
+      dev.style.setProperty('--gx',(px*100)+'%');dev.style.setProperty('--gy',(py*100)+'%');
+      if(!raf)raf=requestAnimationFrame(devLoop);
+    });
+    stage.addEventListener('mouseleave',()=>{tx=0;ty=0;if(!raf)raf=requestAnimationFrame(devLoop);});
+  }
+
+  // (flashcard bento scene is pure CSS, see .deckgen in landing.css)
+
+  // seamless marquee loop, duplicate track content so it never runs out
+  document.querySelectorAll('.marq-track').forEach(t=>{ t.innerHTML += t.innerHTML; });
+
+  // HERO, twinkling starfield + shooting stars
+  (function(){
+    const sky=document.getElementById('heroSky');
+    if(!sky) return;
+    for(let i=0;i<60;i++){
+      const t=document.createElement('div');t.className='tw'+(Math.random()<0.16?' lime':'');
+      t.style.left=Math.random()*100+'%';
+      t.style.top=Math.random()*100+'%';
+      const s=Math.random()*1.7+0.8;t.style.width=s+'px';t.style.height=s+'px';
+      t.style.animationDelay=(Math.random()*3.6)+'s';
+      t.style.animationDuration=(2.2+Math.random()*2.8)+'s';
+      sky.appendChild(t);
+    }
+    for(let i=0;i<5;i++){
+      const sh=document.createElement('div');sh.className='shoot';
+      sh.style.left=(Math.random()*60)+'%';
+      sh.style.top=(Math.random()*40)+'%';
+      sh.style.animationDelay=(i*2.4+Math.random()*1.5)+'s';
+      sh.style.animationDuration=(5.5+Math.random()*4)+'s';
+      sky.appendChild(sh);
+    }
+  })();
+
+  // HOW IT WORKS, fixed atmosphere + scroll-stack reveal
+  (function(){
+    const sky=document.getElementById('hiwSky');
+    if(sky){
+      for(let i=0;i<46;i++){ const t=document.createElement('div');t.className='tw';t.style.left=Math.random()*100+'%';t.style.top=Math.random()*100+'%';const s=Math.random()*1.6+1;t.style.width=s+'px';t.style.height=s+'px';t.style.animationDelay=(Math.random()*3.4)+'s';t.style.animationDuration=(2.4+Math.random()*2.6)+'s';sky.appendChild(t);}
+      for(let i=0;i<11;i++){ const sh=document.createElement('div');sh.className='shoot';const ang=12+Math.random()*22;const len=140+Math.random()*120;const dist=460+Math.random()*340;sh.style.setProperty('--ang',ang+'deg');sh.style.setProperty('--len',len+'px');sh.style.setProperty('--dist',dist+'px');sh.style.left=(Math.random()*62)+'%';sh.style.top=(Math.random()*52)+'%';sh.style.setProperty('--delay',(i*0.95+Math.random()*1.2)+'s');sh.style.setProperty('--dur',(4.2+Math.random()*3.4)+'s');sky.appendChild(sh);}
+    }
+    const sec=document.getElementById('how');
+    const track=document.getElementById('hiwTrack');
+    const stage=document.getElementById('hiwStage');
+    const slider=document.getElementById('hiwSlider');
+    const cards=[...document.querySelectorAll('.hiw-card')];
+    const dots=[...document.querySelectorAll('.hiw-prog i')];
+    if(!sec||!track||!slider) return;
+    const N=cards.length;
+    let cur=0;
+    function setStep(idx){
+      if(idx===cur) return;
+      cur=idx;
+      cards.forEach((c,i)=>c.classList.toggle('active',i===idx));
+      dots.forEach((d,i)=>d.classList.toggle('on',i<=idx));
+    }
+    let tick=false;
+    function update(){
+      const total=track.offsetHeight-innerHeight;
+      const scrolled=-track.getBoundingClientRect().top;
+      let p=total>0?scrolled/total:0;
+      p=Math.max(0,Math.min(1,p));
+      // continuous horizontal pull: panel travels left → right with scroll
+      const travel=Math.max(0,stage.clientWidth-slider.offsetWidth);
+      slider.style.setProperty('--tx',(p*travel).toFixed(1)+'px');
+      // content swaps at quarter points
+      setStep(Math.min(N-1,Math.floor(Math.min(0.9999,p)*N)));
+    }
+    addEventListener('scroll',()=>{ if(tick)return; tick=true; requestAnimationFrame(()=>{ update(); tick=false; }); },{passive:true});
+    addEventListener('resize',update);
+    update();
+  })();
+
+</script>
+</body>
+</html>

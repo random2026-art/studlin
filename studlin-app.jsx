@@ -75,7 +75,7 @@ const T = {...darkT}; // mutable · applyTheme() swaps in place so all component
 const hexA=(hex,a)=>{const h=hex.replace('#','');const r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16);return `rgba(${r},${g},${b},${a})`;};
 // accent palettes — override the lime family per user choice
 const ACCENTS={
-  Lime:  {dk:{lime:"#AECE5E",limeDk:"#8BAE3C",limeLt:"#CBDF92"}, lt:{lime:"#9EC83D",limeDk:"#7FA82A",limeLt:"#CBDF92"}},
+  Lime:  {dk:{lime:"#AECE5E",limeDk:"#8BAE3C",limeLt:"#CBDF92"}, lt:{lime:"#6E9C35",limeDk:"#57802A",limeLt:"#DCE9C0"}},
   Forest:{dk:{lime:"#6FC1A0",limeDk:"#4E9C7B",limeLt:"#A9E0CB"}, lt:{lime:"#2E8E6E",limeDk:"#227056",limeLt:"#A9E0CB"}},
   Sky:   {dk:{lime:"#84BBEA",limeDk:"#5A93C9",limeLt:"#BFE0FA"}, lt:{lime:"#2D74BC",limeDk:"#225A98",limeLt:"#BFE0FA"}},
   Lilac: {dk:{lime:"#B89BE0",limeDk:"#9474C9",limeLt:"#DCCBF5"}, lt:{lime:"#7E5BC0",limeDk:"#634599",limeLt:"#DCCBF5"}},
@@ -118,6 +118,7 @@ const Icon = {
   check:     ic(<><polyline points="20 6 9 17 4 12"/></>),
   refresh:   ic(<><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></>),
   music:     ic(<><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></>),
+  mic:       ic(<><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></>),
   users:     ic(<><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>),
   trophy:    ic(<><polyline points="8 17 12 13 16 17"/><path d="M16 7H8"/><path d="M4 7h16l-1.5 9H5.5L4 7z"/><path d="M9 3.5L7 7h10l-2-3.5"/></>),
   settings:  ic(<><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></>),
@@ -1328,7 +1329,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
 }
 
 // ─── NAV ICONS MAP ────────────────────────────────────────────────────────────
-const navIcon = {dashboard:Icon.grid,aichat:Icon.sparkles,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.users,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,music:Icon.music,settings:Icon.settings,profile:Icon.user};
+const navIcon = {dashboard:Icon.grid,aichat:Icon.sparkles,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.users,lectures:Icon.mic,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,music:Icon.music,feedback:Icon.heart,settings:Icon.settings,profile:Icon.user};
 
 // ─── AI CHAT ──────────────────────────────────────────────────────────────────
 function AiChat() {
@@ -1507,20 +1508,22 @@ function AiChat() {
   if(!hasMessages){
     return(
       <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"calc(100vh - 120px)",padding:"0 24px"}}>
-        <div style={{display:"flex",flexDirection:"column",alignItems:"center",marginBottom:40,animation:"studlinRise 0.5s ease-out"}}>
-          <div style={{width:44,height:44,borderRadius:12,background:T.lime,display:"grid",placeItems:"center",marginBottom:20,fontSize:22,fontWeight:800,color:T.ink||T.bg,fontFamily:T.font}}>S</div>
-          <h1 style={{fontSize:32,fontWeight:700,color:T.white,letterSpacing:"-0.03em",margin:0,textAlign:"center",lineHeight:1.2}}>Welcome, {userName}.</h1>
+        {(()=>{const hr=new Date().getHours();const period=hr<5?"late-night":hr<12?"morning":hr<18?"afternoon":hr<22?"evening":"late-night";const fName=(userName||"there").split(" ")[0];return(
+        <div style={{display:"flex",alignItems:"center",gap:16,marginBottom:34,animation:"studlinRise 0.5s ease-out"}}>
+          <img src="studlin-icon.png" alt="Studlin" style={{width:52,height:52,borderRadius:15,flexShrink:0,boxShadow:"0 6px 20px -8px rgba(0,0,0,0.4)",objectFit:"cover"}} onError={e=>{e.target.style.display="none";}} />
+          <h1 style={{fontFamily:T.hand,fontSize:"clamp(32px,4.8vw,52px)",fontWeight:700,color:T.white,letterSpacing:"-0.02em",margin:0,lineHeight:1.02}}>It's {period}, {fName}.</h1>
         </div>
-        {inputBar(false)}
-        <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"center",marginTop:20,animation:"studlinFade 0.6s ease-out 0.1s both"}}>
+        );})()}
+        <div style={{width:"100%",maxWidth:720}}>{inputBar(false)}</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"center",marginTop:22,maxWidth:660,animation:"studlinFade 0.6s ease-out 0.1s both"}}>
           {quickActions.map(a=>(
-            <button key={a.label} onClick={()=>{setInput(a.prompt);setTimeout(()=>inputRef.current?.focus(),50);}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 16px",borderRadius:99,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontSize:12.5,fontWeight:500,cursor:"pointer",fontFamily:T.font,transition:"all 0.15s"}}>
-              <span style={{display:"inline-flex",color:T.muted}}>{a.icon}</span>
+            <button key={a.label} onClick={()=>{setInput(a.prompt);setTimeout(()=>inputRef.current?.focus(),50);}} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"10px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font,transition:"all 0.15s"}}>
+              <span style={{display:"inline-flex",color:T.lime}}>{a.icon}</span>
               {a.label}
             </button>
           ))}
         </div>
-        <div style={{fontSize:11,color:T.faint,marginTop:24}}><span style={{color:T.muted}}>{curModel.name}</span> · {credits} credits remaining</div>
+        <div style={{fontSize:11,color:T.faint,marginTop:22}}><span style={{color:T.muted}}>{curModel.name}</span> · {credits} credits remaining</div>
       </div>
     );
   }
@@ -8167,8 +8170,13 @@ function VerifyEmailScreen({user}){
   const [err,setErr]=useState("");
   const resend=async()=>{
     setStatus("sending");setErr("");
-    try{await user.sendEmailVerification();setStatus("sent");setTimeout(()=>setStatus("idle"),30000);}
-    catch(e){setErr(e.code==="auth/too-many-requests"?"Too many requests — wait a bit before trying again.":"Couldn't send the email. Try again shortly.");setStatus("idle");}
+    try{
+      const res=await authFetch("/api/send-verification",{method:"POST"});
+      const d=await res.json();
+      if(d.ok){setStatus("sent");setTimeout(()=>setStatus("idle"),30000);}
+      else setErr(d.error||"Couldn't send the email. Try again shortly.");
+    }catch(e){setErr("Couldn't send the email. Try again shortly.");}
+    if(status==="sending")setStatus("idle");
   };
   const checkVerified=async()=>{
     setStatus("checking");
