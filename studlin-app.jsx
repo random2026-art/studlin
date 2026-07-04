@@ -601,6 +601,11 @@ const StatNum = ({label,value,sub,accent,style={}}) => (
 // ─── PERSISTENCE + MONETIZATION HELPERS ──────────────────────────────────────
 const lsGet=(k,d)=>{try{const v=localStorage.getItem("studlin-"+k);return v===null?d:JSON.parse(v);}catch(e){return d;}};
 const lsSet=(k,v)=>{try{localStorage.setItem("studlin-"+k,JSON.stringify(v));}catch(e){}};
+// Read the user's AI Tutor preferences (Settings > Study preferences) for
+// attaching to genuine chat/tutoring /api/chat calls only — one-shot utility
+// generations (citations, grammar, flashcard gen, etc.) never call this, so
+// their output is never affected by these style settings.
+const getAiPrefs=()=>({verbosity:lsGet("pref-verb","Balanced"),tutorStyle:lsGet("pref-tutorStyle","Socratic")});
 const SUBJECT_COLORS=["#D9806B","#7BACDF","#A691DB","#5FCBA8","#DCA64A","#7880A8","#3ECF8E","#FF8A80","#81C784","#CE93D8"];
 const DEFAULT_SUBJECTS=[
   {id:"chem",label:"Chemistry",color:"#D9806B"},
@@ -614,10 +619,10 @@ const getSubjects=()=>lsGet("user-subjects",DEFAULT_SUBJECTS);
 const saveSubjects=(s)=>lsSet("user-subjects",s);
 
 // ─── SCHOOL DIRECTORY (mock, for the searchable school picker) ──────────────
-// Flat mock list, same shape/convention as NETWORK_DIRECTORY below. Exactly
-// two entries (DEMO_SCHOOL_COLLEGE, DEMO_SCHOOL_HS — see the institutional
-// demo section) are wired to real mock class data; every other entry here is
-// just a selectable name with no further behavior.
+// Flat mock list of selectable school names. Exactly two entries
+// (DEMO_SCHOOL_COLLEGE, DEMO_SCHOOL_HS — see the institutional demo section)
+// are wired to real mock class data; every other entry here is just a
+// selectable name with no further behavior.
 const SCHOOL_DIRECTORY=[
   "Harvard University","Lincoln High School","Stanford University","New York University",
   "UC Berkeley","UCLA","MIT","Lehigh University","University of Michigan",
@@ -1556,7 +1561,7 @@ function AiChat() {
     const stepTimer=setInterval(()=>{stepIdx++;if(stepIdx<thinkSteps.length)setThinkStep(thinkSteps[stepIdx]);},1200);
     try{
       const apiMsgs=newMsgs.map(m=>({r:m.r,t:m._ai||m.t}));
-      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:apiMsgs,model})});
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:apiMsgs,model,...getAiPrefs()})});
       const data=await res.json();
       clearInterval(stepTimer);
       setThinkStep("");
@@ -2495,7 +2500,7 @@ function Notes(){
       const res=await authFetch("/api/chat",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({messages:[{r:"user",t:analysisPrompt}],model:"standard"})
+        body:JSON.stringify({messages:[{r:"user",t:analysisPrompt}],model:"standard",...getAiPrefs()})
       });
       if(!res.ok){
         const errData=await res.json().catch(()=>({}));
@@ -2543,7 +2548,7 @@ function Notes(){
       const res=await authFetch("/api/chat",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({messages:apiMsgs,model:"standard"})
+        body:JSON.stringify({messages:apiMsgs,model:"standard",...getAiPrefs()})
       });
       if(!res.ok){
         const errData=await res.json().catch(()=>({}));
@@ -3121,19 +3126,8 @@ function Notes(){
 
 // ─── FRIENDS & CHAT ──────────────────────────────────────────────────────────
 // ─── NETWORK: shared data + helpers ──────────────────────────────────────────
-// Presence is simulated locally (this app has no realtime multi-user backend yet —
-// every "friend" here is a mock profile, consistent with the rest of Studlin Network).
-const NETWORK_DIRECTORY=[
-  {n:"Devon Karu",h:"@devonk",s:"Lehigh University",online:true,presence:{state:"locked-in",subject:"Calculus",remainingMin:34}},
-  {n:"Priya Shah",h:"@priyas",s:"UC Berkeley",online:false,presence:{state:"offline"}},
-  {n:"Jordan Tran",h:"@jtran",s:"Lehigh University",online:true,presence:{state:"in-class"}},
-  {n:"Amara Okafor",h:"@amarao",s:"NYU",online:false,presence:{state:"offline"}},
-  {n:"Liam Chen",h:"@liamc",s:"Stanford University",online:true,presence:{state:"idle"}},
-  {n:"Sofia Diaz",h:"@sofiad",s:"Lehigh University",online:false,presence:{state:"offline"}},
-  {n:"Marcus Webb",h:"@marcusw",s:"UCLA",online:true,presence:{state:"locked-in",subject:"Organic Chem",remainingMin:12}},
-  {n:"Chloe Park",h:"@chloep",s:"MIT",online:false,presence:{state:"offline"}},
-  {n:"Riya Mehta",h:"@riyam",s:"Lehigh University",online:true,presence:{state:"idle"}},
-];
+// Presence is simulated locally (this app has no realtime multi-user backend yet
+// beyond the current user's own online/incognito status).
 const GROUP_DURATIONS=[{label:"1 week",days:7},{label:"2 weeks",days:14},{label:"1 month",days:30},{label:"2 months",days:60},{label:"3 months",days:90}];
 // Deterministic id for a 1:1 chat room — both sides compute the same id
 // from their two uids without a lookup, so the room can be created lazily
@@ -3161,8 +3155,7 @@ function fmtGroupCountdown(expiresAt){
   return{expired:false,urgent:true,label:"today"};
 }
 // Live study-state sub-label for a friend's presence — masked to offline when
-// the friend has incognito on (simulated: NETWORK_DIRECTORY entries never set
-// this, but the current user's own incognito state reuses the same renderer).
+// the friend has incognito on.
 function presenceInfo(u,{incognito=false}={}){
   const p=incognito?{state:"offline"}:(u.presence||{state:u.online?"idle":"offline"});
   if(p.state==="locked-in")return{color:T.teal,text:"Locking In: "+p.subject+" ("+p.remainingMin+"m left)",joinable:true};
@@ -3219,6 +3212,28 @@ function FriendsChat({onFriendRequestSent}={}){
     online:false,
     presence:{state:"idle"},
   });
+
+  // ── Classmates at my school — real, auto-populated, replaces the old
+  // hardcoded NETWORK_DIRECTORY mock. Exact-match on schoolLower (not the
+  // prefix-range query the manual search box below uses), gated on the
+  // current user actually having a school set.
+  const mySchool=(getProfile().school||getProfile().affiliation||"").trim();
+  const [classmates,setClassmates]=useState([]);
+  const [classmatesLoading,setClassmatesLoading]=useState(false);
+  useEffect(()=>{
+    if(!myUid||!mySchool){setClassmates([]);return;}
+    let active=true;
+    setClassmatesLoading(true);
+    fsdb().collection('profiles').where('schoolLower','==',mySchool.toLowerCase()).limit(20).get()
+      .then(snap=>{
+        if(!active)return;
+        const results=snap.docs.map(d=>profileToFriend(d.id,d.data())).filter(u=>u.uid!==myUid);
+        setClassmates(results);
+      })
+      .catch(()=>{if(active)setClassmates([]);})
+      .finally(()=>{if(active)setClassmatesLoading(false);});
+    return ()=>{active=false;};
+  },[myUid,mySchool]);
 
   // Incoming pending requests — real-time via onSnapshot.
   useEffect(()=>{
@@ -3498,6 +3513,46 @@ function FriendsChat({onFriendRequestSent}={}){
           </Card>
         </div>
       </div>
+
+      {/* ── CLASSMATES AT MY SCHOOL — real, auto-populated ── */}
+      {mySchool&&(
+        <div style={{marginBottom:24}}>
+          <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8}}>Classmates at {mySchool}</div>
+          <Card style={{padding:classmates.length===0&&!classmatesLoading?20:0,overflow:"hidden"}}>
+            {classmatesLoading
+              ?<div style={{padding:24,textAlign:"center",fontSize:12.5,color:T.muted}}>Searching…</div>
+              :classmates.length>0
+                ?classmates.map((u,i,arr)=>{
+                    const isFriend=friends.some(f=>f.uid===u.uid);
+                    const incomingFromThem=incomingReqs.find(r=>r.senderId===u.uid);
+                    const isPendingOut=outgoingReqIds.has(u.uid);
+                    const label=isFriend?"Following":incomingFromThem?"Accept":isPendingOut?"Pending":"Add";
+                    const onClickBtn=isFriend||isPendingOut?undefined:incomingFromThem?()=>acceptReq(incomingFromThem.id):()=>sendFriendRequest(u.uid);
+                    return (
+                      <div key={u.uid} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
+                        <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={34} picUrl="" />
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:13,fontWeight:600,color:T.white}}>{u.n}</div>
+                          <div style={{fontSize:11,color:T.muted}}>{u.h}</div>
+                        </div>
+                        <BtnSm variant={label==="Add"||label==="Accept"?"lime":"subtle"} onClick={onClickBtn} style={{flexShrink:0,opacity:onClickBtn?1:0.7}}>{label}</BtnSm>
+                      </div>
+                    );
+                  })
+                :<div>
+                    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+                      <div style={{width:34,height:34,borderRadius:9,background:T.lime+"18",border:`1px solid ${T.lime}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,flexShrink:0}}>{Icon.zap}</div>
+                      <div>
+                        <div style={{fontSize:13,fontWeight:700,color:T.white}}>Be the pioneer on your campus.</div>
+                        <div style={{fontSize:11,color:T.muted}}>Invite classmates to auto-sync routines and conquer the leaderboard!</div>
+                      </div>
+                    </div>
+                    <Btn onClick={()=>setInviteOpen(true)} style={{width:"100%",justifyContent:"center"}}>{Icon.mail} Invite classmates</Btn>
+                  </div>
+            }
+          </Card>
+        </div>
+      )}
 
       {/* ── GROWTH BANNER ── */}
       <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderRadius:10,background:T.lime+"0C",border:`1px solid ${T.lime}22`,marginBottom:24}}>
@@ -6218,7 +6273,7 @@ function AiTutor(){
     setLessonLoading(true);setLesson(null);setShowAnswer(false);
     const prompt="Hey Studlin, I want a mini-lesson on \""+topic.trim()+"\" for "+subject+". Respond with ONLY valid JSON in this exact shape, no markdown fences: {\"concept\":\"a clear 3-5 sentence plain-English explanation of the core idea\",\"example\":\"one fully worked example showing the steps\",\"mistakes\":[\"common mistake 1\",\"common mistake 2\",\"common mistake 3\"],\"question\":\"one short practice question testing this exact concept\",\"answer\":\"the answer to that question with a brief explanation why\"}";
     try{
-      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",...getAiPrefs()})});
       const data=await res.json();
       if(data.error){setLesson({concept:"Couldn't generate a lesson: "+data.error,example:"",mistakes:[],question:"",answer:""});setLessonLoading(false);return;}
       var raw=(data.reply||"").replace(/```json?|```/g,"").trim();
@@ -6235,7 +6290,7 @@ function AiTutor(){
     setSocActive(true);setSocLoading(true);setSocMsgs([]);
     const kickoff="I want to learn about \""+topic.trim()+"\" in "+subject+" using the Socratic method. Don't explain it to me directly. Instead, ask me ONE short guiding question to start helping me figure it out myself. Wait for my answer before continuing.";
     try{
-      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:kickoff}],model:"standard"})});
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:kickoff}],model:"standard",...getAiPrefs()})});
       const data=await res.json();
       setSocMsgs([{r:"ai",t:data.reply||"Let's start: what do you already know about "+topic.trim()+"?"}]);
     }catch(e){setSocMsgs([{r:"ai",t:"Let's start: what do you already know about "+topic.trim()+"?"}]);}
@@ -6250,7 +6305,7 @@ function AiTutor(){
     const apiMsgs=next.map(m=>({r:m.r,t:m.t}));
     apiMsgs.push({r:"user",t:"(Remember: keep using the Socratic method on the topic \""+topic.trim()+"\" -- ask guiding questions, give hints if I'm stuck, don't just give the answer outright unless I've clearly got it.)"});
     try{
-      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:apiMsgs,model:"standard"})});
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:apiMsgs,model:"standard",...getAiPrefs()})});
       const data=await res.json();
       setSocMsgs(m=>m.concat([{r:"ai",t:data.reply||"Hm, try explaining your thinking a bit more?"}]));
     }catch(e){setSocMsgs(m=>m.concat([{r:"ai",t:"Something went wrong. Try again?"}]));}
@@ -7167,11 +7222,43 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   };
   const [profile,setProfileState]=useState(()=>getProfile());
   const updProfile=(patch)=>{const n={...profile,...patch};setProfileState(n);saveProfile(n);};
-  const allUsers=[{n:"Devon Karu",h:"@devonk",s:"UCLA"},{n:"Priya Shah",h:"@priyas",s:"Berkeley"},{n:"Jordan Tran",h:"@jtran",s:"UCLA"},{n:"Amara Okafor",h:"@amarao",s:"NYU"},{n:"Liam Chen",h:"@liamc",s:"Stanford"},{n:"Sofia Diaz",h:"@sofiad",s:"UCLA"}];
-  const [friendQ,setFriendQ]=useState("");
-  const [friends,setFriends]=useState(()=>lsGet("friends",[]));
-  const toggleFriend=(h)=>{const n=friends.includes(h)?friends.filter(x=>x!==h):[...friends,h];setFriends(n);lsSet("friends",n);};
-  const friendResults=friendQ.trim()?allUsers.filter(u=>(u.n+" "+u.h+" "+u.s).toLowerCase().includes(friendQ.toLowerCase())):allUsers.slice(0,3);
+
+  // Gathers every studlin-* localStorage key into one JSON file and downloads
+  // it — same blob pattern as downloadEssay (Essays/WriteStudio).
+  const exportAllData=()=>{
+    const out={};
+    Object.keys(localStorage).forEach(k=>{
+      if(k.indexOf("studlin-")===0){
+        try{out[k.slice(8)]=JSON.parse(localStorage.getItem(k));}catch(e){}
+      }
+    });
+    const blob=new Blob([JSON.stringify(out,null,2)],{type:"application/json"});
+    const a=Object.assign(document.createElement("a"),{href:URL.createObjectURL(blob),download:"studlin-data-export.json"});
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+  };
+  const [chatHistoryLoading,setChatHistoryLoading]=useState(false);
+  const [deleteAccountOpen,setDeleteAccountOpen]=useState(false);
+  const confirmDeleteAccount=()=>{
+    Object.keys(localStorage).forEach(k=>{if(k.indexOf("studlin-")===0)localStorage.removeItem(k);});
+    firebase.auth().signOut().then(()=>{window.location.href="/";});
+  };
+  const downloadChatHistory=async()=>{
+    const myUid=firebase.auth().currentUser?.uid;
+    if(!myUid||chatHistoryLoading)return;
+    setChatHistoryLoading(true);
+    try{
+      const roomsSnap=await fsdb().collection('chatRooms').where('memberUids','array-contains',myUid).get();
+      const rooms=await Promise.all(roomsSnap.docs.map(async d=>{
+        const msgsSnap=await fsdb().collection('chatRooms').doc(d.id).collection('messages').orderBy('ts','asc').get();
+        return {roomId:d.id,type:d.data().type||"dm",messages:msgsSnap.docs.map(m=>m.data())};
+      }));
+      const blob=new Blob([JSON.stringify({rooms},null,2)],{type:"application/json"});
+      const a=Object.assign(document.createElement("a"),{href:URL.createObjectURL(blob),download:"studlin-chat-history.json"});
+      document.body.appendChild(a);a.click();document.body.removeChild(a);
+    }catch(e){}
+    setChatHistoryLoading(false);
+  };
+
   const [calGoogleLinked,setCalGoogleLinked]=useState(()=>lsGet("cal-google",false));
   const [calAppleLinked,setCalAppleLinked]=useState(()=>lsGet("cal-apple",false));
   const [googleSyncing,setGoogleSyncing]=useState(false);
@@ -7302,9 +7389,8 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const Chip = ({active,onClick,children}) => (
     <button type="button" onClick={onClick} style={{padding:"7px 14px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${active?T.lime+"66":T.border}`,background:active?T.lime+"14":"transparent",color:active?T.lime:T.muted,fontFamily:T.font,fontWeight:active?600:400,transition:"all 0.15s"}}>{children}</button>
   );
-  const [pom,setPom]=useState(()=>lsGet("pref-pom","25 min"));
   const [verb,setVerb]=useState(()=>lsGet("pref-verb","Balanced"));
-  const [brk,setBrk]=useState(()=>lsGet("pref-brk","15 min"));
+  const [tutorStyle,setTutorStyle]=useState(()=>lsGet("pref-tutorStyle","Socratic"));
   const accents=[{n:"Lime",c:"#AECE5E"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"}];
   const [mgmtSubjs,setMgmtSubjs]=useState(()=>getSubjects().map(s=>({...s})));
   const [mgmtSaved,setMgmtSaved]=useState(false);
@@ -7349,35 +7435,12 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             <Card>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Connected accounts</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Sync your calendar and cloud notes.</div>
-              {[["Google Calendar","Synced",true],["Apple Calendar","Connect",false],["Notion workspace","Synced",true],["Dropbox","Connect",false]].map(([n,st,on],i)=>(
+              {[["Google Calendar","Synced",true,true],["Apple Calendar","Connect",false,false],["Notion workspace","Connect",false,false],["Dropbox","Connect",false,false]].map(([n,st,on,live],i)=>(
                 <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 0",borderBottom:i<3?`1px solid ${T.border}`:"none"}}>
-                  <div style={{fontSize:13,color:T.text,fontWeight:500}}>{n}</div>
-                  <BtnSm variant={on?"subtle":"lime"}>{st}</BtnSm>
+                  <div style={{fontSize:13,color:T.text,fontWeight:500}}>{n}{!live&&<span style={{marginLeft:8,fontSize:10.5,fontWeight:600,color:T.faint}}>(Coming Soon)</span>}</div>
+                  <BtnSm variant={on?"subtle":"lime"} disabled={!live} style={!live?{opacity:0.4,cursor:"not-allowed"}:undefined}>{st}</BtnSm>
                 </div>
               ))}
-            </Card>
-            <Card style={{marginTop:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Friends</div>
-              <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Find classmates and add them to study together.</div>
-              <div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 13px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:9,marginBottom:12}}>
-                <span style={{color:T.muted,display:"flex"}}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
-                <input value={friendQ} onChange={e=>setFriendQ(e.target.value)} placeholder="Search by name, handle, or school" style={{flex:1,background:"none",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}} />
-              </div>
-              {friendResults.length===0
-                ? <div style={{fontSize:12.5,color:T.muted,padding:"10px 0"}}>No students match “{friendQ}”.</div>
-                : friendResults.map((u,i)=>{
-                  const added=friends.includes(u.h);
-                  return (
-                  <div key={u.h} style={{display:"flex",alignItems:"center",gap:11,padding:"10px 0",borderBottom:i<friendResults.length-1?`1px solid ${T.border}`:"none"}}>
-                    <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={32} />
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:13,color:T.text,fontWeight:600}}>{u.n}</div>
-                      <div style={{fontSize:11,color:T.muted}}>{u.h} · {u.s}</div>
-                    </div>
-                    <BtnSm variant={added?"subtle":"lime"} onClick={()=>toggleFriend(u.h)}>{added?"Added":"Add friend"}</BtnSm>
-                  </div>
-                );})}
-              {friends.length>0&&<div style={{fontSize:11.5,color:T.muted,marginTop:12}}>{friends.length} friend{friends.length===1?"":"s"} added.</div>}
             </Card>
           </>)}
 
@@ -7493,8 +7556,8 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Row label="Use my work to train Studlin AI" sub="Off by default. We will never share your raw content." k="collect" />
               <Row label="Anonymous usage analytics" sub="Helps us fix bugs and prioritise features." k="analytics" />
               <div style={{display:"flex",gap:8,marginTop:14,flexWrap:"wrap"}}>
-                <Btn variant="subtle">{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.copy,"Export all data")}</Btn>
-                <Btn variant="subtle">Download chat history</Btn>
+                <Btn variant="subtle" onClick={exportAllData}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.copy,"Export all data")}</Btn>
+                <Btn variant="subtle" onClick={downloadChatHistory} disabled={chatHistoryLoading}>{chatHistoryLoading?"Preparing…":"Download chat history"}</Btn>
                 <Btn variant="subtle">Privacy policy</Btn>
               </div>
             </Card>
@@ -7508,17 +7571,10 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 
           {active==="Study preferences" && (<>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>Focus &amp; Pomodoro</div>
-              <Field label="Session length"><div style={{display:"flex",gap:6}}>{["15 min","20 min","25 min","30 min","45 min"].map(t=><Chip key={t} active={pom===t} onClick={()=>{setPom(t);lsSet("pref-pom",t);}}>{t}</Chip>)}</div></Field>
-              <Field label="Break after 4 sessions"><div style={{display:"flex",gap:6}}>{["10 min","15 min","20 min","30 min"].map(t=><Chip key={t} active={brk===t} onClick={()=>{setBrk(t);lsSet("pref-brk",t);}}>{t}</Chip>)}</div></Field>
-              <Row label="Auto-start next session" sub="Skip the play button between focus blocks." k="autoSession" />
-              <Row label="Block distracting sites" sub="Studlin's lightweight blocker pauses social media during focus." k="block" />
-            </Card>
-            <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>AI tutor</div>
               <Field label="Response verbosity"><div style={{display:"flex",gap:6}}>{["Concise","Balanced","Comprehensive"].map(t=><Chip key={t} active={verb===t} onClick={()=>{setVerb(t);lsSet("pref-verb",t);}}>{t}</Chip>)}</div></Field>
               <Field label="Tutor style">
-                <SelectChip options={["Socratic","Direct","Encouraging","Strict"]} value={"Socratic"} onChange={()=>{}} />
+                <SelectChip options={["Socratic","Direct","Encouraging","Strict"]} value={tutorStyle} onChange={v=>{setTutorStyle(v);lsSet("pref-tutorStyle",v);}} />
               </Field>
               <Row label="Spaced repetition engine" sub="Intelligent scheduling based on recall performance." k="sr" />
               <Row label="Auto-save drafts" sub="Save essay and note changes every 30 seconds." k="auto" />
@@ -7678,8 +7734,15 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             <Card style={{border:"1px solid rgba(214,117,96,0.3)"}}>
               <div style={{fontSize:13,fontWeight:700,color:T.red,marginBottom:4}}>Delete account</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Permanently remove your account, notes, essays, flashcards, and squad memberships. This cannot be undone.</div>
-              <Btn variant="danger">Delete my account</Btn>
+              <Btn variant="danger" onClick={()=>setDeleteAccountOpen(true)}>Delete my account</Btn>
             </Card>
+            <Modal open={deleteAccountOpen} onClose={()=>setDeleteAccountOpen(false)} title="Delete your account?" sub="Are you sure? This will permanently delete your schedules, notes, and optimized plans."
+              footer={<>
+                <Btn variant="subtle" onClick={()=>setDeleteAccountOpen(false)}>Cancel</Btn>
+                <Btn variant="danger" onClick={confirmDeleteAccount}>Delete my account</Btn>
+              </>}>
+              <div style={{fontSize:12.5,color:T.muted,lineHeight:1.6}}>This cannot be undone. You'll be signed out immediately.</div>
+            </Modal>
           </>)}
         </div>
       </div>
@@ -7698,7 +7761,6 @@ function Profile({setActive}={}) {
   const fileInputRef=useRef(null);
   const camInputRef=useRef(null);
   const prefs=getSchedulePreferences();
-  const [workStart,setWorkStart]=useState(prefs.workStartTime||"09:00");
   const [difficulty,setDifficulty]=useState(prefs.difficultyPreference||"balanced");
   const [prefSaved,setPrefSaved]=useState(false);
   const lvl=levelInfo();
@@ -7724,7 +7786,7 @@ function Profile({setActive}={}) {
     const updated={...getProfile(),status,affiliation,school:affiliation};
     lsSet("profile",updated);
     setProfState(updated);
-    const updatedPrefs={...getSchedulePreferences(),workStartTime:workStart,difficultyPreference:difficulty};
+    const updatedPrefs={...getSchedulePreferences(),difficultyPreference:difficulty};
     setSchedulePreferences(updatedPrefs);
     setPrefSaved(true);
     setTimeout(()=>setPrefSaved(false),2200);
@@ -7785,7 +7847,6 @@ function Profile({setActive}={}) {
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             <StatusChip value="highschool" label="High School" active={status==="highschool"} />
             <StatusChip value="college" label="College" active={status==="college"} />
-            <StatusChip value="working" label="Working" active={status==="working"} />
           </div>
         </Field>
 
@@ -7794,10 +7855,6 @@ function Profile({setActive}={}) {
             <SchoolSelect value={affiliation} onChange={setAffiliation} placeholder={affiliationPlaceholder} />
           </Field>
         )}
-
-        <Field label="Study start time" hint="Tasks are scheduled from this hour.">
-          <TimeInput value={workStart} onChange={setWorkStart} />
-        </Field>
 
         <Field label="Task difficulty order">
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -7824,18 +7881,15 @@ function Profile({setActive}={}) {
       {(()=>{
         const allDecks=lsGet("decks",[]);
         const cardsMastered=allDecks.reduce((a,d)=>a+(d.done||0),0);
-        const allEssays=lsGet("essays",[]);
-        const essaysSubmitted=allEssays.filter(e=>e.submitted).length;
         const stats=[
           ["Total study time",fmtH(ps.totalMin)||"0m",T.lime],
           ["Focus sessions",String(ps.focusSessions),T.teal],
-          ["Essays submitted",String(essaysSubmitted),T.purple],
           ["Cards mastered",String(cardsMastered),T.blue],
           ["Day streak",String(streak),T.amber],
           ["Level",lvl.title,T.red],
         ];
         return(
-          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10,marginBottom:16}}>
             {stats.map(([l,v,c],i)=>(
               <Card key={i} style={{textAlign:"center",padding:16}}>
                 <div style={{fontSize:26,fontWeight:700,color:c,letterSpacing:"-0.02em",lineHeight:1}}>{v}</div>
@@ -7846,10 +7900,9 @@ function Profile({setActive}={}) {
         );
       })()}
 
-      {/* ── Activity + Subject distribution */}
+      {/* ── Weekly activity */}
       {(()=>{
         const allSessions=lsGet("sessions",[]);
-        const allEvents=lsGet("events",[]);
         const now=new Date();
         const dow=(now.getDay()+6)%7;
         const monDate=new Date(now);monDate.setDate(now.getDate()-dow);
@@ -7862,17 +7915,12 @@ function Profile({setActive}={}) {
         });
         const maxMins=Math.max(1,...weekData.map(d=>d.mins));
         const totalWeekMins=weekData.reduce((a,d)=>a+d.mins,0);
-        const subjCounts={};
-        allEvents.forEach(ev=>{if(ev.subject)subjCounts[ev.subject]=(subjCounts[ev.subject]||0)+1;});
-        const subjTotal=Object.values(subjCounts).reduce((a,n)=>a+n,0)||1;
-        const subjColors={"English IV":T.purple,"Biology":T.teal,"Calculus":T.blue,"Spanish":T.amber,"Chemistry":T.red,"History":T.muted};
-        const subjRows=Object.entries(subjCounts).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([s,n])=>({s,pct:Math.round(n/subjTotal*100),c:subjColors[s]||T.lime}));
         return(
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr",gap:12}}>
             <Card>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
                 <div>
-                  <Label>Weekly activity</Label>
+                  <Label>Hours Focused</Label>
                   <div style={{fontSize:22,fontWeight:700,color:T.white,letterSpacing:"-0.02em",lineHeight:1}}>{fmtH(totalWeekMins)||"0m"}</div>
                   <div style={{fontSize:11,color:T.muted,marginTop:2}}>this week</div>
                 </div>
@@ -7889,20 +7937,6 @@ function Profile({setActive}={}) {
                   );
                 })}
               </div>
-            </Card>
-            <Card>
-              <Label>Subject distribution</Label>
-              {subjRows.length===0
-                ?<div style={{fontSize:12,color:T.faint,padding:"16px 0",textAlign:"center"}}>Add tasks to your calendar to track subjects.</div>
-                :subjRows.map((row,i)=>(
-                  <div key={i} style={{marginBottom:12}}>
-                    <div style={{display:"flex",justifyContent:"space-between",fontSize:11,marginBottom:4}}>
-                      <span style={{color:T.muted}}>{row.s}</span>
-                      <span style={{color:row.c,fontWeight:600}}>{row.pct}%</span>
-                    </div>
-                    <Prog pct={row.pct} color={row.c} height={4} />
-                  </div>
-                ))}
             </Card>
           </div>
         );

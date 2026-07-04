@@ -82,7 +82,7 @@ module.exports = async (req, res) => {
   if (!user) return res.status(401).json({ error: 'Sign in required.' });
 
   try {
-    const { messages, model } = req.body;
+    const { messages, model, verbosity, tutorStyle } = req.body;
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({ error: 'Messages are required.' });
     }
@@ -144,8 +144,27 @@ module.exports = async (req, res) => {
     }
 
     const claudeModel = MODEL_MAP[model] || MODEL_MAP.standard;
-    const systemPrompt = model === 'flash' ? FLASH_PROMPT : SYSTEM_PROMPT;
+    let systemPrompt = model === 'flash' ? FLASH_PROMPT : SYSTEM_PROMPT;
     const maxTokens = MAX_TOKENS[model] || 2048;
+
+    // Only genuine chat/tutoring surfaces send verbosity/tutorStyle — every
+    // other call site (citations, grammar, essay feedback, flashcard/quiz
+    // gen, humanizer, calendar auto-scheduling) never sends these fields, so
+    // this block is a guaranteed no-op for them.
+    const VERBOSITY_DIRECTIVES = {
+      Concise: 'Keep your response brief and to the point.',
+      Comprehensive: 'Provide a thorough, detailed explanation.',
+    };
+    const TUTOR_STYLE_DIRECTIVES = {
+      Socratic: 'Favor asking guiding questions over giving direct answers.',
+      Direct: 'Give direct, clear answers without excessive questioning.',
+      Encouraging: 'Be extra encouraging and supportive in tone.',
+      Strict: 'Be rigorous and hold the student to a high standard.',
+    };
+    const directives = [VERBOSITY_DIRECTIVES[verbosity], TUTOR_STYLE_DIRECTIVES[tutorStyle]].filter(Boolean);
+    if (directives.length > 0) {
+      systemPrompt = systemPrompt + '\n\n' + directives.join(' ');
+    }
 
     const claudeMessages = messages.map(m => ({
       role: m.r === 'ai' ? 'assistant' : 'user',
