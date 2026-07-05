@@ -1295,26 +1295,7 @@ body::after{
 </section>
 
 <!-- ============ PRICING ============ -->
-<script>
-window.confetti=(function(){
-  var cvs=document.createElement('canvas');
-  cvs.style.cssText='position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:99999;';
-  var ctx2d,raf,parts=[];
-  function init(){if(!cvs.parentNode)document.body.appendChild(cvs);cvs.width=innerWidth;cvs.height=innerHeight;ctx2d=cvs.getContext('2d');}
-  function rnd(a,b){return a+Math.random()*(b-a);}
-  return function(o){
-    o=o||{};init();
-    var n=o.particleCount||80,org=o.origin||{x:.5,y:.5},cols=o.colors||['#173D2D','#1E4A38','#2C5E45','#8FCBA9','#B8E04A'],sp=(o.spread||70)*Math.PI/180,vel=o.startVelocity||30,sc=o.scalar||1,tk=o.ticks||200;
-    for(var i=0;i<n;i++){var ang=-Math.PI/2+rnd(-sp/2,sp/2),v=rnd(vel*.6,vel)*sc;parts.push({x:org.x*innerWidth,y:org.y*innerHeight,vx:Math.cos(ang)*v,vy:Math.sin(ang)*v,col:cols[0|Math.random()*cols.length],sz:rnd(6,10)*sc,rot:rnd(0,360),rv:rnd(-6,6),life:tk,maxLife:tk,sq:Math.random()>.5});}
-    if(raf)return;
-    raf=requestAnimationFrame(function step(){
-      ctx2d.clearRect(0,0,cvs.width,cvs.height);
-      parts=parts.filter(function(p){p.x+=p.vx;p.y+=p.vy;p.vy+=0.35;p.vx*=0.99;p.rot+=p.rv;p.life--;var al=Math.min(1,p.life/30);ctx2d.save();ctx2d.globalAlpha=al;ctx2d.fillStyle=p.col;ctx2d.translate(p.x,p.y);ctx2d.rotate(p.rot*Math.PI/180);if(p.sq){ctx2d.fillRect(-p.sz/2,-p.sz/3,p.sz,p.sz*.6);}else{ctx2d.beginPath();ctx2d.arc(0,0,p.sz/2,0,Math.PI*2);ctx2d.fill();}ctx2d.restore();return p.life>0;});
-      if(parts.length){raf=requestAnimationFrame(step);}else{raf=null;ctx2d.clearRect(0,0,cvs.width,cvs.height);}
-    });
-  };
-})();
-</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/canvas-confetti/1.9.3/confetti.browser.min.js" crossorigin="anonymous"></script>
 <section class="sec" id="pricing">
   <div class="wrap">
     <div class="head center">
