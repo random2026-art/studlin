@@ -502,7 +502,8 @@ body::after{
 .cmp-cell.bad .ci{color:var(--cream-faint);}
 .cmp-mark{width:20px;height:20px;border-radius:50%;flex:none;display:grid;place-items:center;margin-top:1px;}
 .cmp-mark svg{width:11px;height:11px;}
-.cmp-cell.good .cmp-mark{background:#B8E04A;color:#0A1310;box-shadow:0 4px 12px -4px rgba(184,224,74,0.5);}
+.cmp-cell.good .cmp-mark{background:#B8E04A;color:#0A1310;box-shadow:0 4px 12px -4px rgba(184,224,74,0.45);}
+.cmp-cell.good .ci:nth-child(even) .cmp-mark{background:#173D2D;color:#B8E04A;box-shadow:0 4px 12px -4px rgba(23,61,45,0.35);}
 .cmp-cell.bad .cmp-mark{background:rgba(22,36,28,0.07);color:var(--cream-faint);}
 .cmp-mob{display:none;font-family:var(--mono);font-size:10.5px;letter-spacing:0.14em;text-transform:uppercase;margin-bottom:3px;}
 .cmp-cell.good .cmp-mob{color:var(--lime);}
@@ -542,7 +543,8 @@ body::after{
 .cpt-v{padding:15px 12px;display:flex;align-items:center;justify-content:center;text-align:center;border-bottom:1px solid var(--line-2);border-left:1px solid var(--line-2);font-size:13px;color:var(--cream-dim);}
 .cpt-v.txt{font-family:var(--mono);font-size:12px;letter-spacing:-0.01em;color:var(--cream);}
 .cpt-v.col-pro.txt{color:var(--lime);}
-.cpt-yes{width:25px;height:25px;border-radius:50%;background:var(--lime);color:var(--ink);display:grid;place-items:center;}
+.cpt-yes{width:25px;height:25px;border-radius:50%;background:#173D2D;color:#B8E04A;display:grid;place-items:center;}
+.cpt-v:nth-child(4n+3) .cpt-yes{background:#B8E04A;color:#0A1310;}
 .cpt-yes svg{width:13px;height:13px;}
 .cpt-no{width:15px;height:2px;border-radius:2px;background:rgba(22,36,28,0.2);}
 .cpt-foot{padding:24px 20px;border-left:1px solid var(--line-2);display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:8px;}
@@ -571,7 +573,8 @@ body::after{
 .plan .pdesc{font-size:14px;color:var(--cream-dim);margin-bottom:24px;line-height:1.5;}
 .plan ul{list-style:none;margin:0 0 28px;padding:0;display:flex;flex-direction:column;gap:11px;}
 .plan li{display:flex;gap:10px;font-size:14px;align-items:flex-start;color:var(--cream);}
-.plan li .ck2{width:19px;height:19px;border-radius:50%;background:var(--lime);color:var(--ink);display:grid;place-items:center;flex:none;margin-top:1px;}
+.plan li .ck2{width:19px;height:19px;border-radius:50%;background:#B8E04A;color:#0A1310;display:grid;place-items:center;flex:none;margin-top:1px;box-shadow:0 3px 10px -4px rgba(184,224,74,0.5);}
+.plan li:nth-child(even) .ck2{background:#173D2D;color:#B8E04A;box-shadow:0 3px 10px -4px rgba(23,61,45,0.35);}
 .plan .btn{margin-top:auto;justify-content:center;width:100%;}
 
 /* ============ FAQ ============ */
@@ -580,7 +583,7 @@ body::after{
 .qitem.open{border-color:rgba(184,224,74,0.3);}
 .qq{display:flex;align-items:center;justify-content:space-between;gap:24px;width:100%;padding:22px 26px;font-size:17px;font-weight:500;color:var(--cream);text-align:left;}
 .qq .ic{width:30px;height:30px;flex:none;border-radius:50%;background:rgba(22,36,28,0.06);display:grid;place-items:center;transition:all .3s;}
-.qitem.open .qq .ic{transform:rotate(45deg);background:var(--lime);color:var(--ink);}
+.qitem.open .qq .ic{transform:rotate(45deg);background:#173D2D;color:#B8E04A;}
 .qa{max-height:0;overflow:hidden;transition:max-height .4s cubic-bezier(.2,.8,.2,1);}
 .qitem.open .qa{max-height:240px;}
 .qa-in{padding:0 26px 24px;font-size:15px;line-height:1.65;color:var(--cream-dim);}
@@ -743,8 +746,7 @@ body::after{
 .sec-eyebrow{color:#2C5E45 !important;}
 /* marquee \u00d7 separators -> faint ink */
 .marq-item .x{color:rgba(22,36,28,0.26) !important;}
-/* checkmarks (plans + compare table) -> lime w/ dark ink tick */
-.plan li .ck2,.cpt-yes{background:#B8E04A !important;color:#0A1310 !important;box-shadow:0 4px 12px -4px rgba(184,224,74,0.5) !important;}
+/* checkmarks handled individually above with alternating styles */
 /* pricing popular badges + pro accents -> forest */
 .plan-tag,.cpt-h .rec{background:#173D2D !important;color:#F3F1E7 !important;}
 .cpt-h.col-pro{box-shadow:inset 0 3px 0 0 #173D2D !important;}
