@@ -155,6 +155,7 @@ function StepSignup({ state, set, advance }) {
           const result = await firebase.auth().signInWithCredential(credential);
           const u = result.user;
           set(s=>({...s, provider:"google", name:u.displayName||s.name, email:u.email||s.email}));
+          if(window.posthog){posthog.identify(u.uid,{email:u.email,name:u.displayName||"",provider:"google"});posthog.capture("signup_completed",{method:"google"});}
           advance(true);
         } catch(err) {
           setAuthError(ERR_MAP[err.code]||(err.message||"Sign-up failed."));
@@ -182,6 +183,7 @@ function StepSignup({ state, set, advance }) {
     try {
       const cred = await firebase.auth().createUserWithEmailAndPassword(state.email, state.password);
       await cred.user.updateProfile({ displayName: state.name.trim() });
+      if(window.posthog){posthog.identify(cred.user.uid,{email:state.email,name:state.name.trim(),provider:"email"});posthog.capture("signup_completed",{method:"email"});}
       try {
         const token = await cred.user.getIdToken();
         await fetch("/api/send-verification", { method: "POST", headers: { Authorization: "Bearer " + token } });
@@ -403,13 +405,21 @@ function App() {
     if (u) {
       try {
         await firebase.firestore().collection('users').doc(u.uid).set({
+          name: u.displayName || state.name || "",
+          email: u.email || state.email || "",
           school: (state.school||"").trim(),
           status: state.status || "",
           affiliation: (state.school||"").trim(),
+          provider: u.providerData && u.providerData[0] ? u.providerData[0].providerId : "unknown",
           onboarded: true,
+          onboardedAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         }, { merge: true });
       } catch(e) {}
+      if(window.posthog){
+        posthog.capture("onboarding_completed",{status:state.status,school:(state.school||"").trim()});
+        posthog.setPersonProperties({status:state.status,school:(state.school||"").trim(),onboarded:true});
+      }
     }
     window.location.href = "Studlin Web App.html";
   };
