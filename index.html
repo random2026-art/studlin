@@ -547,7 +547,7 @@ body::after{
 .cpt-yes{width:25px;height:25px;border-radius:50%;background:#173D2D;color:#B8E04A;display:grid;place-items:center;}
 .cpt-v:nth-child(4n+3) .cpt-yes{background:#B8E04A;color:#0A1310;}
 .cpt-yes svg{width:13px;height:13px;}
-.cpt-no{width:15px;height:2px;border-radius:2px;background:rgba(22,36,28,0.2);}
+.cpt-no{display:none;}
 .cpt-foot{padding:24px 20px;border-left:1px solid var(--line-2);display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:8px;}
 .cpt-foot.lbl{border-left:none;align-items:flex-start;justify-content:center;}
 .cpt-foot .fnote{font-size:13px;color:var(--cream-dim);line-height:1.5;}
@@ -1298,7 +1298,7 @@ body::after{
 </section>
 
 <!-- ============ PRICING ============ -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/canvas-confetti/1.9.3/confetti.browser.min.js" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/canvas-confetti/1.9.4/confetti.min.js" crossorigin="anonymous"></script>
 <section class="sec" id="pricing">
   <div class="wrap">
     <div class="head center">
@@ -1362,7 +1362,7 @@ body::after{
         <div class="pc-desc">Maximum firepower. No limits, ever.</div>
       </div>
     </div>
-    <div class="pricing-foot">Most students juggle 4–6 apps. Studlin is all of them in one, starting at <b>$0</b>.</div>
+    <div class="pricing-foot">Most students juggle 4 to 6 apps. Studlin is all of them in one, starting at <b>$0</b>.</div>
   </div>
 </section>
 
@@ -1958,7 +1958,7 @@ body::after{
 
   // Demo video modal
   // TODO: replace YOUTUBE_VIDEO_ID with your actual YouTube video ID
-  var DEMO_VIDEO_ID = 'YOUTUBE_VIDEO_ID';
+  var DEMO_VIDEO_ID = 'ysX4UfLFQ3M';
   var demoModal = document.getElementById('demoModal');
   var demoIframe = document.getElementById('demoIframe');
   function openDemoModal(){
