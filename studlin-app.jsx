@@ -601,6 +601,11 @@ const StatNum = ({label,value,sub,accent,style={}}) => (
 // ─── PERSISTENCE + MONETIZATION HELPERS ──────────────────────────────────────
 const lsGet=(k,d)=>{try{const v=localStorage.getItem("studlin-"+k);return v===null?d:JSON.parse(v);}catch(e){return d;}};
 const lsSet=(k,v)=>{try{localStorage.setItem("studlin-"+k,JSON.stringify(v));}catch(e){}};
+// Read the user's AI Tutor preferences (Settings > Study preferences) for
+// attaching to genuine chat/tutoring /api/chat calls only — one-shot utility
+// generations (citations, grammar, flashcard gen, etc.) never call this, so
+// their output is never affected by these style settings.
+const getAiPrefs=()=>({verbosity:lsGet("pref-verb","Balanced"),tutorStyle:lsGet("pref-tutorStyle","Socratic")});
 const SUBJECT_COLORS=["#D9806B","#7BACDF","#A691DB","#5FCBA8","#DCA64A","#7880A8","#3ECF8E","#FF8A80","#81C784","#CE93D8"];
 const DEFAULT_SUBJECTS=[
   {id:"chem",label:"Chemistry",color:"#D9806B"},
@@ -612,6 +617,135 @@ const DEFAULT_SUBJECTS=[
 ];
 const getSubjects=()=>lsGet("user-subjects",DEFAULT_SUBJECTS);
 const saveSubjects=(s)=>lsSet("user-subjects",s);
+
+// ─── SCHOOL DIRECTORY (mock, for the searchable school picker) ──────────────
+// Flat mock list of selectable school names. Exactly two entries
+// (DEMO_SCHOOL_COLLEGE, DEMO_SCHOOL_HS — see the institutional demo section)
+// are wired to real mock class data; every other entry here is just a
+// selectable name with no further behavior.
+const SCHOOL_DIRECTORY=[
+  "Harvard University","Lincoln High School","Stanford University","New York University",
+  "UC Berkeley","UCLA","MIT","Lehigh University","University of Michigan",
+  "Ohio State University","Georgia Tech","Boston University",
+  "Roosevelt High School","Jefferson High School","Central High School",
+  "Riverside High School","Franklin High School","University of Texas at Austin",
+  "Penn State University","Arizona State University","Northwestern University",
+  "Washington High School","University of Florida","Miami Dade College",
+];
+// Searchable school picker — type-to-filter + click-to-select, same shape as
+// the friend-search pattern used in Studlin Network (text input + filtered
+// list). Typing always calls onChange immediately, so a school that isn't in
+// the mock directory is never blocked — the "fallback" is structural, not a
+// separate confirm step, which matters since most real students' schools
+// won't be in this small demo list.
+const SchoolSelect=({value,onChange,placeholder,theme})=>{
+  const [q,setQ]=useState(value||"");
+  const [open,setOpen]=useState(false);
+  useEffect(()=>{setQ(value||"");},[value]);
+  const matches=(q.trim()?SCHOOL_DIRECTORY.filter(s=>s.toLowerCase().includes(q.toLowerCase())):[]).slice(0,6);
+  const th=theme||{bg:T.card2,border:T.border,text:T.text,muted:T.muted};
+  const pick=(name)=>{setQ(name);onChange(name);setOpen(false);};
+  return (
+    <div style={{position:"relative"}}>
+      <input
+        value={q}
+        onChange={e=>{setQ(e.target.value);onChange(e.target.value);setOpen(true);}}
+        onFocus={()=>setOpen(true)}
+        onBlur={()=>setTimeout(()=>setOpen(false),150)}
+        placeholder={placeholder||"Search or type your school"}
+        style={{width:"100%",background:th.bg,border:`1px solid ${th.border}`,borderRadius:8,padding:"10px 12px",color:th.text,fontSize:13.5,fontFamily:T.font,outline:"none",boxSizing:"border-box"}}
+      />
+      {open&&q.trim()&&(
+        <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,zIndex:20,background:th.bg,border:`1px solid ${th.border}`,borderRadius:8,overflow:"hidden",boxShadow:"0 12px 28px -12px rgba(0,0,0,0.35)"}}>
+          {matches.length>0
+            ? matches.map(name=>(
+                <div key={name} onMouseDown={e=>e.preventDefault()} onClick={()=>pick(name)} style={{padding:"9px 12px",fontSize:13,color:th.text,cursor:"pointer",borderBottom:`1px solid ${th.border}`}}>{name}</div>
+              ))
+            : <div onMouseDown={e=>e.preventDefault()} onClick={()=>setOpen(false)} style={{padding:"9px 12px",fontSize:12.5,color:th.muted,cursor:"pointer"}}>Can't find your school? Use "{q}" instead</div>
+          }
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── INSTITUTIONAL LIVE-DEMO CLASS ENGINE ────────────────────────────────────
+// Pitch/demo material for university and high-school conversations — wired to
+// exactly these two SCHOOL_DIRECTORY entries. Every other school is just a
+// name with no further behavior (see ExploreClassesCard's mount point in
+// Profile(), gated on an exact affiliation match against these two strings).
+const DEMO_SCHOOL_COLLEGE="Harvard University";
+const DEMO_SCHOOL_HS="Lincoln High School";
+
+// Event dates are stored as `dayOffset` (days from "today") and resolved to a
+// real date only at render/inject time, so the demo never looks stale no
+// matter when someone opens the app.
+const resolveDemoDate=(dayOffset)=>dayKey(new Date(Date.now()+dayOffset*86400000));
+const fmtDemoDate=(k)=>{const p=k.split("-");return MON_SHORT[+p[1]-1]+" "+(+p[2]);};
+
+const DEMO_CLASSES_COLLEGE=[
+  {code:"ME 101",title:"Intro to Mechanical Engineering",instructor:"Prof. Alan Reyes",events:[
+    {title:"Syllabus Quiz",dayOffset:2,time:"09:00",kind:"deadline"},
+    {title:"Problem Set 1 Due",dayOffset:5,time:"23:59",kind:"deadline"},
+    {title:"Lab 1 — Statics",dayOffset:7,time:"14:00",kind:"class",duration:120},
+    {title:"Midterm Exam 1",dayOffset:14,time:"10:00",kind:"exam",duration:90},
+    {title:"Problem Set 2 Due",dayOffset:19,time:"23:59",kind:"deadline"},
+    {title:"Lab 2 — Dynamics",dayOffset:21,time:"14:00",kind:"class",duration:120},
+    {title:"Problem Set 3 Due",dayOffset:26,time:"23:59",kind:"deadline"},
+    {title:"Midterm Exam 2",dayOffset:35,time:"10:00",kind:"exam",duration:90},
+    {title:"Lab 3 — Thermodynamics",dayOffset:38,time:"14:00",kind:"class",duration:120},
+    {title:"Problem Set 4 Due",dayOffset:42,time:"23:59",kind:"deadline"},
+    {title:"Design Project Proposal Due",dayOffset:47,time:"23:59",kind:"deadline"},
+    {title:"Lab 4 — Fluid Mechanics",dayOffset:49,time:"14:00",kind:"class",duration:120},
+    {title:"Project 1",dayOffset:52,time:"23:59",kind:"deadline"},
+    {title:"Final Exam",dayOffset:63,time:"09:00",kind:"exam",duration:120},
+    {title:"Final Project Presentation",is_TBD:true,kind:"deadline"},
+  ]},
+  {code:"BUS 210",title:"Business Management",instructor:"Prof. Diane Cho",events:[
+    {title:"Syllabus Acknowledgement",dayOffset:1,time:"23:59",kind:"deadline"},
+    {title:"Case Study 1 Due",dayOffset:6,time:"23:59",kind:"deadline"},
+    {title:"Group Formation Deadline",dayOffset:8,time:"23:59",kind:"deadline"},
+    {title:"Midterm Exam 1",dayOffset:15,time:"11:00",kind:"exam",duration:90},
+    {title:"Case Study 2 Due",dayOffset:20,time:"23:59",kind:"deadline"},
+    {title:"Guest Speaker Session",dayOffset:23,time:"13:00",kind:"class",duration:75},
+    {title:"Case Study 3 Due",dayOffset:27,time:"23:59",kind:"deadline"},
+    {title:"Midterm Exam 2",dayOffset:36,time:"11:00",kind:"exam",duration:90},
+    {title:"Team Strategy Memo Due",dayOffset:41,time:"23:59",kind:"deadline"},
+    {title:"Case Study 4 Due",dayOffset:44,time:"23:59",kind:"deadline"},
+    {title:"Project 1",dayOffset:52,time:"23:59",kind:"deadline"},
+    {title:"Peer Evaluation Due",dayOffset:55,time:"23:59",kind:"deadline"},
+    {title:"Final Exam",dayOffset:64,time:"11:00",kind:"exam",duration:120},
+    {title:"Capstone Deck Due",dayOffset:66,time:"23:59",kind:"deadline"},
+    {title:"Final Project Presentation",is_TBD:true,kind:"deadline"},
+  ]},
+  {code:"CS 50",title:"Introduction to Computer Science",instructor:"Prof. Meredith Okoye",events:[
+    {title:"Problem Set 0",dayOffset:4,time:"23:59",kind:"deadline"},
+    {title:"Problem Set 1",dayOffset:11,time:"23:59",kind:"deadline"},
+    {title:"Midterm Exam",dayOffset:22,time:"09:00",kind:"exam",duration:90},
+    {title:"Problem Set 2",dayOffset:29,time:"23:59",kind:"deadline"},
+    {title:"Final Project Proposal",is_TBD:true,kind:"deadline"},
+  ]},
+];
+
+// High-school syllabus events are week-scoped, not semester-scoped — framed
+// as a "Teacher's Weekly Agenda" that refreshes rather than a fixed plan.
+const DEMO_CLASSES_HS=[
+  {code:"AP-PHYS",title:"AP Physics",instructor:"Mr. Dale Whitfield",events:[
+    {title:"Momentum Problem Set",dayOffset:1,time:"23:59",kind:"deadline"},
+    {title:"Lab: Projectile Motion",dayOffset:2,time:"10:00",kind:"class",duration:50},
+    {title:"Reading: Ch. 9 Rotational Motion",dayOffset:3,time:"23:59",kind:"deadline"},
+    {title:"Quiz: Energy Conservation",dayOffset:4,time:"09:00",kind:"exam",duration:30},
+    {title:"Lab Report Due",dayOffset:5,time:"23:59",kind:"deadline"},
+  ]},
+  {code:"HON-ENG",title:"Honors English",instructor:"Ms. Priya Nair",events:[
+    {title:"Reading: The Great Gatsby Ch. 4-6",dayOffset:1,time:"23:59",kind:"deadline"},
+    {title:"Socratic Seminar",dayOffset:2,time:"11:00",kind:"class",duration:45},
+    {title:"Essay Draft 1 Due",dayOffset:4,time:"23:59",kind:"deadline"},
+    {title:"Vocabulary Quiz",dayOffset:5,time:"09:30",kind:"exam",duration:20},
+  ]},
+];
+
+const DEMO_CLASSES_BY_SCHOOL={[DEMO_SCHOOL_COLLEGE]:DEMO_CLASSES_COLLEGE,[DEMO_SCHOOL_HS]:DEMO_CLASSES_HS};
 
 // ─── WEEKLY ROUTINE ("Time Shields") ─────────────────────────────────────────
 // A routine rule is a recurring commitment: {id,title,kind,days,startTime,
@@ -1427,7 +1561,7 @@ function AiChat() {
     const stepTimer=setInterval(()=>{stepIdx++;if(stepIdx<thinkSteps.length)setThinkStep(thinkSteps[stepIdx]);},1200);
     try{
       const apiMsgs=newMsgs.map(m=>({r:m.r,t:m._ai||m.t}));
-      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:apiMsgs,model})});
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:apiMsgs,model,...getAiPrefs()})});
       const data=await res.json();
       clearInterval(stepTimer);
       setThinkStep("");
@@ -2097,6 +2231,53 @@ function Flashcards() {
     setTimeout(()=>{setSendDeckOpen(false);setSendDeckTarget("");setSendDeckId(null);setSendDeckStatus("");},1800);
   };
 
+  // Live username autocomplete for "Send deck to a friend" — same
+  // prefix-range Firestore query pattern Studlin Network's own search uses,
+  // so typing "v" toward "vene" narrows to real registered usernames.
+  const [sendDeckResults,setSendDeckResults]=useState([]);
+  const [sendDeckSearching,setSendDeckSearching]=useState(false);
+  const [sendDeckDropdownOpen,setSendDeckDropdownOpen]=useState(false);
+  useEffect(()=>{
+    const raw=sendDeckTarget.trim().toLowerCase().replace(/^@/,"");
+    if(!raw){setSendDeckResults([]);setSendDeckSearching(false);return;}
+    setSendDeckSearching(true);
+    let active=true;
+    const myUid=firebase.auth().currentUser?.uid||null;
+    const t=setTimeout(async()=>{
+      try{
+        const snap=await fsdb().collection('profiles').where('usernameLower','>=',raw).where('usernameLower','<=',raw+String.fromCharCode(0xf8ff)).limit(6).get();
+        if(!active)return;
+        setSendDeckResults(snap.docs.map(d=>({uid:d.id,...d.data()})).filter(u=>u.uid!==myUid));
+      }catch(e){if(active)setSendDeckResults([]);}
+      if(active)setSendDeckSearching(false);
+    },250);
+    return ()=>{active=false;clearTimeout(t);};
+  },[sendDeckTarget]);
+
+  // Edit deck — rename + correct individual front/back card pairs, opened via
+  // the card's Edit button or a double-click on its title.
+  const [editDeckOpen,setEditDeckOpen]=useState(false);
+  const [editDeckId,setEditDeckId]=useState(null);
+  const [editDeckName,setEditDeckName]=useState("");
+  const [editDeckCards,setEditDeckCards]=useState([]);
+  const openEditDeck=(deck)=>{
+    setEditDeckId(deck.id);
+    setEditDeckName(deck.name);
+    setEditDeckCards((deck.cards||[]).map(c=>({...c})));
+    setEditDeckOpen(true);
+  };
+  const updateEditCard=(i,field,value)=>setEditDeckCards(prev=>prev.map((c,idx)=>idx===i?{...c,[field]:value}:c));
+  const deleteEditCard=(i)=>setEditDeckCards(prev=>prev.filter((_,idx)=>idx!==i));
+  const addEditCard=()=>setEditDeckCards(prev=>[...prev,{q:"",a:""}]);
+  const saveEditDeck=()=>{
+    const name=editDeckName.trim()||"Untitled deck";
+    const cards=editDeckCards.filter(c=>c.q.trim()||c.a.trim());
+    const next=deckList.map(d=>d.id===editDeckId?{...d,name,cards,count:cards.length}:d);
+    setDeckList(next);lsSet("decks",next);
+    if(studyDeck&&studyDeck.id===editDeckId)setStudyDeck({...studyDeck,name,cards});
+    setEditDeckOpen(false);
+  };
+
   const studyCards=studyDeck?studyDeck.cards:[];
   const curCard=studyCards[idx];
 
@@ -2114,10 +2295,51 @@ function Flashcards() {
           :<>
               {sendDeckId&&(()=>{const d=deckList.find(x=>x.id===sendDeckId);return d?<div style={{padding:"12px 14px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`,marginBottom:14}}><div style={{fontSize:12,fontWeight:600,color:T.white,marginBottom:2}}>{d.name}</div><div style={{fontSize:11,color:T.muted}}>{d.cards?d.cards.length:0} cards</div></div>:null;})()}
               <Field label="Friend's Studlin username or email">
-                <Input placeholder="e.g. @alex or alex@school.edu" value={sendDeckTarget} onChange={e=>setSendDeckTarget(e.target.value)} autoFocus />
+                <div style={{position:"relative"}}>
+                  <Input placeholder="e.g. @alex or alex@school.edu" value={sendDeckTarget}
+                    onChange={e=>{setSendDeckTarget(e.target.value);setSendDeckDropdownOpen(true);}}
+                    onFocus={()=>setSendDeckDropdownOpen(true)}
+                    onBlur={()=>setTimeout(()=>setSendDeckDropdownOpen(false),150)}
+                    autoFocus />
+                  {sendDeckDropdownOpen&&sendDeckTarget.trim()&&(
+                    <div style={{position:"absolute",top:"calc(100% + 4px)",left:0,right:0,zIndex:20,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,overflow:"hidden",boxShadow:"0 12px 28px -12px rgba(0,0,0,0.35)"}}>
+                      {sendDeckSearching
+                        ? <div style={{padding:"10px 12px",fontSize:12,color:T.muted}}>Searching…</div>
+                        : sendDeckResults.length>0
+                          ? sendDeckResults.map(u=>(
+                              <div key={u.uid} onMouseDown={e=>e.preventDefault()} onClick={()=>{setSendDeckTarget("@"+(u.username||u.uid));setSendDeckDropdownOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",cursor:"pointer",borderBottom:`1px solid ${T.border}`}}>
+                                <Av initials={(u.name||"S").split(" ").map(x=>x[0]).join("")} color={T.lime} size={26} picUrl="" />
+                                <div style={{minWidth:0}}>
+                                  <div style={{fontSize:12.5,fontWeight:600,color:T.white}}>{u.name||"Studlin User"}</div>
+                                  <div style={{fontSize:10.5,color:T.muted}}>@{u.username}{u.school?" · "+u.school:""}</div>
+                                </div>
+                              </div>
+                            ))
+                          : <div style={{padding:"10px 12px",fontSize:12,color:T.muted}}>No matches.</div>
+                      }
+                    </div>
+                  )}
+                </div>
               </Field>
             </>
         }
+      </Modal>
+      <Modal open={editDeckOpen} onClose={()=>setEditDeckOpen(false)} title="Edit deck" sub="Rename the deck or fix any card." width={540}
+        footer={<><Btn variant="subtle" onClick={()=>setEditDeckOpen(false)}>Cancel</Btn><Btn onClick={saveEditDeck}>Save changes</Btn></>}>
+        <Field label="Deck title"><Input value={editDeckName} onChange={e=>setEditDeckName(e.target.value)} autoFocus /></Field>
+        <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,margin:"14px 0 8px"}}>Cards ({editDeckCards.length})</div>
+        <div style={{maxHeight:320,overflowY:"auto",display:"flex",flexDirection:"column",gap:8}}>
+          {editDeckCards.map((c,i)=>(
+            <div key={i} style={{display:"flex",gap:6,alignItems:"flex-start",padding:8,background:T.card2,borderRadius:8,border:`1px solid ${T.border}`}}>
+              <div style={{flex:1,display:"flex",flexDirection:"column",gap:6}}>
+                <Textarea value={c.q} onChange={e=>updateEditCard(i,"q",e.target.value)} placeholder="Front" style={{minHeight:44}} />
+                <Textarea value={c.a} onChange={e=>updateEditCard(i,"a",e.target.value)} placeholder="Back" style={{minHeight:44}} />
+              </div>
+              <button onClick={()=>deleteEditCard(i)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,padding:4,flexShrink:0}}>×</button>
+            </div>
+          ))}
+        </div>
+        <BtnSm variant="subtle" onClick={addEditCard} style={{marginTop:10}}>{Icon.plus} Add card</BtnSm>
       </Modal>
       <Modal open={newOpen} onClose={()=>{setNewOpen(false);stopRec();}} title="Create a flashcard deck" sub="Build manually, from a file, YouTube video, or recorded lecture." width={580}
         footer={<><Btn variant="subtle" onClick={()=>{setNewOpen(false);stopRec();}}>Cancel</Btn><Btn onClick={createDeck} disabled={aiLoading||ytFetching}>{aiLoading?"Generating cards...":ytFetching?"Detecting video...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.layers,"Create deck")}</Btn></>}>
@@ -2205,10 +2427,11 @@ function Flashcards() {
             const renderDeckCard=(d,i)=>(
               <Card key={d.id||i} style={{cursor:"pointer",position:"relative"}}>
                 <button onClick={(e)=>{e.stopPropagation();deleteDeck(d.id);}} style={{position:"absolute",top:12,right:12,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14}}>x</button>
-                <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>{d.name}</div>
+                <div onDoubleClick={(e)=>{e.stopPropagation();openEditDeck(d);}} title="Double-click to edit" style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>{d.name}</div>
                 <div style={{fontSize:11,color:T.muted,marginBottom:14}}>{d.cards?d.cards.length:d.count} cards{d.source==="imported"&&<span style={{color:T.teal,fontWeight:600}}> · from {d.importedFrom}</span>}</div>
                 <div style={{display:"flex",gap:6}}>
                   <BtnSm onClick={()=>{setStudyDeck(d);setTab("study");setIdx(0);setFlipped(false);}}>Study now</BtnSm>
+                  <BtnSm variant="ghost" onClick={(e)=>{e.stopPropagation();openEditDeck(d);}}>{Icon.pen} Edit</BtnSm>
                   <BtnSm variant="ghost" onClick={(e)=>{e.stopPropagation();sendDeck(d);}}>{Icon.send} Send</BtnSm>
                 </div>
               </Card>
@@ -2282,6 +2505,12 @@ function Notes(){
   const [tutorMsgs,setTutorMsgs]=useState([]);
   const [tutorInput,setTutorInput]=useState("");
   const [tutorSending,setTutorSending]=useState(false);
+
+  // AI study-tools panel — turn the active note into flashcards, a quiz, or a summary
+  const [panelLoading,setPanelLoading]=useState(null); // "cards" | "quiz" | "summary" | null
+  const [panelMsg,setPanelMsg]=useState("");
+  const [quizOverlay,setQuizOverlay]=useState(null); // {questions,idx,picked,score,done}
+  const [summaryOverlay,setSummaryOverlay]=useState(null); // array of bullet strings
 
   useEffect(()=>{if(!rec)return;const id=setInterval(()=>setRecSecs(x=>x+1),1000);return()=>clearInterval(id);},[rec]);
   const fmtRec=(x)=>String(Math.floor(x/60)).padStart(2,"0")+":"+String(x%60).padStart(2,"0");
@@ -2360,7 +2589,7 @@ function Notes(){
       const res=await authFetch("/api/chat",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({messages:[{r:"user",t:analysisPrompt}],model:"standard"})
+        body:JSON.stringify({messages:[{r:"user",t:analysisPrompt}],model:"standard",...getAiPrefs()})
       });
       if(!res.ok){
         const errData=await res.json().catch(()=>({}));
@@ -2408,7 +2637,7 @@ function Notes(){
       const res=await authFetch("/api/chat",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({messages:apiMsgs,model:"standard"})
+        body:JSON.stringify({messages:apiMsgs,model:"standard",...getAiPrefs()})
       });
       if(!res.ok){
         const errData=await res.json().catch(()=>({}));
@@ -2554,6 +2783,69 @@ function Notes(){
     lsSet("tutor-flags",lsGet("tutor-flags",[]).filter(f=>f.id!==fid));
   };
 
+  // Plain-text extraction of the active note's canvas content, for feeding to the AI
+  const getNotePlainText=()=>{
+    if(sel===null||!editorRef.current)return "";
+    const tmp=document.createElement("div");tmp.innerHTML=editorRef.current.innerHTML;
+    return (tmp.textContent||tmp.innerText||"").trim();
+  };
+
+  const genFlashcardsFromNote=async()=>{
+    const text=getNotePlainText();
+    if(!text){setPanelMsg("This note is empty — write something first.");return;}
+    setPanelLoading("cards");setPanelMsg("");
+    try{
+      const prompt="Create 10 flashcards from these study notes. Format them as a JSON array where each card has a \"q\" key for the question and an \"a\" key for the answer. Return only the JSON array, no markdown fences.\n\n"+text.slice(0,15000);
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+      const data=await res.json();
+      let raw=(data.reply||"").replace(/```json?|```/g,"").trim();
+      const s=raw.indexOf("["),e=raw.lastIndexOf("]");
+      if(s>=0&&e>s)raw=raw.slice(s,e+1);
+      let cards=[];
+      try{const parsed=JSON.parse(raw);cards=Array.isArray(parsed)?parsed:[];}catch(pe){cards=[];}
+      if(cards.length===0){setPanelMsg("Couldn't generate cards. Try again.");setPanelLoading(null);return;}
+      const nd={id:String(Date.now()),name:activeNote.title,count:cards.length,done:0,color:colorOf(activeNote.tag),cards};
+      const decks=lsGet("decks",[]);
+      lsSet("decks",[nd,...decks]);
+      setPanelMsg("✓ Saved "+cards.length+" cards to Flashcards — \""+nd.name+"\"");
+    }catch(e){setPanelMsg("Something went wrong. Try again.");}
+    setPanelLoading(null);
+  };
+
+  const genQuizFromNote=async()=>{
+    const text=getNotePlainText();
+    if(!text){setPanelMsg("This note is empty — write something first.");return;}
+    setPanelLoading("quiz");setPanelMsg("");
+    try{
+      const prompt="Create a 5-question multiple-choice practice quiz from these study notes. Format as a JSON array where each item has \"question\" (string), \"options\" (array of exactly 4 strings), and \"correct\" (0-based index of the right option). Return only the JSON array, no markdown fences.\n\n"+text.slice(0,15000);
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+      const data=await res.json();
+      let raw=(data.reply||"").replace(/```json?|```/g,"").trim();
+      const s=raw.indexOf("["),e=raw.lastIndexOf("]");
+      if(s>=0&&e>s)raw=raw.slice(s,e+1);
+      let qs=[];
+      try{const parsed=JSON.parse(raw);qs=Array.isArray(parsed)?parsed.filter(q=>q&&q.question&&Array.isArray(q.options)&&q.options.length>=2):[];}catch(pe){qs=[];}
+      if(qs.length===0){setPanelMsg("Couldn't generate a quiz. Try again.");setPanelLoading(null);return;}
+      setQuizOverlay({questions:qs,idx:0,picked:null,score:0,done:false});
+    }catch(e){setPanelMsg("Something went wrong. Try again.");}
+    setPanelLoading(null);
+  };
+
+  const genSummaryFromNote=async()=>{
+    const text=getNotePlainText();
+    if(!text){setPanelMsg("This note is empty — write something first.");return;}
+    setPanelLoading("summary");setPanelMsg("");
+    try{
+      const prompt="Summarize these study notes into a concise, high-level bulleted summary for quick review — no more than 8 bullet points. Return only the bullet points as plain text lines, each starting with \"- \". No markdown headers, no extra commentary.\n\n"+text.slice(0,15000);
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
+      const data=await res.json();
+      const raw=(data.reply||"").trim();
+      const bullets=raw.split("\n").map(l=>l.replace(/^[-*•]\s*/,"").trim()).filter(Boolean);
+      setSummaryOverlay(bullets.length?bullets:["No summary available."]);
+    }catch(e){setPanelMsg("Something went wrong. Try again.");}
+    setPanelLoading(null);
+  };
+
   const activeNote=sel!==null?notes[sel]:null;
   const nid=activeNote?.id;
   const activeComments=nid?noteComments[nid]||[]:[];
@@ -2643,6 +2935,55 @@ function Notes(){
             {ytLoading&&<div style={{fontSize:11,color:T.lime,marginTop:4}}>Detecting video…</div>}
           </Field>
         )}
+      </Modal>
+
+      {/* ── PRACTICE QUIZ OVERLAY — generated from the active note ── */}
+      <Modal open={!!quizOverlay} onClose={()=>setQuizOverlay(null)} title="Practice Quiz" sub={activeNote?activeNote.title:""} width={520}>
+        {quizOverlay&&!quizOverlay.done&&(()=>{
+          const q=quizOverlay.questions[quizOverlay.idx];
+          const picked=quizOverlay.picked;
+          return (
+            <div>
+              <div style={{fontSize:11,color:T.muted,marginBottom:8}}>Question {quizOverlay.idx+1} of {quizOverlay.questions.length}</div>
+              <div style={{fontSize:14,fontWeight:600,color:T.white,marginBottom:14,lineHeight:1.5}}>{q.question}</div>
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {q.options.map((opt,i)=>{
+                  const isCorrect=i===q.correct;
+                  const show=picked!==null;
+                  let border=T.border,bg=T.card2,color=T.text;
+                  if(show&&isCorrect){border=T.teal;bg=T.teal+"18";color=T.teal;}
+                  else if(show&&picked===i&&!isCorrect){border=T.red;bg=T.red+"14";color=T.red;}
+                  return (
+                    <button key={i} disabled={picked!==null} onClick={()=>setQuizOverlay(qo=>({...qo,picked:i,score:qo.score+(i===q.correct?1:0)}))} style={{textAlign:"left",padding:"10px 14px",borderRadius:8,border:`1px solid ${border}`,background:bg,color,cursor:picked!==null?"default":"pointer",fontFamily:T.font,fontSize:13}}>{opt}</button>
+                  );
+                })}
+              </div>
+              {picked!==null&&(
+                <div style={{marginTop:16,display:"flex",justifyContent:"flex-end"}}>
+                  <Btn onClick={()=>{
+                    const isLast=quizOverlay.idx>=quizOverlay.questions.length-1;
+                    if(isLast)setQuizOverlay(qo=>({...qo,done:true}));
+                    else setQuizOverlay(qo=>({...qo,idx:qo.idx+1,picked:null}));
+                  }}>{quizOverlay.idx>=quizOverlay.questions.length-1?"See results":"Next question →"}</Btn>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+        {quizOverlay&&quizOverlay.done&&(
+          <div style={{textAlign:"center",padding:"20px 0"}}>
+            <div style={{fontSize:32,fontWeight:800,color:T.lime,marginBottom:6}}>{quizOverlay.score}/{quizOverlay.questions.length}</div>
+            <div style={{fontSize:13,color:T.muted,marginBottom:16}}>Nice work — quiz complete.</div>
+            <Btn variant="subtle" onClick={()=>setQuizOverlay(null)}>Close</Btn>
+          </div>
+        )}
+      </Modal>
+
+      {/* ── SUMMARY OVERLAY — generated from the active note ── */}
+      <Modal open={!!summaryOverlay} onClose={()=>setSummaryOverlay(null)} title="Summary" sub={activeNote?activeNote.title:""} width={480}>
+        <ul style={{margin:0,paddingLeft:18,display:"flex",flexDirection:"column",gap:9}}>
+          {(summaryOverlay||[]).map((b,i)=><li key={i} style={{fontSize:13,color:T.text,lineHeight:1.5}}>{b}</li>)}
+        </ul>
       </Modal>
 
       {/* ── MAIN WORKSPACE LAYOUT ── */}
@@ -2781,6 +3122,15 @@ function Notes(){
                   />
                   {/* Placeholder hint when empty */}
                 </div>
+
+                {/* ── AI STUDY TOOLS — turn this note into flashcards, a quiz, or a summary ── */}
+                <div style={{display:"flex",alignItems:"center",gap:8,padding:"12px 20px",borderTop:`1px solid ${T.border}`,background:T.card2,flexWrap:"wrap"}}>
+                  <span style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.faint,marginRight:2}}>Turn into</span>
+                  <BtnSm variant="subtle" onClick={genFlashcardsFromNote} disabled={panelLoading!==null}>{panelLoading==="cards"?"Generating…":<>{Icon.layers} Create Flashcards</>}</BtnSm>
+                  <BtnSm variant="subtle" onClick={genQuizFromNote} disabled={panelLoading!==null}>{panelLoading==="quiz"?"Generating…":<>{Icon.check} Create Practice Quiz</>}</BtnSm>
+                  <BtnSm variant="subtle" onClick={genSummaryFromNote} disabled={panelLoading!==null}>{panelLoading==="summary"?"Generating…":<>{Icon.file} Generate Summary</>}</BtnSm>
+                  {panelMsg&&<span style={{fontSize:11,color:panelMsg.startsWith("✓")?T.teal:T.red,marginLeft:4}}>{panelMsg}</span>}
+                </div>
               </>
             ):(
               <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:380,gap:12}}>
@@ -2865,19 +3215,8 @@ function Notes(){
 
 // ─── FRIENDS & CHAT ──────────────────────────────────────────────────────────
 // ─── NETWORK: shared data + helpers ──────────────────────────────────────────
-// Presence is simulated locally (this app has no realtime multi-user backend yet —
-// every "friend" here is a mock profile, consistent with the rest of Studlin Network).
-const NETWORK_DIRECTORY=[
-  {n:"Devon Karu",h:"@devonk",s:"Lehigh University",online:true,presence:{state:"locked-in",subject:"Calculus",remainingMin:34}},
-  {n:"Priya Shah",h:"@priyas",s:"UC Berkeley",online:false,presence:{state:"offline"}},
-  {n:"Jordan Tran",h:"@jtran",s:"Lehigh University",online:true,presence:{state:"in-class"}},
-  {n:"Amara Okafor",h:"@amarao",s:"NYU",online:false,presence:{state:"offline"}},
-  {n:"Liam Chen",h:"@liamc",s:"Stanford University",online:true,presence:{state:"idle"}},
-  {n:"Sofia Diaz",h:"@sofiad",s:"Lehigh University",online:false,presence:{state:"offline"}},
-  {n:"Marcus Webb",h:"@marcusw",s:"UCLA",online:true,presence:{state:"locked-in",subject:"Organic Chem",remainingMin:12}},
-  {n:"Chloe Park",h:"@chloep",s:"MIT",online:false,presence:{state:"offline"}},
-  {n:"Riya Mehta",h:"@riyam",s:"Lehigh University",online:true,presence:{state:"idle"}},
-];
+// Presence is simulated locally (this app has no realtime multi-user backend yet
+// beyond the current user's own online/incognito status).
 const GROUP_DURATIONS=[{label:"1 week",days:7},{label:"2 weeks",days:14},{label:"1 month",days:30},{label:"2 months",days:60},{label:"3 months",days:90}];
 // Deterministic id for a 1:1 chat room — both sides compute the same id
 // from their two uids without a lookup, so the room can be created lazily
@@ -2894,6 +3233,21 @@ const isRoomUnread=(room,myUid)=>{
 };
 const isOnlineStatusOn=()=>lsGet("settings",{}).onlineStatus!==false;
 const isIncognitoOn=()=>lsGet("settings",{}).incognito===true;
+// Short two-tone chat chime — same raw Web Audio oscillator technique as
+// TaskTimerModal's playBeep, but a distinct, lighter tone so a new message
+// never sounds like the Pomodoro alarm.
+const playChatChime=()=>{
+  try{
+    const ctx=new(window.AudioContext||window.webkitAudioContext)();
+    const osc=ctx.createOscillator();const gain=ctx.createGain();
+    osc.connect(gain);gain.connect(ctx.destination);
+    osc.frequency.setValueAtTime(660,ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(880,ctx.currentTime+0.12);
+    gain.gain.setValueAtTime(0.22,ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.22);
+    osc.start(ctx.currentTime);osc.stop(ctx.currentTime+0.22);
+  }catch(e){}
+};
 function fmtGroupCountdown(expiresAt){
   if(!expiresAt)return null;
   const ms=expiresAt-Date.now();
@@ -2905,8 +3259,7 @@ function fmtGroupCountdown(expiresAt){
   return{expired:false,urgent:true,label:"today"};
 }
 // Live study-state sub-label for a friend's presence — masked to offline when
-// the friend has incognito on (simulated: NETWORK_DIRECTORY entries never set
-// this, but the current user's own incognito state reuses the same renderer).
+// the friend has incognito on.
 function presenceInfo(u,{incognito=false}={}){
   const p=incognito?{state:"offline"}:(u.presence||{state:u.online?"idle":"offline"});
   if(p.state==="locked-in")return{color:T.teal,text:"Locking In: "+p.subject+" ("+p.remainingMin+"m left)",joinable:true};
@@ -2915,7 +3268,7 @@ function presenceInfo(u,{incognito=false}={}){
   return{color:T.faint,text:"Offline",joinable:false};
 }
 
-function FriendsChat({onFriendRequestSent}={}){
+function FriendsChat({onFriendRequestSent,onActiveChatChange}={}){
   const [searchQ,setSearchQ]=useState("");
   const [searchFilter,setSearchFilter]=useState("All");
   const [inviteEmail,setInviteEmail]=useState("");
@@ -2946,6 +3299,15 @@ function FriendsChat({onFriendRequestSent}={}){
   const qrUrl="https://api.qrserver.com/v1/create-qr-code/?data="+encodeURIComponent(inviteLink)+"&size=150x150&color=AECE5E&bgcolor=0D120F&margin=10";
   const myUid=firebase.auth().currentUser?.uid||null;
 
+  // Reports which thread (if any) is actively open up to App(), so its
+  // cross-tab notification listener can suppress alerts for a thread the
+  // user is already looking at (Rule 1 of the notification router).
+  const roomIdOf=(target)=>target?(target.kind==="group"?target.group.id:(myUid&&target.user.uid?dmRoomId(myUid,target.user.uid):null)):null;
+  useEffect(()=>{
+    if(onActiveChatChange)onActiveChatChange(roomIdOf(chatTarget));
+    return ()=>{if(onActiveChatChange)onActiveChatChange(null);};
+  },[chatTarget,myUid]);
+
   // ── Live friend graph (Firestore `friendships` + `profiles`) ──────────────
   const [friends,setFriends]=useState([]); // accepted, either direction — {uid,n,h,s,online,presence}
   const [incomingReqs,setIncomingReqs]=useState([]); // pending, received by me — {id,senderId,n,h,s}
@@ -2963,6 +3325,28 @@ function FriendsChat({onFriendRequestSent}={}){
     online:false,
     presence:{state:"idle"},
   });
+
+  // ── Classmates at my school — real, auto-populated, replaces the old
+  // hardcoded NETWORK_DIRECTORY mock. Exact-match on schoolLower (not the
+  // prefix-range query the manual search box below uses), gated on the
+  // current user actually having a school set.
+  const mySchool=(getProfile().school||getProfile().affiliation||"").trim();
+  const [classmates,setClassmates]=useState([]);
+  const [classmatesLoading,setClassmatesLoading]=useState(false);
+  useEffect(()=>{
+    if(!myUid||!mySchool){setClassmates([]);return;}
+    let active=true;
+    setClassmatesLoading(true);
+    fsdb().collection('profiles').where('schoolLower','==',mySchool.toLowerCase()).limit(20).get()
+      .then(snap=>{
+        if(!active)return;
+        const results=snap.docs.map(d=>profileToFriend(d.id,d.data())).filter(u=>u.uid!==myUid);
+        setClassmates(results);
+      })
+      .catch(()=>{if(active)setClassmates([]);})
+      .finally(()=>{if(active)setClassmatesLoading(false);});
+    return ()=>{active=false;};
+  },[myUid,mySchool]);
 
   // Incoming pending requests — real-time via onSnapshot.
   useEffect(()=>{
@@ -3243,6 +3627,46 @@ function FriendsChat({onFriendRequestSent}={}){
         </div>
       </div>
 
+      {/* ── CLASSMATES AT MY SCHOOL — real, auto-populated ── */}
+      {mySchool&&(
+        <div style={{marginBottom:24}}>
+          <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8}}>Classmates at {mySchool}</div>
+          <Card style={{padding:classmates.length===0&&!classmatesLoading?20:0,overflow:"hidden"}}>
+            {classmatesLoading
+              ?<div style={{padding:24,textAlign:"center",fontSize:12.5,color:T.muted}}>Searching…</div>
+              :classmates.length>0
+                ?classmates.map((u,i,arr)=>{
+                    const isFriend=friends.some(f=>f.uid===u.uid);
+                    const incomingFromThem=incomingReqs.find(r=>r.senderId===u.uid);
+                    const isPendingOut=outgoingReqIds.has(u.uid);
+                    const label=isFriend?"Following":incomingFromThem?"Accept":isPendingOut?"Pending":"Add";
+                    const onClickBtn=isFriend||isPendingOut?undefined:incomingFromThem?()=>acceptReq(incomingFromThem.id):()=>sendFriendRequest(u.uid);
+                    return (
+                      <div key={u.uid} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
+                        <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={34} picUrl="" />
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:13,fontWeight:600,color:T.white}}>{u.n}</div>
+                          <div style={{fontSize:11,color:T.muted}}>{u.h}</div>
+                        </div>
+                        <BtnSm variant={label==="Add"||label==="Accept"?"lime":"subtle"} onClick={onClickBtn} style={{flexShrink:0,opacity:onClickBtn?1:0.7}}>{label}</BtnSm>
+                      </div>
+                    );
+                  })
+                :<div>
+                    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+                      <div style={{width:34,height:34,borderRadius:9,background:T.lime+"18",border:`1px solid ${T.lime}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,flexShrink:0}}>{Icon.zap}</div>
+                      <div>
+                        <div style={{fontSize:13,fontWeight:700,color:T.white}}>Be the pioneer on your campus.</div>
+                        <div style={{fontSize:11,color:T.muted}}>Invite classmates to auto-sync routines and conquer the leaderboard!</div>
+                      </div>
+                    </div>
+                    <Btn onClick={()=>setInviteOpen(true)} style={{width:"100%",justifyContent:"center"}}>{Icon.mail} Invite classmates</Btn>
+                  </div>
+            }
+          </Card>
+        </div>
+      )}
+
       {/* ── GROWTH BANNER ── */}
       <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderRadius:10,background:T.lime+"0C",border:`1px solid ${T.lime}22`,marginBottom:24}}>
         <div style={{width:28,height:28,borderRadius:8,background:T.lime+"1A",border:`1px solid ${T.lime}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,flexShrink:0}}>{Icon.zap}</div>
@@ -3447,6 +3871,207 @@ function panelPalette(){
     card2: isLight?"rgba(246,241,230,0.08)":T.card2,
   };
 }
+
+// ─── INSTITUTIONAL LIVE-DEMO: class explorer, preview drawer, injection ──────
+// Standalone pill switch — the real `Toggle` component (used in Settings) is
+// closure-bound to that component's own `toggles` state, so it can't be
+// reused here; this is the same 38x20 visual, taking on/onClick directly.
+const MiniToggle=({on,onClick})=>(
+  <div onClick={onClick} style={{width:38,height:20,borderRadius:10,background:on?T.lime:T.card2,border:`1px solid ${on?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+    <div style={{width:14,height:14,borderRadius:"50%",background:on?T.bg:"#fff",position:"absolute",top:2,left:on?21:2,transition:"left 0.2s"}} />
+  </div>
+);
+
+// Injects the non-TBD events of the given classes into the student's real
+// events array. Runs outside CalendarTab's React state, so it reads/writes
+// localStorage directly (same lsGet→concat→lsSet shape CalendarTab's own
+// commitTasks uses). Each event's id is tagged "class-<code>-<index>" so a
+// second click for the same class never double-injects. Returns the events
+// that were actually newly added (empty array if everything was a dup).
+function injectClassEvents(selectedClasses){
+  const existing=lsGet("events",[]);
+  const existingIds=new Set(existing.map(e=>e.id));
+  const newEvents=[];
+  selectedClasses.forEach(cls=>{
+    cls.events.forEach((ev,idx)=>{
+      if(ev.is_TBD)return; // no real date to schedule yet
+      const id="class-"+cls.code+"-"+idx;
+      if(existingIds.has(id))return;
+      newEvents.push({
+        id,
+        title:ev.title,
+        date:resolveDemoDate(ev.dayOffset),
+        time:ev.time||"09:00",
+        subject:cls.title,
+        kind:ev.kind==="exam"?"exam":(ev.kind==="class"?"class":"deadline"),
+        notes:"",
+        priority:3,
+        difficulty:3,
+        deadline:null,
+        duration:ev.duration||60,
+        status:"pending",
+        timeSpent:0,
+        completedAt:null,
+      });
+    });
+  });
+  if(newEvents.length>0)lsSet("events",existing.concat(newEvents));
+  return newEvents;
+}
+
+// How many of the student's existing study blocks now time-overlap the
+// newly-injected class events — used to surface a safe, reviewable count
+// instead of silently auto-moving the student's real study time.
+function countStudyBlockConflicts(newEvents){
+  const events=lsGet("events",[]);
+  const toMin=(t)=>{const p=(t||"00:00").split(":").map(Number);return p[0]*60+p[1];};
+  const overlaps=(a,b)=>{
+    if(a.date!==b.date)return false;
+    const aStart=toMin(a.time),aEnd=aStart+(a.duration||30);
+    const bStart=toMin(b.time),bEnd=bStart+(b.duration||30);
+    return aStart<bEnd&&bStart<aEnd;
+  };
+  return events.filter(e=>e.kind==="study block"&&newEvents.some(ne=>overlaps(e,ne))).length;
+}
+
+// Right-side slide-in preview — modeled directly on ChatDrawer's shell
+// (portal + backdrop + translateX panel), z-index bumped above it so the two
+// never visually collide (they can't both be open in practice).
+function ClassPreviewDrawer({open,cls,events,onClose,isHS,simOn,onToggleSimulate}){
+  const pp=panelPalette();
+  useEffect(()=>{
+    if(!open)return;
+    const onKey=e=>{if(e.key==="Escape")onClose();};
+    window.addEventListener("keydown",onKey);
+    return ()=>window.removeEventListener("keydown",onKey);
+  },[open]);
+  if(!cls)return null;
+  return ReactDOM.createPortal(
+    <>
+      <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(8,12,10,0.5)",zIndex:410,opacity:open?1:0,pointerEvents:open?"auto":"none",transition:"opacity 0.25s"}} />
+      <div style={{position:"fixed",top:0,right:0,height:"100vh",width:400,maxWidth:"92vw",background:T.surface,borderLeft:`1px solid ${pp.border}`,boxShadow:"-24px 0 60px -20px rgba(0,0,0,0.5)",zIndex:411,display:"flex",flexDirection:"column",transform:open?"translateX(0)":"translateX(100%)",transition:"transform 0.28s cubic-bezier(.2,.85,.3,1)"}}>
+        <div style={{padding:"18px 18px 14px",borderBottom:`1px solid ${pp.border}`,display:"flex",alignItems:"center",gap:12}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:14,fontWeight:700,color:pp.text}}>{cls.code}: {cls.title}</div>
+            <div style={{fontSize:11,color:pp.muted}}>{cls.instructor}</div>
+          </div>
+          <button onClick={onClose} style={{width:30,height:30,borderRadius:8,border:`1px solid ${pp.border}`,background:pp.card2,color:pp.muted,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.xmark}</button>
+        </div>
+
+        <div style={{padding:"12px 18px",borderBottom:`1px solid ${pp.border}`,display:"flex",alignItems:"center",gap:8,background:T.amber+"0F"}}>
+          <span style={{color:T.amber,display:"flex",flexShrink:0}}>{Icon.shield}</span>
+          <span style={{fontSize:11.5,color:pp.text,lineHeight:1.4}}>Only <strong>{cls.instructor}</strong> can change these dates.</span>
+        </div>
+
+        <div style={{padding:"12px 18px",borderBottom:`1px solid ${pp.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+          <div>
+            <div style={{fontSize:12.5,fontWeight:600,color:pp.text}}>Simulate Professor Update</div>
+            <div style={{fontSize:10.5,color:pp.muted,marginTop:1}}>Preview: move "Project 1" from Friday to Monday</div>
+          </div>
+          <MiniToggle on={simOn} onClick={onToggleSimulate} />
+        </div>
+
+        <div style={{flex:1,overflowY:"auto",padding:"14px 18px"}}>
+          {isHS&&<div style={{fontSize:10,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:pp.faint,marginBottom:10}}>Teacher's Weekly Agenda</div>}
+          {events.map((ev,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:`1px solid ${pp.border}`}}>
+              <span style={{color:ev.is_TBD?pp.faint:T.lime,flexShrink:0}}>{ev.is_TBD?Icon.clock:Icon.check}</span>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:12.5,color:pp.text,fontWeight:500}}>{ev.title}</div>
+                <div style={{fontSize:10.5,color:pp.muted,marginTop:1}}>
+                  {ev.is_TBD?"TBD — coming soon":(isHS?"This week":fmtDemoDate(resolveDemoDate(ev.dayOffset)))+(ev.time?" · "+ev.time:"")}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </>,
+    document.body
+  );
+}
+
+// Mounted conditionally in Profile() — only when the student's own
+// affiliation exactly matches one of the two seeded demo schools, so the
+// ~99% of real users on other schools never see any trace of this.
+function ExploreClassesCard({school,classes,setActive}){
+  const [selectedCodes,setSelectedCodes]=useState([]);
+  const [previewCls,setPreviewCls]=useState(null);
+  const [simOn,setSimOn]=useState({});
+  const [toast,setToast]=useState("");
+  const [reOptModal,setReOptModal]=useState(null);
+  const isHS=school===DEMO_SCHOOL_HS;
+
+  const toggleSelect=(code)=>setSelectedCodes(prev=>prev.includes(code)?prev.filter(c=>c!==code):[...prev,code]);
+  const showToast=(msg)=>{setToast(msg);setTimeout(()=>setToast(""),2600);};
+  const findProjectIdx=(cls)=>cls.events.findIndex(e=>e.title==="Project 1");
+  const effectiveEvents=(cls)=>{
+    const idx=findProjectIdx(cls);
+    if(idx<0||!simOn[cls.code])return cls.events;
+    return cls.events.map((e,i)=>i===idx?{...e,dayOffset:e.dayOffset+3}:e);
+  };
+
+  const onToggleSimulate=(cls)=>{
+    const turningOn=!simOn[cls.code];
+    setSimOn(prev=>({...prev,[cls.code]:turningOn}));
+    const idx=findProjectIdx(cls);
+    if(idx<0)return;
+    // Keep any already-injected real calendar event in sync with the toggle
+    // in both directions, so switching it back off doesn't leave a stale
+    // "moved" date behind on the student's real calendar.
+    const injectedId="class-"+cls.code+"-"+idx;
+    const evs=lsGet("events",[]);
+    const already=evs.some(e=>e.id===injectedId);
+    const newDate=resolveDemoDate(cls.events[idx].dayOffset+(turningOn?3:0));
+    if(already)lsSet("events",evs.map(e=>e.id===injectedId?{...e,date:newDate}:e));
+    if(turningOn){
+      showToast(cls.instructor+" moved \"Project 1\" to Monday"+(already?" — your calendar has been updated.":" (preview only — add this class to your plan to sync it)."));
+    }
+  };
+
+  const onOptimize=()=>{
+    const chosen=classes.filter(c=>selectedCodes.includes(c.code)).map(c=>({...c,events:effectiveEvents(c)}));
+    const newEvents=injectClassEvents(chosen);
+    if(newEvents.length>0)setReOptModal({conflictCount:countStudyBlockConflicts(newEvents)});
+  };
+
+  return (
+    <Card style={{marginBottom:16}}>
+      <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Explore Classes — {school}</div>
+      <div style={{fontSize:12,color:T.muted,marginBottom:16}}>{isHS?"Live demo: sync your teachers' weekly agendas straight into Studlin.":"Live demo: sync your official course syllabus straight into Studlin."}</div>
+      {classes.map(cls=>(
+        <div key={cls.code} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 2px",borderBottom:`1px solid ${T.border}`}}>
+          <input type="checkbox" checked={selectedCodes.includes(cls.code)} onClick={e=>e.stopPropagation()} onChange={()=>toggleSelect(cls.code)} style={{width:16,height:16,cursor:"pointer",flexShrink:0}} />
+          <div onClick={()=>setPreviewCls(cls)} style={{flex:1,cursor:"pointer",minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:600,color:T.white}}>{cls.code}: {cls.title}</div>
+            <div style={{fontSize:11,color:T.muted,marginTop:1}}>{cls.instructor}</div>
+          </div>
+        </div>
+      ))}
+      <div style={{marginTop:14}}>
+        <Btn onClick={onOptimize} disabled={selectedCodes.length===0}>Optimize Into My Plan</Btn>
+      </div>
+
+      <ClassPreviewDrawer open={!!previewCls} cls={previewCls} events={previewCls?effectiveEvents(previewCls):[]} onClose={()=>setPreviewCls(null)} isHS={isHS}
+        simOn={previewCls?!!simOn[previewCls.code]:false} onToggleSimulate={()=>previewCls&&onToggleSimulate(previewCls)} />
+
+      <Modal open={!!reOptModal} onClose={()=>setReOptModal(null)} title="Studlin AI detected new course events"
+        footer={<Btn onClick={()=>{setReOptModal(null);if(setActive)setActive("calendar");}}>Let's Re-Optimize</Btn>}>
+        <div style={{fontSize:13.5,color:T.text,lineHeight:1.6}}>
+          Studlin AI detected new course events from your synchronized classes. Would you like to automatically re-route your daytime study blocks to accommodate these updates and maximize your free time?
+        </div>
+        {reOptModal&&reOptModal.conflictCount>0&&(
+          <div style={{marginTop:14,fontSize:12.5,color:T.amber}}>We've flagged {reOptModal.conflictCount} study block{reOptModal.conflictCount!==1?"s":""} that now conflict — open Calendar to review.</div>
+        )}
+      </Modal>
+
+      {toast&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,padding:"10px 18px",borderRadius:99,fontSize:12.5,fontWeight:600,boxShadow:"0 12px 28px -10px rgba(0,0,0,0.4)"}}>{toast}</div>
+      )}
+    </Card>
+  );
+}
+
 function ChatBubble({m,myUid,onRespond,onSchedule}){
   const pp=panelPalette();
   const mine=m.senderId===myUid;
@@ -3948,6 +4573,11 @@ function TaskTimerModal({task,onClose,onComplete}){
   const [completion,setCompletion]=useState(null);
   const [barFilled,setBarFilled]=useState(false);
   const [rankRisen,setRankRisen]=useState(false);
+  // Collapsible floating widget — tucks itself away during a focus block so
+  // it doesn't block the dashboard/calendar, and auto-expands the moment a
+  // break starts so the student notices they can step away.
+  const [collapsed,setCollapsed]=useState(false);
+  useEffect(()=>{ if(phase==="break"||phase==="breakDone")setCollapsed(false); },[phase]);
 
   const playBeep=()=>{try{const ctx=new(window.AudioContext||window.webkitAudioContext)();const osc=ctx.createOscillator();const gain=ctx.createGain();osc.connect(gain);gain.connect(ctx.destination);osc.frequency.setValueAtTime(880,ctx.currentTime);osc.frequency.exponentialRampToValueAtTime(440,ctx.currentTime+0.3);gain.gain.setValueAtTime(0.3,ctx.currentTime);gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.35);osc.start(ctx.currentTime);osc.stop(ctx.currentTime+0.35);}catch(e){}};
 
@@ -4040,7 +4670,7 @@ function TaskTimerModal({task,onClose,onComplete}){
     }
   };
 
-  const resume=()=>{setPhase("focus2");setSecs(focus2Mins*60);setRunning(true);};
+  const resume=()=>{setPhase("focus2");setSecs(focus2Mins*60);setRunning(true);setCollapsed(true);};
 
   const finishEarly=()=>{
     if(phase!=="break"&&focusStartRef.current){
@@ -4251,46 +4881,67 @@ function TaskTimerModal({task,onClose,onComplete}){
   const widgetCirc=2*Math.PI*widgetR;
 
   return(
-    <div style={{position:"fixed",bottom:20,right:20,zIndex:500,width:284,background:T.card,border:`1px solid ${T.border}`,borderRadius:18,boxShadow:"0 20px 50px -14px rgba(0,0,0,0.5)",padding:"14px 16px",fontFamily:T.font,animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
-      <div style={{display:"flex",alignItems:"center",gap:12}}>
-        <div style={{position:"relative",width:48,height:48,flexShrink:0}}>
-          <svg viewBox="0 0 64 64" style={{width:48,height:48,transform:"rotate(-90deg)"}}>
-            <circle cx="32" cy="32" r={widgetR} fill="none" stroke={T.border} strokeWidth="5"/>
-            <circle cx="32" cy="32" r={widgetR} fill="none" stroke={timerColor} strokeWidth="5" strokeLinecap="round"
-              strokeDasharray={widgetCirc}
-              strokeDashoffset={widgetCirc*(1-phasePct)}
-              style={{transition:"stroke-dashoffset 0.5s"}}/>
-          </svg>
-          {task.coop&&(
-            <div title={"Locked in with "+task.coop.name} style={{position:"absolute",bottom:-3,right:-3,width:20,height:20,borderRadius:"50%",background:T.teal,border:`2px solid ${T.card}`,display:"grid",placeItems:"center",fontSize:8.5,fontWeight:800,color:T.ink}}>{task.coop.initials}</div>
-          )}
-        </div>
-        <div style={{flex:1,minWidth:0}}>
-          <div style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.09em",textTransform:"uppercase",color:timerColor,marginBottom:2}}>{phaseLabel}{task.coop&&" · 1.2× XP"}</div>
-          <div style={{fontFamily:T.mono,fontSize:19,fontWeight:800,color:T.white,letterSpacing:"-0.02em"}}>{fmt(secs)}</div>
-          <div style={{fontSize:11,color:T.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{task.coop?"With "+task.coop.name:task.title}</div>
-        </div>
-        <button onClick={()=>setSoundOn(s=>!s)} title={soundOn?"Mute alarm":"Unmute alarm"} style={{width:28,height:28,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:soundOn?T.text:T.faint,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{soundOn?Icon.volume:Icon.volOff}</button>
-      </div>
+    <div style={{position:"fixed",bottom:20,right:collapsed?8:20,zIndex:500,width:collapsed?64:284,background:T.card,border:`1px solid ${T.border}`,borderRadius:18,boxShadow:"0 20px 50px -14px rgba(0,0,0,0.5)",padding:collapsed?"30px 8px 14px":"14px 16px",fontFamily:T.font,animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)",transition:"width 0.28s cubic-bezier(.2,.85,.3,1), padding 0.28s cubic-bezier(.2,.85,.3,1), right 0.28s cubic-bezier(.2,.85,.3,1)",overflow:"hidden",boxSizing:"border-box"}}>
+      <button onClick={()=>setCollapsed(c=>!c)} title={collapsed?"Expand timer":"Collapse timer"} style={{position:"absolute",top:10,right:10,width:22,height:22,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer",zIndex:1,padding:0}}>
+        <span style={{display:"inline-flex",transform:collapsed?"rotate(180deg)":"none",transition:"transform 0.22s ease"}}>{Icon.arrowR}</span>
+      </button>
 
-      {isBreak&&(
-        <div style={{fontSize:11.5,color:T.amber,margin:"10px 0 0",padding:"9px 11px",background:T.amber+"12",borderRadius:9,lineHeight:1.5}}>
-          {breakIdeaRef.current}
+      {collapsed ? (
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+          <div style={{position:"relative",width:40,height:40}}>
+            <svg viewBox="0 0 64 64" style={{width:40,height:40,transform:"rotate(-90deg)"}}>
+              <circle cx="32" cy="32" r={widgetR} fill="none" stroke={T.border} strokeWidth="5"/>
+              <circle cx="32" cy="32" r={widgetR} fill="none" stroke={timerColor} strokeWidth="5" strokeLinecap="round"
+                strokeDasharray={widgetCirc}
+                strokeDashoffset={widgetCirc*(1-phasePct)}
+                style={{transition:"stroke-dashoffset 0.5s"}}/>
+            </svg>
+          </div>
+          <div style={{fontFamily:T.mono,fontSize:11,fontWeight:800,color:timerColor,letterSpacing:"-0.02em"}}>{fmt(secs)}</div>
         </div>
-      )}
+      ) : (<>
+        <div style={{display:"flex",alignItems:"center",gap:12,paddingRight:26}}>
+          <div style={{position:"relative",width:48,height:48,flexShrink:0}}>
+            <svg viewBox="0 0 64 64" style={{width:48,height:48,transform:"rotate(-90deg)"}}>
+              <circle cx="32" cy="32" r={widgetR} fill="none" stroke={T.border} strokeWidth="5"/>
+              <circle cx="32" cy="32" r={widgetR} fill="none" stroke={timerColor} strokeWidth="5" strokeLinecap="round"
+                strokeDasharray={widgetCirc}
+                strokeDashoffset={widgetCirc*(1-phasePct)}
+                style={{transition:"stroke-dashoffset 0.5s"}}/>
+            </svg>
+            {task.coop&&(
+              <div title={"Locked in with "+task.coop.name} style={{position:"absolute",bottom:-3,right:-3,width:20,height:20,borderRadius:"50%",background:T.teal,border:`2px solid ${T.card}`,display:"grid",placeItems:"center",fontSize:8.5,fontWeight:800,color:T.ink}}>{task.coop.initials}</div>
+            )}
+          </div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.09em",textTransform:"uppercase",color:timerColor,marginBottom:2}}>{phaseLabel}{task.coop&&" · 1.2× XP"}</div>
+            <div style={{fontFamily:T.mono,fontSize:19,fontWeight:800,color:T.white,letterSpacing:"-0.02em"}}>{fmt(secs)}</div>
+            <div style={{fontSize:11,color:T.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{task.coop?"With "+task.coop.name:task.title}</div>
+          </div>
+          <button onClick={()=>setSoundOn(s=>!s)} title={soundOn?"Mute alarm":"Unmute alarm"} style={{width:28,height:28,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:soundOn?T.text:T.faint,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{soundOn?Icon.volume:Icon.volOff}</button>
+        </div>
 
-      <div style={{display:"flex",gap:8,marginTop:12}}>
-        {phase==="break"&&<BtnSm onClick={resume} style={{flex:1,justifyContent:"center"}}>Resume early</BtnSm>}
-        {phase==="breakDone"&&<BtnSm onClick={resume} style={{flex:1,justifyContent:"center"}}>Resume</BtnSm>}
-        {phase!=="break"&&phase!=="breakDone"&&<BtnSm variant="ghost" onClick={()=>setRunning(r=>!r)} style={{flex:1,justifyContent:"center"}}>{running?"Pause":"Resume"}</BtnSm>}
-        {phase!=="breakDone"&&<BtnSm variant="danger" onClick={finishEarly} style={{flex:1,justifyContent:"center"}}>Finish</BtnSm>}
-      </div>
+        {isBreak&&(
+          <div style={{fontSize:11.5,color:T.amber,margin:"10px 0 0",padding:"9px 11px",background:T.amber+"12",borderRadius:9,lineHeight:1.5}}>
+            {breakIdeaRef.current}
+          </div>
+        )}
+
+        <div style={{display:"flex",gap:8,marginTop:12}}>
+          {phase==="break"&&<BtnSm onClick={resume} style={{flex:1,justifyContent:"center"}}>Resume early</BtnSm>}
+          {phase==="breakDone"&&<BtnSm onClick={resume} style={{flex:1,justifyContent:"center"}}>Resume</BtnSm>}
+          {phase!=="break"&&phase!=="breakDone"&&<BtnSm variant="ghost" onClick={()=>setRunning(r=>!r)} style={{flex:1,justifyContent:"center"}}>{running?"Pause":"Resume"}</BtnSm>}
+          {phase!=="breakDone"&&<BtnSm variant="danger" onClick={finishEarly} style={{flex:1,justifyContent:"center"}}>Finish</BtnSm>}
+        </div>
+      </>)}
     </div>
   );
 }
 
 // ─── WEEKLY PLANNER ───────────────────────────────────────────────────────────
-const WK_PX_HR = 76; // pixels per hour in weekly grid
+// WK_PX_HR (pixels per hour) now lives inside WeeklyPlanner as a local const
+// driven by isAgendaCollapsed, so the grid gains height (not just width) when
+// the Today panel is hidden — see the component body below.
 
 // Lays out same-day events that overlap in time side-by-side instead of
 // fully stacking on top of each other at full column width — previously any
@@ -4332,7 +4983,11 @@ function layoutDayEvents(evs) {
   return laidOut;
 }
 
-function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay}) {
+function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, isAgendaCollapsed}) {
+  // Taller per-hour scale when the Today agenda panel is hidden, so the grid
+  // gains height (not just the width the freed-up column would otherwise
+  // just stretch into) and doesn't flatten out.
+  const WK_PX_HR = isAgendaCollapsed ? 92 : 76;
   const wkColRefs = useRef({});
   const weekScrollRef = useRef(null);
   const [wkDragId, setWkDragId] = useState(null);
@@ -4415,7 +5070,7 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
           );
         })}
       </div>
-      <div ref={weekScrollRef} style={{display:"flex",overflowY:"auto",maxHeight:"calc(100vh - 260px)"}} onDragEnd={handleDragEnd}>
+      <div ref={weekScrollRef} style={{display:"flex",overflowY:"auto",maxHeight:isAgendaCollapsed?"calc(100vh - 200px)":"calc(100vh - 260px)"}} onDragEnd={handleDragEnd}>
         <div style={{width:52,flexShrink:0,background:T.card,borderRight:`1px solid ${T.border}`,zIndex:2}}>
           {Array.from({length:24}, (_, h) => (
             <div key={h} style={{height:WK_PX_HR,display:"flex",alignItems:"flex-start",justifyContent:"flex-end",paddingRight:8,paddingTop:3,borderTop:`1px solid ${T.border}44`,boxSizing:"border-box"}}>
@@ -5390,7 +6045,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
         this div instead of nested inside it, so it centers against the real
         viewport regardless of scroll position or animation state. */}
     <div>
-      <PH title="Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><Btn variant="ghost" onClick={()=>setRoutineCenterOpen(true)}>{Icon.settings} Manage Routine</Btn><Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>{setEditRoutineMode(m=>!m);setHoveredRoutineId(null);}}>Edit Routine</Btn><Btn variant="ghost" onClick={()=>{setGroupSyncOpen(true);setGsStep(1);setGsResults(null);}}>{Icon.users} Group Sync</Btn><span ref={tourAddTaskRef} style={{display:"inline-flex"}}><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></span></div>} />
+      <PH title="Studlin Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><Btn variant="ghost" onClick={()=>setRoutineCenterOpen(true)}>Manage Routine</Btn><Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>{setEditRoutineMode(m=>!m);setHoveredRoutineId(null);}}>Edit Routine</Btn><span ref={tourAddTaskRef} style={{display:"inline-flex"}}><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></span></div>} />
       {editRoutineMode&&(
         <div style={{display:"flex",alignItems:"center",gap:8,padding:"9px 14px",background:T.lime+"10",border:`1px solid ${T.lime}33`,borderRadius:10,marginBottom:14,fontSize:12.5,color:T.text}}>
           Editing your Weekly Routine — one-off tasks are dimmed. Click a routine block to edit it, or hover and tap × to delete it everywhere it repeats.
@@ -5458,7 +6113,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
         <WeeklyPlanner events={events} setEvents={setEvents} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openNew={openNew} openEdit={openEdit}
           routines={routines} editRoutineMode={editRoutineMode} hoveredRoutineId={hoveredRoutineId} setHoveredRoutineId={setHoveredRoutineId}
           onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
-          selDay={selDay} setSelDay={setSelDay} />
+          selDay={selDay} setSelDay={setSelDay} isAgendaCollapsed={isAgendaCollapsed} />
       </CollapsibleAgendaLayout>)}
       {tourStep!==null&&(
         <TourStep
@@ -5755,7 +6410,7 @@ function AiTutor(){
     setLessonLoading(true);setLesson(null);setShowAnswer(false);
     const prompt="Hey Studlin, I want a mini-lesson on \""+topic.trim()+"\" for "+subject+". Respond with ONLY valid JSON in this exact shape, no markdown fences: {\"concept\":\"a clear 3-5 sentence plain-English explanation of the core idea\",\"example\":\"one fully worked example showing the steps\",\"mistakes\":[\"common mistake 1\",\"common mistake 2\",\"common mistake 3\"],\"question\":\"one short practice question testing this exact concept\",\"answer\":\"the answer to that question with a brief explanation why\"}";
     try{
-      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",...getAiPrefs()})});
       const data=await res.json();
       if(data.error){setLesson({concept:"Couldn't generate a lesson: "+data.error,example:"",mistakes:[],question:"",answer:""});setLessonLoading(false);return;}
       var raw=(data.reply||"").replace(/```json?|```/g,"").trim();
@@ -5772,7 +6427,7 @@ function AiTutor(){
     setSocActive(true);setSocLoading(true);setSocMsgs([]);
     const kickoff="I want to learn about \""+topic.trim()+"\" in "+subject+" using the Socratic method. Don't explain it to me directly. Instead, ask me ONE short guiding question to start helping me figure it out myself. Wait for my answer before continuing.";
     try{
-      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:kickoff}],model:"standard"})});
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:kickoff}],model:"standard",...getAiPrefs()})});
       const data=await res.json();
       setSocMsgs([{r:"ai",t:data.reply||"Let's start: what do you already know about "+topic.trim()+"?"}]);
     }catch(e){setSocMsgs([{r:"ai",t:"Let's start: what do you already know about "+topic.trim()+"?"}]);}
@@ -5787,7 +6442,7 @@ function AiTutor(){
     const apiMsgs=next.map(m=>({r:m.r,t:m.t}));
     apiMsgs.push({r:"user",t:"(Remember: keep using the Socratic method on the topic \""+topic.trim()+"\" -- ask guiding questions, give hints if I'm stuck, don't just give the answer outright unless I've clearly got it.)"});
     try{
-      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:apiMsgs,model:"standard"})});
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:apiMsgs,model:"standard",...getAiPrefs()})});
       const data=await res.json();
       setSocMsgs(m=>m.concat([{r:"ai",t:data.reply||"Hm, try explaining your thinking a bit more?"}]));
     }catch(e){setSocMsgs(m=>m.concat([{r:"ai",t:"Something went wrong. Try again?"}]));}
@@ -6670,7 +7325,7 @@ function FocusMusic(){
 // ─── SETTINGS ─────────────────────────────────────────────────────────────────
 function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineWizard=()=>{}}) {
   const [active,setActive]=useState("General");
-  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,sr:true,auto:true,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false},...lsGet("settings",{})}));
+  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,sr:true,auto:true,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true},...lsGet("settings",{})}));
   const tog=k=>setToggles(t=>{const n={...t,[k]:!t[k]};lsSet("settings",n);return n;});
   const [sysPushStatus,setSysPushStatus]=useState(()=>{
     if(typeof Notification==="undefined")return "unsupported";
@@ -6704,11 +7359,43 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   };
   const [profile,setProfileState]=useState(()=>getProfile());
   const updProfile=(patch)=>{const n={...profile,...patch};setProfileState(n);saveProfile(n);};
-  const allUsers=[{n:"Devon Karu",h:"@devonk",s:"UCLA"},{n:"Priya Shah",h:"@priyas",s:"Berkeley"},{n:"Jordan Tran",h:"@jtran",s:"UCLA"},{n:"Amara Okafor",h:"@amarao",s:"NYU"},{n:"Liam Chen",h:"@liamc",s:"Stanford"},{n:"Sofia Diaz",h:"@sofiad",s:"UCLA"}];
-  const [friendQ,setFriendQ]=useState("");
-  const [friends,setFriends]=useState(()=>lsGet("friends",[]));
-  const toggleFriend=(h)=>{const n=friends.includes(h)?friends.filter(x=>x!==h):[...friends,h];setFriends(n);lsSet("friends",n);};
-  const friendResults=friendQ.trim()?allUsers.filter(u=>(u.n+" "+u.h+" "+u.s).toLowerCase().includes(friendQ.toLowerCase())):allUsers.slice(0,3);
+
+  // Gathers every studlin-* localStorage key into one JSON file and downloads
+  // it — same blob pattern as downloadEssay (Essays/WriteStudio).
+  const exportAllData=()=>{
+    const out={};
+    Object.keys(localStorage).forEach(k=>{
+      if(k.indexOf("studlin-")===0){
+        try{out[k.slice(8)]=JSON.parse(localStorage.getItem(k));}catch(e){}
+      }
+    });
+    const blob=new Blob([JSON.stringify(out,null,2)],{type:"application/json"});
+    const a=Object.assign(document.createElement("a"),{href:URL.createObjectURL(blob),download:"studlin-data-export.json"});
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+  };
+  const [chatHistoryLoading,setChatHistoryLoading]=useState(false);
+  const [deleteAccountOpen,setDeleteAccountOpen]=useState(false);
+  const confirmDeleteAccount=()=>{
+    Object.keys(localStorage).forEach(k=>{if(k.indexOf("studlin-")===0)localStorage.removeItem(k);});
+    firebase.auth().signOut().then(()=>{window.location.href="/";});
+  };
+  const downloadChatHistory=async()=>{
+    const myUid=firebase.auth().currentUser?.uid;
+    if(!myUid||chatHistoryLoading)return;
+    setChatHistoryLoading(true);
+    try{
+      const roomsSnap=await fsdb().collection('chatRooms').where('memberUids','array-contains',myUid).get();
+      const rooms=await Promise.all(roomsSnap.docs.map(async d=>{
+        const msgsSnap=await fsdb().collection('chatRooms').doc(d.id).collection('messages').orderBy('ts','asc').get();
+        return {roomId:d.id,type:d.data().type||"dm",messages:msgsSnap.docs.map(m=>m.data())};
+      }));
+      const blob=new Blob([JSON.stringify({rooms},null,2)],{type:"application/json"});
+      const a=Object.assign(document.createElement("a"),{href:URL.createObjectURL(blob),download:"studlin-chat-history.json"});
+      document.body.appendChild(a);a.click();document.body.removeChild(a);
+    }catch(e){}
+    setChatHistoryLoading(false);
+  };
+
   const [calGoogleLinked,setCalGoogleLinked]=useState(()=>lsGet("cal-google",false));
   const [calAppleLinked,setCalAppleLinked]=useState(()=>lsGet("cal-apple",false));
   const [googleSyncing,setGoogleSyncing]=useState(false);
@@ -6839,9 +7526,8 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const Chip = ({active,onClick,children}) => (
     <button type="button" onClick={onClick} style={{padding:"7px 14px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${active?T.lime+"66":T.border}`,background:active?T.lime+"14":"transparent",color:active?T.lime:T.muted,fontFamily:T.font,fontWeight:active?600:400,transition:"all 0.15s"}}>{children}</button>
   );
-  const [pom,setPom]=useState(()=>lsGet("pref-pom","25 min"));
   const [verb,setVerb]=useState(()=>lsGet("pref-verb","Balanced"));
-  const [brk,setBrk]=useState(()=>lsGet("pref-brk","15 min"));
+  const [tutorStyle,setTutorStyle]=useState(()=>lsGet("pref-tutorStyle","Socratic"));
   const accents=[{n:"Lime",c:"#AECE5E"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"}];
   const [mgmtSubjs,setMgmtSubjs]=useState(()=>getSubjects().map(s=>({...s})));
   const [mgmtSaved,setMgmtSaved]=useState(false);
@@ -6867,7 +7553,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <div style={{fontSize:12,color:T.muted,marginBottom:16}}>How you appear across Studlin.</div>
               <Field label="Display name"><Input value={profile.name} onChange={e=>updProfile({name:e.target.value})} /></Field>
               <Field label="Email"><Input value={profile.email} onChange={e=>updProfile({email:e.target.value})} type="email" /></Field>
-              <Field label="School or affiliation"><Input value={profile.school} onChange={e=>updProfile({school:e.target.value})} /></Field>
+              <Field label="School or affiliation"><SchoolSelect value={profile.school} onChange={v=>updProfile({school:v})} placeholder="Search or type your school" /></Field>
               <Field label="Time zone">
                 <select value={profile.tz} onChange={e=>updProfile({tz:e.target.value})} style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.font,outline:"none"}}>
                   <option>America/Los_Angeles</option><option>America/New_York</option><option>Europe/London</option><option>Asia/Singapore</option>
@@ -6886,35 +7572,12 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             <Card>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Connected accounts</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Sync your calendar and cloud notes.</div>
-              {[["Google Calendar","Synced",true],["Apple Calendar","Connect",false],["Notion workspace","Synced",true],["Dropbox","Connect",false]].map(([n,st,on],i)=>(
+              {[["Google Calendar","Synced",true,true],["Apple Calendar","Connect",false,false],["Notion workspace","Connect",false,false],["Dropbox","Connect",false,false]].map(([n,st,on,live],i)=>(
                 <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 0",borderBottom:i<3?`1px solid ${T.border}`:"none"}}>
-                  <div style={{fontSize:13,color:T.text,fontWeight:500}}>{n}</div>
-                  <BtnSm variant={on?"subtle":"lime"}>{st}</BtnSm>
+                  <div style={{fontSize:13,color:T.text,fontWeight:500}}>{n}{!live&&<span style={{marginLeft:8,fontSize:10.5,fontWeight:600,color:T.faint}}>(Coming Soon)</span>}</div>
+                  <BtnSm variant={on?"subtle":"lime"} disabled={!live} style={!live?{opacity:0.4,cursor:"not-allowed"}:undefined}>{st}</BtnSm>
                 </div>
               ))}
-            </Card>
-            <Card style={{marginTop:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Friends</div>
-              <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Find classmates and add them to study together.</div>
-              <div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 13px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:9,marginBottom:12}}>
-                <span style={{color:T.muted,display:"flex"}}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
-                <input value={friendQ} onChange={e=>setFriendQ(e.target.value)} placeholder="Search by name, handle, or school" style={{flex:1,background:"none",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}} />
-              </div>
-              {friendResults.length===0
-                ? <div style={{fontSize:12.5,color:T.muted,padding:"10px 0"}}>No students match “{friendQ}”.</div>
-                : friendResults.map((u,i)=>{
-                  const added=friends.includes(u.h);
-                  return (
-                  <div key={u.h} style={{display:"flex",alignItems:"center",gap:11,padding:"10px 0",borderBottom:i<friendResults.length-1?`1px solid ${T.border}`:"none"}}>
-                    <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={32} />
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:13,color:T.text,fontWeight:600}}>{u.n}</div>
-                      <div style={{fontSize:11,color:T.muted}}>{u.h} · {u.s}</div>
-                    </div>
-                    <BtnSm variant={added?"subtle":"lime"} onClick={()=>toggleFriend(u.h)}>{added?"Added":"Add friend"}</BtnSm>
-                  </div>
-                );})}
-              {friends.length>0&&<div style={{fontSize:11.5,color:T.muted,marginTop:12}}>{friends.length} friend{friends.length===1?"":"s"} added.</div>}
             </Card>
           </>)}
 
@@ -6961,28 +7624,31 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 
           {active==="Notifications" && (<>
             <Card style={{marginBottom:12}}>
-              <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:14,marginBottom:14}}>
-                <div style={{flex:1}}>
-                  <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:3}}>System Notifications</div>
-                  <div style={{fontSize:12,color:T.muted,lineHeight:1.5}}>Receive native desktop alerts for incoming chat messages and study session updates — even when this tab is closed or in the background.</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Notification Preferences</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Control how incoming chat messages reach you — a soft chime, a native desktop alert, or both, depending on what you're doing.</div>
+              <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:14,padding:"13px 0",borderBottom:`1px solid ${T.border}`}}>
+                <div style={{flex:1,marginRight:14}}>
+                  <div style={{fontSize:13,color:T.text,fontWeight:500}}>Enable Desktop Notifications</div>
+                  <div style={{fontSize:11.5,color:T.muted,marginTop:2,lineHeight:1.45}}>Native desktop alerts for incoming chat messages and study session updates — even when this tab is closed or in the background.</div>
                 </div>
                 <div onClick={handleSysPushToggle} style={{width:38,height:20,borderRadius:10,background:toggles.sysPush?T.lime:T.card2,border:`1px solid ${toggles.sysPush?T.lime:T.border}`,position:"relative",cursor:sysPushStatus==="denied"?"not-allowed":"pointer",transition:"all 0.2s",flexShrink:0,opacity:sysPushStatus==="unsupported"?0.45:1}}>
                   <div style={{width:14,height:14,borderRadius:"50%",background:toggles.sysPush?T.bg:"#fff",position:"absolute",top:2,left:toggles.sysPush?21:2,transition:"left 0.2s"}} />
                 </div>
               </div>
               {sysPushStatus==="denied"&&(
-                <div style={{fontSize:11.5,color:T.amber,background:T.amber+"10",border:`1px solid ${T.amber}22`,borderRadius:7,padding:"9px 12px",lineHeight:1.5}}>
+                <div style={{fontSize:11.5,color:T.amber,background:T.amber+"10",border:`1px solid ${T.amber}22`,borderRadius:7,padding:"9px 12px",lineHeight:1.5,marginTop:10}}>
                   Notifications are blocked in your browser. Open browser site settings and allow notifications for this site, then refresh.
                 </div>
               )}
               {sysPushStatus==="unsupported"&&(
-                <div style={{fontSize:11.5,color:T.muted,lineHeight:1.5}}>Your browser does not support desktop push notifications.</div>
+                <div style={{fontSize:11.5,color:T.muted,lineHeight:1.5,marginTop:10}}>Your browser does not support desktop push notifications.</div>
               )}
               {sysPushStatus==="granted"&&toggles.sysPush&&(
-                <div style={{fontSize:11.5,color:T.teal,background:T.teal+"10",border:`1px solid ${T.teal}22`,borderRadius:7,padding:"9px 12px",lineHeight:1.5}}>
+                <div style={{fontSize:11.5,color:T.teal,background:T.teal+"10",border:`1px solid ${T.teal}22`,borderRadius:7,padding:"9px 12px",lineHeight:1.5,marginTop:10}}>
                   Active · Studlin will send alerts to your desktop even when this tab is in the background.
                 </div>
               )}
+              <Row label="Enable Message Audio Chimes" sub="A soft chime when a message arrives while you're elsewhere in Studlin. Muted automatically during a lock-in session." k="chatChimes" />
             </Card>
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Task &amp; App Notifications</div>
@@ -7030,8 +7696,8 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Row label="Use my work to train Studlin AI" sub="Off by default. We will never share your raw content." k="collect" />
               <Row label="Anonymous usage analytics" sub="Helps us fix bugs and prioritise features." k="analytics" />
               <div style={{display:"flex",gap:8,marginTop:14,flexWrap:"wrap"}}>
-                <Btn variant="subtle">{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.copy,"Export all data")}</Btn>
-                <Btn variant="subtle">Download chat history</Btn>
+                <Btn variant="subtle" onClick={exportAllData}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.copy,"Export all data")}</Btn>
+                <Btn variant="subtle" onClick={downloadChatHistory} disabled={chatHistoryLoading}>{chatHistoryLoading?"Preparing…":"Download chat history"}</Btn>
                 <Btn variant="subtle">Privacy policy</Btn>
               </div>
             </Card>
@@ -7045,17 +7711,10 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 
           {active==="Study preferences" && (<>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>Focus &amp; Pomodoro</div>
-              <Field label="Session length"><div style={{display:"flex",gap:6}}>{["15 min","20 min","25 min","30 min","45 min"].map(t=><Chip key={t} active={pom===t} onClick={()=>{setPom(t);lsSet("pref-pom",t);}}>{t}</Chip>)}</div></Field>
-              <Field label="Break after 4 sessions"><div style={{display:"flex",gap:6}}>{["10 min","15 min","20 min","30 min"].map(t=><Chip key={t} active={brk===t} onClick={()=>{setBrk(t);lsSet("pref-brk",t);}}>{t}</Chip>)}</div></Field>
-              <Row label="Auto-start next session" sub="Skip the play button between focus blocks." k="autoSession" />
-              <Row label="Block distracting sites" sub="Studlin's lightweight blocker pauses social media during focus." k="block" />
-            </Card>
-            <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>AI tutor</div>
               <Field label="Response verbosity"><div style={{display:"flex",gap:6}}>{["Concise","Balanced","Comprehensive"].map(t=><Chip key={t} active={verb===t} onClick={()=>{setVerb(t);lsSet("pref-verb",t);}}>{t}</Chip>)}</div></Field>
               <Field label="Tutor style">
-                <SelectChip options={["Socratic","Direct","Encouraging","Strict"]} value={"Socratic"} onChange={()=>{}} />
+                <SelectChip options={["Socratic","Direct","Encouraging","Strict"]} value={tutorStyle} onChange={v=>{setTutorStyle(v);lsSet("pref-tutorStyle",v);}} />
               </Field>
               <Row label="Spaced repetition engine" sub="Intelligent scheduling based on recall performance." k="sr" />
               <Row label="Auto-save drafts" sub="Save essay and note changes every 30 seconds." k="auto" />
@@ -7215,8 +7874,15 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             <Card style={{border:"1px solid rgba(214,117,96,0.3)"}}>
               <div style={{fontSize:13,fontWeight:700,color:T.red,marginBottom:4}}>Delete account</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Permanently remove your account, notes, essays, flashcards, and squad memberships. This cannot be undone.</div>
-              <Btn variant="danger">Delete my account</Btn>
+              <Btn variant="danger" onClick={()=>setDeleteAccountOpen(true)}>Delete my account</Btn>
             </Card>
+            <Modal open={deleteAccountOpen} onClose={()=>setDeleteAccountOpen(false)} title="Delete your account?" sub="Are you sure? This will permanently delete your schedules, notes, and optimized plans."
+              footer={<>
+                <Btn variant="subtle" onClick={()=>setDeleteAccountOpen(false)}>Cancel</Btn>
+                <Btn variant="danger" onClick={confirmDeleteAccount}>Delete my account</Btn>
+              </>}>
+              <div style={{fontSize:12.5,color:T.muted,lineHeight:1.6}}>This cannot be undone. You'll be signed out immediately.</div>
+            </Modal>
           </>)}
         </div>
       </div>
@@ -7226,7 +7892,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 
 
 // ─── PROFILE ──────────────────────────────────────────────────────────────────
-function Profile() {
+function Profile({setActive}={}) {
   const [prof,setProfState]=useState(()=>getProfile());
   const [picUrl,setPicUrl]=useState(()=>getUserPicUrl());
   const [status,setStatus]=useState(prof.status||"");
@@ -7235,7 +7901,6 @@ function Profile() {
   const fileInputRef=useRef(null);
   const camInputRef=useRef(null);
   const prefs=getSchedulePreferences();
-  const [workStart,setWorkStart]=useState(prefs.workStartTime||"09:00");
   const [difficulty,setDifficulty]=useState(prefs.difficultyPreference||"balanced");
   const [prefSaved,setPrefSaved]=useState(false);
   const lvl=levelInfo();
@@ -7261,7 +7926,7 @@ function Profile() {
     const updated={...getProfile(),status,affiliation,school:affiliation};
     lsSet("profile",updated);
     setProfState(updated);
-    const updatedPrefs={...getSchedulePreferences(),workStartTime:workStart,difficultyPreference:difficulty};
+    const updatedPrefs={...getSchedulePreferences(),difficultyPreference:difficulty};
     setSchedulePreferences(updatedPrefs);
     setPrefSaved(true);
     setTimeout(()=>setPrefSaved(false),2200);
@@ -7322,19 +7987,14 @@ function Profile() {
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             <StatusChip value="highschool" label="High School" active={status==="highschool"} />
             <StatusChip value="college" label="College" active={status==="college"} />
-            <StatusChip value="working" label="Working" active={status==="working"} />
           </div>
         </Field>
 
         {status&&(
           <Field label={affiliationLabel} hint="Visible to classmates on leaderboards.">
-            <Input value={affiliation} onChange={e=>setAffiliation(e.target.value)} placeholder={affiliationPlaceholder} />
+            <SchoolSelect value={affiliation} onChange={setAffiliation} placeholder={affiliationPlaceholder} />
           </Field>
         )}
-
-        <Field label="Study start time" hint="Tasks are scheduled from this hour.">
-          <TimeInput value={workStart} onChange={setWorkStart} />
-        </Field>
 
         <Field label="Task difficulty order">
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -7350,22 +8010,26 @@ function Profile() {
         </div>
       </Card>
 
+      {/* ── Explore Classes — institutional live-demo, gated to exactly the
+          two seeded demo schools (see DEMO_CLASSES_BY_SCHOOL). Renders
+          nothing at all for every other school. */}
+      {DEMO_CLASSES_BY_SCHOOL[affiliation] && (
+        <ExploreClassesCard school={affiliation} classes={DEMO_CLASSES_BY_SCHOOL[affiliation]} setActive={setActive} />
+      )}
+
       {/* ── Stats (real data only) */}
       {(()=>{
         const allDecks=lsGet("decks",[]);
         const cardsMastered=allDecks.reduce((a,d)=>a+(d.done||0),0);
-        const allEssays=lsGet("essays",[]);
-        const essaysSubmitted=allEssays.filter(e=>e.submitted).length;
         const stats=[
           ["Total study time",fmtH(ps.totalMin)||"0m",T.lime],
           ["Focus sessions",String(ps.focusSessions),T.teal],
-          ["Essays submitted",String(essaysSubmitted),T.purple],
           ["Cards mastered",String(cardsMastered),T.blue],
           ["Day streak",String(streak),T.amber],
           ["Level",lvl.title,T.red],
         ];
         return(
-          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10,marginBottom:16}}>
             {stats.map(([l,v,c],i)=>(
               <Card key={i} style={{textAlign:"center",padding:16}}>
                 <div style={{fontSize:26,fontWeight:700,color:c,letterSpacing:"-0.02em",lineHeight:1}}>{v}</div>
@@ -7376,10 +8040,9 @@ function Profile() {
         );
       })()}
 
-      {/* ── Activity + Subject distribution */}
+      {/* ── Weekly activity */}
       {(()=>{
         const allSessions=lsGet("sessions",[]);
-        const allEvents=lsGet("events",[]);
         const now=new Date();
         const dow=(now.getDay()+6)%7;
         const monDate=new Date(now);monDate.setDate(now.getDate()-dow);
@@ -7392,17 +8055,12 @@ function Profile() {
         });
         const maxMins=Math.max(1,...weekData.map(d=>d.mins));
         const totalWeekMins=weekData.reduce((a,d)=>a+d.mins,0);
-        const subjCounts={};
-        allEvents.forEach(ev=>{if(ev.subject)subjCounts[ev.subject]=(subjCounts[ev.subject]||0)+1;});
-        const subjTotal=Object.values(subjCounts).reduce((a,n)=>a+n,0)||1;
-        const subjColors={"English IV":T.purple,"Biology":T.teal,"Calculus":T.blue,"Spanish":T.amber,"Chemistry":T.red,"History":T.muted};
-        const subjRows=Object.entries(subjCounts).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([s,n])=>({s,pct:Math.round(n/subjTotal*100),c:subjColors[s]||T.lime}));
         return(
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr",gap:12}}>
             <Card>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
                 <div>
-                  <Label>Weekly activity</Label>
+                  <Label>Hours Focused</Label>
                   <div style={{fontSize:22,fontWeight:700,color:T.white,letterSpacing:"-0.02em",lineHeight:1}}>{fmtH(totalWeekMins)||"0m"}</div>
                   <div style={{fontSize:11,color:T.muted,marginTop:2}}>this week</div>
                 </div>
@@ -7419,20 +8077,6 @@ function Profile() {
                   );
                 })}
               </div>
-            </Card>
-            <Card>
-              <Label>Subject distribution</Label>
-              {subjRows.length===0
-                ?<div style={{fontSize:12,color:T.faint,padding:"16px 0",textAlign:"center"}}>Add tasks to your calendar to track subjects.</div>
-                :subjRows.map((row,i)=>(
-                  <div key={i} style={{marginBottom:12}}>
-                    <div style={{display:"flex",justifyContent:"space-between",fontSize:11,marginBottom:4}}>
-                      <span style={{color:T.muted}}>{row.s}</span>
-                      <span style={{color:row.c,fontWeight:600}}>{row.pct}%</span>
-                    </div>
-                    <Prog pct={row.pct} color={row.c} height={4} />
-                  </div>
-                ))}
             </Card>
           </div>
         );
@@ -7818,44 +8462,20 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
           underlying data (weeklyFocusMin, topSubjectThisWeek) still feeds
           the Weekly Wrapped popup. */}
 
-      {/* ROW: Quick tools — always visible, pure utility */}
-      <div style={{display:"grid",gridTemplateColumns:seriousMode?"1fr":"8fr 4fr",gap:16}}>
-        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
-          <CardHead title="Quick tools" label="JUMP RIGHT IN" more="Browse all" />
-          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
-            {[
-              {icon:Icon.pen,title:"Essay Writer",desc:"Draft, outline, intro & conclusion from a prompt",go:"essays"},
-              {icon:Icon.layers,title:"Flashcards from file",desc:"Drop a PDF · spaced-rep deck in 10s",go:"flashcards"},
-              {icon:Icon.scan,title:"Plagiarism check",desc:"Scan against academic databases",go:"grammar"},
-              {icon:Icon.link,title:"Citation generator",desc:"MLA · APA · Chicago · from a URL",go:"essays"},
-              {icon:Icon.wand,title:"AI Humanizer",desc:"Rewrite in your voice · beat detectors",go:"humanizer",badge:"SCHOLAR"},
-              {icon:Icon.zap,title:"Equation solver",desc:"Step-by-step math with explanations",go:"solve",badge:null},
-              {icon:Icon.msgSquare,title:"YouTube summarizer",desc:"Paste a lecture URL · get key points",go:"notes",badge:"ELITE"},
-              {icon:Icon.brain,title:"Exam prep mode",desc:"Practice tests & MCQs from your notes",go:"aitutor",badge:"ELITE"},
-            ].map((tool,i)=>(
-              <div key={i} onClick={()=>setActive(tool.go)} style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:14,padding:14,cursor:"pointer",position:"relative"}}>
-                {tool.badge&&<span style={{position:"absolute",top:10,right:10,fontSize:8.5,fontWeight:700,letterSpacing:"0.06em",padding:"2px 7px",borderRadius:99,background:T.purple+"22",color:T.purple,border:`1px solid ${T.purple}44`}}>{tool.badge}</span>}
-                {(()=>{const tc=[T.lime,T.teal,T.amber,T.blue,T.purple,T.red,T.teal,T.amber][i%8];return <div style={{width:30,height:30,borderRadius:8,background:tc+"22",border:`1px solid ${tc}33`,display:"grid",placeItems:"center",color:tc,marginBottom:10}}>{tool.icon}</div>;})()}
-                <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>{tool.title}</div>
-                <div style={{fontSize:11,color:T.muted,lineHeight:1.4}}>{tool.desc}</div>
-              </div>
-            ))}
-          </div>
+      {/* ROW: Study streak — full width now that Quick tools has been removed */}
+      {!seriousMode && <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+        <CardHead title="Study streak" label="LAST 91 DAYS" />
+        <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:14}}>
+          <span style={{fontFamily:T.hand,fontSize:44,fontWeight:600,color:T.text}}>{realStreak}</span>
+          <span style={{fontSize:13,color:T.muted}}>day streak</span>
+          <span style={{marginLeft:"auto",fontSize:11,color:T.faint,fontFamily:T.mono}}>LONGEST<br/><span style={{fontSize:16,color:T.text,fontWeight:700}}>{Math.max(realStreak,getStreak())}</span></span>
         </div>
-        {!seriousMode && <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
-          <CardHead title="Study streak" label="LAST 91 DAYS" />
-          <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:14}}>
-            <span style={{fontFamily:T.hand,fontSize:44,fontWeight:600,color:T.text}}>{realStreak}</span>
-            <span style={{fontSize:13,color:T.muted}}>day streak</span>
-            <span style={{marginLeft:"auto",fontSize:11,color:T.faint,fontFamily:T.mono}}>LONGEST<br/><span style={{fontSize:16,color:T.text,fontWeight:700}}>{Math.max(realStreak,getStreak())}</span></span>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(13,1fr)",gap:3}}>
-            {heatmapCells.map((lvl,i)=>(
-              <div key={i} style={{aspectRatio:"1",borderRadius:3,background:cellColor(lvl)}} />
-            ))}
-          </div>
-        </div>}
-      </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(13,1fr)",gap:3}}>
+          {heatmapCells.map((lvl,i)=>(
+            <div key={i} style={{aspectRatio:"1",borderRadius:3,background:cellColor(lvl)}} />
+          ))}
+        </div>
+      </div>}
 
       {/* ROW: Upcoming + Pick up where you left off — always visible, pure utility */}
       <div style={{display:"grid",gridTemplateColumns:"5fr 7fr",gap:16}}>
@@ -8352,7 +8972,7 @@ function InitWizard({onComplete}){
             {status && (
               <div style={{marginTop:4}}>
                 <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:muted,marginBottom:8}}>{affiliationLabel}</label>
-                <input value={affiliation} onChange={e=>setAffiliation(e.target.value)} placeholder={affiliationPlaceholder} style={{width:"100%",background:"#F0EBE0",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:13.5,fontFamily:`"Geist",system-ui,sans-serif`,outline:"none",boxSizing:"border-box"}} />
+                <SchoolSelect value={affiliation} onChange={setAffiliation} placeholder={affiliationPlaceholder} theme={{bg:"#F0EBE0",border,text:ink,muted}} />
                 <div style={{fontSize:11,color:muted,marginTop:6}}>Visible to classmates on leaderboards.</div>
               </div>
             )}
@@ -8546,6 +9166,8 @@ function App() {
   const [newDayModal,setNewDayModal]=useState(false);
   const [overdueForModal,setOverdueForModal]=useState([]);
   const [scheduleSettingsOpen,setScheduleSettingsOpen]=useState(false);
+  const [navCollapsed,setNavCollapsed]=useState(()=>lsGet("navCollapsed",false));
+  const toggleNavCollapsed=()=>{setNavCollapsed(v=>{lsSet("navCollapsed",!v);return !v;});};
   window._setTimerTask=setTimerTask;
   const [creditsOpen,setCreditsOpen]=useState(false);
   const [pricingOpen,setPricingOpen]=useState(false);
@@ -8587,14 +9209,59 @@ function App() {
 
   // Global unread count for the sidebar badge — mounted here (not inside
   // FriendsChat) so it stays live even while the user is on a different tab,
-  // the same chatRooms query FriendsChat uses for its own inbox.
+  // the same chatRooms query FriendsChat uses for its own inbox. This same
+  // listener also drives the context-aware chat notification/chime router
+  // below, since it's the only Firestore subscription that survives tab
+  // switches (FriendsChat's own listeners tear down the moment the user
+  // navigates away).
   const [unreadCount,setUnreadCount]=useState(0);
+  // Which thread (if any) FriendsChat currently has open — reported up via
+  // onActiveChatChange, since chatTarget itself is local to FriendsChat and
+  // unmounts with it.
+  const [openChatRoomId,setOpenChatRoomId]=useState(null);
+  // This effect's dependency array is [myUid] only, by design (re-subscribing
+  // to Firestore on every tab switch or lock-in start/stop would be
+  // wasteful) — so active/timerTask/openChatRoomId must never be read
+  // directly inside the onSnapshot callback below, or they'd be frozen at
+  // whatever they were when the listener was created. Mirror each into a
+  // ref, updated inline every render, and read .current inside the callback.
+  const activeRef=useRef(active);activeRef.current=active;
+  const timerTaskRef=useRef(timerTask);timerTaskRef.current=timerTask;
+  const openChatRoomIdRef=useRef(openChatRoomId);openChatRoomIdRef.current=openChatRoomId;
+  const lastMsgRef=useRef({}); // roomId -> last seen lastMessage.ts, for new-message dedup
   useEffect(()=>{
     if(!myUid){setUnreadCount(0);return;}
     const unsub=fsdb().collection('chatRooms').where('memberUids','array-contains',myUid)
       .onSnapshot(snap=>{
         let n=0;
-        snap.docs.forEach(d=>{if(isRoomUnread(d.data(),myUid))n++;});
+        snap.docs.forEach(d=>{
+          const room=d.data();
+          if(isRoomUnread(room,myUid))n++;
+          const last=room.lastMessage;
+          if(!last||last.senderId===myUid)return;
+          const prevTs=lastMsgRef.current[d.id];
+          if(prevTs===undefined){
+            // First time we've ever seen this room — just seed the
+            // baseline. Without this guard, every pre-existing unread
+            // message would fire a notification the moment the app loads.
+            lastMsgRef.current[d.id]=last.ts;
+            return;
+          }
+          if(last.ts<=prevTs)return;
+          lastMsgRef.current[d.id]=last.ts;
+          // ── Context-aware notification/chime router (4 rules) ──────────
+          if(timerTaskRef.current)return; // Rule 4: lock-in overrules everything
+          const settings=lsGet("settings",{});
+          const chimesOn=settings.chatChimes!==false;
+          const away=document.visibilityState!=="visible";
+          if(!away&&activeRef.current==="friends"&&openChatRoomIdRef.current===d.id)return; // Rule 1: viewing this exact thread
+          if(chimesOn)playChatChime(); // Rules 2 & 3 both chime
+          if(away&&settings.sysPush===true&&typeof Notification!=="undefined"&&Notification.permission==="granted"){
+            // Rule 3 only: away/background also gets the desktop overlay
+            const body=room.type==="group"?"New message in "+(room.name||"group chat"):"New message";
+            new Notification("Studlin",{body});
+          }
+        });
         setUnreadCount(n);
       },()=>{});
     return unsub;
@@ -8713,7 +9380,7 @@ function App() {
   const navSections=[
     {label:"Workspace",items:[
       {id:"dashboard",label:"Dashboard"},
-      {id:"calendar",label:"Calendar"},
+      {id:"calendar",label:"Studlin Calendar"},
       {id:"aichat",label:"Studlin AI"},
       // "writestudio" (Writing Suite) intentionally hidden from the active
       // nav — archived for V2, not deleted. Page, route mapping, and label
@@ -8721,17 +9388,19 @@ function App() {
       // links into it (e.g. Dashboard's Essay Writer / Citation quick tools).
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
-      {id:"lectures",label:"Lectures",badge:"NEW"},
       {id:"friends",label:"Studlin Network",badge:String(unreadCount||"")},
-      {id:"feedback",label:"Feedback"},
+      // "lectures" (Lectures) and "feedback" (Feedback) intentionally hidden
+      // from the active nav — same archive treatment as writestudio/solve.
+      // Page, route mapping, and label all still exist below so nothing
+      // breaks for anything that still references them.
     ]},
-    {label:"Tools",items:[
-      {id:"solve",label:"Solve"},
-    ]},
+    // "solve" (Solve) intentionally hidden from the active nav — page, route
+    // mapping, and label still exist below so nothing breaks for anything
+    // that still references it.
   ];
   const bottomItems=[{id:"settings",label:"Settings"},{id:"profile",label:"Profile"}];
   const pages={aichat:AiChat,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile,lectures:Lectures,feedback:FeedbackPage};
-  const labelOf={dashboard:"Dashboard",aichat:"Studlin AI",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve",lectures:"Lectures",feedback:"Feedback"};
+  const labelOf={dashboard:"Dashboard",aichat:"Studlin AI",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Studlin Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve",lectures:"Lectures",feedback:"Feedback"};
   const sectionOf={dashboard:"Workspace",aichat:"Workspace",writestudio:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",friends:"Workspace",lectures:"Workspace",feedback:"Workspace",solve:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
@@ -8744,30 +9413,44 @@ function App() {
   const NavItem=({item})=>{
     const act=active===item.id;
     return (
-      <div onClick={()=>setActive(item.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 11px",borderRadius:9,cursor:"pointer",fontSize:12.5,background:act?(isLight?"rgba(246,241,230,0.95)":`linear-gradient(100deg, ${T.lime}1c, ${T.lime}08)`):"transparent",color:act?(isLight?T.ink:T.lime):sidebarMuted,fontWeight:act?600:400,marginBottom:2,border:`1px solid ${act?(isLight?"transparent":T.lime+"30"):"transparent"}`,boxShadow:act&&!isLight?`0 4px 14px -8px ${T.lime}70`:"none",transition:"all 0.18s cubic-bezier(.2,.8,.2,1)"}}>
+      <div onClick={()=>setActive(item.id)} title={navCollapsed?item.label:undefined} style={{display:"flex",alignItems:"center",gap:10,padding:navCollapsed?"9px 0":"9px 11px",justifyContent:navCollapsed?"center":"flex-start",borderRadius:9,cursor:"pointer",fontSize:12.5,background:act?(isLight?"rgba(246,241,230,0.95)":`linear-gradient(100deg, ${T.lime}1c, ${T.lime}08)`):"transparent",color:act?(isLight?T.ink:T.lime):sidebarMuted,fontWeight:act?600:400,marginBottom:2,border:`1px solid ${act?(isLight?"transparent":T.lime+"30"):"transparent"}`,boxShadow:act&&!isLight?`0 4px 14px -8px ${T.lime}70`:"none",transition:"all 0.18s cubic-bezier(.2,.8,.2,1)"}}>
         <span style={{width:16,height:16,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:act?(isLight?T.ink:T.lime):sidebarFaint}}>{navIcon[item.id]}</span>
-        <span style={{flex:1,letterSpacing:"0.01em"}}>{item.label}</span>
-        {item.badge&&<span style={{background:T.lime+(act?"":"18"),color:act?T.ink:T.lime,fontSize:9,fontWeight:700,padding:"2px 6px",borderRadius:4,letterSpacing:"0.03em"}}>{item.badge}</span>}
+        {!navCollapsed&&<span style={{flex:1,letterSpacing:"0.01em",whiteSpace:"nowrap"}}>{item.label}</span>}
+        {!navCollapsed&&item.badge&&<span style={{background:T.lime+(act?"":"18"),color:act?T.ink:T.lime,fontSize:9,fontWeight:700,padding:"2px 6px",borderRadius:4,letterSpacing:"0.03em"}}>{item.badge}</span>}
       </div>
     );
   };
+  // Ambient lock-in glow — a subtle ring tinted to the active task's subject
+  // color, framing the viewport for as long as a lock-in session is running
+  // (including its break) so the interface itself signals "deep work."
+  const lockInGlowColor=timerTask?(getSubjects().find(s=>s.label===timerTask.subject)?.color||T.lime):null;
   return (
-    <div style={{display:"flex",height:"100vh",overflow:"hidden",background:isLight?T.bg:`radial-gradient(1200px 600px at 78% -8%, ${T.glow}, transparent 60%), ${T.bg}`,fontFamily:T.font,color:T.text}}>
+    <div style={{display:"flex",height:"100vh",overflow:"hidden",background:isLight?T.bg:`radial-gradient(1200px 600px at 78% -8%, ${T.glow}, transparent 60%), ${T.bg}`,fontFamily:T.font,color:T.text,boxShadow:lockInGlowColor?`inset 0 0 0 3px ${lockInGlowColor}22, inset 0 0 40px 0 ${lockInGlowColor}14`:"none",transition:"box-shadow 0.6s ease"}}>
       {/* SIDEBAR */}
-      <div style={{width:230,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #18241D 0%, #0D120F00 60%)",backgroundColor:isLight?T.surface:T.surface,display:"flex",flexDirection:"column",padding:"20px 12px",borderRight:`1px solid ${isLight?"transparent":T.border}`,overflowY:"auto"}}>
-        <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 6px",marginBottom:20}}>
-          <div style={{width:28,height:28,background:T.lime,borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-            <span style={{fontSize:15,fontWeight:800,color:T.ink,fontFamily:T.font}}>S</span>
-          </div>
-          <span style={{fontSize:16,fontWeight:700,color:sidebarText,letterSpacing:"-0.02em",fontFamily:T.font}}>Studlin</span>
+      <div style={{width:navCollapsed?68:230,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #18241D 0%, #0D120F00 60%)",backgroundColor:isLight?T.surface:T.surface,display:"flex",flexDirection:"column",padding:navCollapsed?"20px 10px":"20px 12px",borderRight:`1px solid ${isLight?"transparent":T.border}`,overflowY:"auto",overflowX:"hidden",transition:"width 0.22s cubic-bezier(.2,.8,.2,1), padding 0.22s cubic-bezier(.2,.8,.2,1)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 6px",marginBottom:20,justifyContent:navCollapsed?"center":"space-between"}}>
+          {!navCollapsed&&(
+            <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
+              <div style={{width:28,height:28,background:T.lime,borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                <span style={{fontSize:15,fontWeight:800,color:T.ink,fontFamily:T.font}}>S</span>
+              </div>
+              <span style={{fontSize:16,fontWeight:700,color:sidebarText,letterSpacing:"-0.02em",fontFamily:T.font,whiteSpace:"nowrap"}}>Studlin</span>
+            </div>
+          )}
+          <button onClick={toggleNavCollapsed} title={navCollapsed?"Expand sidebar":"Collapse sidebar"} style={{width:28,height:28,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${sidebarBorder}`,borderRadius:7,color:sidebarMuted,cursor:"pointer",padding:0}}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{transform:navCollapsed?"rotate(180deg)":"none",transition:"transform 0.22s"}}>
+              <polyline points="11 17 6 12 11 7" /><polyline points="18 17 13 12 18 7" />
+            </svg>
+          </button>
         </div>
-        <div onClick={()=>setActive("profile")} style={{background:sidebarCardBg,borderRadius:8,padding:"10px 12px",marginBottom:16,display:"flex",alignItems:"center",gap:10,cursor:"pointer",border:`1px solid ${sidebarBorder}`}}>
+        <div onClick={()=>setActive("profile")} title={navCollapsed?getUserName():undefined} style={{background:sidebarCardBg,borderRadius:8,padding:navCollapsed?"8px":"10px 12px",marginBottom:16,display:"flex",alignItems:"center",justifyContent:navCollapsed?"center":"flex-start",gap:10,cursor:"pointer",border:`1px solid ${sidebarBorder}`}}>
           <Av initials={getUserInitials()} color={T.lime} size={30} />
-          <div><div style={{fontSize:12,fontWeight:600,color:sidebarText}}>{getUserName()}</div><div style={{fontSize:10,color:sidebarMuted}}>{getPlan()}</div></div>
+          {!navCollapsed&&<div><div style={{fontSize:12,fontWeight:600,color:sidebarText,whiteSpace:"nowrap"}}>{getUserName()}</div><div style={{fontSize:10,color:sidebarMuted}}>{getPlan()}</div></div>}
         </div>
         {navSections.map(sec=>(
           <div key={sec.label}>
-            <div style={{fontSize:9,fontWeight:700,letterSpacing:"0.1em",color:sidebarFaint,textTransform:"uppercase",padding:"0 6px",margin:"14px 0 5px"}}>{sec.label}</div>
+            {!navCollapsed&&<div style={{fontSize:9,fontWeight:700,letterSpacing:"0.1em",color:sidebarFaint,textTransform:"uppercase",padding:"0 6px",margin:"14px 0 5px"}}>{sec.label}</div>}
+            {navCollapsed&&<div style={{height:1,background:sidebarBorder,margin:"14px 4px 10px"}} />}
             {sec.items.map(item=><NavItem key={item.id} item={item} />)}
           </div>
         ))}
@@ -8775,7 +9458,13 @@ function App() {
           {bottomItems.map(item=><NavItem key={item.id} item={item} />)}
         </div>
         {/* AI credits card */}
-        {(()=>{const cr=getCredits();const lim=Math.max(cr,getCreditLimit());const plan=getPlan();const daysLeft=(()=>{const n=new Date();const e=new Date(n.getFullYear(),n.getMonth()+1,1);return Math.ceil((e-n)/86400000);})();const pct=Math.min(100,Math.round(cr/lim*100));return(
+        {(()=>{const cr=getCredits();const lim=Math.max(cr,getCreditLimit());const plan=getPlan();const daysLeft=(()=>{const n=new Date();const e=new Date(n.getFullYear(),n.getMonth()+1,1);return Math.ceil((e-n)/86400000);})();const pct=Math.min(100,Math.round(cr/lim*100));
+        if(navCollapsed){return(
+        <div onClick={()=>setCreditsOpen(true)} title={cr+" / "+getCreditLimit()+" AI credits"} style={{background:T.lime,borderRadius:10,padding:"8px 0",marginTop:"auto",border:`1px solid ${T.limeDk}`,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+          <span style={{fontFamily:T.hand,fontSize:18,fontWeight:700,color:T.ink,lineHeight:1}}>{cr}</span>
+          <div style={{width:"60%",height:3,background:"rgba(8,12,40,0.15)",borderRadius:99,overflow:"hidden"}}><div style={{height:"100%",width:pct+"%",background:T.ink,borderRadius:99}} /></div>
+        </div>);}
+        return(
         <div onClick={()=>setCreditsOpen(true)} style={{background:T.lime,borderRadius:12,padding:"12px 14px",marginTop:"auto",border:`1px solid ${T.limeDk}`,cursor:"pointer",position:"relative",overflow:"hidden",boxShadow:`0 12px 24px -12px ${T.lime}80`}}>
           <div style={{position:"absolute",right:-30,top:-30,width:90,height:90,background:"radial-gradient(circle,rgba(255,255,255,0.5),transparent 70%)",pointerEvents:"none"}} />
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
@@ -8850,8 +9539,9 @@ function App() {
           {active==="dashboard"?<Dashboard setActive={setActive} setScheduleSettingsOpen={setScheduleSettingsOpen} seriousMode={seriousMode} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} />:
            active==="calendar"?<CalendarTab onTourDone={handleCalendarTourDone} onTaskSaved={askNotifIfNeeded} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} />:
-           active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} />:
+           active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} />:
            active==="lectures"?<Lectures setActive={setActive} setPricingOpen={setPricingOpen} />:
+           active==="profile"?<Profile setActive={setActive} />:
            ActivePage?<ActivePage />:null}
         </div>
       </div>

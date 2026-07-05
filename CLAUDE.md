@@ -367,6 +367,24 @@ Avoid:
 
 ---
 
+# Interaction & Feedback Guardrails
+
+Apply these to every form, button, and data-bearing screen — proactively, without being asked each time.
+
+Forms:
+
+* Every input must show a distinct focus state (border/outline shift).
+* Validation errors render as inline red text directly beneath the field. Never rely on browser alerts.
+* Primary submit buttons disable immediately on click and swap their label for a loading state, to prevent duplicate submissions.
+
+Data safety:
+
+* Anything that deletes user data (a deck, a task, a routine) requires a confirm modal first. Never delete on a single click.
+* Successful async actions (sent, saved, synced) get a toast or slide-in confirmation, not silence.
+* Empty states never render blank. Show a styled empty-state message with a clear CTA (e.g. "+ Create your first deck").
+
+---
+
 # Color Direction
 
 Previous branding used dark themes.

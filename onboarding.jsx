@@ -28,6 +28,12 @@ const Ic = {
   star: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26"/></svg>,
 };
 
+// Google-authenticated accounts are already verified by Google — only
+// email/password signups need the Verify step. Mirrors studlin-app.jsx's
+// own isPasswordAccount helper exactly, kept as a separate copy since this
+// is a standalone bundle.
+const isPasswordAccount = (u) => !!(u && u.providerData && u.providerData.some(p => p.providerId === "password"));
+
 const ERR_MAP = {
   "auth/email-already-in-use":"An account with this email already exists. Try signing in.",
   "auth/invalid-email":"Please enter a valid email address.",
@@ -75,7 +81,7 @@ function SelectField({ label, value, onChange, options, hint }) {
 }
 
 const STEPS = [
-  { name: "Sign up" },{ name: "Profile" },
+  { name: "Sign up" },{ name: "Verify" },{ name: "Profile" },
 ];
 
 function LeftRail({ step, state }) {
@@ -97,7 +103,7 @@ function LeftRail({ step, state }) {
       </aside>
     );
   }
-  const groups = [{ name: "Sign up", from: 0, to: 0 },{ name: "Profile", from: 1, to: 1 }];
+  const groups = [{ name: "Sign up", from: 0, to: 0 },{ name: "Verify", from: 1, to: 1 },{ name: "Profile", from: 2, to: 2 }];
   return (
     <aside className="rail">
       <div className="brand">
@@ -196,12 +202,6 @@ function StepSignup({ state, set, advance }) {
 
       {authError && <div style={{fontSize:13,color:"#C4544A",marginBottom:16,padding:"12px 14px",background:"#FCF1EF",borderRadius:10,border:"1px solid #F5D4D0",textAlign:"center"}}>{authError}</div>}
 
-      <label className={"checkbox" + (state.terms ? " is-checked" : "")} onClick={()=>set({...state, terms:!state.terms})} style={{marginBottom:18}}>
-        <span className="box">{Ic.check}</span>
-        <span>I accept the <a href="terms.html" target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}>Terms of Service</a> and <a href="privacy.html" target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}>Privacy Policy</a>.</span>
-      </label>
-      {errors.terms && <div className="field-error" style={{marginTop:-12,marginBottom:14}}>{errors.terms}</div>}
-
       {mode === "providers" && (
         <>
           <div className="providers">
@@ -242,6 +242,67 @@ function StepSignup({ state, set, advance }) {
           <button data-cta="signup" onClick={tryAdvance} style={{display:"none"}}></button>
         </>
       )}
+
+      <label className={"checkbox" + (state.terms ? " is-checked" : "")} onClick={()=>set({...state, terms:!state.terms})} style={{marginTop:22}}>
+        <span className="box">{Ic.check}</span>
+        <span>I accept the <a href="terms.html" target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}>Terms of Service</a> and <a href="privacy.html" target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}>Privacy Policy</a>.</span>
+      </label>
+      {errors.terms && <div className="field-error" style={{marginTop:8}}>{errors.terms}</div>}
+    </div>
+  );
+}
+
+// Verification gate — sits between Sign up and Profile so an unverified
+// (or fake) account can never reach StepProfile, which is what writes
+// school/status to Firestore. Mirrors studlin-app.jsx's own
+// VerifyEmailScreen resend/check-verified logic, styled to match this
+// bundle's onboarding.css classes instead of inline dark-theme styles.
+function StepVerify({ advanceToProfile }) {
+  const [status, setStatus] = useState("idle"); // idle | sending | sent | checking
+  const [err, setErr] = useState("");
+  const user = firebase.auth().currentUser;
+
+  const resend = async () => {
+    setStatus("sending"); setErr("");
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/send-verification", { method: "POST", headers: { Authorization: "Bearer " + token } });
+      const d = await res.json().catch(()=>({}));
+      if (res.ok && d.ok) { setStatus("sent"); setTimeout(()=>setStatus("idle"), 30000); }
+      else { setErr(d.error || "Couldn't send the email. Try again shortly."); setStatus("idle"); }
+    } catch(e) { setErr("Couldn't send the email. Try again shortly."); setStatus("idle"); }
+  };
+
+  const checkVerified = async () => {
+    setStatus("checking"); setErr("");
+    try { await user.reload(); } catch(e) {}
+    if (firebase.auth().currentUser && firebase.auth().currentUser.emailVerified) {
+      advanceToProfile();
+    } else {
+      setErr("Still not verified — check your inbox (and spam folder) for the link.");
+      setStatus("idle");
+    }
+  };
+
+  useEffect(() => {
+    const onFocus = () => { if (document.visibilityState === "visible") checkVerified(); };
+    document.addEventListener("visibilitychange", onFocus);
+    return () => document.removeEventListener("visibilitychange", onFocus);
+  }, []);
+
+  return (
+    <div className="frame">
+      <div className="frame-head">
+        <h2>Check your <em>inbox</em></h2>
+        <p>We sent a verification link to <strong>{user && user.email}</strong>. Click it, then come back here.</p>
+      </div>
+      {err && <div style={{fontSize:13,color:"#C4544A",marginBottom:16,padding:"12px 14px",background:"#FCF1EF",borderRadius:10,border:"1px solid #F5D4D0",textAlign:"center"}}>{err}</div>}
+      <button className="cta lime" disabled={status==="checking"} onClick={checkVerified} style={{width:"100%",justifyContent:"center",marginBottom:12}}>
+        {status==="checking" ? "Checking…" : "I've verified — continue"}
+      </button>
+      <button className="provider" disabled={status==="sending"||status==="sent"} onClick={resend}>
+        {status==="sending" ? "Sending…" : status==="sent" ? "Sent — check your inbox" : "Resend verification email"}
+      </button>
     </div>
   );
 }
@@ -271,9 +332,18 @@ function StepProfile({ state, set }) {
   );
 }
 
+// A password-account user is only past the gate once they've actually
+// verified; Google (or any non-password provider) is already verified.
+const isVerifiedOrGoogle = (u) => !!u && (!isPasswordAccount(u) || u.emailVerified);
+
 function App() {
   const [step, setStep] = useState(()=>{
-    if(firebase.auth().currentUser){const s=JSON.parse(localStorage.getItem("studlin-onboarding")||"null");return s&&s._step?s._step:1;}
+    const u=firebase.auth().currentUser;
+    if(u){
+      const s=JSON.parse(localStorage.getItem("studlin-onboarding")||"null");
+      if(s&&s._step)return s._step;
+      return isVerifiedOrGoogle(u)?2:1;
+    }
     return 0;
   });
   const [state, setState] = useState(() => {
@@ -283,7 +353,10 @@ function App() {
 
   useEffect(()=>{
     return firebase.auth().onAuthStateChanged(u=>{
-      if(u) setStep(prev=>prev<1?1:prev);
+      if(u){
+        const minStep = isVerifiedOrGoogle(u) ? 2 : 1;
+        setStep(prev=>prev<minStep?minStep:prev);
+      }
     });
   },[]);
 
@@ -298,7 +371,8 @@ function App() {
     if (step === 0) {
       return !!state.terms && (!!firebase.auth().currentUser || !!(state.provider) || !!(state.name && state.email && (state.password||"").length >= 8));
     }
-    if (step === 1) return !!state.status && !!(state.school||"").trim();
+    if (step === 1) return isVerifiedOrGoogle(firebase.auth().currentUser);
+    if (step === 2) return !!state.status && !!(state.school||"").trim();
     return true;
   };
 
@@ -349,7 +423,7 @@ function App() {
     return ()=>window.removeEventListener("keydown", fn);
   });
 
-  const CTA_LABEL = ["Sign up for free","Continue"][step];
+  const CTA_LABEL = ["Sign up for free","I've verified — continue","Continue"][step];
 
   return (
     <div className="shell">
@@ -360,14 +434,21 @@ function App() {
         </div>
         <div className={"step-content" + (transitioning ? " is-leaving" : " is-entering")}>
           {/* advance() only ever fires from step 0 right after a successful
-              signup, so its destination is always "step 1" — a fixed
-              setStep(1) rather than a relative s+1 makes this idempotent
-              against the auth-state-changed effect below, which can also
-              bump the step around the same moment. */}
-          {step === 0 && <StepSignup state={state} set={setState} advance={(skip)=>{ if(skip||isStepValid()){ setTransitioning(true); setTimeout(()=>{ setStep(1); setTransitioning(false); },250); }}} />}
-          {step === 1 && <StepProfile state={state} set={setState} />}
+              signup/sign-in. Password accounts must land on the Verify step
+              first — StepProfile (which writes school/status to Firestore)
+              must never be reachable before the account is actually
+              verified. Google accounts are already verified by Google, so
+              they skip straight to Profile. */}
+          {step === 0 && <StepSignup state={state} set={setState} advance={(skip)=>{
+            if(skip||isStepValid()){
+              const dest = isVerifiedOrGoogle(firebase.auth().currentUser) ? 2 : 1;
+              setTransitioning(true); setTimeout(()=>{ setStep(dest); setTransitioning(false); },250);
+            }
+          }} />}
+          {step === 1 && <StepVerify advanceToProfile={()=>{ setTransitioning(true); setTimeout(()=>{ setStep(2); setTransitioning(false); },250); }} />}
+          {step === 2 && <StepProfile state={state} set={setState} />}
         </div>
-        <div className="stage-foot">
+        <div className="stage-foot" style={step===1?{display:"none"}:undefined}>
           <button className="cta" disabled={!isStepValid()||finishing} onClick={()=>{
             if(step===0&&!firebase.auth().currentUser){
               const btn=document.querySelector('[data-cta="signup"]');
