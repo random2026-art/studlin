@@ -862,6 +862,7 @@ async function upsertProfile(extra={}){
     updatedAt:new Date().toISOString(),
   };
   try{await fsdb().collection('profiles').doc(u.uid).set(data,{merge:true});}catch(e){}
+  try{await fsdb().collection('users').doc(u.uid).set({name,email:u.email||"",updatedAt:new Date().toISOString()},{merge:true});}catch(e){}
 }
 // Top-N public profiles ordered by real XP, straight from Firestore — no
 // mock/seed data. Docs that haven't been through upsertProfile() since xp
