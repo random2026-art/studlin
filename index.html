@@ -1298,7 +1298,9 @@ body::after{
 </section>
 
 <!-- ============ PRICING ============ -->
-<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js" crossorigin="anonymous"></script>
+<script>
+!function(){var C=document.createElement('canvas');C.style.cssText='position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:99999;';var X,R,P=[];function I(){if(!C.parentNode)document.body.appendChild(C);C.width=innerWidth;C.height=innerHeight;X=C.getContext('2d');}function rn(a,b){return a+Math.random()*(b-a);}window.confetti=function(o){o=o||{};I();var n=o.particleCount||100,org=o.origin||{x:.5,y:.5},cols=o.colors||['#B8E04A','#FF6B9D','#60C8FF','#FFB347','#A78BFA','#34D399'],sp=(o.spread||80)*Math.PI/180,vel=o.startVelocity||38,sc=o.scalar||1,tk=o.ticks||220;for(var i=0;i<n;i++){var a=-Math.PI/2+rn(-sp/2,sp/2),v=rn(vel*.55,vel)*sc;P.push({x:org.x*innerWidth,y:org.y*innerHeight,vx:Math.cos(a)*v,vy:Math.sin(a)*v,col:cols[0|Math.random()*cols.length],w:rn(7,13)*sc,h:rn(4,8)*sc,rot:rn(0,360),rv:rn(-8,8),life:tk,sq:Math.random()>.4});}if(R)return;R=requestAnimationFrame(function s(){X.clearRect(0,0,C.width,C.height);P=P.filter(function(p){p.x+=p.vx;p.y+=p.vy;p.vy+=0.38;p.vx*=0.99;p.rot+=p.rv;p.life--;var al=p.life<40?p.life/40:1;X.save();X.globalAlpha=al;X.fillStyle=p.col;X.translate(p.x,p.y);X.rotate(p.rot*Math.PI/180);if(p.sq)X.fillRect(-p.w/2,-p.h/2,p.w,p.h);else{X.beginPath();X.ellipse(0,0,p.w/2,p.h/3,0,0,Math.PI*2);X.fill();}X.restore();return p.life>0;});if(P.length)R=requestAnimationFrame(s);else{R=null;X.clearRect(0,0,C.width,C.height);}});}}();
+</script>
 <section class="sec" id="pricing">
   <div class="wrap">
     <div class="head center">
@@ -1780,7 +1782,7 @@ body::after{
         const r=sw.getBoundingClientRect();
         window.confetti({particleCount:72,spread:66,startVelocity:34,scalar:.9,ticks:160,
           origin:{x:(r.left+r.width/2)/innerWidth,y:(r.top+r.height/2)/innerHeight},
-          colors:['#173D2D','#1E4A38','#2C5E45','#8FCBA9','#F3F1E7']});
+          colors:['#B8E04A','#FF6B9D','#60C8FF','#FFB347','#A78BFA','#34D399','#FACC15']});
       }
     });
     const cards=document.querySelector('.pricing-cards');
