@@ -4760,6 +4760,14 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
   // overlay, entered via a distinct square button (never the round
   // collapse/expand toggle, which stays a two-state control).
   const [fullscreen,setFullscreen]=useState(false);
+  // Fades the overlay out (rather than an instant unmount) before dropping
+  // back to the widget, which lands directly in its collapsed circular
+  // state per the minimize affordance — never the full expanded card.
+  const [focusExiting,setFocusExiting]=useState(false);
+  const minimizeFocus=()=>{
+    setFocusExiting(true);
+    setTimeout(()=>{setFullscreen(false);setCollapsed(true);setFocusExiting(false);},220);
+  };
 
   // ── Assignment binary-completion + extension-slider sub-state (only used
   // when phase==="assignmentCheck", i.e. task.assignmentId is set) ─────────
@@ -5166,10 +5174,13 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
   const widgetCirc=2*Math.PI*widgetR;
 
   // ── FULL-SCREEN FOCUS OVERLAY — entered via the square button below.
+  // Fades + scales down on minimize (focusExiting) instead of hard-cutting,
+  // then unmounts once minimizeFocus's timeout lands the widget back in its
+  // collapsed circular state.
   if(fullscreen){
     return(
-      <div style={{position:"fixed",inset:0,zIndex:600,background:T.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:40,textAlign:"center",fontFamily:T.font}}>
-        <button onClick={()=>setFullscreen(false)} title="Restore" style={{position:"absolute",top:24,right:24,width:40,height:40,borderRadius:12,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer"}}>
+      <div style={{position:"fixed",inset:0,zIndex:600,background:T.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:40,textAlign:"center",fontFamily:T.font,opacity:focusExiting?0:1,transform:focusExiting?"scale(0.97)":"scale(1)",transition:"opacity 0.22s ease, transform 0.22s ease"}}>
+        <button onClick={minimizeFocus} title="Minimize" style={{position:"absolute",top:24,right:24,width:40,height:40,borderRadius:12,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer"}}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
         </button>
         <div style={{fontFamily:T.mono,fontSize:64,fontWeight:800,color:timerColor,letterSpacing:"-0.02em",marginBottom:28}}>{fmt(secs)}</div>
@@ -5179,9 +5190,6 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
   }
 
   return(<>
-    {running&&(
-      <div style={{position:"fixed",inset:0,border:`4px solid ${T.lime}`,zIndex:499,pointerEvents:"none"}} />
-    )}
     <div onPointerDown={widgetPointerDown} onPointerMove={widgetPointerMove} onPointerUp={widgetPointerUp}
       style={{position:"fixed",...(dragPos?{left:dragPos.x,top:dragPos.y,right:"auto",bottom:"auto"}:{bottom:20,right:collapsed?8:20}),zIndex:500,width:collapsed?64:284,background:T.card,border:`1px solid ${T.border}`,borderRadius:18,boxShadow:"0 20px 50px -14px rgba(0,0,0,0.5)",padding:collapsed?"30px 8px 14px":"14px 16px",fontFamily:T.font,animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)",transition:"width 0.28s cubic-bezier(.2,.85,.3,1), padding 0.28s cubic-bezier(.2,.85,.3,1)",overflow:"hidden",boxSizing:"border-box",cursor:"grab",touchAction:"none"}}>
       <button onClick={()=>setFullscreen(true)} title="Full-screen focus" style={{position:"absolute",top:10,right:38,width:22,height:22,borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer",zIndex:1,padding:0}}>
@@ -9995,12 +10003,8 @@ function App() {
       </div>
     );
   };
-  // Ambient lock-in glow — a subtle ring tinted to the active task's subject
-  // color, framing the viewport for as long as a lock-in session is running
-  // (including its break) so the interface itself signals "deep work."
-  const lockInGlowColor=timerTask?(getSubjects().find(s=>s.label===timerTask.subject)?.color||T.lime):null;
   return (
-    <div style={{display:"flex",height:"100vh",overflow:"hidden",background:isLight?T.bg:`radial-gradient(1200px 600px at 78% -8%, ${T.glow}, transparent 60%), ${T.bg}`,fontFamily:T.font,color:T.text,boxShadow:lockInGlowColor?`inset 0 0 0 3px ${lockInGlowColor}22, inset 0 0 40px 0 ${lockInGlowColor}14`:"none",transition:"box-shadow 0.6s ease"}}>
+    <div style={{display:"flex",height:"100vh",overflow:"hidden",background:isLight?T.bg:`radial-gradient(1200px 600px at 78% -8%, ${T.glow}, transparent 60%), ${T.bg}`,fontFamily:T.font,color:T.text}}>
       {/* SIDEBAR */}
       <div style={{width:navCollapsed?68:230,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #18241D 0%, #0D120F00 60%)",backgroundColor:isLight?T.surface:T.surface,display:"flex",flexDirection:"column",padding:navCollapsed?"20px 10px":"20px 12px",borderRight:`1px solid ${isLight?"transparent":T.border}`,overflowY:"auto",overflowX:"hidden",transition:"width 0.22s cubic-bezier(.2,.8,.2,1), padding 0.22s cubic-bezier(.2,.8,.2,1)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 6px",marginBottom:20,justifyContent:navCollapsed?"center":"space-between"}}>
