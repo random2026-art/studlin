@@ -50,6 +50,29 @@ service cloud.firestore {
         && (request.auth.uid == resource.data.senderId || request.auth.uid == resource.data.receiverId);
     }
 
+    // Durable assignment/course identity seeded from the (mocked) Canvas
+    // connector. Owned entirely per-user; the actual scheduling of calendar
+    // blocks happens client-side against the existing `events` localStorage
+    // array, never here — these two collections only track "what/when/how-
+    // estimated", not "which time slots are booked."
+    match /courses/{courseId} {
+      allow read: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+      allow update: if request.auth != null
+        && request.auth.uid == resource.data.userId
+        && request.resource.data.userId == resource.data.userId;
+      allow delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+
+    match /assignments/{assignmentId} {
+      allow read: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+      allow update: if request.auth != null
+        && request.auth.uid == resource.data.userId
+        && request.resource.data.userId == resource.data.userId;
+      allow delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+
     // Real-time chat — DMs and groups share one collection so both can be
     // driven by a single `memberUids array-contains` inbox query. `messages`
     // writes must be self-attributed (senderId == auth.uid), so a client can

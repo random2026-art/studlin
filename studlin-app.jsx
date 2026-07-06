@@ -240,6 +240,11 @@ const FCM_CONFIGURED = FCM_VAPID_KEY !== "REPLACE_WITH_VAPID_KEY_FROM_FIREBASE_C
 const GOOGLE_OAUTH_CLIENT_ID = "16831354472-bsq7nhbg1jbrovhj69sib9f9fmg4jag2.apps.googleusercontent.com";
 const GDOCS_CONFIGURED = GOOGLE_OAUTH_CLIENT_ID !== "YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com";
 
+// Gates the "seed mock Canvas data" dev-only button in Settings > Integrations.
+// This app has no build step (Babel-in-browser via CDN), so there is no
+// process.env to read client-side — a plain runtime check is the only option.
+const DEV_MODE = location.hostname==="localhost" || location.hostname==="127.0.0.1";
+
 async function createGoogleDoc(essay) {
   if (!GDOCS_CONFIGURED) throw new Error("GOOGLE_OAUTH_CLIENT_ID not configured");
   if (typeof google === "undefined" || !google.accounts) throw new Error("Google Identity Services not loaded");
@@ -790,23 +795,114 @@ const getRoutineOccurrencesForDate=(dateKey)=>expandRoutineOccurrences(getWeekly
 // within the user's preferred daily window. Shared by aiArrange's
 // deterministic hard-lock enforcement and the Routine Control Center's
 // conflict reconciliation (relocating a task that a routine edit now overlaps).
-function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration){
+function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey){
   const prefStartMins=timeToMinutes(prefs.workStartTime);
   const prefEndMins=timeToMinutes(prefs.workEndTime);
   for(let dayOffset=0;dayOffset<14;dayOffset++){
     const d=new Date(desiredDate+"T12:00:00");d.setDate(d.getDate()+dayOffset);
     const dk=dayKey(d);
+    // Assignment-linked callers (scheduleAssignmentExtension) pass a deadline
+    // so we never place a block past it — plain callers omit it, no-op.
+    if(deadlineKey&&dk>deadlineKey)break;
     // Free periods are preferred landing spots, not blocks — never treat them
     // as occupied (matches the Dashboard's scheduling engine).
+    // Trailing breathing-room buffer scales with each existing block's own
+    // duration, so gap-finding naturally leaves a proportional cooldown
+    // after it rather than allowing zero-gap back-to-back placement.
     const occupied=events.filter(e=>e.date===dk&&e.time)
       .concat(expandRoutineOccurrences(routines,dk,dk).filter(o=>o.kind!=="free period"))
-      .map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)}));
+      .map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
     const scanStart=dayOffset===0?Math.max(prefStartMins,timeToMinutes(desiredTime)):prefStartMins;
     for(let t=scanStart;t+duration<=prefEndMins;t+=15){
       if(!occupied.some(o=>!(t+duration<=o.start||t>=o.end)))return {date:dk,time:minutesToTime(t)};
     }
   }
   return {date:desiredDate,time:desiredTime}; // nothing open in two weeks — better than silently dropping the task
+}
+// findOpenSlotFor's fallback ("return the desired slot anyway if nothing's
+// open") is the right default for its existing callers, but wrong for a
+// Hard Wall that must never be silently violated — used only by "Pause My
+// Life" (Tier 3), never changes findOpenSlotFor itself so every other
+// caller keeps its current behavior.
+function findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey){
+  const slot=findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey);
+  if(deadlineKey&&slot.date>deadlineKey)return null;
+  const occupied=events.filter(e=>e.date===slot.date&&e.time)
+    .concat(expandRoutineOccurrences(routines,slot.date,slot.date).filter(o=>o.kind!=="free period"))
+    .map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
+  const tMins=timeToMinutes(slot.time);
+  const conflict=occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end));
+  return conflict?null:slot;
+}
+// Places a student-reported "I need more time" extension for an assignment
+// into the next open gap(s) before its deadline. Splits anything over 90min
+// into multiple sessions (same chunking ceiling aiArrange uses), each placed
+// via findOpenSlotFor with the assignment's deadline as a hard upper bound.
+// Reads/writes localStorage directly (not React state) since this can be
+// called from outside CalendarTab, same idiom as App's TaskTimerModal
+// onComplete handler.
+function scheduleAssignmentExtension(task,deadlineKey,totalMins){
+  const events=lsGet("events",[]);
+  const routines=getWeeklyRoutine();
+  const prefs=getSchedulePreferences();
+  const CHUNK=90;
+  const chunks=[];
+  let remaining=totalMins;
+  while(remaining>0){const c=Math.min(CHUNK,remaining);chunks.push(c);remaining-=c;}
+
+  let cursorDate=dayKey(),cursorTime=prefs.workStartTime;
+  const newEvents=[];
+  chunks.forEach((mins,i)=>{
+    const slot=findOpenSlotFor(events.concat(newEvents),routines,prefs,cursorDate,cursorTime,mins,deadlineKey);
+    newEvents.push({
+      id:String(Date.now()+i)+"-"+i,title:task.title,date:slot.date,time:slot.time,
+      subject:task.subject,kind:"study block",duration:mins,
+      assignmentId:task.assignmentId,status:"pending",deadline:deadlineKey,
+    });
+    const d=new Date(slot.date+"T12:00:00");d.setDate(d.getDate()+1);
+    cursorDate=dayKey(d);cursorTime=prefs.workStartTime;
+  });
+  lsSet("events",events.concat(newEvents));
+}
+// Dev-only demo seeder for the (mocked, Coming Soon) Canvas connector —
+// creates one course + a few assignments in Firestore, then generates each
+// assignment's first "Attack Block" via the same gap-finder real Canvas sync
+// would use, so the estimation-engine loop is fully demoable without a real
+// Canvas integration. Gated behind DEV_MODE, triggered from Settings >
+// Integrations.
+async function injectMockCanvasData(){
+  const uid=firebase.auth().currentUser?.uid;
+  if(!uid)return;
+  const now=new Date().toISOString();
+  const courseRef=await fsdb().collection('courses').add({
+    userId:uid,name:"AP Chemistry",code:"CHEM 301",color:"#7BACDF",source:"mock",createdAt:now,updatedAt:now,
+  });
+  const mockAssignments=[
+    {title:"Problem Set 4: Thermodynamics",daysOut:2},
+    {title:"Lab Report: Titration Curves",daysOut:4},
+    {title:"Reading Response: Ch. 9",daysOut:6},
+  ];
+  const events=lsGet("events",[]),routines=getWeeklyRoutine(),prefs=getSchedulePreferences();
+  const newEvents=[];
+  for(const a of mockAssignments){
+    const deadline=new Date();deadline.setDate(deadline.getDate()+a.daysOut);
+    const deadlineKey=dayKey(deadline);
+    const asgRef=await fsdb().collection('assignments').add({
+      userId:uid,courseId:courseRef.id,courseName:"AP Chemistry",title:a.title,
+      canvasDeadline:deadline.toISOString(),estimatedMinutes:60,status:"pending",source:"mock",
+      createdAt:now,updatedAt:now,
+    });
+    const attackDate=new Date(deadline);attackDate.setHours(attackDate.getHours()-48);
+    const desiredDate=dayKey(attackDate<new Date()?new Date():attackDate);
+    const slot=findOpenSlotFor(events.concat(newEvents),routines,prefs,desiredDate,prefs.workStartTime,60,deadlineKey);
+    newEvents.push({
+      id:String(Date.now())+"-"+Math.random().toString(36).slice(2,7),
+      title:"Attack Block: "+a.title,date:slot.date,time:slot.time,
+      subject:"Chemistry",kind:"study block",duration:60,
+      assignmentId:asgRef.id,isAttackBlock:true,status:"pending",deadline:deadlineKey,
+    });
+  }
+  lsSet("events",events.concat(newEvents));
 }
 // Subtracts a list of {start,end} "holes" out of a single {start,end} base
 // interval, returning the remaining segments — used to punch free-period
@@ -988,6 +1084,14 @@ function getSchedulePreferences(){
   const stored=lsGet("schedulePrefs",def);
   return {...def,...stored};
 }
+// Proportional Breathing Room — replaces the old fixed 3-tier break buckets
+// with one continuous formula, anchored close to the previous tiers
+// (25min->5, 60min->10, 90min->15) but still scaling past 120min instead of
+// plateauing there. Used both as the Lock-In Timer's default break length
+// and as a trailing buffer after existing blocks during gap-finding.
+function computeBreathingRoom(mins){
+  return Math.max(5,Math.min(20,Math.round((mins*0.15)/5)*5));
+}
 function setSchedulePreferences(prefs){
   lsSet("schedulePrefs",prefs);
 }
@@ -1130,7 +1234,7 @@ function advancedSchedulePlanner(baseEvents){
 
   const scheduled=[];
   const occupiedSlots=[
-    ...hardEvents.map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30),event:e})),
+    ...hardEvents.map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30),event:e})),
     ...shieldOccurrences.map(r=>({start:timeToMinutes(r.time),end:timeToMinutes(r.time)+(r.duration||30),event:r})),
   ];
 
@@ -4539,7 +4643,7 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
 
 // ─── CALENDAR ─────────────────────────────────────────────────────────────────
 // ─── TASK TIMER MODAL ────────────────────────────────────────────────────────
-function TaskTimerModal({task,onClose,onComplete}){
+function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignmentExtend}){
   // Snapshot of live leaderboard profiles, fetched once on mount — used for
   // the before/after rank comparison in the completion screen. A snapshot
   // is fine here (rather than re-fetching mid-session): competitors' XP
@@ -4554,11 +4658,22 @@ function TaskTimerModal({task,onClose,onComplete}){
   const quoteRef=useRef(QUOTES[Math.floor(Math.random()*QUOTES.length)]);
   const breakIdeaRef=useRef(BREAK_IDEAS[Math.floor(Math.random()*BREAK_IDEAS.length)]);
   const focusElapsed=useRef(0);
+  // No-Lie guard: a second, independent elapsed-time tracker using
+  // performance.now() (a monotonic clock immune to system-clock changes),
+  // mirroring focusElapsed/focusStartRef exactly but on a clock a student
+  // can't fake by rolling Date.now() forward/back while backgrounded.
+  const focusElapsedMono=useRef(0);
+  const focusStartMonoRef=useRef(null);
   const barRef=useRef(null);
   const endTimeRef=useRef(null);
   const focusStartRef=useRef(null);
+  // Holds the real focus minutes once focus2 hits zero for an
+  // assignment-linked block, while the student answers the binary
+  // finished/not-finished check — completeSession only actually runs once
+  // they answer, so the value has to survive that detour.
+  const pendingMinsRef=useRef(0);
 
-  const initBreakMins=totalMins>=120?15:totalMins>=60?10:5;
+  const initBreakMins=computeBreathingRoom(totalMins);
   const initBreakPos=Math.max(1,Math.floor((totalMins-initBreakMins)/2));
 
   const [breakOn,setBreakOn]=useState(totalMins>=15);
@@ -4580,6 +4695,20 @@ function TaskTimerModal({task,onClose,onComplete}){
   const [collapsed,setCollapsed]=useState(false);
   useEffect(()=>{ if(phase==="break"||phase==="breakDone")setCollapsed(false); },[phase]);
 
+  // ── Assignment binary-completion + extension-slider sub-state (only used
+  // when phase==="assignmentCheck", i.e. task.assignmentId is set) ─────────
+  const [asgStep,setAsgStep]=useState("choice"); // choice | confirmWipe | slider
+  const [asgPct,setAsgPct]=useState(50);
+  const [asgOverride,setAsgOverride]=useState(""); // "" = use the computed recommendation
+  const asgRecMins=(()=>{
+    const raw=pendingMinsRef.current*(100-asgPct)/asgPct;
+    return Math.max(5,Math.min(480,Math.round(raw/5)*5));
+  })();
+  const asgFinalMins=asgOverride!==""?Math.max(5,Math.min(480,parseInt(asgOverride,10)||asgRecMins)):asgRecMins;
+  const asgRemainingCount=phase==="assignmentCheck"
+    ?lsGet("events",[]).filter(e=>e.assignmentId===task.assignmentId&&e.id!==task.id&&e.status!=="done").length
+    :0;
+
   const playBeep=()=>{try{const ctx=new(window.AudioContext||window.webkitAudioContext)();const osc=ctx.createOscillator();const gain=ctx.createGain();osc.connect(gain);gain.connect(ctx.destination);osc.frequency.setValueAtTime(880,ctx.currentTime);osc.frequency.exponentialRampToValueAtTime(440,ctx.currentTime+0.3);gain.gain.setValueAtTime(0.3,ctx.currentTime);gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.35);osc.start(ctx.currentTime);osc.stop(ctx.currentTime+0.35);}catch(e){}};
 
   const focus2Mins=Math.max(1,totalMins-breakPos-breakMins);
@@ -4588,23 +4717,26 @@ function TaskTimerModal({task,onClose,onComplete}){
   // Logs the session, awards XP, then reveals the reward summary — the modal
   // stays open (as the "done" screen) until the student dismisses it.
   const completeSession=(mins)=>{
+    // No-Lie guard: a session can never claim more focus minutes than its
+    // own block's stated duration, regardless of what the caller computed.
+    const safeMins=Math.min(mins,totalMins);
     const name=getUserName();
     const streak=getStreak();
     const myUid=firebase.auth().currentUser?.uid||null;
     const xpBefore=getXP();
     const rowsBefore=mergeLeaderboard(lbProfiles,name,xpBefore,streak,myUid,5);
     const rankBefore=(rowsBefore.find(u=>u.you)||{}).r||rowsBefore.length;
-    if(onComplete)onComplete(mins);
+    if(onComplete)onComplete(safeMins);
     if(task.coop){
       // Co-op multiplier: +20% on top of the normal session XP (1.2x total).
-      const bonus=Math.round(calcSessionXP(mins)*0.2);
+      const bonus=Math.round(calcSessionXP(safeMins)*0.2);
       if(bonus>0)lsSet("xpBonus",lsGet("xpBonus",0)+bonus);
     }
     const xpAfter=getXP();
     const rowsAfter=mergeLeaderboard(lbProfiles,name,xpAfter,streak,myUid,5);
     const rankAfter=(rowsAfter.find(u=>u.you)||{}).r||rowsAfter.length;
     setCompletion({
-      mins,
+      mins:safeMins,
       gain:Math.max(0,xpAfter-xpBefore),
       xpAfter,
       tierBefore:getProfTitle(xpBefore),
@@ -4615,10 +4747,16 @@ function TaskTimerModal({task,onClose,onComplete}){
     setRunning(false);
   };
 
+  // No-Lie guard: elapsed time is the smaller of two independent clocks —
+  // Date.now() (what the rest of the app uses) and performance.now() (a
+  // monotonic clock a system-clock change can't move). Whichever direction
+  // the wall clock was tampered, the untampered one caps the result.
+  const verifiedMins=()=>Math.max(1,Math.min(totalMins,Math.round(Math.min(focusElapsed.current,focusElapsedMono.current)/60)));
+
   useEffect(()=>{
     if(!running)return;
     endTimeRef.current=Date.now()+secs*1000;
-    if(phase!=="break")focusStartRef.current=Date.now();
+    if(phase!=="break"){focusStartRef.current=Date.now();focusStartMonoRef.current=performance.now();}
     const id=setInterval(()=>{
       const remaining=Math.max(0,Math.round((endTimeRef.current-Date.now())/1000));
       setSecs(remaining);
@@ -4626,7 +4764,25 @@ function TaskTimerModal({task,onClose,onComplete}){
         if(phase==="focus1"){setPhase("break");setRunning(false);if(soundOn)playBeep();}
         else if(phase==="break"){setPhase("breakDone");setRunning(false);if(soundOn)playBeep();}
         else if(phase==="focus2"){
-          completeSession(Math.max(1,Math.round(focusElapsed.current/60)));
+          // Bank the current segment's real elapsed time NOW — the effect's
+          // own cleanup below only runs after the setPhase() calls further
+          // down trigger a re-render, which is too late for verifiedMins()
+          // to see it (it would otherwise read a value one segment behind).
+          if(focusStartRef.current){focusElapsed.current+=(Date.now()-focusStartRef.current)/1000;focusStartRef.current=null;}
+          if(focusStartMonoRef.current){focusElapsedMono.current+=(performance.now()-focusStartMonoRef.current)/1000;focusStartMonoRef.current=null;}
+          const mins=verifiedMins();
+          // Assignment-linked blocks pause here for the binary finished/not
+          // check instead of going straight to the reward screen. Every
+          // existing caller (real events without assignmentId, FriendsChat's
+          // synthetic co-op task) never sets this field, so they take the
+          // untouched completeSession(mins) path exactly as before.
+          if(task.assignmentId){
+            pendingMinsRef.current=mins;
+            setRunning(false);
+            setPhase("assignmentCheck");
+          }else{
+            completeSession(mins);
+          }
         }
       }
     },250);
@@ -4634,7 +4790,9 @@ function TaskTimerModal({task,onClose,onComplete}){
       clearInterval(id);
       if(phase!=="break"&&focusStartRef.current){
         focusElapsed.current+=(Date.now()-focusStartRef.current)/1000;
+        focusElapsedMono.current+=(performance.now()-focusStartMonoRef.current)/1000;
         focusStartRef.current=null;
+        focusStartMonoRef.current=null;
       }
     };
   },[running,phase,totalMins]);
@@ -4676,9 +4834,11 @@ function TaskTimerModal({task,onClose,onComplete}){
   const finishEarly=()=>{
     if(phase!=="break"&&focusStartRef.current){
       focusElapsed.current+=(Date.now()-focusStartRef.current)/1000;
+      focusElapsedMono.current+=(performance.now()-focusStartMonoRef.current)/1000;
       focusStartRef.current=null;
+      focusStartMonoRef.current=null;
     }
-    completeSession(Math.max(1,Math.round(focusElapsed.current/60)));
+    completeSession(verifiedMins());
   };
 
   const updateBreakPos=(e)=>{
@@ -4788,6 +4948,68 @@ function TaskTimerModal({task,onClose,onComplete}){
           </div>
 
           <Btn onClick={startLockIn} style={{width:"100%",justifyContent:"center",padding:"14px 24px",fontSize:15}}>Lock in</Btn>
+        </div>
+      </div>
+    );
+  }
+
+  // ── ASSIGNMENT BINARY COMPLETION + EXTENSION SLIDER ───────────────────────
+  // Mandatory — no backdrop-dismiss — the student must answer before the
+  // reward flow (completeSession, unchanged below) continues.
+  if(phase==="assignmentCheck"){
+    const onConfirmWipe=()=>{
+      if(onAssignmentComplete)onAssignmentComplete();
+      completeSession(pendingMinsRef.current);
+    };
+    const onScheduleExtension=()=>{
+      if(onAssignmentExtend)onAssignmentExtend(pendingMinsRef.current,asgPct,asgFinalMins);
+      completeSession(pendingMinsRef.current);
+    };
+    return(
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(10px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+        <div style={{width:"100%",maxWidth:480,background:T.card,borderRadius:20,border:`1px solid ${T.border}`,padding:"36px 32px",textAlign:"center"}}>
+          {asgStep==="choice"&&(<>
+            <div style={{fontSize:17,fontWeight:700,color:T.white,marginBottom:8}}>Time's up on "{task.title}"</div>
+            <div style={{fontSize:13,color:T.muted,marginBottom:28,lineHeight:1.6}}>Did you finish the assignment?</div>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <Btn onClick={()=>setAsgStep("confirmWipe")} style={{width:"100%",justifyContent:"center"}}>Yes, I am finished</Btn>
+              <Btn variant="subtle" onClick={()=>setAsgStep("slider")} style={{width:"100%",justifyContent:"center"}}>No, I need more time</Btn>
+            </div>
+          </>)}
+
+          {asgStep==="confirmWipe"&&(<>
+            <div style={{fontSize:17,fontWeight:700,color:T.white,marginBottom:8}}>Mark as complete?</div>
+            <div style={{fontSize:13,color:T.muted,marginBottom:28,lineHeight:1.6}}>
+              {asgRemainingCount>0
+                ?`This removes your ${asgRemainingCount} remaining scheduled session${asgRemainingCount===1?"":"s"} for this assignment.`
+                :"This marks the assignment as complete."}
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <Btn variant="subtle" onClick={()=>setAsgStep("choice")} style={{flex:1,justifyContent:"center"}}>Cancel</Btn>
+              <Btn onClick={onConfirmWipe} style={{flex:1,justifyContent:"center"}}>Confirm</Btn>
+            </div>
+          </>)}
+
+          {asgStep==="slider"&&(<>
+            <div style={{fontSize:17,fontWeight:700,color:T.white,marginBottom:8}}>How far did you get?</div>
+            <div style={{fontSize:13,color:T.muted,marginBottom:24,lineHeight:1.6}}>Drag to estimate how much of the assignment is done.</div>
+            <input type="range" min={5} max={95} step={1} value={asgPct}
+              onChange={e=>{setAsgPct(parseInt(e.target.value,10));setAsgOverride("");}}
+              style={{width:"100%",marginBottom:8}} />
+            <div style={{fontSize:13,fontWeight:600,color:T.lime,marginBottom:20}}>{asgPct}% complete</div>
+            <div style={{fontSize:13,color:T.text,marginBottom:10}}>AI Recommended Extension: <strong>+{asgRecMins}m</strong></div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginBottom:24}}>
+              <span style={{fontSize:12,color:T.muted}}>Adjust:</span>
+              <input type="number" min={5} max={480} value={asgOverride!==""?asgOverride:asgRecMins}
+                onChange={e=>setAsgOverride(e.target.value)}
+                style={{width:70,padding:"6px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.text,fontSize:13,fontFamily:T.font,textAlign:"center"}} />
+              <span style={{fontSize:12,color:T.muted}}>min</span>
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <Btn variant="subtle" onClick={()=>setAsgStep("choice")} style={{flex:1,justifyContent:"center"}}>Back</Btn>
+              <Btn onClick={onScheduleExtension} style={{flex:1,justifyContent:"center"}}>Schedule +{asgFinalMins}m</Btn>
+            </div>
+          </>)}
         </div>
       </div>
     );
@@ -4984,7 +5206,7 @@ function layoutDayEvents(evs) {
   return laidOut;
 }
 
-function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, isAgendaCollapsed}) {
+function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, isAgendaCollapsed}) {
   // Taller per-hour scale when the Today agenda panel is hidden, so the grid
   // gains height (not just the width the freed-up column would otherwise
   // just stretch into) and doesn't flatten out.
@@ -5037,8 +5259,9 @@ function WeeklyPlanner({events, setEvents, weekOffset, setWeekOffset, todayK, co
     e.preventDefault();
     if (!wkDragId) return;
     const time = wkDropTime || '09:00';
-    const next = events.map(ev => ev.id === wkDragId ? {...ev, date: dk, time} : ev);
-    setEvents(next); lsSet("events", next);
+    // Routed through the same guarded moveEvent the Monthly grid uses, so
+    // the deadline Hard Wall (Tier 2) has one enforcement point, not two.
+    moveEvent(wkDragId, dk, time);
     setWkDragId(null); setWkDragDeadline(null); setWkDragOverDay(null); setWkDropTime(null);
   };
 
@@ -5674,6 +5897,17 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
   const [evSplitCount,setEvSplitCount]=useState(2);
   const [aiLoading,setAiLoading]=useState(false);
   const [toast,setToast]=useState(false);
+  // Hard-Wall rejection message (Tier 2 of the rescheduling engine) — a
+  // reschedule attempt past a task's own deadline never silently succeeds.
+  const [deadlineToast,setDeadlineToast]=useState("");
+  const showDeadlineToast=(deadline)=>{setDeadlineToast("Can't reschedule past "+deadline+" — that's the deadline.");setTimeout(()=>setDeadlineToast(""),2800);};
+  // Tier 3 — Global Emergency "Pause My Life". pausePreview holds the
+  // computed (not-yet-committed) plan: {label, moved:[...], couldntMove:[...]}.
+  const [pauseOpen,setPauseOpen]=useState(false);
+  const [pauseText,setPauseText]=useState("");
+  const [pauseLoading,setPauseLoading]=useState(false);
+  const [pauseError,setPauseError]=useState("");
+  const [pausePreview,setPausePreview]=useState(null);
   const [dragId,setDragId]=useState(null);
   // Sticky across tab switches — CalendarTab fully remounts every time the
   // user navigates away and back (key={active} at the App level), so plain
@@ -5780,6 +6014,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
   const [editTime,setEditTime]=useState("14:30");
   const [editDuration,setEditDuration]=useState(60);
   const [editDeadline,setEditDeadline]=useState("");
+  const [editDeadlineErr,setEditDeadlineErr]=useState("");
   const [editPriority,setEditPriority]=useState(500);
   const [editDifficulty,setEditDifficulty]=useState(500);
   const [editSubject,setEditSubject]=useState("Chemistry");
@@ -5870,8 +6105,9 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
   const resolveManualSlot=(date,time,duration)=>{
     if(evKind==="exam"||evKind==="class"||evKind==="busy block")return {date,time};
     const occupied=events.filter(e=>e.date===date&&e.time)
-      .concat(expandRoutineOccurrences(routines,date,date).filter(o=>o.kind!=="free period"))
-      .map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)}));
+      .map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}))
+      .concat(expandRoutineOccurrences(routines,date,date).filter(o=>o.kind!=="free period")
+        .map(o=>({start:timeToMinutes(o.time),end:timeToMinutes(o.time)+(o.duration||30)})));
     const tMins=timeToMinutes(time);
     const conflict=occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end));
     return conflict?findOpenSlotFor(events,routines,getSchedulePreferences(),date,time,duration):{date,time};
@@ -5975,11 +6211,27 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
     }catch(e){fallbackSchedule();}
     setAiLoading(false);
   };
-  const removeEvent=(id)=>{const next=events.filter(ev=>ev.id!==id);setEvents(next);lsSet("events",next);};
-  const moveEvent=(id,newDate)=>{const next=events.map(ev=>ev.id===id?{...ev,date:newDate}:ev);setEvents(next);lsSet("events",next);};
+  const removeEvent=(id)=>{
+    const ev=events.find(e=>e.id===id);
+    const next=events.filter(e=>e.id!==id);
+    setEvents(next);lsSet("events",next);
+    // If that was the last block tied to an assignment, the assignment doc
+    // would otherwise silently orphan in "pending" forever — mark it
+    // abandoned instead. No-op for the overwhelming majority of deletes,
+    // which have no assignmentId at all.
+    if(ev&&ev.assignmentId&&!next.some(e=>e.assignmentId===ev.assignmentId)){
+      fsdb().collection('assignments').doc(ev.assignmentId)
+        .update({status:"abandoned",updatedAt:new Date().toISOString()}).catch(()=>{});
+    }
+  };
+  const moveEvent=(id,newDate,newTime)=>{
+    const ev=events.find(e=>e.id===id);
+    if(ev&&ev.deadline&&newDate>ev.deadline){showDeadlineToast(ev.deadline);return;}
+    const next=events.map(e=>e.id===id?{...e,date:newDate,...(newTime?{time:newTime}:{})}:e);setEvents(next);lsSet("events",next);
+  };
   const markDone=(id)=>{const next=events.map(ev=>ev.id===id?{...ev,status:"done",completedAt:Date.now()}:ev);setEvents(next);lsSet("events",next);};
   const nav=(d)=>setYm(c=>{const m2=c.m+d;return {y:c.y+Math.floor(m2/12),m:((m2%12)+12)%12};});
-  const openEdit=(ev)=>{setEditEv(ev);setEditTitle(ev.title||"");setEditDate(ev.date||dayKey());setEditTime(ev.time||"14:30");setEditDuration(ev.duration||60);setEditDeadline(ev.deadline||"");setEditPriority((ev.priority||5)*100);setEditDifficulty((ev.difficulty||5)*100);setEditSubject(ev.subject||"Chemistry");setEditKind(ev.kind||"deadline");setEditNotes(ev.notes||"");setEditOpen(true);};
+  const openEdit=(ev)=>{setEditEv(ev);setEditTitle(ev.title||"");setEditDate(ev.date||dayKey());setEditTime(ev.time||"14:30");setEditDuration(ev.duration||60);setEditDeadline(ev.deadline||"");setEditDeadlineErr("");setEditPriority((ev.priority||5)*100);setEditDifficulty((ev.difficulty||5)*100);setEditSubject(ev.subject||"Chemistry");setEditKind(ev.kind||"deadline");setEditNotes(ev.notes||"");setEditOpen(true);};
   const runGroupSync=()=>{
     if(!gsDueDate.trim())return;
     const prefStart=timeToMinutes(gsStartTime);
@@ -6021,7 +6273,101 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
     setGsResults(slots);setGsStep(2);
   };
   const closeEdit=()=>{setEditOpen(false);setEditEv(null);};
-  const saveEdit=()=>{if(!editEv||!editTitle.trim())return;const next=events.map(e=>e.id===editEv.id?{...e,title:editTitle.trim(),date:editDate,time:editTime,duration:editDuration,deadline:editDeadline||null,priority:Math.round(editPriority/100),difficulty:Math.round(editDifficulty/100),subject:editSubject,kind:editKind,notes:editNotes}:e);setEvents(next);lsSet("events",next);closeEdit();};
+  const saveEdit=()=>{
+    if(!editEv||!editTitle.trim())return;
+    // Hard Wall (Tier 2) — the Edit modal must never silently save a date
+    // past the task's own deadline, same rule enforced on every drag path.
+    if(editDeadline&&editDate>editDeadline){setEditDeadlineErr("Can't schedule past the deadline ("+editDeadline+").");return;}
+    const next=events.map(e=>e.id===editEv.id?{...e,title:editTitle.trim(),date:editDate,time:editTime,duration:editDuration,deadline:editDeadline||null,priority:Math.round(editPriority/100),difficulty:Math.round(editDifficulty/100),subject:editSubject,kind:editKind,notes:editNotes}:e);setEvents(next);lsSet("events",next);closeEdit();
+  };
+
+  // ── Tier 3: Global Emergency "Pause My Life" ──────────────────────────────
+  // Deterministic execution engine shared by both the AI-classified path and
+  // the one-click fallback presets — the model (when used at all) only ever
+  // picks one of a few known intents, it never proposes dates/times itself,
+  // so a misclassification can only ever result in "the wrong known action
+  // ran," never an invented/hallucinated calendar change.
+  const PAUSE_QUALIFYING_KINDS=new Set(["study block","deadline","reminder"]);
+  const computePausePlan=(intent)=>{
+    const today=dayKey();
+    const isQualifying=(ev)=>ev.status==="pending"&&PAUSE_QUALIFYING_KINDS.has(ev.kind);
+    let label,inWindow,computeNewDate;
+    if(intent.intent==="shift"){
+      const days=Math.max(1,Math.min(14,intent.days||1));
+      label="Push everything back "+days+" day"+(days!==1?"s":"");
+      inWindow=(ev)=>isQualifying(ev)&&ev.date>=today;
+      computeNewDate=(ev)=>{const d=new Date(ev.date+"T12:00:00");d.setDate(d.getDate()+days);return dayKey(d);};
+    }else if(intent.intent==="clear_day"){
+      const date=intent.date||today;
+      label="Clear "+date;
+      inWindow=(ev)=>isQualifying(ev)&&ev.date===date;
+      computeNewDate=()=>{const d=new Date(date+"T12:00:00");d.setDate(d.getDate()+1);return dayKey(d);};
+    }else{
+      const end=(()=>{const d=new Date();d.setDate(d.getDate()+6);return dayKey(d);})();
+      label="Clear this week";
+      inWindow=(ev)=>isQualifying(ev)&&ev.date>=today&&ev.date<=end;
+      computeNewDate=()=>{const d=new Date();d.setDate(d.getDate()+7);return dayKey(d);};
+    }
+    const all=lsGet("events",[]);
+    const routinesNow=getWeeklyRoutine();
+    const prefsNow=getSchedulePreferences();
+    const affected=all.filter(inWindow).sort((a,b)=>a.date===b.date?((a.time||"")<(b.time||"")?-1:1):(a.date<b.date?-1:1));
+    let working=all.filter(ev=>!inWindow(ev));
+    const moved=[],couldntMove=[];
+    affected.forEach(ev=>{
+      const desiredDate=computeNewDate(ev);
+      const slot=findLegalSlotOrNull(working,routinesNow,prefsNow,desiredDate,ev.time||prefsNow.workStartTime,ev.duration||30,ev.deadline||null);
+      if(slot){
+        moved.push({id:ev.id,title:ev.title,oldDate:ev.date,oldTime:ev.time,newDate:slot.date,newTime:slot.time});
+        working=working.concat([{...ev,date:slot.date,time:slot.time}]);
+      }else{
+        couldntMove.push({id:ev.id,title:ev.title,deadline:ev.deadline});
+        working=working.concat([ev]);
+      }
+    });
+    return {label,moved,couldntMove};
+  };
+
+  const applyPausePreset=(intent)=>{setPauseError("");setPausePreview(computePausePlan(intent));};
+
+  const submitPauseCommand=async()=>{
+    if(!pauseText.trim()||pauseLoading)return;
+    setPauseLoading(true);setPauseError("");
+    const today=dayKey();
+    const tomorrow=dayKey(new Date(Date.now()+86400000));
+    const weekday=new Date().toLocaleDateString("en-US",{weekday:"long"});
+    const prompt="You are a scheduling-intent classifier for a student calendar app. Today is "+weekday+", "+today+". The student typed: \""+pauseText.trim()+"\". Classify this into EXACTLY one of these intents and respond with ONLY this JSON, no markdown fences, no explanation:\n"+
+      "{\"intent\":\"shift\"|\"clear_day\"|\"clear_week\"|\"unsupported\",\"days\":<integer 1-14 or null>,\"date\":\"YYYY-MM-DD or null\"}\n"+
+      "Rules: \"shift\" pushes everything from today onward back by a number of days — only use it if the student gave (or clearly implied) an explicit day count; never invent a number. \"clear_day\" empties one specific date — resolve relative phrases like \"tomorrow\" against today's date above. \"clear_week\" clears the next 7 days starting today, no parameters. If the request is ambiguous, asks for more than one action, implies permanently deleting/cancelling things, or doesn't clearly match one of these, respond \"unsupported\".\n"+
+      "Examples:\n"+
+      "\"I'm sick, push everything back 3 days\" -> {\"intent\":\"shift\",\"days\":3,\"date\":null}\n"+
+      "\"clear my day tomorrow\" -> {\"intent\":\"clear_day\",\"days\":null,\"date\":\""+tomorrow+"\"}\n"+
+      "\"I need a break this week\" -> {\"intent\":\"clear_week\",\"days\":null,\"date\":null}\n"+
+      "\"push things back a couple days\" -> {\"intent\":\"unsupported\",\"days\":null,\"date\":null}\n"+
+      "\"cancel everything forever\" -> {\"intent\":\"unsupported\",\"days\":null,\"date\":null}";
+    try{
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
+      const data=await res.json();
+      const raw=(data.reply||"").replace(/```json?|```/g,"").trim();
+      const parsed=JSON.parse(raw);
+      if(!parsed||!["shift","clear_day","clear_week"].includes(parsed.intent))throw new Error("unsupported");
+      if(parsed.intent==="shift"&&!(parsed.days>=1&&parsed.days<=14))throw new Error("bad-days");
+      setPausePreview(computePausePlan(parsed));
+    }catch(e){
+      setPauseError("Couldn't understand that — try rephrasing, or use one of the quick actions below.");
+    }
+    setPauseLoading(false);
+  };
+
+  const confirmPausePlan=()=>{
+    if(!pausePreview)return;
+    const movedById=new Map(pausePreview.moved.map(m=>[m.id,m]));
+    const all=lsGet("events",[]);
+    const next=all.map(ev=>movedById.has(ev.id)?{...ev,date:movedById.get(ev.id).newDate,time:movedById.get(ev.id).newTime}:ev);
+    setEvents(next);lsSet("events",next);
+    setPausePreview(null);setPauseOpen(false);setPauseText("");
+    setToast(true);setTimeout(()=>setToast(false),2200);
+  };
   // Fixed real-world blocks (exam/class) only take Day/Start Time/Duration and
   // are never AI-scheduled. Reminders are simple Date/Time markers. Everything
   // else (deadline/study block) is a "task" that can be placed manually or by AI.
@@ -6046,7 +6392,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
         this div instead of nested inside it, so it centers against the real
         viewport regardless of scroll position or animation state. */}
     <div>
-      <PH title="Studlin Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><Btn variant="ghost" onClick={()=>setRoutineCenterOpen(true)}>Manage Routine</Btn><Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>{setEditRoutineMode(m=>!m);setHoveredRoutineId(null);}}>Edit Routine</Btn><span ref={tourAddTaskRef} style={{display:"inline-flex"}}><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></span></div>} />
+      <PH title="Studlin Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><Btn variant="danger" onClick={()=>{setPauseOpen(true);setPauseError("");setPausePreview(null);}}>Pause my life</Btn><Btn variant="ghost" onClick={()=>setRoutineCenterOpen(true)}>Manage Routine</Btn><Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>{setEditRoutineMode(m=>!m);setHoveredRoutineId(null);}}>Edit Routine</Btn><span ref={tourAddTaskRef} style={{display:"inline-flex"}}><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></span></div>} />
       {editRoutineMode&&(
         <div style={{display:"flex",alignItems:"center",gap:8,padding:"9px 14px",background:T.lime+"10",border:`1px solid ${T.lime}33`,borderRadius:10,marginBottom:14,fontSize:12.5,color:T.text}}>
           Editing your Weekly Routine — one-off tasks are dimmed. Click a routine block to edit it, or hover and tap × to delete it everywhere it repeats.
@@ -6111,7 +6457,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
       </CollapsibleAgendaLayout>)}
       {calView==="weekly"&&(<CollapsibleAgendaLayout isAgendaCollapsed={isAgendaCollapsed} setIsAgendaCollapsed={setIsAgendaCollapsed}
         agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,markDone,removeEvent,setSelDay,setYm,dragId,setDragId}}>
-        <WeeklyPlanner events={events} setEvents={setEvents} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openNew={openNew} openEdit={openEdit}
+        <WeeklyPlanner events={events} setEvents={setEvents} moveEvent={moveEvent} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openNew={openNew} openEdit={openEdit}
           routines={routines} editRoutineMode={editRoutineMode} hoveredRoutineId={hoveredRoutineId} setHoveredRoutineId={setHoveredRoutineId}
           onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
           selDay={selDay} setSelDay={setSelDay} isAgendaCollapsed={isAgendaCollapsed} />
@@ -6156,6 +6502,9 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
       )}
       {toast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} Task added</div>
+      )}
+      {deadlineToast&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.red,color:"#fff",fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)"}}>{deadlineToast}</div>
       )}
       <Modal open={newOpen} onClose={resetForm} title="New task" sub="Add details and let Studlin schedule it, or place it manually." width={580}
         footer={
@@ -6269,15 +6618,16 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
         <Field label="Title"><Input value={editTitle} onChange={e=>setEditTitle(e.target.value)} autoFocus /></Field>
         <Field label="Type"><SelectChip options={[{value:"deadline",label:"Task"},"exam","class","study block","reminder","busy block"]} value={editKind} onChange={setEditKind} /></Field>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <Field label="Scheduled date"><Input type="date" value={editDate} onChange={e=>setEditDate(e.target.value)} /></Field>
+          <Field label="Scheduled date"><Input type="date" value={editDate} onChange={e=>{setEditDate(e.target.value);setEditDeadlineErr("");}} /></Field>
           <Field label={editKind==="reminder"?"Reminder time":"Start time"}><TimeInput value={editTime} onChange={setEditTime} /></Field>
         </div>
+        {editDeadlineErr&&<div style={{fontSize:12,color:T.red,marginTop:-8,marginBottom:14}}>{editDeadlineErr}</div>}
         {editKind!=="reminder"&&(
           <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={5} value={editDuration} onChange={setEditDuration} /></Field>
         )}
         {editKind!=="exam"&&editKind!=="class"&&editKind!=="reminder"&&(
           <>
-            <Field label="Deadline" hint="When this must be done by"><Input type="date" value={editDeadline} onChange={e=>setEditDeadline(e.target.value)} /></Field>
+            <Field label="Deadline" hint="When this must be done by"><Input type="date" value={editDeadline} onChange={e=>{setEditDeadline(e.target.value);setEditDeadlineErr("");}} /></Field>
             <Field label={`Priority: ${Math.round(editPriority/10)}%`} hint="Higher priority tasks are scheduled earlier">
               <div style={{display:"flex",alignItems:"center",gap:12}}>
                 <span style={{fontSize:11,color:T.muted,width:28}}>Low</span>
@@ -6302,6 +6652,54 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
         )}
         <Field label="Subject"><SelectChip options={SUBJ} value={editSubject} onChange={setEditSubject} /></Field>
         <Field label="Notes (optional)"><Textarea value={editNotes} onChange={e=>setEditNotes(e.target.value)} /></Field>
+      </Modal>
+      <Modal open={pauseOpen} onClose={()=>{setPauseOpen(false);setPausePreview(null);setPauseError("");}}
+        title={pausePreview?pausePreview.label:"Pause my life"}
+        sub={pausePreview?(pausePreview.moved.length+" task"+(pausePreview.moved.length!==1?"s":"")+" affected"):"Tell Studlin what's going on — it'll reschedule around it."}
+        width={520}
+        footer={pausePreview?(
+          <><Btn variant="subtle" onClick={()=>setPausePreview(null)}>Cancel</Btn><Btn onClick={confirmPausePlan}>Confirm</Btn></>
+        ):null}>
+        {!pausePreview&&(<>
+          <Textarea placeholder={'e.g. "I\'m sick, push everything back 3 days" or "clear my day tomorrow"'} value={pauseText} onChange={e=>setPauseText(e.target.value)} />
+          {pauseError&&<div style={{fontSize:12,color:T.red,marginTop:8}}>{pauseError}</div>}
+          <Btn onClick={submitPauseCommand} disabled={!pauseText.trim()||pauseLoading} style={{marginTop:12,width:"100%",justifyContent:"center",opacity:!pauseText.trim()||pauseLoading?0.5:1}}>{pauseLoading?"Thinking…":"Go"}</Btn>
+          <div style={{fontSize:11,color:T.muted,marginTop:20,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>Or pick one</div>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            <Btn variant="subtle" onClick={()=>applyPausePreset({intent:"shift",days:1})}>Push everything back 1 day</Btn>
+            <Btn variant="subtle" onClick={()=>applyPausePreset({intent:"shift",days:3})}>Push everything back 3 days</Btn>
+            <Btn variant="subtle" onClick={()=>applyPausePreset({intent:"clear_day",date:dayKey()})}>Clear today</Btn>
+            <Btn variant="subtle" onClick={()=>applyPausePreset({intent:"clear_week"})}>Clear this week</Btn>
+          </div>
+        </>)}
+        {pausePreview&&(<>
+          {pausePreview.moved.length>0&&(
+            <div style={{display:"flex",flexDirection:"column",gap:7,marginBottom:pausePreview.couldntMove.length?18:0,maxHeight:220,overflowY:"auto"}}>
+              {pausePreview.moved.map(m=>(
+                <div key={m.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`}}>
+                  <div style={{flex:1,fontSize:13,color:T.text,fontWeight:500}}>{m.title}</div>
+                  <div style={{fontSize:11,color:T.muted,flexShrink:0}}>{m.oldDate} {m.oldTime} → <strong style={{color:T.lime}}>{m.newDate} {m.newTime}</strong></div>
+                </div>
+              ))}
+            </div>
+          )}
+          {pausePreview.couldntMove.length>0&&(
+            <div>
+              <div style={{fontSize:11,fontWeight:700,color:T.red,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>Couldn't reschedule — deadline conflict ({pausePreview.couldntMove.length})</div>
+              <div style={{display:"flex",flexDirection:"column",gap:7,maxHeight:160,overflowY:"auto"}}>
+                {pausePreview.couldntMove.map(m=>(
+                  <div key={m.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.red+"0d",borderRadius:8,border:`1px solid ${T.red}33`}}>
+                    <div style={{flex:1,fontSize:13,color:T.text,fontWeight:500}}>{m.title}</div>
+                    <div style={{fontSize:11,color:T.red,flexShrink:0}}>Deadline {m.deadline}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {pausePreview.moved.length===0&&pausePreview.couldntMove.length===0&&(
+            <div style={{fontSize:13,color:T.muted}}>Nothing to reschedule.</div>
+          )}
+        </>)}
       </Modal>
       <RoutineWizardModal open={routineWizardOpen&&!subjOnboardOpen} initialStatus={getProfile().status} existingRoutines={routines} onFinish={finishRoutineWizard} onSkip={skipRoutineWizard} />
       <RoutineControlCenterModal open={routineCenterOpen} onClose={()=>setRoutineCenterOpen(false)} routines={routines} fmtTime={fmtTime}
@@ -7326,6 +7724,8 @@ function FocusMusic(){
 // ─── SETTINGS ─────────────────────────────────────────────────────────────────
 function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineWizard=()=>{}}) {
   const [active,setActive]=useState("General");
+  const [canvasTipOpen,setCanvasTipOpen]=useState(false);
+  const [canvasSeeding,setCanvasSeeding]=useState(false);
   const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,sr:true,auto:true,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true},...lsGet("settings",{})}));
   const tog=k=>setToggles(t=>{const n={...t,[k]:!t[k]};lsSet("settings",n);return n;});
   const [sysPushStatus,setSysPushStatus]=useState(()=>{
@@ -7801,16 +8201,41 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   </div>
                   <BtnSm variant={calAppleLinked?"subtle":"lime"} onClick={toggleApple}>{calAppleLinked?"Disconnect":"Connect"}</BtnSm>
                 </div>
+                <div style={{position:"relative"}}
+                  onMouseEnter={()=>setCanvasTipOpen(true)} onMouseLeave={()=>setCanvasTipOpen(false)}>
+                  <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${T.border}`,opacity:0.5}}>
+                    <div style={{width:40,height:40,borderRadius:10,background:"rgba(226,80,45,0.10)",border:"1px solid rgba(226,80,45,0.22)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#E2502D" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+                    </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:600,color:T.white}}>Canvas LMS<span style={{marginLeft:8,fontSize:10.5,fontWeight:600,color:T.faint}}>(Coming Soon)</span></div>
+                      <div style={{fontSize:11,color:T.muted,marginTop:2}}>Institutional Partner Feature</div>
+                    </div>
+                    <BtnSm variant="subtle" disabled style={{flexShrink:0,cursor:"not-allowed"}}>Connect</BtnSm>
+                  </div>
+                  {canvasTipOpen&&(
+                    <div style={{position:"absolute",top:"100%",left:0,right:0,marginTop:8,padding:"12px 14px",borderRadius:10,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",fontSize:11.5,color:T.muted,lineHeight:1.6,zIndex:10}}>
+                      Studlin integrates securely via enterprise OAuth 2.0 developer keys issued directly by university IT administrations to ensure strict FERPA compliance and data security.
+                    </div>
+                  )}
+                </div>
               </div>
               {(calGoogleLinked||calAppleLinked)&&(
                 <div style={{marginTop:14,padding:"10px 14px",borderRadius:8,background:T.teal+"10",border:`1px solid ${T.teal}25`,fontSize:12,color:T.teal,lineHeight:1.6}}>
                   Calendar sync active. Events appear in read-only mode on your Studlin calendar and are stored locally on this device.
                 </div>
               )}
+              {DEV_MODE&&(
+                <BtnSm variant="subtle" disabled={canvasSeeding} style={{marginTop:14}} onClick={async()=>{
+                  setCanvasSeeding(true);
+                  try{await injectMockCanvasData();}catch(e){}
+                  setCanvasSeeding(false);
+                }}>{canvasSeeding?"Seeding…":"Seed mock Canvas data (dev only)"}</BtnSm>
+              )}
             </Card>
             <Card>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Coming soon</div>
-              <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>Notion, Canvas LMS, and Outlook integrations are in development. They'll appear here when ready.</div>
+              <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>Notion and Outlook integrations are in development. They'll appear here when ready.</div>
             </Card>
           </>)}
 
@@ -9201,8 +9626,28 @@ function App() {
   const setAccent=(name)=>{ setAccentState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-accent",name); };
   const setDensity=(name)=>{ setDensityState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-density",name); };
   const [timerTask,setTimerTask]=useState(null);
-  const [newDayModal,setNewDayModal]=useState(false);
-  const [overdueForModal,setOverdueForModal]=useState([]);
+  // Tier 1 of the rescheduling engine — detects yesterday-or-earlier
+  // pending tasks and prompts (a dismissible banner, not a blocking modal)
+  // rather than moving them silently; the actual move only happens once
+  // the student clicks "Roll over".
+  const [rolloverPending,setRolloverPending]=useState([]);
+  const [rolloverToast,setRolloverToast]=useState("");
+  const applyRollover=()=>{
+    if(rolloverPending.length===0)return;
+    const today=dayKey();
+    const routines=getWeeklyRoutine();
+    const prefs=getSchedulePreferences();
+    const all=lsGet("events",[]);
+    let working=all;
+    rolloverPending.forEach(ev=>{
+      const slot=findOpenSlotFor(working,routines,prefs,today,prefs.workStartTime,ev.duration||30);
+      working=working.map(e=>e.id===ev.id?{...e,date:slot.date,time:slot.time}:e);
+    });
+    lsSet("events",working);
+    setRolloverToast(rolloverPending.length+" overdue task"+(rolloverPending.length!==1?"s":"")+" moved to today.");
+    setTimeout(()=>setRolloverToast(""),3200);
+    setRolloverPending([]);
+  };
   const [scheduleSettingsOpen,setScheduleSettingsOpen]=useState(false);
   const [navCollapsed,setNavCollapsed]=useState(()=>lsGet("navCollapsed",false));
   const toggleNavCollapsed=()=>{setNavCollapsed(v=>{lsSet("navCollapsed",!v);return !v;});};
@@ -9414,8 +9859,12 @@ function App() {
     const evs=lsGet("events",[]);
     const cleaned=evs.filter(ev=>!(ev.status==="pending"&&ev.deadline&&ev.deadline<today));
     if(cleaned.length!==evs.length)lsSet("events",cleaned);
+    // Detect yesterday-or-earlier pending tasks and prompt — the actual
+    // move (via the same conflict-aware gap-finder AI-arrange/extension-
+    // scheduling use, instead of the old naive back-to-back stacking) only
+    // runs when the student clicks "Roll over" on the prompt below.
     const od=cleaned.filter(ev=>ev.status==="pending"&&ev.date<today&&!(ev.deadline&&ev.deadline<today));
-    if(od.length>0){setOverdueForModal(od);setNewDayModal(true);}
+    if(od.length>0)setRolloverPending(od);
   },[]);
   const navSections=[
     {label:"Workspace",items:[
@@ -9712,7 +10161,17 @@ function App() {
         )}
       </Modal>
 
-      {timerTask&&<TaskTimerModal task={timerTask} onClose={()=>setTimerTask(null)} onComplete={(mins)=>{
+      {timerTask&&<TaskTimerModal task={timerTask} onClose={()=>setTimerTask(null)}
+        onAssignmentComplete={()=>{
+          const aid=timerTask.assignmentId;
+          fsdb().collection('assignments').doc(aid).update({status:"completed",updatedAt:new Date().toISOString()}).catch(()=>{});
+          const next=lsGet("events",[]).filter(ev=>!(ev.assignmentId===aid&&ev.id!==timerTask.id&&ev.status!=="done"));
+          lsSet("events",next);
+        }}
+        onAssignmentExtend={(mins,pct,extensionMins)=>{
+          scheduleAssignmentExtension(timerTask,timerTask.deadline,extensionMins);
+        }}
+        onComplete={(mins)=>{
         logSession(mins,"Task: "+timerTask.title);
         const next=lsGet("events",[]).map(ev=>ev.id===timerTask.id?{...ev,status:"done",timeSpent:mins,completedAt:Date.now()}:ev);
         lsSet("events",next);
@@ -9720,41 +10179,20 @@ function App() {
         // closes itself (setTimerTask(null) via onClose) once dismissed.
       }} />}
 
-      {newDayModal&&(
-        <div onClick={()=>setNewDayModal(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.2s ease"}}>
-          <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:500,background:T.card,borderRadius:18,border:`1px solid ${T.border}`,padding:"32px 28px",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)",boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)"}}>
-            <div style={{fontSize:22,fontWeight:700,color:T.white,marginBottom:6,letterSpacing:"-0.02em"}}>Welcome back</div>
-            <div style={{fontSize:13.5,color:T.muted,marginBottom:20,lineHeight:1.6}}>You have <strong style={{color:T.amber}}>{overdueForModal.length} unfinished task{overdueForModal.length!==1?"s":""}</strong> from a previous day. Reschedule them into open slots today?</div>
-            <div style={{display:"flex",flexDirection:"column",gap:7,marginBottom:22,maxHeight:220,overflowY:"auto"}}>
-              {overdueForModal.map(ev=>(
-                <div key={ev.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`}}>
-                  <div style={{width:6,height:6,borderRadius:"50%",background:T.amber,flexShrink:0}}/>
-                  <div style={{flex:1,fontSize:13,color:T.text,fontWeight:500}}>{ev.title}</div>
-                  <div style={{fontSize:11,color:T.muted,flexShrink:0}}>{ev.duration||25}m · {ev.subject||"Study"}</div>
-                </div>
-              ))}
-            </div>
-            <div style={{display:"flex",gap:10}}>
-              <Btn onClick={()=>{
-                const today=dayKey();
-                const now=new Date();
-                let slotMins=now.getHours()*60+now.getMinutes()+15;
-                const evs=lsGet("events",[]);
-                const rescheduled=evs.map(ev=>{
-                  const od=overdueForModal.find(o=>o.id===ev.id);
-                  if(!od)return ev;
-                  const h=Math.floor(slotMins/60)%24;
-                  const m=slotMins%60;
-                  const timeStr=String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
-                  slotMins+=((od.duration||25)+10);
-                  return {...ev,date:today,time:timeStr,status:"pending"};
-                });
-                lsSet("events",rescheduled);
-                setNewDayModal(false);
-              }} style={{flex:1,justifyContent:"center",padding:"12px 0"}}>Reschedule all</Btn>
-              <Btn variant="ghost" onClick={()=>setNewDayModal(false)} style={{flex:1,justifyContent:"center",padding:"12px 0"}}>Skip for now</Btn>
-            </div>
+      {rolloverPending.length>0&&(
+        <div style={{position:"fixed",top:20,right:20,zIndex:999,display:"flex",alignItems:"center",gap:14,padding:"12px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:380}}>
+          <div style={{fontSize:13,color:T.white}}>
+            You have <strong style={{color:T.amber}}>{rolloverPending.length} unfinished task{rolloverPending.length!==1?"s":""}</strong> from yesterday.
           </div>
+          <div style={{display:"flex",gap:8,flexShrink:0}}>
+            <Btn onClick={applyRollover} style={{padding:"7px 14px",fontSize:12}}>Roll over</Btn>
+            <Btn variant="ghost" onClick={()=>setRolloverPending([])} style={{padding:"7px 14px",fontSize:12}}>Dismiss</Btn>
+          </div>
+        </div>
+      )}
+      {rolloverToast&&(
+        <div style={{position:"fixed",top:20,right:20,zIndex:999,padding:"11px 18px",borderRadius:10,background:T.teal,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+          {rolloverToast}
         </div>
       )}
 
