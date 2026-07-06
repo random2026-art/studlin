@@ -247,7 +247,7 @@ function StepSignup({ state, set, advance }) {
 
       <label className={"checkbox" + (state.terms ? " is-checked" : "")} onClick={()=>set({...state, terms:!state.terms})} style={{marginTop:22}}>
         <span className="box">{Ic.check}</span>
-        <span>I accept the <a href="terms.html" target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}>Terms of Service</a> and <a href="privacy.html" target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}>Privacy Policy</a>.</span>
+        <span>I accept the <a href="/terms" target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}>Terms of Service</a> and <a href="/privacy" target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}>Privacy Policy</a>.</span>
       </label>
       {errors.terms && <div className="field-error" style={{marginTop:8}}>{errors.terms}</div>}
     </div>
@@ -469,7 +469,7 @@ function App() {
           }}>
             {finishing?"Setting up...":CTA_LABEL}<span className="arrow">{Ic.arrow}</span>
           </button>
-          {step === 0 && <div className="stage-links"><a href="privacy.html" target="_blank" rel="noopener noreferrer">Privacy Policy</a> · <a href="terms.html" target="_blank" rel="noopener noreferrer">Terms of Service</a></div>}
+          {step === 0 && <div className="stage-links"><a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a> · <a href="/terms" target="_blank" rel="noopener noreferrer">Terms of Service</a></div>}
           {step === 0 && <div style={{marginTop:16,textAlign:"center",fontSize:13,color:"var(--muted)"}}>Already have an account? <a href="/signin">Log in</a></div>}
           {step > 0 && <div style={{marginTop:14}}><button onClick={back} style={{background:"transparent",border:"none",color:"var(--muted)",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>← Back</button></div>}
         </div>

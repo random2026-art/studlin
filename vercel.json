@@ -5,7 +5,9 @@
     { "source": "/onboarding", "destination": "/Studlin Onboarding.html" },
     { "source": "/signup", "destination": "/Studlin Onboarding.html" },
     { "source": "/signin", "destination": "/Studlin Sign In.html" },
-    { "source": "/login", "destination": "/Studlin Sign In.html" }
+    { "source": "/login", "destination": "/Studlin Sign In.html" },
+    { "source": "/terms", "destination": "/terms.html" },
+    { "source": "/privacy", "destination": "/privacy.html" }
   ],
   "functions": {
     "api/checkout.js": { "memory": 256, "maxDuration": 10 },
