@@ -1,21 +1,39 @@
-// Admin-only CSV export of all Studlin users.
+// Admin-only CSV export of all real onboarded Studlin users.
 // Access: POST /api/export-users with JSON body { secret: "YOUR_ADMIN_EXPORT_SECRET" }
-// Set ADMIN_EXPORT_SECRET in Vercel environment variables.
 const { db, auth } = require('./_lib/firebase-admin');
 
+// Filter out test / QA accounts by email or display name
 const TEST_PATTERNS = [
   /@example\.com$/i,
+  /@test\.com$/i,
+  /@mailinator\.com$/i,
+  /@guerrillamail/i,
+  /@tempmail/i,
+  /@yopmail/i,
   /^studlin\.qa/i,
-  /^qa\s/i,
-  /^test\s/i,
+  /^qa[\s.]/i,
+  /^test[\s.]/i,
   /testuser/i,
+  /^promise\.sctech@/i,
 ];
 
 function isTestAccount(email, name) {
-  if (!email) return false;
+  if (!email) return true; // no email = not a real signup
   if (TEST_PATTERNS.some(p => p.test(email))) return true;
   if (name && TEST_PATTERNS.some(p => p.test(name))) return true;
   return false;
+}
+
+function readableStatus(status) {
+  if (status === 'highschool') return 'High School';
+  if (status === 'college') return 'College';
+  return status || '';
+}
+
+function readableProvider(provider) {
+  if (provider === 'google.com') return 'Google';
+  if (provider === 'password') return 'Email';
+  return provider || '';
 }
 
 module.exports = async (req, res) => {
@@ -41,11 +59,11 @@ module.exports = async (req, res) => {
       const result = await auth.listUsers(1000, pageToken);
       for (const u of result.users) {
         authUsers[u.uid] = {
-          name: u.displayName || '',
-          email: u.email || '',
-          emailVerified: u.emailVerified ? 'yes' : 'no',
-          createdAt: u.metadata.creationTime || '',
-          provider: (u.providerData[0] || {}).providerId || 'unknown',
+          name:          u.displayName || '',
+          email:         u.email || '',
+          emailVerified: u.emailVerified ? 'Yes' : 'No',
+          createdAt:     u.metadata.creationTime || '',
+          provider:      (u.providerData[0] || {}).providerId || 'unknown',
         };
       }
       pageToken = result.pageToken;
@@ -56,37 +74,63 @@ module.exports = async (req, res) => {
     const firestoreUsers = {};
     snap.forEach(doc => { firestoreUsers[doc.id] = doc.data(); });
 
-    // Merge and filter out test accounts
+    // Merge, filter test accounts, keep only onboarded users
     const rows = Object.entries(authUsers)
       .map(([uid, au]) => {
         const fs = firestoreUsers[uid] || {};
         return {
-          name:          fs.name || au.name || '',
-          email:         fs.email || au.email || '',
-          school:        fs.school || fs.affiliation || '',
-          status:        fs.status || '',
-          plan:          fs.plan || 'Free',
-          credits:       fs.credits !== undefined ? fs.credits : '',
-          onboarded:     fs.onboarded ? 'yes' : 'no',
-          emailVerified: au.emailVerified,
-          provider:      au.provider,
-          createdAt:     fs.createdAt || au.createdAt || '',
-          onboardedAt:   fs.onboardedAt || '',
+          // Identity
+          name:            fs.name || au.name || '',
+          email:           fs.email || au.email || '',
+          emailVerified:   au.emailVerified,
+
+          // Onboarding Q1: sign-up method
+          signUpMethod:    readableProvider(au.provider),
+
+          // Onboarding Q2: student status
+          studentStatus:   readableStatus(fs.status),
+
+          // Onboarding Q3: school name
+          school:          fs.school || fs.affiliation || '',
+
+          // Account details
+          plan:            fs.plan || 'Free',
+          credits:         fs.credits !== undefined ? fs.credits : '',
+          onboarded:       fs.onboarded ? 'Yes' : 'No',
+
+          // Timestamps
+          signedUpAt:      fs.createdAt || au.createdAt || '',
+          onboardedAt:     fs.onboardedAt || '',
         };
       })
-      .filter(r => !isTestAccount(r.email, r.name));
+      // Only real users who completed onboarding
+      .filter(r => r.onboarded === 'Yes')
+      // Remove test accounts
+      .filter(r => !isTestAccount(r.email, r.name))
+      // Must have a school (means they completed the profile step)
+      .filter(r => r.school.trim() !== '');
 
-    // Sort: onboarded users first, then by newest signup
-    rows.sort((a, b) => {
-      if (a.onboarded !== b.onboarded) return a.onboarded === 'yes' ? -1 : 1;
-      return (b.createdAt > a.createdAt ? 1 : -1);
-    });
+    // Sort: newest signup first
+    rows.sort((a, b) => (b.signedUpAt > a.signedUpAt ? 1 : -1));
 
-    const headers = ['name','email','school','status','plan','credits','onboarded','emailVerified','provider','createdAt','onboardedAt'];
-    const escape = v => `"${String(v).replace(/"/g,'""')}"`;
+    // Column headers match the onboarding questions
+    const headers = [
+      { key: 'name',          label: 'Full Name' },
+      { key: 'email',         label: 'Email Address' },
+      { key: 'emailVerified', label: 'Email Verified' },
+      { key: 'signUpMethod',  label: 'Sign Up Method (Google or Email)' },
+      { key: 'studentStatus', label: 'Student Status (High School or College)' },
+      { key: 'school',        label: 'School Name' },
+      { key: 'plan',          label: 'Plan' },
+      { key: 'credits',       label: 'Credits' },
+      { key: 'signedUpAt',    label: 'Signed Up At' },
+      { key: 'onboardedAt',   label: 'Onboarded At' },
+    ];
+
+    const escape = v => `"${String(v).replace(/"/g, '""')}"`;
     const csv = [
-      headers.join(','),
-      ...rows.map(r => headers.map(h => escape(r[h])).join(',')),
+      headers.map(h => escape(h.label)).join(','),
+      ...rows.map(r => headers.map(h => escape(r[h.key])).join(',')),
     ].join('\n');
 
     const date = new Date().toISOString().slice(0, 10);
