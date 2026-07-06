@@ -862,6 +862,7 @@ async function upsertProfile(extra={}){
     updatedAt:new Date().toISOString(),
   };
   try{await fsdb().collection('profiles').doc(u.uid).set(data,{merge:true});}catch(e){}
+  try{await fsdb().collection('users').doc(u.uid).set({name,email:u.email||"",updatedAt:new Date().toISOString()},{merge:true});}catch(e){}
 }
 // Top-N public profiles ordered by real XP, straight from Firestore — no
 // mock/seed data. Docs that haven't been through upsertProfile() since xp
@@ -2373,7 +2374,7 @@ function Flashcards() {
         )}
         {dSource==="youtube"&&(
           <Field label="YouTube link" hint={ytInfo?"Found: "+ytInfo:"Paste a link — Studlin detects the topic and generates cards."}>
-            <Input placeholder="https://youtube.com/watch?v=..." value={ytUrl} onChange={ev=>{setYtUrl(ev.target.value);var v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtFetching(true);setYtInfo("");authFetch("/api/youtube-info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(function(r){return r.json();}).then(function(d){if(d.title){setYtInfo(d.title+(d.author?" by "+d.author:""));setDName(d.title+" cards");}setYtFetching(false);}).catch(function(){setYtFetching(false);});}}} />
+            <Input placeholder="https://youtube.com/watch?v=..." value={ytUrl} onChange={ev=>{setYtUrl(ev.target.value);var v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtFetching(true);setYtInfo("");authFetch("/api/search-videos",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(function(r){return r.json();}).then(function(d){if(d.title){setYtInfo(d.title+(d.author?" by "+d.author:""));setDName(d.title+" cards");}setYtFetching(false);}).catch(function(){setYtFetching(false);});}}} />
             {ytFetching&&<div style={{fontSize:11,color:T.lime,marginTop:6}}>Detecting video title...</div>}
             {ytInfo&&!ytFetching&&<div style={{fontSize:11,color:T.lime,fontWeight:600,marginTop:6}}>Found: {ytInfo}</div>}
           </Field>
@@ -2931,7 +2932,7 @@ function Notes(){
         )}
         {src==="youtube"&&(
           <Field label="YouTube link" hint={ytInfo?"Found: "+ytInfo:"Paste any YouTube video link. Studlin will detect the topic and generate notes."}>
-            <Input placeholder="https://youtube.com/watch?v=..." value={yt} onChange={ev=>{setYt(ev.target.value);const v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtLoading(true);authFetch("/api/youtube-info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(r=>r.json()).then(d=>{if(d.title){setYtInfo(d.title+(d.author?" by "+d.author:""));if(!newTitle)setNewTitle(d.title);}setYtLoading(false);}).catch(()=>setYtLoading(false));}}} />
+            <Input placeholder="https://youtube.com/watch?v=..." value={yt} onChange={ev=>{setYt(ev.target.value);const v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtLoading(true);authFetch("/api/search-videos",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(r=>r.json()).then(d=>{if(d.title){setYtInfo(d.title+(d.author?" by "+d.author:""));if(!newTitle)setNewTitle(d.title);}setYtLoading(false);}).catch(()=>setYtLoading(false));}}} />
             {ytLoading&&<div style={{fontSize:11,color:T.lime,marginTop:4}}>Detecting video…</div>}
           </Field>
         )}
@@ -9042,8 +9043,8 @@ function AuthScreen(){
       </div>
       <p style={{fontSize:15,color:"rgba(232,239,231,0.6)",margin:0}}>Sign in to access your workspace.</p>
       <div style={{display:"flex",gap:12,marginTop:8}}>
-        <a href="Studlin Sign In.html" style={{padding:"12px 28px",borderRadius:10,background:"#AECE5E",color:"#0E1F18",fontSize:14,fontWeight:600,textDecoration:"none"}}>Sign in</a>
-        <a href="Studlin Onboarding.html" style={{padding:"12px 28px",borderRadius:10,border:"1px solid rgba(174,206,94,0.3)",background:"transparent",color:"#AECE5E",fontSize:14,fontWeight:600,textDecoration:"none"}}>Create account</a>
+        <a href="/signin" style={{padding:"12px 28px",borderRadius:10,background:"#AECE5E",color:"#0E1F18",fontSize:14,fontWeight:600,textDecoration:"none"}}>Sign in</a>
+        <a href="/onboarding" style={{padding:"12px 28px",borderRadius:10,border:"1px solid rgba(174,206,94,0.3)",background:"transparent",color:"#AECE5E",fontSize:14,fontWeight:600,textDecoration:"none"}}>Create account</a>
       </div>
     </div>
   );
@@ -9109,7 +9110,7 @@ function VerifyEmailScreen({user}){
     if(code.length!==6||checking)return;
     setChecking(true);setErr("");
     try{
-      const res=await authFetch("/api/verify-otp",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({code})});
+      const res=await authFetch("/api/send-verification",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({code})});
       const d=await res.json();
       if(d.ok){window.location.reload();return;}
       setErr(d.error||"Incorrect code. Try again.");
@@ -9224,6 +9225,8 @@ function App() {
   const [calOnboardGoogleSyncing,setCalOnboardGoogleSyncing]=useState(false);
   const [obGoogleLinked,setObGoogleLinked]=useState(()=>!!lsGet("cal-google",false));
   const [obAppleLinked,setObAppleLinked]=useState(()=>!!lsGet("cal-apple",false));
+  const [obAppleStep,setObAppleStep]=useState(null);
+  const [obAppleUrl,setObAppleUrl]=useState("");
   const [notifPermModal,setNotifPermModal]=useState(false);
   const handleNotifAllow=()=>{
     if(Notification&&Notification.requestPermission)Notification.requestPermission();
@@ -9826,12 +9829,12 @@ function App() {
             <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:6}}>
               <div style={{width:44,height:44,borderRadius:12,background:T.lime+"18",border:`1px solid ${T.lime}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,fontSize:20}}>{Icon.cal}</div>
               <div>
-                <div style={{fontSize:19,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>Connect your calendar</div>
-                <div style={{fontSize:12,color:T.muted}}>Pull existing events into Studlin · takes 10 seconds</div>
+                <div style={{fontSize:19,fontWeight:700,color:"rgba(255,255,255,0.95)",letterSpacing:"-0.02em"}}>Connect your calendar</div>
+                <div style={{fontSize:12,color:"rgba(255,255,255,0.6)"}}>Pull existing events into Studlin · takes 10 seconds</div>
               </div>
             </div>
-            <p style={{fontSize:13,color:T.muted,lineHeight:1.7,margin:"18px 0 20px"}}>
-              Studlin can read your upcoming events so you never double-book a study block. Your calendar data is cached locally — we never store it on our servers.
+            <p style={{fontSize:13,color:"rgba(255,255,255,0.65)",lineHeight:1.7,margin:"18px 0 20px"}}>
+              Studlin can read your upcoming events so you never double-book a study block. Your calendar data is cached locally and never stored on our servers.
             </p>
             <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:24}}>
               <div style={{display:"flex",alignItems:"center",gap:14,padding:"13px 16px",borderRadius:10,background:T.card2,border:`1px solid ${obGoogleLinked?T.teal+"44":T.border}`}}>
@@ -9868,25 +9871,62 @@ function App() {
                   }}>{calOnboardGoogleSyncing?"Syncing…":"Connect"}</BtnSm>
                 }
               </div>
-              <div style={{display:"flex",alignItems:"center",gap:14,padding:"13px 16px",borderRadius:10,background:T.card2,border:`1px solid ${obAppleLinked?T.teal+"44":T.border}`}}>
-                <div style={{width:36,height:36,borderRadius:9,background:"rgba(255,255,255,0.06)",border:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill={T.text}><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                <div style={{display:"flex",alignItems:"center",gap:14,padding:"13px 16px",borderRadius:10,background:T.card2,border:`1px solid ${obAppleLinked?T.teal+"44":T.border}`}}>
+                  <div style={{width:36,height:36,borderRadius:9,background:"rgba(255,255,255,0.08)",border:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="rgba(255,255,255,0.85)"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:600,color:T.white}}>Apple Calendar</div>
+                    <div style={{fontSize:11,color:obAppleLinked?T.teal:obAppleStep==="error"?"#f87171":obAppleStep==="syncing"?T.amber:T.muted,marginTop:1}}>
+                      {obAppleLinked?"Connected · events imported":obAppleStep==="syncing"?"Importing events...":obAppleStep==="error"?"Import failed — check the link and try again":"Import iCloud events"}
+                    </div>
+                  </div>
+                  {obAppleLinked
+                    ?<div style={{display:"flex",alignItems:"center",gap:6,color:T.teal,fontSize:12,fontWeight:600}}>{Icon.check} Connected</div>
+                    :obAppleStep
+                      ?<BtnSm variant="subtle" onClick={()=>setObAppleStep(null)} disabled={obAppleStep==="syncing"}>Cancel</BtnSm>
+                      :<BtnSm variant="subtle" onClick={()=>setObAppleStep("input")}>Connect</BtnSm>
+                  }
                 </div>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:13,fontWeight:600,color:T.white}}>Apple Calendar</div>
-                  <div style={{fontSize:11,color:obAppleLinked?T.teal:T.muted,marginTop:1}}>{obAppleLinked?"Connected":"Import iCloud events"}</div>
-                </div>
-                {obAppleLinked
-                  ?<div style={{display:"flex",alignItems:"center",gap:6,color:T.teal,fontSize:12,fontWeight:600}}>{Icon.check} Connected</div>
-                  :<BtnSm variant="subtle" onClick={()=>{lsSet("cal-apple",true);setObAppleLinked(true);}}>Connect</BtnSm>
-                }
+                {!obAppleLinked&&obAppleStep&&(
+                  <div style={{padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${T.border}`}}>
+                    <div style={{fontSize:11,color:T.muted,lineHeight:1.6,marginBottom:10}}>
+                      In iCloud.com/calendar: select a calendar → Share → Copy Link. Paste the webcal:// or https:// link below.
+                    </div>
+                    <div style={{display:"flex",gap:8}}>
+                      <input
+                        value={obAppleUrl}
+                        onChange={e=>setObAppleUrl(e.target.value)}
+                        placeholder="webcal://p00-caldav.icloud.com/published/2/..."
+                        style={{flex:1,padding:"8px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:"rgba(255,255,255,0.07)",color:"rgba(255,255,255,0.9)",fontSize:12,fontFamily:T.font,outline:"none"}}
+                      />
+                      <BtnSm variant="lime" disabled={!obAppleUrl.trim()||obAppleStep==="syncing"} onClick={async()=>{
+                        if(!obAppleUrl.trim()||obAppleStep==="syncing")return;
+                        setObAppleStep("syncing");
+                        try{
+                          const url=obAppleUrl.trim().replace(/^webcal:\/\//i,'https://');
+                          const r=await fetch('/api/cal-proxy?url='+encodeURIComponent(url));
+                          const d=await r.json();
+                          if(!r.ok||!d.ok)throw new Error(d.error||"Import failed");
+                          const existing=lsGet("events",[]).filter(e=>!e.id.startsWith("apple-"));
+                          lsSet("events",[...existing,...d.events]);
+                          lsSet("cal-apple",true);
+                          setObAppleLinked(true);
+                          setObAppleStep(null);
+                          showToast("Apple Calendar connected · "+d.events.length+" events imported");
+                        }catch(e){setObAppleStep("error");}
+                      }}>{obAppleStep==="syncing"?"Importing...":"Import"}</BtnSm>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
             <div style={{display:"flex",gap:10}}>
               <Btn style={{flex:1,justifyContent:"center"}} onClick={()=>{lsSet("cal-onboard-done",true);setCalOnboardDone(true);}}>Done</Btn>
               <Btn variant="subtle" style={{flex:1,justifyContent:"center"}} onClick={()=>{lsSet("cal-onboard-done",true);setCalOnboardDone(true);}}>Skip for now</Btn>
             </div>
-            <div style={{fontSize:11,color:T.faint,textAlign:"center",marginTop:14,lineHeight:1.5}}>You can connect or disconnect calendars anytime in Settings → Integrations.</div>
+            <div style={{fontSize:11,color:"rgba(255,255,255,0.35)",textAlign:"center",marginTop:14,lineHeight:1.5}}>You can connect or disconnect calendars anytime in Settings → Integrations.</div>
           </div>
         </div>
       )}

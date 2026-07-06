@@ -1,16 +1,10 @@
-<!--
-  DRAFT — generated as a starting template, not legal advice.
-  Have a licensed attorney (ideally one with GDPR/CCPA experience) review
-  this before it governs real users. Update bracketed [PLACEHOLDER]
-  values, and confirm the subprocessor list against your actual
-  production infrastructure before publishing.
--->
 <!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Privacy Policy — Studlin</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
   :root{
     --ink:#0E1F18; --forest:#14342A; --cream:#F6F1E6; --paper:#FBF7EE;
@@ -26,6 +20,10 @@
   .wrap{max-width:760px;margin:0 auto;padding:64px 24px 120px;}
   a{color:var(--forest);text-decoration:underline;text-decoration-color:var(--line);}
   a:hover{text-decoration-color:currentColor;}
+  .nav{display:flex;align-items:center;justify-content:space-between;padding:20px 0 40px;}
+  .nav .brand{font-size:17px;font-weight:700;color:var(--ink);text-decoration:none;}
+  .nav .back{font-size:13px;color:var(--muted);text-decoration:none;}
+  .nav .back:hover{color:var(--ink);}
   header.doc{margin-bottom:40px;}
   header.doc .eyebrow{font-size:12px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#7FA82A;margin-bottom:10px;}
   h1{font-size:32px;font-weight:800;letter-spacing:-0.02em;margin:0 0 8px;}
@@ -39,90 +37,96 @@
   table{width:100%;border-collapse:collapse;margin:14px 0 20px;font-size:13.5px;}
   th,td{text-align:left;padding:9px 10px;border:1px solid var(--line);vertical-align:top;}
   th{background:rgba(14,31,24,0.04);font-weight:700;}
-  .callout{background:rgba(158,200,61,0.10);border:1px solid rgba(158,200,61,0.35);border-radius:10px;padding:14px 16px;font-size:13.5px;color:var(--ink);margin-bottom:32px;}
-  .placeholder{background:rgba(196,84,74,0.12);color:#9A3A32;padding:1px 5px;border-radius:4px;font-weight:600;}
+  .callout{background:rgba(158,200,61,0.10);border:1px solid rgba(158,200,61,0.35);border-radius:10px;padding:16px 18px;font-size:14px;color:var(--ink);margin-bottom:32px;font-weight:500;}
   footer.doc{margin-top:56px;padding-top:20px;border-top:1px solid var(--line);font-size:12.5px;color:var(--muted);}
 </style>
 </head>
 <body>
 <div class="wrap">
+
+  <nav class="nav">
+    <a class="brand" href="/">Studlin</a>
+    <a class="back" href="/">← Back to home</a>
+  </nav>
+
   <header class="doc">
     <div class="eyebrow">Legal</div>
     <h1>Privacy Policy</h1>
-    <div class="meta">Effective date: <span class="placeholder">[EFFECTIVE DATE]</span> · Last updated: <span class="placeholder">[LAST UPDATED DATE]</span></div>
+    <div class="meta">Effective date: July 6, 2026 · Last updated: July 6, 2026</div>
   </header>
 
   <div class="callout">
-    This Privacy Policy explains how Studlin Labs, Inc. ("Studlin," "we," "us," or "our") collects, uses, discloses, and protects information when you use the Studlin website and application (the "Service"). It is written to align with common data-protection principles, including those reflected in the GDPR and the CCPA/CPRA, but your specific rights depend on where you live — see Section 5.
+    The short version: we collect what we need to run the app, we use it to make your experience better, and we never sell your data. Full details below.
   </div>
 
-  <h2>1. Information We Collect</h2>
-  <h3>Information you provide directly</h3>
-  <ul>
-    <li><strong>Account information:</strong> name, email address, and (if you sign in with Google) basic profile information such as your profile photo.</li>
-    <li><strong>Academic information:</strong> your school or academic institution affiliation, grade/status, and subjects you add.</li>
-    <li><strong>Content you create:</strong> tasks, calendar events, routines, notes, flashcards, AI tutor conversations, and any files or notes you choose to share with other users through the Studlin Network.</li>
-    <li><strong>Payment information:</strong> if you subscribe to a paid plan, billing details are collected and processed directly by our payment processor, Stripe — Studlin does not receive or store your full card number.</li>
-    <li><strong>Communications:</strong> information you provide when you contact us for support.</li>
-  </ul>
-  <h3>Information collected automatically</h3>
-  <ul>
-    <li>Device identifiers, IP address, browser type and version, operating system, and general platform/usage log data necessary to operate, secure, and troubleshoot the Service.</li>
-    <li>A push-notification device token, if you enable notifications, used solely to deliver reminders you've requested.</li>
-  </ul>
+  <h2>1. Who We Are</h2>
+  <p>Studlin Labs, Inc. ("Studlin," "we," "us," or "our") operates the Studlin website and application (the "Service"). This Privacy Policy explains what data we collect, how we use it, and who we share it with.</p>
+  <p>Questions? Email us at <a href="mailto:studing2026@gmail.com">studing2026@gmail.com</a>.</p>
 
-  <h2>2. How We Use Your Information</h2>
-  <p>We use the information described above to:</p>
-  <ul>
-    <li>create, maintain, and secure your account and authenticate your sign-in;</li>
-    <li>generate your AI-scheduled study calendar, task prioritization, and related planning features;</li>
-    <li>power the AI tutor and related study-assistance features;</li>
-    <li>calculate school-localized Global Leaderboard rankings and related gamification metrics, using your school affiliation and activity data;</li>
-    <li>enable peer-to-peer note-sharing and study-group collaboration with the specific users/networks you choose to share with;</li>
-    <li>process payments and manage subscriptions;</li>
-    <li>send you service-related communications, including optional push notifications and reminders you request; and</li>
-    <li>maintain the security, integrity, and reliability of the Service, and diagnose technical issues.</li>
-  </ul>
-  <p>We do not sell your personal information, and we do not use your academic content to train third-party AI models beyond what is necessary to generate the response you requested in that session.</p>
+  <h2>2. What We Collect</h2>
 
-  <h2>3. Third-Party Service Providers ("Subprocessors")</h2>
-  <p>We rely on the following trusted third-party service providers to operate the Service. Each processes data only as necessary to provide its function to us, under its own applicable terms and privacy practices:</p>
+  <h3>Account data</h3>
+  <p>When you create an account, we collect your name, email address, and authentication credentials. Passwords are never stored by Studlin directly — authentication is handled securely through Firebase Authentication. If you sign in with Google, we receive only your name, email, and profile photo as permitted by you.</p>
+
+  <h3>Usage data</h3>
+  <p>We collect information about how you use the Service: which features you access, how long you study, your streak history, tasks you create, flashcards you generate, calendar events, and similar activity. This powers your study stats, weekly summary, streak tracking, and AI scheduling features.</p>
+
+  <h3>AI content</h3>
+  <p>When you use the AI tutor, upload notes or PDFs, or interact with any AI-powered feature, the content you submit is sent to our AI provider (Anthropic) to generate a response. We do not use your submitted content to train AI models beyond what is necessary to produce your response in that session.</p>
+
+  <h3>Payment data</h3>
+  <p>If you subscribe to a paid plan, payment is processed by Stripe, Inc. Studlin never receives or stores your full card number. We receive only limited billing metadata — last four digits, card type, and subscription status — necessary to manage your account.</p>
+
+  <h2>3. How We Use Your Information</h2>
+  <p>We use your data to:</p>
+  <ul>
+    <li>create and maintain your account</li>
+    <li>power AI features including the tutor, scheduler, and flashcard generator</li>
+    <li>calculate streaks, leaderboard rankings, and study metrics</li>
+    <li>process payments and manage your subscription</li>
+    <li>send service communications and reminders you request</li>
+    <li>keep the Service secure and diagnose technical problems</li>
+  </ul>
+  <p><strong>We do not sell your personal information. We do not share your data with advertisers. We do not use your data for purposes unrelated to operating Studlin.</strong></p>
+
+  <h2>4. Who We Share Your Data With</h2>
+  <p>We share data only with the service providers necessary to run Studlin. Each provider processes data under its own applicable terms and only as needed to perform its function:</p>
   <table>
     <tr><th>Provider</th><th>Purpose</th><th>Data involved</th></tr>
-    <tr><td>Google Cloud Platform (GCP)</td><td>Core cloud computing infrastructure, token authorization, and metadata logging</td><td>Account identifiers, infrastructure/log metadata</td></tr>
-    <tr><td>Firebase (a Google service)</td><td>Account authentication (including Google Sign-In), real-time Firestore database storage, cloud access control, and push notification delivery</td><td>Account credentials/tokens, profile info, calendar/task content, device push token</td></tr>
-    <tr><td>Anthropic</td><td>Processes prompts to power the AI tutor and AI scheduling features</td><td>The specific prompt/content you submit to an AI feature (e.g., a task description or tutor question)</td></tr>
-    <tr><td>Stripe, Inc.</td><td>Payment processing and subscription billing</td><td>Billing/payment details, subscription status</td></tr>
-    <tr><td>Resend</td><td>Delivery of transactional emails (e.g., welcome emails, shared-note notifications)</td><td>Email address, relevant email content</td></tr>
+    <tr><td>Firebase (Google)</td><td>Authentication, database storage, push notifications</td><td>Account data, content you create, device push token</td></tr>
+    <tr><td>Anthropic</td><td>Powers AI tutor and AI study features</td><td>Content you submit to AI features in that session</td></tr>
+    <tr><td>Stripe</td><td>Payment processing and subscription billing</td><td>Billing details, subscription status</td></tr>
+    <tr><td>Resend</td><td>Transactional emails (welcome, notifications)</td><td>Email address, email content</td></tr>
+    <tr><td>PostHog</td><td>Product analytics to improve the Service</td><td>Anonymized usage events</td></tr>
   </table>
-  <p>We may add or change subprocessors as the Service evolves; material changes will be reflected in an updated version of this policy.</p>
+  <p>We may update this list as our infrastructure evolves. Material changes will be reflected in an updated version of this policy.</p>
 
-  <h2>4. Data Retention &amp; Security</h2>
-  <p>Your data is stored in Firebase Firestore, using industry-standard TLS/SSL encryption in transit and encryption at rest as provided by our infrastructure providers. We retain your personal information for as long as your account remains active, or as needed to provide the Service, comply with our legal obligations, resolve disputes, and enforce our agreements. If you delete your account, we will delete or anonymize your personal data within a commercially reasonable period, except where retention is required by law.</p>
+  <h2>5. Education Records and FERPA</h2>
+  <p>Studlin is a voluntary productivity tool. Students enter their own study goals, tasks, and notes. We do not access, request, or store official education records such as transcripts, grades issued by a school, or any records covered by the Family Educational Rights and Privacy Act (FERPA).</p>
+  <p>If we ever pursue integrations with school systems or learning management platforms, we will update this policy and obtain appropriate legal guidance before doing so.</p>
 
-  <h2>5. Your Privacy Rights</h2>
-  <p>Depending on where you live, you may have the right to access, correct, export, or request deletion of your personal information, or to object to or restrict certain processing (rights broadly consistent with the GDPR for users in the EU/EEA/UK, and the CCPA/CPRA for California residents).</p>
-  <p>To exercise any of these rights, send a request to <a href="mailto:privacy@studlin.app">privacy@studlin.app</a> from the email address associated with your account. We will verify your request and respond within the timeframe required by applicable law. You may also delete most of your own content directly within the Service, and permanently delete your account from Settings.</p>
+  <h2>6. Age Requirements</h2>
+  <p>The Service is intended for users aged 13 and older. Users who access paid subscription features must be at least 18 years old, or have documented parental or guardian consent.</p>
+  <p>We do not knowingly collect personal information from children under 13. If you believe a child under 13 has created an account without parental consent, contact us at <a href="mailto:studing2026@gmail.com">studing2026@gmail.com</a> and we will delete the account promptly.</p>
 
-  <h2>6. Cookies &amp; Tracking Technologies</h2>
-  <p>Studlin uses functional, first-party session identifiers set by Firebase Authentication to keep you signed in across visits. These are strictly necessary for the Service to function and are not used for third-party advertising or cross-site tracking. We do not currently use third-party advertising cookies.</p>
+  <h2>7. Data Retention and Security</h2>
+  <p>Your data is stored in Firebase Firestore with TLS encryption in transit and encryption at rest provided by Google Cloud infrastructure. We retain your personal information for as long as your account is active or as needed to provide the Service.</p>
+  <p>If you delete your account, we will delete or anonymize your personal data within a commercially reasonable timeframe, except where retention is required by law.</p>
 
-  <h2>7. Children's Privacy</h2>
-  <p>The Service is intended for students generally aged 13 and older. We do not knowingly collect personal information from children under 13 without verifiable parental consent. If you believe a child under 13 has provided us personal information without such consent, contact us at <a href="mailto:privacy@studlin.app">privacy@studlin.app</a> so we can address it.</p>
-
-  <h2>8. International Data Transfers</h2>
-  <p>Our service providers may process and store information in the United States and other countries. Where required, we rely on appropriate safeguards (such as standard contractual clauses) for cross-border transfers of personal data.</p>
+  <h2>8. Your Privacy Rights</h2>
+  <p>Depending on where you live, you may have rights to access, correct, delete, or export your personal data. To make a request, email us at <a href="mailto:studing2026@gmail.com">studing2026@gmail.com</a>.</p>
+  <p>California residents: we do not sell personal information, so most CCPA opt out rights do not apply to Studlin. We will comply with all applicable requests under California and other state privacy laws.</p>
 
   <h2>9. Changes to This Policy</h2>
-  <p>We may update this Privacy Policy from time to time. If we make material changes, we will notify you through the Service or by other reasonable means before the change takes effect.</p>
+  <p>We may update this Privacy Policy from time to time. If we make material changes, we will notify you by email or through the Service. Your continued use after the effective date means you accept the updated policy.</p>
 
-  <h2>10. Contact Us</h2>
-  <p>Questions about this Privacy Policy or our data practices can be directed to <a href="mailto:privacy@studlin.app">privacy@studlin.app</a>.</p>
+  <h2>10. Contact</h2>
+  <p>Questions about this Privacy Policy or your data? Email us at <a href="mailto:studing2026@gmail.com">studing2026@gmail.com</a>.</p>
 
   <footer class="doc">
-    Studlin Labs, Inc. · <span class="placeholder">[COMPANY ADDRESS]</span><br>
-    This document is a template provided for convenience and does not constitute legal advice. Consult a licensed attorney, ideally with data-privacy expertise in your target markets, before relying on it.
+    Studlin Labs, Inc. · studing2026@gmail.com
   </footer>
+
 </div>
 </body>
 </html>

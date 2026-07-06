@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="apple-touch-icon" href="/studlin-icon.png">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Studlin — Web App</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -37,6 +39,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-analytics-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 <script>
 firebase.initializeApp({
@@ -45,11 +48,16 @@ firebase.initializeApp({
   projectId:"studlin-cb78b",
   storageBucket:"studlin-cb78b.firebasestorage.app",
   messagingSenderId:"16831354472",
-  appId:"1:16831354472:web:50220e57868dba46c18ddd"
+  appId:"1:16831354472:web:50220e57868dba46c18ddd",
+  measurementId:"FIREBASE_MEASUREMENT_ID"
 });
+firebase.analytics();
 if("serviceWorker" in navigator){navigator.serviceWorker.register("/service-worker.js").catch(function(){});}
 </script>
 <script>
+// PostHog analytics — replace POSTHOG_KEY with your project key from app.posthog.com
+!function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.crossOrigin="anonymous",p.async=!0,p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+" (stub)"},o="init capture register register_once unregister opt_out_capturing has_opted_out_capturing opt_in_capturing reset isFeatureEnabled onFeatureFlags getFeatureFlag getFeatureFlagPayload reloadFeatureFlags group updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures getSurveys getActiveMatchingSurveys renderSurvey canRenderSurvey identify setPersonProperties resetGroups set_config startSessionRecording stopSessionRecording sessionRecordingStarted captureException loadToolbar get_distinct_id getGroups get_session_id get_session_replay_url alias set_config register register_once unregister opt_out_capturing has_opted_out_capturing opt_in_capturing reset get_property getSessionProperty createPersonProfile opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing clear_opt_in_out_capturing debug".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
+posthog.init('phc_scmvGneupzSJNuorHXrHGMtEkpasgRU4x3mci5tFSDJj',{api_host:'https://us.i.posthog.com',person_profiles:'identified_only'});
 window._pdfjs=import("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs").then(m=>{m.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";return m;}).catch(()=>{});
 // Suppress console output in production
 (function(){var n=function(){};window.console={log:n,warn:n,error:n,info:n,debug:n,table:n,trace:n,group:n,groupEnd:n};})();

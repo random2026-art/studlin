@@ -5,20 +5,63 @@ const { Resend } = require('resend');
 
 const FROM = 'Studlin <noreply@studlin.com>';
 const OTP_TTL_MS = 10 * 60 * 1000;
+const MAX_ATTEMPTS = 5;
 
 const hashCode = (code) => crypto.createHash('sha256').update(code).digest('hex');
 
+// Handles both sending and checking the 6-digit email OTP — kept as one
+// endpoint (branching on whether `code` is present) rather than a second
+// file so the api/ directory stays under Vercel's Hobby-plan function cap,
+// same reasoning as search-videos absorbing youtube-info.
 module.exports = async (req, res) => {
   setCors(req, res);
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) return res.status(503).json({ error: 'Email service not configured' });
   if (!auth || !db) return res.status(503).json({ error: 'Auth service not configured' });
 
   const user = await verifyAuth(req);
   if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+  const submittedCode = req.body && req.body.code;
+  if (submittedCode) return verifyCode(user, submittedCode, res);
+  return sendCode(user, res);
+};
+
+async function verifyCode(user, submittedCode, res) {
+  const code = String(submittedCode).trim();
+  if (!/^\d{6}$/.test(code)) return res.status(400).json({ error: 'Enter the 6-digit code.' });
+
+  const ref = db.collection('emailOtps').doc(user.uid);
+  const snap = await ref.get().catch(() => null);
+  if (!snap || !snap.exists) return res.status(400).json({ error: 'No pending code. Request a new one.' });
+
+  const data = snap.data();
+  if (Date.now() > data.expiresAt) {
+    await ref.delete().catch(() => {});
+    return res.status(400).json({ error: 'Code expired. Request a new one.' });
+  }
+  if ((data.attempts || 0) >= MAX_ATTEMPTS) {
+    await ref.delete().catch(() => {});
+    return res.status(429).json({ error: 'Too many attempts. Request a new code.' });
+  }
+
+  if (hashCode(code) !== data.codeHash) {
+    await ref.update({ attempts: (data.attempts || 0) + 1 }).catch(() => {});
+    return res.status(400).json({ error: 'Incorrect code. Try again.' });
+  }
+
+  try {
+    await auth.updateUser(user.uid, { emailVerified: true });
+  } catch (e) {
+    return res.status(500).json({ error: 'Could not verify email: ' + e.message });
+  }
+  await ref.delete().catch(() => {});
+  return res.json({ ok: true });
+}
+
+async function sendCode(user, res) {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'Email service not configured' });
 
   const firebaseUser = await auth.getUser(user.uid).catch(() => null);
   if (!firebaseUser) return res.status(404).json({ error: 'User not found' });
@@ -117,4 +160,4 @@ module.exports = async (req, res) => {
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
-};
+}

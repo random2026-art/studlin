@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Studlin — Admin Export</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;background:#0D120F;color:#E8EFE7;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}
+  .card{background:#141C17;border:1px solid rgba(255,255,255,0.08);border-radius:20px;padding:40px;width:100%;max-width:420px;}
+  .logo{font-size:22px;font-weight:700;letter-spacing:-0.03em;margin-bottom:28px;color:#E8EFE7;}
+  .logo span{color:#B8E04A;}
+  h1{font-size:20px;font-weight:600;letter-spacing:-0.02em;margin-bottom:6px;}
+  p{font-size:14px;color:rgba(232,239,231,0.55);margin-bottom:28px;line-height:1.5;}
+  label{display:block;font-size:12px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:rgba(232,239,231,0.45);margin-bottom:8px;}
+  input{width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:12px 14px;font-size:14px;color:#E8EFE7;outline:none;transition:border-color .2s;}
+  input:focus{border-color:rgba(184,224,74,0.5);}
+  button{width:100%;margin-top:16px;background:#B8E04A;color:#0A1310;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;transition:background .2s,transform .15s;}
+  button:hover{background:#C4E85E;}
+  button:active{transform:scale(0.98);}
+  button:disabled{opacity:0.5;cursor:not-allowed;transform:none;}
+  .msg{margin-top:14px;font-size:13px;text-align:center;min-height:18px;}
+  .msg.err{color:#FF6B6B;}
+  .msg.ok{color:#B8E04A;}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">Stud<span>lin</span></div>
+  <h1>Export Users</h1>
+  <p>Downloads a CSV of all real users — test accounts filtered out, onboarded users first.</p>
+  <label for="secret">Admin Secret</label>
+  <input type="password" id="secret" placeholder="Enter your admin secret" autocomplete="off">
+  <button id="btn" onclick="doExport()">Download CSV</button>
+  <div class="msg" id="msg"></div>
+</div>
+<script>
+async function doExport(){
+  var secret=document.getElementById('secret').value.trim();
+  var btn=document.getElementById('btn');
+  var msg=document.getElementById('msg');
+  if(!secret){msg.className='msg err';msg.textContent='Enter the admin secret first.';return;}
+  btn.disabled=true;btn.textContent='Downloading…';msg.textContent='';
+  try{
+    var res=await fetch('/api/export-users',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({secret:secret})
+    });
+    if(!res.ok){
+      var err=await res.json().catch(function(){return{error:'Failed'};});
+      throw new Error(err.error||'Request failed');
+    }
+    var blob=await res.blob();
+    var date=new Date().toISOString().slice(0,10);
+    var a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='studlin-users-'+date+'.csv';
+    a.click();
+    msg.className='msg ok';msg.textContent='Downloaded successfully.';
+  }catch(e){
+    msg.className='msg err';msg.textContent=e.message||'Something went wrong.';
+  }
+  btn.disabled=false;btn.textContent='Download CSV';
+}
+document.getElementById('secret').addEventListener('keydown',function(e){if(e.key==='Enter')doExport();});
+</script>
+</body>
+</html>
