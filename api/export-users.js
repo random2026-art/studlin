@@ -1,5 +1,7 @@
-// Admin-only CSV export of all real onboarded Studlin users.
-// Access: POST /api/export-users with JSON body { secret: "YOUR_ADMIN_EXPORT_SECRET" }
+// Admin-only CSV export of all real onboarded Studlin users, plus (via
+// { action: "purge_preview" | "purge" }) a one-time dev-database purge that
+// deletes every account except KEEP_EMAIL below. Access: POST
+// /api/export-users with JSON body { secret: "YOUR_ADMIN_EXPORT_SECRET", action? }
 const { db, auth } = require('./_lib/firebase-admin');
 
 // Filter out test / QA accounts by email or display name
@@ -50,6 +52,11 @@ module.exports = async (req, res) => {
   }
 
   if (!db || !auth) return res.status(500).json({ error: 'Firebase not initialized' });
+
+  const action = (req.body || {}).action || 'export';
+  if (action === 'purge_preview' || action === 'purge') {
+    return handlePurge(action, req, res);
+  }
 
   try {
     // Pull all Firebase Auth users
@@ -141,3 +148,59 @@ module.exports = async (req, res) => {
     return res.status(500).json({ error: e.message });
   }
 };
+
+// One-time dev-database purge — deletes every Firebase Auth user and every
+// Firestore users/{uid} doc EXCEPT the one exempted email below. Same admin
+// secret as the export action gates it; the client (admin-export.html) still
+// requires an explicit "purge_preview" (dry run, deletes nothing) before the
+// real "purge" call is even offered, so this can never fire from a single
+// accidental click.
+const KEEP_EMAIL = 'shenouday7@gmail.com';
+
+async function handlePurge(action, req, res) {
+  try {
+    const authUsers = [];
+    let pageToken;
+    do {
+      const result = await auth.listUsers(1000, pageToken);
+      authUsers.push(...result.users);
+      pageToken = result.pageToken;
+    } while (pageToken);
+
+    const toDelete = authUsers.filter(u => (u.email || '').toLowerCase() !== KEEP_EMAIL.toLowerCase());
+    const kept = authUsers.length - toDelete.length;
+
+    if (action === 'purge_preview') {
+      return res.status(200).json({
+        ok: true,
+        totalAccounts: authUsers.length,
+        willDelete: toDelete.length,
+        willKeep: kept,
+        sampleEmails: toDelete.slice(0, 10).map(u => u.email || '(no email)'),
+      });
+    }
+
+    // action === 'purge' — the real, irreversible deletion.
+    const uids = toDelete.map(u => u.uid);
+
+    // Firestore users/{uid} docs first, batched under the 500-write limit.
+    for (let i = 0; i < uids.length; i += 400) {
+      const batch = db.batch();
+      uids.slice(i, i + 400).forEach(uid => batch.delete(db.collection('users').doc(uid)));
+      await batch.commit().catch(() => {}); // a missing doc is fine, nothing to delete
+    }
+
+    // Firebase Auth accounts, batched under the Admin SDK's 1000-uid limit.
+    let deleted = 0;
+    const errors = [];
+    for (let i = 0; i < uids.length; i += 1000) {
+      const result = await auth.deleteUsers(uids.slice(i, i + 1000));
+      deleted += result.successCount;
+      errors.push(...result.errors.map(e => e.error?.message || String(e)));
+    }
+
+    return res.status(200).json({ ok: true, totalAccounts: authUsers.length, deleted, kept, errors });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+}

@@ -202,24 +202,25 @@ const DIFFICULTY_LABELS=["","Easy","Moderate","Challenging","Hard","Very Hard"];
 const DIFFICULTY_COLORS=["","#5FCBA8","#7BACDF","#DCA64A","#E8946B","#D9806B"];
 
 // ─── PROFESSIONAL TIER SYSTEM ─────────────────────────────────────────────────
+// Thresholds unchanged from the old XP ladder, just re-denominated as real
+// focus minutes instead of points — 1000 minutes (~16.7 hours) to reach
+// Associate is a clean, honest, achievable milestone the old points system
+// never really had (its "points" were inflated by streak/login/task bonuses).
 const PROF_TIERS=[
-  {title:"Intern",        minXP:0},
-  {title:"Associate",     minXP:1000},
-  {title:"Analyst",       minXP:3000},
-  {title:"Senior Analyst",minXP:7500},
-  {title:"Manager",       minXP:15000},
-  {title:"Senior Manager",minXP:30000},
-  {title:"Director",      minXP:55000},
-  {title:"VP",            minXP:90000},
-  {title:"SVP",           minXP:140000},
-  {title:"C-Suite",       minXP:200000},
-  {title:"CEO",           minXP:300000},
+  {title:"Intern",        minMinutes:0},
+  {title:"Associate",     minMinutes:1000},
+  {title:"Analyst",       minMinutes:3000},
+  {title:"Senior Analyst",minMinutes:7500},
+  {title:"Manager",       minMinutes:15000},
+  {title:"Senior Manager",minMinutes:30000},
+  {title:"Director",      minMinutes:55000},
+  {title:"VP",            minMinutes:90000},
+  {title:"SVP",           minMinutes:140000},
+  {title:"C-Suite",       minMinutes:200000},
+  {title:"CEO",           minMinutes:300000},
 ];
-function getProfTitle(xp){let t=PROF_TIERS[0];for(const r of PROF_TIERS){if(xp>=r.minXP)t=r;else break;}return t.title;}
-function tierProgressFor(xp){let idx=0;for(let i=0;i<PROF_TIERS.length;i++){if(xp>=PROF_TIERS[i].minXP)idx=i;}const cur=PROF_TIERS[idx],next=PROF_TIERS[idx+1]||null;const pct=next?Math.round(Math.max(0,Math.min(100,(xp-cur.minXP)/(next.minXP-cur.minXP)*100))):100;return {title:cur.title,next,pct};}
-function calcSessionXP(mins){return Math.round(mins*(1+Math.floor(mins/30)*0.1));}
-function awardFlashcardXP(rating){const pts={Mastered:15,Good:8,Hard:3,Missed:0};const gain=pts[rating]||0;if(gain>0)lsSet("xpBonus",(lsGet("xpBonus",0)+gain));return gain;}
-function getWeeklyXP(){const sessions=lsGet("sessions",[]);const weekAgo=Date.now()-6*86400000;const weekSessions=sessions.filter(x=>x.t>=weekAgo);const focusXP=weekSessions.reduce((acc,x)=>acc+calcSessionXP(x.m||0),0);const days=new Set(lsGet("days",[]));let wdays=0;for(let i=0;i<7;i++){const d=new Date();d.setDate(d.getDate()-i);if(days.has(dayKey(d)))wdays++;}return focusXP+wdays*15+Math.min(getStreak(),7)*30;}
+function getProfTitle(minutes){let t=PROF_TIERS[0];for(const r of PROF_TIERS){if(minutes>=r.minMinutes)t=r;else break;}return t.title;}
+function tierProgressFor(minutes){let idx=0;for(let i=0;i<PROF_TIERS.length;i++){if(minutes>=PROF_TIERS[i].minMinutes)idx=i;}const cur=PROF_TIERS[idx],next=PROF_TIERS[idx+1]||null;const pct=next?Math.round(Math.max(0,Math.min(100,(minutes-cur.minMinutes)/(next.minMinutes-cur.minMinutes)*100))):100;return {title:cur.title,next,pct};}
 
 // ─── PUSH NOTIFICATIONS (FCM) ────────────────────────────────────────────────
 // To enable real desktop push delivery, replace the placeholder below with
@@ -953,7 +954,7 @@ async function upsertProfile(extra={}){
     school,
     schoolLower:(school||"").toLowerCase(),
     status,
-    xp:getXP(),
+    total_minutes_focused:getTotalMinutesFocused(),
     streak:getStreak(),
     updatedAt:new Date().toISOString(),
   };
@@ -961,30 +962,32 @@ async function upsertProfile(extra={}){
   try{await fsdb().collection('users').doc(u.uid).set({name,email:u.email||"",updatedAt:new Date().toISOString()},{merge:true});}catch(e){}
 }
 // Top-N public profiles ordered by real XP, straight from Firestore — no
-// mock/seed data. Docs that haven't been through upsertProfile() since xp
-// started being synced (or ever) simply lack the field and are naturally
-// excluded by orderBy, rather than sorting in as a false zero.
+// mock/seed data. Docs that haven't been through upsertProfile() since
+// total_minutes_focused started being synced (or ever) simply lack the
+// field and are naturally excluded by orderBy, rather than sorting in as a
+// false zero.
 async function fetchTopProfiles(n=8){
   try{
-    const snap=await fsdb().collection('profiles').orderBy('xp','desc').limit(n).get();
+    const snap=await fsdb().collection('profiles').orderBy('total_minutes_focused','desc').limit(n).get();
     return snap.docs.map(d=>d.data());
   }catch(e){return [];}
 }
 const LB_GRADIENTS=["linear-gradient(135deg,#FFD7B5,#FFC9D2)","linear-gradient(135deg,#BFE3FF,#E2D0FF)","linear-gradient(135deg,#C4F0D8,#FFE99A)","linear-gradient(135deg,#E2D0FF,#FFD7B5)","linear-gradient(135deg,#FFE99A,#C4F0D8)","linear-gradient(135deg,#BFE3FF,#FFD7B5)","linear-gradient(135deg,#C4F0D8,#E2D0FF)"];
-// Merges the signed-in user's own live-accurate xp/streak/name into a
+// Merges the signed-in user's own live-accurate minutes/streak/name into a
 // fetched top-profiles list (replacing their own possibly-stale doc if it's
-// in there), re-sorts by real XP, and assigns rank + a rotating avatar
-// gradient. Always keeps "you" visible in the returned slice even if your
-// real rank falls outside it, same as the leaderboard has always guaranteed.
-function mergeLeaderboard(profiles, realName, realXP, realStreak, myUid, showCount){
+// in there), re-sorts by real total_minutes_focused, and assigns rank + a
+// rotating avatar gradient. Always keeps "you" visible in the returned slice
+// even if your real rank falls outside it, same as the leaderboard has
+// always guaranteed.
+function mergeLeaderboard(profiles, realName, realMinutes, realStreak, myUid, showCount){
   const others=(profiles||[]).filter(p=>p.uid&&p.uid!==myUid);
-  const you={uid:myUid,name:realName||"You",xp:Math.max(0,realXP||0),streak:realStreak||0,you:true};
-  const sorted=[...others,you].sort((a,b)=>(b.xp||0)-(a.xp||0)).map((u,i)=>({
+  const you={uid:myUid,name:realName||"You",minutes:Math.max(0,realMinutes||0),streak:realStreak||0,you:true};
+  const sorted=[...others,you].sort((a,b)=>(b.minutes||b.total_minutes_focused||0)-(a.minutes||a.total_minutes_focused||0)).map((u,i)=>({
     r:i+1,
     n:u.name||"Student",
-    xp:u.xp||0,
+    minutes:u.minutes||u.total_minutes_focused||0,
     streak:u.streak||0,
-    tier:getProfTitle(u.xp||0),
+    tier:getProfTitle(u.minutes||u.total_minutes_focused||0),
     you:!!u.you,
     grad:LB_GRADIENTS[i%LB_GRADIENTS.length],
   }));
@@ -1043,15 +1046,12 @@ const DOW_FULL=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Sat
 const MON_SHORT=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 function todayLabel(){const d=new Date();return DOW_FULL[d.getDay()]+" · "+MON_SHORT[d.getMonth()]+" "+d.getDate();}
 function weekNo(){const d=new Date();const start=new Date(d.getFullYear(),0,1);return Math.ceil((((d-start)/86400000)+start.getDay()+1)/7);}
-function getXP(){
+// Levels map strictly to real Lock-In Timer minutes — no streak/login/task
+// bonuses, no penalty deductions, no starting offset. An honest sum of
+// every session actually logged, nothing else.
+function getTotalMinutesFocused(){
   const s=lsGet("sessions",[]);
-  const base=lsGet("xpBase",1850);
-  const focusXP=s.reduce((acc,x)=>acc+calcSessionXP(x.m||0),0);
-  const streakXP=getStreak()*30;
-  const loginXP=lsGet("days",[]).length*15;
-  const taskXP=Object.values(lsGet("planDone",{})).filter(Boolean).length*20;
-  const penaltyXP=lsGet("xpPenaltyTotal",0);
-  return Math.max(0,base+focusXP+streakXP+loginXP+taskXP+lsGet("xpBonus",0)-penaltyXP);
+  return s.reduce((acc,x)=>acc+(x.m||0),0);
 }
 function applyOverduePenalties(){
   const today=dayKey();
@@ -1069,7 +1069,7 @@ function applyOverduePenalties(){
   });
   if(added>0){lsSet("xpPenaltyTotal",(lsGet("xpPenaltyTotal",0)+added));lsSet("penalizedTasks",penalized);}
 }
-function levelInfo(){const xp=getXP();const per=300;const level=Math.floor(xp/per)+1;const into=xp-(level-1)*per;const title=getProfTitle(xp);const nextTier=PROF_TIERS.find(t=>t.minXP>xp)||null;const curTierXP=(PROF_TIERS.slice().reverse().find(t=>xp>=t.minXP)||PROF_TIERS[0]).minXP;const tierPct=nextTier?Math.round(Math.max(0,Math.min(100,(xp-curTierXP)/(nextTier.minXP-curTierXP)*100))):100;return {xp,level,into,per,toNext:per-into,pct:Math.round(into/per*100),title,nextTier,tierPct};}
+function levelInfo(){const minutes=getTotalMinutesFocused();const per=300;const level=Math.floor(minutes/per)+1;const into=minutes-(level-1)*per;const title=getProfTitle(minutes);const nextTier=PROF_TIERS.find(t=>t.minMinutes>minutes)||null;const curTierMinutes=(PROF_TIERS.slice().reverse().find(t=>minutes>=t.minMinutes)||PROF_TIERS[0]).minMinutes;const tierPct=nextTier?Math.round(Math.max(0,Math.min(100,(minutes-curTierMinutes)/(nextTier.minMinutes-curTierMinutes)*100))):100;return {minutes,level,into,per,toNext:per-into,pct:Math.round(into/per*100),title,nextTier,tierPct};}
 function weekStreak(){const days=new Set(lsGet("days",[]));const now=new Date();const dow=(now.getDay()+6)%7;const mon=new Date(now);mon.setDate(now.getDate()-dow);return ["M","T","W","T","F","S","S"].map((lab,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);const k=dayKey(d);const today=k===dayKey(now);return {lab,on:days.has(k),today,future:d>now&&!today};});}
 // ─── ADVANCED SCHEDULING SYSTEM (5 features integrated) ──────────────────────
 // Feature 1: User preference storage + getters/setters (complete with all onboarding preferences)
@@ -1405,12 +1405,18 @@ function rearrangeUserTasks(tasks, userPrefs){
 
 function togglePlanDone(id){const done=lsGet("planDone",{});done[id]=!done[id];lsSet("planDone",done);return done;}
 function profileStats(){const s=lsGet("sessions",[]);const totalMin=s.reduce((a,x)=>a+(x.m||0),0);const st=sessionStats();return {totalMin,focusSessions:s.length,weekMin:st.weekMin,avg:st.avg};}
+// No more manual Time Zone picker in Settings — always the browser's actual
+// current zone, computed fresh rather than trusted from a possibly-stale
+// stored value (e.g. a profile saved before a student traveled/moved).
+function detectTz(){
+  try{return Intl.DateTimeFormat().resolvedOptions().timeZone||"America/New_York";}catch(e){return "America/New_York";}
+}
 function getProfile(){
   try{
     const u=typeof firebase!=="undefined"?firebase.auth().currentUser:null;
-    const def={name:(u&&u.displayName)||"Student",email:(u&&u.email)||"you@studlin.app",school:"",tz:"America/New_York",status:"",affiliation:""};
-    return lsGet("profile",def);
-  }catch(e){return{name:"Student",email:"you@studlin.app",school:"",tz:"America/New_York",status:"",affiliation:""};}
+    const def={name:(u&&u.displayName)||"Student",email:(u&&u.email)||"you@studlin.app",school:"",tz:detectTz(),status:"",affiliation:""};
+    return {...lsGet("profile",def),tz:detectTz()};
+  }catch(e){return{name:"Student",email:"you@studlin.app",school:"",tz:detectTz(),status:"",affiliation:""};}
 }
 function getUserPicUrl(){return lsGet("profilePic","");}
 function getUserInitials(){
@@ -2269,6 +2275,16 @@ function Flashcards() {
   const [draft,setDraft]=useState([]);
   const colorMap={Biology:T.teal,"English IV":T.purple,Calculus:T.blue,Spanish:T.amber,Chemistry:T.red};
 
+  // One-shot deep link from Dashboard's "Pick up where you left off" card —
+  // matches the pendingTour/pendingRoutineWizard pattern used elsewhere.
+  useEffect(()=>{
+    const wantId=lsGet("openDeckId",null);
+    if(!wantId)return;
+    try{localStorage.removeItem("studlin-openDeckId");}catch(e){}
+    const d=deckList.find(x=>x.id===wantId);
+    if(d){setStudyDeck(d);setTab("study");setIdx(0);setFlipped(false);}
+  },[]);
+
   useEffect(()=>{if(!recOn)return;const id=setInterval(()=>setRecSecs(x=>x+1),1000);return()=>clearInterval(id);},[recOn]);
   const fmtRec=(x)=>String(Math.floor(x/60)).padStart(2,"0")+":"+String(x%60).padStart(2,"0");
 
@@ -2519,7 +2535,7 @@ function Flashcards() {
           <div style={{display:"flex",gap:8,marginTop:14,justifyContent:"center"}}>
             {flipped
               ?[["Missed",T.red],["Hard",T.amber],["Good",T.teal],["Mastered",T.lime]].map(([l,c])=>(
-                  <button key={l} onClick={()=>{awardFlashcardXP(l);setFlipped(false);setIdx(i=>(i+1)%studyCards.length);}} style={{flex:1,padding:"9px 0",borderRadius:7,background:c+"14",color:c,border:"1px solid "+c+"33",cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:T.font}}>{l}</button>
+                  <button key={l} onClick={()=>{setFlipped(false);setIdx(i=>(i+1)%studyCards.length);}} style={{flex:1,padding:"9px 0",borderRadius:7,background:c+"14",color:c,border:"1px solid "+c+"33",cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:T.font}}>{l}</button>
                 ))
               :<><Btn variant="ghost" onClick={()=>{setFlipped(false);setIdx(i=>Math.max(0,i-1));}}>Prev</Btn><Btn onClick={()=>setFlipped(true)}>Reveal answer</Btn><Btn variant="ghost" onClick={()=>{setFlipped(false);setIdx(i=>(i+1)%studyCards.length);}}>Next</Btn></>
             }
@@ -2587,6 +2603,18 @@ function Notes(){
   const [aiLoading,setAiLoading]=useState(false);
   const [fileText,setFileText]=useState("");
   const fileRef=useRef(null);
+
+  // One-shot deep link from Dashboard's "Pick up where you left off" card —
+  // matches the pendingTour/pendingRoutineWizard pattern used elsewhere.
+  // sel is an INDEX into notes (matching the existing setSel(idx) click
+  // handler in the note list below), not the note's own id.
+  useEffect(()=>{
+    const wantId=lsGet("openNoteId",null);
+    if(!wantId)return;
+    try{localStorage.removeItem("studlin-openNoteId");}catch(e){}
+    const i=notes.findIndex(n=>n.id===wantId);
+    if(i>=0)setSel(i);
+  },[]);
 
   // Canvas / editor state
   const editorRef=useRef(null);
@@ -4761,24 +4789,23 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
     const name=getUserName();
     const streak=getStreak();
     const myUid=firebase.auth().currentUser?.uid||null;
-    const xpBefore=getXP();
-    const rowsBefore=mergeLeaderboard(lbProfiles,name,xpBefore,streak,myUid,5);
+    const minutesBefore=getTotalMinutesFocused();
+    const rowsBefore=mergeLeaderboard(lbProfiles,name,minutesBefore,streak,myUid,5);
     const rankBefore=(rowsBefore.find(u=>u.you)||{}).r||rowsBefore.length;
+    // onComplete (App's handler) is what actually logs the session
+    // (logSession -> sessions array), so minutesAfter only reflects the gain
+    // once this has run — levels are strictly real logged minutes now, no
+    // co-op or other synthetic bonus inflates the number.
     if(onComplete)onComplete(safeMins);
-    if(task.coop){
-      // Co-op multiplier: +20% on top of the normal session XP (1.2x total).
-      const bonus=Math.round(calcSessionXP(safeMins)*0.2);
-      if(bonus>0)lsSet("xpBonus",lsGet("xpBonus",0)+bonus);
-    }
-    const xpAfter=getXP();
-    const rowsAfter=mergeLeaderboard(lbProfiles,name,xpAfter,streak,myUid,5);
+    const minutesAfter=getTotalMinutesFocused();
+    const rowsAfter=mergeLeaderboard(lbProfiles,name,minutesAfter,streak,myUid,5);
     const rankAfter=(rowsAfter.find(u=>u.you)||{}).r||rowsAfter.length;
     setCompletion({
       mins:safeMins,
-      gain:Math.max(0,xpAfter-xpBefore),
-      xpAfter,
-      tierBefore:getProfTitle(xpBefore),
-      tierAfter:getProfTitle(xpAfter),
+      gain:Math.max(0,minutesAfter-minutesBefore),
+      minutesAfter,
+      tierBefore:getProfTitle(minutesBefore),
+      tierAfter:getProfTitle(minutesAfter),
       rankBefore,rankAfter,rows:rowsAfter,
     });
     setPhase("done");
@@ -5056,10 +5083,10 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
   // ── XP + LEADERBOARD REWARD SCREEN ────────────────────────────────────────
   if(phase==="done"){
     if(!completion)return null;
-    const {mins,gain,xpAfter,tierBefore,tierAfter,rankBefore,rankAfter,rows}=completion;
+    const {mins,gain,minutesAfter,tierBefore,tierAfter,rankBefore,rankAfter,rows}=completion;
     const tieredUp=tierBefore!==tierAfter;
     const rankRose=rankAfter<rankBefore;
-    const prog=tierProgressFor(xpAfter);
+    const prog=tierProgressFor(minutesAfter);
     const ROW_H=42;
     const deltaRows=Math.max(0,rankBefore-rankAfter);
     return(
@@ -5071,25 +5098,22 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
             <h2 style={{fontSize:23,fontWeight:700,color:T.white,margin:"0 0 4px"}}>{mins} min focused</h2>
             <div style={{fontSize:13,color:T.muted,marginBottom:22}}>{task.title}</div>
 
-            {task.coop&&(
-              <div style={{fontSize:11.5,color:T.teal,fontWeight:700,marginBottom:10,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>{Icon.zap} Co-op bonus: 1.2× XP</div>
-            )}
             <div style={{display:"grid",gridTemplateColumns:task.coop?"1fr 1fr":"1fr",gap:10,marginBottom:tieredUp||rankRose?16:22}}>
               <div style={{background:T.card2,borderRadius:14,padding:"18px 20px",textAlign:"left"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:9}}>
                   <span style={{fontSize:12,color:T.muted,fontWeight:600}}>{task.coop?"You":tierAfter}</span>
-                  <span style={{fontFamily:T.mono,fontSize:16,fontWeight:700,color:T.lime}}>+{gain} XP</span>
+                  <span style={{fontFamily:T.mono,fontSize:16,fontWeight:700,color:T.lime}}>+{gain}m</span>
                 </div>
                 <div style={{height:6,background:T.border,borderRadius:99,overflow:"hidden"}}>
                   <div style={{height:"100%",width:(barFilled?prog.pct:0)+"%",background:T.lime,borderRadius:99,transition:"width 1.1s cubic-bezier(.2,.8,.2,1)"}}/>
                 </div>
-                <div style={{fontSize:11,color:T.faint,marginTop:7}}>{task.coop?tierAfter:(prog.next?`${(prog.next.minXP-xpAfter).toLocaleString()} XP to ${prog.next.title}`:"Maximum rank achieved")}</div>
+                <div style={{fontSize:11,color:T.faint,marginTop:7}}>{task.coop?tierAfter:(prog.next?`${(prog.next.minMinutes-minutesAfter).toLocaleString()}m to ${prog.next.title}`:"Maximum rank achieved")}</div>
               </div>
               {task.coop&&(
                 <div style={{background:T.card2,borderRadius:14,padding:"18px 20px",textAlign:"left"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:9}}>
                     <span style={{fontSize:12,color:T.muted,fontWeight:600}}>{task.coop.name}</span>
-                    <span style={{fontFamily:T.mono,fontSize:16,fontWeight:700,color:T.teal}}>+{gain} XP</span>
+                    <span style={{fontFamily:T.mono,fontSize:16,fontWeight:700,color:T.teal}}>+{gain}m</span>
                   </div>
                   <div style={{height:6,background:T.border,borderRadius:99,overflow:"hidden"}}>
                     <div style={{height:"100%",width:(barFilled?prog.pct:0)+"%",background:T.teal,borderRadius:99,transition:"width 1.1s cubic-bezier(.2,.8,.2,1)"}}/>
@@ -5113,7 +5137,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
                     <div key={u.n} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 9px",borderRadius:9,background:u.you?T.lime+"14":"transparent",border:`1px solid ${u.you?T.lime+"33":"transparent"}`,transform:u.you&&!rankRisen?`translateY(${deltaRows*ROW_H}px)`:"translateY(0)",transition:"transform 0.9s cubic-bezier(.2,.85,.25,1.05)"}}>
                       <span style={{width:18,fontFamily:T.mono,fontSize:11,fontWeight:700,color:u.you?T.lime:T.faint}}>{u.r}</span>
                       <span style={{flex:1,fontSize:12,fontWeight:u.you?700:500,color:u.you?T.white:T.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{u.n}</span>
-                      <span style={{fontFamily:T.mono,fontSize:11,color:u.you?T.lime:T.faint}}>{u.xp.toLocaleString()}</span>
+                      <span style={{fontFamily:T.mono,fontSize:11,color:u.you?T.lime:T.faint}}>{u.minutes.toLocaleString()}m</span>
                     </div>
                   ))}
                 </div>
@@ -5195,7 +5219,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
             )}
           </div>
           <div style={{flex:1,minWidth:0}}>
-            <div style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.09em",textTransform:"uppercase",color:timerColor,marginBottom:2}}>{phaseLabel}{task.coop&&" · 1.2× XP"}</div>
+            <div style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.09em",textTransform:"uppercase",color:timerColor,marginBottom:2}}>{phaseLabel}</div>
             <div style={{fontFamily:T.mono,fontSize:19,fontWeight:800,color:T.white,letterSpacing:"-0.02em"}}>{fmt(secs)}</div>
             <div style={{fontSize:11,color:T.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{task.coop?"With "+task.coop.name:task.title}</div>
           </div>
@@ -8013,11 +8037,6 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Field label="Display name"><Input value={profile.name} onChange={e=>updProfile({name:e.target.value})} /></Field>
               <Field label="Email"><Input value={profile.email} onChange={e=>updProfile({email:e.target.value})} type="email" /></Field>
               <Field label="School or affiliation"><SchoolSelect value={profile.school} onChange={v=>updProfile({school:v})} placeholder="Search or type your school" /></Field>
-              <Field label="Time zone">
-                <select value={profile.tz} onChange={e=>updProfile({tz:e.target.value})} style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.font,outline:"none"}}>
-                  <option>America/Los_Angeles</option><option>America/New_York</option><option>Europe/London</option><option>Asia/Singapore</option>
-                </select>
-              </Field>
             </Card>
             <Card style={{marginBottom:12}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -8134,8 +8153,8 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
           {active==="Privacy" && (<>
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Private Account · Serious Mode</div>
-              <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Strip gamification and go heads-down. XP, levels, and Weekly Wrapped are hidden. Chat, calendar sharing, and notes stay fully accessible.</div>
-              <Row label="Private Account / Serious Mode" sub="Hides XP, tiers, leaderboard, and Weekly Wrapped. Dashboard shows clean calendar + task grid only." k="_" right={
+              <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Strip gamification and go heads-down. Focus minutes, levels, and Weekly Wrapped are hidden. Chat, calendar sharing, and notes stay fully accessible.</div>
+              <Row label="Private Account / Serious Mode" sub="Hides focus minutes, tiers, leaderboard, and Weekly Wrapped. Dashboard shows clean calendar + task grid only." k="_" right={
                 <div onClick={()=>{const next=!seriousMode;setSeriousMode(next);const s=lsGet("settings",{});lsSet("settings",{...s,seriousMode:next});}} style={{width:38,height:20,borderRadius:10,background:seriousMode?T.purple:T.card2,border:`1px solid ${seriousMode?T.purple:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
                   <div style={{width:14,height:14,borderRadius:"50%",background:seriousMode?T.bg:"#fff",position:"absolute",top:2,left:seriousMode?21:2,transition:"left 0.2s"}} />
                 </div>
@@ -8249,15 +8268,15 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                     {googleSyncing?"Syncing…":calGoogleLinked?"Disconnect":"Connect"}
                   </BtnSm>
                 </div>
-                <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${calAppleLinked?T.teal+"44":T.border}`,transition:"border-color 0.2s"}}>
+                <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${T.border}`,opacity:0.5}}>
                   <div style={{width:40,height:40,borderRadius:10,background:"rgba(255,255,255,0.06)",border:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill={T.text}><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
                   </div>
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:13,fontWeight:600,color:T.white}}>Apple Calendar</div>
-                    <div style={{fontSize:11,color:calAppleLinked?T.teal:T.muted,marginTop:2}}>{calAppleLinked?"Connected · iCloud events flowing in":"Import iCloud events into Studlin"}</div>
+                    <div style={{fontSize:13,fontWeight:600,color:T.white}}>Apple Calendar<span style={{marginLeft:8,fontSize:10.5,fontWeight:600,color:T.faint}}>(Coming Soon)</span></div>
+                    <div style={{fontSize:11,color:T.muted,marginTop:2}}>Import iCloud events into Studlin</div>
                   </div>
-                  <BtnSm variant={calAppleLinked?"subtle":"lime"} onClick={toggleApple}>{calAppleLinked?"Disconnect":"Connect"}</BtnSm>
+                  <BtnSm variant="subtle" disabled style={{flexShrink:0,cursor:"not-allowed"}}>Connect</BtnSm>
                 </div>
                 <div style={{position:"relative"}}
                   onMouseEnter={()=>setCanvasTipOpen(true)} onMouseLeave={()=>setCanvasTipOpen(false)}>
@@ -8347,7 +8366,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
           {active==="Danger zone" && (<>
             <Card style={{marginBottom:12,border:"1px solid rgba(214,117,96,0.3)"}}>
               <div style={{fontSize:13,fontWeight:700,color:T.red,marginBottom:4}}>Reset progress</div>
-              <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Wipe your streak, XP, level, and Wrapped history. Notes and essays are kept.</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Wipe your streak, focus minutes, level, and Wrapped history. Notes and essays are kept.</div>
               <Btn variant="danger">Reset all progress</Btn>
             </Card>
             <Card style={{marginBottom:12,border:"1px solid rgba(214,117,96,0.3)"}}>
@@ -8455,10 +8474,10 @@ function Profile({setActive}={}) {
           {picSaved&&<div style={{marginTop:8,fontSize:11.5,color:T.lime,fontWeight:600}}>Profile picture updated.</div>}
         </div>
         <div style={{textAlign:"right"}}>
-          <div style={{fontSize:42,fontWeight:700,color:T.lime,letterSpacing:"-0.04em",lineHeight:1}}>{lvl.xp.toLocaleString()}</div>
-          <div style={{fontSize:12,color:T.muted,marginTop:3}}>XP · {lvl.title}</div>
+          <div style={{fontSize:42,fontWeight:700,color:T.lime,letterSpacing:"-0.04em",lineHeight:1}}>{lvl.minutes.toLocaleString()}m</div>
+          <div style={{fontSize:12,color:T.muted,marginTop:3}}>Focused · {lvl.title}</div>
           <div style={{marginTop:10,width:160}}><Prog pct={lvl.tierPct} /></div>
-          <div style={{fontSize:11,color:T.muted,marginTop:4}}>{lvl.nextTier?`${(lvl.nextTier.minXP-lvl.xp).toLocaleString()} XP to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
+          <div style={{fontSize:11,color:T.muted,marginTop:4}}>{lvl.nextTier?`${(lvl.nextTier.minMinutes-lvl.minutes).toLocaleString()}m to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
         </div>
       </Card>
 
@@ -8570,7 +8589,7 @@ function Profile({setActive}={}) {
 }
 
 // ─── LEVEL ROADMAP MODAL ─────────────────────────────────────────────────────
-function LevelRoadmapModal({open,onClose,currentXP}){
+function LevelRoadmapModal({open,onClose,currentMinutes}){
   if(!open)return null;
   return(
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
@@ -8585,9 +8604,9 @@ function LevelRoadmapModal({open,onClose,currentXP}){
         <div style={{padding:"18px 22px",overflowY:"auto",flex:1,minHeight:0}}>
           {PROF_TIERS.map((tier,i)=>{
             const next=PROF_TIERS[i+1]||null;
-            const unlocked=currentXP>=tier.minXP;
-            const isCurrent=unlocked&&(!next||currentXP<next.minXP);
-            const pct=isCurrent&&next?Math.round(Math.max(0,Math.min(100,(currentXP-tier.minXP)/(next.minXP-tier.minXP)*100))):unlocked?100:0;
+            const unlocked=currentMinutes>=tier.minMinutes;
+            const isCurrent=unlocked&&(!next||currentMinutes<next.minMinutes);
+            const pct=isCurrent&&next?Math.round(Math.max(0,Math.min(100,(currentMinutes-tier.minMinutes)/(next.minMinutes-tier.minMinutes)*100))):unlocked?100:0;
             return(
               <div key={tier.title} style={{display:"flex",gap:14,position:"relative",paddingBottom:i<PROF_TIERS.length-1?8:0}}>
                 {i<PROF_TIERS.length-1&&<div style={{position:"absolute",left:19,top:40,width:2,height:"calc(100% - 12px)",background:unlocked?T.lime+"66":T.card2,zIndex:0}}/>}
@@ -8597,12 +8616,12 @@ function LevelRoadmapModal({open,onClose,currentXP}){
                 <div style={{flex:1,paddingBottom:i<PROF_TIERS.length-1?18:0,minWidth:0}}>
                   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
                     <div style={{fontSize:13.5,fontWeight:isCurrent?700:600,color:isCurrent?T.lime:unlocked?T.text:T.muted,letterSpacing:"-0.01em"}}>{tier.title}</div>
-                    <div style={{fontFamily:T.mono,fontSize:10,color:unlocked?T.lime:T.faint,fontWeight:600,flexShrink:0}}>{tier.minXP.toLocaleString()} XP</div>
+                    <div style={{fontFamily:T.mono,fontSize:10,color:unlocked?T.lime:T.faint,fontWeight:600,flexShrink:0}}>{tier.minMinutes.toLocaleString()}m</div>
                   </div>
                   {isCurrent&&next&&(
                     <div style={{marginTop:7}}>
                       <div style={{height:4,background:T.card2,borderRadius:99,overflow:"hidden"}}><div style={{height:"100%",width:pct+"%",background:T.lime,borderRadius:99,transition:"width 0.5s ease"}}/></div>
-                      <div style={{fontSize:11,color:T.muted,marginTop:4}}>{(next.minXP-currentXP).toLocaleString()} XP until {next.title}</div>
+                      <div style={{fontSize:11,color:T.muted,marginTop:4}}>{(next.minMinutes-currentMinutes).toLocaleString()}m until {next.title}</div>
                     </div>
                   )}
                   {isCurrent&&!next&&<div style={{fontSize:11,color:T.lime,marginTop:4,fontWeight:600}}>Maximum rank achieved</div>}
@@ -8617,7 +8636,7 @@ function LevelRoadmapModal({open,onClose,currentXP}){
 }
 
 // ─── LEADERBOARD MODAL ───────────────────────────────────────────────────────
-function LeaderboardModal({open,onClose,currentXP,currentName,currentStreak}){
+function LeaderboardModal({open,onClose,currentMinutes,currentName,currentStreak}){
   // Hooks must run unconditionally on every render (this component stays
   // mounted with `open` just toggling as a prop, not conditionally
   // rendered) — so the "closed" bail-out has to come after all of them.
@@ -8630,9 +8649,9 @@ function LeaderboardModal({open,onClose,currentXP,currentName,currentStreak}){
     return ()=>{cancelled=true;};
   },[open]);
   if(!open)return null;
-  const userTier=getProfTitle(currentXP);
+  const userTier=getProfTitle(currentMinutes);
   const myUid=firebase.auth().currentUser?.uid||null;
-  const allUsers=mergeLeaderboard(profiles, currentName, currentXP, currentStreak, myUid);
+  const allUsers=mergeLeaderboard(profiles, currentName, currentMinutes, currentStreak, myUid);
   const shown=filter==="level"?allUsers.filter(u=>u.tier===userTier||u.you):allUsers;
   const rankColor=(r)=>r===1?"#FFD700":r===2?"#C0C0C0":r===3?"#CD7F32":T.muted;
   const rankBg=(r)=>r===1?"rgba(255,215,0,0.12)":r===2?"rgba(192,192,192,0.08)":r===3?"rgba(205,127,50,0.08)":"transparent";
@@ -8663,8 +8682,8 @@ function LeaderboardModal({open,onClose,currentXP,currentName,currentStreak}){
                 <div style={{fontSize:11,color:T.muted,marginTop:1}}>{u.tier} · {u.streak>0?u.streak+"-day streak":"No streak"}</div>
               </div>
               <div style={{textAlign:"right",flexShrink:0}}>
-                <div style={{fontFamily:T.mono,fontSize:13,fontWeight:700,color:rankColor(u.r)||T.text}}>{u.xp.toLocaleString()}</div>
-                <div style={{fontSize:10,color:T.faint}}>XP</div>
+                <div style={{fontFamily:T.mono,fontSize:13,fontWeight:700,color:rankColor(u.r)||T.text}}>{u.minutes.toLocaleString()}</div>
+                <div style={{fontSize:10,color:T.faint}}>min</div>
               </div>
             </div>
           ))}
@@ -8715,6 +8734,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
     b:d.done>0?d.done+" done":"NEW",
     bg:T.card2,
     id:d.id,
+    kind:"deck",
   }));
   // Real notes from localStorage
   const rawNotes=lsGet("notes",[]);
@@ -8726,6 +8746,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
     b:n.created?new Date(n.created).toLocaleDateString("en",{weekday:"short"}):"",
     bg:T.card2,
     id:n.id,
+    kind:"note",
   }));
   const pickUpItems=[...realDecks,...noteCards];
   // Real upcoming events (next 14 days)
@@ -8802,9 +8823,9 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
   const isWrappedWindow=(()=>{const d=new Date();const day=d.getDay();return(day===0||day===1)&&d.getHours()>=18;})();
   const [wrappedOpen,setWrappedOpen]=useState(()=>isWrappedWindow&&!lsGet("wrapped-dismissed-"+wrappedWeekKey,false));
   const dismissWrapped=()=>{lsSet("wrapped-dismissed-"+wrappedWeekKey,true);setWrappedOpen(false);};
-  // Dynamic leaderboard — real Firestore profiles ranked by actual XP, "you" merged in live
+  // Dynamic leaderboard — real Firestore profiles ranked by actual focus minutes, "you" merged in live
   const myUid=firebase.auth().currentUser?.uid||null;
-  const lbUsers=mergeLeaderboard(topProfiles, firstName, lvl.xp, realStreak, myUid, 5);
+  const lbUsers=mergeLeaderboard(topProfiles, firstName, lvl.minutes, realStreak, myUid, 5);
   const lbRankColor=(r)=>r===1?"#FFD700":r===2?"#C0C0C0":r===3?"#CD7F32":T.muted;
   const lbRankBg=(r)=>r===1?"rgba(255,215,0,0.10)":r===2?"rgba(192,192,192,0.07)":r===3?"rgba(205,127,50,0.07)":"transparent";
   return (
@@ -8857,7 +8878,12 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
               const isToday=d.today, on=d.on;
               return(
                 <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
-                  <div style={{width:"100%",height:28,borderRadius:7,background:isToday?T.ink:on?T.forest:"rgba(8,12,40,0.10)",color:isToday?T.lime:on?T.lime:"rgba(8,12,40,0.35)",opacity:d.future?0.4:1,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:isToday?"0 0 0 2px "+T.ink:"none"}}>
+                  {/* Fire color tracks whether that day actually has completed
+                      study records (on) — bright red-orange when it does,
+                      muted gray otherwise. isToday only affects the box
+                      background/ring, not the flame color, so "today with
+                      nothing logged yet" reads honestly as unearned. */}
+                  <div style={{width:"100%",height:28,borderRadius:7,background:isToday?T.ink:on?T.forest:"rgba(8,12,40,0.10)",color:on?"#FF5A2E":"rgba(8,12,40,0.35)",opacity:d.future?0.4:1,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:isToday?"0 0 0 2px "+T.ink:"none"}}>
                     {on||isToday
                       ?<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
                       :<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="4"/></svg>
@@ -8870,15 +8896,15 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
           </div>
         </div>
 
-        {/* XP / Level — clickable → career roadmap modal */}
+        {/* Minutes focused / Level — clickable → career roadmap modal */}
         <div onClick={()=>setLevelRoadmapOpen(true)} style={{background:T.card,borderRadius:22,padding:22,cursor:"pointer",border:`1px solid ${T.border}`,display:"flex",flexDirection:"column",position:"relative",overflow:"hidden"}}>
           <div style={{position:"absolute",right:-30,bottom:-30,width:130,height:130,background:`radial-gradient(circle,${T.lime}18,transparent 70%)`,pointerEvents:"none"}}/>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,fontWeight:600}}>XP &amp; Rank</span>
+            <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,fontWeight:600}}>Focus &amp; Rank</span>
             <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.10em",background:T.lime+"22",padding:"3px 9px",borderRadius:99,color:T.lime,border:`1px solid ${T.lime}44`,fontWeight:700}}>{lvl.title.toUpperCase()}</span>
           </div>
           <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.text,margin:"10px 0 2px"}}>{fmtH(weeklyFocusMin)||"0m"}<span style={{fontSize:15,color:T.muted,marginLeft:6}}>focused this wk</span></div>
-          <div style={{fontSize:12,color:T.muted,marginBottom:4}}>{lvl.nextTier?`${(lvl.nextTier.minXP-lvl.xp).toLocaleString()} XP to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
+          <div style={{fontSize:12,color:T.muted,marginBottom:4}}>{lvl.nextTier?`${(lvl.nextTier.minMinutes-lvl.minutes).toLocaleString()}m to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
           <div style={{height:6,background:T.card2,borderRadius:99,marginTop:"auto",overflow:"hidden"}}>
             <div style={{height:"100%",width:lvl.tierPct+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}}/>
           </div>
@@ -8946,23 +8972,11 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
           underlying data (weeklyFocusMin, topSubjectThisWeek) still feeds
           the Weekly Wrapped popup. */}
 
-      {/* ROW: Study streak — full width now that Quick tools has been removed */}
-      {!seriousMode && <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
-        <CardHead title="Study streak" label="LAST 91 DAYS" />
-        <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:14}}>
-          <span style={{fontFamily:T.hand,fontSize:44,fontWeight:600,color:T.text}}>{realStreak}</span>
-          <span style={{fontSize:13,color:T.muted}}>day streak</span>
-          <span style={{marginLeft:"auto",fontSize:11,color:T.faint,fontFamily:T.mono}}>LONGEST<br/><span style={{fontSize:16,color:T.text,fontWeight:700}}>{Math.max(realStreak,getStreak())}</span></span>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(13,1fr)",gap:3}}>
-          {heatmapCells.map((lvl,i)=>(
-            <div key={i} style={{aspectRatio:"1",borderRadius:3,background:cellColor(lvl)}} />
-          ))}
-        </div>
-      </div>}
-
-      {/* ROW: Upcoming + Pick up where you left off — always visible, pure utility */}
-      <div style={{display:"grid",gridTemplateColumns:"5fr 7fr",gap:16}}>
+      {/* ROW: Upcoming + Pick up where you left off + Study streak (moved
+          here, shrunk to a compact secondary card so it no longer dominates
+          the top half of the viewport the way the old full-width 91-day
+          grid did) */}
+      <div style={{display:"grid",gridTemplateColumns:"4fr 5fr 3fr",gap:16}}>
         <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
           <CardHead title="Upcoming" label="NEXT 14 DAYS" more="Calendar" />
           {upcomingEvents.length===0
@@ -8985,11 +8999,14 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
           <CardHead title="Pick up where you left off" label="FLASHCARDS · NOTES · ESSAYS" />
           {pickUpItems.length===0
             ?<div style={{fontSize:13,color:T.muted,padding:"18px 0",textAlign:"center"}}>Create a deck, note, or essay and it'll show up here.</div>
-            :<div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
-              {pickUpItems.slice(0,4).map((it,i)=>{
+            :<div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:10}}>
+              {pickUpItems.slice(0,2).map((it,i)=>{
                 const bgColors=[T.mint,T.peach,T.sky,T.lilac];
                 return (
-                  <div key={i} style={{background:bgColors[i%4],borderRadius:14,padding:14,cursor:"pointer"}}>
+                  <div key={i} onClick={()=>{
+                    if(it.kind==="deck"){lsSet("openDeckId",it.id);setActive("flashcards");}
+                    else if(it.kind==="note"){lsSet("openNoteId",it.id);setActive("notes");}
+                  }} style={{background:bgColors[i%4],borderRadius:14,padding:14,cursor:"pointer"}}>
                     <div style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.06em",color:"rgba(8,12,40,0.55)",marginBottom:8}}>{it.subj}</div>
                     <div style={{fontSize:13,fontWeight:700,color:"#0E1F18",marginBottom:10,lineHeight:1.3}}>{it.title}</div>
                     <div style={{height:4,background:"rgba(8,12,40,0.12)",borderRadius:99,marginBottom:8,overflow:"hidden"}}><div style={{height:"100%",width:it.pct+"%",background:"#0E1F18",borderRadius:99}}/></div>
@@ -8999,6 +9016,20 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
               })}
             </div>}
         </div>
+        {!seriousMode && (
+          <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:16}}>
+            <CardHead title="Study streak" label="91 DAYS" />
+            <div style={{display:"flex",alignItems:"baseline",gap:6,marginBottom:10}}>
+              <span style={{fontFamily:T.hand,fontSize:26,fontWeight:600,color:T.text}}>{realStreak}</span>
+              <span style={{fontSize:11,color:T.muted}}>day streak</span>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(15,1fr)",gap:2}}>
+              {heatmapCells.map((lvl,i)=>(
+                <div key={i} style={{aspectRatio:"1",borderRadius:2,background:cellColor(lvl)}} />
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ROW 4: GLOBAL LEADERBOARD — conditionally hidden (SHOW_GLOBAL_LEADERBOARD)
@@ -9023,8 +9054,8 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
                 <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{u.tier} · {u.streak>0?u.streak+"-day streak":"No active streak"}</div>
               </div>
               <div style={{textAlign:"right",flexShrink:0}}>
-                <div style={{fontFamily:T.mono,fontSize:14,fontWeight:700,color:lbRankColor(u.r)||T.text}}>{u.xp.toLocaleString()}</div>
-                <div style={{fontSize:10,color:T.faint,marginTop:2}}>XP</div>
+                <div style={{fontFamily:T.mono,fontSize:14,fontWeight:700,color:lbRankColor(u.r)||T.text}}>{u.minutes.toLocaleString()}</div>
+                <div style={{fontSize:10,color:T.faint,marginTop:2}}>min</div>
               </div>
             </div>
           ))}
@@ -9040,8 +9071,8 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
         content div put them right behind that wall, breaking their
         centering into being relative to the (possibly scrolled) content div
         instead of the real viewport. Siblings of it are unaffected. */}
-    <LevelRoadmapModal open={levelRoadmapOpen} onClose={()=>setLevelRoadmapOpen(false)} currentXP={lvl.xp} />
-    <LeaderboardModal open={leaderboardOpen} onClose={()=>setLeaderboardOpen(false)} currentXP={lvl.xp} currentName={firstName} currentStreak={realStreak} />
+    <LevelRoadmapModal open={levelRoadmapOpen} onClose={()=>setLevelRoadmapOpen(false)} currentMinutes={lvl.minutes} />
+    <LeaderboardModal open={leaderboardOpen} onClose={()=>setLeaderboardOpen(false)} currentMinutes={lvl.minutes} currentName={firstName} currentStreak={realStreak} />
     {wrappedOpen&&!seriousMode&&(
       <div onClick={dismissWrapped} style={{position:"fixed",inset:0,background:"rgba(8,12,10,0.72)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
         <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:420,background:T.forest,color:T.cream,borderRadius:22,padding:28,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
@@ -9727,9 +9758,6 @@ function App() {
   const [calOnboardDone,setCalOnboardDone]=useState(()=>!!lsGet("cal-onboard-done",false));
   const [calOnboardGoogleSyncing,setCalOnboardGoogleSyncing]=useState(false);
   const [obGoogleLinked,setObGoogleLinked]=useState(()=>!!lsGet("cal-google",false));
-  const [obAppleLinked,setObAppleLinked]=useState(()=>!!lsGet("cal-apple",false));
-  const [obAppleStep,setObAppleStep]=useState(null);
-  const [obAppleUrl,setObAppleUrl]=useState("");
   const [notifPermModal,setNotifPermModal]=useState(false);
   const handleNotifAllow=()=>{
     if(Notification&&Notification.requestPermission)Notification.requestPermission();
@@ -10368,54 +10396,22 @@ function App() {
                 }
               </div>
               <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                <div style={{display:"flex",alignItems:"center",gap:14,padding:"13px 16px",borderRadius:10,background:T.card2,border:`1px solid ${obAppleLinked?T.teal+"44":T.border}`}}>
+                {/* Locked during onboarding specifically — Google stays the
+                    single active path here so first-time signup has no extra
+                    friction from the iCloud link-paste flow. Apple Calendar
+                    is still fully functional later, in Settings > Integrations
+                    (also shown as Coming Soon there per the same product call,
+                    but the underlying import code is untouched either place). */}
+                <div style={{display:"flex",alignItems:"center",gap:14,padding:"13px 16px",borderRadius:10,background:T.card2,border:`1px solid ${T.border}`,opacity:0.5}}>
                   <div style={{width:36,height:36,borderRadius:9,background:"rgba(255,255,255,0.08)",border:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="rgba(255,255,255,0.85)"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
                   </div>
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:13,fontWeight:600,color:T.white}}>Apple Calendar</div>
-                    <div style={{fontSize:11,color:obAppleLinked?T.teal:obAppleStep==="error"?"#f87171":obAppleStep==="syncing"?T.amber:T.muted,marginTop:1}}>
-                      {obAppleLinked?"Connected · events imported":obAppleStep==="syncing"?"Importing events...":obAppleStep==="error"?"Import failed — check the link and try again":"Import iCloud events"}
-                    </div>
+                    <div style={{fontSize:13,fontWeight:600,color:T.white}}>Apple Calendar<span style={{marginLeft:8,fontSize:10.5,fontWeight:600,color:"rgba(255,255,255,0.35)"}}>(Coming Soon)</span></div>
+                    <div style={{fontSize:11,color:"rgba(255,255,255,0.45)",marginTop:1}}>Import iCloud events</div>
                   </div>
-                  {obAppleLinked
-                    ?<div style={{display:"flex",alignItems:"center",gap:6,color:T.teal,fontSize:12,fontWeight:600}}>{Icon.check} Connected</div>
-                    :obAppleStep
-                      ?<BtnSm variant="subtle" onClick={()=>setObAppleStep(null)} disabled={obAppleStep==="syncing"}>Cancel</BtnSm>
-                      :<BtnSm variant="subtle" onClick={()=>setObAppleStep("input")}>Connect</BtnSm>
-                  }
+                  <BtnSm variant="subtle" disabled style={{flexShrink:0,cursor:"not-allowed"}}>Connect</BtnSm>
                 </div>
-                {!obAppleLinked&&obAppleStep&&(
-                  <div style={{padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${T.border}`}}>
-                    <div style={{fontSize:11,color:T.muted,lineHeight:1.6,marginBottom:10}}>
-                      In iCloud.com/calendar: select a calendar → Share → Copy Link. Paste the webcal:// or https:// link below.
-                    </div>
-                    <div style={{display:"flex",gap:8}}>
-                      <input
-                        value={obAppleUrl}
-                        onChange={e=>setObAppleUrl(e.target.value)}
-                        placeholder="webcal://p00-caldav.icloud.com/published/2/..."
-                        style={{flex:1,padding:"8px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:"rgba(255,255,255,0.07)",color:"rgba(255,255,255,0.9)",fontSize:12,fontFamily:T.font,outline:"none"}}
-                      />
-                      <BtnSm variant="lime" disabled={!obAppleUrl.trim()||obAppleStep==="syncing"} onClick={async()=>{
-                        if(!obAppleUrl.trim()||obAppleStep==="syncing")return;
-                        setObAppleStep("syncing");
-                        try{
-                          const url=obAppleUrl.trim().replace(/^webcal:\/\//i,'https://');
-                          const r=await fetch('/api/cal-proxy?url='+encodeURIComponent(url));
-                          const d=await r.json();
-                          if(!r.ok||!d.ok)throw new Error(d.error||"Import failed");
-                          const existing=lsGet("events",[]).filter(e=>!e.id.startsWith("apple-"));
-                          lsSet("events",[...existing,...d.events]);
-                          lsSet("cal-apple",true);
-                          setObAppleLinked(true);
-                          setObAppleStep(null);
-                          showToast("Apple Calendar connected · "+d.events.length+" events imported");
-                        }catch(e){setObAppleStep("error");}
-                      }}>{obAppleStep==="syncing"?"Importing...":"Import"}</BtnSm>
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
             <div style={{display:"flex",gap:10}}>

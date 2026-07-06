@@ -22,6 +22,18 @@
   .msg{margin-top:14px;font-size:13px;text-align:center;min-height:18px;}
   .msg.err{color:#FF6B6B;}
   .msg.ok{color:#B8E04A;}
+  .divider{height:1px;background:rgba(255,255,255,0.08);margin:32px 0;}
+  .danger-zone{border:1px solid rgba(255,107,107,0.3);border-radius:14px;padding:20px;}
+  .danger-zone h2{font-size:15px;font-weight:700;color:#FF6B6B;margin-bottom:6px;}
+  .danger-zone p{font-size:12.5px;margin-bottom:16px;}
+  .danger-btn{background:transparent;border:1px solid rgba(255,107,107,0.4);color:#FF6B6B;}
+  .danger-btn:hover{background:rgba(255,107,107,0.1);}
+  .preview{margin-top:14px;padding:14px;background:rgba(255,107,107,0.06);border:1px solid rgba(255,107,107,0.25);border-radius:10px;font-size:12.5px;line-height:1.6;display:none;}
+  .preview.show{display:block;}
+  .preview b{color:#FF6B6B;}
+  .confirm-row{margin-top:14px;display:none;}
+  .confirm-row.show{display:block;}
+  .confirm-row input{margin-bottom:10px;}
 </style>
 </head>
 <body>
@@ -33,6 +45,21 @@
   <input type="password" id="secret" placeholder="Enter your admin secret" autocomplete="off">
   <button id="btn" onclick="doExport()">Download CSV</button>
   <div class="msg" id="msg"></div>
+
+  <div class="divider"></div>
+
+  <div class="danger-zone">
+    <h2>Purge dev database</h2>
+    <p>Deletes every Firebase Auth account and Firestore users/ doc except shenouday7@gmail.com. This cannot be undone. Preview first — nothing is deleted until you confirm.</p>
+    <button id="previewBtn" class="danger-btn" onclick="doPreview()">Preview what would be deleted</button>
+    <div class="preview" id="preview"></div>
+    <div class="confirm-row" id="confirmRow">
+      <label for="confirmText">Type DELETE ALL to enable the button</label>
+      <input type="text" id="confirmText" placeholder="DELETE ALL" autocomplete="off" oninput="checkConfirmText()">
+      <button id="purgeBtn" class="danger-btn" onclick="doPurge()" disabled>Delete accounts</button>
+    </div>
+    <div class="msg" id="purgeMsg"></div>
+  </div>
 </div>
 <script>
 async function doExport(){
@@ -64,6 +91,69 @@ async function doExport(){
   btn.disabled=false;btn.textContent='Download CSV';
 }
 document.getElementById('secret').addEventListener('keydown',function(e){if(e.key==='Enter')doExport();});
+
+var lastPreview=null;
+async function doPreview(){
+  var secret=document.getElementById('secret').value.trim();
+  var btn=document.getElementById('previewBtn');
+  var preview=document.getElementById('preview');
+  var confirmRow=document.getElementById('confirmRow');
+  var purgeMsg=document.getElementById('purgeMsg');
+  purgeMsg.textContent='';
+  if(!secret){purgeMsg.className='msg err';purgeMsg.textContent='Enter the admin secret above first.';return;}
+  btn.disabled=true;btn.textContent='Checking…';
+  try{
+    var res=await fetch('/api/export-users',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({secret:secret,action:'purge_preview'})
+    });
+    var data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Request failed');
+    lastPreview=data;
+    preview.className='preview show';
+    preview.innerHTML='Total accounts: <b>'+data.totalAccounts+'</b><br>'+
+      'Will delete: <b>'+data.willDelete+'</b><br>'+
+      'Will keep: <b>'+data.willKeep+'</b> (shenouday7@gmail.com)<br>'+
+      (data.sampleEmails.length?'Sample: '+data.sampleEmails.slice(0,5).join(', ')+(data.sampleEmails.length>5?'…':''):'');
+    confirmRow.className='confirm-row show';
+  }catch(e){
+    purgeMsg.className='msg err';purgeMsg.textContent=e.message||'Something went wrong.';
+  }
+  btn.disabled=false;btn.textContent='Preview what would be deleted';
+}
+
+function checkConfirmText(){
+  var val=document.getElementById('confirmText').value.trim();
+  document.getElementById('purgeBtn').disabled=(val!=='DELETE ALL'||!lastPreview);
+}
+
+async function doPurge(){
+  var secret=document.getElementById('secret').value.trim();
+  var btn=document.getElementById('purgeBtn');
+  var purgeMsg=document.getElementById('purgeMsg');
+  if(!lastPreview){purgeMsg.className='msg err';purgeMsg.textContent='Run preview first.';return;}
+  btn.disabled=true;btn.textContent='Deleting…';purgeMsg.textContent='';
+  try{
+    var res=await fetch('/api/export-users',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({secret:secret,action:'purge'})
+    });
+    var data=await res.json();
+    if(!res.ok)throw new Error(data.error||'Request failed');
+    purgeMsg.className='msg ok';
+    purgeMsg.textContent='Deleted '+data.deleted+' account(s). Kept '+data.kept+'.'+(data.errors&&data.errors.length?' ('+data.errors.length+' errors)':'');
+    lastPreview=null;
+    document.getElementById('preview').className='preview';
+    document.getElementById('confirmRow').className='confirm-row';
+    document.getElementById('confirmText').value='';
+  }catch(e){
+    purgeMsg.className='msg err';purgeMsg.textContent=e.message||'Something went wrong.';
+    btn.disabled=false;
+  }
+  btn.textContent='Delete accounts';
+}
 </script>
 </body>
 </html>
