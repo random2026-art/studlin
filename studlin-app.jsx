@@ -1667,7 +1667,9 @@ function AiChat() {
     try{
       const apiMsgs=newMsgs.map(m=>({r:m.r,t:m._ai||m.t}));
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:apiMsgs,model,...getAiPrefs()})});
-      const data=await res.json();
+      let data;
+      try{data=await res.json();}
+      catch(parseErr){throw new Error("Studlin AI is having trouble responding right now. Please try again.");}
       clearInterval(stepTimer);
       setThinkStep("");
       if(data.error){setMsgs(m=>[...m,{r:"ai",t:"⚠ "+data.error}]);}
@@ -4183,6 +4185,11 @@ function ChatBubble({m,myUid,onRespond,onSchedule}){
   const align=mine?"flex-end":"flex-start";
   const bg=mine?T.lime+"1F":pp.card2;
   const border=mine?T.lime+"40":pp.border;
+  // Local "just clicked" state — gives instant feedback on the exact button
+  // clicked, then the real commit (onSchedule, which writes to Firestore and
+  // collapses this whole block to its final "scheduled" layout) fires after
+  // a beat so the click doesn't feel like it vanished into an abrupt cut.
+  const [justChosen,setJustChosen]=useState(null);
   if(m.kind==="calendar"){
     // options falls back to [m.meta] for messages sent before the
     // multi-slot refactor, which stored a single flat window as meta.
@@ -4206,7 +4213,11 @@ function ChatBubble({m,myUid,onRespond,onSchedule}){
                     {w.isBest&&<div style={{fontSize:9,fontWeight:800,letterSpacing:"0.08em",color:T.lime,marginBottom:2}}>BEST CHOICE</div>}
                     <div style={{fontSize:12,fontWeight:600,color:pp.text}}>{w.dayLabel} · {w.timeLabel} · {w.duration}m</div>
                   </div>
-                  <button onClick={()=>onSchedule(m.id,i)} style={{flexShrink:0,padding:"7px 12px",borderRadius:7,background:w.isBest?T.lime:pp.card2,color:w.isBest?T.bg:pp.text,border:w.isBest?"none":`1px solid ${pp.border}`,fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Choose</button>
+                  <button onClick={()=>{
+                    if(justChosen!==null)return;
+                    setJustChosen(i);
+                    setTimeout(()=>onSchedule(m.id,i),1500);
+                  }} disabled={justChosen!==null} style={{flexShrink:0,padding:"7px 12px",borderRadius:7,background:justChosen===i?T.lime:(w.isBest?T.lime:pp.card2),color:justChosen===i?T.bg:(w.isBest?T.bg:pp.text),border:w.isBest||justChosen===i?"none":`1px solid ${pp.border}`,fontSize:11.5,fontWeight:700,cursor:justChosen!==null?"default":"pointer",fontFamily:T.font,opacity:justChosen!==null&&justChosen!==i?0.45:1,transition:"opacity 0.15s"}}>{justChosen===i?"✓ Scheduled":"Choose"}</button>
                 </div>
               ))}
             </div>
@@ -4694,6 +4705,33 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
   // break starts so the student notices they can step away.
   const [collapsed,setCollapsed]=useState(false);
   useEffect(()=>{ if(phase==="break"||phase==="breakDone")setCollapsed(false); },[phase]);
+  // Draggable floating widget — reuses the same pointer-capture pattern as
+  // the break-position bar below, just applied to the whole container
+  // instead of one scrubber. dragPos===null means "use the default
+  // bottom-right CSS anchor"; once dragged, left/top pixel coordinates take
+  // over (clamped so the widget can never be dragged off-screen).
+  const [dragPos,setDragPos]=useState(null);
+  const dragStateRef=useRef({active:false,startX:0,startY:0,origX:0,origY:0});
+  const widgetPointerDown=(e)=>{
+    if(e.target.closest("button"))return; // let buttons inside the widget work normally
+    const rect=e.currentTarget.getBoundingClientRect();
+    dragStateRef.current={active:true,startX:e.clientX,startY:e.clientY,origX:rect.left,origY:rect.top};
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const widgetPointerMove=(e)=>{
+    if(!dragStateRef.current.active)return;
+    const rect=e.currentTarget.getBoundingClientRect();
+    const dx=e.clientX-dragStateRef.current.startX;
+    const dy=e.clientY-dragStateRef.current.startY;
+    const nx=Math.max(4,Math.min(window.innerWidth-rect.width-4,dragStateRef.current.origX+dx));
+    const ny=Math.max(4,Math.min(window.innerHeight-rect.height-4,dragStateRef.current.origY+dy));
+    setDragPos({x:nx,y:ny});
+  };
+  const widgetPointerUp=()=>{dragStateRef.current.active=false;};
+  // Third widget state, alongside collapsed/expanded — a full-viewport focus
+  // overlay, entered via a distinct square button (never the round
+  // collapse/expand toggle, which stays a two-state control).
+  const [fullscreen,setFullscreen]=useState(false);
 
   // ── Assignment binary-completion + extension-slider sub-state (only used
   // when phase==="assignmentCheck", i.e. task.assignmentId is set) ─────────
@@ -5103,8 +5141,28 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
   const widgetR=26;
   const widgetCirc=2*Math.PI*widgetR;
 
-  return(
-    <div style={{position:"fixed",bottom:20,right:collapsed?8:20,zIndex:500,width:collapsed?64:284,background:T.card,border:`1px solid ${T.border}`,borderRadius:18,boxShadow:"0 20px 50px -14px rgba(0,0,0,0.5)",padding:collapsed?"30px 8px 14px":"14px 16px",fontFamily:T.font,animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)",transition:"width 0.28s cubic-bezier(.2,.85,.3,1), padding 0.28s cubic-bezier(.2,.85,.3,1), right 0.28s cubic-bezier(.2,.85,.3,1)",overflow:"hidden",boxSizing:"border-box"}}>
+  // ── FULL-SCREEN FOCUS OVERLAY — entered via the square button below.
+  if(fullscreen){
+    return(
+      <div style={{position:"fixed",inset:0,zIndex:600,background:T.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:40,textAlign:"center",fontFamily:T.font}}>
+        <button onClick={()=>setFullscreen(false)} title="Restore" style={{position:"absolute",top:24,right:24,width:40,height:40,borderRadius:12,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer"}}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+        </button>
+        <div style={{fontFamily:T.mono,fontSize:64,fontWeight:800,color:timerColor,letterSpacing:"-0.02em",marginBottom:28}}>{fmt(secs)}</div>
+        <div style={{fontSize:16,color:T.text,maxWidth:480,lineHeight:1.65}}>Studlin is running in the background. Minimize this window when you are ready to execute, or leave it open to stay completely zeroed in.</div>
+      </div>
+    );
+  }
+
+  return(<>
+    {running&&(
+      <div style={{position:"fixed",inset:0,border:`4px solid ${T.lime}`,zIndex:499,pointerEvents:"none"}} />
+    )}
+    <div onPointerDown={widgetPointerDown} onPointerMove={widgetPointerMove} onPointerUp={widgetPointerUp}
+      style={{position:"fixed",...(dragPos?{left:dragPos.x,top:dragPos.y,right:"auto",bottom:"auto"}:{bottom:20,right:collapsed?8:20}),zIndex:500,width:collapsed?64:284,background:T.card,border:`1px solid ${T.border}`,borderRadius:18,boxShadow:"0 20px 50px -14px rgba(0,0,0,0.5)",padding:collapsed?"30px 8px 14px":"14px 16px",fontFamily:T.font,animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)",transition:"width 0.28s cubic-bezier(.2,.85,.3,1), padding 0.28s cubic-bezier(.2,.85,.3,1)",overflow:"hidden",boxSizing:"border-box",cursor:"grab",touchAction:"none"}}>
+      <button onClick={()=>setFullscreen(true)} title="Full-screen focus" style={{position:"absolute",top:10,right:38,width:22,height:22,borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer",zIndex:1,padding:0}}>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+      </button>
       <button onClick={()=>setCollapsed(c=>!c)} title={collapsed?"Expand timer":"Collapse timer"} style={{position:"absolute",top:10,right:10,width:22,height:22,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer",zIndex:1,padding:0}}>
         <span style={{display:"inline-flex",transform:collapsed?"rotate(180deg)":"none",transition:"transform 0.22s ease"}}>{Icon.arrowR}</span>
       </button>
@@ -5158,7 +5216,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
         </div>
       </>)}
     </div>
-  );
+  </>);
 }
 
 // ─── WEEKLY PLANNER ───────────────────────────────────────────────────────────
@@ -5675,7 +5733,7 @@ function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, c
               </div>
               {!isRoutine&&(
                 <div style={{display:"flex",gap:4,flexShrink:0,alignItems:"center"}}>
-                  {!isDone&&ev.duration&&(ev.kind==="study block"||ev.kind==="deadline")&&<button onClick={()=>{if(window._setTimerTask)window._setTimerTask(ev);}} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.lime}44`,background:T.lime+"12",color:T.lime,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Begin</button>}
+                  {!isDone&&ev.duration&&(ev.kind==="study block"||ev.kind==="deadline")&&<BtnSm onClick={()=>{if(window._setTimerTask)window._setTimerTask(ev);}} style={{flexShrink:0,boxShadow:`0 2px 10px -3px ${T.lime}88`}}>Begin</BtnSm>}
                   {!isDone&&(ev.kind==="exam"||ev.kind==="class"||ev.kind==="reminder")&&<button onClick={()=>openEdit(ev)} title="View details" style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Details</button>}
                   {!isDone&&<button onClick={()=>markDone(ev.id)} title="Mark done" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",display:"flex"}}>{Icon.check}</button>}
                   <button onClick={()=>removeEvent(ev.id)} title="Delete" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,padding:2}}>×</button>

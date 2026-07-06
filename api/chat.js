@@ -172,7 +172,7 @@ GOAL
 
 Every interaction should make the user smarter, more capable, more confident, and more productive.
 
-You are Studlin AI. Your purpose is helping people learn better than they could alone.\`
+You are Studlin AI. Your purpose is helping people learn better than they could alone.`;
 
 const FLASH_PROMPT = `You are Studlin Flash, a quick-answer study assistant. Give the most direct, concise answer possible. Sound like a smart study buddy, not a textbook. 1-3 sentences max unless the question genuinely needs more. Use bullet points to keep it scannable. Be helpful but brief.`;
 
@@ -281,20 +281,42 @@ module.exports = async (req, res) => {
       content: m.t,
     }));
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: claudeModel,
-        max_tokens: maxTokens,
-        system: systemPrompt,
-        messages: claudeMessages,
-      }),
-    });
+    // A hung/slow upstream call would otherwise let Vercel's own platform
+    // timeout (maxDuration, set in vercel.json) kill the function first —
+    // that returns Vercel's own error page (not JSON), which is exactly
+    // what caused the raw "Unexpected token..." crash in Studlin AI. Aborting
+    // a few seconds early guarantees our own try/catch below always gets to
+    // return clean JSON instead.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 25000);
+    let response;
+    try {
+      response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: claudeModel,
+          max_tokens: maxTokens,
+          system: systemPrompt,
+          messages: claudeMessages,
+        }),
+        signal: controller.signal,
+      });
+    } catch (fetchErr) {
+      if (!creditTrackingSkipped && userRef) {
+        await userRef.update({ credits: creditsAfter + cost }).catch(() => {});
+      }
+      if (fetchErr.name === 'AbortError') {
+        return res.status(504).json({ error: 'Studlin AI took too long to respond. Please try again.' });
+      }
+      throw fetchErr;
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (!response.ok) {
       const errText = await response.text();
