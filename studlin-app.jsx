@@ -8443,8 +8443,8 @@ function Profile({setActive}={}) {
     setTimeout(()=>setPrefSaved(false),2200);
   };
 
-  const affiliationLabel = status==="highschool"?"School name":status==="college"?"University":status==="working"?"Company":"School / affiliation";
-  const affiliationPlaceholder = status==="highschool"?"e.g. Lincoln High School":status==="college"?"e.g. UCLA, NYU...":status==="working"?"e.g. Google, startup...":"Your school or company";
+  const affiliationLabel = status==="highschool"?"School name":status==="college"?"University":"School / affiliation";
+  const affiliationPlaceholder = status==="highschool"?"e.g. Lincoln High School":status==="college"?"e.g. UCLA, NYU...":"Your school or company";
 
 
   const StatusChip=({value,label,active})=>(
@@ -8477,7 +8477,7 @@ function Profile({setActive}={}) {
             <Badge color={T.lime}>Pro</Badge>
             <Badge color={T.amber}>{streak}-day streak</Badge>
             <Badge color={T.blue}>{lvl.title}</Badge>
-            {status&&<Badge color={T.teal}>{status==="highschool"?"High School":status==="college"?"College":"Working"}</Badge>}
+            {status&&<Badge color={T.teal}>{status==="highschool"?"High School":"College"}</Badge>}
           </div>
           {picSaved&&<div style={{marginTop:8,fontSize:11.5,color:T.lime,fontWeight:600}}>Profile picture updated.</div>}
         </div>
@@ -9389,8 +9389,8 @@ function InitWizard({onComplete}){
   const [workStart, setWorkStart] = useState(prefs.workStartTime||"09:00");
   const [difficulty, setDifficulty] = useState(prefs.difficultyPreference||"balanced");
 
-  const affiliationLabel = status==="highschool" ? "School name" : status==="college" ? "University name" : status==="working" ? "Company name" : "Affiliation";
-  const affiliationPlaceholder = status==="highschool" ? "e.g. Lincoln High School" : status==="college" ? "e.g. UCLA, NYU..." : status==="working" ? "e.g. Google, startup..." : "Your school or company";
+  const affiliationLabel = status==="highschool" ? "School name" : status==="college" ? "University name" : "Affiliation";
+  const affiliationPlaceholder = status==="highschool" ? "e.g. Lincoln High School" : status==="college" ? "e.g. UCLA, NYU..." : "Your school or company";
 
   const save = () => {
     const updatedPrefs = {...prefs, workStartTime:workStart, difficultyPreference:difficulty};
@@ -9490,7 +9490,6 @@ function InitWizard({onComplete}){
             <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:20}}>
               <ChipOpt value="highschool" active={status==="highschool"} onClick={()=>setStatus("highschool")}>High School</ChipOpt>
               <ChipOpt value="college" active={status==="college"} onClick={()=>setStatus("college")}>College</ChipOpt>
-              <ChipOpt value="working" active={status==="working"} onClick={()=>setStatus("working")}>Working</ChipOpt>
             </div>
             {status && (
               <div style={{marginTop:4}}>

@@ -142,7 +142,19 @@ function StepSignup({ state, set, advance }) {
 
   const googleSign = () => {
     const idErrs = checkIdentityFields();
-    if (Object.keys(idErrs).length > 0) { setErrors(idErrs); return; }
+    if (Object.keys(idErrs).length > 0) {
+      // Terms checkbox is unchecked — it may be below the fold (the trust
+      // panel above it can push it out of view on shorter screens), so the
+      // inline error alone might be invisible. Scroll it into view instead
+      // of leaving the click looking like it did nothing. The page itself
+      // never scrolls here (.shell is a fixed 100vh grid) — .stage is the
+      // actual scrollable element, not window/body.
+      setErrors(idErrs);
+      const stageEl = document.querySelector('.stage');
+      if (stageEl) stageEl.scrollTo({ top: stageEl.scrollHeight, behavior: 'smooth' });
+      else window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+      return;
+    }
     setErrors({});setAuthError("");setLoading(true);
     if(typeof google==="undefined"||!google.accounts){setAuthError("Google sign-in is still loading. Please try again.");setLoading(false);return;}
     const client = google.accounts.oauth2.initTokenClient({
@@ -155,7 +167,7 @@ function StepSignup({ state, set, advance }) {
           const result = await firebase.auth().signInWithCredential(credential);
           const u = result.user;
           set(s=>({...s, provider:"google", name:u.displayName||s.name, email:u.email||s.email}));
-          if(window.posthog){posthog.identify(u.uid,{email:u.email,name:u.displayName||"",provider:"google"});posthog.capture("signup_completed",{method:"google"});}
+          if(window.posthog){posthog.identify(u.uid,{email:u.email,provider:"google"});posthog.capture("signup_completed",{method:"google"});}
           advance(true);
         } catch(err) {
           setAuthError(ERR_MAP[err.code]||(err.message||"Sign-up failed."));
@@ -172,7 +184,6 @@ function StepSignup({ state, set, advance }) {
 
   const tryAdvance = async () => {
     const errs = checkIdentityFields();
-    if (!state.name?.trim()) errs.name = "Please enter your full name";
     if (!state.email?.trim()) errs.email = "Please enter your email address";
     else if (!/\S+@\S+\.\S+/.test(state.email)) errs.email = "Please enter a valid email address";
     if (!allOk) errs.password = "Password must be at least 8 characters";
@@ -182,8 +193,10 @@ function StepSignup({ state, set, advance }) {
     setAuthError("");setLoading(true);
     try {
       const cred = await firebase.auth().createUserWithEmailAndPassword(state.email, state.password);
-      await cred.user.updateProfile({ displayName: state.name.trim() });
-      if(window.posthog){posthog.identify(cred.user.uid,{email:state.email,name:state.name.trim(),provider:"email"});posthog.capture("signup_completed",{method:"email"});}
+      // Full name is collected later, in StepProfile (First/Last name) —
+      // this account's displayName gets set from that once known, in
+      // finishOnboarding.
+      if(window.posthog){posthog.identify(cred.user.uid,{email:state.email,provider:"email"});posthog.capture("signup_completed",{method:"email"});}
       try {
         const token = await cred.user.getIdToken();
         await fetch("/api/send-verification", { method: "POST", headers: { Authorization: "Bearer " + token } });
@@ -235,8 +248,7 @@ function StepSignup({ state, set, advance }) {
 
       {mode === "email" && (
         <>
-          <TextField label="Full name" value={state.name} onChange={v=>set({...state, name:v})} error={errors.name} autoFocus autoComplete="name" />
-          <TextField label="Email address" value={state.email} onChange={v=>set({...state, email:v})} hint={errors.email?null:"Any email works — school, Gmail, whatever."} error={errors.email} type="email" autoComplete="email" />
+          <TextField label="Email address" value={state.email} onChange={v=>set({...state, email:v})} hint={errors.email?null:"Any email works — school, Gmail, whatever."} error={errors.email} type="email" autoComplete="email" autoFocus />
           <TextField label="Create password" value={state.password} onChange={v=>set({...state, password:v})} type="password" autoComplete="new-password" error={errors.password} hint={errors.password?null:"At least 8 characters."} />
           <div style={{marginTop:18}}>
             <button className="provider" onClick={()=>setMode("providers")} style={{padding:"10px 14px",fontSize:13}}>← Use Google instead</button>
@@ -340,55 +352,37 @@ function StepVerify({ advanceToProfile }) {
   );
 }
 
-const statusChipStyle=(sel)=>({flex:1,padding:"16px 14px",borderRadius:14,fontSize:14,fontWeight:600,cursor:"pointer",border:`1.5px solid ${sel?"#9EC83D":"var(--line-strong)"}`,background:sel?"rgba(158,200,61,0.16)":"white",color:sel?"#14342A":"var(--muted)",fontFamily:"inherit",textAlign:"center"});
-
 const USERNAME_RE = /^[a-z][a-z0-9_]{2,19}$/;
 
 // Post-auth profile fork — the only other thing collected before the user
-// lands in the product. Everything else (weekly routine, peak study window)
-// is deferred to the Calendar tab's first-visit wizard, not asked here.
+// lands in the product, stripped to exactly three fields. Student status
+// (high school/college) is no longer asked here at all — it's optional and
+// settable later in Settings if a student wants it. Username isn't asked
+// either: finishOnboarding derives one silently from first+last name so
+// Studlin Network search/autocomplete keep working without adding a field
+// here. Weekly routine and peak study window stay deferred to the Calendar
+// tab's first-visit wizard, same as before.
 function StepProfile({ state, set }) {
-  const status = state.status || "";
-  const label = status === "highschool" ? "Enter your High School" : "Enter your University";
-  const [uCheck, setUCheck] = useState(state.usernameOk ? "available" : "idle"); // idle | checking | available | taken | invalid
-  const timerRef = useRef(null);
-
-  const onUsernameChange = (raw) => {
-    const v = raw.toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 20);
-    set(s => ({ ...s, username: v, usernameOk: false }));
-    if (timerRef.current) clearTimeout(timerRef.current);
-    if (!v) { setUCheck("idle"); return; }
-    if (!USERNAME_RE.test(v)) { setUCheck("invalid"); return; }
-    setUCheck("checking");
-    timerRef.current = setTimeout(async () => {
-      try {
-        const snap = await firebase.firestore().collection("usernames").doc(v).get();
-        if (snap.exists) setUCheck("taken");
-        else { setUCheck("available"); set(s => (s.username === v ? { ...s, usernameOk: true } : s)); }
-      } catch(e) { setUCheck("idle"); }
-    }, 450);
-  };
-
-  const uErr = uCheck === "taken" ? "Username is already taken."
-    : uCheck === "invalid" ? "3-20 characters: lowercase letters, numbers, underscores. Must start with a letter."
-    : null;
-  const uHint = uCheck === "checking" ? "Checking availability…"
-    : uCheck === "available" && state.username ? `@${state.username} is available` : "Your public handle on Studlin.";
+  // Google accounts arrive with a full display name already — split it into
+  // first/last once, on mount, so returning/Google users don't have to
+  // retype what's already known. Never overwrites anything the user typed.
+  useEffect(() => {
+    if (!state.firstName && !state.lastName && state.name) {
+      const parts = state.name.trim().split(/\s+/);
+      set(s => ({ ...s, firstName: s.firstName || parts[0] || "", lastName: s.lastName || parts.slice(1).join(" ") || "" }));
+    }
+  }, []);
 
   return (
     <div className="frame">
       <div className="frame-head">
-        <h2>Select your <em>student status</em></h2>
-        <p>This helps Studlin tailor your calendar and scheduling to how your days actually work.</p>
+        <h2>Tell us <em>about you</em></h2>
+        <p>Just the basics — everything else you can set up later.</p>
       </div>
 
-      <div style={{display:"flex",gap:10,marginBottom:22}}>
-        <button type="button" onClick={()=>set({...state,status:"highschool"})} style={statusChipStyle(status==="highschool")}>High School</button>
-        <button type="button" onClick={()=>set({...state,status:"college"})} style={statusChipStyle(status==="college")}>College</button>
-      </div>
-
-      <TextField label={label} value={state.school} onChange={v=>set({...state, school:v})} hint="Just the name — no need to search a list." />
-      <TextField label="Choose a username" value={state.username||""} onChange={onUsernameChange} error={uErr} hint={uErr?null:uHint} autoComplete="off" />
+      <TextField label="First name" value={state.firstName||""} onChange={v=>set({...state, firstName:v})} autoFocus autoComplete="given-name" />
+      <TextField label="Last name" value={state.lastName||""} onChange={v=>set({...state, lastName:v})} autoComplete="family-name" />
+      <TextField label="Enter your University / School" value={state.school||""} onChange={v=>set({...state, school:v})} hint="Just the name — no need to search a list." />
     </div>
   );
 }
@@ -430,10 +424,10 @@ function App() {
 
   const isStepValid = () => {
     if (step === 0) {
-      return !!state.terms && (!!firebase.auth().currentUser || !!(state.provider) || !!(state.name && state.email && (state.password||"").length >= 8));
+      return !!state.terms && (!!firebase.auth().currentUser || !!(state.provider) || !!(state.email && (state.password||"").length >= 8));
     }
     if (step === 1) return isVerifiedOrGoogle(firebase.auth().currentUser);
-    if (step === 2) return !!state.status && !!(state.school||"").trim() && !!state.usernameOk && USERNAME_RE.test(state.username||"");
+    if (step === 2) return !!(state.firstName||"").trim() && !!(state.lastName||"").trim() && !!(state.school||"").trim();
     return true;
   };
 
@@ -443,56 +437,79 @@ function App() {
 
   const back = () => { setTransitioning(true); setTimeout(() => { setStep(s => Math.max(0, s-1)); setTransitioning(false); }, 250); };
 
+  // Derives a candidate handle from a real name for the silent username
+  // auto-generation below — same charset the rest of the app expects
+  // (USERNAME_RE), never shown to the student.
+  const slugifyName = (s) => (s||"").toLowerCase().replace(/[^a-z0-9]/g,"");
+
+  // Claims a unique username for uid via the same atomic transaction the
+  // old user-facing flow used, except silently: starts from firstName+
+  // lastName, and on collision retries with a random numeric suffix instead
+  // of surfacing an error (there's no username field to show one against
+  // anymore). A handful of retries makes a true failure astronomically
+  // unlikely; if it somehow still fails, onboarding proceeds without a
+  // username rather than blocking the student on an invisible field.
+  const claimUsernameSilently = async (db, uid, firstName, lastName) => {
+    const base = (slugifyName(firstName)+slugifyName(lastName)).slice(0,16) || "student";
+    const withLetterStart = /^[a-z]/.test(base) ? base : "s"+base;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      let candidate = attempt === 0 ? withLetterStart : withLetterStart.slice(0, 16) + Math.floor(1000 + Math.random()*9000);
+      candidate = candidate.slice(0, 20);
+      if (candidate.length < 3) candidate = candidate.padEnd(3, "0");
+      if (!USERNAME_RE.test(candidate)) continue;
+      try {
+        const unameRef = db.collection('usernames').doc(candidate);
+        const profileRef = db.collection('profiles').doc(uid);
+        await db.runTransaction(async (tx) => {
+          const unameSnap = await tx.get(unameRef);
+          if (unameSnap.exists) throw new Error('taken');
+          tx.set(unameRef, { uid, createdAt: new Date().toISOString() });
+          tx.set(profileRef, { username: candidate, usernameLower: candidate }, { merge: true });
+        });
+        return candidate;
+      } catch(e) { /* collision — loop and retry with a new suffix */ }
+    }
+    return "";
+  };
+
   // The real "hand off to the app" step — writes the profile fork straight
   // to the authenticated user's Firestore doc and sets the flag the main
   // app's own separate first-run wizard (InitWizard) checks. Weekly Routine
   // and peak-study-window collection are deliberately NOT seeded here
   // anymore — that's the Calendar tab's first-visit wizard's job now, so the
-  // user lands on the Dashboard, not forced into Calendar.
+  // user lands on the Dashboard, not forced into Calendar. Student status
+  // isn't collected here either — it's optional, set later in Settings.
   const finishOnboarding = async () => {
     if (!isStepValid() || finishing) return;
     setFinishing(true); setFinishError("");
     const u = firebase.auth().currentUser;
-    const uname = (state.username||"").trim().toLowerCase();
+    const firstName = (state.firstName||"").trim();
+    const lastName = (state.lastName||"").trim();
+    const fullName = `${firstName} ${lastName}`.trim();
 
-    // Claim the username atomically first — a transaction so two people
-    // racing on the same handle can't both win. Only if this succeeds do we
-    // clear onboarding state and hand off to the app; a rejection (already
-    // taken) leaves the user right where they were, free to try another.
-    if (u && uname) {
-      try {
-        const db = firebase.firestore();
-        const unameRef = db.collection('usernames').doc(uname);
-        const profileRef = db.collection('profiles').doc(u.uid);
-        await db.runTransaction(async (tx) => {
-          const unameSnap = await tx.get(unameRef);
-          if (unameSnap.exists) throw new Error('taken');
-          tx.set(unameRef, { uid: u.uid, createdAt: new Date().toISOString() });
-          tx.set(profileRef, { username: uname, usernameLower: uname }, { merge: true });
-        });
-      } catch(e) {
-        setFinishing(false);
-        setFinishError(e.message === 'taken' ? "Username is already taken. Please choose another." : "Couldn't claim that username. Please try again.");
-        return;
+    let uname = "";
+    if (u) {
+      if (fullName && u.displayName !== fullName) {
+        try { await u.updateProfile({ displayName: fullName }); } catch(e) {}
       }
+      uname = await claimUsernameSilently(firebase.firestore(), u.uid, firstName, lastName);
     }
 
     try { localStorage.setItem("studlin-onboarded", "true"); } catch(e){}
     // Mirrors the app's own local `profile` object (studlin-app.jsx's
-    // getProfile()/saveProfile()) so status/school/username are available to
+    // getProfile()/saveProfile()) so name/school/username are available to
     // the Calendar's routine wizard immediately, with no Firestore round-trip.
     try {
       const prevProfile = JSON.parse(localStorage.getItem("studlin-profile")||"null") || {};
-      localStorage.setItem("studlin-profile", JSON.stringify({ ...prevProfile, username: uname, status: state.status||"", affiliation: (state.school||"").trim(), school: (state.school||"").trim() }));
+      localStorage.setItem("studlin-profile", JSON.stringify({ ...prevProfile, name: fullName || prevProfile.name || "", username: uname, affiliation: (state.school||"").trim(), school: (state.school||"").trim() }));
     } catch(e){}
     try { localStorage.removeItem("studlin-onboarding"); } catch(e){}
     if (u) {
       try {
         await firebase.firestore().collection('users').doc(u.uid).set({
-          name: u.displayName || state.name || "",
+          name: fullName || u.displayName || "",
           email: u.email || state.email || "",
           school: (state.school||"").trim(),
-          status: state.status || "",
           affiliation: (state.school||"").trim(),
           provider: u.providerData && u.providerData[0] ? u.providerData[0].providerId : "unknown",
           onboarded: true,
@@ -501,8 +518,8 @@ function App() {
         }, { merge: true });
       } catch(e) {}
       if(window.posthog){
-        posthog.capture("onboarding_completed",{status:state.status,school:(state.school||"").trim()});
-        posthog.setPersonProperties({status:state.status,school:(state.school||"").trim(),onboarded:true});
+        posthog.capture("onboarding_completed",{school:(state.school||"").trim()});
+        posthog.setPersonProperties({school:(state.school||"").trim(),onboarded:true});
       }
     }
     window.location.href = "Studlin Web App.html";
