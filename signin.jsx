@@ -233,7 +233,7 @@ function App() {
             <div className="stage-hint">Choose a provider above, or use your email.</div>
           )}
           <div className="stage-links"><a href="#">Privacy Policy</a> · <a href="#">Terms of Service</a></div>
-          <div style={{marginTop:16,textAlign:"center",fontSize:13,color:"var(--muted)"}}>New to Studlin? <a href="Studlin Onboarding.html">Create an account</a></div>
+          <div style={{marginTop:16,textAlign:"center",fontSize:13,color:"var(--muted)"}}>New to Studlin? <a href="/onboarding">Create an account</a></div>
         </div>
       </main>
     </div>
