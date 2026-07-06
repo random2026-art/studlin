@@ -17,9 +17,12 @@ const Ic = {
 
 const APP_URL = "Studlin Web App.html";
 
+// Deliberately generic for user-not-found/wrong-password/invalid-credential —
+// telling an attacker "no account found" vs "wrong password" lets them
+// enumerate which emails have accounts. One message, no distinction.
 const ERR_MAP = {
-  "auth/user-not-found":"No account found with this email. Try signing up instead.",
-  "auth/wrong-password":"Incorrect password. Please try again.",
+  "auth/user-not-found":"Incorrect email or password. Please try again.",
+  "auth/wrong-password":"Incorrect email or password. Please try again.",
   "auth/invalid-credential":"Incorrect email or password. Please try again.",
   "auth/invalid-email":"Please enter a valid email address.",
   "auth/too-many-requests":"Too many attempts. Please wait a moment and try again.",

@@ -252,56 +252,87 @@ function StepSignup({ state, set, advance }) {
   );
 }
 
+// Six-box OTP input — auto-advance, paste-friendly. Kept as its own copy
+// (mirrors studlin-app.jsx's OtpBoxes) since this is a standalone bundle.
+function OtpBoxes({ value, onChange, disabled, autoFocus }) {
+  const refs = useRef([]);
+  const setDigit = (i, d) => { const digits = value.split(""); digits[i] = d; onChange(digits.join("").slice(0,6)); };
+  const onKeyDown = (i, e) => { if (e.key === "Backspace" && !value[i] && i > 0) refs.current[i-1]?.focus(); };
+  const onInput = (i, e) => {
+    const raw = e.target.value.replace(/\D/g, "");
+    if (!raw) { setDigit(i, ""); return; }
+    setDigit(i, raw[raw.length-1]);
+    if (i < 5) refs.current[i+1]?.focus();
+  };
+  const onPaste = (e) => {
+    const raw = (e.clipboardData.getData("text")||"").replace(/\D/g,"").slice(0,6);
+    if (!raw) return;
+    e.preventDefault();
+    onChange(raw.padEnd(value.length,"").slice(0,6));
+    refs.current[Math.min(raw.length,5)]?.focus();
+  };
+  return (
+    <div style={{display:"flex",gap:8,justifyContent:"center",marginBottom:6}} onPaste={onPaste}>
+      {[0,1,2,3,4,5].map(i => (
+        <input key={i} ref={el=>refs.current[i]=el} value={value[i]||""} onChange={e=>onInput(i,e)} onKeyDown={e=>onKeyDown(i,e)}
+          disabled={disabled} autoFocus={autoFocus && i===0} inputMode="numeric" maxLength={1}
+          style={{width:42,height:52,textAlign:"center",fontSize:22,fontWeight:700,borderRadius:10,border:"1.5px solid var(--line-strong)",background:"white",color:"#14342A",outline:"none"}}
+          onFocus={e=>e.target.style.borderColor="#9EC83D"}
+          onBlur={e=>e.target.style.borderColor="var(--line-strong)"} />
+      ))}
+    </div>
+  );
+}
+
 // Verification gate — sits between Sign up and Profile so an unverified
 // (or fake) account can never reach StepProfile, which is what writes
 // school/status to Firestore. Mirrors studlin-app.jsx's own
-// VerifyEmailScreen resend/check-verified logic, styled to match this
-// bundle's onboarding.css classes instead of inline dark-theme styles.
+// VerifyEmailScreen code-entry logic, styled to match this bundle's
+// onboarding.css classes instead of inline dark-theme styles.
 function StepVerify({ advanceToProfile }) {
-  const [status, setStatus] = useState("idle"); // idle | sending | sent | checking
+  const [sendStatus, setSendStatus] = useState("idle"); // idle | sending | sent
+  const [code, setCode] = useState("");
+  const [checking, setChecking] = useState(false);
   const [err, setErr] = useState("");
   const user = firebase.auth().currentUser;
 
   const resend = async () => {
-    setStatus("sending"); setErr("");
+    setSendStatus("sending"); setErr("");
     try {
       const token = await user.getIdToken();
       const res = await fetch("/api/send-verification", { method: "POST", headers: { Authorization: "Bearer " + token } });
       const d = await res.json().catch(()=>({}));
-      if (res.ok && d.ok) { setStatus("sent"); setTimeout(()=>setStatus("idle"), 30000); }
-      else { setErr(d.error || "Couldn't send the email. Try again shortly."); setStatus("idle"); }
-    } catch(e) { setErr("Couldn't send the email. Try again shortly."); setStatus("idle"); }
+      if (res.ok && d.ok) { setSendStatus("sent"); setTimeout(()=>setSendStatus("idle"), 30000); }
+      else { setErr(d.error || "Couldn't send the email. Try again shortly."); setSendStatus("idle"); }
+    } catch(e) { setErr("Couldn't send the email. Try again shortly."); setSendStatus("idle"); }
   };
 
-  const checkVerified = async () => {
-    setStatus("checking"); setErr("");
-    try { await user.reload(); } catch(e) {}
-    if (firebase.auth().currentUser && firebase.auth().currentUser.emailVerified) {
-      advanceToProfile();
-    } else {
-      setErr("Still not verified — check your inbox (and spam folder) for the link.");
-      setStatus("idle");
-    }
+  const submitCode = async () => {
+    if (code.length !== 6 || checking) return;
+    setChecking(true); setErr("");
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/verify-otp", { method: "POST", headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" }, body: JSON.stringify({ code }) });
+      const d = await res.json().catch(()=>({}));
+      if (res.ok && d.ok) { advanceToProfile(); return; }
+      setErr(d.error || "Incorrect code. Try again.");
+    } catch(e) { setErr("Couldn't verify right now. Try again."); }
+    setChecking(false);
   };
-
-  useEffect(() => {
-    const onFocus = () => { if (document.visibilityState === "visible") checkVerified(); };
-    document.addEventListener("visibilitychange", onFocus);
-    return () => document.removeEventListener("visibilitychange", onFocus);
-  }, []);
 
   return (
     <div className="frame">
       <div className="frame-head">
-        <h2>Check your <em>inbox</em></h2>
-        <p>We sent a verification link to <strong>{user && user.email}</strong>. Click it, then come back here.</p>
+        <h2>Enter your <em>code</em></h2>
+        <p>We sent a 6-digit code to <strong>{user && user.email}</strong>.</p>
       </div>
+      <OtpBoxes value={code} onChange={v=>{setCode(v);setErr("");}} disabled={checking} autoFocus />
       {err && <div style={{fontSize:13,color:"#C4544A",marginBottom:16,padding:"12px 14px",background:"#FCF1EF",borderRadius:10,border:"1px solid #F5D4D0",textAlign:"center"}}>{err}</div>}
-      <button className="cta lime" disabled={status==="checking"} onClick={checkVerified} style={{width:"100%",justifyContent:"center",marginBottom:12}}>
-        {status==="checking" ? "Checking…" : "I've verified — continue"}
+      <button className="cta lime" disabled={code.length!==6||checking} onClick={submitCode} style={{width:"100%",justifyContent:"center",marginBottom:12}}>
+        {checking ? "Verifying…" : "Verify email"}
       </button>
-      <button className="provider" disabled={status==="sending"||status==="sent"} onClick={resend}>
-        {status==="sending" ? "Sending…" : status==="sent" ? "Sent — check your inbox" : "Resend verification email"}
+      <button className="provider" disabled={sendStatus==="sending"||sendStatus==="sent"} onClick={resend}>
+        {sendStatus==="sending" ? "Sending…" : sendStatus==="sent" ? "Sent — check your inbox" : "Resend code"}
       </button>
     </div>
   );
@@ -309,12 +340,39 @@ function StepVerify({ advanceToProfile }) {
 
 const statusChipStyle=(sel)=>({flex:1,padding:"16px 14px",borderRadius:14,fontSize:14,fontWeight:600,cursor:"pointer",border:`1.5px solid ${sel?"#9EC83D":"var(--line-strong)"}`,background:sel?"rgba(158,200,61,0.16)":"white",color:sel?"#14342A":"var(--muted)",fontFamily:"inherit",textAlign:"center"});
 
+const USERNAME_RE = /^[a-z][a-z0-9_]{2,19}$/;
+
 // Post-auth profile fork — the only other thing collected before the user
 // lands in the product. Everything else (weekly routine, peak study window)
 // is deferred to the Calendar tab's first-visit wizard, not asked here.
 function StepProfile({ state, set }) {
   const status = state.status || "";
   const label = status === "highschool" ? "Enter your High School" : "Enter your University";
+  const [uCheck, setUCheck] = useState(state.usernameOk ? "available" : "idle"); // idle | checking | available | taken | invalid
+  const timerRef = useRef(null);
+
+  const onUsernameChange = (raw) => {
+    const v = raw.toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 20);
+    set(s => ({ ...s, username: v, usernameOk: false }));
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (!v) { setUCheck("idle"); return; }
+    if (!USERNAME_RE.test(v)) { setUCheck("invalid"); return; }
+    setUCheck("checking");
+    timerRef.current = setTimeout(async () => {
+      try {
+        const snap = await firebase.firestore().collection("usernames").doc(v).get();
+        if (snap.exists) setUCheck("taken");
+        else { setUCheck("available"); set(s => (s.username === v ? { ...s, usernameOk: true } : s)); }
+      } catch(e) { setUCheck("idle"); }
+    }, 450);
+  };
+
+  const uErr = uCheck === "taken" ? "Username is already taken."
+    : uCheck === "invalid" ? "3-20 characters: lowercase letters, numbers, underscores. Must start with a letter."
+    : null;
+  const uHint = uCheck === "checking" ? "Checking availability…"
+    : uCheck === "available" && state.username ? `@${state.username} is available` : "Your public handle on Studlin.";
+
   return (
     <div className="frame">
       <div className="frame-head">
@@ -328,6 +386,7 @@ function StepProfile({ state, set }) {
       </div>
 
       <TextField label={label} value={state.school} onChange={v=>set({...state, school:v})} hint="Just the name — no need to search a list." />
+      <TextField label="Choose a username" value={state.username||""} onChange={onUsernameChange} error={uErr} hint={uErr?null:uHint} autoComplete="off" />
     </div>
   );
 }
@@ -372,12 +431,13 @@ function App() {
       return !!state.terms && (!!firebase.auth().currentUser || !!(state.provider) || !!(state.name && state.email && (state.password||"").length >= 8));
     }
     if (step === 1) return isVerifiedOrGoogle(firebase.auth().currentUser);
-    if (step === 2) return !!state.status && !!(state.school||"").trim();
+    if (step === 2) return !!state.status && !!(state.school||"").trim() && !!state.usernameOk && USERNAME_RE.test(state.username||"");
     return true;
   };
 
   const [transitioning, setTransitioning] = useState(false);
   const [finishing, setFinishing] = useState(false);
+  const [finishError, setFinishError] = useState("");
 
   const back = () => { setTransitioning(true); setTimeout(() => { setStep(s => Math.max(0, s-1)); setTransitioning(false); }, 250); };
 
@@ -389,17 +449,41 @@ function App() {
   // user lands on the Dashboard, not forced into Calendar.
   const finishOnboarding = async () => {
     if (!isStepValid() || finishing) return;
-    setFinishing(true);
+    setFinishing(true); setFinishError("");
+    const u = firebase.auth().currentUser;
+    const uname = (state.username||"").trim().toLowerCase();
+
+    // Claim the username atomically first — a transaction so two people
+    // racing on the same handle can't both win. Only if this succeeds do we
+    // clear onboarding state and hand off to the app; a rejection (already
+    // taken) leaves the user right where they were, free to try another.
+    if (u && uname) {
+      try {
+        const db = firebase.firestore();
+        const unameRef = db.collection('usernames').doc(uname);
+        const profileRef = db.collection('profiles').doc(u.uid);
+        await db.runTransaction(async (tx) => {
+          const unameSnap = await tx.get(unameRef);
+          if (unameSnap.exists) throw new Error('taken');
+          tx.set(unameRef, { uid: u.uid, createdAt: new Date().toISOString() });
+          tx.set(profileRef, { username: uname, usernameLower: uname }, { merge: true });
+        });
+      } catch(e) {
+        setFinishing(false);
+        setFinishError(e.message === 'taken' ? "Username is already taken. Please choose another." : "Couldn't claim that username. Please try again.");
+        return;
+      }
+    }
+
     try { localStorage.setItem("studlin-onboarded", "true"); } catch(e){}
     // Mirrors the app's own local `profile` object (studlin-app.jsx's
-    // getProfile()/saveProfile()) so status/school are available to the
-    // Calendar's routine wizard immediately, with no Firestore round-trip.
+    // getProfile()/saveProfile()) so status/school/username are available to
+    // the Calendar's routine wizard immediately, with no Firestore round-trip.
     try {
       const prevProfile = JSON.parse(localStorage.getItem("studlin-profile")||"null") || {};
-      localStorage.setItem("studlin-profile", JSON.stringify({ ...prevProfile, status: state.status||"", affiliation: (state.school||"").trim(), school: (state.school||"").trim() }));
+      localStorage.setItem("studlin-profile", JSON.stringify({ ...prevProfile, username: uname, status: state.status||"", affiliation: (state.school||"").trim(), school: (state.school||"").trim() }));
     } catch(e){}
     try { localStorage.removeItem("studlin-onboarding"); } catch(e){}
-    const u = firebase.auth().currentUser;
     if (u) {
       try {
         await firebase.firestore().collection('users').doc(u.uid).set({
@@ -449,6 +533,7 @@ function App() {
           {step === 2 && <StepProfile state={state} set={setState} />}
         </div>
         <div className="stage-foot" style={step===1?{display:"none"}:undefined}>
+          {finishError && <div style={{fontSize:13,color:"#C4544A",marginBottom:14,padding:"12px 14px",background:"#FCF1EF",borderRadius:10,border:"1px solid #F5D4D0",textAlign:"center"}}>{finishError}</div>}
           <button className="cta" disabled={!isStepValid()||finishing} onClick={()=>{
             if(step===0&&!firebase.auth().currentUser){
               const btn=document.querySelector('[data-cta="signup"]');

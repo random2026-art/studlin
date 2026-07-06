@@ -1,9 +1,12 @@
-const { auth } = require('./_lib/firebase-admin');
+const crypto = require('crypto');
+const { auth, db } = require('./_lib/firebase-admin');
 const { setCors, verifyAuth } = require('./_lib/auth');
 const { Resend } = require('resend');
 
-const APP_URL = 'https://studlin.vercel.app/Studlin%20Web%20App.html';
-const FROM    = 'Studlin <noreply@studlin.com>';
+const FROM = 'Studlin <noreply@studlin.com>';
+const OTP_TTL_MS = 10 * 60 * 1000;
+
+const hashCode = (code) => crypto.createHash('sha256').update(code).digest('hex');
 
 module.exports = async (req, res) => {
   setCors(req, res);
@@ -12,12 +15,11 @@ module.exports = async (req, res) => {
 
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) return res.status(503).json({ error: 'Email service not configured' });
-  if (!auth)   return res.status(503).json({ error: 'Auth service not configured' });
+  if (!auth || !db) return res.status(503).json({ error: 'Auth service not configured' });
 
   const user = await verifyAuth(req);
   if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-  // If already verified, nothing to do
   const firebaseUser = await auth.getUser(user.uid).catch(() => null);
   if (!firebaseUser) return res.status(404).json({ error: 'User not found' });
   if (firebaseUser.emailVerified) return res.json({ ok: true, alreadyVerified: true });
@@ -25,11 +27,16 @@ module.exports = async (req, res) => {
   const toEmail = firebaseUser.email;
   if (!toEmail) return res.status(400).json({ error: 'No email on account' });
 
-  let link;
+  const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
   try {
-    link = await auth.generateEmailVerificationLink(toEmail, { url: APP_URL });
+    await db.collection('emailOtps').doc(user.uid).set({
+      codeHash: hashCode(code),
+      expiresAt: Date.now() + OTP_TTL_MS,
+      attempts: 0,
+      createdAt: Date.now(),
+    });
   } catch (e) {
-    return res.status(500).json({ error: 'Could not generate verification link: ' + e.message });
+    return res.status(500).json({ error: 'Could not generate a verification code.' });
   }
 
   const deliverTo = process.env.RESEND_TEST_EMAIL || toEmail;
@@ -39,7 +46,7 @@ module.exports = async (req, res) => {
     const { error } = await resend.emails.send({
       from: FROM,
       to: [deliverTo],
-      subject: 'Verify your email for Studlin',
+      subject: 'Your Studlin verification code',
       html: `
 <!DOCTYPE html>
 <html lang="en">
@@ -75,27 +82,16 @@ module.exports = async (req, res) => {
             <h1 style="margin:0 0 10px;font-size:22px;font-weight:700;color:#0D120F;letter-spacing:-0.02em;line-height:1.25;">
               Verify your email address
             </h1>
-            <p style="margin:0 0 8px;font-size:14.5px;color:#555;line-height:1.7;">
-              Click the button below to confirm your email and access your Studlin workspace.
-            </p>
-            <p style="margin:0 0 28px;font-size:13px;color:#999;line-height:1.5;">
-              This link expires in 24 hours. If you didn't create a Studlin account, you can safely ignore this email.
+            <p style="margin:0 0 24px;font-size:14.5px;color:#555;line-height:1.7;">
+              Enter this code in Studlin to confirm your email and access your workspace.
             </p>
 
-            <!-- CTA -->
-            <table cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
-              <tr>
-                <td style="background:#AECE5E;border-radius:10px;">
-                  <a href="${link}" style="display:inline-block;padding:14px 32px;font-size:15px;font-weight:700;color:#0D120F;text-decoration:none;letter-spacing:-0.01em;">
-                    Verify email address
-                  </a>
-                </td>
-              </tr>
-            </table>
+            <div style="text-align:center;margin-bottom:24px;">
+              <span style="display:inline-block;padding:16px 28px;font-size:32px;font-weight:800;letter-spacing:8px;color:#0D120F;background:#F4F0E6;border-radius:12px;">${code}</span>
+            </div>
 
-            <p style="margin:0;font-size:12px;color:#aaa;line-height:1.6;">
-              Or copy and paste this link into your browser:<br>
-              <a href="${link}" style="color:#7BAE3C;word-break:break-all;">${link}</a>
+            <p style="margin:0;font-size:13px;color:#999;line-height:1.5;">
+              This code expires in 10 minutes. If you didn't create a Studlin account, you can safely ignore this email.
             </p>
           </td>
         </tr>

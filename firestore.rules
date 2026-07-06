@@ -79,6 +79,21 @@ service cloud.firestore {
       }
     }
 
+    // Username reservations — a doc ID existing at all means that handle is
+    // taken. Client claims one atomically in a transaction alongside the
+    // profiles/{uid}.username write (see onboarding.jsx finishOnboarding()).
+    // Once created a reservation is permanent: no update/delete, so a handle
+    // can never be silently reassigned out from under its owner.
+    match /usernames/{uname} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.uid == request.auth.uid
+        && uname.matches('^[a-z][a-z0-9_]{2,19}$');
+      allow update, delete: if false;
+    }
+
+    // emailOtps is written/read exclusively by the Vercel API routes via the
+    // Admin SDK (which bypasses these rules) — never by the client directly.
     match /{document=**} {
       allow read, write: if false;
     }

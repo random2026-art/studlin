@@ -845,7 +845,7 @@ async function upsertProfile(extra={}){
   if(!u)return;
   const prof=getProfile();
   const name=u.displayName||prof.name||"Student";
-  const username=slugUsername(name);
+  const username=prof.username||slugUsername(name);
   const school=extra.school!==undefined?extra.school:(prof.affiliation||prof.school||"");
   const status=extra.status!==undefined?extra.status:(prof.status||"");
   const data={
@@ -9050,35 +9050,72 @@ function AuthScreen(){
 }
 
 
+// ─── OTP INPUT — six boxes, auto-advance, paste-friendly. Shared shape used
+// by both the main app's VerifyEmailScreen and onboarding.jsx's StepVerify.
+function OtpBoxes({value,onChange,disabled,autoFocus}){
+  const refs=useRef([]);
+  const setDigit=(i,d)=>{
+    const digits=value.split("");
+    digits[i]=d;
+    onChange(digits.join("").slice(0,6));
+  };
+  const onKeyDown=(i,e)=>{
+    if(e.key==="Backspace"&&!value[i]&&i>0)refs.current[i-1]?.focus();
+  };
+  const onInput=(i,e)=>{
+    const raw=e.target.value.replace(/\D/g,"");
+    if(!raw){setDigit(i,"");return;}
+    setDigit(i,raw[raw.length-1]);
+    if(i<5)refs.current[i+1]?.focus();
+  };
+  const onPaste=(e)=>{
+    const raw=(e.clipboardData.getData("text")||"").replace(/\D/g,"").slice(0,6);
+    if(!raw)return;
+    e.preventDefault();
+    onChange(raw.padEnd(value.length,"").slice(0,6));
+    refs.current[Math.min(raw.length,5)]?.focus();
+  };
+  return(
+    <div style={{display:"flex",gap:8,justifyContent:"center"}} onPaste={onPaste}>
+      {[0,1,2,3,4,5].map(i=>(
+        <input key={i} ref={el=>refs.current[i]=el} value={value[i]||""} onChange={e=>onInput(i,e)} onKeyDown={e=>onKeyDown(i,e)}
+          disabled={disabled} autoFocus={autoFocus&&i===0} inputMode="numeric" maxLength={1}
+          style={{width:42,height:52,textAlign:"center",fontSize:22,fontWeight:700,borderRadius:10,border:"1.5px solid rgba(174,206,94,0.25)",background:"#0D120F",color:"#E8EFE7",outline:"none"}}
+          onFocus={e=>e.target.style.borderColor="#AECE5E"}
+          onBlur={e=>e.target.style.borderColor="rgba(174,206,94,0.25)"} />
+      ))}
+    </div>
+  );
+}
+
 // ─── VERIFY EMAIL SCREEN — blocks the dashboard until a password account
-// confirms their inbox link. Google accounts never see this (see isPasswordAccount).
+// enters the 6-digit code emailed to them. Google accounts never see this
+// (see isPasswordAccount).
 function VerifyEmailScreen({user}){
-  const [status,setStatus]=useState("idle"); // idle | sending | sent | checking
+  const [sendStatus,setSendStatus]=useState("idle"); // idle | sending | sent
+  const [code,setCode]=useState("");
+  const [checking,setChecking]=useState(false);
   const [err,setErr]=useState("");
   const resend=async()=>{
-    setStatus("sending");setErr("");
+    setSendStatus("sending");setErr("");
     try{
       const res=await authFetch("/api/send-verification",{method:"POST"});
       const d=await res.json();
-      if(d.ok){setStatus("sent");setTimeout(()=>setStatus("idle"),30000);}
-      else setErr(d.error||"Couldn't send the email. Try again shortly.");
-    }catch(e){setErr("Couldn't send the email. Try again shortly.");}
-    if(status==="sending")setStatus("idle");
+      if(d.ok){setSendStatus("sent");setTimeout(()=>setSendStatus("idle"),30000);}
+      else{setErr(d.error||"Couldn't send the email. Try again shortly.");setSendStatus("idle");}
+    }catch(e){setErr("Couldn't send the email. Try again shortly.");setSendStatus("idle");}
   };
-  const checkVerified=async()=>{
-    setStatus("checking");
-    try{await user.reload();}catch(e){}
-    if(firebase.auth().currentUser&&firebase.auth().currentUser.emailVerified){
-      // onAuthStateChanged doesn't refire just from reload() — force AuthGate to
-      // re-evaluate by nudging auth state via a no-op state change upstream.
-      window.location.reload();
-    }else{setStatus("idle");}
+  const submitCode=async()=>{
+    if(code.length!==6||checking)return;
+    setChecking(true);setErr("");
+    try{
+      const res=await authFetch("/api/verify-otp",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({code})});
+      const d=await res.json();
+      if(d.ok){window.location.reload();return;}
+      setErr(d.error||"Incorrect code. Try again.");
+    }catch(e){setErr("Couldn't verify right now. Try again.");}
+    setChecking(false);
   };
-  useEffect(()=>{
-    const onFocus=()=>{if(document.visibilityState==="visible")checkVerified();};
-    document.addEventListener("visibilitychange",onFocus);
-    return ()=>document.removeEventListener("visibilitychange",onFocus);
-  },[]);
   return(
     <div style={{minHeight:"100vh",background:"#0D120F",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20,padding:24}}>
       <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -9088,18 +9125,18 @@ function VerifyEmailScreen({user}){
         <span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span>
       </div>
       <div style={{width:"100%",maxWidth:380,background:"#111A15",border:"1px solid rgba(174,206,94,0.16)",borderRadius:16,padding:"28px 26px",textAlign:"center"}}>
-        <div style={{fontSize:17,fontWeight:700,color:"#E8EFE7",marginBottom:8}}>Check your inbox</div>
-        <p style={{fontSize:13.5,color:"rgba(232,239,231,0.6)",lineHeight:1.6,margin:"0 0 4px"}}>
-          We sent a verification link to<br/><strong style={{color:"#E8EFE7"}}>{user.email}</strong>.
+        <div style={{fontSize:17,fontWeight:700,color:"#E8EFE7",marginBottom:8}}>Enter your code</div>
+        <p style={{fontSize:13.5,color:"rgba(232,239,231,0.6)",lineHeight:1.6,margin:"0 0 20px"}}>
+          We sent a 6-digit code to<br/><strong style={{color:"#E8EFE7"}}>{user.email}</strong>.
         </p>
-        <p style={{fontSize:13.5,color:"rgba(232,239,231,0.6)",lineHeight:1.6,margin:"0 0 20px"}}>Click it, then come back here.</p>
-        <button onClick={checkVerified} disabled={status==="checking"} style={{width:"100%",padding:"12px 0",borderRadius:10,background:"#AECE5E",color:"#0E1F18",border:"none",fontSize:14,fontWeight:600,cursor:status==="checking"?"not-allowed":"pointer",opacity:status==="checking"?0.7:1,marginBottom:10}}>
-          {status==="checking"?"Checking…":"I've verified — continue"}
+        <OtpBoxes value={code} onChange={v=>{setCode(v);setErr("");}} disabled={checking} autoFocus />
+        {err&&<div style={{fontSize:12,color:"#E05A47",marginTop:14}}>{err}</div>}
+        <button onClick={submitCode} disabled={code.length!==6||checking} style={{width:"100%",padding:"12px 0",borderRadius:10,background:"#AECE5E",color:"#0E1F18",border:"none",fontSize:14,fontWeight:600,cursor:code.length!==6||checking?"not-allowed":"pointer",opacity:code.length!==6||checking?0.5:1,marginTop:18,marginBottom:10}}>
+          {checking?"Verifying…":"Verify email"}
         </button>
-        <button onClick={resend} disabled={status==="sending"||status==="sent"} style={{width:"100%",padding:"11px 0",borderRadius:10,border:"1px solid rgba(174,206,94,0.3)",background:"transparent",color:"#AECE5E",fontSize:13.5,fontWeight:600,cursor:status==="sending"||status==="sent"?"not-allowed":"pointer",opacity:status==="sending"||status==="sent"?0.6:1}}>
-          {status==="sending"?"Sending…":status==="sent"?"Sent — check your inbox":"Resend verification email"}
+        <button onClick={resend} disabled={sendStatus==="sending"||sendStatus==="sent"} style={{width:"100%",padding:"11px 0",borderRadius:10,border:"1px solid rgba(174,206,94,0.3)",background:"transparent",color:"#AECE5E",fontSize:13.5,fontWeight:600,cursor:sendStatus==="sending"||sendStatus==="sent"?"not-allowed":"pointer",opacity:sendStatus==="sending"||sendStatus==="sent"?0.6:1}}>
+          {sendStatus==="sending"?"Sending…":sendStatus==="sent"?"Sent — check your inbox":"Resend code"}
         </button>
-        {err&&<div style={{fontSize:12,color:"#E05A47",marginTop:10}}>{err}</div>}
       </div>
       <button onClick={()=>firebase.auth().signOut()} style={{background:"none",border:"none",color:"rgba(232,239,231,0.4)",fontSize:12.5,cursor:"pointer",textDecoration:"underline"}}>Sign out</button>
     </div>
