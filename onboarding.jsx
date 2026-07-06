@@ -522,7 +522,7 @@ function App() {
         posthog.setPersonProperties({school:(state.school||"").trim(),onboarded:true});
       }
     }
-    window.location.href = "Studlin Web App.html";
+    window.location.href = "/app";
   };
 
   useEffect(()=>{

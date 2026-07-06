@@ -135,7 +135,7 @@ firebase.auth().onAuthStateChanged(u=>{
   if(!u){
     document.getElementById('card-errors').textContent='Please sign in first.';
     document.getElementById('payBtn').disabled=true;
-    setTimeout(()=>{window.location.href='Studlin Web App.html';},2000);
+    setTimeout(()=>{window.location.href='/app';},2000);
   }else{
     const emailEl=document.getElementById('email');
     const nameEl=document.getElementById('fullName');
@@ -180,7 +180,7 @@ function updateUI(){
     document.getElementById('formSub').textContent='You will be charged immediately.';
     document.getElementById('payBtn').textContent='Pay '+price;
     document.getElementById('cancelNote').innerHTML='Credits are non-refundable.<br>Need help? Contact support.';
-    document.getElementById('backLink').href='Studlin Web App.html';
+    document.getElementById('backLink').href='/app';
     document.getElementById('backLink').textContent='← Back to app';
   }else{
     const p=PLAN_DATA[plan]||PLAN_DATA.pro;
@@ -242,7 +242,7 @@ async function handlePayment(){
     btn.innerHTML='✓ Success!';
     btn.style.background='#0E1F18';
     btn.style.color='#F6F1E6';
-    setTimeout(()=>{window.location.href='Studlin Web App.html';},1500);
+    setTimeout(()=>{window.location.href='/app';},1500);
   }catch(err){
     errEl.textContent=err.message||'Something went wrong.';
     btn.disabled=false;

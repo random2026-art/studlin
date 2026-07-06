@@ -15,7 +15,7 @@ const Ic = {
   clock: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
 };
 
-const APP_URL = "Studlin Web App.html";
+const APP_URL = "/app";
 
 // Deliberately generic for user-not-found/wrong-password/invalid-credential —
 // telling an attacker "no account found" vs "wrong password" lets them
