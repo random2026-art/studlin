@@ -1,20 +1,40 @@
 // Admin-only CSV export of all Studlin users.
-// Access: GET /api/export-users?secret=YOUR_ADMIN_EXPORT_SECRET
+// Access: POST /api/export-users with JSON body { secret: "YOUR_ADMIN_EXPORT_SECRET" }
 // Set ADMIN_EXPORT_SECRET in Vercel environment variables.
 const { db, auth } = require('./_lib/firebase-admin');
 
+const TEST_PATTERNS = [
+  /@example\.com$/i,
+  /^studlin\.qa/i,
+  /^qa\s/i,
+  /^test\s/i,
+  /testuser/i,
+];
+
+function isTestAccount(email, name) {
+  if (!email) return false;
+  if (TEST_PATTERNS.some(p => p.test(email))) return true;
+  if (name && TEST_PATTERNS.some(p => p.test(name))) return true;
+  return false;
+}
+
 module.exports = async (req, res) => {
-  if (req.method !== 'GET') return res.status(405).end();
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).end();
 
   const secret = process.env.ADMIN_EXPORT_SECRET;
-  if (!secret || req.query.secret !== secret) {
+  const provided = (req.body || {}).secret;
+  if (!secret || provided !== secret) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
   if (!db || !auth) return res.status(500).json({ error: 'Firebase not initialized' });
 
   try {
-    // Pull all Firebase Auth users (for displayName / creationTime)
+    // Pull all Firebase Auth users
     const authUsers = {};
     let pageToken;
     do {
@@ -23,6 +43,7 @@ module.exports = async (req, res) => {
         authUsers[u.uid] = {
           name: u.displayName || '',
           email: u.email || '',
+          emailVerified: u.emailVerified ? 'yes' : 'no',
           createdAt: u.metadata.creationTime || '',
           provider: (u.providerData[0] || {}).providerId || 'unknown',
         };
@@ -30,33 +51,38 @@ module.exports = async (req, res) => {
       pageToken = result.pageToken;
     } while (pageToken);
 
-    // Pull all Firestore user documents
+    // Pull Firestore user documents
     const snap = await db.collection('users').get();
     const firestoreUsers = {};
     snap.forEach(doc => { firestoreUsers[doc.id] = doc.data(); });
 
-    // Merge: every Auth user gets a row, Firestore fills in the extra fields
-    const rows = Object.entries(authUsers).map(([uid, au]) => {
-      const fs = firestoreUsers[uid] || {};
-      return {
-        name:        fs.name || au.name || '',
-        email:       fs.email || au.email || '',
-        school:      fs.school || fs.affiliation || '',
-        status:      fs.status || '',
-        plan:        fs.plan || 'Free',
-        credits:     fs.credits !== undefined ? fs.credits : '',
-        onboarded:   fs.onboarded ? 'yes' : 'no',
-        provider:    au.provider,
-        createdAt:   fs.createdAt || au.createdAt || '',
-        onboardedAt: fs.onboardedAt || '',
-      };
+    // Merge and filter out test accounts
+    const rows = Object.entries(authUsers)
+      .map(([uid, au]) => {
+        const fs = firestoreUsers[uid] || {};
+        return {
+          name:          fs.name || au.name || '',
+          email:         fs.email || au.email || '',
+          school:        fs.school || fs.affiliation || '',
+          status:        fs.status || '',
+          plan:          fs.plan || 'Free',
+          credits:       fs.credits !== undefined ? fs.credits : '',
+          onboarded:     fs.onboarded ? 'yes' : 'no',
+          emailVerified: au.emailVerified,
+          provider:      au.provider,
+          createdAt:     fs.createdAt || au.createdAt || '',
+          onboardedAt:   fs.onboardedAt || '',
+        };
+      })
+      .filter(r => !isTestAccount(r.email, r.name));
+
+    // Sort: onboarded users first, then by newest signup
+    rows.sort((a, b) => {
+      if (a.onboarded !== b.onboarded) return a.onboarded === 'yes' ? -1 : 1;
+      return (b.createdAt > a.createdAt ? 1 : -1);
     });
 
-    // Sort by createdAt descending (newest first)
-    rows.sort((a, b) => (b.createdAt > a.createdAt ? 1 : -1));
-
-    // Build CSV
-    const headers = ['name','email','school','status','plan','credits','onboarded','provider','createdAt','onboardedAt'];
+    const headers = ['name','email','school','status','plan','credits','onboarded','emailVerified','provider','createdAt','onboardedAt'];
     const escape = v => `"${String(v).replace(/"/g,'""')}"`;
     const csv = [
       headers.join(','),
