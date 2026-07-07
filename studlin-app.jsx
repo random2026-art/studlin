@@ -835,6 +835,74 @@ function findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,durat
   const conflict=occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end));
   return conflict?null:slot;
 }
+// Same-day-only room check — unlike findOpenSlotFor this never scans
+// forward into later days, used by findSlotWithEviction to decide whether
+// a specific day needs eviction at all.
+function dayHasRoomFor(events,routines,prefs,dateKey,duration){
+  const prefStartMins=timeToMinutes(prefs.workStartTime);
+  const prefEndMins=timeToMinutes(prefs.workEndTime);
+  const occupied=events.filter(e=>e.date===dateKey&&e.time)
+    .concat(expandRoutineOccurrences(routines,dateKey,dateKey).filter(o=>o.kind!=="free period"))
+    .map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
+  for(let t=prefStartMins;t+duration<=prefEndMins;t+=15){
+    if(!occupied.some(o=>!(t+duration<=o.start||t>=o.end)))return true;
+  }
+  return false;
+}
+// Intelligent task swapping — when a task with an imminent deadline (due
+// within 3 days) needs to land on a day that's already full, evict that
+// day's long-term-project micro-sessions (pending study blocks whose own
+// deadline is more than 7 days out, or has none at all) instead of pushing
+// the imminent task further into the future the way findOpenSlotFor's
+// plain forward-scan would — an emergency task should bump low-urgency
+// filler, not get bumped itself. Evicted sessions are re-placed starting
+// the day after, via the ordinary findOpenSlotFor, each still respecting
+// its own deadline — eviction can shuffle a task later in the week, it can
+// never cause it to miss its own due date. Falls back to the plain
+// forward-scan if the task isn't imminent, the day already has room, or
+// evicting every eligible candidate still isn't enough.
+// Returns {events, placement}: events is the full updated array (with any
+// evictions relocated) ready to persist; placement is where the task
+// itself lands.
+function findSlotWithEviction(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey){
+  const daysOut=deadlineKey?Math.ceil((new Date(deadlineKey+"T12:00:00")-new Date(dayKey()+"T12:00:00"))/86400000):null;
+  const isImminent=daysOut!==null&&daysOut<=3;
+
+  if(!isImminent||dayHasRoomFor(events,routines,prefs,desiredDate,duration)){
+    return {events,placement:findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey)};
+  }
+
+  const candidates=events.filter(e=>e.date===desiredDate&&e.kind==="study block"&&e.status==="pending"&&
+    (!e.deadline||daysUntilDeadline(e)>7)
+  ).sort((a,b)=>{
+    const da=a.deadline?daysUntilDeadline(a):Infinity;
+    const db=b.deadline?daysUntilDeadline(b):Infinity;
+    return db-da; // furthest-out (or no) deadline evicted first
+  });
+
+  let working=events.slice();
+  const evictedIds=new Set();
+  for(const cand of candidates){
+    working=working.filter(e=>e.id!==cand.id);
+    evictedIds.add(cand.id);
+    if(dayHasRoomFor(working,routines,prefs,desiredDate,duration))break;
+  }
+
+  if(!dayHasRoomFor(working,routines,prefs,desiredDate,duration)){
+    return {events,placement:findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey)};
+  }
+
+  const nextDay=(()=>{const d=new Date(desiredDate+"T12:00:00");d.setDate(d.getDate()+1);return dayKey(d);})();
+  let pool=working.slice();
+  events.forEach(ev=>{
+    if(!evictedIds.has(ev.id))return;
+    const newSlot=findOpenSlotFor(pool,routines,prefs,nextDay,prefs.workStartTime,ev.duration||30,ev.deadline||null);
+    pool=pool.concat([{...ev,date:newSlot.date,time:newSlot.time}]);
+  });
+
+  const placement=findOpenSlotFor(working,routines,prefs,desiredDate,desiredTime,duration,deadlineKey);
+  return {events:pool,placement};
+}
 // Places a student-reported "I need more time" extension for an assignment
 // into the next open gap(s) before its deadline. Splits anything over 90min
 // into multiple sessions (same chunking ceiling aiArrange uses), each placed
@@ -5710,7 +5778,7 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
 
 // The "Today"/selected-day + Upcoming agenda column — shared by Monthly and
 // Weekly views so the collapsible panel behaves identically in both.
-function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, colorOf, openNew, openEdit, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, routines, openRoutineEdit, deleteRoutineItem, markDone, removeEvent, setSelDay, setYm, dragId, setDragId}) {
+function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, colorOf, openNew, openEdit, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, routines, openRoutineEdit, deleteRoutineItem, markDone, removeEvent, setSelDay, setYm, dragId, setDragId, openReschedule}) {
   return (
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       <Card style={{padding:16}}>
@@ -5767,6 +5835,7 @@ function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, c
                 <div style={{display:"flex",gap:4,flexShrink:0,alignItems:"center"}}>
                   {!isDone&&ev.duration&&(ev.kind==="study block"||ev.kind==="deadline")&&<BtnSm onClick={()=>{if(window._setTimerTask)window._setTimerTask(ev);}} style={{flexShrink:0,boxShadow:`0 2px 10px -3px ${T.lime}88`}}>Begin</BtnSm>}
                   {!isDone&&(ev.kind==="exam"||ev.kind==="class"||ev.kind==="reminder")&&<button onClick={()=>openEdit(ev)} title="View details" style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Details</button>}
+                  {!isDone&&ev.duration&&(ev.kind==="study block"||ev.kind==="deadline")&&<button onClick={()=>openReschedule(ev)} title="Reschedule" style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Reschedule</button>}
                   {!isDone&&<button onClick={()=>markDone(ev.id)} title="Mark done" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",display:"flex"}}>{Icon.check}</button>}
                   <button onClick={()=>removeEvent(ev.id)} title="Delete" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,padding:2}}>×</button>
                 </div>
@@ -5900,6 +5969,62 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
   );
 }
 
+const fmtMinsDur=(m)=>m>=60?Math.floor(m/60)+"h"+(m%60?" "+(m%60)+"m":""):m+"m";
+
+// Velocity Impact Display — shown as the confirmation step whenever a
+// student reschedules a single task, so the trade-off (rest reclaimed
+// today vs. the workload it adds to tomorrow) is a conscious choice
+// instead of a silent one-click action.
+function computeVelocityImpact(task,events){
+  const tomorrow=(()=>{const d=new Date();d.setDate(d.getDate()+1);return dayKey(d);})();
+  const taskMins=task.duration||30;
+  const tomorrowEvents=events.filter(e=>e.date===tomorrow&&e.status!=="done"&&e.id!==task.id);
+  let baseMins=tomorrowEvents.reduce((a,e)=>a+(e.duration||0),0);
+  if(baseMins<=0){
+    // Tomorrow's empty — a single task would otherwise read as an
+    // undefined/infinite jump, so fall back to the rolling 7-day daily
+    // average scheduled load as the baseline instead.
+    const today=dayKey();
+    const start=(()=>{const d=new Date();d.setDate(d.getDate()-7);return dayKey(d);})();
+    const recent=events.filter(e=>e.date>=start&&e.date<today&&e.status!=="done");
+    baseMins=Math.round(recent.reduce((a,e)=>a+(e.duration||0),0)/7);
+  }
+  const pct=baseMins>0?Math.round((taskMins/baseMins)*100):100;
+  return {tomorrow,taskMins,baseMins,pct,isHigh:pct>=15};
+}
+
+function RescheduleModal({task,events,commit,onClose}){
+  const [err,setErr]=useState("");
+  const {tomorrow,taskMins,pct,isHigh}=computeVelocityImpact(task,events);
+
+  const confirm=()=>{
+    if(task.deadline&&tomorrow>task.deadline){setErr("Can't reschedule past "+task.deadline+" — that's the deadline.");return;}
+    const prefs=getSchedulePreferences();
+    const routines=getWeeklyRoutine();
+    const {events:relocated,placement}=findSlotWithEviction(events,routines,prefs,tomorrow,prefs.workStartTime,taskMins,task.deadline||null);
+    const finalEvents=relocated.map(e=>e.id===task.id?{...e,date:placement.date,time:placement.time}:e);
+    const evictedCount=relocated.filter(e=>{const orig=events.find(o=>o.id===e.id);return orig&&orig.date===tomorrow&&e.date!==tomorrow;}).length;
+    commit(finalEvents,evictedCount);
+    onClose();
+  };
+
+  return (
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:420,background:T.card,border:`1px solid ${T.border}`,borderRadius:18,padding:24,animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
+        <div style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:10}}>Reschedule "{task.title}"?</div>
+        <div style={{fontSize:13.5,color:T.text,lineHeight:1.65,marginBottom:18}}>
+          Rescheduling this gives you <strong>{fmtMinsDur(taskMins)}</strong> of rest right now, but increases tomorrow's active workload by <strong style={{color:isHigh?T.amber:T.muted}}>{pct}%</strong>.
+        </div>
+        {err&&<div style={{fontSize:12.5,color:T.red,marginBottom:14,padding:"10px 12px",background:T.red+"14",borderRadius:9}}>{err}</div>}
+        <div style={{display:"flex",gap:8}}>
+          <Btn onClick={confirm} style={{flex:1,justifyContent:"center"}}>Confirm Reschedule</Btn>
+          <Btn variant="subtle" onClick={onClose} style={{flex:1,justifyContent:"center"}}>Cancel</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.muted},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
@@ -5991,6 +6116,10 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
   // reschedule attempt past a task's own deadline never silently succeeds.
   const [deadlineToast,setDeadlineToast]=useState("");
   const showDeadlineToast=(deadline)=>{setDeadlineToast("Can't reschedule past "+deadline+" — that's the deadline.");setTimeout(()=>setDeadlineToast(""),2800);};
+  // Velocity Impact reschedule confirmation — set to the task being
+  // rescheduled, null when closed.
+  const [rescheduleTask,setRescheduleTask]=useState(null);
+  const [rescheduleToast,setRescheduleToast]=useState("");
   // Tier 3 — Global Emergency "Pause My Life". pausePreview holds the
   // computed (not-yet-committed) plan: {label, moved:[...], couldntMove:[...]}.
   const [pauseOpen,setPauseOpen]=useState(false);
@@ -6494,7 +6623,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
         ))}
       </div>
       {calView==="monthly"&&(<CollapsibleAgendaLayout isAgendaCollapsed={isAgendaCollapsed} setIsAgendaCollapsed={setIsAgendaCollapsed}
-        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,markDone,removeEvent,setSelDay,setYm,dragId,setDragId}}>
+        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,markDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask}}>
         <Card style={{padding:16}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,padding:"4px 6px"}}>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
@@ -6546,7 +6675,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
         </Card>
       </CollapsibleAgendaLayout>)}
       {calView==="weekly"&&(<CollapsibleAgendaLayout isAgendaCollapsed={isAgendaCollapsed} setIsAgendaCollapsed={setIsAgendaCollapsed}
-        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,markDone,removeEvent,setSelDay,setYm,dragId,setDragId}}>
+        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,markDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask}}>
         <WeeklyPlanner events={events} setEvents={setEvents} moveEvent={moveEvent} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openNew={openNew} openEdit={openEdit}
           routines={routines} editRoutineMode={editRoutineMode} hoveredRoutineId={hoveredRoutineId} setHoveredRoutineId={setHoveredRoutineId}
           onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
@@ -6595,6 +6724,16 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
       )}
       {deadlineToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.red,color:"#fff",fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)"}}>{deadlineToast}</div>
+      )}
+      {rescheduleToast&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {rescheduleToast}</div>
+      )}
+      {rescheduleTask&&(
+        <RescheduleModal task={rescheduleTask} events={events} onClose={()=>setRescheduleTask(null)} commit={(next,evictedCount)=>{
+          setEvents(next);lsSet("events",next);
+          setRescheduleToast(evictedCount>0?`Task rescheduled — ${evictedCount} other${evictedCount!==1?"s":""} shifted to make room.`:"Task rescheduled.");
+          setTimeout(()=>setRescheduleToast(""),2800);
+        }} />
       )}
       <Modal open={newOpen} onClose={resetForm} title="New task" sub="Add details and let Studlin schedule it, or place it manually." width={580}
         footer={
@@ -6659,7 +6798,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
 
         {isTaskKind&&taskMode==="ai"&&(
           <>
-            <Field label={`Priority: ${Math.round(evPriority/10)}%`} hint="Higher priority tasks are scheduled earlier">
+            <Field label={`Impact: ${Math.round(evPriority/10)}%`} hint="How critical this is, independent of its due date — higher-impact tasks get scheduled earlier">
               <div style={{display:"flex",alignItems:"center",gap:12}}>
                 <span style={{fontSize:11,color:T.muted,width:28}}>Low</span>
                 <div style={{flex:1,position:"relative",paddingTop:24}}>
@@ -6718,7 +6857,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
         {editKind!=="exam"&&editKind!=="class"&&editKind!=="reminder"&&(
           <>
             <Field label="Deadline" hint="When this must be done by"><Input type="date" value={editDeadline} onChange={e=>{setEditDeadline(e.target.value);setEditDeadlineErr("");}} /></Field>
-            <Field label={`Priority: ${Math.round(editPriority/10)}%`} hint="Higher priority tasks are scheduled earlier">
+            <Field label={`Impact: ${Math.round(editPriority/10)}%`} hint="How critical this is, independent of its due date — higher-impact tasks get scheduled earlier">
               <div style={{display:"flex",alignItems:"center",gap:12}}>
                 <span style={{fontSize:11,color:T.muted,width:28}}>Low</span>
                 <div style={{flex:1,position:"relative",paddingTop:24}}>
@@ -8720,6 +8859,8 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
     return ()=>{cancelled=true;};
   },[]);
   const [,forcePlan]=useState(0);
+  const [rescheduleTask,setRescheduleTask]=useState(null);
+  const [dashToast,setDashToast]=useState("");
   const [levelRoadmapOpen,setLevelRoadmapOpen]=useState(false);
   const [leaderboardOpen,setLeaderboardOpen]=useState(false);
   const plan=todaysPlan();
@@ -8954,6 +9095,9 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
                 </div>
                 <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.06em",padding:"3px 8px",borderRadius:6,background:c+"22",color:c,textTransform:"uppercase",fontWeight:600,flex:"none"}}>{t.subject.slice(0,4)}</span>
                 <span style={{fontFamily:T.mono,fontSize:11,color:T.muted}}>{fmtClock(t.time)}</span>
+                {!t.done&&t.duration&&(t.kind==="study block"||t.kind==="deadline")&&(
+                  <button onClick={(e)=>{e.stopPropagation();setRescheduleTask(t);}} title="Reschedule" style={{flexShrink:0,padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Reschedule</button>
+                )}
               </div>
             );})}
         </div>
@@ -9081,6 +9225,16 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
         instead of the real viewport. Siblings of it are unaffected. */}
     <LevelRoadmapModal open={levelRoadmapOpen} onClose={()=>setLevelRoadmapOpen(false)} currentMinutes={lvl.minutes} />
     <LeaderboardModal open={leaderboardOpen} onClose={()=>setLeaderboardOpen(false)} currentMinutes={lvl.minutes} currentName={firstName} currentStreak={realStreak} />
+    {rescheduleTask&&(
+      <RescheduleModal task={rescheduleTask} events={lsGet("events",[])} onClose={()=>setRescheduleTask(null)} commit={(next,evictedCount)=>{
+        lsSet("events",next);forcePlan(x=>x+1);
+        setDashToast(evictedCount>0?`Task rescheduled — ${evictedCount} other${evictedCount!==1?"s":""} shifted to make room.`:"Task rescheduled.");
+        setTimeout(()=>setDashToast(""),2800);
+      }} />
+    )}
+    {dashToast&&(
+      <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:1001,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {dashToast}</div>
+    )}
     {wrappedOpen&&!seriousMode&&(
       <div onClick={dismissWrapped} style={{position:"fixed",inset:0,background:"rgba(8,12,10,0.72)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
         <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:420,background:T.forest,color:T.cream,borderRadius:22,padding:28,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
