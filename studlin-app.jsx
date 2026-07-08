@@ -1122,7 +1122,6 @@ function sessionStats(){
   return {weekCount:week.length,weekMin,todayMin,avg:week.length?Math.round(weekMin/week.length):0,todayCount:today.length};
 }
 const fmtH=(m)=>m>=60?Math.floor(m/60)+"h "+(m%60)+"m":m+"m";
-const PLAN_LIMITS={Free:{music:2},Pro:{music:5},Max:{music:10}};
 function getPlan(){return lsGet("plan","Free");}
 function setPlanLS(p){lsSet("plan",p);}
 function getCredits(){return lsGet("credits",120);}
@@ -1664,7 +1663,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
 }
 
 // ─── NAV ICONS MAP ────────────────────────────────────────────────────────────
-const navIcon = {dashboard:Icon.grid,aichat:Icon.sparkles,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.users,lectures:Icon.mic,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,music:Icon.music,feedback:Icon.heart,settings:Icon.settings,profile:Icon.user};
+const navIcon = {dashboard:Icon.grid,aichat:Icon.sparkles,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.users,lectures:Icon.mic,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,feedback:Icon.heart,settings:Icon.settings,profile:Icon.user};
 
 // ─── AI CHAT ──────────────────────────────────────────────────────────────────
 function AiChat() {
@@ -7867,151 +7866,6 @@ function AiHumanizer() {
             {done&&<div style={{fontSize:11,color:T.lime,marginTop:8}}>{m.lower?"Risk reduced":"Improved"}</div>}
           </Card>
         ))}
-      </div>
-    </div>
-  );
-}
-
-// ─── FOCUS MUSIC ──────────────────────────────────────────────────────────────
-function FocusMusic(){
-  const plan=getPlan();
-  const limit=(PLAN_LIMITS[plan]||PLAN_LIMITS.Free).music;
-  const [creations,setCreations]=useState(()=>lsGet("musicCreations",[]));
-  const [desc,setDesc]=useState("");
-  const [len,setLen]=useState("30 min");
-  const [genning,setGenning]=useState(false);
-  const [upgOpen,setUpgOpen]=useState(false);
-  const [playing,setPlaying]=useState(null);
-  const [vol,setVol]=useState(70);
-  const [,bump]=useState(0);
-  const playlists=[
-    {name:"Deep focus",sub:"Lo-fi instrumental · 2h 34m",bg:"#0d2235",flair:T.blue},
-    {name:"Study jazz",sub:"Acoustic quartet · 1h 48m",bg:"#1a0d35",flair:T.purple},
-    {name:"Classical flow",sub:"Strings and piano · 3h 10m",bg:"#0d2222",flair:T.teal},
-    {name:"Brown noise",sub:"Ambient texture · continuous",bg:"#1a1a0d",flair:T.amber},
-    {name:"Alpha waves",sub:"Binaural 10Hz · 90 min",bg:"#1a0d0d",flair:T.red},
-    {name:"Forest ambience",sub:"Rain and birds · 4h",bg:"#0d1a12",flair:T.lime},
-  ];
-  const used=creations.length;
-  const generate=()=>{
-    if(!desc.trim()||genning)return;
-    if(used>=limit){setUpgOpen(true);return;}
-    setGenning(true);
-    setTimeout(()=>{
-      const name=desc.trim().length>36?desc.trim().slice(0,36)+"…":desc.trim();
-      const next=creations.concat([{id:String(Date.now()),name,len}]);
-      setCreations(next);lsSet("musicCreations",next);
-      setGenning(false);setDesc("");setPlaying({kind:"own",i:next.length-1});
-    },2400);
-  };
-  const removeCreation=(id)=>{const next=creations.filter(c=>c.id!==id);setCreations(next);lsSet("musicCreations",next);setPlaying(null);};
-  const nowName=playing?(playing.kind==="own"?(creations[playing.i]?creations[playing.i].name:null):playlists[playing.i].name):null;
-  const nowSub=playing?(playing.kind==="own"?"Your AI creation · "+(creations[playing.i]?creations[playing.i].len:""):playlists[playing.i].sub):null;
-  const nowFlair=playing?(playing.kind==="own"?T.lime:playlists[playing.i].flair):T.lime;
-  const nowBg=playing?(playing.kind==="own"?"#0d1a12":playlists[playing.i].bg):T.card;
-  return (
-    <div>
-      <style>{"@keyframes eqb{0%,100%{transform:scaleY(0.3)}50%{transform:scaleY(1)}}"}</style>
-      <UpgradeModal open={upgOpen} onClose={()=>setUpgOpen(false)} feature="AI music" detail={"The "+plan+" plan includes "+limit+" AI-generated tracks. Upgrade to keep composing custom focus sound, or delete an old creation to free a slot."} onUpgraded={()=>bump(x=>x+1)} />
-      <PH title="Focus Music" sub="Curated environments, or describe your own and let AI compose it" />
-      <div style={{display:"grid",gridTemplateColumns:"1fr 270px",gap:16}}>
-        <div style={{display:"flex",flexDirection:"column",gap:14}}>
-          <Card style={{background:"linear-gradient(120deg, "+T.card+" 0%, "+T.lime+"0d 100%)",border:"1px solid "+T.lime+"33",padding:20}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-              <Label>AI sound studio</Label>
-              <span style={{fontFamily:T.mono,fontSize:10,color:used>=limit?T.red:T.muted,letterSpacing:"0.06em"}}>{used} of {limit} creations used · {plan}</span>
-            </div>
-            <Textarea placeholder="Describe your sound · e.g. mellow piano over soft rain, slow tempo, no drums" value={desc} onChange={ev=>setDesc(ev.target.value)} style={{minHeight:64,marginBottom:10}} />
-            <div style={{display:"flex",gap:8,alignItems:"center"}}>
-              <SelectChip options={["15 min","30 min","60 min","Loop"]} value={len} onChange={setLen} />
-              <div style={{marginLeft:"auto"}}>
-                {genning
-                  ?<div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 14px"}}>
-                     <div style={{display:"flex",gap:3,alignItems:"center",height:18}}>
-                       {[0,1,2,3,4].map(i=>(<div key={i} style={{width:3,height:16,borderRadius:2,background:T.lime,transformOrigin:"center",animation:"eqb 0.9s ease-in-out infinite",animationDelay:(i*0.13)+"s"}} />))}
-                     </div>
-                     <span style={{fontSize:12,color:T.lime,fontWeight:600}}>Composing your mix…</span>
-                   </div>
-                  :<Btn onClick={generate} style={{opacity:desc.trim()?1:0.45}}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.wand,"Generate track")}</Btn>
-                }
-              </div>
-            </div>
-          </Card>
-          {creations.length>0&&(
-            <div>
-              <Label>Your creations</Label>
-              <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                {creations.map((c,i)=>(
-                  <Card key={c.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",border:"1px solid "+(playing&&playing.kind==="own"&&playing.i===i?T.lime+"55":T.border)}}>
-                    <button onClick={()=>setPlaying(playing&&playing.kind==="own"&&playing.i===i?null:{kind:"own",i})} style={{width:30,height:30,borderRadius:"50%",border:"1px solid "+T.lime+"44",background:T.lime+"18",color:T.lime,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{playing&&playing.kind==="own"&&playing.i===i?Icon.pause:Icon.play}</button>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:12.5,fontWeight:600,color:T.white,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.name}</div>
-                      <div style={{fontSize:10.5,color:T.muted}}>AI generated · {c.len}</div>
-                    </div>
-                    <button onClick={()=>removeCreation(c.id)} title="Delete to free a slot" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:14}}>×</button>
-                  </Card>
-                ))}
-              </div>
-            </div>
-          )}
-          <div>
-            <Label>Curated</Label>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
-              {playlists.map((p,i)=>(
-                <Card key={i} onClick={()=>setPlaying(playing&&playing.kind==="set"&&playing.i===i?null:{kind:"set",i})} style={{padding:0,overflow:"hidden",cursor:"pointer",border:"1px solid "+(playing&&playing.kind==="set"&&playing.i===i?p.flair+"44":T.border),transition:"border 0.2s"}}>
-                  <div style={{height:80,background:p.bg,borderBottom:"1px solid "+p.flair+"22",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                    <div style={{width:32,height:32,borderRadius:"50%",background:p.flair+"22",border:"1px solid "+p.flair+"44",display:"flex",alignItems:"center",justifyContent:"center",color:p.flair}}>{playing&&playing.kind==="set"&&playing.i===i?Icon.pause:Icon.play}</div>
-                  </div>
-                  <div style={{padding:"10px 12px"}}>
-                    <div style={{fontSize:12,fontWeight:600,color:T.white,marginBottom:2}}>{p.name}</div>
-                    <div style={{fontSize:11,color:T.muted}}>{p.sub}</div>
-                  </div>
-                </Card>
-              ))}
-            </div>
-          </div>
-        </div>
-        <div style={{display:"flex",flexDirection:"column",gap:12}}>
-          {playing&&nowName
-            ?<Card style={{background:nowBg,border:"1px solid "+nowFlair+"33"}}>
-                <Label>Now playing</Label>
-                <div style={{fontSize:15,fontWeight:700,color:"#fff",marginBottom:2,lineHeight:1.35}}>{nowName}</div>
-                <div style={{fontSize:12,color:"rgba(255,255,255,0.55)",marginBottom:20}}>{nowSub}</div>
-                <div style={{display:"flex",gap:10,justifyContent:"center",marginBottom:20}}>
-                  <button style={{width:32,height:32,borderRadius:"50%",border:"1px solid rgba(255,255,255,0.1)",background:"transparent",color:"rgba(255,255,255,0.55)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{Icon.prev}</button>
-                  <button onClick={()=>setPlaying(null)} style={{width:44,height:44,borderRadius:"50%",border:"none",background:nowFlair,color:T.bg,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{Icon.pause}</button>
-                  <button style={{width:32,height:32,borderRadius:"50%",border:"1px solid rgba(255,255,255,0.1)",background:"transparent",color:"rgba(255,255,255,0.55)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{Icon.skip}</button>
-                </div>
-                <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                  <div style={{color:"rgba(255,255,255,0.55)"}}>{Icon.volume}</div>
-                  <input type="range" min="0" max="100" value={vol} onChange={ev=>setVol(+ev.target.value)} style={{flex:1}} />
-                  <span style={{fontSize:11,color:"rgba(255,255,255,0.55)",minWidth:28,textAlign:"right"}}>{vol}%</span>
-                </div>
-              </Card>
-            :<Card style={{textAlign:"center",padding:32}}>
-                <div style={{color:T.faint,display:"flex",justifyContent:"center",marginBottom:10}}>{Icon.music}</div>
-                <div style={{fontSize:13,color:T.muted}}>Pick a playlist or compose your own</div>
-              </Card>
-          }
-          <Card>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-              <Label>AI creations</Label>
-              <Badge color={plan==="Max"?T.purple:T.lime}>{plan}</Badge>
-            </div>
-            <div style={{fontSize:24,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>{used}<span style={{fontSize:13,color:T.muted,fontWeight:400}}> / {limit} used</span></div>
-            <Prog pct={Math.min(100,Math.round(used/limit*100))} height={4} />
-            {plan!=="Max"&&<div onClick={()=>setUpgOpen(true)} style={{fontSize:11.5,color:T.lime,marginTop:10,cursor:"pointer",fontWeight:600}}>Upgrade for more creations →</div>}
-          </Card>
-          <Card>
-            <Label>Ambient layer</Label>
-            {[["Rain",38],["Cafe background",20],["White fan",0]].map(([nm,v],i)=>(
-              <div key={i} style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
-                <span style={{fontSize:11,color:T.muted,width:110,flexShrink:0}}>{nm}</span>
-                <input type="range" min="0" max="100" defaultValue={v} style={{flex:1}} />
-              </div>
-            ))}
-          </Card>
-        </div>
       </div>
     </div>
   );
