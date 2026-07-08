@@ -407,7 +407,7 @@ const PRICING_PLANS=(billing)=>([
   {
     key:"pro",name:"Pro",price:billing==="annual"?"$7.99":"$9.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:"7 DAYS FREE",
     desc:"Everything on Free is still manual. Pro is where the AI actually does the work.",
-    features:["~6× more AI credits (200/month)","Every AI model, plus 4 dedicated study modes","Auto-generate flashcards from your notes, a PDF, or a YouTube lecture — no manual typing","Google Docs sync with AI Rewrite in your own voice","Unlimited readability scoring"],
+    features:["~6× more AI credits (200/month)","Every AI model, plus 4 dedicated study modes","Auto-generate flashcards from your notes, a PDF, or a YouTube lecture — no manual typing","Unlimited syllabus deadline-scans","Study groups + shared scheduling"],
     cta:"Start free trial",variant:"lime",featured:true,
   },
   {

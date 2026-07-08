@@ -1080,6 +1080,25 @@ body::after{
         </div>
       </div>
 
+      <!-- syllabus — the centerpiece -->
+      <div class="card col-12 reveal lime" style="padding:36px;" data-spot>
+        <div style="display:grid;grid-template-columns:1fr 1.1fr;gap:44px;align-items:center;">
+          <div>
+            <div class="knum">// The centerpiece</div>
+            <h3 style="font-size:34px;line-height:1.1;margin:10px 0 8px;">Paste your syllabus. Studlin finds every deadline.</h3>
+            <p>Every assignment, exam, and due date extracted automatically and dropped onto your calendar. You review before anything's added — so you're never caught off guard by something that was in the syllabus the whole time.</p>
+          </div>
+          <div class="mini" style="background:var(--bg-deep);">
+            <div class="mono" style="font-size:10px;color:var(--cream-faint);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:10px;">Syllabus · Bio 201 — extracted</div>
+            <div class="chiprow" style="flex-direction:column;align-items:stretch;gap:8px;">
+              <span class="ck" style="background:var(--spark);color:var(--ink);justify-content:space-between;">Lab report 3 <span class="mono" style="font-size:10px;">Sep 22</span></span>
+              <span class="ck" style="background:#fff;color:var(--ink);justify-content:space-between;">Midterm exam <span class="mono" style="font-size:10px;">Oct 6</span></span>
+              <span class="ck" style="background:#fff;color:var(--ink);justify-content:space-between;">Final project draft <span class="mono" style="font-size:10px;">Nov 14</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- flashcards -->
       <div class="card col-5 reveal" data-spot>
         <div class="knum">03 · Flashcards</div>
@@ -1099,14 +1118,16 @@ body::after{
       <div class="card col-7 reveal d1" data-spot>
         <div class="knum">04 · Studlin Network</div>
         <h3>Find a time that works for everyone.</h3>
-        <p>Studlin checks everyone's calendar and finds a window that's actually free — then drops it straight into your schedule as a study block. No 10-message group chat just to pick a time.</p>
+        <p>Studlin checks everyone's calendar and comes back with real options that are actually free — pick one and it drops straight into your schedule. No 10-message group chat just to land on a time.</p>
         <div class="canvas">
-          <div style="background:var(--panel-2);border:1px solid var(--line);border-radius:14px;padding:13px 15px;font-size:12.5px;line-height:1.5;">
-            <div class="mono" style="opacity:.5;font-size:10px;margin-bottom:5px;">STUDLIN NETWORK</div>
-            Found a window that works for both of you: <strong>Thu 4:00–5:00pm</strong>
-          </div>
-          <div style="margin-top:10px;">
-            <span class="mono" style="font-size:10px;background:var(--spark);color:var(--ink);padding:6px 12px;border-radius:99px;font-weight:700;">SCHEDULE IT →</span>
+          <div class="mono" style="opacity:.5;font-size:10px;margin-bottom:8px;">STUDLIN NETWORK · 3 OPTIONS FOUND</div>
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            <div style="display:flex;flex-direction:column;padding:9px 11px;background:var(--spark);border-radius:8px;">
+              <span class="mono" style="font-size:8.5px;font-weight:800;letter-spacing:0.06em;color:var(--ink);opacity:.6;">BEST CHOICE</span>
+              <span style="font-size:12.5px;font-weight:600;color:var(--ink);">Thu · 4:00–5:00pm</span>
+            </div>
+            <div style="padding:9px 11px;background:var(--panel-2);border:1px solid var(--line);border-radius:8px;font-size:12.5px;color:var(--cream);">Fri · 2:00–3:00pm</div>
+            <div style="padding:9px 11px;background:var(--panel-2);border:1px solid var(--line);border-radius:8px;font-size:12.5px;color:var(--cream);">Sat · 11:00am–12:00pm</div>
           </div>
           <div class="mono" style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--cream-faint);margin-top:12px;">Group expires in 6 days · auto-deletes when the project's done</div>
         </div>
@@ -1212,13 +1233,14 @@ body::after{
         <ul class="pc-feats">
           <li><span class="pc-ck">✓</span> 30 AI credits / month</li>
           <li><span class="pc-ck">✓</span> AI tutor, Standard model, Research mode</li>
+          <li><span class="pc-ck">✓</span> 3 syllabus deadline-scans / month</li>
           <li><span class="pc-ck">✓</span> Manual flashcards &amp; notes</li>
           <li><span class="pc-ck">✓</span> Focus timer, calendar &amp; planner</li>
           <li><span class="pc-ck">✓</span> Streaks, XP &amp; basic stats</li>
         </ul>
         <hr class="pc-hr">
         <a href="/onboarding" class="pc-btn">Start free</a>
-        <div class="pc-desc">Everything you need to get organized.</div>
+        <div class="pc-desc">Enough to get started for real — no credit card, no catch.</div>
       </div>
       <div class="pc pc-popular" data-plan="pro">
         <div class="pc-badge"><svg viewBox="0 0 24 24"><path d="M12 2l2.9 6.3 6.9.7-5.2 4.6 1.5 6.8L12 17.8 5.9 21.2l1.5-6.8L2.2 9.8l6.9-.7z"></path></svg> Popular</div>
@@ -1228,15 +1250,13 @@ body::after{
         <ul class="pc-feats">
           <li><span class="pc-ck">✓</span> 200 AI credits / month</li>
           <li><span class="pc-ck">✓</span> AI tutor, all models + 4 study modes</li>
-          <li><span class="pc-ck">✓</span> Full essay suite + plagiarism check</li>
+          <li><span class="pc-ck">✓</span> Unlimited syllabus deadline-scans</li>
           <li><span class="pc-ck">✓</span> AI flashcards from notes, PDFs &amp; YouTube</li>
-          <li><span class="pc-ck">✓</span> Google Docs sync + AI Rewrite (Humanizer)</li>
-          <li><span class="pc-ck">✓</span> Unlimited grammar checks + readability</li>
-          <li><span class="pc-ck">✓</span> Study groups + co-op focus sessions</li>
+          <li><span class="pc-ck">✓</span> Study groups + shared scheduling</li>
         </ul>
         <hr class="pc-hr">
         <a href="/onboarding" class="pc-btn pc-btn-primary magnetic">Start free trial <span class="ar">→</span></a>
-        <div class="pc-desc">Everything you need to stay ahead. Built for serious students.</div>
+        <div class="pc-desc">For when Free's limits start getting in the way.</div>
       </div>
       <div class="pc" data-plan="max">
         <div class="pc-name">Max</div>
@@ -1247,12 +1267,11 @@ body::after{
           <li><span class="pc-ck">✓</span> Everything in Pro, unlimited</li>
           <li><span class="pc-ck">✓</span> Bulk ops, 100 flashcards at once</li>
           <li><span class="pc-ck">✓</span> Advanced analytics &amp; learning paths</li>
-          <li><span class="pc-ck">✓</span> Cosmetics shop + monthly tournaments</li>
-          <li><span class="pc-ck">✓</span> Priority support + 3× focus XP</li>
+          <li><span class="pc-ck">✓</span> Priority support</li>
         </ul>
         <hr class="pc-hr">
         <a href="/onboarding" class="pc-btn">Go Max</a>
-        <div class="pc-desc">Maximum firepower. No limits, ever.</div>
+        <div class="pc-desc">For the heaviest course load — every subject, every week, no caps.</div>
       </div>
     </div>
     <div class="pricing-foot">Falling behind shouldn't cost you. Start for <b>$0</b>.</div>
@@ -1265,7 +1284,7 @@ body::after{
     <div class="head center">
       <span class="sec-eyebrow">// Studlin vs the old way</span>
       <h2>Why students <span class="dim">never go back.</span></h2>
-      <p class="lead">The same hours, a completely different result. Here's how an AI-native workspace stacks up against the patchwork most students still fight with.</p>
+      <p class="lead">Same amount of time, a completely different result. Here's what changes when your plan can actually keep up with real life.</p>
     </div>
     <div class="cmp">
       <div class="cmp-row cmp-head">
@@ -1275,18 +1294,18 @@ body::after{
       </div>
 
       <div class="cmp-row">
-        <div class="cmp-cat">How you learn</div>
+        <div class="cmp-cat">When your plan breaks</div>
         <div class="cmp-cell good">
           <span class="cmp-mob">Studlin</span>
-          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>Active recall and spaced repetition built into every deck</div>
-          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>Instant, mark-by-mark feedback on every answer</div>
-          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>Adapts to exactly what you keep getting wrong</div>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>Paste a syllabus, every deadline lands on your calendar automatically</div>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>Miss a day? Studlin rebuilds your week instead of leaving it broken</div>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>Flashcard reviews auto-scheduled backward from your exam date</div>
         </div>
         <div class="cmp-cell bad">
           <span class="cmp-mob">The old way</span>
-          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></span>Passive re-reading and highlighting</div>
-          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></span>No feedback until the grade comes back</div>
-          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></span>One-size-fits-all worksheets</div>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></span>Copying deadlines out of a syllabus PDF by hand</div>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></span>Miss a day and the whole plan just stays broken</div>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></span>Cramming the night before because nothing reminded you sooner</div>
         </div>
       </div>
 
@@ -1294,15 +1313,15 @@ body::after{
         <div class="cmp-cat">Your time</div>
         <div class="cmp-cell good">
           <span class="cmp-mob">Studlin</span>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>Tell Studlin everything on your plate in one message — it sorts and schedules the rest</div>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>Finding a study time with your group takes one tap, not a 10-text group chat</div>
           <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>Notes become flashcards and summaries in seconds</div>
-          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>One workspace, zero app-switching</div>
-          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>Plans your week around real deadlines automatically</div>
         </div>
         <div class="cmp-cell bad">
           <span class="cmp-mob">The old way</span>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></span>Typing every task into a planner one at a time</div>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></span>Back-and-forth texts trying to find a time that works for everyone</div>
           <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></span>Hours spent making materials by hand</div>
-          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></span>Six disconnected apps and a wall of tabs</div>
-          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></span>Paper planners that fall apart by week three</div>
         </div>
       </div>
 
@@ -1310,14 +1329,14 @@ body::after{
         <div class="cmp-cat">Your money</div>
         <div class="cmp-cell good">
           <span class="cmp-mob">Studlin</span>
-          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>One subscription covers the entire stack</div>
-          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>Tutor-grade help on demand, around the clock</div>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>Tutor-grade help on demand, without the $50–100/hour price tag</div>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>No contracts, cancel anytime, starts free</div>
           <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>Study anywhere, any time, on any device</div>
         </div>
         <div class="cmp-cell bad">
           <span class="cmp-mob">The old way</span>
           <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></span>Private tutors at $50–100 an hour</div>
-          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></span>Paying for five separate subscriptions</div>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></span>Long subscription contracts you forget to cancel</div>
           <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></span>Limited to office hours and scheduling gaps</div>
         </div>
       </div>
@@ -1386,37 +1405,6 @@ body::after{
         <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
         <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
 
-        <!-- WRITING & ESSAYS -->
-        <div class="cpt-cat"><span class="cn"></span> Writing &amp; Essays</div>
-        <div class="cpt-f">Essay editor</div>
-        <div class="cpt-v"><span class="cpt-no"></span></div>
-        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-f">Google Docs sync</div>
-        <div class="cpt-v"><span class="cpt-no"></span></div>
-        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-f">AI-assisted writing</div>
-        <div class="cpt-v"><span class="cpt-no"></span></div>
-        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-f">Feedback &amp; readability scores</div>
-        <div class="cpt-v"><span class="cpt-no"></span></div>
-        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-f">Grammar &amp; polish checks</div>
-        <div class="cpt-v txt">2 / mo</div>
-        <div class="cpt-v col-pro txt">Unlimited</div>
-        <div class="cpt-v txt">Unlimited</div>
-        <div class="cpt-f">Plagiarism detection</div>
-        <div class="cpt-v"><span class="cpt-no"></span></div>
-        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-f">AI Rewrite (Humanizer)</div>
-        <div class="cpt-v"><span class="cpt-no"></span></div>
-        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-
         <!-- FLASHCARDS & NOTES -->
         <div class="cpt-cat"><span class="cn"></span> Flashcards &amp; Notes</div>
         <div class="cpt-f">Manual flashcards &amp; notes</div>
@@ -1454,29 +1442,17 @@ body::after{
         <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
         <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
         <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-f">AI video tutor suggestions</div>
-        <div class="cpt-v"><span class="cpt-no"></span></div>
-        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
         <div class="cpt-f">Bulk operations</div>
         <div class="cpt-v"><span class="cpt-no"></span></div>
         <div class="cpt-v col-pro"><span class="cpt-no"></span></div>
         <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-f">Focus session XP boost</div>
-        <div class="cpt-v txt">1&times;</div>
-        <div class="cpt-v col-pro txt">2&times;</div>
-        <div class="cpt-v txt">3&times;</div>
 
-        <!-- PROFILE & GAMIFICATION -->
-        <div class="cpt-cat"><span class="cn"></span> Profile &amp; Gamification</div>
+        <!-- PROFILE & COMMUNITY -->
+        <div class="cpt-cat"><span class="cn"></span> Profile &amp; Community</div>
         <div class="cpt-f">Streaks, XP &amp; levels</div>
         <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
         <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
         <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-f">Achievements</div>
-        <div class="cpt-v txt">Basic</div>
-        <div class="cpt-v col-pro txt">Advanced</div>
-        <div class="cpt-v txt">Advanced</div>
         <div class="cpt-f">Subject-specific analytics</div>
         <div class="cpt-v"><span class="cpt-no"></span></div>
         <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
@@ -1485,25 +1461,13 @@ body::after{
         <div class="cpt-v"><span class="cpt-no"></span></div>
         <div class="cpt-v col-pro"><span class="cpt-no"></span></div>
         <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-f">Study groups &amp; co-op focus</div>
-        <div class="cpt-v"><span class="cpt-no"></span></div>
-        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-f">Streak credit bonuses</div>
+        <div class="cpt-f">Study groups &amp; shared scheduling</div>
         <div class="cpt-v"><span class="cpt-no"></span></div>
         <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
         <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
 
         <!-- PERKS & SUPPORT -->
         <div class="cpt-cat"><span class="cn"></span> Perks &amp; Support</div>
-        <div class="cpt-f">Cosmetics shop <span class="info">· badges, frames, titles</span></div>
-        <div class="cpt-v"><span class="cpt-no"></span></div>
-        <div class="cpt-v col-pro"><span class="cpt-no"></span></div>
-        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-f">Monthly tournaments</div>
-        <div class="cpt-v"><span class="cpt-no"></span></div>
-        <div class="cpt-v col-pro"><span class="cpt-no"></span></div>
-        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
         <div class="cpt-f">Priority support</div>
         <div class="cpt-v"><span class="cpt-no"></span></div>
         <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
@@ -1528,11 +1492,11 @@ body::after{
       <h2>Ask us <span class="dim">anything.</span></h2>
     </div>
     <div class="faq">
-      <div class="qitem open"><button class="qq">Will my professors know I used AI?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Studlin's AI Detector is the same one most universities deploy, and the Humanizer rewrites in your voice from your past writing. You can also toggle AI off entirely for honor-code-strict assignments.</div></div></div>
-      <div class="qitem"><button class="qq">How does Studlin compare to other study tools?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Most competing tools do one thing well. Studlin integrates writing, flashcards, scheduling, AI tutoring, and focus tracking into a single workspace designed for real student workflows.</div></div></div>
-      <div class="qitem"><button class="qq">What subjects does the AI Tutor support?<span class="ic">+</span></button><div class="qa"><div class="qa-in">All of them. Math with full LaTeX, sciences, humanities, languages, coding, business, including IB, AP, A Levels, IGCSE, SAT and MCAT exam boards.</div></div></div>
-      <div class="qitem"><button class="qq">Can I import my existing notes and flashcards?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Yes. Studlin imports from all major study platforms and file formats, PDFs, spreadsheets, audio files, and more.</div></div></div>
-      <div class="qitem"><button class="qq">Is there a student discount?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Studlin is already built for students. Pro is $7.99/mo billed annually, cheaper than most single-purpose tools it replaces.</div></div></div>
+      <div class="qitem open"><button class="qq">Will Studlin just do my assignments for me?<span class="ic">+</span></button><div class="qa"><div class="qa-in">No — the AI Tutor explains concepts and walks you through problems Socratically instead of handing over answers. What you turn in is your own work.</div></div></div>
+      <div class="qitem"><button class="qq">How does Studlin compare to other study tools?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Most tools either plan your schedule or help you study — not both. Studlin's calendar is the thing that actually adapts when your plan breaks, and everything else (notes, flashcards, your study group) is tied to it.</div></div></div>
+      <div class="qitem"><button class="qq">What subjects does the AI Tutor support?<span class="ic">+</span></button><div class="qa"><div class="qa-in">All of them. Math with full LaTeX, sciences, humanities, languages, coding, business, including IB, AP, A Levels, IGCSE and SAT prep.</div></div></div>
+      <div class="qitem"><button class="qq">Can I import my existing notes and flashcards?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Yes — upload PDFs and files directly, or paste in a YouTube link, and Studlin builds notes and flashcards from it.</div></div></div>
+      <div class="qitem"><button class="qq">Is there a student discount?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Studlin is already priced for students — Pro is $7.99/mo billed annually. No separate discount code needed.</div></div></div>
     </div>
   </div>
 </section>
@@ -1541,8 +1505,8 @@ body::after{
 <section class="sec" style="padding-bottom:0;">
   <div class="cta reveal">
     <span class="tag">// Final exam season starts now</span>
-    <h2>Stop juggling tabs.<br>Start locking in.</h2>
-    <p>Join 24,000+ students who study smarter, not harder.</p>
+    <h2>Fall behind.<br>Get back on track.</h2>
+    <p>Your plan should keep up with real life. Now it can.</p>
     <a href="/onboarding" class="btn btn-ink btn-lg magnetic">Start free, 7 days of Pro <span class="ar">→</span></a>
   </div>
 </section>
