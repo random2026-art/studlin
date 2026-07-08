@@ -1104,6 +1104,27 @@ function logSession(mins,mode){const s=lsGet("sessions",[]);s.push({d:dayKey(),m
 // subject+kind. Removes the time-blindness guesswork of estimating a new
 // task's length from scratch every time; returns null until there's at
 // least one real data point to go on.
+// Phase 3 — flashcard review sessions counting down to an exam. Pure
+// scheduling math, no AI/credit cost: spacing gets denser the closer the
+// exam gets (classic spaced-repetition shape), capped at 4 sessions so a
+// far-off exam doesn't flood the calendar. Offsets are "days before the
+// exam date"; anything that would land in the past (or on the exam day
+// itself) is dropped.
+function computeReviewOffsets(daysUntil){
+  if(daysUntil<2)return [];
+  if(daysUntil<=3)return [1];
+  if(daysUntil<=7)return [3,1];
+  if(daysUntil<=14)return [8,4,1];
+  return [16,10,5,2];
+}
+function computeReviewDates(examDateKey,todayKey){
+  const exam=new Date(examDateKey+"T12:00:00");
+  const today=new Date(todayKey+"T12:00:00");
+  const daysUntil=Math.round((exam-today)/86400000);
+  return computeReviewOffsets(daysUntil).filter(o=>o<daysUntil).map(o=>{
+    const d=new Date(exam);d.setDate(d.getDate()-o);return dayKey(d);
+  }).sort();
+}
 function suggestDurationFor(subject,kind){
   const events=lsGet("events",[]).filter(e=>e.status==="done"&&e.timeSpent&&e.subject===subject&&e.kind===kind);
   if(events.length===0)return null;
@@ -2551,7 +2572,7 @@ function Flashcards() {
       else{cards=await aiGenCards("Lecture transcription:\n\n"+recText,"lecture transcription");}
     }
     if(cards.length===0){cards=[{q:"No cards were generated",a:"Try again with more content"}];}
-    const nd={id:String(Date.now()),name:name,count:cards.length,done:0,color:T.lime,cards:cards};
+    const nd={id:String(Date.now()),name:name,count:cards.length,done:0,color:T.lime,cards:cards,examEventId:null};
     const next=[nd,...deckList];setDeckList(next);lsSet("decks",next);
     setNewOpen(false);setDName("");setDraft([]);setFileText("");setYtUrl("");setYtInfo("");setYtFetching(false);stopRec();setRecText("");setDSource("manual");
     setStudyDeck(nd);setTab("study");setIdx(0);setFlipped(false);
@@ -2574,6 +2595,51 @@ function Flashcards() {
     lsSet("pendingShares",pending);
     setSendDeckStatus("sent");
     setTimeout(()=>{setSendDeckOpen(false);setSendDeckTarget("");setSendDeckId(null);setSendDeckStatus("");},1800);
+  };
+
+  // Phase 3 — link a deck to an exam on the calendar, then propose real
+  // spaced-out review sessions counting down to it. No AI/credit cost —
+  // computeReviewDates is pure scheduling math — and placement reuses
+  // findOpenSlotFor, the same deterministic engine every other scheduling
+  // path in the app already trusts.
+  const [linkExamDeckId,setLinkExamDeckId]=useState(null);
+  const [reviewSchedulePreview,setReviewSchedulePreview]=useState(null); // {deckId,deckName,examTitle,examDate,sessions:[{date,time,duration,include}]}
+  const upcomingExams=()=>lsGet("events",[]).filter(e=>e.kind==="exam"&&e.date>=dayKey()).sort((a,b)=>a.date.localeCompare(b.date));
+  const linkDeckToExam=(deckId,examEventId)=>{
+    const next=deckList.map(d=>d.id===deckId?{...d,examEventId}:d);
+    setDeckList(next);lsSet("decks",next);setLinkExamDeckId(null);
+  };
+  const openReviewSchedule=(deck)=>{
+    const exam=lsGet("events",[]).find(e=>e.id===deck.examEventId);
+    if(!exam)return;
+    const dates=computeReviewDates(exam.date,dayKey());
+    if(dates.length===0)return;
+    const duration=suggestDurationFor(exam.subject,"study block")||25;
+    const events=lsGet("events",[]);
+    const routines=getWeeklyRoutine();
+    const prefs=getSchedulePreferences();
+    let working=events;
+    const sessions=dates.map(date=>{
+      const slot=findOpenSlotFor(working,routines,prefs,date,prefs.workStartTime,duration,exam.date);
+      working=working.concat([{date:slot.date,time:slot.time,duration}]);
+      return {date:slot.date,time:slot.time,duration,include:true};
+    });
+    setReviewSchedulePreview({deckId:deck.id,deckName:deck.name,examTitle:exam.title,examDate:exam.date,sessions});
+  };
+  const commitReviewSchedule=()=>{
+    if(!reviewSchedulePreview)return;
+    const included=reviewSchedulePreview.sessions.filter(s=>s.include);
+    const events=lsGet("events",[]);
+    const newEvents=included.map((s,i)=>({
+      id:"deckrev-"+reviewSchedulePreview.deckId+"-"+Date.now()+"-"+i,
+      title:"Review: "+reviewSchedulePreview.deckName,date:s.date,time:s.time,
+      subject:"",kind:"study block",notes:"",priority:5,difficulty:5,
+      deadline:reviewSchedulePreview.examDate,duration:s.duration,
+      status:"pending",timeSpent:0,completedAt:null,deckId:reviewSchedulePreview.deckId,
+    }));
+    lsSet("events",events.concat(newEvents));
+    newEvents.forEach(scheduleTaskNotif);
+    setReviewSchedulePreview(null);
   };
 
   // Live username autocomplete for "Send deck to a friend" — same
@@ -2668,6 +2734,39 @@ function Flashcards() {
               </Field>
             </>
         }
+      </Modal>
+
+      {/* ── LINK DECK TO EXAM ── */}
+      <Modal open={!!linkExamDeckId} onClose={()=>setLinkExamDeckId(null)} title="Link to an exam" sub="Studlin will propose review sessions counting down to the exam date." width={440}>
+        {upcomingExams().length===0
+          ? <div style={{fontSize:13,color:T.muted,padding:"18px 0",textAlign:"center"}}>No upcoming exams on your calendar yet — add one in Calendar first.</div>
+          : <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {upcomingExams().map(ex=>(
+                <button key={ex.id} onClick={()=>linkDeckToExam(linkExamDeckId,ex.id)} style={{textAlign:"left",padding:"11px 14px",borderRadius:10,border:`1px solid ${T.border}`,background:T.card2,cursor:"pointer",fontFamily:T.font}}>
+                  <div style={{fontSize:13,fontWeight:600,color:T.white}}>{ex.title}</div>
+                  <div style={{fontSize:11,color:T.muted,marginTop:2}}>{ex.date}{ex.subject?" · "+ex.subject:""}</div>
+                </button>
+              ))}
+            </div>}
+      </Modal>
+
+      {/* ── REVIEW SCHEDULE PREVIEW — preview-then-commit, same discipline as syllabus/brain-dump review ── */}
+      <Modal open={!!reviewSchedulePreview} onClose={()=>setReviewSchedulePreview(null)} title="Review sessions" sub={reviewSchedulePreview?"Counting down to "+reviewSchedulePreview.examTitle+" on "+reviewSchedulePreview.examDate+".":""} width={480}
+        footer={<>
+          <Btn variant="subtle" onClick={()=>setReviewSchedulePreview(null)}>Cancel</Btn>
+          <Btn disabled={!reviewSchedulePreview||reviewSchedulePreview.sessions.filter(s=>s.include).length===0} onClick={commitReviewSchedule}>
+            {"Add "+(reviewSchedulePreview?reviewSchedulePreview.sessions.filter(s=>s.include).length:0)+" to Calendar →"}
+          </Btn>
+        </>}>
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {reviewSchedulePreview&&reviewSchedulePreview.sessions.map((s,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,background:s.include?T.card2:T.card,opacity:s.include?1:0.55}}>
+              <input type="checkbox" checked={s.include} onChange={()=>setReviewSchedulePreview(r=>({...r,sessions:r.sessions.map((x,xi)=>xi===i?{...x,include:!x.include}:x)}))} style={{cursor:"pointer"}} />
+              <div style={{flex:1,fontSize:13,color:T.text}}>{s.date} · {s.time}</div>
+              <div style={{fontSize:11,color:T.muted}}>{s.duration}m</div>
+            </div>
+          ))}
+        </div>
       </Modal>
       <Modal open={editDeckOpen} onClose={()=>setEditDeckOpen(false)} title="Edit deck" sub="Rename the deck or fix any card." width={540}
         footer={<><Btn variant="subtle" onClick={()=>setEditDeckOpen(false)}>Cancel</Btn><Btn onClick={saveEditDeck}>Save changes</Btn></>}>
@@ -2773,7 +2872,18 @@ function Flashcards() {
               <Card key={d.id||i} style={{cursor:"pointer",position:"relative"}}>
                 <button onClick={(e)=>{e.stopPropagation();deleteDeck(d.id);}} style={{position:"absolute",top:12,right:12,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14}}>x</button>
                 <div onDoubleClick={(e)=>{e.stopPropagation();openEditDeck(d);}} title="Double-click to edit" style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>{d.name}</div>
-                <div style={{fontSize:11,color:T.muted,marginBottom:14}}>{d.cards?d.cards.length:d.count} cards{d.source==="imported"&&<span style={{color:T.teal,fontWeight:600}}> · from {d.importedFrom}</span>}</div>
+                <div style={{fontSize:11,color:T.muted,marginBottom:10}}>{d.cards?d.cards.length:d.count} cards{d.source==="imported"&&<span style={{color:T.teal,fontWeight:600}}> · from {d.importedFrom}</span>}</div>
+                {(()=>{
+                  const linkedExam=d.examEventId?lsGet("events",[]).find(e=>e.id===d.examEventId):null;
+                  return linkedExam ? (
+                    <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,flexWrap:"wrap"}}>
+                      <span style={{fontSize:10.5,fontWeight:700,padding:"3px 8px",borderRadius:99,background:T.lime+"14",color:T.lime,border:`1px solid ${T.lime}33`}}>Exam: {linkedExam.title} · {linkedExam.date}</span>
+                      <button onClick={(e)=>{e.stopPropagation();openReviewSchedule(d);}} style={{background:"none",border:"none",color:T.lime,cursor:"pointer",fontFamily:T.font,fontSize:11,fontWeight:600,textDecoration:"underline",padding:0}}>Schedule reviews →</button>
+                    </div>
+                  ) : (
+                    <button onClick={(e)=>{e.stopPropagation();setLinkExamDeckId(d.id);}} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:11,textDecoration:"underline",padding:0,marginBottom:10,display:"block"}}>+ Link to an exam</button>
+                  );
+                })()}
                 <div style={{display:"flex",gap:6}}>
                   <BtnSm onClick={()=>{setStudyDeck(d);setTab("study");setIdx(0);setFlipped(false);}}>Study now</BtnSm>
                   <BtnSm variant="ghost" onClick={(e)=>{e.stopPropagation();openEditDeck(d);}}>{Icon.pen} Edit</BtnSm>
