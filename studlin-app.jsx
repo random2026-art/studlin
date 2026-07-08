@@ -1134,6 +1134,46 @@ const DOW_FULL=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Sat
 const MON_SHORT=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 function todayLabel(){const d=new Date();return DOW_FULL[d.getDay()]+" · "+MON_SHORT[d.getMonth()]+" "+d.getDate();}
 function weekNo(){const d=new Date();const start=new Date(d.getFullYear(),0,1);return Math.ceil((((d-start)/86400000)+start.getDay()+1)/7);}
+
+// Deterministic, non-AI fallback for syllabus deadline extraction — mirrors
+// fallbackSchedule's role for AI Schedule Mode: if the AI call throws or
+// returns nothing usable, this guarantees the feature still returns SOMETHING
+// rather than dead-ending. Naive regex date-scan, so every match is tagged
+// confidence:"low" — the review modal flags these for the student to check.
+function regexScanDeadlines(text){
+  const lines=(text||"").split("\n");
+  const results=[];
+  const monthPattern=new RegExp("("+MON_SHORT.join("|")+")[a-z]*\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s*(\\d{4}))?","gi");
+  const numericPattern=/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/g;
+  const now=new Date();
+  const titleFrom=(line)=>{const t=line.replace(/^[\s\-*•\d.)]+/,"").trim().slice(0,60);return t||"Deadline";};
+  const kindFrom=(line)=>/exam|midterm|final/i.test(line)?"exam":"deadline";
+  const rollYear=(month,day,year)=>{
+    if(year)return year.length===2?"20"+year:year;
+    const candidate=new Date(now.getFullYear(),month,day);
+    return String(candidate<now?now.getFullYear()+1:now.getFullYear());
+  };
+  lines.forEach(line=>{
+    if(results.length>=40)return;
+    let m;
+    monthPattern.lastIndex=0;
+    if((m=monthPattern.exec(line))){
+      const monthIdx=MON_SHORT.findIndex(mo=>mo.toLowerCase()===m[1].toLowerCase());
+      const day=parseInt(m[2],10);
+      const year=rollYear(monthIdx,day,m[3]);
+      results.push({title:titleFrom(line),date:year+"-"+String(monthIdx+1).padStart(2,"0")+"-"+String(day).padStart(2,"0"),kind:kindFrom(line),confidence:"low"});
+      return;
+    }
+    numericPattern.lastIndex=0;
+    if((m=numericPattern.exec(line))){
+      const month=parseInt(m[1],10)-1,day=parseInt(m[2],10);
+      if(month<0||month>11||day<1||day>31)return;
+      const year=rollYear(month,day,m[3]);
+      results.push({title:titleFrom(line),date:year+"-"+String(month+1).padStart(2,"0")+"-"+String(day).padStart(2,"0"),kind:kindFrom(line),confidence:"low"});
+    }
+  });
+  return results;
+}
 // Levels map strictly to real Lock-In Timer minutes — no streak/login/task
 // bonuses, no penalty deductions, no starting offset. An honest sum of
 // every session actually logged, nothing else.
@@ -2691,6 +2731,11 @@ function Notes(){
   const [aiLoading,setAiLoading]=useState(false);
   const [fileText,setFileText]=useState("");
   const fileRef=useRef(null);
+  const [syllabusText,setSyllabusText]=useState("");
+  const syllabusFileRef=useRef(null);
+  const [syllabusReview,setSyllabusReview]=useState(null); // {noteId, items:[{id,title,date,kind,confidence,include}]}
+  const [syllabusToast,setSyllabusToast]=useState("");
+  const [deleteNoteConfirm,setDeleteNoteConfirm]=useState(null); // {idx, linked:[events]}
 
   // One-shot deep link from Dashboard's "Pick up where you left off" card —
   // matches the pendingTour/pendingRoutineWizard pattern used elsewhere.
@@ -2906,6 +2951,7 @@ function Notes(){
     {id:"file",label:"Scan a file",desc:"PDF, slides, or photos of the board",icon:Icon.file,cost:"2 credits"},
     {id:"record",label:"Record lecture",desc:"Live transcription + summary",icon:MicIcon,cost:"3 credits"},
     {id:"youtube",label:"YouTube link",desc:"Transcribes and summarises a video",icon:Icon.link,cost:"3 credits"},
+    {id:"syllabus",label:"Syllabus",desc:"Paste or upload — Studlin finds every deadline",icon:Icon.cal,cost:"1 credit"},
   ];
 
   const startRec=()=>{
@@ -2926,6 +2972,17 @@ function Notes(){
     }else{const reader=new FileReader();reader.onload=()=>{setFileText(reader.result);if(!newTitle)setNewTitle("Notes from "+file.name);};reader.readAsText(file);}
   };
 
+  // Same PDF/text extraction as handleFile, just targeting syllabusText —
+  // cloned rather than threading src through handleFile's closure, since
+  // the two sources (scanned notes vs. a syllabus) shouldn't share state.
+  const handleSyllabusFile=async(e)=>{
+    const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
+    const ext=file.name.split(".").pop().toLowerCase();
+    if(ext==="pdf"){
+      try{const pdfjsLib=await window._pdfjs;const buf=await file.arrayBuffer();const pdf=await pdfjsLib.getDocument({data:buf}).promise;let text="";for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();text+=tc.items.map(it=>it.str).join(" ")+"\n\n";}setSyllabusText(text);if(!newTitle)setNewTitle("Notes from "+file.name);}catch(err){setSyllabusText("Could not read PDF: "+err.message);}
+    }else{const reader=new FileReader();reader.onload=()=>{setSyllabusText(reader.result);if(!newTitle)setNewTitle("Notes from "+file.name);};reader.readAsText(file);}
+  };
+
   const aiSummarize=async(text,context)=>{
     setAiLoading(true);
     try{
@@ -2936,11 +2993,39 @@ function Notes(){
     }catch(e){setAiLoading(false);return text;}
   };
 
+  // Extracts every deadline/exam/assignment date from a pasted or scanned
+  // syllabus as structured JSON — deliberately model:"standard" not "flash"
+  // (a real syllabus can hold 15-30 dates; flash's 512-token cap and
+  // brevity-biased system prompt risks truncating a list that long, and
+  // standard costs the same 1 credit). Same "AI attempt, then deterministic
+  // fallback" shape aiArrange uses for AI Schedule Mode — never dead-ends.
+  const extractSyllabusDeadlines=async(text)=>{
+    if(!text||!text.trim())return [];
+    try{
+      const prompt="Extract every deadline, due date, exam date, and assignment date from this course syllabus. "+
+        "Today's date is "+dayKey()+" — if a date has no year, infer the most likely upcoming year given today's date. "+
+        "For each item return: \"title\" (short, e.g. \"Problem Set 3\" or \"Midterm Exam\"), "+
+        "\"date\" (YYYY-MM-DD, your best guess — never omit even if uncertain), "+
+        "\"kind\" (either \"deadline\" for assignments/readings/papers or \"exam\" for tests/midterms/finals), "+
+        "\"confidence\" (\"high\" if an explicit date was stated, \"low\" if you inferred/guessed it, e.g. from \"the Friday after spring break\"). "+
+        "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
+        "{\"deadlines\":[{\"title\":\"Problem Set 3\",\"date\":\"2026-09-22\",\"kind\":\"deadline\",\"confidence\":\"high\"}]}. "+
+        "If you find no dates at all, respond with {\"deadlines\":[]}.\n\n"+text.slice(0,30000);
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+      const data=await res.json();
+      const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
+      const parsed=JSON.parse(raw);
+      if(parsed&&Array.isArray(parsed.deadlines))return parsed.deadlines;
+      return regexScanDeadlines(text);
+    }catch(e){return regexScanDeadlines(text);}
+  };
+
   // "Continue to Canvas" — creates note and enters canvas immediately
   const continueToCanvas=async()=>{
     const tag=newTag==="Other"&&customTag.trim()?customTag.trim():newTag;
     let title=newTitle.trim();
     let body="<p><br></p>";
+    let syllabusItems=null;
     if(src==="write"){
       if(!title)title="Untitled note";
     }else if(src==="file"){
@@ -2953,17 +3038,51 @@ function Notes(){
       if(!title)title=ytInfo?"Notes: "+ytInfo:"Notes from video";
       const topic=ytInfo||yt.trim();
       body=topic?await aiSummarize("Create comprehensive study notes on a YouTube video titled: \""+topic+"\". Include headings, definitions, bullet points, summary.","YouTube study notes"):"<p>Paste a YouTube link.</p>";
+    }else if(src==="syllabus"){
+      if(!title)title="Syllabus";
+      if(syllabusText.trim()){
+        body=await aiSummarize(syllabusText,"course syllabus");
+        setAiLoading(true);
+        syllabusItems=await extractSyllabusDeadlines(syllabusText);
+        setAiLoading(false);
+      }else{
+        body="<p>Paste or upload a syllabus.</p>";
+        syllabusItems=[];
+      }
     }
     const newNote={id:String(Date.now()),title,body,tag,date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now()};
     const next=[newNote,...notes];
     setNotes(next);lsSet("notes",next);
-    setNewOpen(false);setNewTitle("");setYt("");setYtInfo("");setRec(false);setRecSecs(0);setRecText("");setSrc("write");setFileText("");setSearch("");
+    setNewOpen(false);setNewTitle("");setYt("");setYtInfo("");setRec(false);setRecSecs(0);setRecText("");setSrc("write");setFileText("");setSyllabusText("");setSearch("");
     setSel(0);
     setPopover(null);
+    if(syllabusItems!==null){
+      setSyllabusReview({noteId:newNote.id,tag,items:syllabusItems.map((d,i)=>({id:"si-"+i,...d,include:true}))});
+    }
   };
 
   const updateNote=(idx,updates)=>{const next=notes.map((n,i)=>i===idx?Object.assign({},n,updates):n);setNotes(next);lsSet("notes",next);};
-  const deleteNote=(idx)=>{const next=notes.filter((_,i)=>i!==idx);setNotes(next);lsSet("notes",next);setSel(s=>s===idx?null:s>idx?s-1:s);};
+  const doDeleteNote=(idx,alsoDeleteLinkedEvents)=>{
+    const note=notes[idx];
+    const next=notes.filter((_,i)=>i!==idx);
+    setNotes(next);lsSet("notes",next);setSel(s=>s===idx?null:s>idx?s-1:s);
+    if(alsoDeleteLinkedEvents&&note){
+      const events=lsGet("events",[]);
+      lsSet("events",events.filter(e=>e.noteId!==note.id));
+    }
+  };
+  // Deleting a note is normally instant (no confirm) — but a note that
+  // generated real calendar deadlines (via the Syllabus source) is the one
+  // case where deletion has calendar-visible consequences, so that case
+  // alone gets a confirm modal, checkbox defaulting unchecked: an orphaned
+  // harmless noteId on a surviving event beats silently vaporizing a
+  // student's real deadlines.
+  const deleteNote=(idx)=>{
+    const note=notes[idx];
+    const linked=lsGet("events",[]).filter(e=>e.noteId===note.id);
+    if(linked.length>0){setDeleteNoteConfirm({idx,linked});return;}
+    doDeleteNote(idx,false);
+  };
   const exportNote=(n)=>{const t=document.createElement("div");t.innerHTML=n.body;navigator.clipboard&&navigator.clipboard.writeText(n.title+"\n\n"+(t.textContent||t.innerText));};
   const sendNote=async()=>{
     const t=sendNoteTarget.trim();
@@ -3158,7 +3277,83 @@ function Notes(){
             {ytLoading&&<div style={{fontSize:11,color:T.lime,marginTop:4}}>Detecting video…</div>}
           </Field>
         )}
+        {src==="syllabus"&&(
+          <Field label="Syllabus" hint="AI reads your syllabus and finds every deadline — you'll get to review before anything is added to your calendar.">
+            <input type="file" ref={syllabusFileRef} onChange={handleSyllabusFile} accept=".txt,.md,.csv,.pdf,.doc,.docx,.rtf" style={{display:"none"}} />
+            <div onClick={()=>syllabusFileRef.current&&syllabusFileRef.current.click()} style={{border:"1px dashed "+T.borderHover,borderRadius:10,padding:26,textAlign:"center",background:T.card2,cursor:"pointer",marginBottom:10}}>
+              <div style={{color:T.muted,marginBottom:6,display:"flex",justifyContent:"center"}}>{Icon.cal}</div>
+              <div style={{fontSize:13,color:T.text,fontWeight:500}}>{syllabusText?"File loaded — "+syllabusText.length+" chars":"Click to browse or drop a file"}</div>
+              <div style={{fontSize:11,color:T.muted,marginTop:4}}>PDF, TXT, MD, CSV, DOCX</div>
+            </div>
+            <Textarea placeholder="…or paste the syllabus text directly here" value={syllabusText} onChange={ev=>setSyllabusText(ev.target.value)} style={{minHeight:110}} />
+          </Field>
+        )}
       </Modal>
+
+      {/* ── SYLLABUS DEADLINE REVIEW — preview-then-commit, never a silent write ── */}
+      <Modal open={!!syllabusReview} onClose={()=>setSyllabusReview(null)} title="Review extracted deadlines" sub="AI dates are guesses — check them before they go on your calendar. Low-confidence guesses are flagged." width={620}
+        footer={<>
+          <Btn variant="subtle" onClick={()=>setSyllabusReview(null)}>Skip — just save the note</Btn>
+          <Btn disabled={aiLoading||!syllabusReview||syllabusReview.items.filter(i=>i.include).length===0} onClick={()=>{
+            const included=syllabusReview.items.filter(i=>i.include);
+            commitSyllabusEvents(syllabusReview.noteId,syllabusReview.tag,included);
+            setSyllabusToast(included.length+" deadline"+(included.length!==1?"s":"")+" added to your calendar");
+            setTimeout(()=>setSyllabusToast(""),3200);
+            setSyllabusReview(null);
+          }}>{aiLoading?"Processing…":"Add "+(syllabusReview?syllabusReview.items.filter(i=>i.include).length:0)+" to Calendar →"}</Btn>
+        </>}>
+        {syllabusReview&&syllabusReview.items.length===0&&(
+          <div style={{textAlign:"center",padding:"24px 0",color:T.muted,fontSize:13}}>
+            No dates found. Add one manually below, or skip and save just the note.
+          </div>
+        )}
+        <div style={{display:"flex",flexDirection:"column",gap:10,maxHeight:400,overflowY:"auto"}}>
+          {syllabusReview&&syllabusReview.items.map((it,i)=>(
+            <div key={it.id} style={{padding:"12px 14px",borderRadius:10,border:`1px solid ${T.border}`,background:it.include?T.card2:T.card,opacity:it.include?1:0.55}}>
+              <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
+                <input type="checkbox" checked={it.include} onChange={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,include:!x.include}:x)}))} style={{marginTop:10,cursor:"pointer"}} />
+                <div style={{flex:1}}>
+                  <div style={{display:"flex",gap:8,marginBottom:8}}>
+                    <Input value={it.title} onChange={ev=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,title:ev.target.value}:x)}))} style={{flex:1}} />
+                    <Input type="date" value={it.date} onChange={ev=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,date:ev.target.value}:x)}))} style={{width:150}} />
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <SelectChip options={[{value:"deadline",label:"Task"},{value:"exam",label:"Exam"}]} value={it.kind} onChange={v=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v}:x)}))} />
+                    {it.confidence==="low"&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>Low confidence — double-check</span>}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <button type="button" onClick={()=>setSyllabusReview(r=>({...r,items:[...r.items,{id:"si-manual-"+Date.now(),title:"",date:dayKey(),kind:"deadline",confidence:"low",include:true}]}))} style={{marginTop:10,width:"100%",padding:"10px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12.5}}>
+          + Add a deadline manually
+        </button>
+      </Modal>
+
+      {/* ── DELETE NOTE CONFIRMATION — only shown when the note has linked calendar deadlines ── */}
+      <Modal open={!!deleteNoteConfirm} onClose={()=>setDeleteNoteConfirm(null)} title="Delete this note?" sub={deleteNoteConfirm?"This note created "+deleteNoteConfirm.linked.length+" calendar deadline"+(deleteNoteConfirm.linked.length!==1?"s":"")+".":""} width={460}
+        footer={<>
+          <Btn variant="subtle" onClick={()=>setDeleteNoteConfirm(null)}>Cancel</Btn>
+          <Btn variant="danger" onClick={()=>{
+            const also=document.getElementById("also-delete-linked-events");
+            doDeleteNote(deleteNoteConfirm.idx,also?also.checked:false);
+            setDeleteNoteConfirm(null);
+          }}>Delete note</Btn>
+        </>}>
+        <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:T.text,cursor:"pointer"}}>
+          <input id="also-delete-linked-events" type="checkbox" defaultChecked={false} />
+          Also delete the linked calendar events
+        </label>
+        <div style={{fontSize:11.5,color:T.muted,marginTop:8,lineHeight:1.5}}>Leave this unchecked to keep those deadlines on your calendar even after the note is gone.</div>
+      </Modal>
+
+      {/* ── SYLLABUS COMMIT TOAST ── */}
+      {syllabusToast&&(
+        <div style={{position:"fixed",bottom:20,right:20,zIndex:999,padding:"11px 18px",borderRadius:10,background:T.teal,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+          {syllabusToast}
+        </div>
+      )}
 
       {/* ── PRACTICE QUIZ OVERLAY — generated from the active note ── */}
       <Modal open={!!quizOverlay} onClose={()=>setQuizOverlay(null)} title="Practice Quiz" sub={activeNote?activeNote.title:""} width={520}>
@@ -4139,6 +4334,37 @@ function injectClassEvents(selectedClasses){
     });
   });
   if(newEvents.length>0)lsSet("events",existing.concat(newEvents));
+  return newEvents;
+}
+
+// Commits reviewed/confirmed syllabus deadlines as real calendar events,
+// linked back to their source note via noteId (the same cross-reference
+// shape assignmentId already established for Canvas-linked events). Runs
+// outside CalendarTab's React state — called from Notes() — so it reads/
+// writes localStorage directly, same lsGet→concat→lsSet shape as
+// injectClassEvents above. Deterministic ids mean re-confirming the same
+// note's review never double-injects.
+function commitSyllabusEvents(noteId,tag,items){
+  const existing=lsGet("events",[]);
+  const newEvents=items.map((it,i)=>({
+    id:"syl-"+noteId+"-"+i,
+    title:it.title,
+    date:it.date,
+    time:it.kind==="exam"?"09:00":"23:59",
+    subject:tag,
+    kind:it.kind==="exam"?"exam":"deadline",
+    notes:"",
+    priority:5,
+    difficulty:5,
+    deadline:it.kind==="deadline"?it.date:null,
+    duration:null,
+    status:"pending",
+    timeSpent:0,
+    completedAt:null,
+    noteId,
+  }));
+  lsSet("events",existing.concat(newEvents));
+  newEvents.forEach(scheduleTaskNotif);
   return newEvents;
 }
 
@@ -6513,6 +6739,10 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
       fsdb().collection('assignments').doc(ev.assignmentId)
         .update({status:"abandoned",updatedAt:new Date().toISOString()}).catch(()=>{});
     }
+    // ev.noteId (syllabus-extracted deadlines) needs no equivalent cleanup:
+    // unlike assignmentId, a note has no status enum anything else reads, so
+    // there's no orphan *state* to clean up on the note side — just a
+    // noteId on a now-deleted event, which disappears with the event.
   };
   const moveEvent=(id,newDate,newTime)=>{
     const ev=events.find(e=>e.id===id);
