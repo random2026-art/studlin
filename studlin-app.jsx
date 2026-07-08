@@ -1,4 +1,4 @@
-const { useState, useEffect, useRef } = React;
+const { useState, useEffect, useRef, useMemo } = React;
 
 // ─── DESIGN TOKENS · dark + light themes ──────────────────────────────────────
 const darkT = {
@@ -401,19 +401,19 @@ const PRICING_PLANS=(billing)=>([
   {
     key:"free",name:"Free",price:"$0",per:"forever",tag:null,
     desc:"Get organized. No credit card needed.",
-    features:["30 AI credits / month","AI tutor — Standard model","Manual flashcards & notes","Focus timer, calendar & planner","Streaks, XP & basic stats"],
+    features:["30 AI credits / month","AI tutor — Standard model","Manual flashcards & notes","Focus timer, calendar & planner","Streaks & progress stats"],
     cta:"Get started free",variant:"subtle",
   },
   {
     key:"pro",name:"Pro",price:billing==="annual"?"$7.99":"$9.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:"7 DAYS FREE",
-    desc:"The full study OS. Built for serious students.",
-    features:["200 AI credits / month","AI tutor — all models + 4 study modes","Full essay suite + plagiarism check","AI flashcards from notes, PDFs & YouTube","Google Docs sync + AI Rewrite (Humanizer)","Unlimited grammar + readability scores","Squad leaderboards + 2× focus XP"],
+    desc:"Everything on Free is still manual. Pro is where the AI actually does the work.",
+    features:["~6× more AI credits (200/month)","Every AI model, plus 4 dedicated study modes","Auto-generate flashcards from your notes, a PDF, or a YouTube lecture — no manual typing","Full essay suite: plagiarism check + grammar, built in","Google Docs sync with AI Rewrite in your own voice","Unlimited readability scoring"],
     cta:"Start free trial",variant:"lime",featured:true,
   },
   {
     key:"max",name:"Max",price:billing==="annual"?"$19.99":"$24.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:null,
-    desc:"Maximum firepower. No limits, ever.",
-    features:["500 AI credits / month","Everything in Pro, unlimited","Bulk ops — 100 flashcards at once","Advanced analytics & learning paths","Cosmetics shop + monthly tournaments","Priority support + 3× focus XP"],
+    desc:"For the heaviest workload: every subject, every week, no caps.",
+    features:["500 AI credits / month","Everything in Pro, unlimited","Bulk ops — 100 flashcards generated at once","Advanced analytics & learning paths","Priority support"],
     cta:"Upgrade to Max",variant:"ink",
   },
 ]);
@@ -863,13 +863,18 @@ function dayHasRoomFor(events,routines,prefs,dateKey,duration){
 // evicting every eligible candidate still isn't enough.
 // Returns {events, placement}: events is the full updated array (with any
 // evictions relocated) ready to persist; placement is where the task
-// itself lands.
+// itself lands, or null if no legal (non-overlapping, within-deadline) slot
+// exists anywhere — callers must treat null as "can't do this" rather than
+// committing findOpenSlotFor's own last-resort fallback, which can return
+// an already-occupied slot rather than silently dropping the task. That
+// tradeoff is fine for callers who already accept it; it is not fine for a
+// student-facing reschedule that's supposed to represent a legal move.
 function findSlotWithEviction(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey){
   const daysOut=deadlineKey?Math.ceil((new Date(deadlineKey+"T12:00:00")-new Date(dayKey()+"T12:00:00"))/86400000):null;
   const isImminent=daysOut!==null&&daysOut<=3;
 
   if(!isImminent||dayHasRoomFor(events,routines,prefs,desiredDate,duration)){
-    return {events,placement:findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey)};
+    return {events,placement:findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey)};
   }
 
   const candidates=events.filter(e=>e.date===desiredDate&&e.kind==="study block"&&e.status==="pending"&&
@@ -889,7 +894,11 @@ function findSlotWithEviction(events,routines,prefs,desiredDate,desiredTime,dura
   }
 
   if(!dayHasRoomFor(working,routines,prefs,desiredDate,duration)){
-    return {events,placement:findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey)};
+    // Evicting every eligible candidate still isn't enough room on this
+    // specific day — give the search one more genuine chance on a later
+    // (still-legal, pre-deadline) day rather than giving up immediately;
+    // only a real null here means no legal placement exists anywhere.
+    return {events,placement:findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey)};
   }
 
   const nextDay=(()=>{const d=new Date(desiredDate+"T12:00:00");d.setDate(d.getDate()+1);return dayKey(d);})();
@@ -989,7 +998,6 @@ function subtractIntervals(base,holes){
   });
   return segments.filter(s=>s.end>s.start);
 }
-const diffLabel=(v)=>{const p=v/10;return p<=20?"Easy":p<=40?"Moderately Easy":p<=60?"Medium":p<=80?"Moderately Hard":"Hard";};
 const prioLabel=(v)=>{const p=v/10;return p<=20?"Low":p<=40?"Low–Medium":p<=60?"Medium":p<=80?"High":"Urgent";};
 async function getAuthToken(){try{const u=firebase.auth().currentUser;if(!u)return null;return await u.getIdToken();}catch(e){return null;}}
 async function authFetch(url,opts={}){try{const token=await getAuthToken();const h=Object.assign({},opts.headers||{});if(token)h["Authorization"]="Bearer "+token;return fetch(url,Object.assign({},opts,{headers:h}));}catch(e){return fetch(url,opts);}}
@@ -1091,6 +1099,19 @@ function readabilityOf(html){
 function touchStreak(){const days=lsGet("days",[]);const t=dayKey();if(!days.includes(t)){days.push(t);lsSet("days",days);upsertProfile();}}
 function getStreak(){const days=new Set(lsGet("days",[]));let n=0;const d=new Date();while(days.has(dayKey(d))){n++;d.setDate(d.getDate()-1);}return n;}
 function logSession(mins,mode){const s=lsGet("sessions",[]);s.push({d:dayKey(),m:mins,t:Date.now(),mode:mode||"Focus"});lsSet("sessions",s);upsertProfile();}
+// "Similar tasks usually take you ~Xm" — median of real logged time (not
+// the originally-guessed duration) for past completed tasks in the same
+// subject+kind. Removes the time-blindness guesswork of estimating a new
+// task's length from scratch every time; returns null until there's at
+// least one real data point to go on.
+function suggestDurationFor(subject,kind){
+  const events=lsGet("events",[]).filter(e=>e.status==="done"&&e.timeSpent&&e.subject===subject&&e.kind===kind);
+  if(events.length===0)return null;
+  const sorted=events.map(e=>e.timeSpent).sort((a,b)=>a-b);
+  const mid=Math.floor(sorted.length/2);
+  const median=sorted.length%2?sorted[mid]:Math.round((sorted[mid-1]+sorted[mid])/2);
+  return Math.max(5,Math.round(median/5)*5);
+}
 function sessionStats(){
   const s=lsGet("sessions",[]);
   const weekAgo=Date.now()-6*86400000;
@@ -1609,8 +1630,8 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
 function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
   if(!open)return null;
   const tiers=[
-    {name:"Pro",price:"$9.99",perks:["5 AI music creations","200 AI credits / month","Unlimited decks + notes scanning"],color:T.lime},
-    {name:"Max",price:"$24.99",perks:["10 AI music creations","500 AI credits / month","Advanced analytics + learning paths"],color:T.purple},
+    {name:"Pro",price:"$9.99",perks:["~6× more AI credits (200/month)","Every AI model + 4 study modes","Unlimited decks + notes scanning"],color:T.lime},
+    {name:"Max",price:"$24.99",perks:["500 AI credits / month","Everything in Pro, unlimited","Advanced analytics + learning paths"],color:T.purple},
   ];
   const choose=(name)=>{setPlanLS(name);onClose();if(onUpgraded)onUpgraded(name);};
   return (
@@ -4851,7 +4872,25 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
     ?lsGet("events",[]).filter(e=>e.assignmentId===task.assignmentId&&e.id!==task.id&&e.status!=="done").length
     :0;
 
-  const playBeep=()=>{try{const ctx=new(window.AudioContext||window.webkitAudioContext)();const osc=ctx.createOscillator();const gain=ctx.createGain();osc.connect(gain);gain.connect(ctx.destination);osc.frequency.setValueAtTime(880,ctx.currentTime);osc.frequency.exponentialRampToValueAtTime(440,ctx.currentTime+0.3);gain.gain.setValueAtTime(0.3,ctx.currentTime);gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.35);osc.start(ctx.currentTime);osc.stop(ctx.currentTime+0.35);}catch(e){}};
+  // A soft three-note ascending chime (C5-E5-G5) rather than a single sharp
+  // sweep — noticeable enough that a session-end never gets missed, but
+  // pleasant enough that finishing a focus block doesn't feel like an alarm
+  // going off.
+  const playBeep=()=>{try{
+    const ctx=new(window.AudioContext||window.webkitAudioContext)();
+    [523.25,659.25,783.99].forEach((freq,i)=>{
+      const t=ctx.currentTime+i*0.15;
+      const osc=ctx.createOscillator();
+      const gain=ctx.createGain();
+      osc.type="sine";
+      osc.connect(gain);gain.connect(ctx.destination);
+      osc.frequency.setValueAtTime(freq,t);
+      gain.gain.setValueAtTime(0,t);
+      gain.gain.linearRampToValueAtTime(0.22,t+0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001,t+0.5);
+      osc.start(t);osc.stop(t+0.5);
+    });
+  }catch(e){}};
 
   const focus2Mins=Math.max(1,totalMins-breakPos-breakMins);
   const fmt=s=>String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0");
@@ -4938,8 +4977,12 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
     };
   },[running,phase,totalMins]);
 
+  // Break no longer auto-starts the instant focus time ends — the chime
+  // plays, the widget shows "Start Break" as a deliberate action the
+  // student takes, instead of silently flipping into a running countdown
+  // they didn't consciously begin.
   useEffect(()=>{
-    if(phase==="break"){setSecs(breakMins*60);setRunning(true);}
+    if(phase==="break"){setSecs(breakMins*60);setRunning(false);}
   },[phase,breakMins]);
 
   // ── Warn before closing the tab mid-session ───────────────────────────────
@@ -5309,11 +5352,15 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
         )}
 
         <div style={{display:"flex",gap:8,marginTop:12}}>
-          {phase==="break"&&<BtnSm onClick={resume} style={{flex:1,justifyContent:"center"}}>Resume early</BtnSm>}
+          {phase==="break"&&!running&&<BtnSm onClick={()=>setRunning(true)} style={{flex:1,justifyContent:"center"}}>Start Break</BtnSm>}
+          {phase==="break"&&running&&<BtnSm variant="ghost" onClick={()=>setRunning(false)} style={{flex:1,justifyContent:"center"}}>Pause</BtnSm>}
           {phase==="breakDone"&&<BtnSm onClick={resume} style={{flex:1,justifyContent:"center"}}>Resume</BtnSm>}
           {phase!=="break"&&phase!=="breakDone"&&<BtnSm variant="ghost" onClick={()=>setRunning(r=>!r)} style={{flex:1,justifyContent:"center"}}>{running?"Pause":"Resume"}</BtnSm>}
           {phase!=="breakDone"&&<BtnSm variant="danger" onClick={finishEarly} style={{flex:1,justifyContent:"center"}}>Finish</BtnSm>}
         </div>
+        {phase==="break"&&(
+          <button onClick={resume} style={{background:"none",border:"none",color:T.faint,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:"8px 0 0",width:"100%",textAlign:"center"}}>Skip break, keep working →</button>
+        )}
       </>)}
     </div>
   </>);
@@ -6002,6 +6049,7 @@ function RescheduleModal({task,events,commit,onClose}){
     const prefs=getSchedulePreferences();
     const routines=getWeeklyRoutine();
     const {events:relocated,placement}=findSlotWithEviction(events,routines,prefs,tomorrow,prefs.workStartTime,taskMins,task.deadline||null);
+    if(!placement){setErr("No open slot before its deadline, even after freeing up what we can — try a manual edit instead.");return;}
     const finalEvents=relocated.map(e=>e.id===task.id?{...e,date:placement.date,time:placement.time}:e);
     const evictedCount=relocated.filter(e=>{const orig=events.find(o=>o.id===e.id);return orig&&orig.date===tomorrow&&e.date!==tomorrow;}).length;
     commit(finalEvents,evictedCount);
@@ -6098,7 +6146,13 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
   const [evKind,setEvKind]=useState("deadline");
   const [evNotes,setEvNotes]=useState("");
   const [evPriority,setEvPriority]=useState(500); // 0-1000 continuous scale
-  const [evDifficulty,setEvDifficulty]=useState(500); // 0-1000 continuous scale for difficulty
+  // Difficulty slider removed from the UI entirely — deciding "how hard is
+  // this really" is friction with no payoff for a procrastination-prone
+  // brain at the exact moment they're avoiding a task. Stays at a flat
+  // Medium under the hood so calculateTaskPriority's difficulty-preference
+  // scoring doesn't break, it's just neutral for everyone now.
+  const [evDifficulty]=useState(500);
+  const [evMoreOpen,setEvMoreOpen]=useState(false);
   const [evDeadline,setEvDeadline]=useState("");
   const [evDeadlineTime,setEvDeadlineTime]=useState("23:59");
   // Explicit AI-Schedule vs Manual-Placement fork for task-kind entries —
@@ -6116,6 +6170,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
   // reschedule attempt past a task's own deadline never silently succeeds.
   const [deadlineToast,setDeadlineToast]=useState("");
   const showDeadlineToast=(deadline)=>{setDeadlineToast("Can't reschedule past "+deadline+" — that's the deadline.");setTimeout(()=>setDeadlineToast(""),2800);};
+  const [reconcileToast,setReconcileToast]=useState("");
   // Velocity Impact reschedule confirmation — set to the task being
   // rescheduled, null when closed.
   const [rescheduleTask,setRescheduleTask]=useState(null);
@@ -6159,6 +6214,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
     // never further in the past.
     const horizonEnd=(()=>{const d=new Date(now);d.setDate(d.getDate()+13);return dayKey(d);})();
     let changed=false;
+    const movedTitles=[];
     const next=events.map(ev=>{
       if(ev.status==="done"||!ev.time)return ev;
       if(ev.kind==="exam"||ev.kind==="class"||ev.kind==="busy block")return ev;
@@ -6175,9 +6231,21 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
       const slot=findOpenSlotFor(events.filter(e=>e.id!==ev.id),nextRoutines,prefs,ev.date,ev.time,duration);
       if(slot.date===ev.date&&slot.time===ev.time)return ev;
       changed=true;
+      movedTitles.push(ev.title);
       return {...ev,date:slot.date,time:slot.time};
     });
-    if(changed){setEvents(next);lsSet("events",next);}
+    if(changed){
+      setEvents(next);lsSet("events",next);
+      // This runs automatically (on mount, and whenever routines change) —
+      // unlike every other reschedule path in the app, nothing here is a
+      // direct response to a click, so it's the one place a task can move
+      // with no visible trigger. Always surface it, matching the app's own
+      // "successful async actions get a toast, not silence" convention.
+      setReconcileToast(movedTitles.length===1
+        ? `"${movedTitles[0]}" moved — it conflicted with your schedule.`
+        : `${movedTitles.length} tasks moved — they conflicted with your schedule.`);
+      setTimeout(()=>setReconcileToast(""),3400);
+    }
   };
   const persistRoutines=(r)=>{setRoutinesState(r);saveWeeklyRoutine(r);reconcileRoutineConflicts(r);};
   // Reconciliation above only fires on a routine *change* — it never touches
@@ -6235,7 +6303,11 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
   const [editDeadline,setEditDeadline]=useState("");
   const [editDeadlineErr,setEditDeadlineErr]=useState("");
   const [editPriority,setEditPriority]=useState(500);
+  // Difficulty is still preserved on the underlying task if it already had
+  // one (older data, or AI-set), but there's no slider to change it anymore
+  // — same reasoning as the Add Task flow.
   const [editDifficulty,setEditDifficulty]=useState(500);
+  const [editMoreOpen,setEditMoreOpen]=useState(false);
   const [editSubject,setEditSubject]=useState("Chemistry");
   const [editKind,setEditKind]=useState("deadline");
   const [editNotes,setEditNotes]=useState("");
@@ -6283,8 +6355,8 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
   // "let AI schedule this". The clicked day is remembered so fixed-time kinds
   // (exam/class/reminder), which always need a real date, can still default
   // to it once the user picks one of those types.
-  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("");setEvSubject("None");setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setNewOpen(true);};
-  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvDate("");setEvTime("");setEvPriority(500);setEvDifficulty(500);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);};
+  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("");setEvSubject("None");setEvDate("");setEvDeadline("");setEvPriority(500);setEvMoreOpen(false);setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setNewOpen(true);};
+  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvDate("");setEvTime("");setEvPriority(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);};
   const onEvKindChange=(k)=>{setEvKind(k);if((k==="exam"||k==="class"||k==="reminder"||k==="busy block")&&!evDate)setEvDate(evPrefillDate);};
   const buildTask=(date,time,titleSuffix,splitInfo)=>{
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
@@ -6450,7 +6522,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
   };
   const markDone=(id)=>{const next=events.map(ev=>ev.id===id?{...ev,status:"done",completedAt:Date.now()}:ev);setEvents(next);lsSet("events",next);};
   const nav=(d)=>setYm(c=>{const m2=c.m+d;return {y:c.y+Math.floor(m2/12),m:((m2%12)+12)%12};});
-  const openEdit=(ev)=>{setEditEv(ev);setEditTitle(ev.title||"");setEditDate(ev.date||dayKey());setEditTime(ev.time||"14:30");setEditDuration(ev.duration||60);setEditDeadline(ev.deadline||"");setEditDeadlineErr("");setEditPriority((ev.priority||5)*100);setEditDifficulty((ev.difficulty||5)*100);setEditSubject(ev.subject||"Chemistry");setEditKind(ev.kind||"deadline");setEditNotes(ev.notes||"");setEditOpen(true);};
+  const openEdit=(ev)=>{setEditEv(ev);setEditTitle(ev.title||"");setEditDate(ev.date||dayKey());setEditTime(ev.time||"14:30");setEditDuration(ev.duration||60);setEditDeadline(ev.deadline||"");setEditDeadlineErr("");setEditPriority((ev.priority||5)*100);setEditDifficulty((ev.difficulty||5)*100);setEditMoreOpen(!!ev.priority&&ev.priority!==5);setEditSubject(ev.subject||"Chemistry");setEditKind(ev.kind||"deadline");setEditNotes(ev.notes||"");setEditOpen(true);};
   const runGroupSync=()=>{
     if(!gsDueDate.trim())return;
     const prefStart=timeToMinutes(gsStartTime);
@@ -6728,6 +6800,9 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
       {rescheduleToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {rescheduleToast}</div>
       )}
+      {reconcileToast&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.amber,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {reconcileToast}</div>
+      )}
       {rescheduleTask&&(
         <RescheduleModal task={rescheduleTask} events={events} onClose={()=>setRescheduleTask(null)} commit={(next,evictedCount)=>{
           setEvents(next);lsSet("events",next);
@@ -6748,6 +6823,9 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
         <Field label="Type" hint={isFixedKind?"Fixed real-world block — Studlin will never move or reschedule this.":"Choose what kind of entry this is"}>
           <SelectChip options={[{value:"deadline",label:"Task"},"exam","class","study block","reminder","busy block"]} value={evKind} onChange={onEvKindChange} />
         </Field>
+
+        <div ref={tourSubjectRef}><Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field></div>
+        {evSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Drivers ed, SAT prep, club..." value={evCustom} onChange={ev=>setEvCustom(ev.target.value)} /></Field>}
 
         {isTaskKind&&(
           <Field label="Scheduling">
@@ -6793,11 +6871,16 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
         )}
 
         {isTaskKind&&(
-          <Field label="Duration (minutes)" hint="How long you plan to spend"><NumField min={5} max={480} fallback={5} value={evDuration} onChange={setEvDuration} /></Field>
+          <Field label="Duration (minutes)" hint="How long you plan to spend">
+            <NumField min={5} max={480} fallback={5} value={evDuration} onChange={setEvDuration} />
+            {(()=>{const s=suggestDurationFor(evSubject,evKind);return s&&s!==evDuration&&(
+              <div style={{fontSize:11.5,color:T.muted,marginTop:6}}>Similar tasks usually take you ~{s}m — <button type="button" onClick={()=>setEvDuration(s)} style={{background:"none",border:"none",color:T.lime,cursor:"pointer",fontSize:11.5,fontFamily:T.font,padding:0,textDecoration:"underline"}}>use this</button></div>
+            );})()}
+          </Field>
         )}
 
         {isTaskKind&&taskMode==="ai"&&(
-          <>
+          evMoreOpen ? (
             <Field label={`Impact: ${Math.round(evPriority/10)}%`} hint="How critical this is, independent of its due date — higher-impact tasks get scheduled earlier">
               <div style={{display:"flex",alignItems:"center",gap:12}}>
                 <span style={{fontSize:11,color:T.muted,width:28}}>Low</span>
@@ -6808,22 +6891,13 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
                 <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Urgent</span>
               </div>
             </Field>
-
-            <Field label={`Difficulty: ${Math.round(evDifficulty/10)}%`} hint="Very Easy to Very Difficult">
-              <div style={{display:"flex",alignItems:"center",gap:12}}>
-                <span style={{fontSize:11,color:T.muted,width:28}}>Easy</span>
-                <div style={{flex:1,position:"relative",paddingTop:24}}>
-                  <div style={{position:"absolute",top:0,left:`${evDifficulty/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.purple,background:T.purple+"18",border:`1px solid ${T.purple}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{diffLabel(evDifficulty)}</div>
-                  <input type="range" min={0} max={1000} value={evDifficulty} onChange={ev=>setEvDifficulty(+ev.target.value)} style={{width:"100%",accentColor:T.purple,height:6,borderRadius:3,cursor:"pointer"}} />
-                </div>
-                <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Hard</span>
-              </div>
-            </Field>
-          </>
+          ) : (
+            // Defaults to Medium impact — most tasks don't need this touched.
+            // One tap reveals it for the ones that do, instead of asking
+            // every single time.
+            <button type="button" onClick={()=>setEvMoreOpen(true)} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:"4px 0",marginBottom:14,textDecoration:"underline"}}>+ More details (impact)</button>
+          )
         )}
-
-        <div ref={tourSubjectRef}><Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field></div>
-        {evSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Drivers ed, SAT prep, club..." value={evCustom} onChange={ev=>setEvCustom(ev.target.value)} /></Field>}
 
         {isTaskKind&&(
           <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14}}>
@@ -6846,6 +6920,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
         footer={<><Btn variant="subtle" onClick={closeEdit}>Cancel</Btn><Btn onClick={saveEdit} disabled={!editTitle.trim()} style={{opacity:editTitle.trim()?1:0.45}}>Save changes</Btn></>}>
         <Field label="Title"><Input value={editTitle} onChange={e=>setEditTitle(e.target.value)} autoFocus /></Field>
         <Field label="Type"><SelectChip options={[{value:"deadline",label:"Task"},"exam","class","study block","reminder","busy block"]} value={editKind} onChange={setEditKind} /></Field>
+        <Field label="Subject"><SelectChip options={SUBJ} value={editSubject} onChange={setEditSubject} /></Field>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
           <Field label="Scheduled date"><Input type="date" value={editDate} onChange={e=>{setEditDate(e.target.value);setEditDeadlineErr("");}} /></Field>
           <Field label={editKind==="reminder"?"Reminder time":"Start time"}><TimeInput value={editTime} onChange={setEditTime} /></Field>
@@ -6857,29 +6932,22 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
         {editKind!=="exam"&&editKind!=="class"&&editKind!=="reminder"&&(
           <>
             <Field label="Deadline" hint="When this must be done by"><Input type="date" value={editDeadline} onChange={e=>{setEditDeadline(e.target.value);setEditDeadlineErr("");}} /></Field>
-            <Field label={`Impact: ${Math.round(editPriority/10)}%`} hint="How critical this is, independent of its due date — higher-impact tasks get scheduled earlier">
-              <div style={{display:"flex",alignItems:"center",gap:12}}>
-                <span style={{fontSize:11,color:T.muted,width:28}}>Low</span>
-                <div style={{flex:1,position:"relative",paddingTop:24}}>
-                  <div style={{position:"absolute",top:0,left:`${editPriority/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{prioLabel(editPriority)}</div>
-                  <input type="range" min={0} max={1000} value={editPriority} onChange={e=>setEditPriority(+e.target.value)} style={{width:"100%",accentColor:T.lime,height:6,borderRadius:3,cursor:"pointer"}} />
+            {editMoreOpen ? (
+              <Field label={`Impact: ${Math.round(editPriority/10)}%`} hint="How critical this is, independent of its due date — higher-impact tasks get scheduled earlier">
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  <span style={{fontSize:11,color:T.muted,width:28}}>Low</span>
+                  <div style={{flex:1,position:"relative",paddingTop:24}}>
+                    <div style={{position:"absolute",top:0,left:`${editPriority/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{prioLabel(editPriority)}</div>
+                    <input type="range" min={0} max={1000} value={editPriority} onChange={e=>setEditPriority(+e.target.value)} style={{width:"100%",accentColor:T.lime,height:6,borderRadius:3,cursor:"pointer"}} />
+                  </div>
+                  <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Urgent</span>
                 </div>
-                <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Urgent</span>
-              </div>
-            </Field>
-            <Field label={`Difficulty: ${Math.round(editDifficulty/10)}%`} hint="Very Easy to Very Difficult">
-              <div style={{display:"flex",alignItems:"center",gap:12}}>
-                <span style={{fontSize:11,color:T.muted,width:28}}>Easy</span>
-                <div style={{flex:1,position:"relative",paddingTop:24}}>
-                  <div style={{position:"absolute",top:0,left:`${editDifficulty/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.purple,background:T.purple+"18",border:`1px solid ${T.purple}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{diffLabel(editDifficulty)}</div>
-                  <input type="range" min={0} max={1000} value={editDifficulty} onChange={e=>setEditDifficulty(+e.target.value)} style={{width:"100%",accentColor:T.purple,height:6,borderRadius:3,cursor:"pointer"}} />
-                </div>
-                <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Hard</span>
-              </div>
-            </Field>
+              </Field>
+            ) : (
+              <button type="button" onClick={()=>setEditMoreOpen(true)} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:"4px 0",marginBottom:14,textDecoration:"underline"}}>+ More details (impact)</button>
+            )}
           </>
         )}
-        <Field label="Subject"><SelectChip options={SUBJ} value={editSubject} onChange={setEditSubject} /></Field>
         <Field label="Notes (optional)"><Textarea value={editNotes} onChange={e=>setEditNotes(e.target.value)} /></Field>
       </Modal>
       <Modal open={pauseOpen} onClose={()=>{setPauseOpen(false);setPausePreview(null);setPauseError("");}}
@@ -9882,16 +9950,31 @@ function App() {
   // the student clicks "Roll over".
   const [rolloverPending,setRolloverPending]=useState([]);
   const [rolloverToast,setRolloverToast]=useState("");
-  const applyRollover=()=>{
-    if(rolloverPending.length===0)return;
+  const fmtRolloverClock=(t)=>{if(!t)return"";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+ap;};
+  // Preview of exactly where each pending task would land — computed once
+  // per rolloverPending change (not re-derived on every render) so what the
+  // student sees in the banner and what "Roll over" actually commits are
+  // always the same batch of slots, never silently recomputed between them.
+  const rolloverPreview=useMemo(()=>{
+    if(rolloverPending.length===0)return[];
     const today=dayKey();
     const routines=getWeeklyRoutine();
     const prefs=getSchedulePreferences();
-    const all=lsGet("events",[]);
-    let working=all;
+    let working=lsGet("events",[]);
+    const preview=[];
     rolloverPending.forEach(ev=>{
       const slot=findOpenSlotFor(working,routines,prefs,today,prefs.workStartTime,ev.duration||30);
       working=working.map(e=>e.id===ev.id?{...e,date:slot.date,time:slot.time}:e);
+      preview.push({id:ev.id,title:ev.title,slot});
+    });
+    return preview;
+  },[rolloverPending]);
+  const applyRollover=()=>{
+    if(rolloverPending.length===0)return;
+    const all=lsGet("events",[]);
+    const working=all.map(e=>{
+      const p=rolloverPreview.find(x=>x.id===e.id);
+      return p?{...e,date:p.slot.date,time:p.slot.time}:e;
     });
     lsSet("events",working);
     setRolloverToast(rolloverPending.length+" overdue task"+(rolloverPending.length!==1?"s":"")+" moved to today.");
@@ -9901,6 +9984,33 @@ function App() {
   const [scheduleSettingsOpen,setScheduleSettingsOpen]=useState(false);
   const [navCollapsed,setNavCollapsed]=useState(()=>lsGet("navCollapsed",false));
   const toggleNavCollapsed=()=>{setNavCollapsed(v=>{lsSet("navCollapsed",!v);return !v;});};
+  // A gentle heads-up a few minutes before a scheduled study block/deadline
+  // starts — the "I knew I had to be locked in at that time" cue a mental
+  // notepad gives you for free, which a calendar you have to remember to
+  // check doesn't. Fires once per event per session (notifiedHeadsUpRef),
+  // never re-nags for the same block.
+  const [headsUpEvent,setHeadsUpEvent]=useState(null);
+  const notifiedHeadsUpRef=useRef(new Set());
+  useEffect(()=>{
+    const HEADS_UP_MINS=10;
+    const check=()=>{
+      if(timerTask)return; // already locked in, no need to be reminded
+      const today=dayKey();
+      const nowMins=(()=>{const d=new Date();return d.getHours()*60+d.getMinutes();})();
+      const events=lsGet("events",[]);
+      const upcoming=events.find(e=>{
+        if(e.date!==today||!e.time||e.status!=="pending")return false;
+        if(e.kind!=="study block"&&e.kind!=="deadline")return false;
+        if(notifiedHeadsUpRef.current.has(e.id))return false;
+        const em=timeToMinutes(e.time);
+        return em>nowMins&&em-nowMins<=HEADS_UP_MINS;
+      });
+      if(upcoming){notifiedHeadsUpRef.current.add(upcoming.id);setHeadsUpEvent(upcoming);setTimeout(()=>setHeadsUpEvent(h=>h&&h.id===upcoming.id?null:h),12000);}
+    };
+    check();
+    const id=setInterval(check,60000);
+    return()=>clearInterval(id);
+  },[timerTask]);
   window._setTimerTask=setTimerTask;
   const [creditsOpen,setCreditsOpen]=useState(false);
   const [pricingOpen,setPricingOpen]=useState(false);
@@ -10423,19 +10533,38 @@ function App() {
       }} />}
 
       {rolloverPending.length>0&&(
-        <div style={{position:"fixed",top:20,right:20,zIndex:999,display:"flex",alignItems:"center",gap:14,padding:"12px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:380}}>
-          <div style={{fontSize:13,color:T.white}}>
-            You have <strong style={{color:T.amber}}>{rolloverPending.length} unfinished task{rolloverPending.length!==1?"s":""}</strong> from yesterday.
+        <div style={{position:"fixed",top:76,right:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+          <div style={{fontSize:13,color:T.white,marginBottom:10}}>
+            <strong style={{color:T.amber}}>{rolloverPending.length} unfinished task{rolloverPending.length!==1?"s":""}</strong> from yesterday — here's where they'd go:
           </div>
-          <div style={{display:"flex",gap:8,flexShrink:0}}>
-            <Btn onClick={applyRollover} style={{padding:"7px 14px",fontSize:12}}>Roll over</Btn>
-            <Btn variant="ghost" onClick={()=>setRolloverPending([])} style={{padding:"7px 14px",fontSize:12}}>Dismiss</Btn>
+          <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12,maxHeight:160,overflowY:"auto"}}>
+            {rolloverPreview.map(p=>(
+              <div key={p.id} style={{display:"flex",justifyContent:"space-between",gap:10,fontSize:12,padding:"6px 9px",background:T.card2,borderRadius:8}}>
+                <span style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.title}</span>
+                <span style={{color:T.muted,flexShrink:0,fontFamily:T.mono}}>{p.slot.date===dayKey()?"Today":p.slot.date} {fmtRolloverClock(p.slot.time)}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <Btn onClick={applyRollover} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Roll over</Btn>
+            <Btn variant="ghost" onClick={()=>setRolloverPending([])} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Dismiss</Btn>
           </div>
         </div>
       )}
       {rolloverToast&&(
-        <div style={{position:"fixed",top:20,right:20,zIndex:999,padding:"11px 18px",borderRadius:10,background:T.teal,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+        <div style={{position:"fixed",top:76,right:20,zIndex:999,padding:"11px 18px",borderRadius:10,background:T.teal,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           {rolloverToast}
+        </div>
+      )}
+      {headsUpEvent&&(
+        <div style={{position:"fixed",bottom:20,left:20,zIndex:999,padding:"12px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:300,display:"flex",alignItems:"center",gap:12}}>
+          <div style={{fontSize:12.5,color:T.text,flex:1}}>
+            <strong>{headsUpEvent.title}</strong> starts soon — {fmtRolloverClock(headsUpEvent.time)}.
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:6,flexShrink:0}}>
+            <BtnSm onClick={()=>{setTimerTask(headsUpEvent);setHeadsUpEvent(null);}} style={{padding:"6px 12px",fontSize:11}}>Begin now</BtnSm>
+            <button onClick={()=>setHeadsUpEvent(null)} style={{background:"none",border:"none",color:T.faint,fontSize:11,cursor:"pointer",fontFamily:T.font}}>Dismiss</button>
+          </div>
         </div>
       )}
 
