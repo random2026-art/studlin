@@ -10319,19 +10319,19 @@ function App() {
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
       {id:"friends",label:"Studlin Network",badge:String(unreadCount||"")},
-      {id:"feedback",label:"Feedback"},
       // "lectures" (Lectures) intentionally hidden from the active nav —
       // same archive treatment as writestudio/solve. Page, route mapping,
       // and label still exist below so nothing breaks for anything that
-      // still references it. (No "achievements" entry — that page/feature
-      // doesn't exist in this tree; see the pending discussion with Vene
-      // before merging Phase 4+6A+6B.)
+      // still references it. Feedback moved to bottomItems below. (No
+      // "achievements" entry — that page/feature doesn't exist in this
+      // tree; see the pending discussion with Vene before merging Phase
+      // 4+6A+6B.)
     ]},
     // "solve" (Solve) intentionally hidden from the active nav — page, route
     // mapping, and label still exist below so nothing breaks for anything
     // that still references it.
   ];
-  const bottomItems=[{id:"settings",label:"Settings"},{id:"profile",label:"Profile"}];
+  const bottomItems=[{id:"settings",label:"Settings"},{id:"feedback",label:"Feedback"},{id:"profile",label:"Profile"}];
   const pages={aichat:AiChat,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile,lectures:Lectures,feedback:FeedbackPage};
   const labelOf={dashboard:"Dashboard",aichat:"Studlin AI",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Studlin Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve",lectures:"Lectures",feedback:"Feedback"};
   const sectionOf={dashboard:"Workspace",aichat:"Workspace",writestudio:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",friends:"Workspace",lectures:"Workspace",feedback:"Workspace",solve:"Tools",settings:"Account",profile:"Account"};
