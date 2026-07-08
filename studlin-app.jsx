@@ -9573,10 +9573,21 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
           {text:"An investment in knowledge pays the best interest.",author:"Benjamin Franklin"},
           {text:"Learning is not attained by chance — it must be sought with ardor.",author:"Abigail Adams"},
         ];
-        const q=QUOTES[new Date().getDate()%QUOTES.length];
+        const todayStr=new Date().toISOString().slice(0,10);
+        const stored=lsGet("quote-of-day",null);
+        let qIdx;
+        if(stored&&stored.date===todayStr){
+          qIdx=stored.idx;
+        }else{
+          const prev=stored?stored.idx:-1;
+          let next=Math.floor(Math.random()*QUOTES.length);
+          if(next===prev)next=(next+1)%QUOTES.length;
+          qIdx=next;
+          lsSet("quote-of-day",{date:todayStr,idx:qIdx});
+        }
+        const q=QUOTES[qIdx];
         return(
           <div style={{background:"#F5EE90",borderRadius:22,padding:"28px 32px",position:"relative",overflow:"hidden",display:"flex",alignItems:"flex-start",gap:24}}>
-            <div style={{fontFamily:T.hand,fontSize:110,lineHeight:0.7,fontWeight:700,color:"rgba(14,31,24,0.13)",flexShrink:0,userSelect:"none",marginTop:-8,letterSpacing:"-0.04em"}}>{new Date().getDate()}</div>
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(14,31,24,0.4)",marginBottom:10,fontWeight:600}}>Quote of the day</div>
               <p style={{fontFamily:"Georgia,serif",fontSize:18,fontStyle:"italic",lineHeight:1.55,color:"#0E1F18",margin:"0 0 12px",maxWidth:680}}>"{q.text}"</p>
