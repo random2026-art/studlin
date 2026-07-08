@@ -10319,10 +10319,13 @@ function App() {
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
       {id:"friends",label:"Studlin Network",badge:String(unreadCount||"")},
-      // "lectures" (Lectures) and "feedback" (Feedback) intentionally hidden
-      // from the active nav — same archive treatment as writestudio/solve.
-      // Page, route mapping, and label all still exist below so nothing
-      // breaks for anything that still references them.
+      {id:"feedback",label:"Feedback"},
+      // "lectures" (Lectures) intentionally hidden from the active nav —
+      // same archive treatment as writestudio/solve. Page, route mapping,
+      // and label still exist below so nothing breaks for anything that
+      // still references it. (No "achievements" entry — that page/feature
+      // doesn't exist in this tree; see the pending discussion with Vene
+      // before merging Phase 4+6A+6B.)
     ]},
     // "solve" (Solve) intentionally hidden from the active nav — page, route
     // mapping, and label still exist below so nothing breaks for anything
