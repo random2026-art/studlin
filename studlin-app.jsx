@@ -6174,7 +6174,6 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
   const [items,setItems]=useState([]);
   const [workStart,setWorkStart]=useState("10:00");
   const [workEnd,setWorkEnd]=useState("18:00");
-  const [skipConfirmOpen,setSkipConfirmOpen]=useState(false);
 
   useEffect(()=>{
     if(!open)return;
@@ -6190,7 +6189,6 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
     const prefs=getSchedulePreferences();
     setWorkStart(prefs.workStartTime||"10:00");
     setWorkEnd(prefs.workEndTime||"18:00");
-    setSkipConfirmOpen(false);
   },[open]);
 
   const addItem=(item)=>setItems(prev=>[...prev,{id:String(Date.now()+Math.random()*1000),...item}]);
@@ -6216,13 +6214,13 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
 
   return (
     <>
-      <Modal open={open&&!skipConfirmOpen} onClose={()=>setSkipConfirmOpen(true)}
+      <Modal open={open} onClose={onSkip}
         title={wizStep==="status"?"Set up your Weekly Routine?":wizStep==="build"?"Map your schedule":"Preferred Focus Windows"}
         sub={wizStep==="status"?"Add your classes, sports, or work shifts once, and our AI will automatically shield those times every single week.":wizStep==="window"?"When do you typically prefer to study?":undefined}
         width={620}
         footer={
           <div style={{display:"flex",width:"100%",justifyContent:"space-between",alignItems:"center"}}>
-            <Btn variant="subtle" onClick={()=>setSkipConfirmOpen(true)}>Skip and Setup Later</Btn>
+            <Btn variant="subtle" onClick={onSkip}>Skip and Setup Later</Btn>
             <div style={{display:"flex",gap:10}}>
               {wizStep!=="status"&&<Btn variant="subtle" onClick={()=>setWizStep(wizStep==="window"?"build":"status")}>Back</Btn>}
               {wizStep==="status"&&<Btn onClick={()=>setWizStep("build")} disabled={!status} style={{opacity:status?1:0.45}}>Map Routine Now</Btn>}
@@ -6245,15 +6243,6 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
             <Field label="Preferred study end"><TimeInput value={workEnd} onChange={setWorkEnd} /></Field>
           </div>
         )}
-      </Modal>
-      <Modal open={skipConfirmOpen} onClose={()=>setSkipConfirmOpen(false)} title="Hold up!" width={440}
-        footer={
-          <div style={{display:"flex",gap:10,width:"100%",justifyContent:"flex-end"}}>
-            <Btn variant="subtle" onClick={()=>setSkipConfirmOpen(false)}>Map Routine Now</Btn>
-            <Btn variant="danger" onClick={()=>{setSkipConfirmOpen(false);onSkip();}}>Skip Anyway, I'll Fix it in Settings</Btn>
-          </div>
-        }>
-        <div style={{fontSize:14,color:T.text,lineHeight:1.5}}>Without a routine baseline, the AI might schedule study blocks during your actual classes.</div>
       </Modal>
     </>
   );
@@ -6519,12 +6508,16 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   const [subjOnboardOpen,setSubjOnboardOpen]=useState(()=>!lsGet("subjects-configured",false));
   const [onbSubjs,setOnbSubjs]=useState(()=>getSubjects().map(s=>({...s})));
 
-  // Deferred Weekly Routine wizard — first-visit intercept, gated by its own
-  // one-shot flag (separate from subjects setup), plus a "Manage Routine"
-  // reopen path from the Calendar header and Settings > Calendar Preferences
+  // Deferred Weekly Routine wizard — used to block on the very first Calendar
+  // mount for every new account, before the student had done anything at
+  // all. Now it only auto-opens once they've actually saved a real task
+  // (i.e. on a *later* visit to Calendar, never the first) — the setup ask
+  // comes after they've seen the app do something, not before. Still gated
+  // by the same one-shot "hasConfiguredRoutine" flag, and still reachable
+  // any time via the "Routine" button or Settings > Calendar Preferences
   // (the latter arrives via openWizardOnMount, since Settings is a separate
   // top-level tab with no direct access to this component's state).
-  const [routineWizardOpen,setRoutineWizardOpen]=useState(()=>!lsGet("hasConfiguredRoutine",false));
+  const [routineWizardOpen,setRoutineWizardOpen]=useState(()=>!lsGet("hasConfiguredRoutine",false)&&lsGet("events",[]).some(e=>!e.id.startsWith("seed-")));
   // Routine Control Center — the ongoing management dashboard reached via the
   // gear icon on the Calendar toolbar (as opposed to routineWizardOpen, which
   // is only the first-run setup flow).
@@ -6590,6 +6583,14 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   const [brainDumpText,setBrainDumpText]=useState("");
   const [brainDumpLoading,setBrainDumpLoading]=useState(false);
   const [brainDumpReview,setBrainDumpReview]=useState(null); // {items:[{id,title,kind,durationMin,dueDate,needsDuration,include}]}
+  // One-shot deep link from Dashboard's empty-Today's-Plan "Brain dump
+  // everything" button — matches the openDeckId/openNoteId pattern used
+  // elsewhere for cross-tab one-shot triggers.
+  useEffect(()=>{
+    if(!lsGet("pendingBrainDump",false))return;
+    try{localStorage.removeItem("studlin-pendingBrainDump");}catch(e){}
+    setBrainDumpOpen(true);
+  },[]);
   // Explicit AI-Schedule vs Manual-Placement fork for task-kind entries —
   // replaces the old implicit "fill in Target Date to go manual" behavior,
   // which showed both the Target Date and Deadline fields at once and left
@@ -9565,7 +9566,10 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
           {plan.length===0
             ? <div style={{padding:"22px 8px",textAlign:"center"}}>
                 <div style={{fontSize:13,color:T.muted,marginBottom:14,lineHeight:1.5}}>Nothing scheduled for today. Add events to your calendar and they appear here automatically.</div>
-                <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 16px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Open calendar</button>
+                <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
+                  <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 16px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Add a task</button>
+                  <button onClick={()=>{lsSet("pendingBrainDump",true);setActive("calendar");}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 16px",background:"transparent",color:T.text,border:`1px solid ${T.border}`,borderRadius:99,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Brain dump everything</button>
+                </div>
               </div>
             : plan.map((t)=>{
               const c=scOf(t.subject);
@@ -10481,14 +10485,18 @@ function App() {
   // after onboarding — the first time it's actually relevant (a task with a
   // reminder was just saved, or a friend request was just sent), not before.
   const askNotifIfNeeded=()=>{ if(!lsGet("notifAsked",false)) setNotifPermModal(true); };
-  // Fires on every task save; the notif prompt has its own one-shot gate, and
-  // the paywall's "first real task" moment gets its own separate one below —
-  // same trigger point, two independent one-time intercepts.
+  // Fires on every task save. The paywall and the notification-permission ask
+  // used to both be gated off this same event, which meant a student's very
+  // first save could trigger both at once — right after doing the thing you
+  // wanted, get hit with two separate asks. Made them mutually exclusive: the
+  // first-ever save shows only the paywall (the real "aha moment"), and the
+  // notification ask is deferred to the save after that.
   const handleTaskSaved=()=>{
-    askNotifIfNeeded();
     if(!lsGet("paywallShown",false)){
       lsSet("paywallShown",true);
       setPaywallOpen(true);
+    }else{
+      askNotifIfNeeded();
     }
   };
   // Cross-tab deep link for Settings > Calendar Preferences' "Manage Routine"
