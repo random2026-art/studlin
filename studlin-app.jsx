@@ -9506,7 +9506,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
         </div>
 
         {/* Streak — medium green card matching design */}
-        <div onClick={()=>setActive("profile")} style={{background:"#4D7835",borderRadius:22,padding:22,cursor:"pointer",display:"flex",flexDirection:"column",position:"relative",overflow:"hidden"}}>
+        <div onClick={()=>setActive("profile")} style={{background:"#5B8C2A",borderRadius:22,padding:22,cursor:"pointer",display:"flex",flexDirection:"column",position:"relative",overflow:"hidden"}}>
           <div style={{position:"absolute",right:-20,top:-20,width:120,height:120,background:"radial-gradient(circle,rgba(174,206,94,0.15),transparent 70%)",pointerEvents:"none"}} />
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
             <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)",fontWeight:600}}>Day Streak</span>
@@ -9535,8 +9535,8 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
           </div>
         </div>
 
-        {/* XP & Rank — light card, clickable → career roadmap modal */}
-        <div onClick={()=>setLevelRoadmapOpen(true)} style={{background:T.mode==="dark"?"#F0EDE6":"#FFFFFF",borderRadius:22,padding:22,cursor:"pointer",display:"flex",flexDirection:"column"}}>
+        {/* XP & Rank — always white, pops against dark background */}
+        <div onClick={()=>setLevelRoadmapOpen(true)} style={{background:"#FFFFFF",borderRadius:22,padding:22,cursor:"pointer",display:"flex",flexDirection:"column"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(14,31,24,0.45)",fontWeight:600}}>Focus &amp; Rank</span>
             <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.10em",background:T.lime+"33",padding:"3px 9px",borderRadius:99,color:T.limeDk,border:`1px solid ${T.lime}55`,fontWeight:700}}>{lvl.title.toUpperCase()}</span>
@@ -9574,12 +9574,12 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
         ];
         const q=QUOTES[new Date().getDate()%QUOTES.length];
         return(
-          <div style={{background:T.mode==="dark"?"#1C1A14":"#F5F0DC",borderRadius:22,padding:"28px 32px",position:"relative",overflow:"hidden",display:"flex",alignItems:"flex-start",gap:24}}>
-            <div style={{fontFamily:T.hand,fontSize:88,lineHeight:0.7,fontWeight:700,color:T.mode==="dark"?"rgba(246,241,230,0.08)":"rgba(14,31,24,0.06)",flexShrink:0,userSelect:"none",marginTop:-8}}>{new Date().getDate()}</div>
+          <div style={{background:"#F5EE90",borderRadius:22,padding:"28px 32px",position:"relative",overflow:"hidden",display:"flex",alignItems:"flex-start",gap:24}}>
+            <div style={{fontFamily:T.hand,fontSize:88,lineHeight:0.7,fontWeight:700,color:"rgba(14,31,24,0.07)",flexShrink:0,userSelect:"none",marginTop:-8}}>{new Date().getDate()}</div>
             <div style={{flex:1,minWidth:0}}>
-              <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:T.mode==="dark"?"rgba(246,241,230,0.35)":"rgba(14,31,24,0.35)",marginBottom:10,fontWeight:600}}>Quote of the day</div>
-              <p style={{fontFamily:"Georgia,serif",fontSize:18,fontStyle:"italic",lineHeight:1.55,color:T.mode==="dark"?T.cream:"#0E1F18",margin:"0 0 12px",maxWidth:680}}>"{q.text}"</p>
-              <div style={{fontSize:12,color:T.mode==="dark"?"rgba(246,241,230,0.4)":"rgba(14,31,24,0.4)",letterSpacing:"0.04em"}}>— {q.author.toUpperCase()}</div>
+              <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(14,31,24,0.4)",marginBottom:10,fontWeight:600}}>Quote of the day</div>
+              <p style={{fontFamily:"Georgia,serif",fontSize:18,fontStyle:"italic",lineHeight:1.55,color:"#0E1F18",margin:"0 0 12px",maxWidth:680}}>"{q.text}"</p>
+              <div style={{fontSize:12,color:"rgba(14,31,24,0.45)",letterSpacing:"0.04em"}}>— {q.author.toUpperCase()}</div>
             </div>
             <button onClick={()=>{if(navigator.share)navigator.share({text:'"'+q.text+'" — '+q.author+'\n\nStudlin'});else if(navigator.clipboard)navigator.clipboard.writeText('"'+q.text+'" — '+q.author);}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"11px 18px",background:"#0E1F18",border:"none",borderRadius:99,fontSize:13,fontWeight:600,color:"#F6F1E6",cursor:"pointer",fontFamily:T.font,flexShrink:0,boxShadow:"0 4px 14px rgba(0,0,0,0.18)"}}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
@@ -9592,7 +9592,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
       {/* ROW 2: Today's plan + Jump back in + Ask Studlin */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:16}}>
         {/* Today's plan */}
-        <div style={{background:T.mode==="dark"?"#F0EDE6":"#FFFFFF",borderRadius:22,padding:24,display:"flex",flexDirection:"column"}}>
+        <div style={{background:"#FFFFFF",borderRadius:22,padding:24,display:"flex",flexDirection:"column"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8,flexWrap:"wrap"}}>
             <span style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:"#0E1F18"}}>Today's plan</span>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
