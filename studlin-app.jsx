@@ -1725,6 +1725,61 @@ function AiChat() {
   useEffect(scrollToBottom,[msgs,thinkStep]);
   const hasMessages=msgs.length>0;
 
+  const [chatId,setChatId]=useState(()=>"chat-"+Date.now());
+  const [historyOpen,setHistoryOpen]=useState(false);
+  const [chatHistory,setChatHistory]=useState(()=>lsGet("ai-chats",[]));
+
+  useEffect(()=>{
+    if(msgs.length===0)return;
+    const title=msgs.find(m=>m.r==="user")?.t?.replace(/\n/g," ").slice(0,60)||"Conversation";
+    const chats=lsGet("ai-chats",[]);
+    const idx=chats.findIndex(c=>c.id===chatId);
+    const entry={id:chatId,title,updatedAt:Date.now(),msgs};
+    const updated=idx>=0?chats.map((c,i)=>i===idx?entry:c):[entry,...chats];
+    const trimmed=updated.slice(0,30);
+    lsSet("ai-chats",trimmed);
+    setChatHistory(trimmed);
+  },[msgs]);
+
+  const newChat=()=>{setChatId("chat-"+Date.now());setMsgs([]);setInput("");setAttachedFile(null);};
+  const loadChat=(chat)=>{setChatId(chat.id);setMsgs(chat.msgs);setHistoryOpen(false);};
+  const deleteChat=(id,e)=>{e.stopPropagation();const updated=chatHistory.filter(c=>c.id!==id);lsSet("ai-chats",updated);setChatHistory(updated);if(id===chatId)newChat();};
+  const relTime=(ts)=>{const d=Date.now()-ts,m=Math.floor(d/60000);if(m<1)return"Just now";if(m<60)return m+"m ago";const h=Math.floor(m/60);if(h<24)return h+"h ago";const dy=Math.floor(h/24);if(dy===1)return"Yesterday";if(dy<7)return dy+"d ago";return new Date(ts).toLocaleDateString("en-US",{month:"short",day:"numeric"});};
+
+  const historyPanel=(
+    <div style={{width:220,flexShrink:0,borderRight:`1px solid ${T.border}`,display:"flex",flexDirection:"column",background:T.surface,overflow:"hidden"}}>
+      <div style={{padding:"14px 12px 8px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:`1px solid ${T.border}`,flexShrink:0}}>
+        <span style={{fontSize:10,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:T.muted}}>Chat history</span>
+        <button onClick={newChat} style={{display:"inline-flex",alignItems:"center",gap:5,padding:"5px 9px",borderRadius:7,border:`1px solid ${T.border}`,background:"transparent",color:T.lime,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          New
+        </button>
+      </div>
+      <div style={{flex:1,overflowY:"auto",padding:"6px 8px"}}>
+        {chatHistory.length===0&&(
+          <div style={{padding:"32px 12px",textAlign:"center",color:T.faint,fontSize:12,lineHeight:1.5}}>No past chats yet.</div>
+        )}
+        {chatHistory.map(chat=>(
+          <div key={chat.id} onClick={()=>loadChat(chat)} style={{display:"flex",alignItems:"flex-start",gap:6,padding:"9px 10px",borderRadius:8,cursor:"pointer",background:chat.id===chatId?T.lime+"12":"transparent",border:`1px solid ${chat.id===chatId?T.lime+"33":"transparent"}`,marginBottom:2,group:true,position:"relative"}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:12,fontWeight:chat.id===chatId?600:500,color:chat.id===chatId?T.white:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",lineHeight:1.35}}>{chat.title}</div>
+              <div style={{fontSize:10,color:T.faint,marginTop:2}}>{relTime(chat.updatedAt)}</div>
+            </div>
+            <button onClick={(e)=>deleteChat(chat.id,e)} style={{width:18,height:18,borderRadius:4,border:"none",background:"transparent",color:T.faint,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:1,padding:0,opacity:0.6}} title="Delete">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  const historyToggle=(
+    <button onClick={()=>setHistoryOpen(o=>!o)} title={historyOpen?"Close history":"Chat history"} style={{display:"grid",placeItems:"center",width:32,height:32,borderRadius:8,border:`1px solid ${historyOpen?T.lime+"44":T.border}`,background:historyOpen?T.lime+"10":"transparent",color:historyOpen?T.lime:T.muted,cursor:"pointer",flexShrink:0}}>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+    </button>
+  );
+
   const userName=(getUserName()||"there").split(" ")[0];
 
   const [recording,setRecording]=useState(false);
@@ -1883,7 +1938,10 @@ function AiChat() {
 
   if(!hasMessages){
     return(
-      <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"calc(100vh - 120px)",padding:"0 24px"}}>
+      <div style={{display:"flex",height:"calc(100vh - 80px)",overflow:"hidden"}}>
+        {historyOpen&&historyPanel}
+        <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"calc(100vh - 120px)",padding:"0 24px",position:"relative"}}>
+        <div style={{position:"absolute",top:12,left:12}}>{historyToggle}</div>
         {(()=>{const hr=new Date().getHours();const period=hr<5?"late-night":hr<12?"morning":hr<18?"afternoon":hr<22?"evening":"late-night";const fName=(userName||"there").split(" ")[0];return(
         <div style={{display:"flex",alignItems:"center",gap:16,marginBottom:34,animation:"studlinRise 0.5s ease-out"}}>
           <img src="studlin-icon.png" alt="Studlin" style={{width:52,height:52,borderRadius:15,flexShrink:0,boxShadow:"0 6px 20px -8px rgba(0,0,0,0.4)",objectFit:"cover"}} onError={e=>{e.target.style.display="none";}} />
@@ -1900,15 +1958,19 @@ function AiChat() {
           ))}
         </div>
         <div style={{fontSize:11,color:T.faint,marginTop:22}}><span style={{color:T.muted}}>{curModel.name}</span> · {credits} credits remaining</div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 80px)"}}>
+    <div style={{display:"flex",height:"calc(100vh - 80px)",overflow:"hidden"}}>
+      {historyOpen&&historyPanel}
+      <div style={{flex:1,display:"flex",flexDirection:"column",minWidth:0}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 0 16px",flexShrink:0}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <button onClick={()=>setMsgs([])} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.card,color:T.muted,fontSize:12,fontWeight:500,cursor:"pointer",fontFamily:T.font}}>
+          {historyToggle}
+          <button onClick={newChat} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.card,color:T.muted,fontSize:12,fontWeight:500,cursor:"pointer",fontFamily:T.font}}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             New chat
           </button>
@@ -1969,6 +2031,7 @@ function AiChat() {
         <div style={{maxWidth:720,margin:"0 auto"}}>
           {inputBar(true)}
         </div>
+      </div>
       </div>
     </div>
   );
