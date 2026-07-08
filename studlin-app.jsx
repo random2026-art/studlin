@@ -9511,7 +9511,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
             <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)",fontWeight:600}}>Day Streak</span>
             <svg width="22" height="22" viewBox="0 0 24 24" stroke="none">
-              <defs><linearGradient id="streakFlameGrad2" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#FF5F52"/><stop offset="100%" stopColor="#B3001B"/></linearGradient></defs>
+              <defs><linearGradient id="streakFlameGrad2" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#FFB347"/><stop offset="100%" stopColor="#FF6B00"/></linearGradient></defs>
               <path fill="url(#streakFlameGrad2)" d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/>
             </svg>
           </div>
@@ -9522,7 +9522,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
               const isToday=d.today, on=d.on;
               return(
                 <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
-                  <div style={{width:"100%",height:28,borderRadius:7,background:isToday?"rgba(174,206,94,0.25)":on?"rgba(246,241,230,0.12)":"rgba(246,241,230,0.05)",color:on?"#FF5A2E":"rgba(246,241,230,0.25)",opacity:d.future?0.4:1,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:isToday?`0 0 0 1.5px ${T.lime}`:"none"}}>
+                  <div style={{width:"100%",height:28,borderRadius:7,background:isToday?"rgba(174,206,94,0.25)":on?"rgba(246,241,230,0.12)":"rgba(246,241,230,0.05)",color:on?"#FF8C38":"rgba(246,241,230,0.25)",opacity:d.future?0.4:1,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:isToday?`0 0 0 1.5px ${T.lime}`:"none"}}>
                     {on||isToday
                       ?<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
                       :<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="4"/></svg>
@@ -9697,7 +9697,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
         const barData=weekDays7.map((d)=>{const key=dayKey(d);const mins=minsByDay[key]||0;const isToday=key===dayKey(new Date());const lab=d.toLocaleDateString("en-US",{weekday:"short"}).slice(0,2).toUpperCase();return {mins,isToday,lab};});
         const maxMins=Math.max.apply(null,barData.map((d)=>d.mins).concat([1]));
         const wkMins=weeklyFocusMin||0;
-        const focusStr=wkMins>=60?Math.floor(wkMins/60)+"H"+(wkMins%60>0?" "+(wkMins%60)+"M":""):wkMins+"M";
+        const focusStr=wkMins>=60?Math.floor(wkMins/60)+"H "+(wkMins%60)+"M":wkMins+"M";
         return(
           <div style={{display:"grid",gridTemplateColumns:"7fr 5fr",gap:16}}>
             {/* This week's focus */}
@@ -9737,7 +9737,10 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
             <div style={{background:`linear-gradient(135deg, ${T.forest} 0%, #1B4536 100%)`,borderRadius:22,padding:"26px 28px",display:"flex",flexDirection:"column"}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
                 <span style={{fontFamily:T.hand,fontSize:26,fontWeight:600,color:T.cream}}>Weekly Wrapped</span>
-                <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.12em",padding:"4px 10px",borderRadius:6,background:"rgba(246,241,230,0.10)",color:"rgba(246,241,230,0.55)",fontWeight:700,border:"1px solid rgba(246,241,230,0.12)"}}>WEEK {weekNo()}</span>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.12em",padding:"4px 10px",borderRadius:6,background:"rgba(246,241,230,0.10)",color:"rgba(246,241,230,0.55)",fontWeight:700,border:"1px solid rgba(246,241,230,0.12)"}}>WEEK {weekNo()}</span>
+                  <button onClick={()=>setWrappedOpen(true)} style={{fontSize:12,color:"rgba(246,241,230,0.5)",background:"none",border:"none",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:3,fontFamily:T.font}}>View full <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
+                </div>
               </div>
               {[
                 {label:"FOCUS HOURS",value:focusStr,accent:true},
@@ -11008,7 +11011,7 @@ function App() {
             such modal's centering into being relative to this scrolled
             container instead of the real viewport. Clearing it once done
             keeps the entrance animation but stops that side effect. */}
-        <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both"}}>
+        <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?"#F0EBE1":undefined}}>
           {active==="dashboard"?<Dashboard setActive={setActive} setScheduleSettingsOpen={setScheduleSettingsOpen} seriousMode={seriousMode} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} />:
            active==="calendar"?<CalendarTab onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} />:
