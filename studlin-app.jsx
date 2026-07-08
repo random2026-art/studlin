@@ -407,7 +407,7 @@ const PRICING_PLANS=(billing)=>([
   {
     key:"pro",name:"Pro",price:billing==="annual"?"$7.99":"$9.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:"7 DAYS FREE",
     desc:"Everything on Free is still manual. Pro is where the AI actually does the work.",
-    features:["~6× more AI credits (200/month)","Every AI model, plus 4 dedicated study modes","Auto-generate flashcards from your notes, a PDF, or a YouTube lecture — no manual typing","Full essay suite: plagiarism check + grammar, built in","Google Docs sync with AI Rewrite in your own voice","Unlimited readability scoring"],
+    features:["~6× more AI credits (200/month)","Every AI model, plus 4 dedicated study modes","Auto-generate flashcards from your notes, a PDF, or a YouTube lecture — no manual typing","Google Docs sync with AI Rewrite in your own voice","Unlimited readability scoring"],
     cta:"Start free trial",variant:"lime",featured:true,
   },
   {
@@ -3383,7 +3383,7 @@ function Notes(){
                     <Input type="date" value={it.date} onChange={ev=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,date:ev.target.value}:x)}))} style={{width:150}} />
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:8}}>
-                    <SelectChip options={[{value:"deadline",label:"Task"},{value:"exam",label:"Exam"}]} value={it.kind} onChange={v=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v}:x)}))} />
+                    <SelectChip options={[{value:"deadline",label:"To-Do"},{value:"exam",label:"Exam"}]} value={it.kind} onChange={v=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v}:x)}))} />
                     {it.confidence==="low"&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>Low confidence — double-check</span>}
                   </div>
                 </div>
@@ -6236,7 +6236,7 @@ function CollapsibleAgendaLayout({isAgendaCollapsed, setIsAgendaCollapsed, child
 // block with Edit/Delete, plus an inline expandable "+ Add Recurring
 // Activity" form — reuses the same fields/components as the existing "Edit
 // routine block" modal for visual consistency.
-function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRoutine, onDeleteRoutine, onAddRoutine}) {
+function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRoutine, onDeleteRoutine, onAddRoutine, onEditOnCalendar}) {
   const [addingRoutine,setAddingRoutine]=useState(false);
   const [title,setTitle]=useState("");
   const [kind,setKind]=useState("class");
@@ -6277,6 +6277,9 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
             </div>
           ))}
         </div>
+      )}
+      {routines.length>0&&onEditOnCalendar&&(
+        <button type="button" onClick={onEditOnCalendar} style={{background:"none",border:"none",color:T.lime,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:"0 0 16px",textDecoration:"underline"}}>Edit directly on the calendar instead</button>
       )}
       {!addingRoutine
         ? <Btn variant="subtle" onClick={()=>setAddingRoutine(true)} style={{width:"100%",justifyContent:"center"}}>+ Add Recurring Activity</Btn>
@@ -6363,7 +6366,7 @@ function RescheduleModal({task,events,commit,onClose}){
   );
 }
 
-function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}={}){
+function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.muted},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   const colorOf=(sub)=>{if(!sub||sub==="None"||sub==="")return T.muted;const x=userSubjects.find(s=>s.label===sub);return x?x.color:T.lime;};
@@ -6392,29 +6395,11 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
   const skipRoutineWizard=()=>{
     // Marks the wizard "handled" so it doesn't keep re-intercepting on every
     // future Calendar visit — the user can still reopen it anytime via
-    // "Manage Routine".
+    // "Routine".
     lsSet("hasConfiguredRoutine",true);
     setRoutineWizardOpen(false);
   };
 
-  // First-run Calendar tour — waits for both the "Set up your subjects" AND
-  // the routine wizard first-run overlays to close first (three first-run
-  // overlays total; showing more than one at once would be a mess), then
-  // coachmarks Add Task and subject tagging, then closes with a note about
-  // the peak-window scheduling rule. Finishing (or skipping) hands off to
-  // the caller (App) so it can trigger the paywall intercept right after.
-  const [tourStep,setTourStep]=useState(null);
-  const tourAddTaskRef=useRef(null);
-  const tourSubjectRef=useRef(null);
-  useEffect(()=>{
-    if(subjOnboardOpen||routineWizardOpen)return;
-    if(lsGet("seenCalendarTour",false))return;
-    setTourStep(0);
-  },[subjOnboardOpen,routineWizardOpen]);
-  useEffect(()=>{
-    if(tourStep===1)setNewOpen(true);
-    if(tourStep===2)setNewOpen(false);
-  },[tourStep]);
   const mk=(off,time,title,subject,kind)=>{const d=new Date();d.setDate(d.getDate()+off);return {id:"seed-"+off+"-"+time,date:dayKey(d),time,title,subject,kind};};
   const seed=[
     mk(0,"14:30","Chem quiz · Periodic trends","Chemistry","exam"),
@@ -6465,7 +6450,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
   // rescheduled, null when closed.
   const [rescheduleTask,setRescheduleTask]=useState(null);
   const [rescheduleToast,setRescheduleToast]=useState("");
-  // Tier 3 — Global Emergency "Pause My Life". pausePreview holds the
+  // Tier 3 — Global Emergency "Studlin Reschedule". pausePreview holds the
   // computed (not-yet-committed) plan: {label, moved:[...], couldntMove:[...]}.
   const [pauseOpen,setPauseOpen]=useState(false);
   const [pauseText,setPauseText]=useState("");
@@ -6620,21 +6605,6 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
   const todayK=dayKey();
   const fmtTime=(t)=>{const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
   const niceDate=(k)=>{const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});};
-  const CAL_TOUR_STEPS=[
-    {targetRef:tourAddTaskRef,title:"Add your first task",body:"Click “Add task” to create a study block — Studlin can place it on your calendar automatically, or you can set the date yourself."},
-    {targetRef:tourSubjectRef,title:"Tag it with a subject",body:"Pick a subject and color for each task so your calendar stays organized at a glance. You can add your own classes anytime."},
-    {targetRef:null,title:"Your focus time is protected",body:(()=>{const p=getSchedulePreferences();const win=fmtTime(p.workStartTime)+" – "+fmtTime(p.workEndTime);return "Studlin schedules focus blocks inside your peak window ("+win+").";})()},
-  ];
-  const advanceTour=()=>{
-    if(tourStep>=CAL_TOUR_STEPS.length-1){finishTour();return;}
-    setTourStep(s=>s+1);
-  };
-  const finishTour=()=>{
-    lsSet("seenCalendarTour",true);
-    setTourStep(null);
-    setNewOpen(false);
-    if(onTourDone)onTourDone();
-  };
   const relDay=(k)=>{if(k===todayK)return "Today";const t=new Date();t.setDate(t.getDate()+1);if(k===dayKey(t))return "Tomorrow";const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{month:"short",day:"numeric"});};
   const upcoming=events.filter(ev=>ev.date>=todayK).sort((a,b)=>a.date===b.date?(a.time<b.time?-1:1):(a.date<b.date?-1:1)).slice(0,6);
   // Computed straight from `events`/routines for `selDay` (rather than the
@@ -6866,7 +6836,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
     const next=events.map(e=>e.id===editEv.id?{...e,title:editTitle.trim(),date:editDate,time:editTime,duration:editDuration,deadline:editDeadline||null,priority:Math.round(editPriority/100),difficulty:Math.round(editDifficulty/100),subject:editSubject,kind:editKind,notes:editNotes}:e);setEvents(next);lsSet("events",next);closeEdit();
   };
 
-  // ── Tier 3: Global Emergency "Pause My Life" ──────────────────────────────
+  // ── Tier 3: Global Emergency "Studlin Reschedule" ──────────────────────────
   // Deterministic execution engine shared by both the AI-classified path and
   // the one-click fallback presets — the model (when used at all) only ever
   // picks one of a few known intents, it never proposes dates/times itself,
@@ -6977,10 +6947,11 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
         this div instead of nested inside it, so it centers against the real
         viewport regardless of scroll position or animation state. */}
     <div>
-      <PH title="Studlin Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><Btn variant="danger" onClick={()=>{setPauseOpen(true);setPauseError("");setPausePreview(null);}}>Pause my life</Btn><Btn variant="ghost" onClick={()=>setRoutineCenterOpen(true)}>Manage Routine</Btn><Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>{setEditRoutineMode(m=>!m);setHoveredRoutineId(null);}}>Edit Routine</Btn><span ref={tourAddTaskRef} style={{display:"inline-flex"}}><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></span></div>} />
+      <PH title="Studlin Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><Btn variant="danger" onClick={()=>{setPauseOpen(true);setPauseError("");setPausePreview(null);}}>Studlin Reschedule</Btn><Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>setRoutineCenterOpen(true)}>Routine</Btn><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></div>} />
       {editRoutineMode&&(
-        <div style={{display:"flex",alignItems:"center",gap:8,padding:"9px 14px",background:T.lime+"10",border:`1px solid ${T.lime}33`,borderRadius:10,marginBottom:14,fontSize:12.5,color:T.text}}>
-          Editing your Weekly Routine — one-off tasks are dimmed. Click a routine block to edit it, or hover and tap × to delete it everywhere it repeats.
+        <div style={{display:"flex",alignItems:"center",gap:12,padding:"9px 14px",background:T.lime+"10",border:`1px solid ${T.lime}33`,borderRadius:10,marginBottom:14,fontSize:12.5,color:T.text}}>
+          <span style={{flex:1}}>Editing your Weekly Routine — one-off tasks are dimmed. Click a routine block to edit it, or hover and tap × to delete it everywhere it repeats.</span>
+          <BtnSm variant="subtle" onClick={()=>{setEditRoutineMode(false);setHoveredRoutineId(null);}}>Done</BtnSm>
         </div>
       )}
       <div style={{display:"flex",gap:6,marginBottom:20}}>
@@ -7047,18 +7018,6 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
           onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
           selDay={selDay} setSelDay={setSelDay} isAgendaCollapsed={isAgendaCollapsed} />
       </CollapsibleAgendaLayout>)}
-      {tourStep!==null&&(
-        <TourStep
-          targetRef={CAL_TOUR_STEPS[tourStep].targetRef}
-          title={CAL_TOUR_STEPS[tourStep].title}
-          body={CAL_TOUR_STEPS[tourStep].body}
-          step={tourStep}
-          total={CAL_TOUR_STEPS.length}
-          isLast={tourStep===CAL_TOUR_STEPS.length-1}
-          onNext={advanceTour}
-          onSkip={finishTour}
-        />
-      )}
     </div>
       {subjOnboardOpen&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -7115,10 +7074,10 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
         <Field label="Title"><Input placeholder="e.g. Study Bio chapter 4-6" value={evTitle} onChange={ev=>setEvTitle(ev.target.value)} autoFocus /></Field>
 
         <Field label="Type" hint={isFixedKind?"Fixed real-world block — Studlin will never move or reschedule this.":"Choose what kind of entry this is"}>
-          <SelectChip options={[{value:"deadline",label:"Task"},"exam","class","study block","reminder","busy block"]} value={evKind} onChange={onEvKindChange} />
+          <SelectChip options={[{value:"deadline",label:"To-Do"},"exam","class","study block","reminder","busy block"]} value={evKind} onChange={onEvKindChange} />
         </Field>
 
-        <div ref={tourSubjectRef}><Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field></div>
+        <Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field>
         {evSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Drivers ed, SAT prep, club..." value={evCustom} onChange={ev=>setEvCustom(ev.target.value)} /></Field>}
 
         {isTaskKind&&(
@@ -7213,7 +7172,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
       <Modal open={editOpen} onClose={closeEdit} title="Edit task" sub="Update this task's details." width={580}
         footer={<><Btn variant="subtle" onClick={closeEdit}>Cancel</Btn><Btn onClick={saveEdit} disabled={!editTitle.trim()} style={{opacity:editTitle.trim()?1:0.45}}>Save changes</Btn></>}>
         <Field label="Title"><Input value={editTitle} onChange={e=>setEditTitle(e.target.value)} autoFocus /></Field>
-        <Field label="Type"><SelectChip options={[{value:"deadline",label:"Task"},"exam","class","study block","reminder","busy block"]} value={editKind} onChange={setEditKind} /></Field>
+        <Field label="Type"><SelectChip options={[{value:"deadline",label:"To-Do"},"exam","class","study block","reminder","busy block"]} value={editKind} onChange={setEditKind} /></Field>
         <Field label="Subject"><SelectChip options={SUBJ} value={editSubject} onChange={setEditSubject} /></Field>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
           <Field label="Scheduled date"><Input type="date" value={editDate} onChange={e=>{setEditDate(e.target.value);setEditDeadlineErr("");}} /></Field>
@@ -7245,7 +7204,7 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
         <Field label="Notes (optional)"><Textarea value={editNotes} onChange={e=>setEditNotes(e.target.value)} /></Field>
       </Modal>
       <Modal open={pauseOpen} onClose={()=>{setPauseOpen(false);setPausePreview(null);setPauseError("");}}
-        title={pausePreview?pausePreview.label:"Pause my life"}
+        title={pausePreview?pausePreview.label:"Studlin Reschedule"}
         sub={pausePreview?(pausePreview.moved.length+" task"+(pausePreview.moved.length!==1?"s":"")+" affected"):"Tell Studlin what's going on — it'll reschedule around it."}
         width={520}
         footer={pausePreview?(
@@ -7295,7 +7254,8 @@ function CalendarTab({onTourDone,onTaskSaved,openWizardOnMount,onWizardOpenedFro
       <RoutineWizardModal open={routineWizardOpen&&!subjOnboardOpen} initialStatus={getProfile().status} existingRoutines={routines} onFinish={finishRoutineWizard} onSkip={skipRoutineWizard} />
       <RoutineControlCenterModal open={routineCenterOpen} onClose={()=>setRoutineCenterOpen(false)} routines={routines} fmtTime={fmtTime}
         onEditRoutine={openRoutineEdit} onDeleteRoutine={deleteRoutineItem}
-        onAddRoutine={(rule)=>persistRoutines([...routines,{id:String(Date.now()+Math.random()*1000),...rule,subject:""}])} />
+        onAddRoutine={(rule)=>persistRoutines([...routines,{id:String(Date.now()+Math.random()*1000),...rule,subject:""}])}
+        onEditOnCalendar={()=>{setRoutineCenterOpen(false);setEditRoutineMode(true);}} />
       <Modal open={!!routineEditItem} onClose={closeRoutineEdit} title="Edit routine block" sub="Changes apply to every week this repeats." width={480}
         footer={
           <div style={{display:"flex",width:"100%",justifyContent:"space-between",alignItems:"center"}}>
@@ -10163,16 +10123,12 @@ function App() {
   window._setTimerTask=setTimerTask;
   const [creditsOpen,setCreditsOpen]=useState(false);
   const [pricingOpen,setPricingOpen]=useState(false);
-  // Strategic paywall intercept — shown once, right when the user finishes
-  // (or skips) their first Calendar tour, the "aha moment" placement instead
-  // of during signup. Gated so it only ever auto-fires this one time.
+  // Strategic paywall intercept — shown once, right after the student's first
+  // real task save (not during signup, and not behind a forced walkthrough —
+  // this is the actual "aha moment": they just watched Studlin place their
+  // first task). Gated so it only ever auto-fires this one time.
   const [paywallOpen,setPaywallOpen]=useState(false);
   const [paywallBilling,setPaywallBilling]=useState("monthly");
-  const handleCalendarTourDone=()=>{
-    if(lsGet("paywallShown",false))return;
-    lsSet("paywallShown",true);
-    setPaywallOpen(true);
-  };
   const [notifOpen,setNotifOpen]=useState(false);
   const [seriousMode,setSeriousMode]=useState(()=>lsGet("settings",{}).seriousMode||false);
   const [calOnboardDone,setCalOnboardDone]=useState(()=>!!lsGet("cal-onboard-done",false));
@@ -10191,6 +10147,16 @@ function App() {
   // after onboarding — the first time it's actually relevant (a task with a
   // reminder was just saved, or a friend request was just sent), not before.
   const askNotifIfNeeded=()=>{ if(!lsGet("notifAsked",false)) setNotifPermModal(true); };
+  // Fires on every task save; the notif prompt has its own one-shot gate, and
+  // the paywall's "first real task" moment gets its own separate one below —
+  // same trigger point, two independent one-time intercepts.
+  const handleTaskSaved=()=>{
+    askNotifIfNeeded();
+    if(!lsGet("paywallShown",false)){
+      lsSet("paywallShown",true);
+      setPaywallOpen(true);
+    }
+  };
   // Cross-tab deep link for Settings > Calendar Preferences' "Manage Routine"
   // link — CalendarTab owns the wizard's actual open/closed state, so this
   // just switches tabs and leaves a one-shot flag for it to pick up on mount.
@@ -10534,7 +10500,7 @@ function App() {
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both"}}>
           {active==="dashboard"?<Dashboard setActive={setActive} setScheduleSettingsOpen={setScheduleSettingsOpen} seriousMode={seriousMode} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} />:
-           active==="calendar"?<CalendarTab onTourDone={handleCalendarTourDone} onTaskSaved={askNotifIfNeeded} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} />:
+           active==="calendar"?<CalendarTab onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} />:
            active==="lectures"?<Lectures setActive={setActive} setPricingOpen={setPricingOpen} />:
            active==="profile"?<Profile setActive={setActive} />:
