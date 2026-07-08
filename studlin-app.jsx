@@ -1334,8 +1334,9 @@ function advancedSchedulePlanner(baseEvents){
   const tk=dayKey();
   const done=lsGet("planDone",{});
 
-  // Get all events for today
-  const events=baseEvents.filter(e=>e.date===tk);
+  // Get all events for today — checklist to-dos are excluded, they have no
+  // duration and never belong in the scheduled day plan.
+  const events=baseEvents.filter(e=>e.date===tk&&!e.checklist);
   const now=new Date();
   const nowMins=timeToMinutes(String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0"));
 
@@ -6430,6 +6431,11 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   const [evMoreOpen,setEvMoreOpen]=useState(false);
   const [evDeadline,setEvDeadline]=useState("");
   const [evDeadlineTime,setEvDeadlineTime]=useState("23:59");
+  // To-Do items can skip scheduling entirely — a checkbox with no inherent
+  // duration ("send AP scores to college") shouldn't be forced onto a
+  // calendar time slot. Only offered for the "deadline"/To-Do kind; exams,
+  // classes, study blocks etc. all have a real duration and stay scheduled.
+  const [asChecklist,setAsChecklist]=useState(false);
   // Explicit AI-Schedule vs Manual-Placement fork for task-kind entries —
   // replaces the old implicit "fill in Target Date to go manual" behavior,
   // which showed both the Target Date and Deadline fields at once and left
@@ -6594,7 +6600,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   for(let i=lead-1;i>=0;i--)cells.push({d:dimPrev-i,out:true,key:dayKey(new Date(ym.y,ym.m-1,dimPrev-i))});
   for(let d=1;d<=dim;d++)cells.push({d,out:false,key:dayKey(new Date(ym.y,ym.m,d))});
   let nx=1;while(cells.length%7!==0){cells.push({d:nx,out:true,key:dayKey(new Date(ym.y,ym.m+1,nx))});nx++;}
-  const byDay={};events.forEach(ev=>{(byDay[ev.date]=byDay[ev.date]||[]).push(ev);});
+  const byDay={};events.forEach(ev=>{if(ev.checklist)return;(byDay[ev.date]=byDay[ev.date]||[]).push(ev);});
   // Merge in virtual Weekly Routine occurrences for the visible grid range —
   // never persisted, just expanded fresh every render so editing/deleting a
   // rule instantly reflects across every week without any migration pass.
@@ -6606,17 +6612,19 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   const fmtTime=(t)=>{const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
   const niceDate=(k)=>{const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});};
   const relDay=(k)=>{if(k===todayK)return "Today";const t=new Date();t.setDate(t.getDate()+1);if(k===dayKey(t))return "Tomorrow";const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{month:"short",day:"numeric"});};
-  const upcoming=events.filter(ev=>ev.date>=todayK).sort((a,b)=>a.date===b.date?(a.time<b.time?-1:1):(a.date<b.date?-1:1)).slice(0,6);
+  const upcoming=events.filter(ev=>!ev.checklist&&ev.date>=todayK).sort((a,b)=>a.date===b.date?(a.time<b.time?-1:1):(a.date<b.date?-1:1)).slice(0,6);
   // Computed straight from `events`/routines for `selDay` (rather than the
   // month-grid-scoped `byDay`) so the agenda column stays correct even when
   // `selDay` falls in a week outside the visible month grid (Weekly view).
-  const dayEvents=events.filter(ev=>ev.date===selDay).concat(getRoutineOccurrencesForDate(selDay).filter(o=>o.kind!=="free period")).sort((a,b)=>a.time<b.time?-1:1);
+  // Checklist items are excluded everywhere here — they deliberately have no
+  // calendar presence, only a Dashboard checklist entry.
+  const dayEvents=events.filter(ev=>!ev.checklist&&ev.date===selDay).concat(getRoutineOccurrencesForDate(selDay).filter(o=>o.kind!=="free period")).sort((a,b)=>a.time<b.time?-1:1);
   // Target Date/Start Time start blank — for tasks/study blocks, blank means
   // "let AI schedule this". The clicked day is remembered so fixed-time kinds
   // (exam/class/reminder), which always need a real date, can still default
   // to it once the user picks one of those types.
   const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("");setEvSubject("None");setEvDate("");setEvDeadline("");setEvPriority(500);setEvMoreOpen(false);setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setNewOpen(true);};
-  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvDate("");setEvTime("");setEvPriority(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);};
+  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvDate("");setEvTime("");setEvPriority(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);setAsChecklist(false);};
   const onEvKindChange=(k)=>{setEvKind(k);if((k==="exam"||k==="class"||k==="reminder"||k==="busy block")&&!evDate)setEvDate(evPrefillDate);};
   const buildTask=(date,time,titleSuffix,splitInfo)=>{
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
@@ -6626,10 +6634,28 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     const next=events.concat(newTasks);
     setEvents(next);lsSet("events",next);
     newTasks.forEach(t=>scheduleTaskNotif(t));
-    resetForm();setSelDay(newTasks[0].date);
-    const d=newTasks[0].date;if(d.slice(0,7)!==(ym.y+"-"+String(ym.m+1).padStart(2,"0"))){const p=d.split("-");setYm({y:+p[0],m:+p[1]-1});}
+    resetForm();
+    // Checklist items can have no date at all (a to-do with no due date) —
+    // skip the day/month-jump entirely rather than feeding an empty string
+    // into the date math below, which would produce NaN.
+    const d=newTasks[0].date;
+    if(d){
+      setSelDay(d);
+      if(d.slice(0,7)!==(ym.y+"-"+String(ym.m+1).padStart(2,"0"))){const p=d.split("-");setYm({y:+p[0],m:+p[1]-1});}
+    }
     setToast(true);setTimeout(()=>setToast(false),2200);
     if(onTaskSaved)onTaskSaved();
+  };
+  // A checklist item is deliberately minimal — title and an optional due
+  // date, nothing else. It's flagged checklist:true and carries no `time`,
+  // so it's excluded from the calendar grid, agenda, and AI day-planning
+  // (advancedSchedulePlanner) everywhere those filter on that flag, and
+  // instead only ever shows up in the Dashboard checklist.
+  const saveChecklistItem=()=>{
+    if(!evTitle.trim())return;
+    const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
+    const item={id:String(Date.now()+Math.random()*1000),title:evTitle.trim(),date:evDeadline||"",time:"",subject:subj,kind:"deadline",notes:evNotes,checklist:true,deadline:evDeadline||null,priority:5,difficulty:5,duration:0,status:"pending",timeSpent:0,completedAt:null};
+    commitTasks([item]);
   };
   // Turns the current form into a recurring routine rule instead of a
   // one-off event — used when "Save to my Weekly Routine" is checked. Only
@@ -6929,7 +6955,8 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   const isFixedKind=evKind==="exam"||evKind==="class"||evKind==="busy block";
   const isReminderKind=evKind==="reminder";
   const isTaskKind=!isFixedKind&&!isReminderKind;
-  const manualMode=isTaskKind&&taskMode==="manual";
+  const isChecklistMode=evKind==="deadline"&&asChecklist;
+  const manualMode=isTaskKind&&!isChecklistMode&&taskMode==="manual";
   // Switching modes clears whichever fields the other path owns, so a stale
   // value left over from the previous mode can't accidentally satisfy a
   // guard (e.g. aiArrange bailing because evDate still held an old value).
@@ -7065,11 +7092,13 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
       )}
       <Modal open={newOpen} onClose={resetForm} title="New task" sub="Add details and let Studlin schedule it, or place it manually." width={580}
         footer={
-          isReminderKind||isFixedKind
-            ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!(evTitle.trim()&&evDate.trim()&&evTime.trim())} style={{opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>{isReminderKind?"Save reminder":"Save"}</Btn></>
-            : taskMode==="manual"
-              ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!evTitle.trim()||!evDate.trim()||!evTime.trim()} style={{flex:1,justifyContent:"center",opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>Save to Calendar</Btn></>
-              : <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={aiArrange} disabled={aiLoading||!evTitle.trim()} style={{flex:1,justifyContent:"center",opacity:aiLoading?1:(!evTitle.trim()?0.45:1)}}>{aiLoading?"Scheduling...":"Add Task with AI"}</Btn></>
+          isChecklistMode
+            ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveChecklistItem} disabled={!evTitle.trim()} style={{flex:1,justifyContent:"center",opacity:evTitle.trim()?1:0.45}}>Add to Checklist</Btn></>
+            : isReminderKind||isFixedKind
+              ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!(evTitle.trim()&&evDate.trim()&&evTime.trim())} style={{opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>{isReminderKind?"Save reminder":"Save"}</Btn></>
+              : taskMode==="manual"
+                ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!evTitle.trim()||!evDate.trim()||!evTime.trim()} style={{flex:1,justifyContent:"center",opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>Save to Calendar</Btn></>
+                : <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={aiArrange} disabled={aiLoading||!evTitle.trim()} style={{flex:1,justifyContent:"center",opacity:aiLoading?1:(!evTitle.trim()?0.45:1)}}>{aiLoading?"Scheduling...":"Add Task with AI"}</Btn></>
         }>
         <Field label="Title"><Input placeholder="e.g. Study Bio chapter 4-6" value={evTitle} onChange={ev=>setEvTitle(ev.target.value)} autoFocus /></Field>
 
@@ -7077,10 +7106,22 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
           <SelectChip options={[{value:"deadline",label:"To-Do"},"exam","class","study block","reminder","busy block"]} value={evKind} onChange={onEvKindChange} />
         </Field>
 
+        {evKind==="deadline"&&(
+          <label className="checkbox" onClick={()=>setAsChecklist(s=>!s)} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:14,fontSize:12.5,color:T.text}}>
+            <span style={{width:16,height:16,borderRadius:4,border:`1.5px solid ${asChecklist?T.lime:T.border}`,background:asChecklist?T.lime:"transparent",display:"grid",placeItems:"center",flexShrink:0,color:T.ink}}>{asChecklist&&Icon.check}</span>
+            Just a to-do — no need to schedule it
+            <span style={{color:T.muted,fontWeight:400}}>— skips the calendar, shows up as a checkbox on your Dashboard</span>
+          </label>
+        )}
+
         <Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field>
         {evSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Drivers ed, SAT prep, club..." value={evCustom} onChange={ev=>setEvCustom(ev.target.value)} /></Field>}
 
-        {isTaskKind&&(
+        {isChecklistMode&&(
+          <Field label="Due date (optional)"><Input type="date" value={evDeadline} onChange={ev=>setEvDeadline(ev.target.value)} /></Field>
+        )}
+
+        {isTaskKind&&!isChecklistMode&&(
           <Field label="Scheduling">
             <div style={{display:"flex",gap:6,padding:3,background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,marginBottom:2}}>
               <button type="button" onClick={()=>selectTaskMode("ai")} style={{flex:1,padding:"8px 10px",borderRadius:7,border:"none",background:taskMode==="ai"?T.lime:"transparent",color:taskMode==="ai"?T.ink:T.muted,fontSize:12.5,fontWeight:taskMode==="ai"?700:500,cursor:"pointer",fontFamily:T.font,transition:"all 0.15s"}}>AI Schedule Mode</button>
@@ -7107,14 +7148,14 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
           </>
         )}
 
-        {isTaskKind&&taskMode==="manual"&&(
+        {isTaskKind&&!isChecklistMode&&taskMode==="manual"&&(
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
             <Field label="Date"><Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} /></Field>
             <Field label="Start Time"><TimeInput value={evTime} onChange={setEvTime} /></Field>
           </div>
         )}
 
-        {isTaskKind&&taskMode==="ai"&&(
+        {isTaskKind&&!isChecklistMode&&taskMode==="ai"&&(
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
             <Field label="Due Date & Time" hint="When this must be done by">
               <Input type="date" value={evDeadline} onChange={ev=>setEvDeadline(ev.target.value)} />
@@ -7123,7 +7164,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
           </div>
         )}
 
-        {isTaskKind&&(
+        {isTaskKind&&!isChecklistMode&&(
           <Field label="Duration (minutes)" hint="How long you plan to spend">
             <NumField min={5} max={480} fallback={5} value={evDuration} onChange={setEvDuration} />
             {(()=>{const s=suggestDurationFor(evSubject,evKind);return s&&s!==evDuration&&(
@@ -7132,7 +7173,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
           </Field>
         )}
 
-        {isTaskKind&&taskMode==="ai"&&(
+        {isTaskKind&&!isChecklistMode&&taskMode==="ai"&&(
           evMoreOpen ? (
             <Field label={`Impact: ${Math.round(evPriority/10)}%`} hint="How critical this is, independent of its due date — higher-impact tasks get scheduled earlier">
               <div style={{display:"flex",alignItems:"center",gap:12}}>
@@ -7152,7 +7193,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
           )
         )}
 
-        {isTaskKind&&(
+        {isTaskKind&&!isChecklistMode&&(
           <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14}}>
             <div onClick={()=>setEvSplitEnabled(s=>!s)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
               <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Split into sessions</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Spread this task across multiple days</div></div>
@@ -9080,7 +9121,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
   const today=dayKey();
   const in14days=new Date();in14days.setDate(in14days.getDate()+14);
   const upcomingEvents=allEvents
-    .filter(ev=>ev.date>=today&&ev.date<=dayKey(in14days)&&ev.status!=="done")
+    .filter(ev=>!ev.checklist&&ev.date>=today&&ev.date<=dayKey(in14days)&&ev.status!=="done")
     .sort((a,b)=>a.date.localeCompare(b.date)||((a.time||"").localeCompare(b.time||"")))
     .slice(0,5)
     .map(ev=>{
@@ -9096,6 +9137,24 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
         id:ev.id,
       };
     });
+  // Checklist to-dos — no duration, no calendar slot, just a checkbox. Kept
+  // in the same `events` localStorage array as everything else (same
+  // id/status shape markDone-style toggles already expect), just flagged
+  // and filtered out of every calendar/planner surface above.
+  const checklistItems=allEvents.filter(ev=>ev.checklist&&ev.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
+  const [checklistDraft,setChecklistDraft]=useState("");
+  const toggleChecklistItem=(id)=>{
+    const all=lsGet("events",[]);
+    const next=all.map(ev=>ev.id===id?{...ev,status:ev.status==="done"?"pending":"done",completedAt:ev.status==="done"?null:Date.now()}:ev);
+    lsSet("events",next);forcePlan(x=>x+1);
+  };
+  const addChecklistItem=()=>{
+    if(!checklistDraft.trim())return;
+    const all=lsGet("events",[]);
+    const item={id:String(Date.now()+Math.random()*1000),title:checklistDraft.trim(),date:"",time:"",subject:"",kind:"deadline",notes:"",checklist:true,deadline:null,priority:5,difficulty:5,duration:0,status:"pending",timeSpent:0,completedAt:null};
+    lsSet("events",[...all,item]);
+    setChecklistDraft("");forcePlan(x=>x+1);
+  };
   // Real weekly wrapped stats
   const weeklyFocusMin=realStats.weekMin;
   // Real cards mastered + words written totals
@@ -9359,6 +9418,27 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
             </div>
           </div>
         )}
+      </div>
+
+      {/* ROW 3.5: CHECKLIST — plain to-dos with no inherent duration/time
+          (e.g. "send AP scores to college"). Deliberately kept out of the
+          calendar/Today's-plan entirely; this is the only place they live. */}
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+        <CardHead title="Checklist" label={checklistItems.length+" OPEN"} />
+        <div style={{display:"flex",gap:8,marginBottom:14}}>
+          <input value={checklistDraft} onChange={e=>setChecklistDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addChecklistItem();}}
+            placeholder="e.g. Send AP scores to college" style={{flex:1,background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none"}} />
+          <button onClick={addChecklistItem} disabled={!checklistDraft.trim()} style={{padding:"9px 16px",background:T.lime,color:T.ink,border:"none",borderRadius:10,fontSize:12.5,fontWeight:600,cursor:checklistDraft.trim()?"pointer":"default",fontFamily:T.font,opacity:checklistDraft.trim()?1:0.45,flexShrink:0}}>Add</button>
+        </div>
+        {checklistItems.length===0
+          ? <div style={{fontSize:13,color:T.muted,padding:"6px 0 4px",textAlign:"center"}}>Nothing on your checklist. Add something above — no due date required.</div>
+          : checklistItems.map(item=>(
+            <div key={item.id} onClick={()=>toggleChecklistItem(item.id)} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer"}}>
+              <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${T.faint}`,background:"transparent",flex:"none",display:"grid",placeItems:"center"}} />
+              <div style={{flex:1,minWidth:0,fontSize:13.5,color:T.text,fontWeight:500}}>{item.title}</div>
+              {item.date&&<span style={{fontSize:10.5,fontWeight:700,padding:"4px 9px",borderRadius:99,background:T.card2,color:T.muted,flexShrink:0}}>Due {item.date}</span>}
+            </div>
+          ))}
       </div>
 
       {/* ROW 4: GLOBAL LEADERBOARD — conditionally hidden (SHOW_GLOBAL_LEADERBOARD)
