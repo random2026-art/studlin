@@ -9555,12 +9555,43 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
       </div>
       )} {/* end seriousMode ternary */}
 
-      {/* ROW 2: Today's plan + Jump back in + Ask Studlin + Checklist — grid
-          widened from 3 to 4 columns when Checklist merged in alongside
-          Vene's new "Jump back in" card; Checklist gets a slightly narrower
-          share since its content (a quick-add input + short rows) needs
-          less room than the other three. */}
-      <div style={{display:"grid",gridTemplateColumns:"1.1fr 1fr 1.1fr 0.9fr",gap:16}}>
+      {/* Quote of the Day */}
+      {!seriousMode&&(()=>{
+        const QUOTES=[
+          {text:"Your future self will thank you for the work you put in today.",author:"Anonymous"},
+          {text:"The secret of getting ahead is getting started.",author:"Mark Twain"},
+          {text:"You don't have to be great to start, but you have to start to be great.",author:"Zig Ziglar"},
+          {text:"Education is not the filling of a pail, but the lighting of a fire.",author:"W.B. Yeats"},
+          {text:"Success is the sum of small efforts repeated day in and day out.",author:"Robert Collier"},
+          {text:"The expert in anything was once a beginner.",author:"Helen Hayes"},
+          {text:"Push yourself, because no one else is going to do it for you.",author:"Anonymous"},
+          {text:"Don't watch the clock; do what it does. Keep going.",author:"Sam Levenson"},
+          {text:"Believe you can and you're halfway there.",author:"Theodore Roosevelt"},
+          {text:"It always seems impossible until it's done.",author:"Nelson Mandela"},
+          {text:"Hard work beats talent when talent doesn't work hard.",author:"Tim Notke"},
+          {text:"The more that you read, the more things you will know.",author:"Dr. Seuss"},
+          {text:"An investment in knowledge pays the best interest.",author:"Benjamin Franklin"},
+          {text:"Learning is not attained by chance — it must be sought with ardor.",author:"Abigail Adams"},
+        ];
+        const q=QUOTES[new Date().getDate()%QUOTES.length];
+        return(
+          <div style={{background:"#F5EE90",borderRadius:22,padding:"28px 32px",position:"relative",overflow:"hidden",display:"flex",alignItems:"flex-start",gap:24}}>
+            <div style={{fontFamily:T.hand,fontSize:110,lineHeight:0.7,fontWeight:700,color:"rgba(14,31,24,0.13)",flexShrink:0,userSelect:"none",marginTop:-8,letterSpacing:"-0.04em"}}>{new Date().getDate()}</div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(14,31,24,0.4)",marginBottom:10,fontWeight:600}}>Quote of the day</div>
+              <p style={{fontFamily:"Georgia,serif",fontSize:18,fontStyle:"italic",lineHeight:1.55,color:"#0E1F18",margin:"0 0 12px",maxWidth:680}}>"{q.text}"</p>
+              <div style={{fontSize:12,color:"rgba(14,31,24,0.45)",letterSpacing:"0.04em"}}>— {q.author.toUpperCase()}</div>
+            </div>
+            <button onClick={()=>{if(navigator.share)navigator.share({text:'"'+q.text+'" — '+q.author+'\n\nStudlin'});else if(navigator.clipboard)navigator.clipboard.writeText('"'+q.text+'" — '+q.author);}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"11px 18px",background:"#0E1F18",border:"none",borderRadius:99,fontSize:13,fontWeight:600,color:"#F6F1E6",cursor:"pointer",fontFamily:T.font,flexShrink:0,boxShadow:"0 4px 14px rgba(0,0,0,0.18)"}}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+              Share Quote
+            </button>
+          </div>
+        );
+      })()}
+
+      {/* ROW 2: Today's plan + Jump back in + Ask Studlin */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:16}}>
         {/* Today's plan */}
         <div style={{background:"#FFFFFF",borderRadius:22,padding:24,display:"flex",flexDirection:"column"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8,flexWrap:"wrap"}}>
@@ -9639,30 +9670,6 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
           </div>
         </div>
 
-        {/* Checklist — plain to-dos with no inherent duration/time (e.g.
-            "send AP scores to college"). Deliberately kept out of the
-            calendar/Today's-plan entirely; this is the only place they live. */}
-        <div style={{background:"#FFFFFF",borderRadius:22,padding:22,border:"1px solid rgba(14,31,24,0.08)"}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
-            <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <span style={{fontFamily:T.hand,fontSize:22,fontWeight:600,color:"#0E1F18"}}>Checklist</span>
-              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:"1px solid rgba(14,31,24,0.12)",borderRadius:99,color:"rgba(14,31,24,0.45)"}}>{checklistItems.length} OPEN</span>
-            </div>
-          </div>
-          <div style={{display:"flex",gap:8,marginBottom:14}}>
-            <input value={checklistDraft} onChange={e=>setChecklistDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addChecklistItem();}}
-              placeholder="e.g. Send AP scores" style={{flex:1,minWidth:0,background:"rgba(14,31,24,0.04)",border:"1px solid rgba(14,31,24,0.10)",borderRadius:10,padding:"9px 10px",color:"#0E1F18",fontSize:12.5,fontFamily:T.font,outline:"none"}} />
-            <button onClick={addChecklistItem} disabled={!checklistDraft.trim()} style={{padding:"9px 12px",background:T.lime,color:T.ink,border:"none",borderRadius:10,fontSize:12.5,fontWeight:600,cursor:checklistDraft.trim()?"pointer":"default",fontFamily:T.font,opacity:checklistDraft.trim()?1:0.45,flexShrink:0}}>Add</button>
-          </div>
-          {checklistItems.length===0
-            ? <div style={{fontSize:12.5,color:"rgba(14,31,24,0.4)",padding:"6px 0 4px",textAlign:"center"}}>Nothing on your checklist.</div>
-            : checklistItems.map(item=>(
-              <div key={item.id} onClick={()=>toggleChecklistItem(item.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:12,border:"1px solid rgba(14,31,24,0.08)",marginBottom:8,cursor:"pointer"}}>
-                <div style={{width:18,height:18,borderRadius:"50%",border:"1.5px solid rgba(14,31,24,0.20)",background:"transparent",flex:"none",display:"grid",placeItems:"center"}} />
-                <div style={{flex:1,minWidth:0,fontSize:12.5,color:"#0E1F18",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.title}</div>
-              </div>
-            ))}
-        </div>
       </div>
 
       {/* ROW 3: This week's focus bar chart + Weekly Wrapped */}
