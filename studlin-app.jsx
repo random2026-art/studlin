@@ -1174,6 +1174,20 @@ function regexScanDeadlines(text){
   });
   return results;
 }
+// Deterministic "never dead-end" fallback for the Brain Dump parser (see
+// parseBrainDump in CalendarTab) — splits on commas/newlines/" and " and
+// treats every fragment as a plain to-do. Deliberately never guesses a
+// study duration here: without the AI actually reading the text, inventing
+// a number would be a worse failure mode than just asking the student to
+// schedule it themselves via the checklist.
+function fallbackSplitBrainDump(text){
+  return (text||"")
+    .split(/[,\n]|(?:\s+and\s+)/i)
+    .map(s=>s.trim().replace(/^[\s\-*•.]+/,""))
+    .filter(s=>s.length>2)
+    .slice(0,15)
+    .map(s=>({title:s.charAt(0).toUpperCase()+s.slice(1),kind:"todo",durationMin:null,dueDate:null,needsDuration:false}));
+}
 // Levels map strictly to real Lock-In Timer minutes — no streak/login/task
 // bonuses, no penalty deductions, no starting offset. An honest sum of
 // every session actually logged, nothing else.
@@ -6436,6 +6450,15 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   // calendar time slot. Only offered for the "deadline"/To-Do kind; exams,
   // classes, study blocks etc. all have a real duration and stay scheduled.
   const [asChecklist,setAsChecklist]=useState(false);
+  // Brain Dump — tell Studlin everything at once instead of one task at a
+  // time. One AI call splits it into items; anything with a real duration
+  // gets slotted deterministically via findOpenSlotFor (same placement
+  // engine as everything else), anything without one becomes a checklist
+  // to-do instead of forcing a guessed time onto it.
+  const [brainDumpOpen,setBrainDumpOpen]=useState(false);
+  const [brainDumpText,setBrainDumpText]=useState("");
+  const [brainDumpLoading,setBrainDumpLoading]=useState(false);
+  const [brainDumpReview,setBrainDumpReview]=useState(null); // {items:[{id,title,kind,durationMin,dueDate,needsDuration,include}]}
   // Explicit AI-Schedule vs Manual-Placement fork for task-kind entries —
   // replaces the old implicit "fill in Target Date to go manual" behavior,
   // which showed both the Target Date and Deadline fields at once and left
@@ -6656,6 +6679,58 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
     const item={id:String(Date.now()+Math.random()*1000),title:evTitle.trim(),date:evDeadline||"",time:"",subject:subj,kind:"deadline",notes:evNotes,checklist:true,deadline:evDeadline||null,priority:5,difficulty:5,duration:0,status:"pending",timeSpent:0,completedAt:null};
     commitTasks([item]);
+  };
+  // 1 credit, same as every other /api/chat call site — splits the whole
+  // brain dump into items in one shot rather than one call per task. Same
+  // "AI attempt, then deterministic fallback" shape as extractSyllabusDeadlines.
+  const parseBrainDump=async(text)=>{
+    if(!text||!text.trim())return [];
+    try{
+      const prompt="A student just brain-dumped everything they need to do, in their own words, in one go. Break it into separate individual items. "+
+        "Today's date is "+dayKey()+" ("+new Date().toLocaleDateString("en-US",{weekday:"long"})+"). "+
+        "For each item return: \"title\" (short, e.g. \"Chem homework\" or \"Email counselor\"), "+
+        "\"kind\" (\"study\" for anything that takes real focused work time — homework, studying, a project — or \"todo\" for a quick task with no real duration, like sending an email, a form, or a phone call), "+
+        "\"durationMin\" (your best-guess minutes needed, ONLY for kind:\"study\" — null for kind:\"todo\"), "+
+        "\"dueDate\" (YYYY-MM-DD if a deadline was stated or clearly implied like \"Friday\", else null), "+
+        "\"needsDuration\" (true ONLY if kind is \"study\" and you genuinely can't make a reasonable guess from context — be generous, most things can get a rough estimate). "+
+        "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
+        "{\"items\":[{\"title\":\"Chem homework\",\"kind\":\"study\",\"durationMin\":45,\"dueDate\":null,\"needsDuration\":false}]}. "+
+        "If nothing usable is in the text, respond {\"items\":[]}.\n\n"+text.slice(0,4000);
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+      const data=await res.json();
+      const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
+      const parsed=JSON.parse(raw);
+      if(parsed&&Array.isArray(parsed.items)&&parsed.items.length>0)return parsed.items;
+      return fallbackSplitBrainDump(text);
+    }catch(e){return fallbackSplitBrainDump(text);}
+  };
+  const submitBrainDump=async()=>{
+    if(!brainDumpText.trim()||brainDumpLoading)return;
+    setBrainDumpLoading(true);
+    const items=await parseBrainDump(brainDumpText);
+    setBrainDumpLoading(false);
+    setBrainDumpOpen(false);
+    setBrainDumpReview({items:items.map((it,i)=>({id:"bd-"+i,title:it.title,kind:it.kind==="study"?"study":"todo",durationMin:it.durationMin||30,dueDate:it.dueDate||"",needsDuration:!!it.needsDuration,include:true}))});
+  };
+  // Study-kind items get a real slot via the same deterministic placement
+  // engine every other scheduling path trusts — no separate AI call per
+  // item, the one parseBrainDump call above already did the understanding.
+  // Todo-kind items skip scheduling entirely, same shape as saveChecklistItem.
+  const commitBrainDump=(items)=>{
+    const prefs=getSchedulePreferences();
+    const today=dayKey();
+    let working=events;
+    const newTasks=[];
+    items.filter(it=>it.kind==="study").forEach(it=>{
+      const duration=Math.max(5,it.durationMin||30);
+      const slot=findOpenSlotFor(working,routines,prefs,today,prefs.workStartTime,duration,it.dueDate||null);
+      const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:slot.date,time:slot.time,subject:"",kind:"study block",notes:"",priority:5,difficulty:5,deadline:it.dueDate||null,duration,status:"pending",timeSpent:0,completedAt:null};
+      newTasks.push(task);working=working.concat([task]);
+    });
+    items.filter(it=>it.kind==="todo").forEach(it=>{
+      newTasks.push({id:String(Date.now()+Math.random()*1000),title:it.title,date:it.dueDate||"",time:"",subject:"",kind:"deadline",notes:"",checklist:true,deadline:it.dueDate||null,priority:5,difficulty:5,duration:0,status:"pending",timeSpent:0,completedAt:null});
+    });
+    commitTasks(newTasks);
   };
   // Turns the current form into a recurring routine rule instead of a
   // one-off event — used when "Save to my Weekly Routine" is checked. Only
@@ -7100,6 +7175,9 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
                 ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!evTitle.trim()||!evDate.trim()||!evTime.trim()} style={{flex:1,justifyContent:"center",opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>Save to Calendar</Btn></>
                 : <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={aiArrange} disabled={aiLoading||!evTitle.trim()} style={{flex:1,justifyContent:"center",opacity:aiLoading?1:(!evTitle.trim()?0.45:1)}}>{aiLoading?"Scheduling...":"Add Task with AI"}</Btn></>
         }>
+        <button type="button" onClick={()=>{resetForm();setBrainDumpOpen(true);}} style={{display:"block",width:"100%",textAlign:"left",background:T.lime+"0d",border:`1px solid ${T.lime}33`,borderRadius:10,padding:"10px 12px",marginBottom:16,cursor:"pointer",fontFamily:T.font,fontSize:12.5,color:T.lime,fontWeight:600}}>
+          Got more than one thing on your plate? Brain dump it all at once →
+        </button>
         <Field label="Title"><Input placeholder="e.g. Study Bio chapter 4-6" value={evTitle} onChange={ev=>setEvTitle(ev.target.value)} autoFocus /></Field>
 
         <Field label="Type" hint={isFixedKind?"Fixed real-world block — Studlin will never move or reschedule this.":"Choose what kind of entry this is"}>
@@ -7209,6 +7287,51 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
         )}
 
         <Field label="Notes (optional)"><Textarea placeholder="e.g. Bring calculator, covers chapters 4 to 6." value={evNotes} onChange={ev=>setEvNotes(ev.target.value)} /></Field>
+      </Modal>
+
+      {/* ── BRAIN DUMP — tell Studlin everything at once instead of one task at a time ── */}
+      <Modal open={brainDumpOpen} onClose={()=>{setBrainDumpOpen(false);setBrainDumpText("");}} title="Brain dump" sub="Tell Studlin everything you need to do — it'll sort out the rest." width={560}
+        footer={<><Btn variant="subtle" onClick={()=>{setBrainDumpOpen(false);setBrainDumpText("");}}>Cancel</Btn><Btn onClick={submitBrainDump} disabled={brainDumpLoading||!brainDumpText.trim()} style={{flex:1,justifyContent:"center",opacity:brainDumpLoading?1:(!brainDumpText.trim()?0.45:1)}}>{brainDumpLoading?"Sorting it out...":"Sort it out →"}</Btn></>}>
+        <Textarea placeholder="e.g. I have chem homework, need to email my counselor about my schedule, and my bio project is due Friday..." value={brainDumpText} onChange={e=>setBrainDumpText(e.target.value)} style={{minHeight:140}} autoFocus />
+      </Modal>
+
+      {/* ── BRAIN DUMP REVIEW — preview-then-commit, same discipline as the syllabus review in Notes ── */}
+      <Modal open={!!brainDumpReview} onClose={()=>setBrainDumpReview(null)} title="Review your plan" sub="Studlin sorted these out — check them before they're added." width={620}
+        footer={<>
+          <Btn variant="subtle" onClick={()=>setBrainDumpReview(null)}>Cancel</Btn>
+          <Btn disabled={!brainDumpReview||brainDumpReview.items.filter(i=>i.include).length===0} onClick={()=>{
+            const included=brainDumpReview.items.filter(i=>i.include);
+            commitBrainDump(included);
+            setBrainDumpReview(null);
+          }}>{"Add "+(brainDumpReview?brainDumpReview.items.filter(i=>i.include).length:0)+" to your plan →"}</Btn>
+        </>}>
+        {brainDumpReview&&brainDumpReview.items.length===0&&(
+          <div style={{textAlign:"center",padding:"24px 0",color:T.muted,fontSize:13}}>Couldn't find anything in that — try rephrasing.</div>
+        )}
+        <div style={{display:"flex",flexDirection:"column",gap:10,maxHeight:400,overflowY:"auto"}}>
+          {brainDumpReview&&brainDumpReview.items.map((it,i)=>(
+            <div key={it.id} style={{padding:"12px 14px",borderRadius:10,border:`1px solid ${T.border}`,background:it.include?T.card2:T.card,opacity:it.include?1:0.55}}>
+              <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
+                <input type="checkbox" checked={it.include} onChange={()=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,include:!x.include}:x)}))} style={{marginTop:10,cursor:"pointer"}} />
+                <div style={{flex:1}}>
+                  <div style={{display:"flex",gap:8,marginBottom:8}}>
+                    <Input value={it.title} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,title:ev.target.value}:x)}))} style={{flex:1}} />
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                    <SelectChip options={[{value:"study",label:"Study Session"},{value:"todo",label:"To-Do"}]} value={it.kind} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v}:x)}))} />
+                    {it.kind==="study"&&(
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <NumField min={5} max={480} fallback={30} value={it.durationMin} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,durationMin:v}:x)}))} />
+                        <span style={{fontSize:11.5,color:T.muted}}>min</span>
+                      </div>
+                    )}
+                    {it.kind==="study"&&it.needsDuration&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>Wasn't sure how long this takes — check the estimate</span>}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
       </Modal>
       <Modal open={editOpen} onClose={closeEdit} title="Edit task" sub="Update this task's details." width={580}
         footer={<><Btn variant="subtle" onClick={closeEdit}>Cancel</Btn><Btn onClick={saveEdit} disabled={!editTitle.trim()} style={{opacity:editTitle.trim()?1:0.45}}>Save changes</Btn></>}>
