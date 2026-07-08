@@ -10327,9 +10327,13 @@ function App() {
       // tree; see the pending discussion with Vene before merging Phase
       // 4+6A+6B.)
     ]},
-    {label:"Others",items:[]},
+    {label:"Others",items:[
+      {id:"settings",label:"Settings"},
+      {id:"feedback",label:"Feedback"},
+      {id:"profile",label:"Profile"},
+    ]},
   ];
-  const bottomItems=[{id:"settings",label:"Settings"},{id:"feedback",label:"Feedback"},{id:"profile",label:"Profile"}];
+  const bottomItems=[];
   const pages={aichat:AiChat,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile,lectures:Lectures,feedback:FeedbackPage};
   const labelOf={dashboard:"Dashboard",aichat:"Studlin AI",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Studlin Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve",lectures:"Lectures",feedback:"Feedback"};
   const sectionOf={dashboard:"Workspace",aichat:"Workspace",writestudio:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",friends:"Workspace",lectures:"Workspace",feedback:"Workspace",solve:"Tools",settings:"Account",profile:"Account"};
