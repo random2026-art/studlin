@@ -383,7 +383,7 @@ function TourStep({ targetRef, title, body, step, total, onNext, onSkip, isLast 
           ))}
         </div>
         <div style={{fontSize:14.5,fontWeight:700,color:T.white,marginBottom:6,letterSpacing:"-0.01em"}}>{title}</div>
-        <div style={{fontSize:12.5,color:T.muted,lineHeight:1.55,marginBottom:16}}>{body}</div>
+        <div style={{fontSize:12.5,color:T.text,lineHeight:1.55,marginBottom:16}}>{body}</div>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <button onClick={onSkip} style={{background:"none",border:"none",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font,padding:0}}>Skip guide</button>
           <BtnSm onClick={onNext}>{isLast?"Done":"Next"}</BtnSm>
@@ -1680,7 +1680,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
           <span style={{display:"inline-flex",width:30,height:30,borderRadius:8,background:T.lime+"1c",border:"1px solid "+T.lime+"44",alignItems:"center",justifyContent:"center",color:T.lime}}>{Icon.wand}</span>
           <div style={{fontSize:17,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>You have hit your {feature} limit</div>
         </div>
-        <div style={{fontSize:12.5,color:T.muted,lineHeight:1.6,marginBottom:18}}>{detail}</div>
+        <div style={{fontSize:12.5,color:T.text,lineHeight:1.6,marginBottom:18}}>{detail}</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
           {tiers.map(t=>(
             <div key={t.name} style={{background:T.card,border:"1px solid "+(t.name==="Max"?t.color+"55":T.border),borderRadius:12,padding:16,position:"relative"}}>
@@ -4255,7 +4255,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange}={}){
                 <div style={{fontSize:12,color:T.muted}}>Unlock collective calendar syncing.</div>
               </div>
             </div>
-            <div style={{fontSize:13,color:T.muted,lineHeight:1.7,marginBottom:20}}>
+            <div style={{fontSize:13,color:T.text,lineHeight:1.7,marginBottom:20}}>
               When your whole class is on Studlin, syncing calendars can automatically find when <em>everyone</em> is free — no more "when can everyone meet?" texts.
             </div>
             <div style={{padding:"11px 14px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,marginBottom:14,display:"flex",alignItems:"center",gap:10}}>
@@ -4264,7 +4264,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange}={}){
                 {copied?"✓ Copied!":"Copy"}
               </button>
             </div>
-            <div style={{padding:"10px 14px",background:T.lime+"0A",border:`1px solid ${T.lime}22`,borderRadius:8,fontSize:12,color:T.muted,marginBottom:20,lineHeight:1.6}}>
+            <div style={{padding:"10px 14px",background:T.lime+"0A",border:`1px solid ${T.lime}22`,borderRadius:8,fontSize:12,color:T.text,marginBottom:20,lineHeight:1.6}}>
               For every friend who joins via your link, you <strong style={{color:T.lime}}>both</strong> unlock <strong style={{color:T.lime}}>50 bonus AI scheduling credits</strong>.
             </div>
             <div style={{display:"flex",gap:10}}>
@@ -5444,7 +5444,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
         <div style={{width:"100%",maxWidth:480,background:T.card,borderRadius:20,border:`1px solid ${T.border}`,padding:"36px 32px",textAlign:"center"}}>
           {asgStep==="choice"&&(<>
             <div style={{fontSize:17,fontWeight:700,color:T.white,marginBottom:8}}>Time's up on "{task.title}"</div>
-            <div style={{fontSize:13,color:T.muted,marginBottom:28,lineHeight:1.6}}>Did you finish the assignment?</div>
+            <div style={{fontSize:13,color:T.text,marginBottom:28,lineHeight:1.6}}>Did you finish the assignment?</div>
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
               <Btn onClick={()=>setAsgStep("confirmWipe")} style={{width:"100%",justifyContent:"center"}}>Yes, I am finished</Btn>
               <Btn variant="subtle" onClick={()=>setAsgStep("slider")} style={{width:"100%",justifyContent:"center"}}>No, I need more time</Btn>
@@ -5453,7 +5453,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
 
           {asgStep==="confirmWipe"&&(<>
             <div style={{fontSize:17,fontWeight:700,color:T.white,marginBottom:8}}>Mark as complete?</div>
-            <div style={{fontSize:13,color:T.muted,marginBottom:28,lineHeight:1.6}}>
+            <div style={{fontSize:13,color:T.text,marginBottom:28,lineHeight:1.6}}>
               {asgRemainingCount>0
                 ?`This removes your ${asgRemainingCount} remaining scheduled session${asgRemainingCount===1?"":"s"} for this assignment.`
                 :"This marks the assignment as complete."}
@@ -5466,7 +5466,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
 
           {asgStep==="slider"&&(<>
             <div style={{fontSize:17,fontWeight:700,color:T.white,marginBottom:8}}>How far did you get?</div>
-            <div style={{fontSize:13,color:T.muted,marginBottom:24,lineHeight:1.6}}>Drag to estimate how much of the assignment is done.</div>
+            <div style={{fontSize:13,color:T.text,marginBottom:24,lineHeight:1.6}}>Drag to estimate how much of the assignment is done.</div>
             <input type="range" min={5} max={95} step={1} value={asgPct}
               onChange={e=>{setAsgPct(parseInt(e.target.value,10));setAsgOverride("");}}
               style={{width:"100%",marginBottom:8}} />
@@ -7819,7 +7819,7 @@ function WriteStudio(){
         ):(
           <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,padding:40,textAlign:"center"}}>
             <div style={{width:56,height:56,borderRadius:14,background:T.lime+"14",border:"1px solid "+T.lime+"33",display:"grid",placeItems:"center",color:T.lime}}>{Icon.pen}</div>
-            <div><div style={{fontSize:17,fontWeight:700,color:T.white,marginBottom:6}}>Writing Suite</div><div style={{fontSize:13,color:T.muted,maxWidth:280,lineHeight:1.6}}>Your essays, AI tutor, grammar check, and rewrite tools — all in one place. Create a doc or pick a template to get started.</div></div>
+            <div><div style={{fontSize:17,fontWeight:700,color:T.white,marginBottom:6}}>Writing Suite</div><div style={{fontSize:13,color:T.text,maxWidth:280,lineHeight:1.6}}>Your essays, AI tutor, grammar check, and rewrite tools — all in one place. Create a doc or pick a template to get started.</div></div>
             <Btn onClick={()=>setNewOpen(true)}>{Icon.plus} New doc</Btn>
           </div>
         )}
@@ -8616,7 +8616,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             )}
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Calendar Integrations</div>
-              <div style={{fontSize:12,color:T.muted,marginBottom:16,lineHeight:1.6}}>Pull your existing events into Studlin. Your data is never stored on our servers — events are cached locally on this device only.</div>
+              <div style={{fontSize:12,color:T.text,marginBottom:16,lineHeight:1.6}}>Pull your existing events into Studlin. Your data is never stored on our servers — events are cached locally on this device only.</div>
               <div style={{display:"flex",flexDirection:"column",gap:10}}>
                 <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${calGoogleLinked?T.teal+"44":T.border}`,transition:"border-color 0.2s"}}>
                   <div style={{width:40,height:40,borderRadius:10,background:"rgba(66,133,244,0.10)",border:"1px solid rgba(66,133,244,0.22)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
@@ -8748,7 +8748,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 <Btn variant="subtle" onClick={()=>setDeleteAccountOpen(false)}>Cancel</Btn>
                 <Btn variant="danger" onClick={confirmDeleteAccount}>Delete my account</Btn>
               </>}>
-              <div style={{fontSize:12.5,color:T.muted,lineHeight:1.6}}>This cannot be undone. You'll be signed out immediately.</div>
+              <div style={{fontSize:12.5,color:T.text,lineHeight:1.6}}>This cannot be undone. You'll be signed out immediately.</div>
             </Modal>
           </>)}
         </div>
@@ -9516,7 +9516,7 @@ function FeedbackPage() {
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
       </div>
       <div style={{fontFamily:T.hand,fontSize:36,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>Thanks for the feedback.</div>
-      <div style={{fontSize:14,color:T.muted,maxWidth:360,lineHeight:1.6}}>Every note goes straight to the team. We read them all and use them to build what matters to you.</div>
+      <div style={{fontSize:14,color:T.text,maxWidth:360,lineHeight:1.6}}>Every note goes straight to the team. We read them all and use them to build what matters to you.</div>
       <button onClick={()=>{setSent(false);setCategory(null);setMsg("");}} style={{marginTop:8,padding:"10px 22px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Send another</button>
     </div>
   );
@@ -9562,7 +9562,7 @@ function FeedbackPage() {
       {/* Footer note */}
       <div style={{padding:"14px 18px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:14,display:"flex",gap:12,alignItems:"flex-start"}}>
         <span style={{color:T.lime,flexShrink:0,marginTop:2}}>{Icon.heart}</span>
-        <div style={{fontSize:12.5,color:T.muted,lineHeight:1.6}}>Studlin is built by students, for students. Your feedback directly influences what we build next. We read every message.</div>
+        <div style={{fontSize:12.5,color:T.text,lineHeight:1.6}}>Studlin is built by students, for students. Your feedback directly influences what we build next. We read every message.</div>
       </div>
     </div>
   );
