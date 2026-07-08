@@ -1746,8 +1746,10 @@ function AiChat() {
   const deleteChat=(id,e)=>{e.stopPropagation();const updated=chatHistory.filter(c=>c.id!==id);lsSet("ai-chats",updated);setChatHistory(updated);if(id===chatId)newChat();};
   const relTime=(ts)=>{const d=Date.now()-ts,m=Math.floor(d/60000);if(m<1)return"Just now";if(m<60)return m+"m ago";const h=Math.floor(m/60);if(h<24)return h+"h ago";const dy=Math.floor(h/24);if(dy===1)return"Yesterday";if(dy<7)return dy+"d ago";return new Date(ts).toLocaleDateString("en-US",{month:"short",day:"numeric"});};
 
+  const chatBg=T.mode==="dark"?"#0E0F14":T.bg;
+  const chatPanel=T.mode==="dark"?"#0B0C10":T.surface;
   const historyPanel=(
-    <div style={{width:220,flexShrink:0,borderRight:`1px solid ${T.border}`,display:"flex",flexDirection:"column",background:T.surface,overflow:"hidden"}}>
+    <div style={{width:220,flexShrink:0,borderRight:`1px solid ${T.mode==="dark"?"rgba(255,255,255,0.05)":T.border}`,display:"flex",flexDirection:"column",background:chatPanel,overflow:"hidden"}}>
       <div style={{padding:"14px 12px 8px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:`1px solid ${T.border}`,flexShrink:0}}>
         <span style={{fontSize:10,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:T.muted}}>Chat history</span>
         <button onClick={newChat} style={{display:"inline-flex",alignItems:"center",gap:5,padding:"5px 9px",borderRadius:7,border:`1px solid ${T.border}`,background:"transparent",color:T.lime,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>
@@ -1938,7 +1940,7 @@ function AiChat() {
 
   if(!hasMessages){
     return(
-      <div style={{display:"flex",height:"calc(100vh - 80px)",overflow:"hidden"}}>
+      <div style={{display:"flex",height:"calc(100vh - 80px)",overflow:"hidden",background:chatBg}}>
         {historyOpen&&historyPanel}
         <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"calc(100vh - 120px)",padding:"0 24px",position:"relative"}}>
         <div style={{position:"absolute",top:12,left:12}}>{historyToggle}</div>
@@ -1964,7 +1966,7 @@ function AiChat() {
   }
 
   return (
-    <div style={{display:"flex",height:"calc(100vh - 80px)",overflow:"hidden"}}>
+    <div style={{display:"flex",height:"calc(100vh - 80px)",overflow:"hidden",background:chatBg}}>
       {historyOpen&&historyPanel}
       <div style={{flex:1,display:"flex",flexDirection:"column",minWidth:0}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 0 16px",flexShrink:0}}>
