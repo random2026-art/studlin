@@ -1128,6 +1128,20 @@ function getCredits(){return lsGet("credits",120);}
 function setCreditsLS(n){lsSet("credits",Math.max(0,n));}
 function getCreditLimit(){const p=getPlan();return p==="Max"?500:p==="Pro"?200:30;}
 const CREDIT_COST={standard:1,flash:1};
+// Syllabus scans are capped at 3/month on Free — a separate, more visible
+// gate than the general credit pool, since the syllabus feature is the
+// centerpiece "aha moment" and deserves its own honest usage counter rather
+// than quietly eating into the same 30 AI credits as everything else. Pro
+// and Max are uncapped. Purely client-side (same trust model as credits
+// everywhere else in this app — no server enforcement exists yet).
+const SYLLABUS_SCAN_LIMIT=3;
+function getSyllabusScanUsage(){
+  const monthKey=new Date().toISOString().slice(0,7);
+  const stored=lsGet("syllabusScans",{month:monthKey,count:0});
+  return stored.month===monthKey?stored:{month:monthKey,count:0};
+}
+function canScanSyllabus(){return getPlan()!=="Free"||getSyllabusScanUsage().count<SYLLABUS_SCAN_LIMIT;}
+function recordSyllabusScan(){const u=getSyllabusScanUsage();lsSet("syllabusScans",{month:u.month,count:u.count+1});}
 
 // ─── XP · LEVEL · STREAK · PLAN (all derived from real activity) ───────────────
 const DOW_FULL=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
@@ -3031,7 +3045,7 @@ function Notes(){
     {id:"file",label:"Scan a file",desc:"PDF, slides, or photos of the board",icon:Icon.file,cost:"2 credits"},
     {id:"record",label:"Record lecture",desc:"Live transcription + summary",icon:MicIcon,cost:"3 credits"},
     {id:"youtube",label:"YouTube link",desc:"Transcribes and summarises a video",icon:Icon.link,cost:"3 credits"},
-    {id:"syllabus",label:"Syllabus",desc:"Paste or upload — Studlin finds every deadline",icon:Icon.cal,cost:"1 credit"},
+    {id:"syllabus",label:"Syllabus",desc:getPlan()==="Free"?Math.max(0,SYLLABUS_SCAN_LIMIT-getSyllabusScanUsage().count)+" free scan"+(SYLLABUS_SCAN_LIMIT-getSyllabusScanUsage().count===1?"":"s")+" left this month":"Paste or upload — Studlin finds every deadline",icon:Icon.cal,cost:"1 credit"},
   ];
 
   const startRec=()=>{
@@ -3122,9 +3136,16 @@ function Notes(){
       if(!title)title="Syllabus";
       if(syllabusText.trim()){
         body=await aiSummarize(syllabusText,"course syllabus");
-        setAiLoading(true);
-        syllabusItems=await extractSyllabusDeadlines(syllabusText);
-        setAiLoading(false);
+        if(canScanSyllabus()){
+          setAiLoading(true);
+          syllabusItems=await extractSyllabusDeadlines(syllabusText);
+          setAiLoading(false);
+          recordSyllabusScan();
+        }else{
+          syllabusItems=[];
+          setSyllabusToast("You've used all "+SYLLABUS_SCAN_LIMIT+" free syllabus scans this month — the note saved, but deadline extraction needs Pro.");
+          setTimeout(()=>setSyllabusToast(""),4200);
+        }
       }else{
         body="<p>Paste or upload a syllabus.</p>";
         syllabusItems=[];
