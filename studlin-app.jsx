@@ -9194,7 +9194,6 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
   const lbUsers=mergeLeaderboard(topProfiles, firstName, lvl.minutes, realStreak, myUid, 5);
   const lbRankColor=(r)=>r===1?"#FFD700":r===2?"#C0C0C0":r===3?"#CD7F32":T.muted;
   const lbRankBg=(r)=>r===1?"rgba(255,215,0,0.10)":r===2?"rgba(192,192,192,0.07)":r===3?"rgba(205,127,50,0.07)":"transparent";
-  const weeklyXP=getWeeklyXP();
   const dayLabels=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
   const weekBarData=weekDays7.map((d,i)=>({day:dayLabels[i],mins:minsByDay[dayKey(d)]||0,isToday:dayKey(d)===today}));
   const maxWeekMins=Math.max(...weekBarData.map(d=>d.mins),30);
@@ -9364,7 +9363,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
             <div style={{display:"flex",gap:32,flexWrap:"wrap",alignItems:"flex-end"}}>
               {[
                 {stat:fmtH(weeklyFocusMin)||"0m", label:"Focus hours"},
-                {stat:weeklyXP+" XP", label:"XP earned"},
+                {stat:weekDays7.reduce((s,d)=>{const m=minsByDay[dayKey(d)]||0;return s+Math.round(m<=30?m*6:m<=60?180+(m-30)*5:m<=120?330+(m-60)*3.5:540+(m-120)*1.5);},0)+" XP", label:"XP earned"},
                 {stat:realStreak+"-day", label:"Day streak"},
                 {stat:cardsMasteredTotal, label:"Cards mastered"},
                 {stat:wordsWrittenTotal.toLocaleString(), label:"Words written"},
