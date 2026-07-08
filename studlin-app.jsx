@@ -7318,7 +7318,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
         {evKind==="deadline"&&(
           <label className="checkbox" onClick={()=>setAsChecklist(s=>!s)} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:14,fontSize:12.5,color:T.text}}>
             <span style={{width:16,height:16,borderRadius:4,border:`1.5px solid ${asChecklist?T.lime:T.border}`,background:asChecklist?T.lime:"transparent",display:"grid",placeItems:"center",flexShrink:0,color:T.ink}}>{asChecklist&&Icon.check}</span>
-            Just a to-do — no need to schedule it
+            No specific time — add to checklist instead
             <span style={{color:T.muted,fontWeight:400}}>— skips the calendar, shows up as a checkbox on your Dashboard</span>
           </label>
         )}
@@ -9538,11 +9538,11 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
         {/* XP & Rank — light card, clickable → career roadmap modal */}
         <div onClick={()=>setLevelRoadmapOpen(true)} style={{background:T.mode==="dark"?"#F0EDE6":"#FFFFFF",borderRadius:22,padding:22,cursor:"pointer",display:"flex",flexDirection:"column"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(14,31,24,0.45)",fontWeight:600}}>XP &amp; Rank</span>
+            <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(14,31,24,0.45)",fontWeight:600}}>Focus &amp; Rank</span>
             <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.10em",background:T.lime+"33",padding:"3px 9px",borderRadius:99,color:T.limeDk,border:`1px solid ${T.lime}55`,fontWeight:700}}>{lvl.title.toUpperCase()}</span>
           </div>
-          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:"#0E1F18",margin:"10px 0 2px"}}>{lvl.minutes.toLocaleString()}<span style={{fontSize:18,color:"rgba(14,31,24,0.45)",marginLeft:6,fontFamily:T.font,fontWeight:400}}>xp</span></div>
-          <div style={{fontSize:12,color:"rgba(14,31,24,0.5)",marginBottom:4}}>{lvl.nextTier?`${(lvl.nextTier.minMinutes-lvl.minutes).toLocaleString()} XP to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
+          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:"#0E1F18",margin:"10px 0 2px"}}>{lvl.minutes.toLocaleString()}<span style={{fontSize:18,color:"rgba(14,31,24,0.45)",marginLeft:6,fontFamily:T.font,fontWeight:400}}>min</span></div>
+          <div style={{fontSize:12,color:"rgba(14,31,24,0.5)",marginBottom:4}}>{lvl.nextTier?`${(lvl.nextTier.minMinutes-lvl.minutes).toLocaleString()} min to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
           <div style={{height:6,background:"rgba(14,31,24,0.10)",borderRadius:99,marginTop:"auto",overflow:"hidden"}}>
             <div style={{height:"100%",width:lvl.tierPct+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}}/>
           </div>
@@ -9553,41 +9553,6 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
         </div>
       </div>
       )} {/* end seriousMode ternary */}
-
-      {/* Quote of the Day */}
-      {!seriousMode&&(()=>{
-        const QUOTES=[
-          {text:"Your future self will thank you for the work you put in today.",author:"Anonymous"},
-          {text:"The secret of getting ahead is getting started.",author:"Mark Twain"},
-          {text:"You don't have to be great to start, but you have to start to be great.",author:"Zig Ziglar"},
-          {text:"Education is not the filling of a pail, but the lighting of a fire.",author:"W.B. Yeats"},
-          {text:"Success is the sum of small efforts repeated day in and day out.",author:"Robert Collier"},
-          {text:"The expert in anything was once a beginner.",author:"Helen Hayes"},
-          {text:"Push yourself, because no one else is going to do it for you.",author:"Anonymous"},
-          {text:"Don't watch the clock; do what it does. Keep going.",author:"Sam Levenson"},
-          {text:"Believe you can and you're halfway there.",author:"Theodore Roosevelt"},
-          {text:"It always seems impossible until it's done.",author:"Nelson Mandela"},
-          {text:"Hard work beats talent when talent doesn't work hard.",author:"Tim Notke"},
-          {text:"The more that you read, the more things you will know.",author:"Dr. Seuss"},
-          {text:"An investment in knowledge pays the best interest.",author:"Benjamin Franklin"},
-          {text:"Learning is not attained by chance — it must be sought with ardor.",author:"Abigail Adams"},
-        ];
-        const q=QUOTES[new Date().getDate()%QUOTES.length];
-        return(
-          <div style={{background:T.mode==="dark"?"#1C1A14":"#F5F0DC",borderRadius:22,padding:"28px 32px",position:"relative",overflow:"hidden",display:"flex",alignItems:"flex-start",gap:24}}>
-            <div style={{fontFamily:T.hand,fontSize:88,lineHeight:0.7,fontWeight:700,color:T.mode==="dark"?"rgba(246,241,230,0.08)":"rgba(14,31,24,0.06)",flexShrink:0,userSelect:"none",marginTop:-8}}>{new Date().getDate()}</div>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:T.mode==="dark"?"rgba(246,241,230,0.35)":"rgba(14,31,24,0.35)",marginBottom:10,fontWeight:600}}>Quote of the day</div>
-              <p style={{fontFamily:"Georgia,serif",fontSize:18,fontStyle:"italic",lineHeight:1.55,color:T.mode==="dark"?T.cream:"#0E1F18",margin:"0 0 12px",maxWidth:680}}>"{q.text}"</p>
-              <div style={{fontSize:12,color:T.mode==="dark"?"rgba(246,241,230,0.4)":"rgba(14,31,24,0.4)",letterSpacing:"0.04em"}}>— {q.author.toUpperCase()}</div>
-            </div>
-            <button onClick={()=>{if(navigator.share)navigator.share({text:'"'+q.text+'" — '+q.author+'\n\nStudlin'});else if(navigator.clipboard)navigator.clipboard.writeText('"'+q.text+'" — '+q.author);}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"10px 16px",background:T.mode==="dark"?"rgba(246,241,230,0.08)":"rgba(14,31,24,0.08)",border:T.mode==="dark"?"1px solid rgba(246,241,230,0.12)":"1px solid rgba(14,31,24,0.10)",borderRadius:99,fontSize:12.5,fontWeight:600,color:T.mode==="dark"?T.cream:"#0E1F18",cursor:"pointer",fontFamily:T.font,flexShrink:0}}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-              Share Quote
-            </button>
-          </div>
-        );
-      })()}
 
       {/* ROW 2: Today's plan + Ask Studlin */}
       <div style={{display:"grid",gridTemplateColumns:"7fr 5fr",gap:16}}>
