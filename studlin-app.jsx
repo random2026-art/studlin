@@ -10327,9 +10327,7 @@ function App() {
       // tree; see the pending discussion with Vene before merging Phase
       // 4+6A+6B.)
     ]},
-    // "solve" (Solve) intentionally hidden from the active nav — page, route
-    // mapping, and label still exist below so nothing breaks for anything
-    // that still references it.
+    {label:"Others",items:[]},
   ];
   const bottomItems=[{id:"settings",label:"Settings"},{id:"feedback",label:"Feedback"},{id:"profile",label:"Profile"}];
   const pages={aichat:AiChat,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile,lectures:Lectures,feedback:FeedbackPage};
