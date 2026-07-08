@@ -9241,65 +9241,99 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
             <div style={{fontFamily:T.hand,fontSize:54,lineHeight:0.95,fontWeight:600,color:T.cream,margin:"0 0 4px",animation:"studlinRise 0.5s ease-out"}}>{greet}, <span style={{color:T.lime}}>{firstName}.</span></div>
             <p style={{fontSize:13.5,color:"rgba(246,241,230,0.7)",margin:"8px 0 16px",lineHeight:1.5,maxWidth:380}}>{planLeft>0?<>You've got <strong style={{color:T.cream}}>{planLeft} task{planLeft===1?"":"s"} left</strong> on today's plan. Let's lock in.</>:plan.length>0?<>All <strong style={{color:T.cream}}>{plan.length} tasks done</strong> today. Outstanding work.</>:<>Nothing scheduled yet. Add a few tasks and let's lock in.</>}</p>
             <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-              <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",background:T.lime,color:T.ink,borderRadius:99,fontSize:13,fontWeight:600,border:"none",cursor:"pointer",fontFamily:T.font}}>View today's plan</button>
+              <button onClick={()=>setActive("aichat")} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",background:T.lime,color:T.ink,borderRadius:99,fontSize:13,fontWeight:600,border:"none",cursor:"pointer",fontFamily:T.font}}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 3c-4.97 0-9 3.185-9 7.115 0 2.557 1.522 4.82 3.889 6.115L6 21l4.339-2.308C11.536 18.888 12.746 19 14 19c4.97 0 9-3.185 9-7.115S16.97 3 12 3z"/></svg>
+                Ask Studlin AI
+              </button>
+              <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",color:T.cream,border:"1px solid rgba(246,241,230,0.18)",background:"transparent",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>View today's plan</button>
               <button onClick={()=>setScheduleSettingsOpen(true)} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",color:T.cream,border:"1px solid rgba(246,241,230,0.18)",background:"transparent",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Customize schedule</button>
             </div>
           </div>
         </div>
 
-        {/* Streak — Duolingo-style flame indicator */}
-        <div onClick={()=>setActive("profile")} style={{background:T.lime,borderRadius:22,padding:22,cursor:"pointer",border:"none",display:"flex",flexDirection:"column"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(8,12,40,0.6)",fontWeight:600}}>Day Streak</span>
+        {/* Streak — dark green card matching design */}
+        <div onClick={()=>setActive("profile")} style={{background:`linear-gradient(135deg,${T.forest} 0%,#1B4536 100%)`,borderRadius:22,padding:22,cursor:"pointer",display:"flex",flexDirection:"column",position:"relative",overflow:"hidden"}}>
+          <div style={{position:"absolute",right:-20,top:-20,width:120,height:120,background:"radial-gradient(circle,rgba(174,206,94,0.15),transparent 70%)",pointerEvents:"none"}} />
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
+            <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)",fontWeight:600}}>Day Streak</span>
             <svg width="22" height="22" viewBox="0 0 24 24" stroke="none">
-              <defs><linearGradient id="streakFlameGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#FF5F52"/><stop offset="100%" stopColor="#B3001B"/></linearGradient></defs>
-              <path fill="url(#streakFlameGrad)" d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/>
+              <defs><linearGradient id="streakFlameGrad2" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#FF5F52"/><stop offset="100%" stopColor="#B3001B"/></linearGradient></defs>
+              <path fill="url(#streakFlameGrad2)" d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/>
             </svg>
           </div>
-          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.ink,margin:"10px 0 2px"}}>{realStreak}<span style={{fontSize:20,color:"rgba(8,12,40,0.55)",marginLeft:6}}>days</span></div>
-          <div style={{fontSize:12,color:"rgba(8,12,40,0.7)",marginBottom:4}}>Today{wk.find(d=>d.today)?.on?" · active":"· keep going!"}</div>
+          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.cream,margin:"10px 0 2px",position:"relative"}}>{realStreak}<span style={{fontSize:20,color:"rgba(246,241,230,0.55)",marginLeft:6}}>days</span></div>
+          <div style={{fontSize:12,color:"rgba(246,241,230,0.65)",marginBottom:4}}>Today{wk.find(d=>d.today)?.on?" · active":" · keep going!"}</div>
           <div style={{display:"flex",gap:5,marginTop:"auto",paddingTop:10}}>
             {wk.map((d,i)=>{
               const isToday=d.today, on=d.on;
               return(
                 <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
-                  {/* Fire color tracks whether that day actually has completed
-                      study records (on) — bright red-orange when it does,
-                      muted gray otherwise. isToday only affects the box
-                      background/ring, not the flame color, so "today with
-                      nothing logged yet" reads honestly as unearned. */}
-                  <div style={{width:"100%",height:28,borderRadius:7,background:isToday?T.ink:on?T.forest:"rgba(8,12,40,0.10)",color:on?"#FF5A2E":"rgba(8,12,40,0.35)",opacity:d.future?0.4:1,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:isToday?"0 0 0 2px "+T.ink:"none"}}>
+                  <div style={{width:"100%",height:28,borderRadius:7,background:isToday?"rgba(174,206,94,0.25)":on?"rgba(246,241,230,0.12)":"rgba(246,241,230,0.05)",color:on?"#FF5A2E":"rgba(246,241,230,0.25)",opacity:d.future?0.4:1,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:isToday?`0 0 0 1.5px ${T.lime}`:"none"}}>
                     {on||isToday
                       ?<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
                       :<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="4"/></svg>
                     }
                   </div>
-                  <span style={{fontSize:9,fontFamily:T.mono,fontWeight:isToday?700:400,color:isToday?T.ink:"rgba(8,12,40,0.45)"}}>{d.lab}</span>
+                  <span style={{fontSize:9,fontFamily:T.mono,fontWeight:isToday?700:400,color:isToday?T.lime:"rgba(246,241,230,0.35)"}}>{d.lab}</span>
                 </div>
               );
             })}
           </div>
         </div>
 
-        {/* Minutes focused / Level — clickable → career roadmap modal */}
-        <div onClick={()=>setLevelRoadmapOpen(true)} style={{background:T.card,borderRadius:22,padding:22,cursor:"pointer",border:`1px solid ${T.border}`,display:"flex",flexDirection:"column",position:"relative",overflow:"hidden"}}>
-          <div style={{position:"absolute",right:-30,bottom:-30,width:130,height:130,background:`radial-gradient(circle,${T.lime}18,transparent 70%)`,pointerEvents:"none"}}/>
+        {/* XP & Rank — light card, clickable → career roadmap modal */}
+        <div onClick={()=>setLevelRoadmapOpen(true)} style={{background:T.mode==="dark"?"#F0EDE6":"#FFFFFF",borderRadius:22,padding:22,cursor:"pointer",display:"flex",flexDirection:"column"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,fontWeight:600}}>Focus &amp; Rank</span>
-            <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.10em",background:T.lime+"22",padding:"3px 9px",borderRadius:99,color:T.lime,border:`1px solid ${T.lime}44`,fontWeight:700}}>{lvl.title.toUpperCase()}</span>
+            <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(14,31,24,0.45)",fontWeight:600}}>XP &amp; Rank</span>
+            <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.10em",background:T.lime+"33",padding:"3px 9px",borderRadius:99,color:T.limeDk,border:`1px solid ${T.lime}55`,fontWeight:700}}>{lvl.title.toUpperCase()}</span>
           </div>
-          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.text,margin:"10px 0 2px"}}>{fmtH(weeklyFocusMin)||"0m"}<span style={{fontSize:15,color:T.muted,marginLeft:6}}>focused this wk</span></div>
-          <div style={{fontSize:12,color:T.muted,marginBottom:4}}>{lvl.nextTier?`${(lvl.nextTier.minMinutes-lvl.minutes).toLocaleString()}m to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
-          <div style={{height:6,background:T.card2,borderRadius:99,marginTop:"auto",overflow:"hidden"}}>
+          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:"#0E1F18",margin:"10px 0 2px"}}>{lvl.minutes.toLocaleString()}<span style={{fontSize:18,color:"rgba(14,31,24,0.45)",marginLeft:6,fontFamily:T.font,fontWeight:400}}>xp</span></div>
+          <div style={{fontSize:12,color:"rgba(14,31,24,0.5)",marginBottom:4}}>{lvl.nextTier?`${(lvl.nextTier.minMinutes-lvl.minutes).toLocaleString()} XP to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
+          <div style={{height:6,background:"rgba(14,31,24,0.10)",borderRadius:99,marginTop:"auto",overflow:"hidden"}}>
             <div style={{height:"100%",width:lvl.tierPct+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}}/>
           </div>
-          <div style={{fontSize:11,color:T.faint,marginTop:8,display:"flex",alignItems:"center",gap:4}}>
+          <div style={{fontSize:11,color:"rgba(14,31,24,0.4)",marginTop:8,display:"flex",alignItems:"center",gap:4}}>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
             View career roadmap
           </div>
         </div>
       </div>
       )} {/* end seriousMode ternary */}
+
+      {/* Quote of the Day */}
+      {!seriousMode&&(()=>{
+        const QUOTES=[
+          {text:"Your future self will thank you for the work you put in today.",author:"Anonymous"},
+          {text:"The secret of getting ahead is getting started.",author:"Mark Twain"},
+          {text:"You don't have to be great to start, but you have to start to be great.",author:"Zig Ziglar"},
+          {text:"Education is not the filling of a pail, but the lighting of a fire.",author:"W.B. Yeats"},
+          {text:"Success is the sum of small efforts repeated day in and day out.",author:"Robert Collier"},
+          {text:"The expert in anything was once a beginner.",author:"Helen Hayes"},
+          {text:"Push yourself, because no one else is going to do it for you.",author:"Anonymous"},
+          {text:"Don't watch the clock; do what it does. Keep going.",author:"Sam Levenson"},
+          {text:"Believe you can and you're halfway there.",author:"Theodore Roosevelt"},
+          {text:"It always seems impossible until it's done.",author:"Nelson Mandela"},
+          {text:"Hard work beats talent when talent doesn't work hard.",author:"Tim Notke"},
+          {text:"The more that you read, the more things you will know.",author:"Dr. Seuss"},
+          {text:"An investment in knowledge pays the best interest.",author:"Benjamin Franklin"},
+          {text:"Learning is not attained by chance — it must be sought with ardor.",author:"Abigail Adams"},
+        ];
+        const q=QUOTES[new Date().getDate()%QUOTES.length];
+        return(
+          <div style={{background:T.mode==="dark"?"#1C1A14":"#F5F0DC",borderRadius:22,padding:"28px 32px",position:"relative",overflow:"hidden",display:"flex",alignItems:"flex-start",gap:24}}>
+            <div style={{fontFamily:T.hand,fontSize:88,lineHeight:0.7,fontWeight:700,color:T.mode==="dark"?"rgba(246,241,230,0.08)":"rgba(14,31,24,0.06)",flexShrink:0,userSelect:"none",marginTop:-8}}>{new Date().getDate()}</div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:T.mode==="dark"?"rgba(246,241,230,0.35)":"rgba(14,31,24,0.35)",marginBottom:10,fontWeight:600}}>Quote of the day</div>
+              <p style={{fontFamily:"Georgia,serif",fontSize:18,fontStyle:"italic",lineHeight:1.55,color:T.mode==="dark"?T.cream:"#0E1F18",margin:"0 0 12px",maxWidth:680}}>"{q.text}"</p>
+              <div style={{fontSize:12,color:T.mode==="dark"?"rgba(246,241,230,0.4)":"rgba(14,31,24,0.4)",letterSpacing:"0.04em"}}>— {q.author.toUpperCase()}</div>
+            </div>
+            <button onClick={()=>{if(navigator.share)navigator.share({text:'"'+q.text+'" — '+q.author+'\n\nStudlin'});else if(navigator.clipboard)navigator.clipboard.writeText('"'+q.text+'" — '+q.author);}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"10px 16px",background:T.mode==="dark"?"rgba(246,241,230,0.08)":"rgba(14,31,24,0.08)",border:T.mode==="dark"?"1px solid rgba(246,241,230,0.12)":"1px solid rgba(14,31,24,0.10)",borderRadius:99,fontSize:12.5,fontWeight:600,color:T.mode==="dark"?T.cream:"#0E1F18",cursor:"pointer",fontFamily:T.font,flexShrink:0}}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+              Share Quote
+            </button>
+          </div>
+        );
+      })()}
 
       {/* ROW 2: Today's plan + Ask Studlin */}
       <div style={{display:"grid",gridTemplateColumns:"7fr 5fr",gap:16}}>
