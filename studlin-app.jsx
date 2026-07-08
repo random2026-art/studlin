@@ -9859,6 +9859,46 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
           rather than deleted, per request to disable it "for now." Flip the
           flag back to true to restore it; lbUsers/lbRankColor/lbRankBg and
           LeaderboardModal are left fully intact. */}
+      {/* This week, you... — full-width weekly summary at bottom */}
+      {!seriousMode&&(()=>{
+        const wkMins=weeklyFocusMin||0;
+        const weeklyXP=weekDays7.reduce((s,d)=>{const m=minsByDay[dayKey(d)]||0;return s+Math.round(m<=30?m*6:m<=60?180+(m-30)*5:m<=120?330+(m-60)*3.5:540+(m-120)*1.5);},0);
+        const focusStr=wkMins>=60?Math.floor(wkMins/60)+"h "+(wkMins%60)+"m":wkMins+"m";
+        return(
+          <div style={{background:`linear-gradient(135deg, ${T.forest} 0%, #1B4536 100%)`,borderRadius:22,padding:"32px 36px",position:"relative",overflow:"hidden"}}>
+            <div style={{position:"absolute",right:-60,top:-60,width:300,height:300,background:"radial-gradient(circle,rgba(174,206,94,0.10),transparent 70%)",pointerEvents:"none"}} />
+            <div style={{position:"relative"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:28,flexWrap:"wrap",gap:12}}>
+                <div style={{display:"flex",alignItems:"center",gap:14}}>
+                  <span style={{fontFamily:T.hand,fontSize:36,fontWeight:600,color:T.cream}}>This week, you...</span>
+                  <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.12em",padding:"5px 12px",borderRadius:99,background:"rgba(246,241,230,0.10)",color:"rgba(246,241,230,0.55)",fontWeight:700,border:"1px solid rgba(246,241,230,0.12)"}}>WRAPPED · WEEK {weekNo()}</span>
+                </div>
+                <button onClick={()=>{if(navigator.share)navigator.share({title:"My Studlin week",text:"This week: "+focusStr+" focused, "+weeklyXP+" XP earned, "+realStreak+"-day streak. @Studlin"}).catch(()=>{});}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"10px 18px",background:"rgba(246,241,230,0.10)",border:"1px solid rgba(246,241,230,0.16)",borderRadius:99,fontSize:13,fontWeight:600,color:T.cream,cursor:"pointer",fontFamily:T.font,flexShrink:0}}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                  Share Wrapped
+                </button>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:16,marginBottom:18}}>
+                {[
+                  {label:"FOCUS HOURS",value:focusStr},
+                  {label:"XP EARNED",value:weeklyXP.toLocaleString()+" xp"},
+                  {label:"DAY STREAK",value:realStreak+" days"},
+                ].map((s,i)=>(
+                  <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:14,padding:"20px 22px",border:"1px solid rgba(246,241,230,0.07)"}}>
+                    <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.12em",color:"rgba(246,241,230,0.45)",marginBottom:10}}>{s.label}</div>
+                    <div style={{fontFamily:T.hand,fontSize:38,fontWeight:600,color:T.lime,lineHeight:1}}>{s.value}</div>
+                  </div>
+                ))}
+              </div>
+              {realStreak>0&&<span style={{display:"inline-flex",alignItems:"center",gap:7,fontSize:12,fontWeight:600,padding:"7px 14px",background:"rgba(174,206,94,0.12)",border:"1px solid rgba(174,206,94,0.20)",borderRadius:99,color:T.lime}}>
+                <span style={{width:22,height:22,borderRadius:"50%",background:T.lime,color:T.ink,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,flexShrink:0}}>{realStreak}</span>
+                {realStreak}-day streak
+              </span>}
+            </div>
+          </div>
+        );
+      })()}
+
       {SHOW_GLOBAL_LEADERBOARD && !seriousMode && <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18,gap:12,flexWrap:"wrap"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
