@@ -9554,8 +9554,10 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
       </div>
       )} {/* end seriousMode ternary */}
 
-      {/* ROW 2: Today's plan + Ask Studlin */}
-      <div style={{display:"grid",gridTemplateColumns:"7fr 5fr",gap:16}}>
+      {/* ROW 2: Today's plan + Ask Studlin + Checklist — Checklist sits here,
+          not further down the page, so it's visible without scrolling right
+          next to the scheduled plan it's deliberately NOT part of. */}
+      <div style={{display:"grid",gridTemplateColumns:"5fr 4fr 3fr",gap:16}}>
         {/* Today's plan */}
         <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
           <CardHead title="Today's plan" label={planDoneCount+" / "+plan.length+" DONE"} more="Calendar" />
@@ -9605,6 +9607,26 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
             <span>1 credit per message</span>
             <span>{getCredits()} credits left</span>
           </div>
+        </div>
+
+        {/* Checklist — plain to-dos with no inherent duration/time (e.g.
+            "send AP scores to college"). Deliberately kept out of the
+            calendar/Today's-plan entirely; this is the only place they live. */}
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+          <CardHead title="Checklist" label={checklistItems.length+" OPEN"} />
+          <div style={{display:"flex",gap:8,marginBottom:14}}>
+            <input value={checklistDraft} onChange={e=>setChecklistDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addChecklistItem();}}
+              placeholder="e.g. Send AP scores" style={{flex:1,minWidth:0,background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"9px 10px",color:T.text,fontSize:12.5,fontFamily:T.font,outline:"none"}} />
+            <button onClick={addChecklistItem} disabled={!checklistDraft.trim()} style={{padding:"9px 12px",background:T.lime,color:T.ink,border:"none",borderRadius:10,fontSize:12.5,fontWeight:600,cursor:checklistDraft.trim()?"pointer":"default",fontFamily:T.font,opacity:checklistDraft.trim()?1:0.45,flexShrink:0}}>Add</button>
+          </div>
+          {checklistItems.length===0
+            ? <div style={{fontSize:12.5,color:T.muted,padding:"6px 0 4px",textAlign:"center"}}>Nothing on your checklist.</div>
+            : checklistItems.map(item=>(
+              <div key={item.id} onClick={()=>toggleChecklistItem(item.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer"}}>
+                <div style={{width:18,height:18,borderRadius:"50%",border:`1.5px solid ${T.faint}`,background:"transparent",flex:"none",display:"grid",placeItems:"center"}} />
+                <div style={{flex:1,minWidth:0,fontSize:12.5,color:T.text,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.title}</div>
+              </div>
+            ))}
         </div>
       </div>
 
@@ -9671,27 +9693,6 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
             </div>
           </div>
         )}
-      </div>
-
-      {/* ROW 3.5: CHECKLIST — plain to-dos with no inherent duration/time
-          (e.g. "send AP scores to college"). Deliberately kept out of the
-          calendar/Today's-plan entirely; this is the only place they live. */}
-      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
-        <CardHead title="Checklist" label={checklistItems.length+" OPEN"} />
-        <div style={{display:"flex",gap:8,marginBottom:14}}>
-          <input value={checklistDraft} onChange={e=>setChecklistDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addChecklistItem();}}
-            placeholder="e.g. Send AP scores to college" style={{flex:1,background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none"}} />
-          <button onClick={addChecklistItem} disabled={!checklistDraft.trim()} style={{padding:"9px 16px",background:T.lime,color:T.ink,border:"none",borderRadius:10,fontSize:12.5,fontWeight:600,cursor:checklistDraft.trim()?"pointer":"default",fontFamily:T.font,opacity:checklistDraft.trim()?1:0.45,flexShrink:0}}>Add</button>
-        </div>
-        {checklistItems.length===0
-          ? <div style={{fontSize:13,color:T.muted,padding:"6px 0 4px",textAlign:"center"}}>Nothing on your checklist. Add something above — no due date required.</div>
-          : checklistItems.map(item=>(
-            <div key={item.id} onClick={()=>toggleChecklistItem(item.id)} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer"}}>
-              <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${T.faint}`,background:"transparent",flex:"none",display:"grid",placeItems:"center"}} />
-              <div style={{flex:1,minWidth:0,fontSize:13.5,color:T.text,fontWeight:500}}>{item.title}</div>
-              {item.date&&<span style={{fontSize:10.5,fontWeight:700,padding:"4px 9px",borderRadius:99,background:T.card2,color:T.muted,flexShrink:0}}>Due {item.date}</span>}
-            </div>
-          ))}
       </div>
 
       {/* ROW 4: GLOBAL LEADERBOARD — conditionally hidden (SHOW_GLOBAL_LEADERBOARD)
