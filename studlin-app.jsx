@@ -9506,8 +9506,8 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
           </div>
         </div>
 
-        {/* Streak — dark green card matching design */}
-        <div onClick={()=>setActive("profile")} style={{background:`linear-gradient(135deg,${T.forest} 0%,#1B4536 100%)`,borderRadius:22,padding:22,cursor:"pointer",display:"flex",flexDirection:"column",position:"relative",overflow:"hidden"}}>
+        {/* Streak — medium green card matching design */}
+        <div onClick={()=>setActive("profile")} style={{background:"#5B8C2A",borderRadius:22,padding:22,cursor:"pointer",display:"flex",flexDirection:"column",position:"relative",overflow:"hidden"}}>
           <div style={{position:"absolute",right:-20,top:-20,width:120,height:120,background:"radial-gradient(circle,rgba(174,206,94,0.15),transparent 70%)",pointerEvents:"none"}} />
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
             <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)",fontWeight:600}}>Day Streak</span>
@@ -9536,8 +9536,8 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
           </div>
         </div>
 
-        {/* XP & Rank — light card, clickable → career roadmap modal */}
-        <div onClick={()=>setLevelRoadmapOpen(true)} style={{background:T.mode==="dark"?"#F0EDE6":"#FFFFFF",borderRadius:22,padding:22,cursor:"pointer",display:"flex",flexDirection:"column"}}>
+        {/* Focus & Rank — always white, pops against dark background */}
+        <div onClick={()=>setLevelRoadmapOpen(true)} style={{background:"#FFFFFF",borderRadius:22,padding:22,cursor:"pointer",display:"flex",flexDirection:"column"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(14,31,24,0.45)",fontWeight:600}}>Focus &amp; Rank</span>
             <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.10em",background:T.lime+"33",padding:"3px 9px",borderRadius:99,color:T.limeDk,border:`1px solid ${T.lime}55`,fontWeight:700}}>{lvl.title.toUpperCase()}</span>
@@ -9555,61 +9555,87 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
       </div>
       )} {/* end seriousMode ternary */}
 
-      {/* ROW 2: Today's plan + Ask Studlin + Checklist — Checklist sits here,
-          not further down the page, so it's visible without scrolling right
-          next to the scheduled plan it's deliberately NOT part of. */}
-      <div style={{display:"grid",gridTemplateColumns:"5fr 4fr 3fr",gap:16}}>
+      {/* ROW 2: Today's plan + Jump back in + Ask Studlin + Checklist — grid
+          widened from 3 to 4 columns when Checklist merged in alongside
+          Vene's new "Jump back in" card; Checklist gets a slightly narrower
+          share since its content (a quick-add input + short rows) needs
+          less room than the other three. */}
+      <div style={{display:"grid",gridTemplateColumns:"1.1fr 1fr 1.1fr 0.9fr",gap:16}}>
         {/* Today's plan */}
-        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
-          <CardHead title="Today's plan" label={planDoneCount+" / "+plan.length+" DONE"} more="Calendar" />
-          {plan.length>0&&<div style={{height:3,background:T.card2,borderRadius:99,marginBottom:14,overflow:"hidden"}}><div style={{height:"100%",width:Math.round(planDoneCount/Math.max(plan.length,1)*100)+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}} /></div>}
+        <div style={{background:"#FFFFFF",borderRadius:22,padding:24,display:"flex",flexDirection:"column"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8,flexWrap:"wrap"}}>
+            <span style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:"#0E1F18"}}>Today's plan</span>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.1em",padding:"4px 9px",borderRadius:99,background:"rgba(14,31,24,0.08)",color:"rgba(14,31,24,0.5)",fontWeight:600}}>{planDoneCount} / {plan.length} DONE</span>
+              <button onClick={()=>setActive("calendar")} style={{fontSize:12,color:"rgba(14,31,24,0.4)",display:"inline-flex",alignItems:"center",gap:3,cursor:"pointer",background:"none",border:"none",fontFamily:T.font,fontWeight:500}}>Calendar <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
+            </div>
+          </div>
+          {plan.length>0&&<div style={{height:3,background:"rgba(14,31,24,0.08)",borderRadius:99,marginBottom:14,overflow:"hidden"}}><div style={{height:"100%",width:Math.round(planDoneCount/Math.max(plan.length,1)*100)+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}} /></div>}
           {plan.length===0
-            ? <div style={{padding:"22px 8px",textAlign:"center"}}>
-                <div style={{fontSize:13,color:T.muted,marginBottom:14,lineHeight:1.5}}>Nothing scheduled for today. Add events to your calendar and they appear here automatically.</div>
-                <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
-                  <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 16px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Add a task</button>
-                  <button onClick={()=>{lsSet("pendingBrainDump",true);setActive("calendar");}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 16px",background:"transparent",color:T.text,border:`1px solid ${T.border}`,borderRadius:99,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Brain dump everything</button>
-                </div>
+            ?<div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 8px",textAlign:"center"}}>
+              <div style={{fontSize:13,color:"rgba(14,31,24,0.45)",marginBottom:18,lineHeight:1.6}}>Nothing scheduled for today. Add events to your calendar and they appear here automatically.</div>
+              <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
+                <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"10px 20px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Add a task</button>
+                <button onClick={()=>{lsSet("pendingBrainDump",true);setActive("calendar");}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"10px 20px",background:"transparent",color:"#0E1F18",border:"1px solid rgba(14,31,24,0.15)",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Brain dump everything</button>
               </div>
-            : plan.map((t)=>{
+            </div>
+            :plan.map((t)=>{
               const c=scOf(t.subject);
-              return (
-              <div key={t.id} onClick={()=>{togglePlanDone(t.id);forcePlan(x=>x+1);}} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer"}}>
-                <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${t.done?T.forest:T.faint}`,background:t.done?T.forest:"transparent",flex:"none",display:"grid",placeItems:"center"}}>
-                  {t.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
-                </div>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{display:"flex",alignItems:"center",gap:6}}>
-                    {t.priority&&<span style={{width:6,height:6,borderRadius:"50%",background:PRIORITY_COLORS[t.priority||3],flexShrink:0}} />}
-                    <span style={{fontSize:13.5,color:t.done?T.muted:T.text,textDecoration:t.done?"line-through":"none",fontWeight:500}}>{t.title}</span>
+              return(
+                <div key={t.id} onClick={()=>{togglePlanDone(t.id);forcePlan(x=>x+1);}} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:"1px solid rgba(14,31,24,0.08)",marginBottom:8,cursor:"pointer",background:"rgba(14,31,24,0.03)"}}>
+                  <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${t.done?"#0E1F18":"rgba(14,31,24,0.2)"}`,background:t.done?"#0E1F18":"transparent",flex:"none",display:"grid",placeItems:"center"}}>
+                    {t.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
                   </div>
-                  <div style={{fontSize:11.5,color:T.muted,marginTop:1,display:"flex",gap:6,alignItems:"center"}}>
-                    <span style={{textTransform:"capitalize"}}>{t.subject}{t.kind?" · "+t.kind:""}</span>
-                    {t.duration&&<span style={{background:T.card2,padding:"0 5px",borderRadius:3,fontSize:10,fontWeight:600}}>{t.duration}m</span>}
+                  <div style={{flex:1,minWidth:0}}>
+                    <span style={{fontSize:13.5,color:t.done?"rgba(14,31,24,0.35)":"#0E1F18",textDecoration:t.done?"line-through":"none",fontWeight:500}}>{t.title}</span>
+                    <div style={{fontSize:11,color:"rgba(14,31,24,0.4)",marginTop:1}}>{t.subject}{t.kind?" · "+t.kind:""}</div>
                   </div>
+                  <span style={{fontFamily:T.mono,fontSize:10,color:"rgba(14,31,24,0.35)"}}>{fmtClock(t.time)}</span>
+                  {!t.done&&t.duration&&(t.kind==="study block"||t.kind==="deadline")&&(
+                    <button onClick={(e)=>{e.stopPropagation();setRescheduleTask(t);}} style={{flexShrink:0,padding:"3px 7px",borderRadius:6,border:"1px solid rgba(14,31,24,0.12)",background:"transparent",color:"rgba(14,31,24,0.4)",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Reschedule</button>
+                  )}
                 </div>
-                <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.06em",padding:"3px 8px",borderRadius:6,background:c+"22",color:c,textTransform:"uppercase",fontWeight:600,flex:"none"}}>{t.subject.slice(0,4)}</span>
-                <span style={{fontFamily:T.mono,fontSize:11,color:T.muted}}>{fmtClock(t.time)}</span>
-                {!t.done&&t.duration&&(t.kind==="study block"||t.kind==="deadline")&&(
-                  <button onClick={(e)=>{e.stopPropagation();setRescheduleTask(t);}} title="Reschedule" style={{flexShrink:0,padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Reschedule</button>
-                )}
-              </div>
+              );
+            })}
+        </div>
+
+        {/* Jump back in */}
+        <div style={{background:T.forest,color:T.cream,borderRadius:22,padding:24,display:"flex",flexDirection:"column"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+            <span style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:T.cream}}>Jump back in</span>
+            <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.12em",padding:"4px 9px",borderRadius:99,background:"rgba(246,241,230,0.10)",color:"rgba(246,241,230,0.6)",fontWeight:700,border:"1px solid rgba(246,241,230,0.12)"}}>QUICK START</span>
+          </div>
+          <p style={{fontSize:13,color:"rgba(246,241,230,0.6)",lineHeight:1.5,margin:"0 0 18px"}}>Pick up right where you left off. One tap to your most-used tools.</p>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,flex:1}}>
+            {[
+              {id:"notes",    icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>, label:"New note"},
+              {id:"flashcards",icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>, label:"New deck"},
+              {id:"aichat",   icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2L13.09 8.26L19 6L14.74 10.74L21 12L14.74 13.26L19 18L13.09 15.74L12 22L10.91 15.74L5 18L9.26 13.26L3 12L9.26 10.74L5 6L10.91 8.26L12 2Z"/></svg>, label:"Ask Studlin"},
+              {id:"calendar", icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>, label:"Plan today"},
+            ].map(function(it){return(
+              <button key={it.id} onClick={()=>setActive(it.id)} style={{background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.10)",borderRadius:14,padding:"14px 12px",cursor:"pointer",textAlign:"left",display:"flex",flexDirection:"column",gap:10,fontFamily:T.font}}>
+                <div style={{color:T.lime}}>{it.icon}</div>
+                <span style={{fontSize:13,fontWeight:600,color:T.cream}}>{it.label}</span>
+              </button>
             );})}
+          </div>
         </div>
 
         {/* Ask Studlin */}
-        <div style={{background:T.ink,color:T.cream,borderRadius:22,padding:22,display:"flex",flexDirection:"column"}}>
-          <CardHead title="Ask Studlin" label="AI TUTOR" more="Open" light />
-          {(()=>{const nt=plan.find(t=>!t.done);const tc=nt?(nt.subject||nt.title):"your subjects";const sug=nt?["Explain "+tc+" concepts","Quiz me on "+tc,"Help me outline this"]:["Summarize my notes","Build a study schedule","Quiz me on any topic"];const ctx=nt?`You have "${nt.title}" up next — want a quick summary, practice quiz, or step-by-step explanation?`:`What are you studying today? I can quiz you, explain concepts, or help you plan your session.`;return(<><div style={{fontSize:13,color:"rgba(246,241,230,0.7)",marginBottom:14,lineHeight:1.5}}>{ctx}</div><div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>{sug.map(s=>(<button key={s} onClick={()=>setActive("aichat")} style={{fontSize:11.5,padding:"6px 11px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:"rgba(246,241,230,0.85)",cursor:"pointer",fontFamily:T.font}}>{s}</button>))}</div></>);})()}
-          <div style={{display:"flex",alignItems:"center",gap:10,background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:14,padding:"10px 12px",marginTop:"auto"}}>
+        <div style={{background:T.ink,color:T.cream,borderRadius:22,padding:24,display:"flex",flexDirection:"column"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+            <span style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:T.cream}}>Ask Studlin</span>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.12em",padding:"4px 9px",borderRadius:99,background:"rgba(246,241,230,0.10)",color:"rgba(246,241,230,0.6)",fontWeight:700,border:"1px solid rgba(246,241,230,0.12)"}}>AI TUTOR</span>
+              <button onClick={()=>setActive("aichat")} style={{fontSize:12,color:"rgba(246,241,230,0.5)",display:"inline-flex",alignItems:"center",gap:2,cursor:"pointer",background:"none",border:"none",fontFamily:T.font}}>Open <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
+            </div>
+          </div>
+          {(()=>{const nt=plan.find(t=>!t.done);const tc=nt?(nt.subject||nt.title):"your subjects";const sug=nt?["Explain "+tc+" concepts","Quiz me on "+tc,"Help me outline this"]:["Summarize my notes","Build a study schedule","Quiz me on any topic"];const ctx=nt?`You have "${nt.title}" up next — want a quick summary, practice quiz, or step-by-step explanation?`:`What are you studying today? I can quiz you, explain concepts, or help you plan your session.`;return(<><div style={{fontSize:13,color:"rgba(246,241,230,0.65)",marginBottom:14,lineHeight:1.6}}>{ctx}</div><div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>{sug.map(s=>(<button key={s} onClick={()=>setActive("aichat")} style={{fontSize:11.5,padding:"6px 11px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.12)",borderRadius:99,color:"rgba(246,241,230,0.8)",cursor:"pointer",fontFamily:T.font}}>{s}</button>))}</div></>);})()}
+          <div style={{display:"flex",alignItems:"center",gap:10,background:"rgba(246,241,230,0.05)",border:"1px solid rgba(246,241,230,0.10)",borderRadius:14,padding:"10px 12px",marginTop:"auto"}}>
             <input placeholder="Ask anything · paste a problem" style={{flex:1,background:"none",border:"none",outline:"none",color:T.cream,fontSize:13,fontFamily:T.font,minWidth:0}}/>
             <button onClick={()=>setActive("aichat")} style={{display:"grid",placeItems:"center",width:30,height:30,borderRadius:8,background:T.lime,color:T.ink,border:"none",cursor:"pointer",flex:"none"}}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="22 2 15 22 11 13 2 9"/></svg>
             </button>
-          </div>
-          <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(246,241,230,0.45)",marginTop:10,display:"flex",justifyContent:"space-between"}}>
-            <span>1 credit per message</span>
-            <span>{getCredits()} credits left</span>
           </div>
         </div>
 
