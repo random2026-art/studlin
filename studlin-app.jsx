@@ -6557,7 +6557,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   const [evPrefillDate,setEvPrefillDate]=useState(dayKey());
   const [evSubject,setEvSubject]=useState("None");
   const [evCustom,setEvCustom]=useState("");
-  const [evKind,setEvKind]=useState("deadline");
+  const [evKind,setEvKind]=useState("study block");
   const [evNotes,setEvNotes]=useState("");
   const [evPriority,setEvPriority]=useState(500); // 0-1000 continuous scale
   // Difficulty slider removed from the UI entirely — deciding "how hard is
@@ -7313,7 +7313,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
         <Field label="Title"><Input placeholder="e.g. Study Bio chapter 4-6" value={evTitle} onChange={ev=>setEvTitle(ev.target.value)} autoFocus /></Field>
 
         <Field label="Type" hint={isFixedKind?"Fixed real-world block — Studlin will never move or reschedule this.":"Choose what kind of entry this is"}>
-          <SelectChip options={[{value:"deadline",label:"To-Do"},"exam","class","study block","reminder","busy block"]} value={evKind} onChange={onEvKindChange} />
+          <SelectChip options={["study block",{value:"deadline",label:"To-Do"},"exam","class","reminder","busy block"]} value={evKind} onChange={onEvKindChange} />
         </Field>
 
         {evKind==="deadline"&&(
@@ -7468,7 +7468,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
       <Modal open={editOpen} onClose={closeEdit} title="Edit task" sub="Update this task's details." width={580}
         footer={<><Btn variant="subtle" onClick={closeEdit}>Cancel</Btn><Btn onClick={saveEdit} disabled={!editTitle.trim()} style={{opacity:editTitle.trim()?1:0.45}}>Save changes</Btn></>}>
         <Field label="Title"><Input value={editTitle} onChange={e=>setEditTitle(e.target.value)} autoFocus /></Field>
-        <Field label="Type"><SelectChip options={[{value:"deadline",label:"To-Do"},"exam","class","study block","reminder","busy block"]} value={editKind} onChange={setEditKind} /></Field>
+        <Field label="Type"><SelectChip options={["study block",{value:"deadline",label:"To-Do"},"exam","class","reminder","busy block"]} value={editKind} onChange={setEditKind} /></Field>
         <Field label="Subject"><SelectChip options={SUBJ} value={editSubject} onChange={setEditSubject} /></Field>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
           <Field label="Scheduled date"><Input type="date" value={editDate} onChange={e=>{setEditDate(e.target.value);setEditDeadlineErr("");}} /></Field>
@@ -9317,7 +9317,7 @@ function LeaderboardModal({open,onClose,currentMinutes,currentName,currentStreak
 // Disabled "for now" per request — flip back to true to restore the inline
 // Global Leaderboard card on the dashboard.
 const SHOW_GLOBAL_LEADERBOARD=false;
-function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false}) {
+function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false, rescheduleTask, setRescheduleTask, dashToast, setDashToast}) {
   const realStats=sessionStats();
   const realStreak=Math.max(1,getStreak());
   const lvl=levelInfo();
@@ -9332,8 +9332,6 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
     return ()=>{cancelled=true;};
   },[]);
   const [,forcePlan]=useState(0);
-  const [rescheduleTask,setRescheduleTask]=useState(null);
-  const [dashToast,setDashToast]=useState("");
   const [levelRoadmapOpen,setLevelRoadmapOpen]=useState(false);
   const [leaderboardOpen,setLeaderboardOpen]=useState(false);
   const plan=todaysPlan();
@@ -9879,26 +9877,18 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
       </div>}
 
     </div>
-    {/* Modals — rendered as siblings of the scrollable content div above, not
-        nested inside it. [data-page] > * gets a staggered entrance animation
-        (studlinChild) that leaves a non-"none" transform applied even after
-        it finishes; that makes whichever div it lands on a containing block
-        for any position:fixed descendant. Nesting these modals inside the
-        content div put them right behind that wall, breaking their
-        centering into being relative to the (possibly scrolled) content div
-        instead of the real viewport. Siblings of it are unaffected. */}
+    {/* NOTE (corrected — see App-level "PRICING MODAL"/"PAYWALL" comments for
+        the actual root cause): being a sibling of the content div here is
+        NOT enough. [data-page] itself carries the transform-bearing
+        studlinRise entrance animation, so it's a containing block for any
+        position:fixed descendant *anywhere* inside it, including these two
+        modals, regardless of nesting depth. RescheduleModal/its toast were
+        moved out to the App level (true siblings of [data-page] itself) to
+        fix the reported "have to scroll up to see the reschedule confirm"
+        bug. LevelRoadmapModal/LeaderboardModal below still have the same
+        underlying issue — not fixed yet, flagged for a follow-up pass. */}
     <LevelRoadmapModal open={levelRoadmapOpen} onClose={()=>setLevelRoadmapOpen(false)} currentMinutes={lvl.minutes} />
     <LeaderboardModal open={leaderboardOpen} onClose={()=>setLeaderboardOpen(false)} currentMinutes={lvl.minutes} currentName={firstName} currentStreak={realStreak} />
-    {rescheduleTask&&(
-      <RescheduleModal task={rescheduleTask} events={lsGet("events",[])} onClose={()=>setRescheduleTask(null)} commit={(next,evictedCount)=>{
-        lsSet("events",next);forcePlan(x=>x+1);
-        setDashToast(evictedCount>0?`Task rescheduled — ${evictedCount} other${evictedCount!==1?"s":""} shifted to make room.`:"Task rescheduled.");
-        setTimeout(()=>setDashToast(""),2800);
-      }} />
-    )}
-    {dashToast&&(
-      <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:1001,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {dashToast}</div>
-    )}
     {wrappedOpen&&!seriousMode&&(
       <div onClick={dismissWrapped} style={{position:"fixed",inset:0,background:"rgba(8,12,10,0.72)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
         <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:420,background:T.forest,color:T.cream,borderRadius:22,padding:28,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
@@ -10610,6 +10600,15 @@ function App() {
   window._setTimerTask=setTimerTask;
   const [creditsOpen,setCreditsOpen]=useState(false);
   const [pricingOpen,setPricingOpen]=useState(false);
+  // Dashboard's "Reschedule" confirm + its toast — lifted up from Dashboard
+  // itself (same fix pattern as PRICING MODAL/PAYWALL below): [data-page]'s
+  // own entrance animation makes it a containing block for any
+  // position:fixed descendant anywhere inside it, so a modal opened from
+  // Dashboard rendered relative to the scrolled [data-page] box instead of
+  // the real viewport. Rendering it as a true sibling of [data-page] here
+  // fixes that.
+  const [rescheduleTask,setRescheduleTask]=useState(null);
+  const [dashToast,setDashToast]=useState("");
   // Strategic paywall intercept — shown once, right after the student's first
   // real task save (not during signup, and not behind a forced walkthrough —
   // this is the actual "aha moment": they just watched Studlin place their
@@ -10989,7 +10988,7 @@ function App() {
             container instead of the real viewport. Clearing it once done
             keeps the entrance animation but stops that side effect. */}
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?"#F0EBE1":undefined}}>
-          {active==="dashboard"?<Dashboard setActive={setActive} setScheduleSettingsOpen={setScheduleSettingsOpen} seriousMode={seriousMode} />:
+          {active==="dashboard"?<Dashboard setActive={setActive} setScheduleSettingsOpen={setScheduleSettingsOpen} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} />:
            active==="calendar"?<CalendarTab onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} />:
@@ -10998,6 +10997,19 @@ function App() {
            ActivePage?<ActivePage />:null}
         </div>
       </div>
+
+      {/* DASHBOARD RESCHEDULE CONFIRM + TOAST — true sibling of [data-page],
+          see the state declaration above for why. */}
+      {rescheduleTask&&(
+        <RescheduleModal task={rescheduleTask} events={lsGet("events",[])} onClose={()=>setRescheduleTask(null)} commit={(next,evictedCount)=>{
+          lsSet("events",next);
+          setDashToast(evictedCount>0?`Task rescheduled — ${evictedCount} other${evictedCount!==1?"s":""} shifted to make room.`:"Task rescheduled.");
+          setTimeout(()=>setDashToast(""),2800);
+        }} />
+      )}
+      {dashToast&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:1001,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {dashToast}</div>
+      )}
 
       {/* PRICING MODAL */}
       <Modal open={pricingOpen} onClose={()=>setPricingOpen(false)} title="Studlin plans" sub="Start free. Upgrade when you're ready. Cancel anytime." width={820}>
