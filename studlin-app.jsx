@@ -9514,23 +9514,25 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
               <path fill="url(#streakFlameGrad2)" d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/>
             </svg>
           </div>
-          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.cream,margin:"10px 0 2px",position:"relative"}}>{realStreak}<span style={{fontSize:20,color:"rgba(246,241,230,0.55)",marginLeft:6}}>days</span></div>
-          <div style={{fontSize:12,color:"rgba(246,241,230,0.65)",marginBottom:4}}>Today{wk.find(d=>d.today)?.on?" · active":" · keep going!"}</div>
-          <div style={{display:"flex",gap:5,marginTop:14}}>
-            {wk.map((d,i)=>{
-              const isToday=d.today, on=d.on;
-              return(
-                <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
-                  <div style={{width:"100%",height:28,borderRadius:7,background:isToday?"rgba(174,206,94,0.25)":on?"rgba(246,241,230,0.12)":"rgba(246,241,230,0.05)",color:on?"#FF8C38":"rgba(246,241,230,0.25)",opacity:d.future?0.4:1,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:isToday?`0 0 0 1.5px ${T.lime}`:"none"}}>
-                    {on||isToday
-                      ?<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
-                      :<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="4"/></svg>
-                    }
+          <div style={{marginTop:"auto"}}>
+            <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.cream,margin:"0 0 2px",position:"relative"}}>{realStreak}<span style={{fontSize:20,color:"rgba(246,241,230,0.55)",marginLeft:6}}>days</span></div>
+            <div style={{fontSize:12,color:"rgba(246,241,230,0.65)",marginBottom:12}}>Today{wk.find(d=>d.today)?.on?" · active":" · keep going!"}</div>
+            <div style={{display:"flex",gap:5}}>
+              {wk.map((d,i)=>{
+                const isToday=d.today, on=d.on;
+                return(
+                  <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+                    <div style={{width:"100%",height:28,borderRadius:7,background:isToday?"rgba(174,206,94,0.25)":on?"rgba(246,241,230,0.12)":"rgba(246,241,230,0.05)",color:on?"#FF8C38":"rgba(246,241,230,0.25)",opacity:d.future?0.4:1,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:isToday?`0 0 0 1.5px ${T.lime}`:"none"}}>
+                      {on||isToday
+                        ?<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
+                        :<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="4"/></svg>
+                      }
+                    </div>
+                    <span style={{fontSize:9,fontFamily:T.mono,fontWeight:isToday?700:400,color:isToday?T.lime:"rgba(246,241,230,0.35)"}}>{d.lab}</span>
                   </div>
-                  <span style={{fontSize:9,fontFamily:T.mono,fontWeight:isToday?700:400,color:isToday?T.lime:"rgba(246,241,230,0.35)"}}>{d.lab}</span>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         </div>
 
@@ -9540,14 +9542,16 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
             <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,fontWeight:600}}>Focus &amp; Rank</span>
             <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.10em",background:T.lime+"33",padding:"3px 9px",borderRadius:99,color:T.limeDk,border:`1px solid ${T.lime}55`,fontWeight:700}}>{lvl.title.toUpperCase()}</span>
           </div>
-          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.text,margin:"10px 0 2px"}}>{lvl.minutes.toLocaleString()}<span style={{fontSize:18,color:T.muted,marginLeft:6,fontFamily:T.font,fontWeight:400}}>min</span></div>
-          <div style={{fontSize:12,color:T.muted,marginBottom:4}}>{lvl.nextTier?`${(lvl.nextTier.minMinutes-lvl.minutes).toLocaleString()} min to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
-          <div style={{height:6,background:T.card2,borderRadius:99,marginTop:16,overflow:"hidden"}}>
+          <div style={{marginTop:"auto"}}>
+          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.text,margin:"0 0 2px"}}>{lvl.minutes.toLocaleString()}<span style={{fontSize:18,color:T.muted,marginLeft:6,fontFamily:T.font,fontWeight:400}}>min</span></div>
+          <div style={{fontSize:12,color:T.muted,marginBottom:14}}>{lvl.nextTier?`${(lvl.nextTier.minMinutes-lvl.minutes).toLocaleString()} min to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
+          <div style={{height:6,background:T.card2,borderRadius:99,overflow:"hidden"}}>
             <div style={{height:"100%",width:lvl.tierPct+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}}/>
           </div>
           <div style={{fontSize:11,color:T.muted,marginTop:8,display:"flex",alignItems:"center",gap:4}}>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
             View career roadmap
+          </div>
           </div>
         </div>
       </div>
@@ -9690,13 +9694,14 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
         return(
           <div style={{display:"grid",gridTemplateColumns:"7fr 5fr",gap:16}}>
             {/* This week's focus */}
-            <div style={{background:T.card,borderRadius:22,padding:"26px 28px",border:`1px solid ${T.border}`}}>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:22}}>
+            <div style={{background:T.card,borderRadius:22,padding:"26px 28px",border:`1px solid ${T.border}`,display:"flex",flexDirection:"column"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:0}}>
                 <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
                   <span style={{fontFamily:T.hand,fontSize:26,fontWeight:600,color:T.text}}>This week's focus</span>
                   <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.12em",padding:"4px 10px",borderRadius:99,background:T.card2,color:T.muted,fontWeight:600}}>{focusStr} THIS WEEK · TRACKED LIVE</span>
                 </div>
               </div>
+              <div style={{marginTop:"auto"}}>
               <div style={{display:"flex",alignItems:"flex-end",gap:8,height:76,marginBottom:14}}>
                 {barData.map((d,i)=>{
                   const h=d.mins>0?Math.max(6,Math.round(d.mins/maxMins*100)):0;
@@ -9720,6 +9725,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
                     <span style={{fontSize:11,color:T.muted,fontFamily:T.mono}}>{item.label}</span>
                   </div>
                 ))}
+              </div>
               </div>
             </div>
             {/* Weekly Wrapped */}
@@ -9759,14 +9765,14 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
         return(
           <div style={{display:"grid",gridTemplateColumns:"7fr 5fr",gap:16}}>
             {/* Quick tools */}
-            <div style={{background:T.card,borderRadius:22,padding:"26px 28px",border:`1px solid ${T.border}`}}>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
+            <div style={{background:T.card,borderRadius:22,padding:"26px 28px",border:`1px solid ${T.border}`,display:"flex",flexDirection:"column"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:0}}>
                 <div style={{display:"flex",alignItems:"center",gap:12}}>
                   <span style={{fontFamily:T.hand,fontSize:26,fontWeight:600,color:T.text}}>Quick tools</span>
                   <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.12em",padding:"4px 10px",borderRadius:99,background:T.card2,color:T.muted,fontWeight:600}}>JUMP RIGHT IN</span>
                 </div>
               </div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginTop:"auto"}}>
                 {[
                   {id:"aichat",     label:"Studlin AI",  desc:"Ask anything",        icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 3c-4.97 0-9 3.185-9 7.115 0 2.557 1.522 4.82 3.889 6.115L6 21l4.339-2.308C11.536 18.888 12.746 19 14 19c4.97 0 9-3.185 9-7.115S16.97 3 12 3z"/></svg>},
                   {id:"flashcards", label:"Flashcards",  desc:"Memorise faster",     icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>},
