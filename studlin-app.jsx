@@ -1809,8 +1809,13 @@ function AiChat() {
       const title=msgs.find(m=>m.r==="user")?.t?.replace(/\n/g," ").slice(0,80)||"Shared conversation";
       const res=await authFetch("/api/share-chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({msgs:msgs.map(m=>({r:m.r,t:m.t||"",file:m.file||null})),title})});
       const data=await res.json();
-      if(data.shareId){setShareLink(window.location.origin+"/app?share="+data.shareId);}
-      else{console.error("Share failed",data.error);}
+      if(data.shareId){
+        const link=window.location.origin+"/app?share="+data.shareId;
+        setShareLink(link);
+        try{navigator.clipboard.writeText(link);}catch(e){}
+        setShareCopied(true);
+        setTimeout(()=>setShareCopied(false),3000);
+      }
     }catch(e){console.error("Share failed",e);}
     setShareLoading(false);
   };
@@ -2142,15 +2147,17 @@ function AiChat() {
             ))}
           </div>
           {shareLink&&(
-            <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",borderRadius:8,background:"rgba(255,255,255,0.05)",border:`1px solid rgba(255,255,255,0.08)`,marginBottom:12}}>
+            <div onClick={copyShareLink} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",borderRadius:8,background:"rgba(255,255,255,0.05)",border:`1px solid ${shareCopied?T.lime+"44":"rgba(255,255,255,0.08)"}`,marginBottom:12,cursor:"pointer",transition:"border-color 0.2s"}}>
               <span style={{flex:1,fontSize:12,color:"rgba(246,241,230,0.55)",fontFamily:T.mono,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{shareLink}</span>
-              <button onClick={copyShareLink} style={{flexShrink:0,padding:"5px 12px",borderRadius:6,border:`1px solid ${T.lime}44`,background:shareCopied?T.lime+"22":"transparent",color:shareCopied?T.lime:"rgba(246,241,230,0.7)",fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,transition:"all 0.15s"}}>
-                {shareCopied?"Copied!":"Copy"}
-              </button>
+              <span style={{flexShrink:0,fontSize:11.5,fontWeight:600,color:shareCopied?T.lime:"rgba(246,241,230,0.5)",fontFamily:T.font}}>{shareCopied?"Copied!":"Copy"}</span>
             </div>
           )}
-          <button onClick={shareLink?copyShareLink:createShareLink} disabled={shareLoading} style={{width:"100%",padding:"12px 0",borderRadius:10,background:T.cream,color:"#14342A",border:"none",fontSize:14,fontWeight:700,cursor:shareLoading?"not-allowed":"pointer",fontFamily:T.font,opacity:shareLoading?0.6:1,transition:"opacity 0.15s"}}>
-            {shareLink?(shareCopied?"Copied!":"Copy link"):shareLoading?"Creating link...":shareMode==="private"?"Done":"Create share link"}
+          <button onClick={shareLink?copyShareLink:createShareLink} disabled={shareLoading||!!shareLink} style={{width:"100%",padding:"12px 0",borderRadius:10,background:shareLink?(shareCopied?T.lime:"rgba(174,206,94,0.85)"):T.cream,color:"#0E1F18",border:"none",fontSize:14,fontWeight:700,cursor:shareLoading||shareLink?"default":"pointer",fontFamily:T.font,opacity:shareLoading?0.55:1,transition:"background 0.2s"}}>
+            {shareLink
+              ? shareCopied
+                ? <span style={{display:"inline-flex",alignItems:"center",gap:6}}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Link copied to clipboard</span>
+                : "Click the link above to copy"
+              : shareLoading?"Creating link...":shareMode==="private"?"Done":"Create share link"}
           </button>
         </div>
       </div>
