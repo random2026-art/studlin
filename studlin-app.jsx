@@ -9525,7 +9525,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
         </div>
 
         {/* Streak — medium green card matching design */}
-        <div onClick={()=>setActive("profile")} style={{background:"#5B8C2A",borderRadius:22,padding:22,cursor:"pointer",display:"flex",flexDirection:"column",position:"relative",overflow:"hidden"}}>
+        <div onClick={()=>setActive("profile")} style={{background:isLight?"#5B8C2A":"#78BC2A",borderRadius:22,padding:22,cursor:"pointer",display:"flex",flexDirection:"column",position:"relative",overflow:"hidden"}}>
           <div style={{position:"absolute",right:-20,top:-20,width:120,height:120,background:"radial-gradient(circle,rgba(174,206,94,0.15),transparent 70%)",pointerEvents:"none"}} />
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
             <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)",fontWeight:600}}>Day Streak</span>
@@ -10594,7 +10594,7 @@ function App() {
   const [active,setActive]=useState(()=>{
     const pending=lsGet("pendingTour",null);
     if(pending){try{localStorage.removeItem("studlin-pendingTour");}catch(e){}return pending;}
-    return "dashboard";
+    return lsGet("studlin-active-tab","dashboard");
   });
   const [theme,setThemeState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-theme"))||"light");
   const [accent,setAccentState]=useState(()=>{
@@ -10892,6 +10892,7 @@ function App() {
     return list;
   })();
   useEffect(()=>{ touchStreak(); },[]);
+  useEffect(()=>{ lsSet("studlin-active-tab",active); },[active]);
   useEffect(()=>{
     const lastDay=lsGet("lastLoginDay","");
     const today=dayKey();
