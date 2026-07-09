@@ -10594,7 +10594,7 @@ function App() {
   const [active,setActive]=useState(()=>{
     const pending=lsGet("pendingTour",null);
     if(pending){try{localStorage.removeItem("studlin-pendingTour");}catch(e){}return pending;}
-    return lsGet("studlin-active-tab","dashboard");
+    return localStorage.getItem("studlin-active-tab")||"dashboard";
   });
   const [theme,setThemeState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-theme"))||"light");
   const [accent,setAccentState]=useState(()=>{
@@ -10892,7 +10892,7 @@ function App() {
     return list;
   })();
   useEffect(()=>{ touchStreak(); },[]);
-  useEffect(()=>{ lsSet("studlin-active-tab",active); },[active]);
+  useEffect(()=>{ try{localStorage.setItem("studlin-active-tab",active);}catch(e){} },[active]);
   useEffect(()=>{
     const lastDay=lsGet("lastLoginDay","");
     const today=dayKey();
