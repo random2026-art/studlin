@@ -1802,13 +1802,23 @@ function AiChat() {
   const [shareLink,setShareLink]=useState("");
   const [shareLoading,setShareLoading]=useState(false);
   const [shareCopied,setShareCopied]=useState(false);
-  const openShare=()=>{setShareOpen(true);setShareMode("private");setShareLink("");setShareCopied(false);};
+  const [shareError,setShareError]=useState("");
+  const openShare=()=>{setShareOpen(true);setShareMode("private");setShareLink("");setShareCopied(false);setShareLoading(false);setShareError("");};
   const createShareLink=async()=>{
     if(shareMode==="private"){setShareOpen(false);return;}
     setShareLoading(true);
+    setShareError("");
     try{
       const title=msgs.find(m=>m.r==="user")?.t?.replace(/\n/g," ").slice(0,80)||"Shared conversation";
-      const res=await authFetch("/api/share-chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({msgs:msgs.map(m=>({r:m.r,t:m.t||"",file:m.file||null})),title})});
+      const safeMsgs=msgs.map(m=>({r:m.r,t:m.t||"",file:null}));
+      const res=await authFetch("/api/share-chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({msgs:safeMsgs,title})});
+      if(!res.ok){
+        let errMsg="Failed to create link ("+res.status+")";
+        try{const d=await res.json();if(d.error)errMsg=d.error;}catch(e2){}
+        setShareError(errMsg);
+        setShareLoading(false);
+        return;
+      }
       const data=await res.json();
       if(data.shareId){
         const link=window.location.origin+"/app?share="+data.shareId;
@@ -1816,8 +1826,13 @@ function AiChat() {
         try{navigator.clipboard.writeText(link);}catch(e){}
         setShareCopied(true);
         setTimeout(()=>setShareCopied(false),3000);
+      } else {
+        setShareError(data.error||"Something went wrong. Try again.");
       }
-    }catch(e){console.error("Share failed",e);}
+    }catch(e){
+      console.error("Share failed",e);
+      setShareError("Network error — check your connection and try again.");
+    }
     setShareLoading(false);
   };
   const copyShareLink=()=>{
@@ -2152,6 +2167,9 @@ function AiChat() {
               <span style={{flex:1,fontSize:12,color:"rgba(246,241,230,0.55)",fontFamily:T.mono,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{shareLink}</span>
               <span style={{flexShrink:0,fontSize:11.5,fontWeight:600,color:shareCopied?T.lime:"rgba(246,241,230,0.5)",fontFamily:T.font}}>{shareCopied?"Copied!":"Copy"}</span>
             </div>
+          )}
+          {shareError&&(
+            <div style={{fontSize:12.5,color:"#ff6b6b",background:"rgba(255,107,107,0.12)",border:"1px solid rgba(255,107,107,0.25)",borderRadius:8,padding:"10px 14px",marginBottom:12,fontFamily:T.font}}>{shareError}</div>
           )}
           <button onClick={shareLink?copyShareLink:createShareLink} disabled={shareLoading||!!shareLink} style={{width:"100%",padding:"12px 0",borderRadius:10,background:shareLink?(shareCopied?T.lime:"rgba(174,206,94,0.85)"):T.cream,color:"#0E1F18",border:"none",fontSize:14,fontWeight:700,cursor:shareLoading||shareLink?"default":"pointer",fontFamily:T.font,opacity:shareLoading?0.55:1,transition:"background 0.2s"}}>
             {shareLink
