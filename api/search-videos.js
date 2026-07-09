@@ -68,8 +68,9 @@ const VIDEOS = [
 ];
 
 const { setCors, verifyAuth } = require('./_lib/auth');
+const { withSentry } = require('./_lib/sentry');
 
-module.exports = async (req, res) => {
+module.exports = withSentry(async (req, res) => {
   setCors(req, res);
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -122,4 +123,4 @@ module.exports = async (req, res) => {
   }));
 
   return res.status(200).json({ videos });
-};
+});

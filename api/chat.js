@@ -1,5 +1,6 @@
 const { db } = require('./_lib/firebase-admin');
 const { setCors, verifyAuth } = require('./_lib/auth');
+const { withSentry } = require('./_lib/sentry');
 
 const MODEL_MAP = {
   standard: 'claude-sonnet-4-6',
@@ -180,7 +181,7 @@ const CREDIT_COST = { standard: 1, flash: 1 };
 const DEFAULT_CREDITS = 30; // Free plan limit
 const RATE_LIMIT_PER_MIN = 20;
 
-module.exports = async (req, res) => {
+module.exports = withSentry(async (req, res) => {
   setCors(req, res);
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -332,4 +333,4 @@ module.exports = async (req, res) => {
   } catch (err) {
     return res.status(500).json({ error: err.message || 'Server error.' });
   }
-};
+});

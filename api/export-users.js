@@ -3,6 +3,7 @@
 // deletes every account except KEEP_EMAIL below. Access: POST
 // /api/export-users with JSON body { secret: "YOUR_ADMIN_EXPORT_SECRET", action? }
 const { db, auth } = require('./_lib/firebase-admin');
+const { withSentry } = require('./_lib/sentry');
 
 // Filter out test / QA accounts by email or display name
 const TEST_PATTERNS = [
@@ -38,7 +39,7 @@ function readableProvider(provider) {
   return provider || '';
 }
 
-module.exports = async (req, res) => {
+module.exports = withSentry(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -147,7 +148,7 @@ module.exports = async (req, res) => {
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
-};
+});
 
 // One-time dev-database purge — deletes every Firebase Auth user and every
 // Firestore users/{uid} doc EXCEPT the one exempted email below. Same admin

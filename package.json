@@ -1,6 +1,7 @@
 {
   "private": true,
   "dependencies": {
+    "@sentry/node": "^10.64.0",
     "firebase-admin": "^13.0.0",
     "resend": "^4.8.0",
     "stripe": "^17.7.0"

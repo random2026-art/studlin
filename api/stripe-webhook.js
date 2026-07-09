@@ -1,5 +1,6 @@
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { db } = require('./_lib/firebase-admin');
+const { Sentry, withSentry } = require('./_lib/sentry');
 
 const PLAN_MAP = {
   price_1TkZlWFJjTMWMaWhqfDLfirV: 'Pro',
@@ -91,10 +92,7 @@ async function handleSubscriptionDeleted(subscription) {
   }
 }
 
-// Vercel serverless: raw body needed for signature verification
-module.exports.config = { api: { bodyParser: false } };
-
-module.exports = async (req, res) => {
+const handler = withSentry(async (req, res) => {
   if (req.method !== 'POST') return res.status(405).end();
 
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -137,8 +135,22 @@ module.exports = async (req, res) => {
     }
   } catch (err) {
     console.error('Webhook handler error:', err);
+    Sentry.captureException(err);
     return res.status(500).json({ error: 'Webhook processing failed.' });
   }
 
   res.status(200).json({ received: true });
-};
+});
+
+// Vercel serverless: raw body needed for Stripe signature verification.
+// Must be set on the exported function AFTER withSentry() wraps it —
+// the previous order here (module.exports.config = ... before
+// module.exports = async (req,res) => {...}) attached .config to a
+// throwaway object that got discarded the moment module.exports was
+// reassigned, so Vercel never actually saw bodyParser:false. That meant
+// the default JSON body-parser was consuming the request stream before
+// this handler could read it raw, which silently failed every webhook's
+// signature check — i.e. Stripe payments were very likely never
+// actually granting credits/plan upgrades in production.
+handler.config = { api: { bodyParser: false } };
+module.exports = handler;

@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const { auth, db } = require('./_lib/firebase-admin');
 const { setCors, verifyAuth } = require('./_lib/auth');
 const { Resend } = require('resend');
+const { withSentry } = require('./_lib/sentry');
 
 const FROM = 'Studlin <noreply@studlin.com>';
 const OTP_TTL_MS = 10 * 60 * 1000;
@@ -13,7 +14,7 @@ const hashCode = (code) => crypto.createHash('sha256').update(code).digest('hex'
 // endpoint (branching on whether `code` is present) rather than a second
 // file so the api/ directory stays under Vercel's Hobby-plan function cap,
 // same reasoning as search-videos absorbing youtube-info.
-module.exports = async (req, res) => {
+module.exports = withSentry(async (req, res) => {
   setCors(req, res);
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -25,7 +26,7 @@ module.exports = async (req, res) => {
   const submittedCode = req.body && req.body.code;
   if (submittedCode) return verifyCode(user, submittedCode, res);
   return sendCode(user, res);
-};
+});
 
 async function verifyCode(user, submittedCode, res) {
   const code = String(submittedCode).trim();

@@ -1,11 +1,12 @@
 const { Resend } = require('resend');
 const { admin, db } = require('./_lib/firebase-admin');
 const { setCors, verifyAuth } = require('./_lib/auth');
+const { withSentry } = require('./_lib/sentry');
 
 // Merges send-note.js, send-push.js, and send-welcome.js into one function —
 // Vercel Hobby caps a deployment at 12 Serverless Functions and this project
 // hit that ceiling (see vercel.json). Routes on `type` in the body.
-module.exports = async (req, res) => {
+module.exports = withSentry(async (req, res) => {
   setCors(req, res);
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -17,7 +18,7 @@ module.exports = async (req, res) => {
   if (type === 'push') return sendPush(user, req, res);
   if (type === 'welcome') return sendWelcome(user, req, res);
   return sendNote(user, req, res);
-};
+});
 
 async function sendNote(user, req, res) {
   const { recipientEmail, noteTitle, noteBody, noteTag } = req.body || {};

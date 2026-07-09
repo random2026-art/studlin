@@ -1,5 +1,7 @@
 // Server-side proxy for fetching .ics calendar files.
 // Avoids browser CORS restrictions when importing iCloud / other calendar links.
+const { withSentry } = require('./_lib/sentry');
+
 const ALLOWED_DOMAINS = [
   'icloud.com',
   'calendar.google.com',
@@ -7,7 +9,7 @@ const ALLOWED_DOMAINS = [
   'outlook.office365.com',
 ];
 
-module.exports = async (req, res) => {
+module.exports = withSentry(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
@@ -30,7 +32,7 @@ module.exports = async (req, res) => {
   } catch (e) {
     return res.status(500).json({ error: e.message || 'Server error' });
   }
-};
+});
 
 function parseDt(s) {
   if (!s || s.length < 8) return '';

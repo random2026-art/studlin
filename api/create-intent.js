@@ -1,5 +1,6 @@
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { setCors, verifyAuth } = require('./_lib/auth');
+const { withSentry } = require('./_lib/sentry');
 
 const CREDIT_PACKS = {
   150:  499,
@@ -18,7 +19,7 @@ const PRICES = {
   max_annual: 'price_1Tkbr1FJjTMWMaWhzdBVVWO6',
 };
 
-module.exports = async (req, res) => {
+module.exports = withSentry(async (req, res) => {
   setCors(req, res);
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -95,4 +96,4 @@ module.exports = async (req, res) => {
     console.error('Payment intent error:', err);
     res.status(500).json({ error: 'Payment processing failed. Please try again.' });
   }
-};
+});

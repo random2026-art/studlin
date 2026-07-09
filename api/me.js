@@ -1,9 +1,10 @@
 const { db } = require('./_lib/firebase-admin');
 const { setCors, verifyAuth } = require('./_lib/auth');
+const { withSentry } = require('./_lib/sentry');
 
 const DEFAULT_CREDITS = 120;
 
-module.exports = async (req, res) => {
+module.exports = withSentry(async (req, res) => {
   setCors(req, res);
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
@@ -40,4 +41,4 @@ module.exports = async (req, res) => {
     console.warn('Profile lookup unavailable, returning defaults:', err.message);
     return res.status(200).json({ plan: 'Free', credits: DEFAULT_CREDITS, email: user.email || null });
   }
-};
+});
