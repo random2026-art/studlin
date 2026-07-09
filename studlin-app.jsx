@@ -999,6 +999,7 @@ function subtractIntervals(base,holes){
   return segments.filter(s=>s.end>s.start);
 }
 const prioLabel=(v)=>{const p=v/10;return p<=20?"Low":p<=40?"Low–Medium":p<=60?"Medium":p<=80?"High":"Urgent";};
+const diffLabel=(v)=>{const p=v/10;return p<=20?"Very Easy":p<=40?"Easy":p<=60?"Medium":p<=80?"Hard":"Very Hard";};
 async function getAuthToken(){try{const u=firebase.auth().currentUser;if(!u)return null;return await u.getIdToken();}catch(e){return null;}}
 async function authFetch(url,opts={}){try{const token=await getAuthToken();const h=Object.assign({},opts.headers||{});if(token)h["Authorization"]="Bearer "+token;return fetch(url,Object.assign({},opts,{headers:h}));}catch(e){return fetch(url,opts);}}
 async function fetchUserProfile(){try{const res=await authFetch("/api/me");if(!res.ok)return null;const d=await res.json();lsSet("credits",d.credits);lsSet("plan",d.plan||"Free");return d;}catch(e){return null;}}
@@ -6662,7 +6663,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   // brain at the exact moment they're avoiding a task. Stays at a flat
   // Medium under the hood so calculateTaskPriority's difficulty-preference
   // scoring doesn't break, it's just neutral for everyone now.
-  const [evDifficulty]=useState(500);
+  const [evDifficulty,setEvDifficulty]=useState(500);
   const [evMoreOpen,setEvMoreOpen]=useState(false);
   const [evDeadline,setEvDeadline]=useState("");
   const [evDeadlineTime,setEvDeadlineTime]=useState("23:59");
@@ -6875,8 +6876,8 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   // "let AI schedule this". The clicked day is remembered so fixed-time kinds
   // (exam/class/reminder), which always need a real date, can still default
   // to it once the user picks one of those types.
-  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("");setEvSubject("None");setEvDate("");setEvDeadline("");setEvPriority(500);setEvMoreOpen(false);setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setNewOpen(true);};
-  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvDate("");setEvTime("");setEvPriority(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);setAsChecklist(false);};
+  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("");setEvSubject("None");setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setNewOpen(true);};
+  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvDate("");setEvTime("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);setAsChecklist(false);};
   const onEvKindChange=(k)=>{setEvKind(k);if((k==="exam"||k==="class"||k==="reminder"||k==="busy block")&&!evDate)setEvDate(evPrefillDate);};
   const buildTask=(date,time,titleSuffix,splitInfo)=>{
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
@@ -7487,21 +7488,30 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
 
         {isTaskKind&&!isChecklistMode&&taskMode==="ai"&&(
           evMoreOpen ? (
-            <Field label={`Impact: ${Math.round(evPriority/10)}%`} hint="How critical this is, independent of its due date — higher-impact tasks get scheduled earlier">
-              <div style={{display:"flex",alignItems:"center",gap:12}}>
-                <span style={{fontSize:11,color:T.muted,width:28}}>Low</span>
-                <div style={{flex:1,position:"relative",paddingTop:24}}>
-                  <div style={{position:"absolute",top:0,left:`${evPriority/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{prioLabel(evPriority)}</div>
-                  <input type="range" min={0} max={1000} value={evPriority} onChange={ev=>setEvPriority(+ev.target.value)} style={{width:"100%",accentColor:T.lime,height:6,borderRadius:3,cursor:"pointer"}} />
+            <>
+              <Field label={`Impact: ${Math.round(evPriority/10)}%`} hint="How critical this is, independent of its due date — higher-impact tasks get scheduled earlier">
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  <span style={{fontSize:11,color:T.muted,width:28}}>Low</span>
+                  <div style={{flex:1,position:"relative",paddingTop:24}}>
+                    <div style={{position:"absolute",top:0,left:`${evPriority/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{prioLabel(evPriority)}</div>
+                    <input type="range" min={0} max={1000} value={evPriority} onChange={ev=>setEvPriority(+ev.target.value)} style={{width:"100%",accentColor:T.lime,height:6,borderRadius:3,cursor:"pointer"}} />
+                  </div>
+                  <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Urgent</span>
                 </div>
-                <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Urgent</span>
-              </div>
-            </Field>
+              </Field>
+              <Field label={`Difficulty: ${diffLabel(evDifficulty)}`} hint="How hard this task is for you — helps Studlin schedule it when your energy matches">
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  <span style={{fontSize:11,color:T.muted,width:28}}>Easy</span>
+                  <div style={{flex:1,position:"relative",paddingTop:24}}>
+                    <div style={{position:"absolute",top:0,left:`${evDifficulty/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{diffLabel(evDifficulty)}</div>
+                    <input type="range" min={0} max={1000} value={evDifficulty} onChange={ev=>setEvDifficulty(+ev.target.value)} style={{width:"100%",accentColor:T.lime,height:6,borderRadius:3,cursor:"pointer"}} />
+                  </div>
+                  <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Hard</span>
+                </div>
+              </Field>
+            </>
           ) : (
-            // Defaults to Medium impact — most tasks don't need this touched.
-            // One tap reveals it for the ones that do, instead of asking
-            // every single time.
-            <button type="button" onClick={()=>setEvMoreOpen(true)} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:"4px 0",marginBottom:14,textDecoration:"underline"}}>+ More details (impact)</button>
+            <button type="button" onClick={()=>setEvMoreOpen(true)} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:"4px 0",marginBottom:14,textDecoration:"underline"}}>+ More details (impact &amp; difficulty)</button>
           )
         )}
 
@@ -7584,18 +7594,30 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
           <>
             <Field label="Deadline" hint="When this must be done by"><Input type="date" value={editDeadline} onChange={e=>{setEditDeadline(e.target.value);setEditDeadlineErr("");}} /></Field>
             {editMoreOpen ? (
-              <Field label={`Impact: ${Math.round(editPriority/10)}%`} hint="How critical this is, independent of its due date — higher-impact tasks get scheduled earlier">
-                <div style={{display:"flex",alignItems:"center",gap:12}}>
-                  <span style={{fontSize:11,color:T.muted,width:28}}>Low</span>
-                  <div style={{flex:1,position:"relative",paddingTop:24}}>
-                    <div style={{position:"absolute",top:0,left:`${editPriority/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{prioLabel(editPriority)}</div>
-                    <input type="range" min={0} max={1000} value={editPriority} onChange={e=>setEditPriority(+e.target.value)} style={{width:"100%",accentColor:T.lime,height:6,borderRadius:3,cursor:"pointer"}} />
+              <>
+                <Field label={`Impact: ${Math.round(editPriority/10)}%`} hint="How critical this is, independent of its due date — higher-impact tasks get scheduled earlier">
+                  <div style={{display:"flex",alignItems:"center",gap:12}}>
+                    <span style={{fontSize:11,color:T.muted,width:28}}>Low</span>
+                    <div style={{flex:1,position:"relative",paddingTop:24}}>
+                      <div style={{position:"absolute",top:0,left:`${editPriority/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{prioLabel(editPriority)}</div>
+                      <input type="range" min={0} max={1000} value={editPriority} onChange={e=>setEditPriority(+e.target.value)} style={{width:"100%",accentColor:T.lime,height:6,borderRadius:3,cursor:"pointer"}} />
+                    </div>
+                    <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Urgent</span>
                   </div>
-                  <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Urgent</span>
-                </div>
-              </Field>
+                </Field>
+                <Field label={`Difficulty: ${diffLabel(editDifficulty)}`} hint="How hard this task is for you — helps Studlin schedule it when your energy matches">
+                  <div style={{display:"flex",alignItems:"center",gap:12}}>
+                    <span style={{fontSize:11,color:T.muted,width:28}}>Easy</span>
+                    <div style={{flex:1,position:"relative",paddingTop:24}}>
+                      <div style={{position:"absolute",top:0,left:`${editDifficulty/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{diffLabel(editDifficulty)}</div>
+                      <input type="range" min={0} max={1000} value={editDifficulty} onChange={e=>setEditDifficulty(+e.target.value)} style={{width:"100%",accentColor:T.lime,height:6,borderRadius:3,cursor:"pointer"}} />
+                    </div>
+                    <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Hard</span>
+                  </div>
+                </Field>
+              </>
             ) : (
-              <button type="button" onClick={()=>setEditMoreOpen(true)} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:"4px 0",marginBottom:14,textDecoration:"underline"}}>+ More details (impact)</button>
+              <button type="button" onClick={()=>setEditMoreOpen(true)} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:"4px 0",marginBottom:14,textDecoration:"underline"}}>+ More details (impact &amp; difficulty)</button>
             )}
           </>
         )}
