@@ -9639,26 +9639,31 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
             })}
         </div>
 
-        {/* Jump back in */}
-        <div style={{background:T.forest,color:T.cream,borderRadius:22,padding:24,display:"flex",flexDirection:"column"}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
-            <span style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:T.cream}}>Jump back in</span>
-            <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.12em",padding:"4px 9px",borderRadius:99,background:"rgba(246,241,230,0.10)",color:"rgba(246,241,230,0.6)",fontWeight:700,border:"1px solid rgba(246,241,230,0.12)"}}>QUICK START</span>
+        {/* Checklist — plain to-dos with no inherent duration/time (e.g.
+            "send AP scores to college"). Deliberately kept out of the
+            calendar/Today's-plan entirely; this is the only place they live.
+            Restored here after briefly being removed — replaces "Jump back
+            in", which just duplicated what the sidebar nav already does. */}
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <span style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:T.text}}>Checklist</span>
+              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:99,color:T.muted}}>{checklistItems.length} OPEN</span>
+            </div>
           </div>
-          <p style={{fontSize:13,color:"rgba(246,241,230,0.6)",lineHeight:1.5,margin:"0 0 18px"}}>Pick up right where you left off. One tap to your most-used tools.</p>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,flex:1}}>
-            {[
-              {id:"notes",    icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>, label:"New note"},
-              {id:"flashcards",icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>, label:"New deck"},
-              {id:"aichat",   icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2L13.09 8.26L19 6L14.74 10.74L21 12L14.74 13.26L19 18L13.09 15.74L12 22L10.91 15.74L5 18L9.26 13.26L3 12L9.26 10.74L5 6L10.91 8.26L12 2Z"/></svg>, label:"Ask Studlin"},
-              {id:"calendar", icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>, label:"Plan today"},
-            ].map(function(it){return(
-              <button key={it.id} onClick={()=>setActive(it.id)} style={{background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.10)",borderRadius:14,padding:"14px 12px",cursor:"pointer",textAlign:"left",display:"flex",flexDirection:"column",gap:10,fontFamily:T.font}}>
-                <div style={{color:T.lime}}>{it.icon}</div>
-                <span style={{fontSize:13,fontWeight:600,color:T.cream}}>{it.label}</span>
-              </button>
-            );})}
+          <div style={{display:"flex",gap:8,marginBottom:14}}>
+            <input value={checklistDraft} onChange={e=>setChecklistDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addChecklistItem();}}
+              placeholder="e.g. Send AP scores" style={{flex:1,minWidth:0,background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"9px 10px",color:T.text,fontSize:12.5,fontFamily:T.font,outline:"none"}} />
+            <button onClick={addChecklistItem} disabled={!checklistDraft.trim()} style={{padding:"9px 12px",background:T.lime,color:T.ink,border:"none",borderRadius:10,fontSize:12.5,fontWeight:600,cursor:checklistDraft.trim()?"pointer":"default",fontFamily:T.font,opacity:checklistDraft.trim()?1:0.45,flexShrink:0}}>Add</button>
           </div>
+          {checklistItems.length===0
+            ? <div style={{fontSize:12.5,color:T.muted,padding:"6px 0 4px",textAlign:"center"}}>Nothing on your checklist.</div>
+            : checklistItems.map(item=>(
+              <div key={item.id} onClick={()=>toggleChecklistItem(item.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer"}}>
+                <div style={{width:18,height:18,borderRadius:"50%",border:`1.5px solid ${T.faint}`,background:"transparent",flex:"none",display:"grid",placeItems:"center"}} />
+                <div style={{flex:1,minWidth:0,fontSize:12.5,color:T.text,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.title}</div>
+              </div>
+            ))}
         </div>
 
         {/* Ask Studlin */}
@@ -9681,130 +9686,34 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
 
       </div>
 
-      {/* ROW 3: This week's focus bar chart + Weekly Wrapped */}
-      {!seriousMode&&(()=>{
-        const barData=weekDays7.map((d)=>{const key=dayKey(d);const mins=minsByDay[key]||0;const isToday=key===dayKey(new Date());const lab=d.toLocaleDateString("en-US",{weekday:"short"}).slice(0,2).toUpperCase();return {mins,isToday,lab};});
-        const maxMins=Math.max.apply(null,barData.map((d)=>d.mins).concat([1]));
-        const wkMins=weeklyFocusMin||0;
-        const focusStr=wkMins>=60?Math.floor(wkMins/60)+"H "+(wkMins%60)+"M":wkMins+"M";
-        return(
-          <div style={{display:"grid",gridTemplateColumns:"7fr 5fr",gap:16}}>
-            {/* This week's focus */}
-            <div style={{background:T.card,borderRadius:22,padding:"26px 28px",border:`1px solid ${T.border}`}}>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:22}}>
-                <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-                  <span style={{fontFamily:T.hand,fontSize:26,fontWeight:600,color:T.text}}>This week's focus</span>
-                  <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.12em",padding:"4px 10px",borderRadius:99,background:T.card2,color:T.muted,fontWeight:600}}>{focusStr} THIS WEEK · TRACKED LIVE</span>
-                </div>
-              </div>
-              <div style={{display:"flex",alignItems:"flex-end",gap:8,height:76,marginBottom:14}}>
-                {barData.map((d,i)=>{
-                  const h=d.mins>0?Math.max(6,Math.round(d.mins/maxMins*100)):0;
-                  return(
-                    <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:5}}>
-                      <div style={{width:"100%",display:"flex",flexDirection:"column",justifyContent:"flex-end",height:64}}>
-                        {d.mins>0
-                          ?<div style={{width:"100%",height:h,background:d.isToday?"#14342A":"#5B8C2A",borderRadius:"5px 5px 0 0",transition:"height 0.4s ease"}} />
-                          :<div style={{width:"100%",height:4,background:T.card2,borderRadius:2}} />
-                        }
-                      </div>
-                      <span style={{fontSize:9.5,fontFamily:T.mono,color:d.isToday?T.text:T.faint,fontWeight:d.isToday?700:400}}>{d.lab}</span>
-                    </div>
-                  );
-                })}
-              </div>
-              <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
-                {[{color:"#14342A",label:"Reading & notes"},{color:"#5B8C2A",label:"Flashcards"},{color:"#F5EE90",border:`1px solid ${T.border}`,label:"Writing"}].map((item,i)=>(
-                  <div key={i} style={{display:"flex",alignItems:"center",gap:5}}>
-                    <div style={{width:8,height:8,borderRadius:2,background:item.color,border:item.border||"none"}} />
-                    <span style={{fontSize:11,color:T.muted,fontFamily:T.mono}}>{item.label}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            {/* Weekly Wrapped */}
-            <div style={{background:`linear-gradient(135deg, ${T.forest} 0%, #1B4536 100%)`,borderRadius:22,padding:"26px 28px",display:"flex",flexDirection:"column"}}>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
-                <span style={{fontFamily:T.hand,fontSize:26,fontWeight:600,color:T.cream}}>Weekly Wrapped</span>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.12em",padding:"4px 10px",borderRadius:6,background:"rgba(246,241,230,0.10)",color:"rgba(246,241,230,0.55)",fontWeight:700,border:"1px solid rgba(246,241,230,0.12)"}}>WEEK {weekNo()}</span>
-                  <button onClick={()=>setWrappedOpen(true)} style={{fontSize:12,color:"rgba(246,241,230,0.5)",background:"none",border:"none",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:3,fontFamily:T.font}}>View full <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
-                </div>
-              </div>
-              {[
-                {label:"FOCUS HOURS",value:focusStr,accent:true},
-                {label:"CARDS MASTERED",value:cardsMasteredTotal},
-                {label:"WORDS WRITTEN",value:(wordsWrittenTotal||0).toLocaleString()},
-              ].map((s,i)=>(
-                <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 0",borderBottom:i<2?"1px solid rgba(246,241,230,0.07)":"none"}}>
-                  <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.12em",color:"rgba(246,241,230,0.45)"}}>{s.label}</span>
-                  <span style={{fontFamily:T.hand,fontSize:26,fontWeight:600,color:s.accent?T.lime:T.cream}}>{s.value}</span>
-                </div>
-              ))}
-              {realStreak>0&&<div style={{marginTop:14}}>
-                <span style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:12,fontWeight:600,padding:"6px 12px",background:"rgba(174,206,94,0.12)",border:"1px solid rgba(174,206,94,0.20)",borderRadius:99,color:T.lime}}>
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
-                  {realStreak}-day streak
-                </span>
-              </div>}
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* ROW 4: Quick tools + Study streak */}
+      {/* ROW 3: Study streak — used to share this row with "Quick tools"
+          (removed: every one of those shortcuts already exists in the
+          sidebar nav, one click away). Full width now that it's on its own.
+          The day-by-day focus bar chart that used to sit here, and the
+          duplicate "Weekly Wrapped" summary card next to it, were both
+          removed too — see the wrappedOpen popup below for where that
+          content now lives instead of being repeated permanently on the
+          dashboard. */}
       {!seriousMode&&(()=>{
         var longest=0,cur=0;
         heatmapCells.forEach((v)=>{if(v>0){cur++;if(cur>longest)longest=cur;}else{cur=0;}});
         return(
-          <div style={{display:"grid",gridTemplateColumns:"7fr 5fr",gap:16}}>
-            {/* Quick tools */}
-            <div style={{background:T.card,borderRadius:22,padding:"26px 28px",border:`1px solid ${T.border}`}}>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
-                <div style={{display:"flex",alignItems:"center",gap:12}}>
-                  <span style={{fontFamily:T.hand,fontSize:26,fontWeight:600,color:T.text}}>Quick tools</span>
-                  <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.12em",padding:"4px 10px",borderRadius:99,background:T.card2,color:T.muted,fontWeight:600}}>JUMP RIGHT IN</span>
-                </div>
-              </div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
-                {[
-                  {id:"aichat",     label:"Studlin AI",  desc:"Ask anything",        icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 3c-4.97 0-9 3.185-9 7.115 0 2.557 1.522 4.82 3.889 6.115L6 21l4.339-2.308C11.536 18.888 12.746 19 14 19c4.97 0 9-3.185 9-7.115S16.97 3 12 3z"/></svg>},
-                  {id:"flashcards", label:"Flashcards",  desc:"Memorise faster",     icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>},
-                  {id:"notes",      label:"Notes",       desc:"Capture ideas",       icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>},
-                  {id:"calendar",   label:"Calendar",    desc:"Plan your week",      icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>},
-                  {id:"writing",    label:"Writing",     desc:"Essays & drafts",     icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>},
-                  {id:"lectures",   label:"Lectures",    desc:"Scan textbooks",      icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>},
-                  {id:"solve",      label:"Solve",       desc:"Work through problems",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>},
-                  {id:"network",    label:"Network",     desc:"Study with others",   icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>},
-                ].map((tool)=>(
-                  <button key={tool.id} onClick={()=>setActive(tool.id)} style={{background:T.card2,borderRadius:14,padding:"14px 12px",cursor:"pointer",textAlign:"left",border:`1px solid ${T.border}`,fontFamily:T.font,display:"flex",flexDirection:"column",gap:8}}>
-                    <div style={{color:T.text}}>{tool.icon}</div>
-                    <div>
-                      <div style={{fontSize:12.5,fontWeight:700,color:T.text,marginBottom:3}}>{tool.label}</div>
-                      <div style={{fontSize:11,color:T.muted,lineHeight:1.4}}>{tool.desc}</div>
-                    </div>
-                  </button>
-                ))}
-              </div>
+          <div style={{background:T.card,borderRadius:22,padding:"26px 28px",border:`1px solid ${T.border}`,display:"flex",flexDirection:"column"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+              <span style={{fontFamily:T.hand,fontSize:26,fontWeight:600,color:T.text}}>Study streak</span>
+              <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.12em",padding:"4px 10px",borderRadius:99,background:T.card2,color:T.muted,fontWeight:600}}>LAST 91 DAYS</span>
             </div>
-            {/* Study streak heatmap */}
-            <div style={{background:T.card,borderRadius:22,padding:"26px 28px",border:`1px solid ${T.border}`,display:"flex",flexDirection:"column"}}>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
-                <span style={{fontFamily:T.hand,fontSize:26,fontWeight:600,color:T.text}}>Study streak</span>
-                <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.12em",padding:"4px 10px",borderRadius:99,background:T.card2,color:T.muted,fontWeight:600}}>LAST 91 DAYS</span>
+            <div style={{marginBottom:16}}>
+              <div style={{display:"flex",alignItems:"baseline",gap:6}}>
+                <span style={{fontFamily:T.hand,fontSize:38,fontWeight:600,color:T.text}}>{realStreak}</span>
+                <span style={{fontSize:13,color:T.muted}}>day streak</span>
               </div>
-              <div style={{marginBottom:16}}>
-                <div style={{display:"flex",alignItems:"baseline",gap:6}}>
-                  <span style={{fontFamily:T.hand,fontSize:38,fontWeight:600,color:T.text}}>{realStreak}</span>
-                  <span style={{fontSize:13,color:T.muted}}>day streak</span>
-                </div>
-                <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.10em",color:T.muted,marginTop:4}}>LONGEST: {longest}</div>
-              </div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(13,1fr)",gap:3}}>
-                {heatmapCells.map((lv,i)=>(
-                  <div key={i} style={{aspectRatio:"1",borderRadius:3,background:cellColor(lv)}} />
-                ))}
-              </div>
+              <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.10em",color:T.muted,marginTop:4}}>LONGEST: {longest}</div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(26,1fr)",gap:3}}>
+              {heatmapCells.map((lv,i)=>(
+                <div key={i} style={{aspectRatio:"1",borderRadius:3,background:cellColor(lv)}} />
+              ))}
             </div>
           </div>
         );
@@ -9868,45 +9777,9 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
           rather than deleted, per request to disable it "for now." Flip the
           flag back to true to restore it; lbUsers/lbRankColor/lbRankBg and
           LeaderboardModal are left fully intact. */}
-      {/* This week, you... — full-width weekly summary at bottom */}
-      {!seriousMode&&(()=>{
-        const wkMins=weeklyFocusMin||0;
-        const weeklyXP=weekDays7.reduce((s,d)=>{const m=minsByDay[dayKey(d)]||0;return s+Math.round(m<=30?m*6:m<=60?180+(m-30)*5:m<=120?330+(m-60)*3.5:540+(m-120)*1.5);},0);
-        const focusStr=wkMins>=60?Math.floor(wkMins/60)+"h "+(wkMins%60)+"m":wkMins+"m";
-        return(
-          <div style={{background:`linear-gradient(135deg, ${T.forest} 0%, #1B4536 100%)`,borderRadius:22,padding:"32px 36px",position:"relative",overflow:"hidden"}}>
-            <div style={{position:"absolute",right:-60,top:-60,width:300,height:300,background:"radial-gradient(circle,rgba(174,206,94,0.10),transparent 70%)",pointerEvents:"none"}} />
-            <div style={{position:"relative"}}>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:28,flexWrap:"wrap",gap:12}}>
-                <div style={{display:"flex",alignItems:"center",gap:14}}>
-                  <span style={{fontFamily:T.hand,fontSize:36,fontWeight:600,color:T.cream}}>This week, you...</span>
-                  <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.12em",padding:"5px 12px",borderRadius:99,background:"rgba(246,241,230,0.10)",color:"rgba(246,241,230,0.55)",fontWeight:700,border:"1px solid rgba(246,241,230,0.12)"}}>WRAPPED · WEEK {weekNo()}</span>
-                </div>
-                <button onClick={()=>{if(navigator.share)navigator.share({title:"My Studlin week",text:"This week: "+focusStr+" focused, "+weeklyXP+" XP earned, "+realStreak+"-day streak. @Studlin"}).catch(()=>{});}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"10px 18px",background:"rgba(246,241,230,0.10)",border:"1px solid rgba(246,241,230,0.16)",borderRadius:99,fontSize:13,fontWeight:600,color:T.cream,cursor:"pointer",fontFamily:T.font,flexShrink:0}}>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-                  Share Wrapped
-                </button>
-              </div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:16,marginBottom:18}}>
-                {[
-                  {label:"FOCUS HOURS",value:focusStr},
-                  {label:"XP EARNED",value:weeklyXP.toLocaleString()+" xp"},
-                  {label:"DAY STREAK",value:realStreak+" days"},
-                ].map((s,i)=>(
-                  <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:14,padding:"20px 22px",border:"1px solid rgba(246,241,230,0.07)"}}>
-                    <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.12em",color:"rgba(246,241,230,0.45)",marginBottom:10}}>{s.label}</div>
-                    <div style={{fontFamily:T.hand,fontSize:38,fontWeight:600,color:T.lime,lineHeight:1}}>{s.value}</div>
-                  </div>
-                ))}
-              </div>
-              {realStreak>0&&<span style={{display:"inline-flex",alignItems:"center",gap:7,fontSize:12,fontWeight:600,padding:"7px 14px",background:"rgba(174,206,94,0.12)",border:"1px solid rgba(174,206,94,0.20)",borderRadius:99,color:T.lime}}>
-                <span style={{width:22,height:22,borderRadius:"50%",background:T.lime,color:T.ink,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,flexShrink:0}}>{realStreak}</span>
-                {realStreak}-day streak
-              </span>}
-            </div>
-          </div>
-        );
-      })()}
+      {/* "This week, you..." — the second Weekly Wrapped duplicate, removed.
+          Same content (focus hours, streak) as the Sunday wrappedOpen popup
+          below; the popup is the one real weekly-summary surface now. */}
 
       {SHOW_GLOBAL_LEADERBOARD && !seriousMode && <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18,gap:12,flexWrap:"wrap"}}>
@@ -9951,7 +9824,32 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
       <div onClick={dismissWrapped} style={{position:"fixed",inset:0,background:"rgba(8,12,10,0.72)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
         <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:420,background:T.forest,color:T.cream,borderRadius:22,padding:28,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
           <CardHead title="Weekly Wrapped" label={"WEEK "+weekNo()} light />
-          <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:8}}>
+          {/* Day-by-day breakdown — used to be its own permanent "This
+              week's focus" dashboard card; folded in here instead since
+              this is the one place a week-in-review actually belongs. */}
+          {(()=>{
+            const barData=weekDays7.map((d)=>{const key=dayKey(d);const mins=minsByDay[key]||0;const isToday=key===dayKey(new Date());const lab=d.toLocaleDateString("en-US",{weekday:"short"}).slice(0,1).toUpperCase();return {mins,isToday,lab};});
+            const maxMins=Math.max.apply(null,barData.map((d)=>d.mins).concat([1]));
+            return(
+              <div style={{display:"flex",alignItems:"flex-end",gap:6,height:52,marginTop:10,marginBottom:4}}>
+                {barData.map((d,i)=>{
+                  const h=d.mins>0?Math.max(4,Math.round(d.mins/maxMins*40)):0;
+                  return(
+                    <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+                      <div style={{width:"100%",display:"flex",flexDirection:"column",justifyContent:"flex-end",height:40}}>
+                        {d.mins>0
+                          ?<div style={{width:"100%",height:h,background:d.isToday?T.lime:"rgba(246,241,230,0.25)",borderRadius:"3px 3px 0 0"}} />
+                          :<div style={{width:"100%",height:3,background:"rgba(246,241,230,0.10)",borderRadius:2}} />
+                        }
+                      </div>
+                      <span style={{fontSize:9,fontFamily:T.mono,color:d.isToday?T.lime:"rgba(246,241,230,0.4)",fontWeight:d.isToday?700:400}}>{d.lab}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+          <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:14}}>
             {[
               {ln:"Focus hours",vn:fmtH(weeklyFocusMin)||"0m"},
               {ln:"Cards mastered",vn:cardsMasteredTotal},
