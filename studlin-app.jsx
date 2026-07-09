@@ -1806,15 +1806,11 @@ function AiChat() {
     if(shareMode==="private"){setShareOpen(false);return;}
     setShareLoading(true);
     try{
-      const shareId="s"+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
       const title=msgs.find(m=>m.r==="user")?.t?.replace(/\n/g," ").slice(0,80)||"Shared conversation";
-      await fsdb().collection("shared_chats").doc(shareId).set({
-        msgs:msgs.map(m=>({r:m.r,t:m.t||"",file:m.file||null})),
-        title,createdAt:Date.now(),
-        uid:firebase.auth().currentUser?.uid||null,
-      });
-      const link=window.location.origin+"/app?share="+shareId;
-      setShareLink(link);
+      const res=await authFetch("/api/share-chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({msgs:msgs.map(m=>({r:m.r,t:m.t||"",file:m.file||null})),title})});
+      const data=await res.json();
+      if(data.shareId){setShareLink(window.location.origin+"/app?share="+data.shareId);}
+      else{console.error("Share failed",data.error);}
     }catch(e){console.error("Share failed",e);}
     setShareLoading(false);
   };
@@ -10533,9 +10529,10 @@ function SharedChatView({shareId}){
   const [chat,setChat]=useState(null);
   const [status,setStatus]=useState("loading");
   useEffect(()=>{
-    fsdb().collection("shared_chats").doc(shareId).get()
-      .then(doc=>{if(doc.exists){setChat(doc.data());setStatus("ok");}else setStatus("notfound");})
-      .catch(()=>setStatus("error"));
+    fetch("/api/get-shared-chat?id="+encodeURIComponent(shareId))
+      .then(r=>{if(r.status===404)throw new Error("notfound");if(!r.ok)throw new Error("error");return r.json();})
+      .then(data=>{setChat(data);setStatus("ok");})
+      .catch(e=>{setStatus(e.message==="notfound"?"notfound":"error");});
   },[shareId]);
   const bg=T.bg||"#0D120F",card=T.card||"#19211C",text=T.text||"#E8EFE7",muted=T.muted||"#849389",lime=T.lime||"#AECE5E",font=T.font||"system-ui";
   if(status==="loading")return(<div style={{minHeight:"100vh",background:bg,display:"grid",placeItems:"center"}}><div style={{width:14,height:14,borderRadius:"50%",border:`2px solid ${lime}`,borderTopColor:"transparent",animation:"studlinSpin 0.7s linear infinite"}}/></div>);
