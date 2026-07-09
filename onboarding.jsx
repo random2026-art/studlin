@@ -98,7 +98,7 @@ function LeftRail({ step, state }) {
         <div className="rail-tiles">
           <div className="rail-tile"><div className="ic">{Ic.spark}</div><div className="t">AI tutor on every subject</div><div className="s">Drop a PDF · ask anything</div></div>
           <div className="rail-tile"><div className="ic">{Ic.flame}</div><div className="t">Streaks that keep you going</div><div className="s">Daily momentum, milestones, and Weekly Wrapped</div></div>
-          <div className="rail-tile"><div className="ic">{Ic.zap}</div><div className="t">All your tools, one price</div><div className="s">Writing, flashcards, AI tutor, focus timer and more</div></div>
+          <div className="rail-tile"><div className="ic">{Ic.zap}</div><div className="t">All your tools, one price</div><div className="s">Study groups, flashcards, calendar and more</div></div>
         </div>
       </aside>
     );
@@ -230,17 +230,9 @@ function StepSignup({ state, set, advance }) {
               <span className="tchip">{Ic.check} No card required</span>
               <span className="tchip">{Ic.check} 60-second setup</span>
             </div>
-            <div className="signup-quote">
-              <div className="sq-mark">"</div>
-              <p>Studlin replaced five different apps I was paying for. My grades went from a 3.1 to a 3.8 in a single semester.</p>
-              <div className="sq-by">
-                <span className="sq-av">M</span>
-                <div className="sq-meta"><strong>Maya</strong><span>Senior · AP Bio &amp; Calculus</span></div>
-              </div>
-            </div>
             <div className="trust-foot">
               <div className="tf-avatars"><span></span><span></span><span></span><span></span></div>
-              Loved by <strong>24,000+</strong> students
+              Made for real student life.
             </div>
           </div>
         </>
@@ -506,12 +498,17 @@ function App() {
     try { localStorage.removeItem("studlin-onboarding"); } catch(e){}
     if (u) {
       try {
+        // name/email/provider are deliberately NOT written here — Firestore
+        // security rules only allow this client write to touch a specific
+        // onboarding-field allowlist (see firestore.rules). name already
+        // lives on the Auth profile via updateProfile() above; email and
+        // provider are populated server-side via the Admin SDK (api/me.js)
+        // the first time the app calls it. Writing them here would just get
+        // silently rejected by the rules and, worse, was masking a real bug
+        // (this succeeded before only because the live rules were stale).
         await firebase.firestore().collection('users').doc(u.uid).set({
-          name: fullName || u.displayName || "",
-          email: u.email || state.email || "",
           school: (state.school||"").trim(),
           affiliation: (state.school||"").trim(),
-          provider: u.providerData && u.providerData[0] ? u.providerData[0].providerId : "unknown",
           onboarded: true,
           onboardedAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
