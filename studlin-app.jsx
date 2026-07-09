@@ -1800,40 +1800,25 @@ function AiChat() {
   const [shareOpen,setShareOpen]=useState(false);
   const [shareMode,setShareMode]=useState("private");
   const [shareLink,setShareLink]=useState("");
-  const [shareLoading,setShareLoading]=useState(false);
   const [shareCopied,setShareCopied]=useState(false);
   const [shareError,setShareError]=useState("");
-  const openShare=()=>{setShareOpen(true);setShareMode("private");setShareLink("");setShareCopied(false);setShareLoading(false);setShareError("");};
-  const createShareLink=async()=>{
+  const openShare=()=>{setShareOpen(true);setShareMode("private");setShareLink("");setShareCopied(false);setShareError("");};
+  const createShareLink=()=>{
     if(shareMode==="private"){setShareOpen(false);return;}
-    setShareLoading(true);
     setShareError("");
     try{
-      const title=msgs.find(m=>m.r==="user")?.t?.replace(/\n/g," ").slice(0,80)||"Shared conversation";
-      const safeMsgs=msgs.map(m=>({r:m.r,t:m.t||"",file:null}));
-      const res=await authFetch("/api/share-chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({msgs:safeMsgs,title})});
-      if(!res.ok){
-        let errMsg="Failed to create link ("+res.status+")";
-        try{const d=await res.json();if(d.error)errMsg=d.error;}catch(e2){}
-        setShareError(errMsg);
-        setShareLoading(false);
-        return;
-      }
-      const data=await res.json();
-      if(data.shareId){
-        const link=window.location.origin+"/app?share="+data.shareId;
-        setShareLink(link);
-        try{navigator.clipboard.writeText(link);}catch(e){}
-        setShareCopied(true);
-        setTimeout(()=>setShareCopied(false),3000);
-      } else {
-        setShareError(data.error||"Something went wrong. Try again.");
-      }
+      const title=(msgs.find(m=>m.r==="user")||{t:""}).t.replace(/\n/g," ").slice(0,80)||"Shared conversation";
+      const safeMsgs=msgs.map(function(m){return{r:m.r,t:m.t||""};});
+      const payload=JSON.stringify({msgs:safeMsgs,title,v:1});
+      const encoded=btoa(unescape(encodeURIComponent(payload)));
+      const link=window.location.origin+"/app?share="+encodeURIComponent(encoded);
+      setShareLink(link);
+      try{navigator.clipboard.writeText(link);}catch(e){}
+      setShareCopied(true);
+      setTimeout(function(){setShareCopied(false);},3000);
     }catch(e){
-      console.error("Share failed",e);
-      setShareError("Network error — check your connection and try again.");
+      setShareError("Could not create link — try with a shorter conversation.");
     }
-    setShareLoading(false);
   };
   const copyShareLink=()=>{
     try{navigator.clipboard.writeText(shareLink);}catch(e){}
@@ -2171,13 +2156,17 @@ function AiChat() {
           {shareError&&(
             <div style={{fontSize:12.5,color:"#ff6b6b",background:"rgba(255,107,107,0.12)",border:"1px solid rgba(255,107,107,0.25)",borderRadius:8,padding:"10px 14px",marginBottom:12,fontFamily:T.font}}>{shareError}</div>
           )}
-          <button onClick={shareLink?copyShareLink:createShareLink} disabled={shareLoading||!!shareLink} style={{width:"100%",padding:"12px 0",borderRadius:10,background:shareLink?(shareCopied?T.lime:"rgba(174,206,94,0.85)"):T.cream,color:"#0E1F18",border:"none",fontSize:14,fontWeight:700,cursor:shareLoading||shareLink?"default":"pointer",fontFamily:T.font,opacity:shareLoading?0.55:1,transition:"background 0.2s"}}>
-            {shareLink
-              ? shareCopied
-                ? <span style={{display:"inline-flex",alignItems:"center",gap:6}}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Link copied to clipboard</span>
-                : "Click the link above to copy"
-              : shareLoading?"Creating link...":shareMode==="private"?"Done":"Create share link"}
-          </button>
+          {shareLink?(
+            <button onClick={copyShareLink} style={{width:"100%",padding:"12px 0",borderRadius:10,background:shareCopied?T.lime:"rgba(174,206,94,0.85)",color:"#0E1F18",border:"none",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:T.font,transition:"background 0.2s",display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
+              {shareCopied
+                ?<><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Link copied</>
+                :"Copy link"}
+            </button>
+          ):(
+            <button onClick={createShareLink} style={{width:"100%",padding:"12px 0",borderRadius:10,background:T.cream,color:"#0E1F18",border:"none",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:T.font,transition:"background 0.2s"}}>
+              {shareMode==="private"?"Done":"Create share link"}
+            </button>
+          )}
         </div>
       </div>
     )}
@@ -10576,10 +10565,17 @@ function SharedChatView({shareId}){
   const [chat,setChat]=useState(null);
   const [status,setStatus]=useState("loading");
   useEffect(()=>{
+    // Try to decode as base64-encoded payload first (new format)
+    try{
+      const decoded=decodeURIComponent(escape(atob(decodeURIComponent(shareId))));
+      const parsed=JSON.parse(decoded);
+      if(parsed&&Array.isArray(parsed.msgs)){setChat(parsed);setStatus("ok");return;}
+    }catch(e2){}
+    // Fall back to API for old server-generated share IDs
     fetch("/api/get-shared-chat?id="+encodeURIComponent(shareId))
-      .then(r=>{if(r.status===404)throw new Error("notfound");if(!r.ok)throw new Error("error");return r.json();})
-      .then(data=>{setChat(data);setStatus("ok");})
-      .catch(e=>{setStatus(e.message==="notfound"?"notfound":"error");});
+      .then(function(r){if(r.status===404)throw new Error("notfound");if(!r.ok)throw new Error("error");return r.json();})
+      .then(function(data){setChat(data);setStatus("ok");})
+      .catch(function(e){setStatus(e.message==="notfound"?"notfound":"error");});
   },[shareId]);
   const bg=T.bg||"#0D120F",card=T.card||"#19211C",text=T.text||"#E8EFE7",muted=T.muted||"#849389",lime=T.lime||"#AECE5E",font=T.font||"system-ui";
   if(status==="loading")return(<div style={{minHeight:"100vh",background:bg,display:"grid",placeItems:"center"}}><div style={{width:14,height:14,borderRadius:"50%",border:`2px solid ${lime}`,borderTopColor:"transparent",animation:"studlinSpin 0.7s linear infinite"}}/></div>);
