@@ -1807,7 +1807,8 @@ function AiChat() {
     if(shareMode==="private"){setShareOpen(false);return;}
     setShareError("");
     try{
-      const title=(msgs.find(m=>m.r==="user")||{t:""}).t.replace(/\n/g," ").slice(0,80)||"Shared conversation";
+      const firstUser=msgs.find(function(m){return m.r==="user";});
+      const title=firstUser&&firstUser.t?String(firstUser.t).replace(/\n/g," ").slice(0,80):"Shared conversation";
       const safeMsgs=msgs.map(function(m){return{r:m.r,t:m.t||""};});
       const payload=JSON.stringify({msgs:safeMsgs,title,v:1});
       const encoded=btoa(unescape(encodeURIComponent(payload)));
