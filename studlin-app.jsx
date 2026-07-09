@@ -1288,6 +1288,79 @@ function minutesToTime(mins){
   return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
 }
 
+// Normalize a stored priority/difficulty value to 0-1.
+// New tasks (Phase 3+) store 0-1000; legacy tasks store 0-10.
+function normalizeTaskVal(v,defaultVal){
+  const n=v!=null?v:defaultVal;
+  return n>10?n/1000:n/10;
+}
+
+// Weighted scoring formula (returns 0-1000 integer, higher = schedule sooner).
+// W_priority=0.35, W_deadline=0.35, W_difficulty=0.20, W_streak=0.10
+function scoreTask(task,prefs,streak){
+  const p=normalizeTaskVal(task.priority,5);
+
+  const rawDiff=task.difficulty!=null?task.difficulty:500;
+  const d=normalizeTaskVal(rawDiff,5);
+
+  let urgency=0.3;
+  if(task.deadline){
+    const h=(new Date(task.deadline+"T23:59:00").getTime()-Date.now())/3600000;
+    if(h<=0)urgency=1.0;
+    else if(h<=24)urgency=1.0;
+    else if(h<=48)urgency=0.8;
+    else if(h<=72)urgency=0.6;
+    else urgency=Math.max(0.3,0.6-(h-72)/240);
+  }
+
+  const pref=(prefs&&prefs.taskDifficultyPreference)||"NONE";
+  const diffWeight=pref==="FIRST"?d:pref==="LAST"?1-d:0.5;
+
+  const streakBoost=(streak||0)>=3?1.0:0.0;
+
+  const raw=0.35*p+0.35*urgency+0.20*diffWeight+0.10*streakBoost;
+  return Math.round(Math.min(1,raw)*1000);
+}
+
+// Re-score and re-slot all pending flexible tasks on dateKey.
+// Returns the full updated events array; does not persist.
+function rebalanceDay(dateKey,allEvents,routines,prefs){
+  const FIXED=new Set(["exam","class","busy block","reminder"]);
+  const streak=getStreak();
+  const isFixed=function(e){return FIXED.has(e.kind);};
+  const isFlexPending=function(e){return e.date===dateKey&&!isFixed(e)&&!e.checklist&&e.status!=="done"&&e.time;};
+
+  const flex=allEvents.filter(isFlexPending);
+  if(flex.length<2)return allEvents;
+
+  const rest=allEvents.filter(function(e){return !isFlexPending(e);});
+
+  const sorted=[...flex].sort(function(a,b){return scoreTask(b,prefs,streak)-scoreTask(a,prefs,streak);});
+
+  const prefStart=timeToMinutes(prefs.workStartTime);
+  const prefEnd=timeToMinutes(prefs.workEndTime);
+
+  const occupied=rest.filter(function(e){return e.date===dateKey&&e.time;}).map(function(e){
+    return{start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)};
+  });
+  expandRoutineOccurrences(routines||[],dateKey,dateKey)
+    .filter(function(r){return r.kind!=="free period";})
+    .forEach(function(r){occupied.push({start:timeToMinutes(r.time),end:timeToMinutes(r.time)+(r.duration||30)});});
+
+  const reassigned=sorted.map(function(task){
+    const dur=task.duration||60;
+    for(let t=prefStart;t+dur<=prefEnd;t+=15){
+      if(!occupied.some(function(o){return!(t+dur<=o.start||t>=o.end);})){
+        occupied.push({start:t,end:t+dur+computeBreathingRoom(dur)});
+        return Object.assign({},task,{time:minutesToTime(t)});
+      }
+    }
+    return task;
+  });
+
+  return rest.concat(reassigned);
+}
+
 // Feature 3: Task priority scoring (0-1000 scale with exponential deadline urgency)
 function calculateTaskPriority(task,allTasks){
   let score=0;
@@ -6890,10 +6963,13 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   const onEvKindChange=(k)=>{setEvKind(k);if((k==="exam"||k==="class"||k==="reminder"||k==="busy block")&&!evDate)setEvDate(evPrefillDate);};
   const buildTask=(date,time,titleSuffix,splitInfo)=>{
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
-    return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,kind:evKind,notes:evNotes,priority:Math.round(evPriority/100),difficulty:Math.round(evDifficulty/100),deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,...(splitInfo||{})};
+    return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,kind:evKind,notes:evNotes,priority:evPriority,difficulty:evDifficulty,deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,...(splitInfo||{})};
   };
   const commitTasks=(newTasks)=>{
-    const next=events.concat(newTasks);
+    const prefs=getSchedulePreferences();
+    const datesAffected=new Set(newTasks.map(function(t){return t.date;}).filter(Boolean));
+    let next=events.concat(newTasks);
+    datesAffected.forEach(function(dk){next=rebalanceDay(dk,next,routines,prefs);});
     setEvents(next);lsSet("events",next);
     newTasks.forEach(t=>scheduleTaskNotif(t));
     resetForm();
@@ -7131,7 +7207,8 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   };
   const markDone=(id)=>{const next=events.map(ev=>ev.id===id?{...ev,status:"done",completedAt:Date.now()}:ev);setEvents(next);lsSet("events",next);};
   const nav=(d)=>setYm(c=>{const m2=c.m+d;return {y:c.y+Math.floor(m2/12),m:((m2%12)+12)%12};});
-  const openEdit=(ev)=>{setEditEv(ev);setEditTitle(ev.title||"");setEditDate(ev.date||dayKey());setEditTime(ev.time||"14:30");setEditDuration(ev.duration||60);setEditDeadline(ev.deadline||"");setEditDeadlineErr("");setEditPriority((ev.priority||5)*100);setEditDifficulty((ev.difficulty||5)*100);setEditMoreOpen(!!ev.priority&&ev.priority!==5);setEditSubject(ev.subject||"Chemistry");setEditKind(ev.kind||"deadline");setEditNotes(ev.notes||"");setEditOpen(true);};
+  const toSliderVal=(v,def)=>{const n=v!=null?v:def;return n>10?n:n*100;};
+  const openEdit=(ev)=>{setEditEv(ev);setEditTitle(ev.title||"");setEditDate(ev.date||dayKey());setEditTime(ev.time||"14:30");setEditDuration(ev.duration||60);setEditDeadline(ev.deadline||"");setEditDeadlineErr("");setEditPriority(toSliderVal(ev.priority,5));setEditDifficulty(toSliderVal(ev.difficulty,5));setEditMoreOpen(!!(ev.priority&&(ev.priority>10?ev.priority!==500:ev.priority!==5)));setEditSubject(ev.subject||"Chemistry");setEditKind(ev.kind||"deadline");setEditNotes(ev.notes||"");setEditOpen(true);};
   const runGroupSync=()=>{
     if(!gsDueDate.trim())return;
     const prefStart=timeToMinutes(gsStartTime);
@@ -7178,7 +7255,10 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     // Hard Wall (Tier 2) — the Edit modal must never silently save a date
     // past the task's own deadline, same rule enforced on every drag path.
     if(editDeadline&&editDate>editDeadline){setEditDeadlineErr("Can't schedule past the deadline ("+editDeadline+").");return;}
-    const next=events.map(e=>e.id===editEv.id?{...e,title:editTitle.trim(),date:editDate,time:editTime,duration:editDuration,deadline:editDeadline||null,priority:Math.round(editPriority/100),difficulty:Math.round(editDifficulty/100),subject:editSubject,kind:editKind,notes:editNotes}:e);setEvents(next);lsSet("events",next);closeEdit();
+    const updated=events.map(e=>e.id===editEv.id?{...e,title:editTitle.trim(),date:editDate,time:editTime,duration:editDuration,deadline:editDeadline||null,priority:editPriority,difficulty:editDifficulty,subject:editSubject,kind:editKind,notes:editNotes}:e);
+    const prefs=getSchedulePreferences();
+    const next=editDate?rebalanceDay(editDate,updated,routines,prefs):updated;
+    setEvents(next);lsSet("events",next);closeEdit();
   };
 
   // ── Tier 3: Global Emergency "Studlin Reschedule" ──────────────────────────
