@@ -1,0 +1,48 @@
+name: Build Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Vercel Hobby plan caps a deployment at 12 Serverless Functions.
+      # Going over this fails every deploy silently (site keeps serving the
+      # last good build with no obvious error) — this is what took the site
+      # down for 11+ hours on 2026-07-09.
+      - name: "Check serverless function count (Vercel Hobby cap: 12)"
+        run: |
+          count=$(ls api/*.js | wc -l)
+          echo "Found $count serverless functions in api/"
+          if [ "$count" -gt 12 ]; then
+            echo "::error::api/ has $count .js files — Vercel Hobby plan allows a maximum of 12 Serverless Functions per deployment. Consolidate routes before merging."
+            exit 1
+          fi
+
+      - name: Validate vercel.json is valid JSON
+        run: node -e "JSON.parse(require('fs').readFileSync('vercel.json','utf8'))"
+
+      - name: Syntax-check all API route files
+        run: |
+          for f in api/*.js api/_lib/*.js; do
+            node -c "$f" || exit 1
+          done
+
+      # Catches invalid JSX before it ships — these bundles are compiled by
+      # Babel in the browser at runtime with no local build step, so a
+      # broken return statement (e.g. two sibling elements with no
+      # Fragment) previously reached production undetected.
+      - name: Compile JSX bundles
+        run: |
+          npx --yes esbuild "studlin-app.jsx" --loader:.jsx=jsx --outfile=/tmp/studlin-app.out.js
+          npx --yes esbuild "onboarding.jsx" --loader:.jsx=jsx --outfile=/tmp/onboarding.out.js
+          npx --yes esbuild "signin.jsx" --loader:.jsx=jsx --outfile=/tmp/signin.out.js
