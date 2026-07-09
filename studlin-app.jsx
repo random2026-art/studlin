@@ -6951,12 +6951,16 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     const bufMins=now.getHours()*60+now.getMinutes()+15;
     const earliestTodayMins=Math.max(prefStartMins,Math.ceil(bufMins/15)*15);
     const earliestTodayTime=minutesToTime(earliestTodayMins);
-    // If today's remaining preferred window can't fit even one session, direct AI to start tomorrow
     const perSession=Math.round(evDuration/(evSplitEnabled?evSplitCount:1));
     const splitCount=evSplitEnabled?evSplitCount:1;
-    const todayWindowMins=Math.max(0,prefEndMins-earliestTodayMins);
-    const firstAvailDate=todayWindowMins>=perSession?tk:(()=>{const d=new Date(now);d.setDate(d.getDate()+1);return dayKey(d);})();
-    const horizonEnd=(()=>{const d=new Date(now);d.setDate(d.getDate()+13);return dayKey(d);})();
+    // Respect the date the user clicked on — if evPrefillDate is today or future, use it as the anchor
+    const desiredStartDate=(evPrefillDate&&evPrefillDate>=tk)?evPrefillDate:tk;
+    const isDesiredToday=desiredStartDate===tk;
+    const windowStart=isDesiredToday?earliestTodayMins:prefStartMins;
+    const windowStartTime=isDesiredToday?earliestTodayTime:minutesToTime(prefStartMins);
+    const windowMins=Math.max(0,prefEndMins-windowStart);
+    const firstAvailDate=windowMins>=perSession?desiredStartDate:(()=>{const d=new Date(desiredStartDate+"T12:00:00");d.setDate(d.getDate()+1);return dayKey(d);})();
+    const horizonEnd=(()=>{const d=new Date(desiredStartDate+"T12:00:00");d.setDate(d.getDate()+13);return dayKey(d);})();
     const routineAhead=expandRoutineOccurrences(routines,tk,horizonEnd);
     // Free periods are preferred landing spots (see freeAhead below), not hard
     // blocks — excluding them here also resolves the prompt's prior internal
@@ -6969,14 +6973,14 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     // avoid conflicts and prefer free-period windows, but "strictly
     // forbidden" needs a real guarantee, not just advisory text.
     const findOpenSlot=(desiredDate,desiredTime,duration)=>findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration);
-    const prompt="You are a scheduling AI. The user's LIVE clock reads "+nowTime+" on "+tk+". Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+priorityLabel+(evDeadline?". Deadline: "+evDeadline+" "+(evDeadlineTime||"23:59"):"")+". Existing schedule, including recurring classes/activities that repeat weekly — treat every one of these as a hard block you may NEVER overlap: "+JSON.stringify(existing)+". Free/open windows (free periods or study halls) good for short sub-20-minute sessions specifically: "+JSON.stringify(freeAhead)+". The user's preferred daily study window is "+prefs.workStartTime+"–"+prefs.workEndTime+" — always fill that window first, chronologically from the start, before ever using time outside it. STRICT RULES (violations are forbidden): 1) NEVER place any session before "+earliestTodayTime+" on today ("+tk+") — those slots have already passed. 2) The earliest you may schedule anything today is "+earliestTodayTime+". 3) If today has no open window at or after "+earliestTodayTime+", start from "+firstAvailDate+" instead. 4) Prefer sessions within "+prefs.workStartTime+"-"+prefs.workEndTime+"; only expand outside that range (up to 08:00-22:00) if the preferred window is fully booked that day. 5) Higher priority = earlier slots. 6) Must be before deadline. 7) NEVER overlap anything in the existing schedule, including recurring blocks — this is non-negotiable. 8) If this session is 20 minutes or less, prefer placing it inside one of the free/open windows listed above. 9) Spread splits across days. Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
+    const prompt="You are a scheduling AI. The user's LIVE clock reads "+nowTime+" on "+tk+". Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+priorityLabel+(evDeadline?". Deadline: "+evDeadline+" "+(evDeadlineTime||"23:59"):"")+". Existing schedule, including recurring classes/activities that repeat weekly — treat every one of these as a hard block you may NEVER overlap: "+JSON.stringify(existing)+". Free/open windows (free periods or study halls) good for short sub-20-minute sessions specifically: "+JSON.stringify(freeAhead)+". The user's preferred daily study window is "+prefs.workStartTime+"–"+prefs.workEndTime+" — always fill that window first, chronologically from the start, before ever using time outside it. CRITICAL USER INTENT: The user explicitly selected "+desiredStartDate+" on the calendar. Start scheduling on "+desiredStartDate+" — do NOT place any session before this date. STRICT RULES (violations are forbidden): 1) NEVER schedule before "+desiredStartDate+". 2) The first available slot on "+desiredStartDate+" starts at "+windowStartTime+". 3) If "+desiredStartDate+" has no open window at or after "+windowStartTime+", start from "+firstAvailDate+" instead. 4) Prefer sessions within "+prefs.workStartTime+"-"+prefs.workEndTime+"; only expand outside that range (up to 08:00-22:00) if the preferred window is fully booked that day. 5) Higher priority = earlier slots within the allowed date range. 6) Must be before deadline. 7) NEVER overlap anything in the existing schedule, including recurring blocks — this is non-negotiable. 8) If this session is 20 minutes or less, prefer placing it inside one of the free/open windows listed above. 9) Spread splits across consecutive days starting from "+desiredStartDate+". Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
     // If the AI call fails or returns nothing usable, fall back to a fully
     // deterministic placement — evDate/evTime are blank in AI mode, so
     // saveManual() isn't usable here.
     const fallbackSchedule=()=>{
       const groupId=splitCount>1?"split-"+Date.now():null;
       const tasks=[];
-      let cursorDate=firstAvailDate,cursorTime=earliestTodayTime;
+      let cursorDate=firstAvailDate,cursorTime=windowStartTime;
       for(let i=0;i<splitCount;i++){
         const slot=findOpenSlot(cursorDate,cursorTime,perSession);
         tasks.push(buildTask(slot.date,slot.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})));
@@ -6993,10 +6997,11 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
       if(parsed.sessions&&parsed.sessions.length>0){
         const sanitized=parsed.sessions.map(s=>{
           let date=s.date,time=s.time;
-          // Client-side guardrail: if the AI still returned a past slot, push it to the next valid day
-          if(date===tk&&timeToMinutes(time)<earliestTodayMins){
-            const d=new Date(now);d.setDate(d.getDate()+1);
-            date=dayKey(d);time=earliestTodayTime;
+          // Client-side guardrail: if the AI returned a slot before the user's desired start date, push forward
+          if(date<desiredStartDate){date=firstAvailDate;time=windowStartTime;}
+          else if(date===tk&&timeToMinutes(time)<earliestTodayMins){
+            const d=new Date(desiredStartDate+"T12:00:00");d.setDate(d.getDate()+1);
+            date=dayKey(d);time=minutesToTime(prefStartMins);
           }
           // Deterministic conflict check — reject/reshift anything that
           // actually overlaps a real event or routine shield, rather than
