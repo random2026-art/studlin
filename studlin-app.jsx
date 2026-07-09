@@ -1079,6 +1079,7 @@ function daysUntilDeadline(ev){if(!ev.deadline)return null;const d1=new Date(ev.
 function scheduleTaskNotif(task){try{if(!("Notification" in window)||Notification.permission!=="granted")return;const t=new Date(task.date+"T"+task.time);const delay=t.getTime()-10*60*1000-Date.now();if(delay<=0)return;setTimeout(()=>{new Notification("Studlin",{body:task.title+" starts in 10 minutes"});},delay);}catch(e){}}
 function requestNotifPermission(){if(!("Notification" in window))return;Notification.requestPermission();}
 function stripHtml(html){return(html||"").replace(/<[^>]*>/g," ");}
+function sanitizeHtml(html){if(typeof DOMPurify==='undefined')return html||'';return DOMPurify.sanitize(html||'',{ALLOWED_TAGS:['p','br','h1','h2','h3','h4','h5','h6','ul','ol','li','strong','em','b','i','u','s','blockquote','span','a','code','pre','table','thead','tbody','tr','th','td','hr','sub','sup'],ALLOWED_ATTR:['href','target','rel'],FORCE_BODY:true,ALLOW_UNKNOWN_PROTOCOLS:false});}
 function wordCountOf(html){var txt=stripHtml(html).trim();return txt?txt.split(/\s+/).length:0;}
 function readabilityOf(html){
   var txt=stripHtml(html).trim();
@@ -2390,7 +2391,8 @@ function Essays() {
 
   const applyToolResult=()=>{
     if(!toolResult||!activeEssay)return;
-    const html=toolResult.text.split(/\n+/).filter(Boolean).map(p=>"<p>"+p+"</p>").join("");
+    const raw=toolResult.text.split(/\n+/).filter(Boolean).map(p=>"<p>"+p+"</p>").join("");
+    const html=sanitizeHtml(raw);
     updateContent(html);
     if(editorRef.current)editorRef.current.innerHTML=html;
     setToolResult(null);
@@ -2410,7 +2412,7 @@ function Essays() {
 
   const insertCitation=()=>{
     if(!citeResult||!activeEssay)return;
-    const html=(activeEssay.content||"")+"<p>"+citeResult+"</p>";
+    const html=sanitizeHtml((activeEssay.content||"")+"<p>"+citeResult+"</p>");
     updateContent(html);
     if(editorRef.current)editorRef.current.innerHTML=html;
     setCiteOpen(false);setCiteSource("");setCiteResult("");
@@ -2552,7 +2554,7 @@ function Essays() {
               </div>
               <div style={{display:"flex",gap:2,background:T.card2,padding:"6px",borderRadius:"6px 6px 0 0",flexWrap:"wrap",border:`1px solid ${T.border}`,borderBottom:"none"}}>
                 {[["B","bold",Icon.bold],["I","italic",Icon.italic],["Link","createLink",Icon.link],["Quote","formatBlock",Icon.quote]].map(([l,cmd,ico])=>(
-                  <button key={l} type="button" onClick={()=>exec(cmd,cmd==="createLink"?(prompt("Link URL:")||""):cmd==="formatBlock"?"blockquote":undefined)} style={{display:"flex",alignItems:"center",gap:4,padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>{ico} {l}</button>
+                  <button key={l} type="button" onClick={()=>{if(cmd==="createLink"){const u=(prompt("Link URL:")||"").trim();if(!u||!((/^https?:\/\//i).test(u)||(/^mailto:/i).test(u)))return;exec(cmd,u);}else{exec(cmd,cmd==="formatBlock"?"blockquote":undefined);}}} style={{display:"flex",alignItems:"center",gap:4,padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>{ico} {l}</button>
                 ))}
                 <div style={{width:1,background:T.border,margin:"2px 4px"}} />
                 {["H1","H2","H3"].map(h=><button key={h} type="button" onClick={()=>exec("formatBlock",h.toLowerCase())} style={{padding:"5px 8px",borderRadius:4,border:"none",background:"transparent",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:T.font}}>{h}</button>)}
@@ -3172,7 +3174,7 @@ function Notes(){
     if(sel===null||!editorRef.current||!notes[sel])return;
     const body=notes[sel].body||"";
     const isHtml=body.trim().startsWith("<");
-    editorRef.current.innerHTML=isHtml?body:body?body.split("\n\n").map(p=>"<p>"+(p||"<br>")+"</p>").join(""):"<p><br></p>";
+    editorRef.current.innerHTML=isHtml?sanitizeHtml(body):body?body.split("\n\n").map(p=>"<p>"+(p||"<br>")+"</p>").join(""):"<p><br></p>";
   },[sel]); // intentionally omit notes — only fire on note switch
 
   const onEditorInput=()=>{
@@ -3316,7 +3318,7 @@ function Notes(){
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
       const data=await res.json();
       if(data.reply){
-        const cleaned=data.reply.replace(/```html?\n?/gi,"").replace(/```/g,"").trim();
+        const cleaned=sanitizeHtml(data.reply.replace(/```html?\n?/gi,"").replace(/```/g,"").trim());
         editorRef.current.innerHTML=cleaned;
         onEditorInput();
       }
@@ -5175,7 +5177,7 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
     if(decision==="approved"&&msg.senderId!==myUid){
       if(msg.kind==="note"){
         const notes=lsGet("notes",[]);
-        const copy={id:String(Date.now()),title:msg.meta.title,body:msg.meta.body||"<p>Shared from "+peerName+".</p>",tag:"Shared",date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now(),source:"shared",sharedFrom:peerName};
+        const copy={id:String(Date.now()),title:msg.meta.title,body:sanitizeHtml(msg.meta.body||"<p>Shared from "+peerName+".</p>"),tag:"Shared",date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now(),source:"shared",sharedFrom:peerName};
         lsSet("notes",[copy,...notes]);
         // Carry the sender's flags/comments over onto the recipient's own
         // copy (re-keyed to its new id) so tutor context survives the share.
@@ -8099,8 +8101,8 @@ function WriteStudio(){
     try{const p="Hey Studlin, check my writing. Return ONLY valid JSON: {\"grade\":\"B+\",\"readingLevel\":\"Grade 11\",\"issues\":[{\"type\":\"Grammar\",\"orig\":\"wrong text\",\"fix\":\"fixed\",\"desc\":\"explanation\"}],\"grammarCount\":0,\"styleCount\":0,\"clarityCount\":0,\"summary\":\"one sentence\"}\n\nText:\n"+essayText.slice(0,6000);const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:p}],model:"standard"})});const d=await res.json();var raw=(d.reply||"").replace(/```json?|```/g,"").trim();var s=raw.indexOf("{");var en=raw.lastIndexOf("}");if(s>=0&&en>s)raw=raw.slice(s,en+1);try{var parsed=JSON.parse(raw);setGrade(parsed.grade||"?");setGrammarStats({grammar:parsed.grammarCount||0,style:parsed.styleCount||0,clarity:parsed.clarityCount||0,reading:parsed.readingLevel||"",summary:parsed.summary||""});setIssues(Array.isArray(parsed.issues)?parsed.issues:[]);}catch(pe){setGrade("?");setGrammarStats({grammar:0,style:0,clarity:0,reading:"",summary:"Couldn't parse. Try again."});}}
     catch(e){setGrade("?");}setCheckLoading(false);
   };
-  const acceptFix=(issue)=>{if(!activeEssay)return;const html=(activeEssay.content||"").replace(issue.orig,issue.fix);updateContent(html);if(editorRef.current)editorRef.current.innerHTML=html;setIssues(arr=>arr.filter(x=>x!==issue));};
-  const acceptAllFixes=()=>{if(!activeEssay)return;let html=activeEssay.content||"";issues.forEach(issue=>{html=html.replace(issue.orig,issue.fix);});updateContent(html);if(editorRef.current)editorRef.current.innerHTML=html;setIssues([]);};
+  const acceptFix=(issue)=>{if(!activeEssay)return;const fix=issue.fix;const html=sanitizeHtml((activeEssay.content||"").replace(issue.orig,()=>fix));updateContent(html);if(editorRef.current)editorRef.current.innerHTML=html;setIssues(arr=>arr.filter(x=>x!==issue));};
+  const acceptAllFixes=()=>{if(!activeEssay)return;let html=activeEssay.content||"";issues.forEach(issue=>{const fix=issue.fix;html=html.replace(issue.orig,()=>fix);});html=sanitizeHtml(html);updateContent(html);if(editorRef.current)editorRef.current.innerHTML=html;setIssues([]);};
   const typeColor={"Grammar":T.red,"Spelling":T.red,"Punctuation":T.amber,"Style":T.amber,"Clarity":T.teal};
 
   const runRewrite=async(mode)=>{
@@ -8109,7 +8111,7 @@ function WriteStudio(){
     try{const p="Hey Studlin, "+prompts[mode]+"\n\nText:\n"+essayText.slice(0,6000)+"\n\nGive me the rewritten text only, nothing else.";const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:p}],model:"standard"})});const d=await res.json();setRewriteResult(d.reply||"No result.");}
     catch(e){setRewriteResult("Error: "+e.message);}setRewriteLoading(false);
   };
-  const applyRewrite=()=>{if(!rewriteResult||!activeEssay)return;const html=rewriteResult.split(/\n+/).filter(Boolean).map(p=>"<p>"+p+"</p>").join("");updateContent(html);if(editorRef.current)editorRef.current.innerHTML=html;setRewriteResult("");setActiveRW(null);};
+  const applyRewrite=()=>{if(!rewriteResult||!activeEssay)return;const html=sanitizeHtml(rewriteResult.split(/\n+/).filter(Boolean).map(p=>"<p>"+p+"</p>").join(""));updateContent(html);if(editorRef.current)editorRef.current.innerHTML=html;setRewriteResult("");setActiveRW(null);};
 
   const runFeedback=async()=>{
     if(!essayText)return;setFeedbackLoading(true);setFeedbackIssues(null);
@@ -8122,7 +8124,7 @@ function WriteStudio(){
   const sendSocratic=async()=>{if(!socInput.trim()||socLoading)return;const userMsg={r:"user",t:socInput.trim()};const next=socMsgs.concat([userMsg]);setSocMsgs(next);setSocInput("");setSocLoading(true);const apiMsgs=next.concat([{r:"user",t:"(Keep using Socratic method on \""+topic+"\" — guiding questions only, no direct answers unless they've clearly got it.)"}]);try{const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:apiMsgs,model:"standard"})});const d=await res.json();setSocMsgs(m=>m.concat([{r:"ai",t:d.reply||"Keep going — what else do you know?"}]));}catch(e){setSocMsgs(m=>m.concat([{r:"ai",t:"Something went wrong. Try again?"}]));}setSocLoading(false);};
 
   const generateCitation=async()=>{if(!citeSource.trim())return;setCiteLoading(true);setCiteResult("");try{const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:"Format a "+citeStyle+" citation for: "+citeSource.trim()+". Respond with ONLY the formatted citation."}],model:"flash"})});const d=await res.json();setCiteResult(d.reply||"");}catch(e){setCiteResult("Error. Try again.");}setCiteLoading(false);};
-  const insertCitation=()=>{if(!citeResult||!activeEssay)return;const html=(activeEssay.content||"")+"<p>"+citeResult+"</p>";updateContent(html);if(editorRef.current)editorRef.current.innerHTML=html;setCiteOpen(false);setCiteSource("");setCiteResult("");};
+  const insertCitation=()=>{if(!citeResult||!activeEssay)return;const html=sanitizeHtml((activeEssay.content||"")+"<p>"+citeResult+"</p>");updateContent(html);if(editorRef.current)editorRef.current.innerHTML=html;setCiteOpen(false);setCiteSource("");setCiteResult("");};
 
   const copyEssay=()=>{if(!activeEssay)return;const txt=activeEssay.title+"\n\n"+essayText;navigator.clipboard&&navigator.clipboard.writeText(txt).then(()=>{setCopiedMsg("Copied");setTimeout(()=>setCopiedMsg(""),2000);});};
   const downloadEssay=()=>{if(!activeEssay)return;const blob=new Blob([activeEssay.title+"\n\n"+essayText],{type:"text/plain"});const a=Object.assign(document.createElement("a"),{href:URL.createObjectURL(blob),download:(activeEssay.title||"essay").replace(/[^a-z0-9]+/gi,"_")+".txt"});document.body.appendChild(a);a.click();document.body.removeChild(a);};
@@ -10696,12 +10698,15 @@ function SharedChatView({shareId}){
 const isPasswordAccount=(u)=>!!(u.providerData&&u.providerData.some(p=>p.providerId==="password"));
 function AuthGate(){
   const shareId=new URLSearchParams(window.location.search).get("share");
-  if(shareId)return <SharedChatView shareId={shareId} />;
   const [user,setUser]=useState(undefined);
-  useEffect(()=>{return firebase.auth().onAuthStateChanged(u=>{
-    setUser(u||null);
-    if(u&&(!isPasswordAccount(u)||u.emailVerified)){fetchUserProfile();upsertProfile();}
-  });},[]);
+  useEffect(()=>{
+    if(shareId)return;
+    return firebase.auth().onAuthStateChanged(u=>{
+      setUser(u||null);
+      if(u&&(!isPasswordAccount(u)||u.emailVerified)){fetchUserProfile();upsertProfile();}
+    });
+  },[shareId]);
+  if(shareId)return <SharedChatView shareId={shareId} />;
   if(user===undefined)return(<div style={{minHeight:"100vh",background:"#0D120F",display:"grid",placeItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#14342A,#0E1F18)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(174,206,94,0.38)"}}><div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #CBDF92, #AECE5E)",boxShadow:"0 0 10px 3px rgba(174,206,94,0.65)"}}/></div><span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span></div></div>);
   if(!user)return <AuthScreen />;
   if(isPasswordAccount(user)&&!user.emailVerified)return <VerifyEmailScreen user={user} />;
