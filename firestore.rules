@@ -115,6 +115,15 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Shared AI chat conversations — public by design. Anyone with the share
+    // ID can read. Only authenticated users can create (share). Immutable
+    // once created: no updates or deletes.
+    match /shared_chats/{shareId} {
+      allow read: if true;
+      allow create: if request.auth != null;
+      allow update, delete: if false;
+    }
+
     // emailOtps is written/read exclusively by the Vercel API routes via the
     // Admin SDK (which bypasses these rules) — never by the client directly.
     match /{document=**} {

@@ -1796,7 +1796,34 @@ function AiChat() {
   const deleteChat=(id,e)=>{e.stopPropagation();const updated=chatHistory.filter(c=>c.id!==id);lsSet("ai-chats",updated);setChatHistory(updated);if(id===chatId)newChat();};
   const relTime=(ts)=>{const d=Date.now()-ts,m=Math.floor(d/60000);if(m<1)return"Just now";if(m<60)return m+"m ago";const h=Math.floor(m/60);if(h<24)return h+"h ago";const dy=Math.floor(h/24);if(dy===1)return"Yesterday";if(dy<7)return dy+"d ago";return new Date(ts).toLocaleDateString("en-US",{month:"short",day:"numeric"});};
 
-  const chatBg=T.mode==="dark"?"#0E0F14":T.bg;
+  const [shareOpen,setShareOpen]=useState(false);
+  const [shareMode,setShareMode]=useState("private");
+  const [shareLink,setShareLink]=useState("");
+  const [shareLoading,setShareLoading]=useState(false);
+  const [shareCopied,setShareCopied]=useState(false);
+  const openShare=()=>{setShareOpen(true);setShareMode("private");setShareLink("");setShareCopied(false);};
+  const createShareLink=async()=>{
+    if(shareMode==="private"){setShareOpen(false);return;}
+    setShareLoading(true);
+    try{
+      const shareId="s"+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+      const title=msgs.find(m=>m.r==="user")?.t?.replace(/\n/g," ").slice(0,80)||"Shared conversation";
+      await fsdb().collection("shared_chats").doc(shareId).set({
+        msgs:msgs.map(m=>({r:m.r,t:m.t||"",file:m.file||null})),
+        title,createdAt:Date.now(),
+        uid:firebase.auth().currentUser?.uid||null,
+      });
+      const link=window.location.origin+"/app?share="+shareId;
+      setShareLink(link);
+    }catch(e){console.error("Share failed",e);}
+    setShareLoading(false);
+  };
+  const copyShareLink=()=>{
+    try{navigator.clipboard.writeText(shareLink);}catch(e){}
+    setShareCopied(true);setTimeout(()=>setShareCopied(false),2000);
+  };
+
+  const chatBg=T.bg;
   const chatPanel=T.mode==="dark"?"#0B0C10":T.surface;
   const historyPanel=(
     <div style={{width:220,flexShrink:0,borderRight:`1px solid ${T.mode==="dark"?"rgba(255,255,255,0.05)":T.border}`,display:"flex",flexDirection:"column",background:chatPanel,overflow:"hidden"}}>
@@ -2016,6 +2043,7 @@ function AiChat() {
   }
 
   return (
+    <>
     <div style={{display:"flex",height:"calc(100vh - 80px)",overflow:"hidden",background:chatBg}}>
       {historyOpen&&historyPanel}
       <div style={{flex:1,display:"flex",flexDirection:"column",minWidth:0}}>
@@ -2027,7 +2055,13 @@ function AiChat() {
             New chat
           </button>
         </div>
-        <div style={{fontSize:11,color:T.muted}}><span style={{color:credits<(CREDIT_COST[model]||1)?T.red||"#f87171":T.lime,fontWeight:600}}>{credits}</span> credits · {curModel.name}</div>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <button onClick={openShare} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 14px",borderRadius:8,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+            Share
+          </button>
+          <div style={{fontSize:11,color:T.muted}}><span style={{color:credits<(CREDIT_COST[model]||1)?T.red||"#f87171":T.lime,fontWeight:600}}>{credits}</span> credits · {curModel.name}</div>
+        </div>
       </div>
 
       <div ref={chatRef} style={{flex:1,overflowY:"auto",paddingBottom:16}}>
@@ -2086,6 +2120,46 @@ function AiChat() {
       </div>
       </div>
     </div>
+
+    {/* Share modal */}
+    {shareOpen&&(
+      <div onClick={()=>setShareOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:9000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:T.surface,borderRadius:18,padding:"28px 28px 24px",width:460,maxWidth:"100%",position:"relative",border:`1px solid rgba(255,255,255,0.08)`,boxShadow:"0 32px 64px -16px rgba(0,0,0,0.55)"}}>
+          <button onClick={()=>setShareOpen(false)} style={{position:"absolute",top:16,right:16,width:30,height:30,borderRadius:8,border:`1px solid rgba(255,255,255,0.12)`,background:"rgba(255,255,255,0.06)",color:T.cream,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+          <div style={{fontSize:18,fontWeight:700,color:T.cream,marginBottom:4,fontFamily:T.font}}>Share chat</div>
+          <div style={{fontSize:13,color:"rgba(246,241,230,0.5)",marginBottom:20,fontFamily:T.font}}>Only messages up to this point will be shared.</div>
+          <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
+            {[
+              {key:"private",Icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>,label:"Keep private",sub:"Only you have access"},
+              {key:"public",Icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>,label:"Create public link",sub:"Anyone with the link can view"},
+            ].map(opt=>(
+              <div key={opt.key} onClick={()=>{setShareMode(opt.key);setShareLink("");}} style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,border:`1px solid ${shareMode===opt.key?"rgba(255,255,255,0.18)":"rgba(255,255,255,0.07)"}`,background:shareMode===opt.key?"rgba(255,255,255,0.06)":"transparent",cursor:"pointer",transition:"all 0.15s"}}>
+                <span style={{color:"rgba(246,241,230,0.6)",flexShrink:0}}>{opt.Icon}</span>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:14,fontWeight:600,color:T.cream,fontFamily:T.font}}>{opt.label}</div>
+                  <div style={{fontSize:12,color:"rgba(246,241,230,0.45)",marginTop:1,fontFamily:T.font}}>{opt.sub}</div>
+                </div>
+                {shareMode===opt.key&&<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+              </div>
+            ))}
+          </div>
+          {shareLink&&(
+            <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",borderRadius:8,background:"rgba(255,255,255,0.05)",border:`1px solid rgba(255,255,255,0.08)`,marginBottom:12}}>
+              <span style={{flex:1,fontSize:12,color:"rgba(246,241,230,0.55)",fontFamily:T.mono,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{shareLink}</span>
+              <button onClick={copyShareLink} style={{flexShrink:0,padding:"5px 12px",borderRadius:6,border:`1px solid ${T.lime}44`,background:shareCopied?T.lime+"22":"transparent",color:shareCopied?T.lime:"rgba(246,241,230,0.7)",fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,transition:"all 0.15s"}}>
+                {shareCopied?"Copied!":"Copy"}
+              </button>
+            </div>
+          )}
+          <button onClick={shareLink?copyShareLink:createShareLink} disabled={shareLoading} style={{width:"100%",padding:"12px 0",borderRadius:10,background:T.cream,color:"#14342A",border:"none",fontSize:14,fontWeight:700,cursor:shareLoading?"not-allowed":"pointer",fontFamily:T.font,opacity:shareLoading?0.6:1,transition:"opacity 0.15s"}}>
+            {shareLink?(shareCopied?"Copied!":"Copy link"):shareLoading?"Creating link...":shareMode==="private"?"Done":"Create share link"}
+          </button>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 
@@ -2508,7 +2582,9 @@ function Flashcards() {
   const fileRef=useRef(null);
   const [ytUrl,setYtUrl]=useState("");
   const [ytInfo,setYtInfo]=useState("");
+  const [ytTopic,setYtTopic]=useState("");
   const [ytFetching,setYtFetching]=useState(false);
+  const [cardCount,setCardCount]=useState(10);
   const [recOn,setRecOn]=useState(false);
   const [recSecs,setRecSecs]=useState(0);
   const [recText,setRecText]=useState("");
@@ -2536,10 +2612,10 @@ function Flashcards() {
 
   const handleFile=async(e)=>{const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";const ext=file.name.split(".").pop().toLowerCase();if(ext==="pdf"){try{const pdfjsLib=await window._pdfjs;const buf=await file.arrayBuffer();const pdf=await pdfjsLib.getDocument({data:buf}).promise;let text="";for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();text+=tc.items.map(it=>it.str).join(" ")+"\n\n";}setFileText(text);if(!dName)setDName("Cards from "+file.name);}catch(err){setFileText("Could not read PDF.");}}else{const reader=new FileReader();reader.onload=()=>{setFileText(reader.result);if(!dName)setDName("Cards from "+file.name);};reader.readAsText(file);}};
 
-  const aiGenCards=async(content,context)=>{
+  const aiGenCards=async(content,context,count=10)=>{
     setAiLoading(true);
     try{
-      const prompt="Hey Studlin, I need you to help me make flashcards for studying. Can you create 10 flashcards from this "+context+"? Please format them as a JSON array where each card has a \"q\" key for the question and an \"a\" key for the answer. Just give me the JSON array directly so I can import them into my deck. Here's the material:\n\n"+content.slice(0,15000);
+      const prompt="Create "+count+" flashcards from this "+context+". Format as a JSON array where each object has a \"q\" key (question) and \"a\" key (answer). Return only the JSON array, no other text. Material:\n\n"+content.slice(0,15000);
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
       const data=await res.json();
       var raw=(data.reply||"").replace(/```json?|```/g,"").trim();
@@ -2560,21 +2636,26 @@ function Flashcards() {
     if(dSource==="manual"){cards=[...draft];}
     else if(dSource==="file"){
       if(!fileText){cards=[{q:"No file loaded",a:"Upload a PDF or text file first"}];}
-      else{cards=await aiGenCards(fileText,"document/notes");}
+      else{cards=await aiGenCards(fileText,"document/notes",cardCount);}
     }
     else if(dSource==="youtube"){
-      var topic=ytInfo||dName||ytUrl;
-      if(!topic){cards=[{q:"No video detected",a:"Paste a YouTube link first"}];}
-      else{cards=await aiGenCards("The topic is: "+topic+". Create 10 detailed study flashcards covering the key concepts, definitions, and important facts about this topic.","topic");}
+      const topic=(ytTopic||ytInfo||"").trim();
+      if(!ytUrl.trim()&&!topic){cards=[{q:"No video provided",a:"Paste a YouTube link or type a topic"}];}
+      else{
+        const ctx=topic
+          ?"YouTube video: \""+topic+"\". Generate "+cardCount+" flashcards covering all key concepts, definitions, formulas, and important facts a student needs to know from this video."
+          :"YouTube video at: "+ytUrl+". Generate "+cardCount+" flashcards covering likely key concepts from this video.";
+        cards=await aiGenCards(ctx,"YouTube video",cardCount);
+      }
     }
     else if(dSource==="record"){
       if(!recText){cards=[{q:"No audio recorded",a:"Record a lecture first"}];}
-      else{cards=await aiGenCards("Lecture transcription:\n\n"+recText,"lecture transcription");}
+      else{cards=await aiGenCards("Lecture transcription:\n\n"+recText,"lecture transcription",cardCount);}
     }
     if(cards.length===0){cards=[{q:"No cards were generated",a:"Try again with more content"}];}
     const nd={id:String(Date.now()),name:name,count:cards.length,done:0,color:T.lime,cards:cards,examEventId:null};
     const next=[nd,...deckList];setDeckList(next);lsSet("decks",next);
-    setNewOpen(false);setDName("");setDraft([]);setFileText("");setYtUrl("");setYtInfo("");setYtFetching(false);stopRec();setRecText("");setDSource("manual");
+    setNewOpen(false);setDName("");setDraft([]);setFileText("");setYtUrl("");setYtInfo("");setYtTopic("");setYtFetching(false);stopRec();setRecText("");setDSource("manual");setCardCount(10);
     setStudyDeck(nd);setTab("study");setIdx(0);setFlipped(false);
   };
 
@@ -2798,6 +2879,15 @@ function Flashcards() {
             ))}
           </div>
         </Field>
+        {dSource!=="manual"&&(
+          <Field label="How many cards?">
+            <div style={{display:"flex",gap:8}}>
+              {[5,10,15,20].map(n=>(
+                <button key={n} type="button" onClick={()=>setCardCount(n)} style={{flex:1,padding:"8px 0",borderRadius:8,border:"1px solid "+(cardCount===n?T.lime+"66":T.border),background:cardCount===n?T.lime+"14":T.card2,color:cardCount===n?T.lime:T.text,fontWeight:cardCount===n?700:400,fontSize:13,cursor:"pointer",fontFamily:T.font,transition:"all 0.15s"}}>{n}</button>
+              ))}
+            </div>
+          </Field>
+        )}
         {dSource==="manual"&&(<>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
             <Field label="Question"><Input placeholder="Front of card..." value={cQ} onChange={e=>setCQ(e.target.value)} /></Field>
@@ -2816,11 +2906,15 @@ function Flashcards() {
           </Field>
         )}
         {dSource==="youtube"&&(
-          <Field label="YouTube link" hint={ytInfo?"Found: "+ytInfo:"Paste a link — Studlin detects the topic and generates cards."}>
-            <Input placeholder="https://youtube.com/watch?v=..." value={ytUrl} onChange={ev=>{setYtUrl(ev.target.value);var v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtFetching(true);setYtInfo("");authFetch("/api/search-videos",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(function(r){return r.json();}).then(function(d){if(d.title){setYtInfo(d.title+(d.author?" by "+d.author:""));setDName(d.title+" cards");}setYtFetching(false);}).catch(function(){setYtFetching(false);});}}} />
-            {ytFetching&&<div style={{fontSize:11,color:T.lime,marginTop:6}}>Detecting video title...</div>}
-            {ytInfo&&!ytFetching&&<div style={{fontSize:11,color:T.lime,fontWeight:600,marginTop:6}}>Found: {ytInfo}</div>}
+          <>
+          <Field label="YouTube link" hint="Paste a link — Studlin detects the title automatically.">
+            <Input placeholder="https://youtube.com/watch?v=..." value={ytUrl} onChange={ev=>{setYtUrl(ev.target.value);var v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtFetching(true);setYtInfo("");authFetch("/api/search-videos",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(function(r){return r.json();}).then(function(d){if(d.title){var t=d.title+(d.author?" by "+d.author:"");setYtInfo(t);setYtTopic(t);if(!dName)setDName(d.title+" cards");}setYtFetching(false);}).catch(function(){setYtFetching(false);});}}} />
+            {ytFetching&&<div style={{fontSize:11,color:T.lime,marginTop:6}}>Detecting video...</div>}
           </Field>
+          <Field label="Topic / subject" hint="Auto-filled from the video — edit or type manually if detection fails.">
+            <Input placeholder="e.g. AP Physics 1 — Newton's Laws" value={ytTopic} onChange={e=>setYtTopic(e.target.value)} />
+          </Field>
+          </>
         )}
         {dSource==="record"&&(
           <Field label="Record lecture" hint="Speak or play audio — AI generates flashcards from what it hears.">
@@ -6931,12 +7025,16 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     const bufMins=now.getHours()*60+now.getMinutes()+15;
     const earliestTodayMins=Math.max(prefStartMins,Math.ceil(bufMins/15)*15);
     const earliestTodayTime=minutesToTime(earliestTodayMins);
-    // If today's remaining preferred window can't fit even one session, direct AI to start tomorrow
     const perSession=Math.round(evDuration/(evSplitEnabled?evSplitCount:1));
     const splitCount=evSplitEnabled?evSplitCount:1;
-    const todayWindowMins=Math.max(0,prefEndMins-earliestTodayMins);
-    const firstAvailDate=todayWindowMins>=perSession?tk:(()=>{const d=new Date(now);d.setDate(d.getDate()+1);return dayKey(d);})();
-    const horizonEnd=(()=>{const d=new Date(now);d.setDate(d.getDate()+13);return dayKey(d);})();
+    // Respect the date the user clicked on — if evPrefillDate is today or future, use it as the anchor
+    const desiredStartDate=(evPrefillDate&&evPrefillDate>=tk)?evPrefillDate:tk;
+    const isDesiredToday=desiredStartDate===tk;
+    const windowStart=isDesiredToday?earliestTodayMins:prefStartMins;
+    const windowStartTime=isDesiredToday?earliestTodayTime:minutesToTime(prefStartMins);
+    const windowMins=Math.max(0,prefEndMins-windowStart);
+    const firstAvailDate=windowMins>=perSession?desiredStartDate:(()=>{const d=new Date(desiredStartDate+"T12:00:00");d.setDate(d.getDate()+1);return dayKey(d);})();
+    const horizonEnd=(()=>{const d=new Date(desiredStartDate+"T12:00:00");d.setDate(d.getDate()+13);return dayKey(d);})();
     const routineAhead=expandRoutineOccurrences(routines,tk,horizonEnd);
     // Free periods are preferred landing spots (see freeAhead below), not hard
     // blocks — excluding them here also resolves the prompt's prior internal
@@ -6949,14 +7047,14 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     // avoid conflicts and prefer free-period windows, but "strictly
     // forbidden" needs a real guarantee, not just advisory text.
     const findOpenSlot=(desiredDate,desiredTime,duration)=>findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration);
-    const prompt="You are a scheduling AI. The user's LIVE clock reads "+nowTime+" on "+tk+". Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+priorityLabel+(evDeadline?". Deadline: "+evDeadline+" "+(evDeadlineTime||"23:59"):"")+". Existing schedule, including recurring classes/activities that repeat weekly — treat every one of these as a hard block you may NEVER overlap: "+JSON.stringify(existing)+". Free/open windows (free periods or study halls) good for short sub-20-minute sessions specifically: "+JSON.stringify(freeAhead)+". The user's preferred daily study window is "+prefs.workStartTime+"–"+prefs.workEndTime+" — always fill that window first, chronologically from the start, before ever using time outside it. STRICT RULES (violations are forbidden): 1) NEVER place any session before "+earliestTodayTime+" on today ("+tk+") — those slots have already passed. 2) The earliest you may schedule anything today is "+earliestTodayTime+". 3) If today has no open window at or after "+earliestTodayTime+", start from "+firstAvailDate+" instead. 4) Prefer sessions within "+prefs.workStartTime+"-"+prefs.workEndTime+"; only expand outside that range (up to 08:00-22:00) if the preferred window is fully booked that day. 5) Higher priority = earlier slots. 6) Must be before deadline. 7) NEVER overlap anything in the existing schedule, including recurring blocks — this is non-negotiable. 8) If this session is 20 minutes or less, prefer placing it inside one of the free/open windows listed above. 9) Spread splits across days. Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
+    const prompt="You are a scheduling AI. The user's LIVE clock reads "+nowTime+" on "+tk+". Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+priorityLabel+(evDeadline?". Deadline: "+evDeadline+" "+(evDeadlineTime||"23:59"):"")+". Existing schedule, including recurring classes/activities that repeat weekly — treat every one of these as a hard block you may NEVER overlap: "+JSON.stringify(existing)+". Free/open windows (free periods or study halls) good for short sub-20-minute sessions specifically: "+JSON.stringify(freeAhead)+". The user's preferred daily study window is "+prefs.workStartTime+"–"+prefs.workEndTime+" — always fill that window first, chronologically from the start, before ever using time outside it. CRITICAL USER INTENT: The user explicitly selected "+desiredStartDate+" on the calendar. Start scheduling on "+desiredStartDate+" — do NOT place any session before this date. STRICT RULES (violations are forbidden): 1) NEVER schedule before "+desiredStartDate+". 2) The first available slot on "+desiredStartDate+" starts at "+windowStartTime+". 3) If "+desiredStartDate+" has no open window at or after "+windowStartTime+", start from "+firstAvailDate+" instead. 4) Prefer sessions within "+prefs.workStartTime+"-"+prefs.workEndTime+"; only expand outside that range (up to 08:00-22:00) if the preferred window is fully booked that day. 5) Higher priority = earlier slots within the allowed date range. 6) Must be before deadline. 7) NEVER overlap anything in the existing schedule, including recurring blocks — this is non-negotiable. 8) If this session is 20 minutes or less, prefer placing it inside one of the free/open windows listed above. 9) Spread splits across consecutive days starting from "+desiredStartDate+". Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
     // If the AI call fails or returns nothing usable, fall back to a fully
     // deterministic placement — evDate/evTime are blank in AI mode, so
     // saveManual() isn't usable here.
     const fallbackSchedule=()=>{
       const groupId=splitCount>1?"split-"+Date.now():null;
       const tasks=[];
-      let cursorDate=firstAvailDate,cursorTime=earliestTodayTime;
+      let cursorDate=firstAvailDate,cursorTime=windowStartTime;
       for(let i=0;i<splitCount;i++){
         const slot=findOpenSlot(cursorDate,cursorTime,perSession);
         tasks.push(buildTask(slot.date,slot.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})));
@@ -6973,10 +7071,11 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
       if(parsed.sessions&&parsed.sessions.length>0){
         const sanitized=parsed.sessions.map(s=>{
           let date=s.date,time=s.time;
-          // Client-side guardrail: if the AI still returned a past slot, push it to the next valid day
-          if(date===tk&&timeToMinutes(time)<earliestTodayMins){
-            const d=new Date(now);d.setDate(d.getDate()+1);
-            date=dayKey(d);time=earliestTodayTime;
+          // Client-side guardrail: if the AI returned a slot before the user's desired start date, push forward
+          if(date<desiredStartDate){date=firstAvailDate;time=windowStartTime;}
+          else if(date===tk&&timeToMinutes(time)<earliestTodayMins){
+            const d=new Date(desiredStartDate+"T12:00:00");d.setDate(d.getDate()+1);
+            date=dayKey(d);time=minutesToTime(prefStartMins);
           }
           // Deterministic conflict check — reject/reshift anything that
           // actually overlaps a real event or routine shield, rather than
@@ -9505,7 +9604,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
         </div>
 
         {/* Streak — medium green card matching design */}
-        <div onClick={()=>setActive("profile")} style={{background:"#5B8C2A",borderRadius:22,padding:22,cursor:"pointer",display:"flex",flexDirection:"column",position:"relative",overflow:"hidden"}}>
+        <div onClick={()=>setActive("profile")} style={{background:isLight?"#5B8C2A":"#78BC2A",borderRadius:22,padding:22,cursor:"pointer",display:"flex",flexDirection:"column",position:"relative",overflow:"hidden"}}>
           <div style={{position:"absolute",right:-20,top:-20,width:120,height:120,background:"radial-gradient(circle,rgba(174,206,94,0.15),transparent 70%)",pointerEvents:"none"}} />
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
             <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)",fontWeight:600}}>Day Streak</span>
@@ -9515,23 +9614,23 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
             </svg>
           </div>
           <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.cream,margin:"10px 0 2px",position:"relative"}}>{realStreak}<span style={{fontSize:20,color:"rgba(246,241,230,0.55)",marginLeft:6}}>days</span></div>
-          <div style={{fontSize:12,color:"rgba(246,241,230,0.65)",marginBottom:4}}>Today{wk.find(d=>d.today)?.on?" · active":" · keep going!"}</div>
-          <div style={{display:"flex",gap:5,marginTop:14}}>
-            {wk.map((d,i)=>{
-              const isToday=d.today, on=d.on;
-              return(
-                <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
-                  <div style={{width:"100%",height:28,borderRadius:7,background:isToday?"rgba(174,206,94,0.25)":on?"rgba(246,241,230,0.12)":"rgba(246,241,230,0.05)",color:on?"#FF8C38":"rgba(246,241,230,0.25)",opacity:d.future?0.4:1,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:isToday?`0 0 0 1.5px ${T.lime}`:"none"}}>
-                    {on||isToday
-                      ?<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
-                      :<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="4"/></svg>
-                    }
+            <div style={{fontSize:12,color:"rgba(246,241,230,0.65)",marginBottom:4}}>Today{wk.find(d=>d.today)?.on?" · active":" · keep going!"}</div>
+            <div style={{display:"flex",gap:5,marginTop:"auto"}}>
+              {wk.map((d,i)=>{
+                const isToday=d.today, on=d.on;
+                return(
+                  <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+                    <div style={{width:"100%",height:28,borderRadius:7,background:isToday?"rgba(174,206,94,0.25)":on?"rgba(246,241,230,0.12)":"rgba(246,241,230,0.05)",color:on?"#FF8C38":"rgba(246,241,230,0.25)",opacity:d.future?0.4:1,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:isToday?`0 0 0 1.5px ${T.lime}`:"none"}}>
+                      {on||isToday
+                        ?<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
+                        :<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="4"/></svg>
+                      }
+                    </div>
+                    <span style={{fontSize:9,fontFamily:T.mono,fontWeight:isToday?700:400,color:isToday?T.lime:"rgba(246,241,230,0.35)"}}>{d.lab}</span>
                   </div>
-                  <span style={{fontSize:9,fontFamily:T.mono,fontWeight:isToday?700:400,color:isToday?T.lime:"rgba(246,241,230,0.35)"}}>{d.lab}</span>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
         </div>
 
         {/* Focus & Rank */}
@@ -9542,7 +9641,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
           </div>
           <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.text,margin:"10px 0 2px"}}>{lvl.minutes.toLocaleString()}<span style={{fontSize:18,color:T.muted,marginLeft:6,fontFamily:T.font,fontWeight:400}}>min</span></div>
           <div style={{fontSize:12,color:T.muted,marginBottom:4}}>{lvl.nextTier?`${(lvl.nextTier.minMinutes-lvl.minutes).toLocaleString()} min to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
-          <div style={{height:6,background:T.card2,borderRadius:99,marginTop:16,overflow:"hidden"}}>
+          <div style={{height:6,background:T.card2,borderRadius:99,overflow:"hidden",marginTop:"auto"}}>
             <div style={{height:"100%",width:lvl.tierPct+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}}/>
           </div>
           <div style={{fontSize:11,color:T.muted,marginTop:8,display:"flex",alignItems:"center",gap:4}}>
@@ -10429,9 +10528,53 @@ function VerifyEmailScreen({user}){
   );
 }
 
+// ─── SHARED CHAT VIEW ─────────────────────────────────────────────────────────
+function SharedChatView({shareId}){
+  const [chat,setChat]=useState(null);
+  const [status,setStatus]=useState("loading");
+  useEffect(()=>{
+    fsdb().collection("shared_chats").doc(shareId).get()
+      .then(doc=>{if(doc.exists){setChat(doc.data());setStatus("ok");}else setStatus("notfound");})
+      .catch(()=>setStatus("error"));
+  },[shareId]);
+  const bg=T.bg||"#0D120F",card=T.card||"#19211C",text=T.text||"#E8EFE7",muted=T.muted||"#849389",lime=T.lime||"#AECE5E",font=T.font||"system-ui";
+  if(status==="loading")return(<div style={{minHeight:"100vh",background:bg,display:"grid",placeItems:"center"}}><div style={{width:14,height:14,borderRadius:"50%",border:`2px solid ${lime}`,borderTopColor:"transparent",animation:"studlinSpin 0.7s linear infinite"}}/></div>);
+  if(status!=="ok")return(<div style={{minHeight:"100vh",background:bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12,fontFamily:font}}><div style={{fontSize:18,fontWeight:700,color:text}}>{status==="notfound"?"This chat doesn't exist.":"Failed to load chat."}</div><a href="/app" style={{color:lime,fontSize:14,textDecoration:"none"}}>Go to Studlin</a></div>);
+  return(
+    <div style={{minHeight:"100vh",background:bg,fontFamily:font,color:text}}>
+      <div style={{borderBottom:`1px solid rgba(255,255,255,0.07)`,padding:"14px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",background:bg,position:"sticky",top:0,zIndex:10}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div style={{width:28,height:28,background:lime,borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:"#0E1F18",fontSize:14}}>S</div>
+          <span style={{fontSize:15,fontWeight:700,color:text,letterSpacing:"-0.02em"}}>Studlin</span>
+        </div>
+        <a href="/app" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 16px",borderRadius:99,background:lime,color:"#0E1F18",fontSize:13,fontWeight:700,textDecoration:"none"}}>Try Studlin AI</a>
+      </div>
+      <div style={{maxWidth:720,margin:"0 auto",padding:"32px 24px 80px"}}>
+        <div style={{fontSize:13,color:muted,marginBottom:28,fontWeight:500}}>Shared conversation</div>
+        {(chat.msgs||[]).map((m,i)=>(
+          <div key={i} style={{display:"flex",gap:12,alignItems:"flex-start",marginBottom:24,flexDirection:m.r==="user"?"row-reverse":"row"}}>
+            {m.r==="ai"
+              ?<div style={{width:28,height:28,borderRadius:7,background:lime,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:"#0E1F18",fontSize:13,flexShrink:0,marginTop:2}}>S</div>
+              :<div style={{width:28,height:28,borderRadius:"50%",background:lime+"22",border:`1px solid ${lime}44`,display:"flex",alignItems:"center",justifyContent:"center",color:lime,flexShrink:0,marginTop:2}}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+            }
+            <div style={{maxWidth:"80%",fontSize:14,lineHeight:1.75,color:text,background:m.r==="user"?card:"transparent",padding:m.r==="user"?"12px 16px":0,borderRadius:m.r==="user"?12:0,whiteSpace:"pre-wrap"}}>{m.t}</div>
+          </div>
+        ))}
+        <div style={{marginTop:40,padding:"28px 24px",borderRadius:16,background:card,border:`1px solid rgba(255,255,255,0.07)`,textAlign:"center"}}>
+          <div style={{fontSize:17,fontWeight:700,color:text,marginBottom:8}}>Study smarter with Studlin AI</div>
+          <div style={{fontSize:13,color:muted,marginBottom:20,lineHeight:1.6}}>Your AI study assistant, flashcards, notes, and calendar — all in one place.</div>
+          <a href="/app" style={{display:"inline-flex",padding:"11px 28px",borderRadius:99,background:lime,color:"#0E1F18",fontSize:14,fontWeight:700,textDecoration:"none"}}>Get started free</a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── AUTH GATE ────────────────────────────────────────────────────────────────
 const isPasswordAccount=(u)=>!!(u.providerData&&u.providerData.some(p=>p.providerId==="password"));
 function AuthGate(){
+  const shareId=new URLSearchParams(window.location.search).get("share");
+  if(shareId)return <SharedChatView shareId={shareId} />;
   const [user,setUser]=useState(undefined);
   useEffect(()=>{return firebase.auth().onAuthStateChanged(u=>{
     setUser(u||null);
@@ -10470,7 +10613,7 @@ function App() {
   const [active,setActive]=useState(()=>{
     const pending=lsGet("pendingTour",null);
     if(pending){try{localStorage.removeItem("studlin-pendingTour");}catch(e){}return pending;}
-    return "dashboard";
+    return localStorage.getItem("studlin-active-tab")||"dashboard";
   });
   const [theme,setThemeState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-theme"))||"light");
   const [accent,setAccentState]=useState(()=>{
@@ -10768,6 +10911,7 @@ function App() {
     return list;
   })();
   useEffect(()=>{ touchStreak(); },[]);
+  useEffect(()=>{ try{localStorage.setItem("studlin-active-tab",active);}catch(e){} },[active]);
   useEffect(()=>{
     const lastDay=lsGet("lastLoginDay","");
     const today=dayKey();
@@ -10787,32 +10931,19 @@ function App() {
   const navSections=[
     {label:"Workspace",items:[
       {id:"dashboard",label:"Dashboard"},
-      {id:"calendar",label:"Studlin Calendar"},
+      {id:"calendar",label:"Calendar"},
       {id:"aichat",label:"Studlin AI"},
-      // "writestudio" (Writing Suite) intentionally hidden from the active
-      // nav — archived for V2, not deleted. Page, route mapping, and label
-      // all still exist below so nothing breaks for anything that still
-      // links into it (e.g. Dashboard's Essay Writer / Citation quick tools).
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
       {id:"friends",label:"Studlin Network",badge:String(unreadCount||"")},
-      // "lectures" (Lectures) intentionally hidden from the active nav —
-      // same archive treatment as writestudio/solve. Page, route mapping,
-      // and label still exist below so nothing breaks for anything that
-      // still references it. Feedback moved to bottomItems below. (No
-      // "achievements" entry — that page/feature doesn't exist in this
-      // tree; see the pending discussion with Vene before merging Phase
-      // 4+6A+6B.)
-    ]},
-    {label:"Others",items:[
-      {id:"settings",label:"Settings"},
       {id:"feedback",label:"Feedback"},
+      {id:"settings",label:"Settings"},
       {id:"profile",label:"Profile"},
     ]},
   ];
   const bottomItems=[];
   const pages={aichat:AiChat,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile,lectures:Lectures,feedback:FeedbackPage};
-  const labelOf={dashboard:"Dashboard",aichat:"Studlin AI",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Studlin Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve",lectures:"Lectures",feedback:"Feedback"};
+  const labelOf={dashboard:"Dashboard",aichat:"Studlin AI",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve",lectures:"Lectures",feedback:"Feedback"};
   const sectionOf={dashboard:"Workspace",aichat:"Workspace",writestudio:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",friends:"Workspace",lectures:"Workspace",feedback:"Workspace",solve:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
