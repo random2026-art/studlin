@@ -433,7 +433,7 @@ function PlanCards({ billing, onSelect }) {
           {plan.tag && (
             <div style={{position:"absolute",top:-11,left:18,background:T.lime,color:T.ink,fontFamily:T.mono,fontSize:10,fontWeight:700,letterSpacing:"0.14em",padding:"4px 10px",borderRadius:99}}>{plan.tag}</div>
           )}
-          <div style={{fontSize:18,fontWeight:700,color:plan.featured?T.cream:T.white,letterSpacing:"-0.02em",marginBottom:4}}>{plan.name}</div>
+          <div style={{fontSize:18,fontWeight:700,color:plan.featured?T.cream:T.text,letterSpacing:"-0.02em",marginBottom:4}}>{plan.name}</div>
           <div style={{display:"flex",alignItems:"baseline",gap:5,margin:"8px 0 6px"}}>
             <span style={{fontFamily:T.hand,fontSize:50,fontWeight:700,lineHeight:0.9,color:plan.featured?T.lime:T.text,letterSpacing:"-0.02em"}}>{plan.price}</span>
             <span style={{fontSize:13,color:T.muted}}>{plan.per}</span>
@@ -9487,7 +9487,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
       ) : (
       <div style={{display:"grid",gridTemplateColumns:"1.5fr 1fr 1fr",gap:16}}>
         {/* Greeting */}
-        <div style={{background:`linear-gradient(135deg, ${T.forest} 0%, #1B4536 100%)`,color:T.cream,borderRadius:22,padding:"26px 30px",position:"relative",overflow:"hidden",minHeight:200}}>
+        <div style={{background:`linear-gradient(135deg, ${T.forest} 0%, #1B4536 100%)`,color:T.cream,borderRadius:22,padding:"26px 30px",position:"relative",overflow:"hidden"}}>
           <div style={{position:"absolute",right:-40,top:-40,width:240,height:240,background:"radial-gradient(circle,rgba(200,255,90,0.18),transparent 70%)",pointerEvents:"none"}} />
           <div style={{position:"relative"}}>
             <div style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)",marginBottom:6}}>{todayLabel()} · Week {weekNo()}</div>
@@ -9516,7 +9516,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
           </div>
           <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.cream,margin:"10px 0 2px",position:"relative"}}>{realStreak}<span style={{fontSize:20,color:"rgba(246,241,230,0.55)",marginLeft:6}}>days</span></div>
           <div style={{fontSize:12,color:"rgba(246,241,230,0.65)",marginBottom:4}}>Today{wk.find(d=>d.today)?.on?" · active":" · keep going!"}</div>
-          <div style={{display:"flex",gap:5,marginTop:"auto",paddingTop:10}}>
+          <div style={{display:"flex",gap:5,marginTop:14}}>
             {wk.map((d,i)=>{
               const isToday=d.today, on=d.on;
               return(
@@ -9542,7 +9542,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
           </div>
           <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.text,margin:"10px 0 2px"}}>{lvl.minutes.toLocaleString()}<span style={{fontSize:18,color:T.muted,marginLeft:6,fontFamily:T.font,fontWeight:400}}>min</span></div>
           <div style={{fontSize:12,color:T.muted,marginBottom:4}}>{lvl.nextTier?`${(lvl.nextTier.minMinutes-lvl.minutes).toLocaleString()} min to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
-          <div style={{height:6,background:T.card2,borderRadius:99,marginTop:"auto",overflow:"hidden"}}>
+          <div style={{height:6,background:T.card2,borderRadius:99,marginTop:16,overflow:"hidden"}}>
             <div style={{height:"100%",width:lvl.tierPct+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}}/>
           </div>
           <div style={{fontSize:11,color:T.muted,marginTop:8,display:"flex",alignItems:"center",gap:4}}>
@@ -9697,12 +9697,12 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
                   <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.12em",padding:"4px 10px",borderRadius:99,background:T.card2,color:T.muted,fontWeight:600}}>{focusStr} THIS WEEK · TRACKED LIVE</span>
                 </div>
               </div>
-              <div style={{display:"flex",alignItems:"flex-end",gap:8,height:110,marginBottom:16}}>
+              <div style={{display:"flex",alignItems:"flex-end",gap:8,height:76,marginBottom:14}}>
                 {barData.map((d,i)=>{
                   const h=d.mins>0?Math.max(6,Math.round(d.mins/maxMins*100)):0;
                   return(
-                    <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
-                      <div style={{width:"100%",display:"flex",flexDirection:"column",justifyContent:"flex-end",height:100}}>
+                    <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:5}}>
+                      <div style={{width:"100%",display:"flex",flexDirection:"column",justifyContent:"flex-end",height:64}}>
                         {d.mins>0
                           ?<div style={{width:"100%",height:h,background:d.isToday?"#14342A":"#5B8C2A",borderRadius:"5px 5px 0 0",transition:"height 0.4s ease"}} />
                           :<div style={{width:"100%",height:4,background:T.card2,borderRadius:2}} />
@@ -11087,8 +11087,8 @@ function App() {
         <div style={{position:"fixed",inset:0,zIndex:1000,background:"rgba(8,12,10,0.82)",backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px",overflowY:"auto"}}>
           <div style={{width:"100%",maxWidth:900,background:T.surface,border:`1px solid ${T.border}`,borderRadius:22,padding:"40px 40px 32px",boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease",margin:"24px 0"}}>
             <div style={{textAlign:"center",marginBottom:24}}>
-              <div style={{fontSize:24,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:6}}>Unlock your full potential</div>
-              <div style={{fontSize:13.5,color:T.muted}}>Students on Pro study 2.4× more and report a full letter-grade jump. Try it free for 7 days.</div>
+              <div style={{fontSize:24,fontWeight:700,color:T.cream,letterSpacing:"-0.02em",marginBottom:6}}>Unlock your full potential</div>
+              <div style={{fontSize:13.5,color:"rgba(246,241,230,0.65)"}}>Students on Pro study 2.4× more and report a full letter-grade jump. Try it free for 7 days.</div>
             </div>
             <div style={{display:"flex",justifyContent:"center",marginBottom:24}}>
               <div style={{display:"inline-flex",background:T.card2,border:`1px solid ${T.border}`,borderRadius:99,padding:3,gap:2}}>
