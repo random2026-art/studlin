@@ -433,7 +433,7 @@ function PlanCards({ billing, onSelect }) {
           {plan.tag && (
             <div style={{position:"absolute",top:-11,left:18,background:T.lime,color:T.ink,fontFamily:T.mono,fontSize:10,fontWeight:700,letterSpacing:"0.14em",padding:"4px 10px",borderRadius:99}}>{plan.tag}</div>
           )}
-          <div style={{fontSize:18,fontWeight:700,color:plan.featured?T.cream:T.white,letterSpacing:"-0.02em",marginBottom:4}}>{plan.name}</div>
+          <div style={{fontSize:18,fontWeight:700,color:plan.featured?T.cream:T.text,letterSpacing:"-0.02em",marginBottom:4}}>{plan.name}</div>
           <div style={{display:"flex",alignItems:"baseline",gap:5,margin:"8px 0 6px"}}>
             <span style={{fontFamily:T.hand,fontSize:50,fontWeight:700,lineHeight:0.9,color:plan.featured?T.lime:T.text,letterSpacing:"-0.02em"}}>{plan.price}</span>
             <span style={{fontSize:13,color:T.muted}}>{plan.per}</span>
@@ -11075,8 +11075,8 @@ function App() {
         <div style={{position:"fixed",inset:0,zIndex:1000,background:"rgba(8,12,10,0.82)",backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px",overflowY:"auto"}}>
           <div style={{width:"100%",maxWidth:900,background:T.surface,border:`1px solid ${T.border}`,borderRadius:22,padding:"40px 40px 32px",boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease",margin:"24px 0"}}>
             <div style={{textAlign:"center",marginBottom:24}}>
-              <div style={{fontSize:24,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:6}}>Unlock your full potential</div>
-              <div style={{fontSize:13.5,color:T.muted}}>Students on Pro study 2.4× more and report a full letter-grade jump. Try it free for 7 days.</div>
+              <div style={{fontSize:24,fontWeight:700,color:T.cream,letterSpacing:"-0.02em",marginBottom:6}}>Unlock your full potential</div>
+              <div style={{fontSize:13.5,color:"rgba(246,241,230,0.65)"}}>Students on Pro study 2.4× more and report a full letter-grade jump. Try it free for 7 days.</div>
             </div>
             <div style={{display:"flex",justifyContent:"center",marginBottom:24}}>
               <div style={{display:"inline-flex",background:T.card2,border:`1px solid ${T.border}`,borderRadius:99,padding:3,gap:2}}>
