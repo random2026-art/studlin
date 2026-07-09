@@ -234,7 +234,7 @@ async function handlePayment(){
       const{paymentMethod,error:pmError}=await stripe.createPaymentMethod({type:'card',card:card,billing_details:{name:fullName,email:email,address:{country:country}}});
       if(pmError)throw pmError;
 
-      const res=await authFetch('/api/checkout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan:plan+'_'+billing,country,paymentMethodId:paymentMethod.id})});
+      const res=await authFetch('/api/create-intent',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'subscription',plan:plan+'_'+billing,country,paymentMethodId:paymentMethod.id})});
       const data=await res.json();
       if(data.error)throw new Error(data.error);
     }

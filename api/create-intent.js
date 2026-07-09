@@ -8,6 +8,16 @@ const CREDIT_PACKS = {
   3000: 5999,
 };
 
+// Subscription price IDs — merged in from api/checkout.js so subscription
+// creation and one-off payment intents share one function (Vercel Hobby's
+// 12-function cap; see vercel.json).
+const PRICES = {
+  pro_monthly: 'price_1TkZlWFJjTMWMaWhqfDLfirV',
+  pro_annual: 'price_1Tkbr1FJjTMWMaWhC4TyEj4F',
+  max_monthly: 'price_1TkZmXFJjTMWMaWhX2tnwQ89',
+  max_annual: 'price_1Tkbr1FJjTMWMaWhzdBVVWO6',
+};
+
 module.exports = async (req, res) => {
   setCors(req, res);
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -17,7 +27,7 @@ module.exports = async (req, res) => {
   if (!user) return res.status(401).json({ error: 'Sign in required.' });
 
   try {
-    const { mode, credits, customAmount } = req.body;
+    const { mode, credits, customAmount, plan, country, paymentMethodId } = req.body;
 
     if (mode === 'setup') {
       const setupIntent = await stripe.setupIntents.create({
@@ -55,7 +65,32 @@ module.exports = async (req, res) => {
       return res.status(200).json({ clientSecret: paymentIntent.client_secret });
     }
 
-    return res.status(400).json({ error: 'Invalid mode. Use "setup" or "payment".' });
+    if (mode === 'subscription') {
+      const priceId = PRICES[plan];
+      if (!priceId) return res.status(400).json({ error: 'Invalid plan.' });
+      if (!paymentMethodId) return res.status(400).json({ error: 'Payment method is required.' });
+
+      const customer = await stripe.customers.create({
+        email: user.email,
+        name: user.name || undefined,
+        address: { country: country || undefined },
+        payment_method: paymentMethodId,
+        invoice_settings: { default_payment_method: paymentMethodId },
+        metadata: { plan, firebase_uid: user.uid },
+      });
+
+      const subscription = await stripe.subscriptions.create({
+        customer: customer.id,
+        items: [{ price: priceId }],
+        trial_period_days: 7,
+        default_payment_method: paymentMethodId,
+        metadata: { firebase_uid: user.uid },
+      });
+
+      return res.status(200).json({ subscriptionId: subscription.id, status: subscription.status });
+    }
+
+    return res.status(400).json({ error: 'Invalid mode. Use "setup", "payment", or "subscription".' });
   } catch (err) {
     console.error('Payment intent error:', err);
     res.status(500).json({ error: 'Payment processing failed. Please try again.' });

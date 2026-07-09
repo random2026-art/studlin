@@ -228,7 +228,7 @@ function tierProgressFor(minutes){let idx=0;for(let i=0;i<PROF_TIERS.length;i++)
 //   console.firebase.google.com → studlin-cb78b → Project Settings →
 //   Cloud Messaging → Web configuration → Web Push certificates → Generate key pair
 // Also requires FIREBASE_SERVICE_ACCOUNT set in Vercel's env vars so
-// api/send-push.js can actually call admin.messaging().send() — see api/_lib/firebase-admin.js.
+// api/notify.js can actually call admin.messaging().send() — see api/_lib/firebase-admin.js.
 const FCM_VAPID_KEY = "BAgeXH3hA5APFcYuopRiB_7dBey6w1cYHStHBG-b8jnYA3941-4D1pQKILfsfNCjI3Ot2S5BTAwvEMgohR9ubmA";
 const FCM_CONFIGURED = FCM_VAPID_KEY !== "REPLACE_WITH_VAPID_KEY_FROM_FIREBASE_CONSOLE";
 
@@ -3407,11 +3407,12 @@ function Notes(){
     setSendNoteStatus("sending");
     setSendNoteError("");
     try{
-      console.log("[sendNote] Calling /api/send-note for",t);
-      const res=await authFetch("/api/send-note",{
+      console.log("[sendNote] Calling /api/notify for",t);
+      const res=await authFetch("/api/notify",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
+          type:"note",
           recipientEmail:t,
           noteTitle:notes[sel].title,
           noteBody:notes[sel].body,
@@ -4982,7 +4983,7 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
     // Server-side push — checks the recipient's own preference before
     // sending, so this is a request to try, not a guarantee it fires.
     const preview=fields.text||(fields.kind==="calendar"?"Shared free time found":fields.kind==="note"?"Note shared":fields.kind==="deck"?"Deck shared":"New message");
-    authFetch("/api/send-push",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({roomId,preview})}).catch(()=>{});
+    authFetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"push",roomId,preview})}).catch(()=>{});
   };
 
   const sendText=()=>{if(!input.trim())return;sendMessage({kind:"text",text:input.trim()});setInput("");};
@@ -8570,7 +8571,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   });
   const myUid=firebase.auth().currentUser?.uid||null;
   // Mirrors the local toggle into Firestore so the server-side push sender
-  // (api/send-push.js) can gate on it — local state stays the source of
+  // (api/notify.js) can gate on it — local state stays the source of
   // truth for the UI (instant, no round-trip), this write is fire-and-forget.
   const syncPushPref=(enabled)=>{
     if(!myUid)return;
@@ -10028,7 +10029,7 @@ function FeedbackPage() {
     try{
       const tok=firebase.auth().currentUser?await firebase.auth().currentUser.getIdToken():null;
       if(tok){
-        await fetch("/api/send-note",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+tok},body:JSON.stringify({subject:"App Feedback: "+category,body:msg.trim()})}).catch(()=>{});
+        await fetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+tok},body:JSON.stringify({type:"note",subject:"App Feedback: "+category,body:msg.trim()})}).catch(()=>{});
       }
     }catch(e){}
     setSending(false);
@@ -10310,10 +10311,10 @@ function InitWizard({onComplete}){
     }
 
     // Fire welcome email — best-effort, non-blocking
-    authFetch("/api/send-welcome", {
+    authFetch("/api/notify", {
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({name:updatedProf.name||"", email:updatedProf.email||""})
+      body:JSON.stringify({type:"welcome", name:updatedProf.name||"", email:updatedProf.email||""})
     }).catch(()=>{});
     onComplete();
   };

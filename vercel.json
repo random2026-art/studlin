@@ -10,19 +10,15 @@
     { "source": "/privacy", "destination": "/privacy.html" }
   ],
   "functions": {
-    "api/checkout.js": { "memory": 256, "maxDuration": 10 },
     "api/create-intent.js": { "memory": 256, "maxDuration": 10 },
     "api/search-videos.js": { "memory": 128, "maxDuration": 10 },
     "api/chat.js": { "memory": 256, "maxDuration": 30 },
     "api/me.js": { "memory": 256, "maxDuration": 10 },
     "api/stripe-webhook.js": { "memory": 256, "maxDuration": 15 },
-    "api/send-welcome.js": { "memory": 256, "maxDuration": 10 },
-    "api/send-note.js": { "memory": 256, "maxDuration": 10 },
-    "api/send-push.js": { "memory": 256, "maxDuration": 10 },
+    "api/notify.js": { "memory": 256, "maxDuration": 10 },
     "api/send-verification.js": { "memory": 256, "maxDuration": 10 },
     "api/cal-proxy.js": { "memory": 256, "maxDuration": 10 },
     "api/export-users.js": { "memory": 256, "maxDuration": 30 },
-    "api/share-chat.js": { "memory": 256, "maxDuration": 10 },
     "api/get-shared-chat.js": { "memory": 128, "maxDuration": 10 }
   },
   "headers": [
