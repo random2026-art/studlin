@@ -1796,7 +1796,7 @@ function AiChat() {
   const deleteChat=(id,e)=>{e.stopPropagation();const updated=chatHistory.filter(c=>c.id!==id);lsSet("ai-chats",updated);setChatHistory(updated);if(id===chatId)newChat();};
   const relTime=(ts)=>{const d=Date.now()-ts,m=Math.floor(d/60000);if(m<1)return"Just now";if(m<60)return m+"m ago";const h=Math.floor(m/60);if(h<24)return h+"h ago";const dy=Math.floor(h/24);if(dy===1)return"Yesterday";if(dy<7)return dy+"d ago";return new Date(ts).toLocaleDateString("en-US",{month:"short",day:"numeric"});};
 
-  const chatBg=T.mode==="dark"?"#0E0F14":T.bg;
+  const chatBg=T.bg;
   const chatPanel=T.mode==="dark"?"#0B0C10":T.surface;
   const historyPanel=(
     <div style={{width:220,flexShrink:0,borderRight:`1px solid ${T.mode==="dark"?"rgba(255,255,255,0.05)":T.border}`,display:"flex",flexDirection:"column",background:chatPanel,overflow:"hidden"}}>
@@ -10917,32 +10917,19 @@ function App() {
   const navSections=[
     {label:"Workspace",items:[
       {id:"dashboard",label:"Dashboard"},
-      {id:"calendar",label:"Studlin Calendar"},
+      {id:"calendar",label:"Calendar"},
       {id:"aichat",label:"Studlin AI"},
-      // "writestudio" (Writing Suite) intentionally hidden from the active
-      // nav — archived for V2, not deleted. Page, route mapping, and label
-      // all still exist below so nothing breaks for anything that still
-      // links into it (e.g. Dashboard's Essay Writer / Citation quick tools).
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
       {id:"friends",label:"Studlin Network",badge:String(unreadCount||"")},
-      // "lectures" (Lectures) intentionally hidden from the active nav —
-      // same archive treatment as writestudio/solve. Page, route mapping,
-      // and label still exist below so nothing breaks for anything that
-      // still references it. Feedback moved to bottomItems below. (No
-      // "achievements" entry — that page/feature doesn't exist in this
-      // tree; see the pending discussion with Vene before merging Phase
-      // 4+6A+6B.)
-    ]},
-    {label:"Others",items:[
-      {id:"settings",label:"Settings"},
       {id:"feedback",label:"Feedback"},
+      {id:"settings",label:"Settings"},
       {id:"profile",label:"Profile"},
     ]},
   ];
   const bottomItems=[];
   const pages={aichat:AiChat,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile,lectures:Lectures,feedback:FeedbackPage};
-  const labelOf={dashboard:"Dashboard",aichat:"Studlin AI",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Studlin Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve",lectures:"Lectures",feedback:"Feedback"};
+  const labelOf={dashboard:"Dashboard",aichat:"Studlin AI",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve",lectures:"Lectures",feedback:"Feedback"};
   const sectionOf={dashboard:"Workspace",aichat:"Workspace",writestudio:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",friends:"Workspace",lectures:"Workspace",feedback:"Workspace",solve:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
