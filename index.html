@@ -427,6 +427,19 @@ body::after{
 }
 .streakbig{font-family:var(--display);font-weight:700;font-size:88px;line-height:0.82;color:var(--ink);letter-spacing:-0.04em;}
 
+/* generic looping "step reveal" — used across bento mockups so each one
+   plays out like a tiny movie instead of sitting there as a flat screenshot.
+   Same 6s duration on every step within a card keeps them in sync; the
+   staggered arrival % is what makes it read as a sequence. */
+@media (prefers-reduced-motion: no-preference){
+  .seq-1{animation:seqStep1 6s ease-in-out infinite;}
+  .seq-2{animation:seqStep2 6s ease-in-out infinite;}
+  .seq-3{animation:seqStep3 6s ease-in-out infinite;}
+}
+@keyframes seqStep1{0%,3%{opacity:0;transform:translateY(10px);}10%,88%{opacity:1;transform:translateY(0);}96%,100%{opacity:0;transform:translateY(-4px);}}
+@keyframes seqStep2{0%,26%{opacity:0;transform:translateY(10px);}33%,88%{opacity:1;transform:translateY(0);}96%,100%{opacity:0;transform:translateY(-4px);}}
+@keyframes seqStep3{0%,50%{opacity:0;transform:translateY(10px);}57%,88%{opacity:1;transform:translateY(0);}96%,100%{opacity:0;transform:translateY(-4px);}}
+
 /* leaderboard rows */
 .lbrow{display:flex;align-items:center;gap:13px;padding:11px 14px;border-radius:13px;margin-bottom:8px;}
 .lbrow .rk{font-family:var(--display);font-weight:700;font-size:22px;width:22px;text-align:center;}
@@ -1223,17 +1236,21 @@ body::after{
         <div style="display:grid;grid-template-columns:1.05fr 1fr;gap:48px;align-items:center;">
           <div>
             <div class="knum">01 · Studlin Network</div>
-            <h3 style="font-size:40px;line-height:1.05;">Your group project, actually organized.</h3>
-            <p>Add friends or classmates, drop them in a group, and Studlin finds the time everyone's actually free. Pick it and it's already on every calendar. Share a note or a deck with one tap.</p>
+            <h3 style="font-size:40px;line-height:1.05;">No more "does 4pm work?" texts.</h3>
+            <p>Add your group. Studlin finds the one slot everyone's free and adds it to every calendar. Share notes or a deck with one tap.</p>
             <a href="/app" class="btn btn-lime magnetic">Start a group <span class="ar">→</span></a>
           </div>
-          <div style="display:flex;flex-direction:column;gap:12px;">
-            <div style="background:var(--bg-deep);border:1px solid var(--line);border-radius:16px;padding:18px;">
-              <div class="mono" style="font-size:10px;color:var(--cream-faint);letter-spacing:0.1em;margin-bottom:10px;">HISTORY PROJECT · 5 MEMBERS</div>
-              <div style="font-size:13px;color:var(--cream-dim);margin-bottom:10px;">Everyone's free <strong style="color:var(--cream);">Thu 4:00pm</strong></div>
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <div class="seq-1" style="background:#fff;border-radius:16px;padding:14px 16px;opacity:0.7;">
+              <div class="mono" style="font-size:9.5px;color:#aaa;letter-spacing:0.1em;margin-bottom:8px;">GROUP CHAT · BEFORE</div>
+              <div style="font-size:12px;color:#888;line-height:1.6;">"does thu work" · "no i have practice" · "sat?" · "cant, family thing" · "so... when"</div>
+            </div>
+            <div class="seq-2" style="background:#163A2C;border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:18px;">
+              <div class="mono" style="font-size:10px;color:rgba(245,242,234,0.55);letter-spacing:0.1em;margin-bottom:10px;">HISTORY PROJECT · 5 MEMBERS · AFTER</div>
+              <div style="font-size:13px;color:#F5F2EA;margin-bottom:10px;">Everyone's free <strong style="color:var(--spark);">Thu 4:00pm</strong></div>
               <span class="mono" style="font-size:10px;background:var(--spark);color:var(--ink);padding:5px 10px;border-radius:99px;font-weight:700;">Added to 5 calendars ✓</span>
             </div>
-            <div style="background:#fff;border-radius:16px;padding:16px 18px;">
+            <div class="seq-3" style="background:#fff;border-radius:16px;padding:16px 18px;">
               <div class="mono" style="font-size:10px;color:#999;letter-spacing:0.1em;margin-bottom:6px;">SHARED NOTE</div>
               <div style="font-size:13px;color:var(--ink);font-weight:600;">Chapter 7 Study Guide</div>
               <div style="font-size:11.5px;color:#888;margin-top:4px;">Shared with Maya, Jordan +3</div>
@@ -1245,14 +1262,15 @@ body::after{
       <!-- notes -->
       <div class="card col-5 reveal" data-spot>
         <div class="knum">02 · Notes</div>
-        <h3>Take notes. Flag what's confusing.</h3>
-        <p>Write notes for any class, then flag a line or ask the tutor right there. No tab switching, no losing your place.</p>
+        <h3>Get unstuck without losing your place.</h3>
+        <p>Flag a confusing line or ask the tutor right there. Get an answer in seconds, then keep writing.</p>
         <div class="canvas">
           <div class="mini">
             <div style="font-size:13px;line-height:1.6;color:var(--ink);">Mitochondria is the <span class="hl" style="background:rgba(233,185,140,0.3);border-bottom:2px solid var(--peach);">powerhouse of the cell</span>, converting glucose into ATP...</div>
-            <div class="chiprow">
+            <div class="chiprow seq-1">
               <span class="ck" style="background:var(--spark);color:var(--ink);">🚩 Flagged for tutor</span>
             </div>
+            <div class="seq-2" style="background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:9px 12px;margin-top:8px;font-size:11.5px;line-height:1.5;color:var(--ink);">Powerhouse means it makes the cell's energy (ATP). Think of it like the cell's battery factory.</div>
           </div>
         </div>
       </div>
@@ -1261,7 +1279,7 @@ body::after{
       <div class="card col-7 reveal d1" data-spot>
         <div class="knum">03 · Flashcards</div>
         <h3>Make a deck. Link it to your test. Done.</h3>
-        <p>Build cards from a PDF, your notes, or by hand. Attach a deck to an exam and Studlin schedules the study sessions for you, ending right before test day.</p>
+        <p>Build cards from a PDF, notes, or by hand. Link a deck to an exam and Studlin schedules your study sessions for you.</p>
         <div class="canvas deckwrap deckgen" aria-hidden="true">
           <div class="dg-doc"><i class="l1"></i><i class="l2"></i><i class="l3"></i><span class="mono">bio-notes.pdf</span></div>
           <div class="dg-stream"><i></i><i></i><i></i></div>
@@ -1270,13 +1288,16 @@ body::after{
           <div class="dg-card c3">Mitosis vs meiosis?</div>
           <div class="dg-progress"><i></i></div>
         </div>
+        <div class="seq-3" style="margin-top:10px;animation-duration:6.5s;">
+          <span class="mono" style="font-size:10px;background:var(--spark);color:var(--ink);padding:5px 10px;border-radius:99px;font-weight:700;">🔗 Linked to Bio Midterm · 3 sessions scheduled</span>
+        </div>
       </div>
     </div>
   </div>
 
   <div class="wrap" style="margin:56px 0 28px;text-align:center;">
     <span class="sec-eyebrow">// Why this matters</span>
-    <p class="lead" style="max-width:620px;margin:10px auto 0;">Up to 95% of students procrastinate, and 65% never learned real time management. One missed day turns into a scramble, and the whole plan falls apart. That's what Studlin's calendar is built to catch.</p>
+    <p class="lead" style="max-width:620px;margin:10px auto 0;">Up to 95% of students procrastinate. 65% never learned real time management. One missed day, and the whole plan falls apart. That's what Studlin's calendar catches.</p>
   </div>
 
   <div class="wrap">
@@ -1284,15 +1305,15 @@ body::after{
       <!-- brain dump -->
       <div class="card col-5 reveal" data-spot>
         <div class="knum">04 · Brain Dump</div>
-        <h3>Dump everything. Studlin sorts it out.</h3>
-        <p>Type or talk through everything on your plate. Studlin turns it into calendar blocks or a quick checklist, whichever fits.</p>
+        <h3>Everything in your head. Not anymore.</h3>
+        <p>Type or talk through everything on your plate. Studlin sorts it into calendar blocks or a checklist, whichever fits.</p>
         <div class="canvas">
-          <div style="background:var(--bg-deep);border-radius:13px;padding:14px 16px;font-family:var(--mono);font-size:11.5px;color:var(--cream-dim);line-height:1.6;">
+          <div style="background:#163A2C;border-radius:13px;padding:14px 16px;font-family:var(--mono);font-size:11.5px;color:rgba(245,242,234,0.75);line-height:1.6;">
             chem lab due fri, call mom, finish bio deck, gym at 6, essay outline...
           </div>
           <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
-            <span class="mono" style="font-size:10px;background:var(--spark);color:var(--ink);padding:5px 10px;border-radius:99px;font-weight:700;">→ 3 calendar blocks</span>
-            <span class="mono" style="font-size:10px;background:rgba(22,36,28,0.06);color:var(--cream-dim);padding:5px 10px;border-radius:99px;border:1px solid var(--line);">→ 2 checklist items</span>
+            <span class="seq-1 mono" style="font-size:10px;background:var(--spark);color:var(--ink);padding:5px 10px;border-radius:99px;font-weight:700;">→ 3 calendar blocks</span>
+            <span class="seq-2 mono" style="font-size:10px;background:rgba(22,36,28,0.06);color:var(--cream-dim);padding:5px 10px;border-radius:99px;border:1px solid var(--line);">→ 2 checklist items</span>
           </div>
         </div>
       </div>
@@ -1301,12 +1322,12 @@ body::after{
       <div class="card col-7 reveal d1 lime" data-spot>
         <div class="knum">05 · Smart Reschedule</div>
         <h3>"I have a chem test Friday." Done.</h3>
-        <p>Describe what happened in plain English. Studlin re-plans your week around it, no stress, and still hits the deadline.</p>
+        <p>Describe what happened in plain English. Studlin replans your week around it and still hits every deadline.</p>
         <div class="canvas">
-          <div style="background:#163A2C;color:#F5F2EA;border-radius:13px;padding:13px 15px;font-family:var(--mono);font-size:12.5px;">
+          <div class="seq-1" style="background:#163A2C;color:#F5F2EA;border-radius:13px;padding:13px 15px;font-family:var(--mono);font-size:12.5px;">
             <div style="opacity:.55;font-size:10px;margin-bottom:5px;">YOU</div>move my history essay so i can study for chem
           </div>
-          <div style="background:#fff;color:var(--ink);border-radius:13px;padding:13px 15px;margin-top:8px;font-size:12.5px;line-height:1.5;">
+          <div class="seq-2" style="background:#fff;color:var(--ink);border-radius:13px;padding:13px 15px;margin-top:8px;font-size:12.5px;line-height:1.5;">
             <div class="mono" style="opacity:.5;font-size:10px;margin-bottom:5px;">STUDLIN</div>Pushed essay to <strong>Sat 10am</strong>. Added 4×45m chem blocks. Synced to Google Cal.
           </div>
         </div>
@@ -1316,14 +1337,14 @@ body::after{
       <div class="card col-5 reveal" data-spot>
         <div class="knum">06 · Syllabus Import</div>
         <h3>Drop in your syllabus. Get every date.</h3>
-        <p>Upload the PDF your professor sends day one. Studlin pulls every deadline, exam, and reading straight onto your calendar.</p>
+        <p>Upload the PDF from day one. Studlin pulls every exam, deadline, and reading onto your calendar.</p>
         <div class="canvas">
           <div class="mini">
             <div class="mono" style="font-size:10px;color:var(--lime);letter-spacing:0.1em;margin-bottom:10px;">SYLLABUS.PDF · SCANNED</div>
             <div style="display:flex;flex-direction:column;gap:8px;font-size:12.5px;color:var(--ink);">
-              <div>📌 Midterm exam <span style="color:#888;">· Oct 14</span></div>
-              <div>📌 Essay due <span style="color:#888;">· Oct 21</span></div>
-              <div>📌 Final exam <span style="color:#888;">· Dec 9</span></div>
+              <div class="seq-1">📌 Midterm exam <span style="color:#888;">· Oct 14</span></div>
+              <div class="seq-2">📌 Essay due <span style="color:#888;">· Oct 21</span></div>
+              <div class="seq-3">📌 Final exam <span style="color:#888;">· Dec 9</span></div>
             </div>
           </div>
         </div>
@@ -1333,13 +1354,13 @@ body::after{
       <div class="card col-7 reveal d1" data-spot>
         <div class="knum">07 · Gets smarter over time</div>
         <h3>The more you use it, the better it knows you.</h3>
-        <p>Studlin learns how long your assignments actually take. Next time something similar comes up, it books the right amount of time automatically.</p>
+        <p>Studlin learns how long your assignments actually take. Next time, it books the real amount of time, not a guess.</p>
         <div class="canvas">
           <div class="mini">
             <div class="mono" style="font-size:10px;color:var(--lime);letter-spacing:0.1em;margin-bottom:10px;">LAB REPORTS · YOUR AVERAGE</div>
             <div style="display:flex;align-items:baseline;gap:10px;">
               <span style="font-size:13px;color:#999;text-decoration:line-through;">Est. 45m</span>
-              <span style="font-size:20px;font-weight:700;color:var(--ink);">→ 70m</span>
+              <span class="seq-2" style="font-size:20px;font-weight:700;color:var(--ink);">→ 70m</span>
             </div>
             <div style="font-size:11.5px;color:#888;margin-top:6px;">Based on your last 6 lab reports</div>
           </div>
@@ -1347,50 +1368,39 @@ body::after{
       </div>
 
       <!-- tutor -->
-      <div class="card col-6 reveal" data-spot>
-        <div class="knum">08 · AI Tutor for every subject</div>
+      <div class="card col-4 reveal" data-spot>
+        <div class="knum">08 · AI Tutor</div>
         <h3>Upload anything. Ask anything.</h3>
-        <p>Snap a worksheet, paste a problem. The tutor walks you through it. It never just hands over answers.</p>
+        <p>Snap a worksheet, paste a problem. The tutor walks you through it, never just hands over the answer.</p>
         <div class="canvas">
           <div style="display:flex;flex-direction:column;gap:8px;">
-            <div style="align-self:flex-end;background:var(--bg);border:1px solid var(--line);padding:10px 14px;border-radius:14px 14px 4px 14px;font-size:13px;max-width:78%;">why is sin(2x) = 2sin(x)cos(x)?</div>
-            <div style="align-self:flex-start;background:var(--panel-2);border:1px solid var(--line);padding:10px 14px;border-radius:14px 14px 14px 4px;font-size:13px;max-width:82%;line-height:1.5;">Start with sin(A+B) = sin A cos B + cos A sin B. Now set A = B = x... <span class="mono" style="background:var(--spark);color:var(--ink);padding:1px 6px;border-radius:4px;">your turn →</span></div>
+            <div class="seq-1" style="align-self:flex-end;background:var(--bg);border:1px solid var(--line);padding:10px 14px;border-radius:14px 14px 4px 14px;font-size:12.5px;max-width:82%;">why is sin(2x) = 2sinxcosx?</div>
+            <div class="seq-2" style="align-self:flex-start;background:var(--panel-2);border:1px solid var(--line);padding:10px 14px;border-radius:14px 14px 14px 4px;font-size:12.5px;max-width:88%;line-height:1.5;">Start with sin(A+B)... <span class="mono" style="background:var(--spark);color:var(--ink);padding:1px 6px;border-radius:4px;">your turn →</span></div>
           </div>
         </div>
       </div>
 
       <!-- streaks -->
-      <div class="card col-6 reveal d1 spark" data-spot>
+      <div class="card col-4 reveal d1 spark" data-spot>
         <div class="knum">09 · Streaks</div>
-        <h3>The reason you'll show up.</h3>
-        <p>Daily streaks, milestones, and a Weekly Wrapped that's actually fun to share.</p>
+        <h3>The reason you'll show up tomorrow.</h3>
+        <p>Daily streaks and milestones that make the boring days count too.</p>
         <div class="canvas" style="display:flex;align-items:flex-end;gap:12px;">
           <span class="streakbig" style="color:var(--lime);">12</span>
           <div style="padding-bottom:10px;"><div style="font-weight:600;font-size:13px;">day streak</div><div style="font-size:11.5px;color:var(--cream-faint);">longest: 31</div></div>
         </div>
       </div>
 
-      <!-- music -->
-      <div class="card col-6 reveal" data-spot>
-        <div class="knum">10 · Focus Music</div>
-        <h3>Sounds your brain agrees with.</h3>
-        <p>AI curated soundscapes. Lo-fi for reading, binaural for math.</p>
-        <div class="canvas">
-          <div class="bars" id="eqBars"></div>
-          <div class="mono" style="font-size:11px;margin-top:10px;color:var(--cream-dim);">▶ Deep Focus · 45 min left</div>
-        </div>
-      </div>
-
       <!-- wrapped -->
-      <div class="card col-6 reveal d1 lime" data-spot>
-        <div class="knum">11 · Wrapped</div>
-        <h3>Spotify Wrapped, for studying.</h3>
-        <p>Weekly recaps of your wins, focus hours, and exactly where you slipped.</p>
+      <div class="card col-4 reveal lime" data-spot>
+        <div class="knum">10 · Wrapped</div>
+        <h3>See what Studlin saved you.</h3>
+        <p>A weekly recap of your focus time, and exactly how much planning Studlin just did for you.</p>
         <div class="canvas">
-          <div class="mini" style="background:var(--bg-deep);">
-            <div class="mono" style="font-size:10px;color:var(--cream-faint);letter-spacing:0.1em;">WEEK 18 · WRAPPED</div>
-            <div style="font-family:var(--display);font-weight:700;font-size:36px;color:var(--spark);margin:4px 0;letter-spacing:-0.03em;">14h 22m</div>
-            <div style="font-size:12px;color:var(--cream-dim);">+3.2h vs last week</div>
+          <div class="mini" style="background:#163A2C;">
+            <div class="seq-1 mono" style="font-size:10px;color:rgba(245,242,234,0.55);letter-spacing:0.1em;">WEEK 18 · TIME SAVED</div>
+            <div class="seq-2" style="font-family:var(--display);font-weight:700;font-size:32px;color:var(--spark);margin:4px 0;letter-spacing:-0.03em;">2h 40m</div>
+            <div class="seq-3" style="font-size:11.5px;color:rgba(245,242,234,0.75);">3 reschedules · 1 syllabus scan</div>
           </div>
         </div>
       </div>
