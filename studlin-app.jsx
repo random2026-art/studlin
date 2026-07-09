@@ -2508,7 +2508,9 @@ function Flashcards() {
   const fileRef=useRef(null);
   const [ytUrl,setYtUrl]=useState("");
   const [ytInfo,setYtInfo]=useState("");
+  const [ytTopic,setYtTopic]=useState("");
   const [ytFetching,setYtFetching]=useState(false);
+  const [cardCount,setCardCount]=useState(10);
   const [recOn,setRecOn]=useState(false);
   const [recSecs,setRecSecs]=useState(0);
   const [recText,setRecText]=useState("");
@@ -2536,10 +2538,10 @@ function Flashcards() {
 
   const handleFile=async(e)=>{const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";const ext=file.name.split(".").pop().toLowerCase();if(ext==="pdf"){try{const pdfjsLib=await window._pdfjs;const buf=await file.arrayBuffer();const pdf=await pdfjsLib.getDocument({data:buf}).promise;let text="";for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();text+=tc.items.map(it=>it.str).join(" ")+"\n\n";}setFileText(text);if(!dName)setDName("Cards from "+file.name);}catch(err){setFileText("Could not read PDF.");}}else{const reader=new FileReader();reader.onload=()=>{setFileText(reader.result);if(!dName)setDName("Cards from "+file.name);};reader.readAsText(file);}};
 
-  const aiGenCards=async(content,context)=>{
+  const aiGenCards=async(content,context,count=10)=>{
     setAiLoading(true);
     try{
-      const prompt="Hey Studlin, I need you to help me make flashcards for studying. Can you create 10 flashcards from this "+context+"? Please format them as a JSON array where each card has a \"q\" key for the question and an \"a\" key for the answer. Just give me the JSON array directly so I can import them into my deck. Here's the material:\n\n"+content.slice(0,15000);
+      const prompt="Create "+count+" flashcards from this "+context+". Format as a JSON array where each object has a \"q\" key (question) and \"a\" key (answer). Return only the JSON array, no other text. Material:\n\n"+content.slice(0,15000);
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
       const data=await res.json();
       var raw=(data.reply||"").replace(/```json?|```/g,"").trim();
@@ -2560,21 +2562,26 @@ function Flashcards() {
     if(dSource==="manual"){cards=[...draft];}
     else if(dSource==="file"){
       if(!fileText){cards=[{q:"No file loaded",a:"Upload a PDF or text file first"}];}
-      else{cards=await aiGenCards(fileText,"document/notes");}
+      else{cards=await aiGenCards(fileText,"document/notes",cardCount);}
     }
     else if(dSource==="youtube"){
-      var topic=ytInfo||dName||ytUrl;
-      if(!topic){cards=[{q:"No video detected",a:"Paste a YouTube link first"}];}
-      else{cards=await aiGenCards("The topic is: "+topic+". Create 10 detailed study flashcards covering the key concepts, definitions, and important facts about this topic.","topic");}
+      const topic=(ytTopic||ytInfo||"").trim();
+      if(!ytUrl.trim()&&!topic){cards=[{q:"No video provided",a:"Paste a YouTube link or type a topic"}];}
+      else{
+        const ctx=topic
+          ?"YouTube video: \""+topic+"\". Generate "+cardCount+" flashcards covering all key concepts, definitions, formulas, and important facts a student needs to know from this video."
+          :"YouTube video at: "+ytUrl+". Generate "+cardCount+" flashcards covering likely key concepts from this video.";
+        cards=await aiGenCards(ctx,"YouTube video",cardCount);
+      }
     }
     else if(dSource==="record"){
       if(!recText){cards=[{q:"No audio recorded",a:"Record a lecture first"}];}
-      else{cards=await aiGenCards("Lecture transcription:\n\n"+recText,"lecture transcription");}
+      else{cards=await aiGenCards("Lecture transcription:\n\n"+recText,"lecture transcription",cardCount);}
     }
     if(cards.length===0){cards=[{q:"No cards were generated",a:"Try again with more content"}];}
     const nd={id:String(Date.now()),name:name,count:cards.length,done:0,color:T.lime,cards:cards,examEventId:null};
     const next=[nd,...deckList];setDeckList(next);lsSet("decks",next);
-    setNewOpen(false);setDName("");setDraft([]);setFileText("");setYtUrl("");setYtInfo("");setYtFetching(false);stopRec();setRecText("");setDSource("manual");
+    setNewOpen(false);setDName("");setDraft([]);setFileText("");setYtUrl("");setYtInfo("");setYtTopic("");setYtFetching(false);stopRec();setRecText("");setDSource("manual");setCardCount(10);
     setStudyDeck(nd);setTab("study");setIdx(0);setFlipped(false);
   };
 
@@ -2798,6 +2805,15 @@ function Flashcards() {
             ))}
           </div>
         </Field>
+        {dSource!=="manual"&&(
+          <Field label="How many cards?">
+            <div style={{display:"flex",gap:8}}>
+              {[5,10,15,20].map(n=>(
+                <button key={n} type="button" onClick={()=>setCardCount(n)} style={{flex:1,padding:"8px 0",borderRadius:8,border:"1px solid "+(cardCount===n?T.lime+"66":T.border),background:cardCount===n?T.lime+"14":T.card2,color:cardCount===n?T.lime:T.text,fontWeight:cardCount===n?700:400,fontSize:13,cursor:"pointer",fontFamily:T.font,transition:"all 0.15s"}}>{n}</button>
+              ))}
+            </div>
+          </Field>
+        )}
         {dSource==="manual"&&(<>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
             <Field label="Question"><Input placeholder="Front of card..." value={cQ} onChange={e=>setCQ(e.target.value)} /></Field>
@@ -2816,11 +2832,15 @@ function Flashcards() {
           </Field>
         )}
         {dSource==="youtube"&&(
-          <Field label="YouTube link" hint={ytInfo?"Found: "+ytInfo:"Paste a link — Studlin detects the topic and generates cards."}>
-            <Input placeholder="https://youtube.com/watch?v=..." value={ytUrl} onChange={ev=>{setYtUrl(ev.target.value);var v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtFetching(true);setYtInfo("");authFetch("/api/search-videos",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(function(r){return r.json();}).then(function(d){if(d.title){setYtInfo(d.title+(d.author?" by "+d.author:""));setDName(d.title+" cards");}setYtFetching(false);}).catch(function(){setYtFetching(false);});}}} />
-            {ytFetching&&<div style={{fontSize:11,color:T.lime,marginTop:6}}>Detecting video title...</div>}
-            {ytInfo&&!ytFetching&&<div style={{fontSize:11,color:T.lime,fontWeight:600,marginTop:6}}>Found: {ytInfo}</div>}
+          <>
+          <Field label="YouTube link" hint="Paste a link — Studlin detects the title automatically.">
+            <Input placeholder="https://youtube.com/watch?v=..." value={ytUrl} onChange={ev=>{setYtUrl(ev.target.value);var v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtFetching(true);setYtInfo("");authFetch("/api/search-videos",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(function(r){return r.json();}).then(function(d){if(d.title){var t=d.title+(d.author?" by "+d.author:"");setYtInfo(t);setYtTopic(t);if(!dName)setDName(d.title+" cards");}setYtFetching(false);}).catch(function(){setYtFetching(false);});}}} />
+            {ytFetching&&<div style={{fontSize:11,color:T.lime,marginTop:6}}>Detecting video...</div>}
           </Field>
+          <Field label="Topic / subject" hint="Auto-filled from the video — edit or type manually if detection fails.">
+            <Input placeholder="e.g. AP Physics 1 — Newton's Laws" value={ytTopic} onChange={e=>setYtTopic(e.target.value)} />
+          </Field>
+          </>
         )}
         {dSource==="record"&&(
           <Field label="Record lecture" hint="Speak or play audio — AI generates flashcards from what it hears.">
