@@ -9534,18 +9534,18 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
           </div>
         </div>
 
-        {/* Focus & Rank — always white, pops against dark background */}
-        <div onClick={()=>setLevelRoadmapOpen(true)} style={{background:"#FFFFFF",borderRadius:22,padding:22,cursor:"pointer",display:"flex",flexDirection:"column"}}>
+        {/* Focus & Rank */}
+        <div onClick={()=>setLevelRoadmapOpen(true)} style={{background:T.card,borderRadius:22,padding:22,cursor:"pointer",display:"flex",flexDirection:"column"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(14,31,24,0.45)",fontWeight:600}}>Focus &amp; Rank</span>
+            <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,fontWeight:600}}>Focus &amp; Rank</span>
             <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.10em",background:T.lime+"33",padding:"3px 9px",borderRadius:99,color:T.limeDk,border:`1px solid ${T.lime}55`,fontWeight:700}}>{lvl.title.toUpperCase()}</span>
           </div>
-          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:"#0E1F18",margin:"10px 0 2px"}}>{lvl.minutes.toLocaleString()}<span style={{fontSize:18,color:"rgba(14,31,24,0.45)",marginLeft:6,fontFamily:T.font,fontWeight:400}}>min</span></div>
-          <div style={{fontSize:12,color:"rgba(14,31,24,0.5)",marginBottom:4}}>{lvl.nextTier?`${(lvl.nextTier.minMinutes-lvl.minutes).toLocaleString()} min to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
-          <div style={{height:6,background:"rgba(14,31,24,0.10)",borderRadius:99,marginTop:"auto",overflow:"hidden"}}>
+          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.text,margin:"10px 0 2px"}}>{lvl.minutes.toLocaleString()}<span style={{fontSize:18,color:T.muted,marginLeft:6,fontFamily:T.font,fontWeight:400}}>min</span></div>
+          <div style={{fontSize:12,color:T.muted,marginBottom:4}}>{lvl.nextTier?`${(lvl.nextTier.minMinutes-lvl.minutes).toLocaleString()} min to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
+          <div style={{height:6,background:T.card2,borderRadius:99,marginTop:"auto",overflow:"hidden"}}>
             <div style={{height:"100%",width:lvl.tierPct+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}}/>
           </div>
-          <div style={{fontSize:11,color:"rgba(14,31,24,0.4)",marginTop:8,display:"flex",alignItems:"center",gap:4}}>
+          <div style={{fontSize:11,color:T.muted,marginTop:8,display:"flex",alignItems:"center",gap:4}}>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
             View career roadmap
           </div>
@@ -9553,44 +9553,86 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
       </div>
       )} {/* end seriousMode ternary */}
 
-      {/* ROW 2: Today's plan + Jump back in + Ask Studlin + Checklist — grid
-          widened from 3 to 4 columns when Checklist merged in alongside
-          Vene's new "Jump back in" card; Checklist gets a slightly narrower
-          share since its content (a quick-add input + short rows) needs
-          less room than the other three. */}
-      <div style={{display:"grid",gridTemplateColumns:"1.1fr 1fr 1.1fr 0.9fr",gap:16}}>
+      {/* Quote of the Day */}
+      {!seriousMode&&(()=>{
+        const QUOTES=[
+          {text:"Your future self will thank you for the work you put in today.",author:"Anonymous"},
+          {text:"The secret of getting ahead is getting started.",author:"Mark Twain"},
+          {text:"You don't have to be great to start, but you have to start to be great.",author:"Zig Ziglar"},
+          {text:"Education is not the filling of a pail, but the lighting of a fire.",author:"W.B. Yeats"},
+          {text:"Success is the sum of small efforts repeated day in and day out.",author:"Robert Collier"},
+          {text:"The expert in anything was once a beginner.",author:"Helen Hayes"},
+          {text:"Push yourself, because no one else is going to do it for you.",author:"Anonymous"},
+          {text:"Don't watch the clock; do what it does. Keep going.",author:"Sam Levenson"},
+          {text:"Believe you can and you're halfway there.",author:"Theodore Roosevelt"},
+          {text:"It always seems impossible until it's done.",author:"Nelson Mandela"},
+          {text:"Hard work beats talent when talent doesn't work hard.",author:"Tim Notke"},
+          {text:"The more that you read, the more things you will know.",author:"Dr. Seuss"},
+          {text:"An investment in knowledge pays the best interest.",author:"Benjamin Franklin"},
+          {text:"Learning is not attained by chance — it must be sought with ardor.",author:"Abigail Adams"},
+        ];
+        const todayStr=new Date().toISOString().slice(0,10);
+        const stored=lsGet("quote-of-day",null);
+        let qIdx;
+        if(stored&&stored.date===todayStr){
+          qIdx=stored.idx;
+        }else{
+          const prev=stored?stored.idx:-1;
+          let next=Math.floor(Math.random()*QUOTES.length);
+          if(next===prev)next=(next+1)%QUOTES.length;
+          qIdx=next;
+          lsSet("quote-of-day",{date:todayStr,idx:qIdx});
+        }
+        const q=QUOTES[qIdx];
+        return(
+          <div style={{background:"#F5EE90",borderRadius:22,padding:"28px 32px",position:"relative",overflow:"hidden",display:"flex",alignItems:"flex-start",gap:24}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(14,31,24,0.4)",marginBottom:10,fontWeight:600}}>Quote of the day</div>
+              <p style={{fontFamily:"Georgia,serif",fontSize:18,fontStyle:"italic",lineHeight:1.55,color:"#0E1F18",margin:"0 0 12px",maxWidth:680}}>"{q.text}"</p>
+              <div style={{fontSize:12,color:"rgba(14,31,24,0.45)",letterSpacing:"0.04em"}}>— {q.author.toUpperCase()}</div>
+            </div>
+            <button onClick={()=>{if(navigator.share)navigator.share({text:'"'+q.text+'" — '+q.author+'\n\nStudlin'});else if(navigator.clipboard)navigator.clipboard.writeText('"'+q.text+'" — '+q.author);}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"11px 18px",background:"#0E1F18",border:"none",borderRadius:99,fontSize:13,fontWeight:600,color:"#F6F1E6",cursor:"pointer",fontFamily:T.font,flexShrink:0,boxShadow:"0 4px 14px rgba(0,0,0,0.18)"}}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+              Share Quote
+            </button>
+          </div>
+        );
+      })()}
+
+      {/* ROW 2: Today's plan + Jump back in + Ask Studlin */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:16}}>
         {/* Today's plan */}
-        <div style={{background:"#FFFFFF",borderRadius:22,padding:24,display:"flex",flexDirection:"column"}}>
+        <div style={{background:T.card,borderRadius:22,padding:24,display:"flex",flexDirection:"column"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8,flexWrap:"wrap"}}>
-            <span style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:"#0E1F18"}}>Today's plan</span>
+            <span style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:T.text}}>Today's plan</span>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.1em",padding:"4px 9px",borderRadius:99,background:"rgba(14,31,24,0.08)",color:"rgba(14,31,24,0.5)",fontWeight:600}}>{planDoneCount} / {plan.length} DONE</span>
-              <button onClick={()=>setActive("calendar")} style={{fontSize:12,color:"rgba(14,31,24,0.4)",display:"inline-flex",alignItems:"center",gap:3,cursor:"pointer",background:"none",border:"none",fontFamily:T.font,fontWeight:500}}>Calendar <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
+              <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.1em",padding:"4px 9px",borderRadius:99,background:T.card2,color:T.muted,fontWeight:600}}>{planDoneCount} / {plan.length} DONE</span>
+              <button onClick={()=>setActive("calendar")} style={{fontSize:12,color:T.muted,display:"inline-flex",alignItems:"center",gap:3,cursor:"pointer",background:"none",border:"none",fontFamily:T.font,fontWeight:500}}>Calendar <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
             </div>
           </div>
-          {plan.length>0&&<div style={{height:3,background:"rgba(14,31,24,0.08)",borderRadius:99,marginBottom:14,overflow:"hidden"}}><div style={{height:"100%",width:Math.round(planDoneCount/Math.max(plan.length,1)*100)+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}} /></div>}
+          {plan.length>0&&<div style={{height:3,background:T.card2,borderRadius:99,marginBottom:14,overflow:"hidden"}}><div style={{height:"100%",width:Math.round(planDoneCount/Math.max(plan.length,1)*100)+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}} /></div>}
           {plan.length===0
             ?<div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 8px",textAlign:"center"}}>
-              <div style={{fontSize:13,color:"rgba(14,31,24,0.45)",marginBottom:18,lineHeight:1.6}}>Nothing scheduled for today. Add events to your calendar and they appear here automatically.</div>
+              <div style={{fontSize:13,color:T.muted,marginBottom:18,lineHeight:1.6}}>Nothing scheduled for today. Add events to your calendar and they appear here automatically.</div>
               <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
                 <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"10px 20px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Add a task</button>
-                <button onClick={()=>{lsSet("pendingBrainDump",true);setActive("calendar");}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"10px 20px",background:"transparent",color:"#0E1F18",border:"1px solid rgba(14,31,24,0.15)",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Brain dump everything</button>
+                <button onClick={()=>{lsSet("pendingBrainDump",true);setActive("calendar");}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"10px 20px",background:"transparent",color:T.text,border:`1px solid ${T.border}`,borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Brain dump everything</button>
               </div>
             </div>
             :plan.map((t)=>{
               const c=scOf(t.subject);
               return(
-                <div key={t.id} onClick={()=>{togglePlanDone(t.id);forcePlan(x=>x+1);}} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:"1px solid rgba(14,31,24,0.08)",marginBottom:8,cursor:"pointer",background:"rgba(14,31,24,0.03)"}}>
-                  <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${t.done?"#0E1F18":"rgba(14,31,24,0.2)"}`,background:t.done?"#0E1F18":"transparent",flex:"none",display:"grid",placeItems:"center"}}>
+                <div key={t.id} onClick={()=>{togglePlanDone(t.id);forcePlan(x=>x+1);}} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer",background:T.card2}}>
+                  <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${t.done?T.text:T.border}`,background:t.done?T.text:"transparent",flex:"none",display:"grid",placeItems:"center"}}>
                     {t.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
                   </div>
                   <div style={{flex:1,minWidth:0}}>
-                    <span style={{fontSize:13.5,color:t.done?"rgba(14,31,24,0.35)":"#0E1F18",textDecoration:t.done?"line-through":"none",fontWeight:500}}>{t.title}</span>
-                    <div style={{fontSize:11,color:"rgba(14,31,24,0.4)",marginTop:1}}>{t.subject}{t.kind?" · "+t.kind:""}</div>
+                    <span style={{fontSize:13.5,color:t.done?T.faint:T.text,textDecoration:t.done?"line-through":"none",fontWeight:500}}>{t.title}</span>
+                    <div style={{fontSize:11,color:T.muted,marginTop:1}}>{t.subject}{t.kind?" · "+t.kind:""}</div>
                   </div>
-                  <span style={{fontFamily:T.mono,fontSize:10,color:"rgba(14,31,24,0.35)"}}>{fmtClock(t.time)}</span>
+                  <span style={{fontFamily:T.mono,fontSize:10,color:T.faint}}>{fmtClock(t.time)}</span>
                   {!t.done&&t.duration&&(t.kind==="study block"||t.kind==="deadline")&&(
-                    <button onClick={(e)=>{e.stopPropagation();setRescheduleTask(t);}} style={{flexShrink:0,padding:"3px 7px",borderRadius:6,border:"1px solid rgba(14,31,24,0.12)",background:"transparent",color:"rgba(14,31,24,0.4)",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Reschedule</button>
+                    <button onClick={(e)=>{e.stopPropagation();setRescheduleTask(t);}} style={{flexShrink:0,padding:"3px 7px",borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Reschedule</button>
                   )}
                 </div>
               );
@@ -9637,30 +9679,6 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
           </div>
         </div>
 
-        {/* Checklist — plain to-dos with no inherent duration/time (e.g.
-            "send AP scores to college"). Deliberately kept out of the
-            calendar/Today's-plan entirely; this is the only place they live. */}
-        <div style={{background:"#FFFFFF",borderRadius:22,padding:22,border:"1px solid rgba(14,31,24,0.08)"}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
-            <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <span style={{fontFamily:T.hand,fontSize:22,fontWeight:600,color:"#0E1F18"}}>Checklist</span>
-              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:"1px solid rgba(14,31,24,0.12)",borderRadius:99,color:"rgba(14,31,24,0.45)"}}>{checklistItems.length} OPEN</span>
-            </div>
-          </div>
-          <div style={{display:"flex",gap:8,marginBottom:14}}>
-            <input value={checklistDraft} onChange={e=>setChecklistDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addChecklistItem();}}
-              placeholder="e.g. Send AP scores" style={{flex:1,minWidth:0,background:"rgba(14,31,24,0.04)",border:"1px solid rgba(14,31,24,0.10)",borderRadius:10,padding:"9px 10px",color:"#0E1F18",fontSize:12.5,fontFamily:T.font,outline:"none"}} />
-            <button onClick={addChecklistItem} disabled={!checklistDraft.trim()} style={{padding:"9px 12px",background:T.lime,color:T.ink,border:"none",borderRadius:10,fontSize:12.5,fontWeight:600,cursor:checklistDraft.trim()?"pointer":"default",fontFamily:T.font,opacity:checklistDraft.trim()?1:0.45,flexShrink:0}}>Add</button>
-          </div>
-          {checklistItems.length===0
-            ? <div style={{fontSize:12.5,color:"rgba(14,31,24,0.4)",padding:"6px 0 4px",textAlign:"center"}}>Nothing on your checklist.</div>
-            : checklistItems.map(item=>(
-              <div key={item.id} onClick={()=>toggleChecklistItem(item.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:12,border:"1px solid rgba(14,31,24,0.08)",marginBottom:8,cursor:"pointer"}}>
-                <div style={{width:18,height:18,borderRadius:"50%",border:"1.5px solid rgba(14,31,24,0.20)",background:"transparent",flex:"none",display:"grid",placeItems:"center"}} />
-                <div style={{flex:1,minWidth:0,fontSize:12.5,color:"#0E1F18",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.title}</div>
-              </div>
-            ))}
-        </div>
       </div>
 
       {/* ROW 3: This week's focus bar chart + Weekly Wrapped */}
@@ -9672,11 +9690,11 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
         return(
           <div style={{display:"grid",gridTemplateColumns:"7fr 5fr",gap:16}}>
             {/* This week's focus */}
-            <div style={{background:"#FFFFFF",borderRadius:22,padding:"26px 28px",border:"1px solid rgba(14,31,24,0.08)"}}>
+            <div style={{background:T.card,borderRadius:22,padding:"26px 28px",border:`1px solid ${T.border}`}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:22}}>
                 <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-                  <span style={{fontFamily:T.hand,fontSize:26,fontWeight:600,color:"#0E1F18"}}>This week's focus</span>
-                  <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.12em",padding:"4px 10px",borderRadius:99,background:"rgba(14,31,24,0.06)",color:"rgba(14,31,24,0.45)",fontWeight:600}}>{focusStr} THIS WEEK · TRACKED LIVE</span>
+                  <span style={{fontFamily:T.hand,fontSize:26,fontWeight:600,color:T.text}}>This week's focus</span>
+                  <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.12em",padding:"4px 10px",borderRadius:99,background:T.card2,color:T.muted,fontWeight:600}}>{focusStr} THIS WEEK · TRACKED LIVE</span>
                 </div>
               </div>
               <div style={{display:"flex",alignItems:"flex-end",gap:8,height:110,marginBottom:16}}>
@@ -9687,19 +9705,19 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
                       <div style={{width:"100%",display:"flex",flexDirection:"column",justifyContent:"flex-end",height:100}}>
                         {d.mins>0
                           ?<div style={{width:"100%",height:h,background:d.isToday?"#14342A":"#5B8C2A",borderRadius:"5px 5px 0 0",transition:"height 0.4s ease"}} />
-                          :<div style={{width:"100%",height:4,background:"#EBEBEB",borderRadius:2}} />
+                          :<div style={{width:"100%",height:4,background:T.card2,borderRadius:2}} />
                         }
                       </div>
-                      <span style={{fontSize:9.5,fontFamily:T.mono,color:d.isToday?"#14342A":"rgba(14,31,24,0.35)",fontWeight:d.isToday?700:400}}>{d.lab}</span>
+                      <span style={{fontSize:9.5,fontFamily:T.mono,color:d.isToday?T.text:T.faint,fontWeight:d.isToday?700:400}}>{d.lab}</span>
                     </div>
                   );
                 })}
               </div>
               <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
-                {[{color:"#14342A",label:"Reading & notes"},{color:"#5B8C2A",label:"Flashcards"},{color:"#F5EE90",border:"1px solid rgba(14,31,24,0.2)",label:"Writing"}].map((item,i)=>(
+                {[{color:"#14342A",label:"Reading & notes"},{color:"#5B8C2A",label:"Flashcards"},{color:"#F5EE90",border:`1px solid ${T.border}`,label:"Writing"}].map((item,i)=>(
                   <div key={i} style={{display:"flex",alignItems:"center",gap:5}}>
                     <div style={{width:8,height:8,borderRadius:2,background:item.color,border:item.border||"none"}} />
-                    <span style={{fontSize:11,color:"rgba(14,31,24,0.45)",fontFamily:T.mono}}>{item.label}</span>
+                    <span style={{fontSize:11,color:T.muted,fontFamily:T.mono}}>{item.label}</span>
                   </div>
                 ))}
               </div>
@@ -9741,11 +9759,11 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
         return(
           <div style={{display:"grid",gridTemplateColumns:"7fr 5fr",gap:16}}>
             {/* Quick tools */}
-            <div style={{background:"#FFFFFF",borderRadius:22,padding:"26px 28px",border:"1px solid rgba(14,31,24,0.08)"}}>
+            <div style={{background:T.card,borderRadius:22,padding:"26px 28px",border:`1px solid ${T.border}`}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
                 <div style={{display:"flex",alignItems:"center",gap:12}}>
-                  <span style={{fontFamily:T.hand,fontSize:26,fontWeight:600,color:"#0E1F18"}}>Quick tools</span>
-                  <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.12em",padding:"4px 10px",borderRadius:99,background:"rgba(14,31,24,0.06)",color:"rgba(14,31,24,0.45)",fontWeight:600}}>JUMP RIGHT IN</span>
+                  <span style={{fontFamily:T.hand,fontSize:26,fontWeight:600,color:T.text}}>Quick tools</span>
+                  <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.12em",padding:"4px 10px",borderRadius:99,background:T.card2,color:T.muted,fontWeight:600}}>JUMP RIGHT IN</span>
                 </div>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
@@ -9759,28 +9777,28 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
                   {id:"solve",      label:"Solve",       desc:"Work through problems",icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>},
                   {id:"network",    label:"Network",     desc:"Study with others",   icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>},
                 ].map((tool)=>(
-                  <button key={tool.id} onClick={()=>setActive(tool.id)} style={{background:"#F5F0E8",borderRadius:14,padding:"14px 12px",cursor:"pointer",textAlign:"left",border:"1px solid rgba(14,31,24,0.05)",fontFamily:T.font,display:"flex",flexDirection:"column",gap:8}}>
-                    <div style={{color:"rgba(14,31,24,0.7)"}}>{tool.icon}</div>
+                  <button key={tool.id} onClick={()=>setActive(tool.id)} style={{background:T.card2,borderRadius:14,padding:"14px 12px",cursor:"pointer",textAlign:"left",border:`1px solid ${T.border}`,fontFamily:T.font,display:"flex",flexDirection:"column",gap:8}}>
+                    <div style={{color:T.text}}>{tool.icon}</div>
                     <div>
-                      <div style={{fontSize:12.5,fontWeight:700,color:"#0E1F18",marginBottom:3}}>{tool.label}</div>
-                      <div style={{fontSize:11,color:"rgba(14,31,24,0.45)",lineHeight:1.4}}>{tool.desc}</div>
+                      <div style={{fontSize:12.5,fontWeight:700,color:T.text,marginBottom:3}}>{tool.label}</div>
+                      <div style={{fontSize:11,color:T.muted,lineHeight:1.4}}>{tool.desc}</div>
                     </div>
                   </button>
                 ))}
               </div>
             </div>
             {/* Study streak heatmap */}
-            <div style={{background:"#FFFFFF",borderRadius:22,padding:"26px 28px",border:"1px solid rgba(14,31,24,0.08)",display:"flex",flexDirection:"column"}}>
+            <div style={{background:T.card,borderRadius:22,padding:"26px 28px",border:`1px solid ${T.border}`,display:"flex",flexDirection:"column"}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
-                <span style={{fontFamily:T.hand,fontSize:26,fontWeight:600,color:"#0E1F18"}}>Study streak</span>
-                <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.12em",padding:"4px 10px",borderRadius:99,background:"rgba(14,31,24,0.06)",color:"rgba(14,31,24,0.45)",fontWeight:600}}>LAST 91 DAYS</span>
+                <span style={{fontFamily:T.hand,fontSize:26,fontWeight:600,color:T.text}}>Study streak</span>
+                <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.12em",padding:"4px 10px",borderRadius:99,background:T.card2,color:T.muted,fontWeight:600}}>LAST 91 DAYS</span>
               </div>
               <div style={{marginBottom:16}}>
                 <div style={{display:"flex",alignItems:"baseline",gap:6}}>
-                  <span style={{fontFamily:T.hand,fontSize:38,fontWeight:600,color:"#0E1F18"}}>{realStreak}</span>
-                  <span style={{fontSize:13,color:"rgba(14,31,24,0.5)"}}>day streak</span>
+                  <span style={{fontFamily:T.hand,fontSize:38,fontWeight:600,color:T.text}}>{realStreak}</span>
+                  <span style={{fontSize:13,color:T.muted}}>day streak</span>
                 </div>
-                <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.10em",color:"rgba(14,31,24,0.4)",marginTop:4}}>LONGEST: {longest}</div>
+                <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.10em",color:T.muted,marginTop:4}}>LONGEST: {longest}</div>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(13,1fr)",gap:3}}>
                 {heatmapCells.map((lv,i)=>(
@@ -9794,39 +9812,39 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
 
       {/* ROW 5: Upcoming + Pick up where you left off */}
       <div style={{display:"grid",gridTemplateColumns:"5fr 7fr",gap:16}}>
-        <div style={{background:"#FFFFFF",borderRadius:22,padding:22,border:"1px solid rgba(14,31,24,0.08)"}}>
+        <div style={{background:T.card,borderRadius:22,padding:22,border:`1px solid ${T.border}`}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <span style={{fontFamily:T.hand,fontSize:22,fontWeight:600,color:"#0E1F18"}}>Upcoming</span>
-              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:"1px solid rgba(14,31,24,0.12)",borderRadius:99,color:"rgba(14,31,24,0.45)"}}>NEXT 14 DAYS</span>
+              <span style={{fontFamily:T.hand,fontSize:22,fontWeight:600,color:T.text}}>Upcoming</span>
+              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:99,color:T.muted}}>NEXT 14 DAYS</span>
             </div>
-            <button onClick={()=>setActive("calendar")} style={{fontSize:12,color:"rgba(14,31,24,0.4)",display:"inline-flex",alignItems:"center",gap:3,cursor:"pointer",background:"none",border:"none",fontFamily:T.font}}>Calendar <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
+            <button onClick={()=>setActive("calendar")} style={{fontSize:12,color:T.muted,display:"inline-flex",alignItems:"center",gap:3,cursor:"pointer",background:"none",border:"none",fontFamily:T.font}}>Calendar <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
           </div>
           {upcomingEvents.length===0
-            ?<div style={{fontSize:13,color:"rgba(14,31,24,0.4)",padding:"18px 0",textAlign:"center"}}>Nothing on the horizon. Add deadlines to your calendar.</div>
+            ?<div style={{fontSize:13,color:T.muted,padding:"18px 0",textAlign:"center"}}>Nothing on the horizon. Add deadlines to your calendar.</div>
             :upcomingEvents.map((ev,i)=>(
-              <div key={ev.id} onClick={()=>setActive("calendar")} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 0",borderBottom:i<upcomingEvents.length-1?"1px solid rgba(14,31,24,0.07)":"none",cursor:"pointer"}}>
-                <div style={{width:44,height:44,borderRadius:10,background:ev.urgent?T.lime:"rgba(14,31,24,0.05)",color:ev.urgent?T.ink:"#0E1F18",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              <div key={ev.id} onClick={()=>setActive("calendar")} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 0",borderBottom:i<upcomingEvents.length-1?`1px solid ${T.border}`:"none",cursor:"pointer"}}>
+                <div style={{width:44,height:44,borderRadius:10,background:ev.urgent?T.lime:T.card2,color:ev.urgent?T.ink:T.text,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                   <span style={{fontSize:15,fontWeight:800,lineHeight:1}}>{ev.d}</span>
                   <span style={{fontSize:8.5,fontWeight:700,letterSpacing:"0.04em"}}>{ev.mo}</span>
                 </div>
                 <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:13,fontWeight:600,color:"#0E1F18"}}>{ev.t}</div>
-                  <div style={{fontSize:11,color:"rgba(14,31,24,0.45)",marginTop:1}}>{ev.sub}</div>
+                  <div style={{fontSize:13,fontWeight:600,color:T.text}}>{ev.t}</div>
+                  <div style={{fontSize:11,color:T.muted,marginTop:1}}>{ev.sub}</div>
                 </div>
-                <span style={{fontSize:10.5,fontWeight:700,padding:"4px 9px",borderRadius:99,background:ev.urgent?"rgba(224,48,48,0.10)":"rgba(14,31,24,0.05)",color:ev.urgent?"#E03030":"rgba(14,31,24,0.45)",flexShrink:0}}>{ev.cd}</span>
+                <span style={{fontSize:10.5,fontWeight:700,padding:"4px 9px",borderRadius:99,background:ev.urgent?"rgba(224,48,48,0.10)":T.card2,color:ev.urgent?"#E03030":T.muted,flexShrink:0}}>{ev.cd}</span>
               </div>
             ))}
         </div>
-        <div style={{background:"#FFFFFF",borderRadius:22,padding:22,border:"1px solid rgba(14,31,24,0.08)"}}>
+        <div style={{background:T.card,borderRadius:22,padding:22,border:`1px solid ${T.border}`}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <span style={{fontFamily:T.hand,fontSize:22,fontWeight:600,color:"#0E1F18"}}>Pick up where you left off</span>
-              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:"1px solid rgba(14,31,24,0.12)",borderRadius:99,color:"rgba(14,31,24,0.45)"}}>RECENT</span>
+              <span style={{fontFamily:T.hand,fontSize:22,fontWeight:600,color:T.text}}>Pick up where you left off</span>
+              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:99,color:T.muted}}>RECENT</span>
             </div>
           </div>
           {pickUpItems.length===0
-            ?<div style={{fontSize:13,color:"rgba(14,31,24,0.4)",padding:"18px 0",textAlign:"center"}}>Create a deck, note, or essay and it'll show up here.</div>
+            ?<div style={{fontSize:13,color:T.muted,padding:"18px 0",textAlign:"center"}}>Create a deck, note, or essay and it'll show up here.</div>
             :<div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:10}}>
               {pickUpItems.slice(0,4).map((it,i)=>{
                 const bgColors=["#B8E4C0","#FFD6A5","#B8D4FF","#E0C4FF"];
@@ -9835,9 +9853,9 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
                     if(it.kind==="deck"){lsSet("openDeckId",it.id);setActive("flashcards");}
                     else if(it.kind==="note"){lsSet("openNoteId",it.id);setActive("notes");}
                   }} style={{background:bgColors[i%4],borderRadius:14,padding:14,cursor:"pointer"}}>
-                    <div style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.06em",color:"rgba(8,12,40,0.55)",marginBottom:8}}>{it.subj}</div>
-                    <div style={{fontSize:13,fontWeight:700,color:"#0E1F18",marginBottom:10,lineHeight:1.3}}>{it.title}</div>
-                    <div style={{height:4,background:"rgba(8,12,40,0.12)",borderRadius:99,marginBottom:8,overflow:"hidden"}}><div style={{height:"100%",width:it.pct+"%",background:"#0E1F18",borderRadius:99}}/></div>
+                    <div style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.06em",color:"rgba(8,12,40,0.65)",marginBottom:8}}>{it.subj}</div>
+                    <div style={{fontSize:13,fontWeight:700,color:"#0D120F",marginBottom:10,lineHeight:1.3}}>{it.title}</div>
+                    <div style={{height:4,background:"rgba(8,12,40,0.15)",borderRadius:99,marginBottom:8,overflow:"hidden"}}><div style={{height:"100%",width:it.pct+"%",background:"#0D120F",borderRadius:99}}/></div>
                     <div style={{fontSize:10.5,color:"rgba(8,12,40,0.6)",display:"flex",justifyContent:"space-between"}}><span>{it.a}</span><span>{it.b}</span></div>
                   </div>
                 );
@@ -9850,6 +9868,46 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
           rather than deleted, per request to disable it "for now." Flip the
           flag back to true to restore it; lbUsers/lbRankColor/lbRankBg and
           LeaderboardModal are left fully intact. */}
+      {/* This week, you... — full-width weekly summary at bottom */}
+      {!seriousMode&&(()=>{
+        const wkMins=weeklyFocusMin||0;
+        const weeklyXP=weekDays7.reduce((s,d)=>{const m=minsByDay[dayKey(d)]||0;return s+Math.round(m<=30?m*6:m<=60?180+(m-30)*5:m<=120?330+(m-60)*3.5:540+(m-120)*1.5);},0);
+        const focusStr=wkMins>=60?Math.floor(wkMins/60)+"h "+(wkMins%60)+"m":wkMins+"m";
+        return(
+          <div style={{background:`linear-gradient(135deg, ${T.forest} 0%, #1B4536 100%)`,borderRadius:22,padding:"32px 36px",position:"relative",overflow:"hidden"}}>
+            <div style={{position:"absolute",right:-60,top:-60,width:300,height:300,background:"radial-gradient(circle,rgba(174,206,94,0.10),transparent 70%)",pointerEvents:"none"}} />
+            <div style={{position:"relative"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:28,flexWrap:"wrap",gap:12}}>
+                <div style={{display:"flex",alignItems:"center",gap:14}}>
+                  <span style={{fontFamily:T.hand,fontSize:36,fontWeight:600,color:T.cream}}>This week, you...</span>
+                  <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.12em",padding:"5px 12px",borderRadius:99,background:"rgba(246,241,230,0.10)",color:"rgba(246,241,230,0.55)",fontWeight:700,border:"1px solid rgba(246,241,230,0.12)"}}>WRAPPED · WEEK {weekNo()}</span>
+                </div>
+                <button onClick={()=>{if(navigator.share)navigator.share({title:"My Studlin week",text:"This week: "+focusStr+" focused, "+weeklyXP+" XP earned, "+realStreak+"-day streak. @Studlin"}).catch(()=>{});}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"10px 18px",background:"rgba(246,241,230,0.10)",border:"1px solid rgba(246,241,230,0.16)",borderRadius:99,fontSize:13,fontWeight:600,color:T.cream,cursor:"pointer",fontFamily:T.font,flexShrink:0}}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                  Share Wrapped
+                </button>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:16,marginBottom:18}}>
+                {[
+                  {label:"FOCUS HOURS",value:focusStr},
+                  {label:"XP EARNED",value:weeklyXP.toLocaleString()+" xp"},
+                  {label:"DAY STREAK",value:realStreak+" days"},
+                ].map((s,i)=>(
+                  <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:14,padding:"20px 22px",border:"1px solid rgba(246,241,230,0.07)"}}>
+                    <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.12em",color:"rgba(246,241,230,0.45)",marginBottom:10}}>{s.label}</div>
+                    <div style={{fontFamily:T.hand,fontSize:38,fontWeight:600,color:T.lime,lineHeight:1}}>{s.value}</div>
+                  </div>
+                ))}
+              </div>
+              {realStreak>0&&<span style={{display:"inline-flex",alignItems:"center",gap:7,fontSize:12,fontWeight:600,padding:"7px 14px",background:"rgba(174,206,94,0.12)",border:"1px solid rgba(174,206,94,0.20)",borderRadius:99,color:T.lime}}>
+                <span style={{width:22,height:22,borderRadius:"50%",background:T.lime,color:T.ink,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,flexShrink:0}}>{realStreak}</span>
+                {realStreak}-day streak
+              </span>}
+            </div>
+          </div>
+        );
+      })()}
+
       {SHOW_GLOBAL_LEADERBOARD && !seriousMode && <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18,gap:12,flexWrap:"wrap"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -10987,7 +11045,7 @@ function App() {
             such modal's centering into being relative to this scrolled
             container instead of the real viewport. Clearing it once done
             keeps the entrance animation but stops that side effect. */}
-        <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?"#F0EBE1":undefined}}>
+        <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
           {active==="dashboard"?<Dashboard setActive={setActive} setScheduleSettingsOpen={setScheduleSettingsOpen} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} />:
            active==="calendar"?<CalendarTab onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} />:
