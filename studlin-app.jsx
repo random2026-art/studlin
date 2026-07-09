@@ -1796,6 +1796,33 @@ function AiChat() {
   const deleteChat=(id,e)=>{e.stopPropagation();const updated=chatHistory.filter(c=>c.id!==id);lsSet("ai-chats",updated);setChatHistory(updated);if(id===chatId)newChat();};
   const relTime=(ts)=>{const d=Date.now()-ts,m=Math.floor(d/60000);if(m<1)return"Just now";if(m<60)return m+"m ago";const h=Math.floor(m/60);if(h<24)return h+"h ago";const dy=Math.floor(h/24);if(dy===1)return"Yesterday";if(dy<7)return dy+"d ago";return new Date(ts).toLocaleDateString("en-US",{month:"short",day:"numeric"});};
 
+  const [shareOpen,setShareOpen]=useState(false);
+  const [shareMode,setShareMode]=useState("private");
+  const [shareLink,setShareLink]=useState("");
+  const [shareLoading,setShareLoading]=useState(false);
+  const [shareCopied,setShareCopied]=useState(false);
+  const openShare=()=>{setShareOpen(true);setShareMode("private");setShareLink("");setShareCopied(false);};
+  const createShareLink=async()=>{
+    if(shareMode==="private"){setShareOpen(false);return;}
+    setShareLoading(true);
+    try{
+      const shareId="s"+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+      const title=msgs.find(m=>m.r==="user")?.t?.replace(/\n/g," ").slice(0,80)||"Shared conversation";
+      await fsdb().collection("shared_chats").doc(shareId).set({
+        msgs:msgs.map(m=>({r:m.r,t:m.t||"",file:m.file||null})),
+        title,createdAt:Date.now(),
+        uid:firebase.auth().currentUser?.uid||null,
+      });
+      const link=window.location.origin+"/app?share="+shareId;
+      setShareLink(link);
+    }catch(e){console.error("Share failed",e);}
+    setShareLoading(false);
+  };
+  const copyShareLink=()=>{
+    try{navigator.clipboard.writeText(shareLink);}catch(e){}
+    setShareCopied(true);setTimeout(()=>setShareCopied(false),2000);
+  };
+
   const chatBg=T.bg;
   const chatPanel=T.mode==="dark"?"#0B0C10":T.surface;
   const historyPanel=(
@@ -2027,7 +2054,13 @@ function AiChat() {
             New chat
           </button>
         </div>
-        <div style={{fontSize:11,color:T.muted}}><span style={{color:credits<(CREDIT_COST[model]||1)?T.red||"#f87171":T.lime,fontWeight:600}}>{credits}</span> credits · {curModel.name}</div>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <button onClick={openShare} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 14px",borderRadius:8,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+            Share
+          </button>
+          <div style={{fontSize:11,color:T.muted}}><span style={{color:credits<(CREDIT_COST[model]||1)?T.red||"#f87171":T.lime,fontWeight:600}}>{credits}</span> credits · {curModel.name}</div>
+        </div>
       </div>
 
       <div ref={chatRef} style={{flex:1,overflowY:"auto",paddingBottom:16}}>
@@ -2086,6 +2119,45 @@ function AiChat() {
       </div>
       </div>
     </div>
+
+    {/* Share modal */}
+    {shareOpen&&(
+      <div onClick={()=>setShareOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:9000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:T.surface,borderRadius:18,padding:"28px 28px 24px",width:460,maxWidth:"100%",position:"relative",border:`1px solid rgba(255,255,255,0.08)`,boxShadow:"0 32px 64px -16px rgba(0,0,0,0.55)"}}>
+          <button onClick={()=>setShareOpen(false)} style={{position:"absolute",top:16,right:16,width:30,height:30,borderRadius:8,border:`1px solid rgba(255,255,255,0.12)`,background:"rgba(255,255,255,0.06)",color:T.cream,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+          <div style={{fontSize:18,fontWeight:700,color:T.cream,marginBottom:4,fontFamily:T.font}}>Share chat</div>
+          <div style={{fontSize:13,color:"rgba(246,241,230,0.5)",marginBottom:20,fontFamily:T.font}}>Only messages up to this point will be shared.</div>
+          <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
+            {[
+              {key:"private",Icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>,label:"Keep private",sub:"Only you have access"},
+              {key:"public",Icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>,label:"Create public link",sub:"Anyone with the link can view"},
+            ].map(opt=>(
+              <div key={opt.key} onClick={()=>{setShareMode(opt.key);setShareLink("");}} style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,border:`1px solid ${shareMode===opt.key?"rgba(255,255,255,0.18)":"rgba(255,255,255,0.07)"}`,background:shareMode===opt.key?"rgba(255,255,255,0.06)":"transparent",cursor:"pointer",transition:"all 0.15s"}}>
+                <span style={{color:"rgba(246,241,230,0.6)",flexShrink:0}}>{opt.Icon}</span>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:14,fontWeight:600,color:T.cream,fontFamily:T.font}}>{opt.label}</div>
+                  <div style={{fontSize:12,color:"rgba(246,241,230,0.45)",marginTop:1,fontFamily:T.font}}>{opt.sub}</div>
+                </div>
+                {shareMode===opt.key&&<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+              </div>
+            ))}
+          </div>
+          {shareLink&&(
+            <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",borderRadius:8,background:"rgba(255,255,255,0.05)",border:`1px solid rgba(255,255,255,0.08)`,marginBottom:12}}>
+              <span style={{flex:1,fontSize:12,color:"rgba(246,241,230,0.55)",fontFamily:T.mono,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{shareLink}</span>
+              <button onClick={copyShareLink} style={{flexShrink:0,padding:"5px 12px",borderRadius:6,border:`1px solid ${T.lime}44`,background:shareCopied?T.lime+"22":"transparent",color:shareCopied?T.lime:"rgba(246,241,230,0.7)",fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,transition:"all 0.15s"}}>
+                {shareCopied?"Copied!":"Copy"}
+              </button>
+            </div>
+          )}
+          <button onClick={shareLink?copyShareLink:createShareLink} disabled={shareLoading} style={{width:"100%",padding:"12px 0",borderRadius:10,background:T.cream,color:"#14342A",border:"none",fontSize:14,fontWeight:700,cursor:shareLoading?"not-allowed":"pointer",fontFamily:T.font,opacity:shareLoading?0.6:1,transition:"opacity 0.15s"}}>
+            {shareLink?(shareCopied?"Copied!":"Copy link"):shareLoading?"Creating link...":shareMode==="private"?"Done":"Create share link"}
+          </button>
+        </div>
+      </div>
+    )}
   );
 }
 
@@ -10558,9 +10630,53 @@ function VerifyEmailScreen({user}){
   );
 }
 
+// ─── SHARED CHAT VIEW ─────────────────────────────────────────────────────────
+function SharedChatView({shareId}){
+  const [chat,setChat]=useState(null);
+  const [status,setStatus]=useState("loading");
+  useEffect(()=>{
+    fsdb().collection("shared_chats").doc(shareId).get()
+      .then(doc=>{if(doc.exists){setChat(doc.data());setStatus("ok");}else setStatus("notfound");})
+      .catch(()=>setStatus("error"));
+  },[shareId]);
+  const bg=T.bg||"#0D120F",card=T.card||"#19211C",text=T.text||"#E8EFE7",muted=T.muted||"#849389",lime=T.lime||"#AECE5E",font=T.font||"system-ui";
+  if(status==="loading")return(<div style={{minHeight:"100vh",background:bg,display:"grid",placeItems:"center"}}><div style={{width:14,height:14,borderRadius:"50%",border:`2px solid ${lime}`,borderTopColor:"transparent",animation:"studlinSpin 0.7s linear infinite"}}/></div>);
+  if(status!=="ok")return(<div style={{minHeight:"100vh",background:bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12,fontFamily:font}}><div style={{fontSize:18,fontWeight:700,color:text}}>{status==="notfound"?"This chat doesn't exist.":"Failed to load chat."}</div><a href="/app" style={{color:lime,fontSize:14,textDecoration:"none"}}>Go to Studlin</a></div>);
+  return(
+    <div style={{minHeight:"100vh",background:bg,fontFamily:font,color:text}}>
+      <div style={{borderBottom:`1px solid rgba(255,255,255,0.07)`,padding:"14px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",background:bg,position:"sticky",top:0,zIndex:10}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div style={{width:28,height:28,background:lime,borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:"#0E1F18",fontSize:14}}>S</div>
+          <span style={{fontSize:15,fontWeight:700,color:text,letterSpacing:"-0.02em"}}>Studlin</span>
+        </div>
+        <a href="/app" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 16px",borderRadius:99,background:lime,color:"#0E1F18",fontSize:13,fontWeight:700,textDecoration:"none"}}>Try Studlin AI</a>
+      </div>
+      <div style={{maxWidth:720,margin:"0 auto",padding:"32px 24px 80px"}}>
+        <div style={{fontSize:13,color:muted,marginBottom:28,fontWeight:500}}>Shared conversation</div>
+        {(chat.msgs||[]).map((m,i)=>(
+          <div key={i} style={{display:"flex",gap:12,alignItems:"flex-start",marginBottom:24,flexDirection:m.r==="user"?"row-reverse":"row"}}>
+            {m.r==="ai"
+              ?<div style={{width:28,height:28,borderRadius:7,background:lime,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:"#0E1F18",fontSize:13,flexShrink:0,marginTop:2}}>S</div>
+              :<div style={{width:28,height:28,borderRadius:"50%",background:lime+"22",border:`1px solid ${lime}44`,display:"flex",alignItems:"center",justifyContent:"center",color:lime,flexShrink:0,marginTop:2}}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+            }
+            <div style={{maxWidth:"80%",fontSize:14,lineHeight:1.75,color:text,background:m.r==="user"?card:"transparent",padding:m.r==="user"?"12px 16px":0,borderRadius:m.r==="user"?12:0,whiteSpace:"pre-wrap"}}>{m.t}</div>
+          </div>
+        ))}
+        <div style={{marginTop:40,padding:"28px 24px",borderRadius:16,background:card,border:`1px solid rgba(255,255,255,0.07)`,textAlign:"center"}}>
+          <div style={{fontSize:17,fontWeight:700,color:text,marginBottom:8}}>Study smarter with Studlin AI</div>
+          <div style={{fontSize:13,color:muted,marginBottom:20,lineHeight:1.6}}>Your AI study assistant, flashcards, notes, and calendar — all in one place.</div>
+          <a href="/app" style={{display:"inline-flex",padding:"11px 28px",borderRadius:99,background:lime,color:"#0E1F18",fontSize:14,fontWeight:700,textDecoration:"none"}}>Get started free</a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── AUTH GATE ────────────────────────────────────────────────────────────────
 const isPasswordAccount=(u)=>!!(u.providerData&&u.providerData.some(p=>p.providerId==="password"));
 function AuthGate(){
+  const shareId=new URLSearchParams(window.location.search).get("share");
+  if(shareId)return <SharedChatView shareId={shareId} />;
   const [user,setUser]=useState(undefined);
   useEffect(()=>{return firebase.auth().onAuthStateChanged(u=>{
     setUser(u||null);
