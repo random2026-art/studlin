@@ -82,7 +82,7 @@ function LeftRail() {
         <div className="rail-tile">
           <div className="ic">{Ic.spark}</div>
           <div className="t">Everything synced</div>
-          <div className="s">Notes, flashcards, essays and calendar, right where you left them</div>
+          <div className="s">Notes, flashcards, and calendar, right where you left them</div>
         </div>
         <div className="rail-tile">
           <div className="ic">{Ic.clock}</div>
