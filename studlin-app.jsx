@@ -1352,8 +1352,17 @@ function rebalanceDay(dateKey,allEvents,routines,prefs){
 
   const sorted=[...flex].sort(function(a,b){return scoreTask(b,prefs,streak)-scoreTask(a,prefs,streak);});
 
-  const prefStart=timeToMinutes(prefs.workStartTime);
+  let prefStart=timeToMinutes(prefs.workStartTime);
   const prefEnd=timeToMinutes(prefs.workEndTime);
+  // Same "never re-slot into the past" floor as findOpenSlotFor — without
+  // this, saving or editing any second task today silently snapped every
+  // flexible task on the day back to workStartTime, clobbering times that
+  // aiArrange/findOpenSlotFor had already correctly placed after "now".
+  if(dateKey===dayKey()){
+    const now=new Date();
+    const nowFloorMins=Math.ceil((now.getHours()*60+now.getMinutes()+15)/15)*15;
+    prefStart=Math.max(prefStart,nowFloorMins);
+  }
 
   const occupied=rest.filter(function(e){return e.date===dateKey&&e.time;}).map(function(e){
     return{start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)};
@@ -1364,6 +1373,7 @@ function rebalanceDay(dateKey,allEvents,routines,prefs){
 
   const reassigned=sorted.map(function(task){
     const dur=task.duration||60;
+    if(prefStart+dur>prefEnd)return task; // no room left today — leave it where it was rather than force a slot
     for(let t=prefStart;t+dur<=prefEnd;t+=15){
       if(!occupied.some(function(o){return!(t+dur<=o.start||t>=o.end);})){
         occupied.push({start:t,end:t+dur+computeBreathingRoom(dur)});
@@ -1477,9 +1487,13 @@ function advancedSchedulePlanner(baseEvents){
   const events=baseEvents.filter(e=>e.date===tk&&!e.checklist);
   const now=new Date();
   const nowMins=timeToMinutes(String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0"));
+  // Floor for placing anything today: now + 15min buffer, rounded up to the
+  // 15-min grid this planner already steps on. Without this, flexible tasks
+  // with no time yet always landed at workStartTime regardless of the clock.
+  const nowFloorMins=Math.ceil((nowMins+15)/15)*15;
 
   // Time window constraints
-  const workStart=timeToMinutes(prefs.workStartTime);
+  const workStart=Math.max(timeToMinutes(prefs.workStartTime),nowFloorMins);
   const workEnd=timeToMinutes(prefs.workEndTime);
 
   // Separate hard events (fixed time) and flexible tasks
@@ -1525,7 +1539,8 @@ function advancedSchedulePlanner(baseEvents){
     // window — that's the "Dead Time Activation" the free periods exist for.
     if(dur<=20){
       for(const w of freeWindows){
-        for(let timeSlot=w.start;timeSlot+dur<=w.end&&!placed;timeSlot+=15){
+        const wStart=Math.max(w.start,nowFloorMins);
+        for(let timeSlot=wStart;timeSlot+dur<=w.end&&!placed;timeSlot+=15){
           if(!detectConflicts(task,occupiedSlots,timeSlot)){
             occupiedSlots.push({start:timeSlot,end:timeSlot+dur,task:task});
             scheduled.push({...task,time:minutesToTime(timeSlot),done:!!done[task.id],scheduled:true});
