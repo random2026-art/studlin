@@ -613,14 +613,10 @@ const lsSet=(k,v)=>{try{localStorage.setItem("studlin-"+k,JSON.stringify(v));}ca
 // their output is never affected by these style settings.
 const getAiPrefs=()=>({verbosity:lsGet("pref-verb","Balanced"),tutorStyle:lsGet("pref-tutorStyle","Socratic")});
 const SUBJECT_COLORS=["#D9806B","#7BACDF","#A691DB","#5FCBA8","#DCA64A","#7880A8","#3ECF8E","#FF8A80","#81C784","#CE93D8"];
-const DEFAULT_SUBJECTS=[
-  {id:"chem",label:"Chemistry",color:"#D9806B"},
-  {id:"bio", label:"Biology",  color:"#5FCBA8"},
-  {id:"calc",label:"Calculus", color:"#7BACDF"},
-  {id:"eng", label:"English",  color:"#A691DB"},
-  {id:"hist",label:"History",  color:"#7880A8"},
-  {id:"span",label:"Spanish",  color:"#DCA64A"},
-];
+// Ships empty — forcing six unrelated pre-filled classes (Chemistry, Biology...)
+// on every new user added noise before they'd even decided what to track.
+// Users add their own as they go.
+const DEFAULT_SUBJECTS=[];
 const getSubjects=()=>lsGet("user-subjects",DEFAULT_SUBJECTS);
 const saveSubjects=(s)=>lsSet("user-subjects",s);
 
@@ -674,6 +670,29 @@ const SchoolSelect=({value,onChange,placeholder,theme})=>{
     </div>
   );
 };
+
+// Single swatch button that opens a color grid on click, instead of showing
+// every option inline at once — picking a color closes the dropdown, and the
+// caller is expected to tint the subject's own row with it (see subjectRowStyle)
+// so the color choice reads immediately without a separate legend.
+const ColorSelect=({value,onChange})=>{
+  const [open,setOpen]=useState(false);
+  return (
+    <div style={{position:"relative",flexShrink:0}}>
+      <button type="button" onClick={()=>setOpen(o=>!o)} onBlur={()=>setTimeout(()=>setOpen(false),150)}
+        title="Choose a color" style={{width:26,height:26,borderRadius:"50%",background:value,border:`2px solid ${T.white}30`,cursor:"pointer",padding:0,flexShrink:0}} />
+      {open&&(
+        <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,zIndex:30,background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:10,display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,boxShadow:"0 12px 28px -12px rgba(0,0,0,0.5)"}}>
+          {SUBJECT_COLORS.map(c=>(
+            <div key={c} onMouseDown={e=>e.preventDefault()} onClick={()=>{onChange(c);setOpen(false);}} title={c}
+              style={{width:20,height:20,borderRadius:"50%",background:c,cursor:"pointer",border:value===c?`2.5px solid ${T.white}`:"2px solid transparent",boxSizing:"border-box",transform:value===c?"scale(1.15)":"scale(1)",transition:"transform 0.12s"}} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+const subjectRowStyle=(color)=>({display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:10,background:color+"14",border:`1px solid ${color}33`,borderLeft:`3px solid ${color}`});
 
 // ─── INSTITUTIONAL LIVE-DEMO CLASS ENGINE ────────────────────────────────────
 // Pitch/demo material for university and high-school conversations — wired to
@@ -7655,13 +7674,8 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
             <div style={{fontSize:20,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:4}}>Set up your subjects</div>
             <div style={{fontSize:13,color:T.muted,marginBottom:20}}>Add your classes and pick a color for each. You can always manage these in Settings.</div>
             {onbSubjs.map((s,i)=>(
-              <div key={i} style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
-                <div style={{display:"flex",gap:4,flexShrink:0,flexWrap:"wrap",maxWidth:120}}>
-                  {SUBJECT_COLORS.map(c=>(
-                    <div key={c} onClick={()=>setOnbSubjs(a=>a.map((x,j)=>j===i?{...x,color:c}:x))} title={c} style={{width:14,height:14,borderRadius:"50%",background:c,cursor:"pointer",border:s.color===c?`2.5px solid ${T.white}`:`2px solid transparent`,boxSizing:"border-box",flexShrink:0,transition:"transform 0.12s",transform:s.color===c?"scale(1.25)":"scale(1)"}} />
-                  ))}
-                </div>
-                <div style={{width:10,height:10,borderRadius:"50%",background:s.color,flexShrink:0}} />
+              <div key={i} style={{...subjectRowStyle(s.color),marginBottom:10}}>
+                <ColorSelect value={s.color} onChange={c=>setOnbSubjs(a=>a.map((x,j)=>j===i?{...x,color:c}:x))} />
                 <input value={s.label} onChange={e=>setOnbSubjs(a=>a.map((x,j)=>j===i?{...x,label:e.target.value}:x))} placeholder={`Class ${i+1} (e.g. Calculus)`} style={{flex:1,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none"}} />
                 <button onClick={()=>setOnbSubjs(a=>a.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:18,padding:"2px 6px",fontFamily:T.font,lineHeight:1}}>×</button>
               </div>
@@ -9061,6 +9075,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const accents=[{n:"Lime",c:"#AECE5E"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"}];
   const [mgmtSubjs,setMgmtSubjs]=useState(()=>getSubjects().map(s=>({...s})));
   const [mgmtSaved,setMgmtSaved]=useState(false);
+  const [confirmClearSubjs,setConfirmClearSubjs]=useState(false);
   const saveMgmtSubjs=()=>{const valid=mgmtSubjs.filter(s=>s.label.trim());saveSubjects(valid);lsSet("subjects-configured",true);setMgmtSaved(true);setTimeout(()=>setMgmtSaved(false),2500);};
 
   return (
@@ -9264,20 +9279,23 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 <div style={{fontSize:12.5,color:T.muted,padding:"20px 0",textAlign:"center",borderTop:`1px solid ${T.border}`}}>No subjects yet. Click "+ Add" to create your first label.</div>
               )}
               {mgmtSubjs.map((sub,i)=>(
-                <div key={sub.id||i} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 0",borderBottom:`1px solid ${T.border}`}}>
-                  <div style={{display:"flex",gap:4,flexWrap:"wrap",flexShrink:0,maxWidth:120}}>
-                    {SUBJECT_COLORS.map(c=>(
-                      <div key={c} onClick={()=>setMgmtSubjs(s=>s.map((x,j)=>j===i?{...x,color:c}:x))} title={c} style={{width:14,height:14,borderRadius:"50%",background:c,cursor:"pointer",boxSizing:"border-box",border:sub.color===c?`2.5px solid ${T.white}`:`2px solid transparent`,transition:"transform 0.12s",transform:sub.color===c?"scale(1.25)":"scale(1)",flexShrink:0}} />
-                    ))}
-                  </div>
-                  <div style={{width:10,height:10,borderRadius:"50%",background:sub.color,flexShrink:0}} />
+                <div key={sub.id||i} style={{...subjectRowStyle(sub.color),marginBottom:10}}>
+                  <ColorSelect value={sub.color} onChange={c=>setMgmtSubjs(s=>s.map((x,j)=>j===i?{...x,color:c}:x))} />
                   <input value={sub.label} onChange={e=>setMgmtSubjs(s=>s.map((x,j)=>j===i?{...x,label:e.target.value}:x))} placeholder="Subject name..." style={{flex:1,background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"7px 10px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none"}} />
                   <button onClick={()=>setMgmtSubjs(s=>s.filter((_,j)=>j!==i))} style={{background:"none",border:`1px solid ${T.border}`,color:T.muted,cursor:"pointer",borderRadius:6,padding:"4px 10px",fontSize:12,fontFamily:T.font}}>Remove</button>
                 </div>
               ))}
               <div style={{display:"flex",gap:10,marginTop:16,alignItems:"center"}}>
                 <Btn onClick={saveMgmtSubjs}>Save changes</Btn>
-                <Btn variant="subtle" onClick={()=>setMgmtSubjs(DEFAULT_SUBJECTS.map(s=>({...s})))}>Reset to defaults</Btn>
+                {mgmtSubjs.length>0&&(confirmClearSubjs?(
+                  <>
+                    <span style={{fontSize:12,color:T.muted}}>Remove all {mgmtSubjs.length} subject{mgmtSubjs.length!==1?"s":""}?</span>
+                    <Btn variant="danger" onClick={()=>{setMgmtSubjs([]);saveSubjects([]);setConfirmClearSubjs(false);}}>Yes, clear</Btn>
+                    <Btn variant="subtle" onClick={()=>setConfirmClearSubjs(false)}>Cancel</Btn>
+                  </>
+                ):(
+                  <Btn variant="subtle" onClick={()=>setConfirmClearSubjs(true)}>Clear all</Btn>
+                ))}
                 {mgmtSaved&&<span style={{fontSize:12,color:T.lime,fontWeight:600}}>✓ Saved</span>}
               </div>
             </Card>
