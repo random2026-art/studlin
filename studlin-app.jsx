@@ -6931,13 +6931,10 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   const rescheduleBtnRef=useRef(null);
   const CAL_TOUR_STEPS=[
     {targetRef:addTaskBtnRef,title:"Add anything, one place",body:"A class, an assignment, a reminder — tap Add Task and Studlin finds the time for it."},
-    {targetRef:brainDumpLinkRef,title:"Got a lot going on?",body:"Dump it all in at once — Studlin sorts it into tasks and deadlines for you."},
     {targetRef:rescheduleBtnRef,title:"When things don't go as planned",body:"Tell Studlin what happened and it reschedules everything around it — deadlines stay safe, nothing gets crammed in."},
   ];
   const [calTourStep,setCalTourStep]=useState(()=>isFreshAccount?0:-1);
   const advanceCalTour=()=>{
-    if(calTourStep===0)openNew(selDay); // reveal the Brain Dump link inside the Add Task modal
-    if(calTourStep===1)resetForm(); // close the Add Task modal so the Reschedule button is visible
     const next=calTourStep+1;
     if(next>=CAL_TOUR_STEPS.length){
       setCalTourStep(-1);
@@ -6948,7 +6945,6 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     setCalTourStep(next);
   };
   const skipCalTour=()=>{
-    resetForm();
     setCalTourStep(-1);
     lsSet("seenCalendarTour",true);
     setRoutineWizardOpen(true);
