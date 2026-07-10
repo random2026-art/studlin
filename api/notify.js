@@ -3,6 +3,8 @@ const { admin, db } = require('./_lib/firebase-admin');
 const { setCors, verifyAuth } = require('./_lib/auth');
 const { withSentry } = require('./_lib/sentry');
 
+function htmlEscape(str){return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#x27;');}
+
 // Merges send-note.js, send-push.js, and send-welcome.js into one function —
 // Vercel Hobby caps a deployment at 12 Serverless Functions and this project
 // hit that ceiling (see vercel.json). Routes on `type` in the body.
@@ -95,11 +97,11 @@ async function sendNote(user, req, res) {
               Shared note
             </p>
             <h1 style="margin:0 0 16px;font-size:22px;font-weight:700;color:#0D120F;letter-spacing:-0.02em;line-height:1.25;">
-              ${noteTitle}
+              ${htmlEscape(noteTitle)}
             </h1>
-            ${noteTag ? `<div style="display:inline-block;padding:3px 10px;border-radius:99px;background:#AECE5E22;border:1px solid #AECE5E55;font-size:11px;font-weight:700;color:#3a5a1a;letter-spacing:0.05em;margin-bottom:20px;">${noteTag}</div>` : ''}
+            ${noteTag ? `<div style="display:inline-block;padding:3px 10px;border-radius:99px;background:#AECE5E22;border:1px solid #AECE5E55;font-size:11px;font-weight:700;color:#3a5a1a;letter-spacing:0.05em;margin-bottom:20px;">${htmlEscape(noteTag)}</div>` : ''}
             <p style="margin:0 0 24px;font-size:14px;color:#555;line-height:1.7;">
-              <strong style="color:#0D120F;">${senderName || 'A Studlin user'}</strong> has shared this note with you.
+              <strong style="color:#0D120F;">${htmlEscape(senderName || 'A Studlin user')}</strong> has shared this note with you.
             </p>
 
             <!-- Note preview card -->
@@ -145,7 +147,7 @@ async function sendNote(user, req, res) {
 
     if (error) {
       console.error('[notify:note] Resend API error:', JSON.stringify(error));
-      return res.status(500).json({ error: 'Failed to send email', detail: error.message });
+      return res.status(500).json({ error: 'Failed to send email' });
     }
 
     console.log('[notify:note] Email sent successfully — resend_id=%s', data?.id);
@@ -153,7 +155,7 @@ async function sendNote(user, req, res) {
 
   } catch (e) {
     console.error('[notify:note] Unexpected error:', e.message, e.stack);
-    return res.status(500).json({ error: 'Server error', detail: e.message });
+    return res.status(500).json({ error: 'Server error' });
   }
 }
 
@@ -290,7 +292,7 @@ async function sendWelcome(user, req, res) {
 
     if (error) {
       console.error('[notify:welcome] Resend error:', error);
-      return res.status(500).json({ error: 'Failed to send email', detail: error.message });
+      return res.status(500).json({ error: 'Failed to send email' });
     }
 
     return res.json({ ok: true, id: data?.id });
