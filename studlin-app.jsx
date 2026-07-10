@@ -11490,10 +11490,6 @@ function App() {
             </svg>
           </button>
         </div>
-        <div onClick={()=>setActive("profile")} title={navCollapsed?getUserName():undefined} style={{background:sidebarCardBg,borderRadius:8,padding:navCollapsed?"8px":"10px 12px",marginBottom:16,display:"flex",alignItems:"center",justifyContent:navCollapsed?"center":"flex-start",gap:10,cursor:"pointer",border:`1px solid ${sidebarBorder}`}}>
-          <Av initials={getUserInitials()} color={T.lime} size={30} />
-          {!navCollapsed&&<div><div style={{fontSize:12,fontWeight:600,color:sidebarText,whiteSpace:"nowrap"}}>{getUserName()}</div><div style={{fontSize:10,color:sidebarMuted}}>{getPlan()}</div></div>}
-        </div>
         {navSections.map(sec=>(
           <div key={sec.label}>
             {!navCollapsed&&<div style={{fontSize:9,fontWeight:700,letterSpacing:"0.1em",color:sidebarFaint,textTransform:"uppercase",padding:"0 6px",margin:"14px 0 5px"}}>{sec.label}</div>}
@@ -11504,33 +11500,46 @@ function App() {
         <div style={{margin:"14px 0 5px"}}>
           {bottomItems.map(item=><NavItem key={item.id} item={item} />)}
         </div>
-        {/* AI credits card */}
+        {/* Bottom profile + usage — Claude-style */}
         {(()=>{
           const cr=getCredits();const lim=getCreditLimit();const plan=getPlan();
-          const used=Math.max(0,lim-cr);const pct=Math.min(100,Math.round(cr/lim*100));
-          const barColor=pct>50?T.lime:pct>20?"#F5A623":"#E05252";
+          const used=Math.max(0,lim-cr);const pct=Math.min(100,Math.round(used/lim*100));
+          const barColor=pct<50?T.lime:pct<80?"#F5A623":"#E05252";
           const daysLeft=(()=>{const n=new Date();const e=new Date(n.getFullYear(),n.getMonth()+1,1);return Math.ceil((e-n)/86400000);})();
+          const email=firebase.auth().currentUser?.email||"";
           if(navCollapsed){return(
-          <div onClick={()=>setCreditsOpen(true)} title={cr+" credits remaining"} style={{background:T.card,borderRadius:10,padding:"10px 0",marginTop:"auto",border:`1px solid ${T.border}`,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
-            <span style={{fontSize:15,fontWeight:700,color:pct>20?T.lime:"#E05252",lineHeight:1}}>{cr}</span>
-            <div style={{width:"60%",height:3,background:T.border,borderRadius:99,overflow:"hidden"}}><div style={{height:"100%",width:pct+"%",background:barColor,borderRadius:99,transition:"width 0.4s"}} /></div>
+          <div style={{marginTop:"auto",borderTop:`1px solid ${sidebarBorder}`,paddingTop:10,display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
+            <div onClick={()=>setActive("profile")} title={getUserName()} style={{cursor:"pointer"}}><Av initials={getUserInitials()} color={T.lime} size={32} /></div>
+            <div onClick={()=>setCreditsOpen(true)} title={cr+" credits remaining"} style={{cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+              <div style={{width:28,height:3,background:sidebarBorder,borderRadius:99,overflow:"hidden"}}><div style={{height:"100%",width:pct+"%",background:barColor,borderRadius:99,transition:"width 0.4s"}} /></div>
+            </div>
           </div>);}
           return(
-          <div onClick={()=>setCreditsOpen(true)} style={{background:T.card,borderRadius:12,padding:"13px 14px",marginTop:"auto",border:`1px solid ${T.border}`,cursor:"pointer",overflow:"hidden"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-              <span style={{fontSize:10,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase"}}>AI Credits</span>
-              <span style={{fontSize:9.5,fontWeight:700,color:plan==="Free"?T.muted:T.lime,background:plan==="Free"?T.border:T.lime+"18",padding:"2px 7px",borderRadius:4,letterSpacing:"0.04em"}}>{plan.toUpperCase()}</span>
+          <div style={{marginTop:"auto",borderTop:`1px solid ${sidebarBorder}`,paddingTop:10}}>
+            {/* Profile row */}
+            <div onClick={()=>setActive("profile")} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:9,cursor:"pointer",marginBottom:2,transition:"background 0.15s"}} onMouseEnter={e=>e.currentTarget.style.background=sidebarCardBg} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+              <Av initials={getUserInitials()} color={T.lime} size={32} />
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:12.5,fontWeight:600,color:sidebarText,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{getUserName()}</div>
+                <div style={{fontSize:10,color:sidebarMuted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{email}</div>
+              </div>
+              <button onClick={e=>{e.stopPropagation();setActive("settings");}} title="Settings" style={{width:26,height:26,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:"none",color:sidebarMuted,cursor:"pointer",borderRadius:6,flexShrink:0}}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              </button>
             </div>
-            <div style={{display:"flex",alignItems:"baseline",gap:4,marginBottom:8}}>
-              <span style={{fontSize:30,fontWeight:700,color:pct>20?T.text:"#E05252",lineHeight:1,letterSpacing:"-0.03em"}}>{cr}</span>
-              <span style={{fontSize:12,color:T.muted,fontWeight:400}}>/ {lim}</span>
-            </div>
-            <div style={{height:3,background:T.border,borderRadius:99,overflow:"hidden",marginBottom:8}}>
-              <div style={{height:"100%",width:pct+"%",background:barColor,borderRadius:99,transition:"width 0.4s"}} />
-            </div>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <span style={{fontSize:10.5,color:T.muted}}>{used} used · resets in {daysLeft}d</span>
-              {plan==="Free"&&<button onClick={e=>{e.stopPropagation();setPricingOpen(true);}} style={{fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"14",border:`1px solid ${T.lime}30`,padding:"2px 8px",borderRadius:5,cursor:"pointer",fontFamily:T.font}}>Upgrade</button>}
+            {/* Usage row */}
+            <div onClick={()=>setCreditsOpen(true)} style={{padding:"8px 10px",borderRadius:9,cursor:"pointer",transition:"background 0.15s"}} onMouseEnter={e=>e.currentTarget.style.background=sidebarCardBg} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                <span style={{fontSize:11,fontWeight:500,color:sidebarMuted}}>AI Credits</span>
+                <span style={{fontSize:10.5,color:pct<80?sidebarMuted:"#E05252"}}>{pct}% used</span>
+              </div>
+              <div style={{height:3,background:sidebarBorder,borderRadius:99,overflow:"hidden",marginBottom:5}}>
+                <div style={{height:"100%",width:pct+"%",background:barColor,borderRadius:99,transition:"width 0.4s"}} />
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:10,color:sidebarFaint}}>{cr} remaining · resets in {daysLeft}d</span>
+                {plan==="Free"&&<button onClick={e=>{e.stopPropagation();setPricingOpen(true);}} style={{fontSize:9.5,fontWeight:700,color:T.lime,background:T.lime+"14",border:`1px solid ${T.lime}30`,padding:"2px 7px",borderRadius:4,cursor:"pointer",fontFamily:T.font}}>Upgrade</button>}
+              </div>
             </div>
           </div>);
         })()}
