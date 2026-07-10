@@ -7089,7 +7089,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
         "For each item return: \"title\" (short, e.g. \"Chem homework\" or \"Email counselor\"), "+
         "\"kind\" (\"study\" for anything that takes real focused work time — homework, studying, a project — or \"todo\" for a quick task with no real duration, like sending an email, a form, or a phone call), "+
         "\"durationMin\" (your best-guess minutes needed, ONLY for kind:\"study\" — null for kind:\"todo\"), "+
-        "\"dueDate\" (YYYY-MM-DD if a deadline was stated or clearly implied like \"Friday\", else null), "+
+        "\"dueDate\" (YYYY-MM-DD if a deadline or target day was stated or implied — \"today\"/\"tonight\" means the date given above, \"Friday\" means the next occurrence of that weekday, etc. Be literal: if the student named a specific day, always return it, even if it's today. Only use null when truly no timing was mentioned at all), "+
         "\"needsDuration\" (true ONLY if kind is \"study\" and you genuinely can't make a reasonable guess from context — be generous, most things can get a rough estimate). "+
         "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
         "{\"items\":[{\"title\":\"Chem homework\",\"kind\":\"study\",\"durationMin\":45,\"dueDate\":null,\"needsDuration\":false}]}. "+
