@@ -4279,9 +4279,9 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange}={}){
   const finishNetTour=()=>{lsSet("seenNetworkTour",true);setNetTourStep(null);};
 
   const me=getUserName()||"You";
-  const refCode=me.toLowerCase().replace(/\s+/g,"");
+  const refCode=myUid?myUid.slice(0,10):me.toLowerCase().replace(/\s+/g,"");
   const inviteLink="https://studlin.app?ref="+refCode;
-  const qrUrl="https://api.qrserver.com/v1/create-qr-code/?data="+encodeURIComponent(inviteLink)+"&size=150x150&color=AECE5E&bgcolor=0D120F&margin=10";
+  const qrUrl="https://chart.googleapis.com/chart?cht=qr&chs=150x150&chl="+encodeURIComponent(inviteLink)+"&chco=AECE5E&chf=bg,s,0D120F";
   const myUid=firebase.auth().currentUser?.uid||null;
 
   // Reports which thread (if any) is actively open up to App(), so its
