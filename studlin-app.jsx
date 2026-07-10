@@ -828,7 +828,15 @@ function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,
       if(!occupied.some(o=>!(t+duration<=o.start||t>=o.end)))return {date:dk,time:minutesToTime(t)};
     }
   }
-  return {date:desiredDate,time:desiredTime}; // nothing open in two weeks — better than silently dropping the task
+  // Nothing open in two weeks (or the deadline forced an early break before
+  // any day was even scanned, e.g. an item due "today" with today already
+  // full) — better than silently dropping the task. But this raw fallback
+  // must still never hand back a past time for today: a same-day deadline
+  // with no room left is a genuine no-good-answer case, so we'd rather
+  // return a tight-but-still-in-the-future slot than one that's already
+  // passed on the clock.
+  if(desiredDate===todayKey&&timeToMinutes(desiredTime)<nowFloorMins)return {date:desiredDate,time:minutesToTime(nowFloorMins)};
+  return {date:desiredDate,time:desiredTime};
 }
 // findOpenSlotFor's fallback ("return the desired slot anyway if nothing's
 // open") is the right default for its existing callers, but wrong for a
