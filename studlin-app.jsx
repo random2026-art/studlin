@@ -10830,6 +10830,10 @@ function App() {
     const LEAD_TIMES=[10,5]; // minutes before start
     const check=()=>{
       if(Notification.permission!=="granted")return;
+      // Respect the "Task & App Notifications" master toggle in Settings
+      // (defaults on) — read fresh each poll so turning it off mid-session
+      // takes effect immediately instead of needing a reload.
+      if(lsGet("settings",{}).notifMaster===false)return;
       const events=lsGet("events",[]);
       const todayK=dayKey();
       const now=Date.now();
