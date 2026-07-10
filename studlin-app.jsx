@@ -4279,10 +4279,10 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange}={}){
   const finishNetTour=()=>{lsSet("seenNetworkTour",true);setNetTourStep(null);};
 
   const me=getUserName()||"You";
-  const refCode=myUid?myUid.slice(0,10):me.toLowerCase().replace(/\s+/g,"");
-  const inviteLink="https://studlin.app?ref="+refCode;
-  const qrUrl="https://chart.googleapis.com/chart?cht=qr&chs=150x150&chl="+encodeURIComponent(inviteLink)+"&chco=AECE5E&chf=bg,s,0D120F";
   const myUid=firebase.auth().currentUser?.uid||null;
+  const refCode=myUid||me.toLowerCase().replace(/\s+/g,"");
+  const inviteLink="https://studlin.com/app?ref="+refCode;
+  const qrUrl="https://chart.googleapis.com/chart?cht=qr&chs=150x150&chl="+encodeURIComponent(inviteLink)+"&chco=AECE5E&chf=bg,s,0D120F";
 
   // Reports which thread (if any) is actively open up to App(), so its
   // cross-tab notification listener can suppress alerts for a thread the
@@ -4616,7 +4616,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange}={}){
                       <rect key={i} x={x} y={y} width="5" height="5" rx="1" fill={T.lime} opacity="0.78"/>
                     ))}
                   </svg>
-                  <div style={{fontSize:8.5,color:T.muted,letterSpacing:"0.04em"}}>studlin.app</div>
+                  <div style={{fontSize:8.5,color:T.muted,letterSpacing:"0.04em"}}>studlin.com</div>
                 </div>
               </div>
             </div>
@@ -11054,12 +11054,30 @@ function SharedChatView({shareId}){
 const isPasswordAccount=(u)=>!!(u.providerData&&u.providerData.some(p=>p.providerId==="password"));
 function AuthGate(){
   const shareId=new URLSearchParams(window.location.search).get("share");
+  const refId=new URLSearchParams(window.location.search).get("ref");
+  if(refId)try{sessionStorage.setItem("studlin-ref",refId);}catch(e){}
   const [user,setUser]=useState(undefined);
   useEffect(()=>{
     if(shareId)return;
-    return firebase.auth().onAuthStateChanged(u=>{
+    return firebase.auth().onAuthStateChanged(async u=>{
       setUser(u||null);
-      if(u&&(!isPasswordAccount(u)||u.emailVerified)){fetchUserProfile();upsertProfile();}
+      if(u&&(!isPasswordAccount(u)||u.emailVerified)){
+        fetchUserProfile();upsertProfile();
+        const ref=sessionStorage.getItem("studlin-ref");
+        if(ref&&ref!==u.uid){
+          try{
+            sessionStorage.removeItem("studlin-ref");
+            const existing=await fsdb().collection("friendships")
+              .where("senderId","==",u.uid).where("receiverId","==",ref).get();
+            if(existing.empty){
+              await fsdb().collection("friendships").add({
+                senderId:u.uid,receiverId:ref,status:"pending",
+                createdAt:new Date().toISOString(),source:"invite_link"
+              });
+            }
+          }catch(e){}
+        }
+      }
     });
   },[shareId]);
   if(shareId)return <SharedChatView shareId={shareId} />;
