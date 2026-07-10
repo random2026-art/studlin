@@ -2813,6 +2813,8 @@ function Essays() {
 function Flashcards() {
   const MicIcon=<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0,display:"block"}}><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg>;
   const [deckList,setDeckList]=useState(()=>{const d=lsGet("decks",null);return(d&&Array.isArray(d))?d:[];});
+  const [showExamLinkTip,setShowExamLinkTip]=useState(()=>!lsGet("seenFlashcardsExamTip",false));
+  const dismissExamLinkTip=()=>{lsSet("seenFlashcardsExamTip",true);setShowExamLinkTip(false);};
   const [studyDeck,setStudyDeck]=useState(null);
   const [flipped,setFlipped]=useState(false);
   const [idx,setIdx]=useState(0);
@@ -3018,6 +3020,13 @@ function Flashcards() {
   return (
     <div>
       <PH title="Flashcards" sub="Study with spaced repetition" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New deck")}</Btn>} />
+      {showExamLinkTip&&(
+        <div style={{display:"flex",alignItems:"center",gap:12,background:T.lime+"0d",border:`1px solid ${T.lime}33`,borderRadius:12,padding:"12px 16px",marginBottom:16}}>
+          <span style={{fontSize:18,flexShrink:0}}>🎯</span>
+          <div style={{flex:1,fontSize:12.5,color:T.text,lineHeight:1.5}}><strong style={{color:T.lime}}>Tip:</strong> Link a deck to an exam on your calendar and Studlin schedules spaced review sessions for you — no cramming.</div>
+          <button onClick={dismissExamLinkTip} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:18,padding:"2px 6px",fontFamily:T.font,lineHeight:1,flexShrink:0}}>×</button>
+        </div>
+      )}
       <Modal open={sendDeckOpen} onClose={()=>{setSendDeckOpen(false);setSendDeckTarget("");setSendDeckId(null);setSendDeckStatus("");}} title="Send deck to a friend" sub="Beam this entire deck into a friend's Studlin workspace." width={440}
         footer={sendDeckStatus==="sent"?null:<><Btn variant="subtle" onClick={()=>{setSendDeckOpen(false);setSendDeckTarget("");setSendDeckId(null);setSendDeckStatus("");}}>Cancel</Btn><Btn onClick={confirmSendDeck} style={{opacity:sendDeckTarget.trim()?1:0.45}}>{Icon.send} Send deck</Btn></>}>
         {sendDeckStatus==="sent"
@@ -3251,6 +3260,8 @@ function Notes(){
   const colorOf=(tg)=>{const s=userSubjects.find(x=>x.label===tg);return s?s.color:T.lime;};
 
   const [notes,setNotes]=useState(()=>{const n=lsGet("notes",null);return(n&&Array.isArray(n))?n.filter(x=>x&&x.title):[];});
+  const [showSyllabusTip,setShowSyllabusTip]=useState(()=>!lsGet("seenNotesSyllabusTip",false));
+  const dismissSyllabusTip=()=>{lsSet("seenNotesSyllabusTip",true);setShowSyllabusTip(false);};
   const [sel,setSel]=useState(null);
   const [search,setSearch]=useState("");
   const filtered=notes.filter(n=>n.title.toLowerCase().includes(search.toLowerCase())||(n.body||"").replace(/<[^>]+>/g," ").toLowerCase().includes(search.toLowerCase()));
@@ -3748,6 +3759,14 @@ function Notes(){
   return (
     <div>
       <PH title="Notes" sub="Write, scan, record, or import" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New note")}</Btn>} />
+
+      {showSyllabusTip&&(
+        <div style={{display:"flex",alignItems:"center",gap:12,background:T.lime+"0d",border:`1px solid ${T.lime}33`,borderRadius:12,padding:"12px 16px",marginBottom:16}}>
+          <span style={{fontSize:18,flexShrink:0}}>📄</span>
+          <div style={{flex:1,fontSize:12.5,color:T.text,lineHeight:1.5}}><strong style={{color:T.lime}}>Tip:</strong> Paste or upload your syllabus — Studlin finds every deadline for that class automatically.</div>
+          <button onClick={dismissSyllabusTip} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:18,padding:"2px 6px",fontFamily:T.font,lineHeight:1,flexShrink:0}}>×</button>
+        </div>
+      )}
 
       {/* ── SEND NOTE MODAL ── */}
       <Modal open={sendNoteOpen} onClose={()=>{if(sendNoteStatus==="sending")return;setSendNoteOpen(false);setSendNoteTarget("");setSendNoteStatus("");setSendNoteError("");}} title="Send note to a friend" sub="Deliver this note directly to any email address." width={440}
@@ -4249,9 +4268,9 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange}={}){
   // carousel since there's no single control to anchor to here.
   const [netTourStep,setNetTourStep]=useState(()=>lsGet("seenNetworkTour",false)?null:0);
   const NET_TOUR_STEPS=[
-    {title:"Missed Class Protection",body:"Effortlessly share class notes and lecture materials with verified school peers — never fall behind because you missed a lecture."},
-    {title:"Peer Sync",body:"Real-time study chats and shared digital study sessions, so you're never studying completely alone."},
-    {title:"Flexible Architectures",body:"Spin up agile, temporary study groups for an upcoming exam, or set up a permanent channel for the whole semester."},
+    {title:"Missed a class?",body:"Get notes from a classmate instead of falling behind."},
+    {title:"Study together",body:"Chat and study live with people in your classes."},
+    {title:"Study groups",body:"Make one for an exam, or keep one going all semester."},
   ];
   const advanceNetTour=()=>{
     if(netTourStep>=NET_TOUR_STEPS.length-1){finishNetTour();return;}
@@ -6863,7 +6882,17 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.muted},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   const colorOf=(sub)=>{if(!sub||sub==="None"||sub==="")return T.muted;const x=userSubjects.find(s=>s.label===sub);return x?x.color:T.lime;};
-  const [subjOnboardOpen,setSubjOnboardOpen]=useState(()=>!lsGet("subjects-configured",false));
+  // A genuinely fresh account — never touched Subjects or Routine, and
+  // hasn't seen the new tour either. Deliberately excludes "cal-onboard-done"
+  // (the old Google Calendar prompt's flag): App() stamps that one itself
+  // for every fresh account on mount, before this component even runs, so
+  // checking it here would always read true and make this look non-fresh
+  // on the very mount it needs to be fresh. Gates all legacy auto-triggers
+  // off in favor of the single linear sequence below (tour -> Routine ->
+  // Subjects); anyone who already has Subjects or Routine configured
+  // (existing accounts, from before this tour existed) is untouched.
+  const isFreshAccount=!lsGet("subjects-configured",false)&&!lsGet("hasConfiguredRoutine",false)&&!lsGet("seenCalendarTour",false);
+  const [subjOnboardOpen,setSubjOnboardOpen]=useState(()=>!lsGet("subjects-configured",false)&&!isFreshAccount);
   const [onbSubjs,setOnbSubjs]=useState(()=>getSubjects().map(s=>({...s})));
 
   // Deferred Weekly Routine wizard — used to block on the very first Calendar
@@ -6874,8 +6903,42 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   // by the same one-shot "hasConfiguredRoutine" flag, and still reachable
   // any time via the "Routine" button or Settings > Calendar Preferences
   // (the latter arrives via openWizardOnMount, since Settings is a separate
-  // top-level tab with no direct access to this component's state).
-  const [routineWizardOpen,setRoutineWizardOpen]=useState(()=>!lsGet("hasConfiguredRoutine",false)&&lsGet("events",[]).some(e=>!e.id.startsWith("seed-")));
+  // top-level tab with no direct access to this component's state). Fresh
+  // accounts skip this old auto-condition entirely — calTourStep below
+  // opens it explicitly once the new walkthrough finishes.
+  const [routineWizardOpen,setRoutineWizardOpen]=useState(()=>!lsGet("hasConfiguredRoutine",false)&&lsGet("events",[]).some(e=>!e.id.startsWith("seed-"))&&!isFreshAccount);
+  // First-time guided walkthrough — Add Task/Brain Dump -> Studlin
+  // Reschedule -> (chains into Routine, then Subjects, via their own
+  // finish/skip handlers below). Replaces three independent modals that
+  // used to compete for the same first-run moment with one linear sequence
+  // that shows what the app does before asking for any setup.
+  const addTaskBtnRef=useRef(null);
+  const brainDumpLinkRef=useRef(null);
+  const rescheduleBtnRef=useRef(null);
+  const CAL_TOUR_STEPS=[
+    {targetRef:addTaskBtnRef,title:"Add anything, one place",body:"A class, an assignment, a reminder — tap Add Task and Studlin finds the time for it."},
+    {targetRef:brainDumpLinkRef,title:"Got a lot going on?",body:"Dump it all in at once — Studlin sorts it into tasks and deadlines for you."},
+    {targetRef:rescheduleBtnRef,title:"When things don't go as planned",body:"Tell Studlin what happened and it reschedules everything around it — deadlines stay safe, nothing gets crammed in."},
+  ];
+  const [calTourStep,setCalTourStep]=useState(()=>isFreshAccount?0:-1);
+  const advanceCalTour=()=>{
+    if(calTourStep===0)openNew(selDay); // reveal the Brain Dump link inside the Add Task modal
+    if(calTourStep===1)resetForm(); // close the Add Task modal so the Reschedule button is visible
+    const next=calTourStep+1;
+    if(next>=CAL_TOUR_STEPS.length){
+      setCalTourStep(-1);
+      lsSet("seenCalendarTour",true);
+      setRoutineWizardOpen(true);
+      return;
+    }
+    setCalTourStep(next);
+  };
+  const skipCalTour=()=>{
+    resetForm();
+    setCalTourStep(-1);
+    lsSet("seenCalendarTour",true);
+    setRoutineWizardOpen(true);
+  };
   // Routine Control Center — the ongoing management dashboard reached via the
   // gear icon on the Calendar toolbar (as opposed to routineWizardOpen, which
   // is only the first-run setup flow).
@@ -6883,11 +6946,17 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   useEffect(()=>{
     if(openWizardOnMount){setRoutineWizardOpen(true);if(onWizardOpenedFromSettings)onWizardOpenedFromSettings();}
   },[openWizardOnMount]);
+  // Chains into Subjects setup only if it's genuinely still unconfigured —
+  // a no-op for anyone reopening Routine later from Settings who's already
+  // done Subjects, and the second half of the new-account sequence
+  // (tour -> Routine -> Subjects) for everyone else.
+  const maybeOpenSubjectsNext=()=>{if(!lsGet("subjects-configured",false))setSubjOnboardOpen(true);};
   const finishRoutineWizard=(routine,prefs)=>{
     persistRoutines(routine);
     setSchedulePreferences({...getSchedulePreferences(),...prefs});
     lsSet("hasConfiguredRoutine",true);
     setRoutineWizardOpen(false);
+    maybeOpenSubjectsNext();
   };
   const skipRoutineWizard=()=>{
     // Marks the wizard "handled" so it doesn't keep re-intercepting on every
@@ -6895,6 +6964,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     // "Routine".
     lsSet("hasConfiguredRoutine",true);
     setRoutineWizardOpen(false);
+    maybeOpenSubjectsNext();
   };
 
   const mk=(off,time,title,subject,kind)=>{const d=new Date();d.setDate(d.getDate()+off);return {id:"seed-"+off+"-"+time,date:dayKey(d),time,title,subject,kind};};
@@ -7595,7 +7665,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
         this div instead of nested inside it, so it centers against the real
         viewport regardless of scroll position or animation state. */}
     <div>
-      <PH title="Studlin Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><Btn variant="danger" onClick={()=>{setPauseOpen(true);setPauseError("");setPausePreview(null);}}>Studlin Reschedule</Btn><Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>setRoutineCenterOpen(true)}>Routine</Btn><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></div>} />
+      <PH title="Studlin Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><span ref={rescheduleBtnRef} style={{display:"inline-flex"}}><Btn variant="danger" onClick={()=>{setPauseOpen(true);setPauseError("");setPausePreview(null);}}>Studlin Reschedule</Btn></span><Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>setRoutineCenterOpen(true)}>Routine</Btn><span ref={addTaskBtnRef} style={{display:"inline-flex"}}><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></span></div>} />
       {editRoutineMode&&(
         <div style={{display:"flex",alignItems:"center",gap:12,padding:"9px 14px",background:T.lime+"10",border:`1px solid ${T.lime}33`,borderRadius:10,marginBottom:14,fontSize:12.5,color:T.text}}>
           <span style={{flex:1}}>Editing your Weekly Routine — one-off tasks are dimmed. Click a routine block to edit it, or hover and tap × to delete it everywhere it repeats.</span>
@@ -7668,6 +7738,10 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
           selDay={selDay} setSelDay={setSelDay} isAgendaCollapsed={isAgendaCollapsed} />
       </CollapsibleAgendaLayout>)}
     </div>
+      {calTourStep>=0&&(
+        <TourStep {...CAL_TOUR_STEPS[calTourStep]} step={calTourStep} total={CAL_TOUR_STEPS.length}
+          isLast={calTourStep===CAL_TOUR_STEPS.length-1} onNext={advanceCalTour} onSkip={skipCalTour} />
+      )}
       {subjOnboardOpen&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}}>
           <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:20,padding:28,width:520,maxWidth:"90vw",maxHeight:"82vh",overflowY:"auto",boxShadow:"0 32px 64px -16px rgba(0,0,0,0.6)"}}>
@@ -7717,7 +7791,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
                 ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!evTitle.trim()||!evDate.trim()||!evTime.trim()} style={{flex:1,justifyContent:"center",opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>Save to Calendar</Btn></>
                 : <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={aiArrange} disabled={aiLoading||!evTitle.trim()} style={{flex:1,justifyContent:"center",opacity:aiLoading?1:(!evTitle.trim()?0.45:1)}}>{aiLoading?"Scheduling...":"Add Task with AI"}</Btn></>
         }>
-        <button type="button" onClick={()=>{resetForm();setBrainDumpOpen(true);}} style={{display:"block",width:"100%",textAlign:"left",background:T.lime+"0d",border:`1px solid ${T.lime}33`,borderRadius:10,padding:"10px 12px",marginBottom:16,cursor:"pointer",fontFamily:T.font,fontSize:12.5,color:T.lime,fontWeight:600}}>
+        <button ref={brainDumpLinkRef} type="button" onClick={()=>{resetForm();setBrainDumpOpen(true);}} style={{display:"block",width:"100%",textAlign:"left",background:T.lime+"0d",border:`1px solid ${T.lime}33`,borderRadius:10,padding:"10px 12px",marginBottom:16,cursor:"pointer",fontFamily:T.font,fontSize:12.5,color:T.lime,fontWeight:600}}>
           Got more than one thing on your plate? Brain dump it all at once →
         </button>
         <Field label="Title"><Input placeholder="e.g. Study Bio chapter 4-6" value={evTitle} onChange={ev=>setEvTitle(ev.target.value)} autoFocus /></Field>
@@ -11030,7 +11104,12 @@ function App() {
   const [active,setActive]=useState(()=>{
     const pending=lsGet("pendingTour",null);
     if(pending){try{localStorage.removeItem("studlin-pendingTour");}catch(e){}return pending;}
-    return localStorage.getItem("studlin-active-tab")||"dashboard";
+    // First-ever load for this account has no stored tab yet — land on
+    // Calendar, not Dashboard, since Dashboard is empty (no streak, no
+    // decks, no history) for a brand-new user and gives them nothing to do.
+    // Every tab switch persists "studlin-active-tab" below, so this branch
+    // only ever fires once per account.
+    return localStorage.getItem("studlin-active-tab")||"calendar";
   });
   const [theme,setThemeState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-theme"))||"light");
   const [accent,setAccentState]=useState(()=>{
@@ -11133,7 +11212,19 @@ function App() {
   const [paywallBilling,setPaywallBilling]=useState("monthly");
   const [notifOpen,setNotifOpen]=useState(false);
   const [seriousMode,setSeriousMode]=useState(()=>lsGet("settings",{}).seriousMode||false);
-  const [calOnboardDone,setCalOnboardDone]=useState(()=>!!lsGet("cal-onboard-done",false));
+  // Fresh accounts skip this forced first-run prompt permanently — they get
+  // the new in-Calendar guided tour instead, and Google Calendar connect is
+  // still fully available anytime via Settings > Integrations. Stamping the
+  // flag (not just deriving it) means this stays retired for them even
+  // across a reload mid-tour, rather than reappearing once the "fresh"
+  // signal stops being true. Existing accounts that haven't seen this
+  // before are completely untouched.
+  const [calOnboardDone,setCalOnboardDone]=useState(()=>{
+    if(!!lsGet("cal-onboard-done",false))return true;
+    const isFresh=!lsGet("subjects-configured",false)&&!lsGet("hasConfiguredRoutine",false)&&!lsGet("seenCalendarTour",false);
+    if(isFresh){lsSet("cal-onboard-done",true);return true;}
+    return false;
+  });
   const [calOnboardGoogleSyncing,setCalOnboardGoogleSyncing]=useState(false);
   const [obGoogleLinked,setObGoogleLinked]=useState(()=>!!lsGet("cal-google",false));
   const [notifPermModal,setNotifPermModal]=useState(false);
