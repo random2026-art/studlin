@@ -803,10 +803,20 @@ const getRoutineOccurrencesForDate=(dateKey)=>expandRoutineOccurrences(getWeekly
 // in as a last resort, after the normal [workStart, workEnd] window for
 // today comes up empty, so it never disturbs how anything already-planned
 // in the normal hours gets scheduled.
+// Resolves the work window for one specific date — weekend hours if the
+// user has enabled a separate weekend schedule and this date falls on a
+// Saturday/Sunday, otherwise the same default hours every day. Kept as a
+// per-date lookup (not computed once) since a multi-day search needs a
+// different answer for each candidate day it walks through.
+function getWorkWindowMinsFor(prefs,dk){
+  const isWeekend=[0,6].includes(new Date(dk+"T12:00:00").getDay());
+  if(isWeekend&&prefs.weekendEnabled){
+    return {start:timeToMinutes(prefs.weekendStartTime||prefs.workStartTime),end:timeToMinutes(prefs.weekendEndTime||prefs.workEndTime)};
+  }
+  return {start:timeToMinutes(prefs.workStartTime),end:timeToMinutes(prefs.workEndTime)};
+}
 const CATCHUP_BUFFER_MINS=120;
 function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey){
-  const prefStartMins=timeToMinutes(prefs.workStartTime);
-  const prefEndMins=timeToMinutes(prefs.workEndTime);
   // Never hand back a slot that's already passed today. Most callers (Brain
   // Dump, assignment extensions, review sessions, overdue rollover) pass a
   // fixed desiredTime like prefs.workStartTime with no awareness of the
@@ -821,6 +831,7 @@ function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,
     // Assignment-linked callers (scheduleAssignmentExtension) pass a deadline
     // so we never place a block past it — plain callers omit it, no-op.
     if(deadlineKey&&dk>deadlineKey)break;
+    const {start:prefStartMins,end:prefEndMins}=getWorkWindowMinsFor(prefs,dk);
     // Free periods are preferred landing spots, not blocks — never treat them
     // as occupied (matches the Dashboard's scheduling engine).
     // Trailing breathing-room buffer scales with each existing block's own
@@ -878,8 +889,9 @@ function findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,durat
 // forward into later days, used by findSlotWithEviction to decide whether
 // a specific day needs eviction at all.
 function dayHasRoomFor(events,routines,prefs,dateKey,duration){
-  const prefStartMins=timeToMinutes(prefs.workStartTime);
-  const prefEndMins=timeToMinutes(prefs.workEndTime);
+  const dayWindow=getWorkWindowMinsFor(prefs,dateKey);
+  const prefStartMins=dayWindow.start;
+  const prefEndMins=dayWindow.end;
   const occupied=events.filter(e=>e.date===dateKey&&e.time)
     .concat(expandRoutineOccurrences(routines,dateKey,dateKey).filter(o=>o.kind!=="free period"))
     .map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
@@ -1307,7 +1319,13 @@ function getSchedulePreferences(){
     workEndTime:"18:00",
     bedtime:"23:00",
     taskDifficultyPreference:"NONE",
-    bufferMarginStrategy:"15_MIN"
+    bufferMarginStrategy:"15_MIN",
+    // Optional separate Sat/Sun hours — off by default, so every existing
+    // account keeps its current single-window behavior until someone
+    // explicitly turns this on in Settings.
+    weekendEnabled:false,
+    weekendStartTime:"10:00",
+    weekendEndTime:"18:00"
   };
   const stored=lsGet("schedulePrefs",def);
   return {...def,...stored};
@@ -1411,8 +1429,9 @@ function rebalanceDay(dateKey,allEvents,routines,prefs){
 
   const sorted=[...flex].sort(function(a,b){return scoreTask(b,prefs,streak)-scoreTask(a,prefs,streak);});
 
-  let prefStart=timeToMinutes(prefs.workStartTime);
-  const prefEnd=timeToMinutes(prefs.workEndTime);
+  const dayWindow=getWorkWindowMinsFor(prefs,dateKey);
+  let prefStart=dayWindow.start;
+  const prefEnd=dayWindow.end;
   const isToday=dateKey===dayKey();
   // Same "never re-slot into the past" floor as findOpenSlotFor — without
   // this, saving or editing any second task today silently snapped every
@@ -1552,8 +1571,9 @@ function advancedSchedulePlanner(baseEvents){
   const nowFloorMins=Math.ceil((nowMins+15)/15)*15;
 
   // Time window constraints
-  const workStart=Math.max(timeToMinutes(prefs.workStartTime),nowFloorMins);
-  const workEnd=timeToMinutes(prefs.workEndTime);
+  const todayWindow=getWorkWindowMinsFor(prefs,tk);
+  const workStart=Math.max(todayWindow.start,nowFloorMins);
+  const workEnd=todayWindow.end;
 
   // Separate hard events (fixed time) and flexible tasks
   const hardEvents=events.filter(e=>!e.isFlexible&&e.time);
@@ -1797,13 +1817,20 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
   const [workStart,setWorkStart]=useState(prefs.workStartTime);
   const [workEnd,setWorkEnd]=useState(prefs.workEndTime);
   const [difficulty,setDifficulty]=useState(prefs.difficultyPreference);
+  const [weekendEnabled,setWeekendEnabled]=useState(prefs.weekendEnabled);
+  const [weekendStart,setWeekendStart]=useState(prefs.weekendStartTime);
+  const [weekendEnd,setWeekendEnd]=useState(prefs.weekendEndTime);
   const [saved,setSaved]=useState(false);
 
   const handleSave=()=>{
     const newPrefs={
+      ...prefs,
       workStartTime:workStart,
       workEndTime:workEnd,
       difficultyPreference:difficulty,
+      weekendEnabled,
+      weekendStartTime:weekendStart,
+      weekendEndTime:weekendEnd,
     };
     setSchedulePreferences(newPrefs);
     setSaved(true);
@@ -1835,7 +1862,29 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
           </div>
           <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>Tasks will be scheduled within this window. Your study schedule respects these hours.</div>
         </div>
-        
+
+        <div style={{marginBottom:22}}>
+          <div onClick={()=>setWeekendEnabled(!weekendEnabled)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer",marginBottom:weekendEnabled?12:0}}>
+            <label style={{fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,cursor:"pointer"}}>Different Weekend Hours</label>
+            <div style={{width:34,height:19,borderRadius:99,background:weekendEnabled?T.lime:T.card2,border:"1px solid "+(weekendEnabled?T.lime:T.border),position:"relative",transition:"all 0.15s",flexShrink:0}}>
+              <div style={{position:"absolute",top:1,left:weekendEnabled?16:1,width:15,height:15,borderRadius:"50%",background:weekendEnabled?T.ink:T.muted,transition:"all 0.15s"}}/>
+            </div>
+          </div>
+          {weekendEnabled&&(
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <div>
+                <label style={{fontSize:12,color:T.text,marginBottom:4,display:"block"}}>Sat/Sun start</label>
+                <TimeInput value={weekendStart} onChange={setWeekendStart} style={{fontFamily:T.mono}} />
+              </div>
+              <div>
+                <label style={{fontSize:12,color:T.text,marginBottom:4,display:"block"}}>Sat/Sun end</label>
+                <TimeInput value={weekendEnd} onChange={setWeekendEnd} style={{fontFamily:T.mono}} />
+              </div>
+            </div>
+          )}
+          <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>{weekendEnabled?"Weekends will use this window instead of your weekday hours.":"Off — weekends use the same hours as weekdays."}</div>
+        </div>
+
         <div style={{marginBottom:22}}>
           <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>Difficulty Preference</label>
           <div style={{display:"flex",gap:8}}>
@@ -6309,6 +6358,13 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                       style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:5,padding:"2px 5px",cursor:isRoutine?(editRoutineMode?"pointer":"default"):"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isDone?0.4:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{})}}>
                       <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                       {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:1}}>{fmtTime(ev.time)}{dur ? " · "+dur+"m" : ""}</div>}
+                      {ev.userPinned && !isRoutine && (
+                        <div onClick={(e)=>{e.stopPropagation();const next=events.map(x=>x.id===ev.id?{...x,userPinned:false}:x);setEvents(next);lsSet("events",next);}}
+                          title="Pinned — Studlin won't move this. Click to let it auto-schedule again."
+                          style={{position:"absolute",top:2,right:2,width:13,height:13,borderRadius:"50%",background:"rgba(0,0,0,0.28)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",zIndex:1}}>
+                          <span style={{fontSize:8,lineHeight:1}}>📌</span>
+                        </div>
+                      )}
                       {isRoutine&&editRoutineMode&&hoveredRoutineId===ev.routineId&&(
                         <button onClick={(e)=>{e.stopPropagation();if(onDeleteRoutine)onDeleteRoutine(ev.routineId);if(setHoveredRoutineId)setHoveredRoutineId(null);}} title="Delete this routine block (every week)"
                           style={{position:"absolute",top:-8,right:-8,width:18,height:18,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.red,fontSize:11,lineHeight:1,cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 4px 10px -2px rgba(0,0,0,0.4)"}}>×</button>
@@ -6810,7 +6866,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   },[openWizardOnMount]);
   const finishRoutineWizard=(routine,prefs)=>{
     persistRoutines(routine);
-    setSchedulePreferences(prefs);
+    setSchedulePreferences({...getSchedulePreferences(),...prefs});
     lsSet("hasConfiguredRoutine",true);
     setRoutineWizardOpen(false);
   };
@@ -7215,20 +7271,21 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     const nowM=String(now.getMinutes()).padStart(2,"0");
     const nowTime=nowH+":"+nowM;
     const prefs=getSchedulePreferences();
-    const prefStartMins=timeToMinutes(prefs.workStartTime);
-    const prefEndMins=timeToMinutes(prefs.workEndTime);
-    // Earliest bookable time today: the later of (user's preferred start) or (now + 15-min buffer)
+    // Respect the date the user clicked on — if evPrefillDate is today or future, use it as the anchor
+    const desiredStartDate=(evPrefillDate&&evPrefillDate>=tk)?evPrefillDate:tk;
+    const desiredDayWindow=getWorkWindowMinsFor(prefs,desiredStartDate);
+    const desiredStartMins=desiredDayWindow.start;
+    const desiredEndMins=desiredDayWindow.end;
+    // Earliest bookable time today: the later of (that day's window start) or (now + 15-min buffer)
     const bufMins=now.getHours()*60+now.getMinutes()+15;
-    const earliestTodayMins=Math.max(prefStartMins,Math.ceil(bufMins/15)*15);
+    const earliestTodayMins=Math.max(desiredStartMins,Math.ceil(bufMins/15)*15);
     const earliestTodayTime=minutesToTime(earliestTodayMins);
     const perSession=Math.round(evDuration/(evSplitEnabled?evSplitCount:1));
     const splitCount=evSplitEnabled?evSplitCount:1;
-    // Respect the date the user clicked on — if evPrefillDate is today or future, use it as the anchor
-    const desiredStartDate=(evPrefillDate&&evPrefillDate>=tk)?evPrefillDate:tk;
     const isDesiredToday=desiredStartDate===tk;
-    const windowStart=isDesiredToday?earliestTodayMins:prefStartMins;
-    const windowStartTime=isDesiredToday?earliestTodayTime:minutesToTime(prefStartMins);
-    const windowMins=Math.max(0,prefEndMins-windowStart);
+    const windowStart=isDesiredToday?earliestTodayMins:desiredStartMins;
+    const windowStartTime=isDesiredToday?earliestTodayTime:minutesToTime(desiredStartMins);
+    const windowMins=Math.max(0,desiredEndMins-windowStart);
     const firstAvailDate=windowMins>=perSession?desiredStartDate:(()=>{const d=new Date(desiredStartDate+"T12:00:00");d.setDate(d.getDate()+1);return dayKey(d);})();
     const horizonEnd=(()=>{const d=new Date(desiredStartDate+"T12:00:00");d.setDate(d.getDate()+13);return dayKey(d);})();
     const routineAhead=expandRoutineOccurrences(routines,tk,horizonEnd);
@@ -7243,7 +7300,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     // avoid conflicts and prefer free-period windows, but "strictly
     // forbidden" needs a real guarantee, not just advisory text.
     const findOpenSlot=(desiredDate,desiredTime,duration)=>findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration);
-    const prompt="You are a scheduling AI. The user's LIVE clock reads "+nowTime+" on "+tk+". Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+priorityLabel+(evDeadline?". Deadline: "+evDeadline+" "+(evDeadlineTime||"23:59"):"")+". Existing schedule, including recurring classes/activities that repeat weekly — treat every one of these as a hard block you may NEVER overlap: "+JSON.stringify(existing)+". Free/open windows (free periods or study halls) good for short sub-20-minute sessions specifically: "+JSON.stringify(freeAhead)+". The user's preferred daily study window is "+prefs.workStartTime+"–"+prefs.workEndTime+" — always fill that window first, chronologically from the start, before ever using time outside it. CRITICAL USER INTENT: The user explicitly selected "+desiredStartDate+" on the calendar. Start scheduling on "+desiredStartDate+" — do NOT place any session before this date. STRICT RULES (violations are forbidden): 1) NEVER schedule before "+desiredStartDate+". 2) The first available slot on "+desiredStartDate+" starts at "+windowStartTime+". 3) If "+desiredStartDate+" has no open window at or after "+windowStartTime+", start from "+firstAvailDate+" instead. 4) Prefer sessions within "+prefs.workStartTime+"-"+prefs.workEndTime+"; only expand outside that range (up to 08:00-22:00) if the preferred window is fully booked that day. 5) Higher priority = earlier slots within the allowed date range. 6) Must be before deadline. 7) NEVER overlap anything in the existing schedule, including recurring blocks — this is non-negotiable. 8) If this session is 20 minutes or less, prefer placing it inside one of the free/open windows listed above. 9) Spread splits across consecutive days starting from "+desiredStartDate+". Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
+    const prompt="You are a scheduling AI. The user's LIVE clock reads "+nowTime+" on "+tk+". Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+priorityLabel+(evDeadline?". Deadline: "+evDeadline+" "+(evDeadlineTime||"23:59"):"")+". Existing schedule, including recurring classes/activities that repeat weekly — treat every one of these as a hard block you may NEVER overlap: "+JSON.stringify(existing)+". Free/open windows (free periods or study halls) good for short sub-20-minute sessions specifically: "+JSON.stringify(freeAhead)+". The user's preferred daily study window is "+prefs.workStartTime+"–"+prefs.workEndTime+" on weekdays"+(prefs.weekendEnabled?" and "+prefs.weekendStartTime+"–"+prefs.weekendEndTime+" on weekends (Sat/Sun)":"")+" — always fill that window first, chronologically from the start, before ever using time outside it. CRITICAL USER INTENT: The user explicitly selected "+desiredStartDate+" on the calendar. Start scheduling on "+desiredStartDate+" — do NOT place any session before this date. STRICT RULES (violations are forbidden): 1) NEVER schedule before "+desiredStartDate+". 2) The first available slot on "+desiredStartDate+" starts at "+windowStartTime+". 3) If "+desiredStartDate+" has no open window at or after "+windowStartTime+", start from "+firstAvailDate+" instead. 4) Prefer sessions within that day's preferred window; only expand outside it (up to 08:00-22:00) if the preferred window is fully booked that day. 5) Higher priority = earlier slots within the allowed date range. 6) Must be before deadline. 7) NEVER overlap anything in the existing schedule, including recurring blocks — this is non-negotiable. 8) If this session is 20 minutes or less, prefer placing it inside one of the free/open windows listed above. 9) Spread splits across consecutive days starting from "+desiredStartDate+". Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
     // If the AI call fails or returns nothing usable, fall back to a fully
     // deterministic placement — evDate/evTime are blank in AI mode, so
     // saveManual() isn't usable here.
@@ -7255,7 +7312,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
         const slot=findOpenSlot(cursorDate,cursorTime,perSession);
         tasks.push(buildTask(slot.date,slot.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})));
         const d=new Date(slot.date+"T12:00:00");d.setDate(d.getDate()+1);
-        cursorDate=dayKey(d);cursorTime=prefs.workStartTime;
+        cursorDate=dayKey(d);cursorTime=minutesToTime(getWorkWindowMinsFor(prefs,cursorDate).start);
       }
       commitTasks(tasks);
     };
@@ -7271,7 +7328,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
           if(date<desiredStartDate){date=firstAvailDate;time=windowStartTime;}
           else if(date===tk&&timeToMinutes(time)<earliestTodayMins){
             const d=new Date(desiredStartDate+"T12:00:00");d.setDate(d.getDate()+1);
-            date=dayKey(d);time=minutesToTime(prefStartMins);
+            date=dayKey(d);time=minutesToTime(getWorkWindowMinsFor(prefs,date).start);
           }
           // Deterministic conflict check — reject/reshift anything that
           // actually overlaps a real event or routine shield, rather than
@@ -7309,13 +7366,42 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   };
   const moveEvent=(id,newDate,newTime)=>{
     const ev=events.find(e=>e.id===id);
-    if(ev&&ev.deadline&&newDate>ev.deadline){showDeadlineToast(ev.deadline);return;}
+    if(!ev)return;
+    if(ev.deadline&&newDate>ev.deadline){showDeadlineToast(ev.deadline);return;}
     // Dropping onto a specific time slot (WeeklyPlanner drag, or any future
     // drag surface that computes one) is a deliberate placement choice —
     // pin it so a later rebalanceDay never picks it back up and moves it
     // again. A date-only move (Monthly grid drag, no explicit time) doesn't
     // pin, since no specific time was actually chosen.
-    const next=events.map(e=>e.id===id?{...e,date:newDate,...(newTime?{time:newTime,userPinned:true}:{})}:e);setEvents(next);lsSet("events",next);
+    const checkTime=newTime||ev.time;
+    let finalTime=checkTime;
+    if(checkTime){
+      const dur=ev.duration||30;
+      const occupied=events.filter(e=>e.id!==id&&e.date===newDate&&e.time&&e.kind!=="free period").map(e=>({
+        start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)
+      }));
+      const checkMins=timeToMinutes(checkTime);
+      const collides=occupied.some(o=>!(checkMins+dur<=o.start||checkMins>=o.end));
+      if(collides){
+        // Dropping directly on top of something else used to just silently
+        // overwrite with no warning. Search outward in both directions for
+        // the nearest open 15-min slot instead, so the drop still lands as
+        // close as possible to where the user actually dropped it.
+        let found=null;
+        for(let step=15;step<=24*60&&found==null;step+=15){
+          for(const cand of [checkMins+step,checkMins-step]){
+            if(cand<0||cand+dur>24*60)continue;
+            if(!occupied.some(o=>!(cand+dur<=o.start||cand>=o.end))){found=cand;break;}
+          }
+        }
+        if(found!=null&&found!==checkMins){
+          finalTime=minutesToTime(found);
+          setDeadlineToast("That time was already taken — moved to "+fmtTime(finalTime)+" instead.");
+          setTimeout(()=>setDeadlineToast(""),2800);
+        }
+      }
+    }
+    const next=events.map(e=>e.id===id?{...e,date:newDate,...(checkTime?{time:finalTime,userPinned:true}:{})}:e);setEvents(next);lsSet("events",next);
   };
   const markDone=(id)=>{const next=events.map(ev=>ev.id===id?{...ev,status:"done",completedAt:Date.now()}:ev);setEvents(next);lsSet("events",next);};
   const nav=(d)=>setYm(c=>{const m2=c.m+d;return {y:c.y+Math.floor(m2/12),m:((m2%12)+12)%12};});
@@ -7542,6 +7628,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
                       const dimmedByRoutineMode=editRoutineMode&&!isRoutine;
                       return <div key={j} style={{fontSize:9,fontWeight:600,color:tagColor,background:tagColor+(isExam?"22":"16"),border:isRoutine&&editRoutineMode?`1px solid ${T.lime}`:isExam?`1px solid ${tagColor}`:"none",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%",display:"flex",alignItems:"center",gap:3,opacity:dimmedByRoutineMode?0.3:1}}>
                         {ev.priority&&ev.priority>=4&&<span style={{width:5,height:5,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority],flexShrink:0}} />}
+                        {ev.userPinned&&<span style={{flexShrink:0,fontSize:7}} title="Pinned — won't be auto-rescheduled">📌</span>}
                         {ev.title}
                       </div>;
                     })}
@@ -7792,6 +7879,16 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
           <Field label="Scheduled date"><Input type="date" value={editDate} onChange={e=>{setEditDate(e.target.value);setEditDeadlineErr("");}} /></Field>
           <Field label={editKind==="reminder"?"Reminder time":"Start time"}><TimeInput value={editTime} onChange={setEditTime} /></Field>
         </div>
+        {editEv&&editEv.userPinned&&(
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:T.muted}}>
+            <span>📌 Pinned — Studlin won't move this automatically.</span>
+            <button type="button" onClick={()=>{
+              const next=events.map(x=>x.id===editEv.id?{...x,userPinned:false}:x);
+              setEvents(next);lsSet("events",next);
+              setEditEv(prev=>prev?{...prev,userPinned:false}:prev);
+            }} style={{background:"none",border:"none",color:T.lime,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Unpin</button>
+          </div>
+        )}
         {editDeadlineErr&&<div style={{fontSize:12,color:T.red,marginTop:-8,marginBottom:14}}>{editDeadlineErr}</div>}
         {editKind!=="reminder"&&(
           <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={5} value={editDuration} onChange={setEditDuration} /></Field>
@@ -10871,6 +10968,7 @@ function App() {
       const events=lsGet("events",[]);
       const todayK=dayKey();
       const now=Date.now();
+      const MISSED_NUDGE_MIN=15; // minutes late before a "still doing this?" nudge
       events.forEach(ev=>{
         if(!ev.time||ev.date!==todayK||ev.checklist||ev.status==="done")return;
         const startMs=new Date(ev.date+"T"+ev.time).getTime();
@@ -10887,6 +10985,20 @@ function App() {
             try{new Notification("Studlin",{body:ev.title+" starts in "+lead+" minutes"});}catch(e){}
           }
         });
+        // Missed-task nudge — a task that's sat pending 15+ minutes past its
+        // own start time gets one follow-up asking if it's still happening,
+        // instead of just silently aging in place. Same 1-minute trailing
+        // window as the lead-time reminders, so it fires once right as it
+        // crosses the threshold, not for every already-stale task on load.
+        const missedKey=ev.id+"-missed";
+        const minsSinceStart=-minsUntil;
+        if(!notifiedRef.current.has(missedKey)&&minsSinceStart>=MISSED_NUDGE_MIN&&minsSinceStart<MISSED_NUDGE_MIN+1){
+          notifiedRef.current.add(missedKey);
+          try{
+            const n=new Notification("Studlin",{body:"Still doing \""+ev.title+"\"? It was due to start "+MISSED_NUDGE_MIN+" min ago — tap to reschedule."});
+            n.onclick=()=>{try{window.focus();}catch(e){}};
+          }catch(e){}
+        }
       });
     };
     check();
