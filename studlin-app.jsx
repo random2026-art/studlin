@@ -1378,12 +1378,36 @@ function rebalanceDay(dateKey,allEvents,routines,prefs){
   const FIXED=new Set(["exam","class","busy block","reminder"]);
   const streak=getStreak();
   const isFixed=function(e){return FIXED.has(e.kind);};
-  const isFlexPending=function(e){return e.date===dateKey&&!isFixed(e)&&!e.checklist&&e.status!=="done"&&e.time;};
+  // userPinned tasks (manually dragged, or hand-typed a time in Add Task /
+  // Edit) are excluded from reshuffling the same way FIXED kinds are — they
+  // still occupy their slot (fall into `rest`, still block other tasks from
+  // landing on top of them) but the algorithm never picks them back up and
+  // moves them again just because a new task got added to the day.
+  const isFlexPending=function(e){return e.date===dateKey&&!isFixed(e)&&!e.checklist&&e.status!=="done"&&e.time&&!e.userPinned;};
 
   const flex=allEvents.filter(isFlexPending);
-  if(flex.length<2)return allEvents;
+  if(flex.length===0)return allEvents;
 
   const rest=allEvents.filter(function(e){return !isFlexPending(e);});
+
+  const occupiedBase=rest.filter(function(e){return e.date===dateKey&&e.time;}).map(function(e){
+    return{start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)};
+  });
+  expandRoutineOccurrences(routines||[],dateKey,dateKey)
+    .filter(function(r){return r.kind!=="free period";})
+    .forEach(function(r){occupiedBase.push({start:timeToMinutes(r.time),end:timeToMinutes(r.time)+(r.duration||30)});});
+
+  // With only one flexible task, there's nothing to reorder relative to —
+  // leave it exactly where it is unless it's actually colliding with
+  // something fixed/pinned it needs to route around (a pinned task now
+  // occupying that exact slot, for instance).
+  if(flex.length<2){
+    const solo=flex[0];
+    const soloStart=timeToMinutes(solo.time);
+    const soloEnd=soloStart+(solo.duration||60);
+    const collides=occupiedBase.some(function(o){return!(soloEnd<=o.start||soloStart>=o.end);});
+    if(!collides)return allEvents;
+  }
 
   const sorted=[...flex].sort(function(a,b){return scoreTask(b,prefs,streak)-scoreTask(a,prefs,streak);});
 
@@ -1404,12 +1428,7 @@ function rebalanceDay(dateKey,allEvents,routines,prefs){
   // strand overflow tasks just because normal work hours are full.
   const dayEnd=isToday?prefEnd+CATCHUP_BUFFER_MINS:prefEnd;
 
-  const occupied=rest.filter(function(e){return e.date===dateKey&&e.time;}).map(function(e){
-    return{start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)};
-  });
-  expandRoutineOccurrences(routines||[],dateKey,dateKey)
-    .filter(function(r){return r.kind!=="free period";})
-    .forEach(function(r){occupied.push({start:timeToMinutes(r.time),end:timeToMinutes(r.time)+(r.duration||30)});});
+  const occupied=occupiedBase.slice();
 
   const reassigned=sorted.map(function(task){
     const dur=task.duration||60;
@@ -7049,10 +7068,15 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
     return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,kind:evKind,notes:evNotes,priority:evPriority,difficulty:evDifficulty,deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,...(splitInfo||{})};
   };
-  const commitTasks=(newTasks)=>{
+  const commitTasks=(newTasks,opts)=>{
     const prefs=getSchedulePreferences();
-    const datesAffected=new Set(newTasks.map(function(t){return t.date;}).filter(Boolean));
-    let next=events.concat(newTasks);
+    // opts.userPinned marks tasks whose time the user typed in directly
+    // (Add Task / split sessions) so rebalanceDay leaves them alone —
+    // distinct from algorithm-chosen times (Brain Dump, AI Arrange, Group
+    // Sync), which stay free to be reshuffled.
+    const tasksToAdd=(opts&&opts.userPinned)?newTasks.map(function(t){return {...t,userPinned:true};}):newTasks;
+    const datesAffected=new Set(tasksToAdd.map(function(t){return t.date;}).filter(Boolean));
+    let next=events.concat(tasksToAdd);
     datesAffected.forEach(function(dk){next=rebalanceDay(dk,next,routines,prefs);});
     setEvents(next);lsSet("events",next);
     resetForm();
@@ -7167,7 +7191,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     if(evSaveToRoutine&&(evKind==="exam"||evKind==="class"||evKind==="busy block")){saveToRoutineFromForm();return;}
     if(!evSplitEnabled){
       const slot=resolveManualSlot(evDate,evTime,evDuration);
-      commitTasks([buildTask(slot.date,slot.time)]);
+      commitTasks([buildTask(slot.date,slot.time)],{userPinned:true});
       return;
     }
     const groupId="split-"+Date.now();
@@ -7178,7 +7202,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
       const slot=resolveManualSlot(dayKey(d),evTime,perSession);
       tasks.push(buildTask(slot.date,slot.time," ("+(i+1)+"/"+evSplitCount+")",{splitGroup:groupId,splitIndex:i+1,splitTotal:evSplitCount,duration:perSession}));
     }
-    commitTasks(tasks);
+    commitTasks(tasks,{userPinned:true});
   };
   const aiArrange=async()=>{
     if(!evTitle.trim())return;
@@ -7286,7 +7310,12 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   const moveEvent=(id,newDate,newTime)=>{
     const ev=events.find(e=>e.id===id);
     if(ev&&ev.deadline&&newDate>ev.deadline){showDeadlineToast(ev.deadline);return;}
-    const next=events.map(e=>e.id===id?{...e,date:newDate,...(newTime?{time:newTime}:{})}:e);setEvents(next);lsSet("events",next);
+    // Dropping onto a specific time slot (WeeklyPlanner drag, or any future
+    // drag surface that computes one) is a deliberate placement choice —
+    // pin it so a later rebalanceDay never picks it back up and moves it
+    // again. A date-only move (Monthly grid drag, no explicit time) doesn't
+    // pin, since no specific time was actually chosen.
+    const next=events.map(e=>e.id===id?{...e,date:newDate,...(newTime?{time:newTime,userPinned:true}:{})}:e);setEvents(next);lsSet("events",next);
   };
   const markDone=(id)=>{const next=events.map(ev=>ev.id===id?{...ev,status:"done",completedAt:Date.now()}:ev);setEvents(next);lsSet("events",next);};
   const nav=(d)=>setYm(c=>{const m2=c.m+d;return {y:c.y+Math.floor(m2/12),m:((m2%12)+12)%12};});
@@ -7338,7 +7367,12 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     // Hard Wall (Tier 2) — the Edit modal must never silently save a date
     // past the task's own deadline, same rule enforced on every drag path.
     if(editDeadline&&editDate>editDeadline){setEditDeadlineErr("Can't schedule past the deadline ("+editDeadline+").");return;}
-    const updated=events.map(e=>e.id===editEv.id?{...e,title:editTitle.trim(),date:editDate,time:editTime,duration:editDuration,deadline:editDeadline||null,priority:editPriority,difficulty:editDifficulty,subject:editSubject,kind:editKind,notes:editNotes}:e);
+    // Only pin if the user actually touched date/time in this edit — a
+    // title/notes-only edit shouldn't newly exempt a task from rebalancing
+    // (though if it was already pinned from an earlier action, ...e keeps
+    // that flag as-is either way).
+    const timeChanged=editTime!==editEv.time||editDate!==editEv.date;
+    const updated=events.map(e=>e.id===editEv.id?{...e,title:editTitle.trim(),date:editDate,time:editTime,duration:editDuration,deadline:editDeadline||null,priority:editPriority,difficulty:editDifficulty,subject:editSubject,kind:editKind,notes:editNotes,...(timeChanged?{userPinned:true}:{})}:e);
     const prefs=getSchedulePreferences();
     const next=editDate?rebalanceDay(editDate,updated,routines,prefs):updated;
     setEvents(next);lsSet("events",next);closeEdit();
