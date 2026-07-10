@@ -401,19 +401,19 @@ const PRICING_PLANS=(billing)=>([
   {
     key:"free",name:"Free",price:"$0",per:"forever",tag:null,
     desc:"Get organized. No credit card needed.",
-    features:["30 AI credits / month","AI tutor — Standard model","Manual flashcards & notes","Focus timer, calendar & planner","Streaks & progress stats"],
+    features:["20 AI credits / month","Basic AI chat (Flash model)","Manual flashcards & notes — unlimited","Calendar, tasks & focus timer","Streaks & XP"],
     cta:"Get started free",variant:"subtle",
   },
   {
     key:"pro",name:"Pro",price:billing==="annual"?"$7.99":"$9.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:"7 DAYS FREE",
     desc:"Everything on Free is still manual. Pro is where the AI actually does the work.",
-    features:["~6× more AI credits (200/month)","Every AI model, plus 4 dedicated study modes","Auto-generate flashcards from your notes, a PDF, or a YouTube lecture — no manual typing","Unlimited syllabus deadline-scans","Study groups + shared scheduling"],
+    features:["200 AI credits / month (10× more)","All AI models — Flash, Standard & Research","AI flashcards from notes, PDFs & YouTube","Full essay suite — grammar, rewrite & citations","AI note cleanup, syllabus scan & study groups"],
     cta:"Start free trial",variant:"lime",featured:true,
   },
   {
     key:"max",name:"Max",price:billing==="annual"?"$19.99":"$24.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:null,
     desc:"For the heaviest workload: every subject, every week, no caps.",
-    features:["500 AI credits / month","Everything in Pro, unlimited","Bulk ops — 100 flashcards generated at once","Advanced analytics & learning paths","Priority support"],
+    features:["500 AI credits / month","Everything in Pro","Priority AI — faster responses, no queue","Bulk flashcard generation — 100 at once","3× XP multiplier + advanced analytics"],
     cta:"Upgrade to Max",variant:"ink",
   },
 ]);
@@ -1196,14 +1196,14 @@ function sessionStats(){
 const fmtH=(m)=>m>=60?Math.floor(m/60)+"h "+(m%60)+"m":m+"m";
 function getPlan(){return lsGet("plan","Free");}
 function setPlanLS(p){lsSet("plan",p);}
-function getCredits(){return lsGet("credits",120);}
+function getCreditLimit(){const p=getPlan();return p==="Max"?500:p==="Pro"?200:20;}
+function getCredits(){return lsGet("credits",getCreditLimit());}
 function setCreditsLS(n){lsSet("credits",Math.max(0,n));}
-function getCreditLimit(){const p=getPlan();return p==="Max"?500:p==="Pro"?200:30;}
 const CREDIT_COST={standard:1,flash:1};
 // Syllabus scans are capped at 3/month on Free — a separate, more visible
 // gate than the general credit pool, since the syllabus feature is the
 // centerpiece "aha moment" and deserves its own honest usage counter rather
-// than quietly eating into the same 30 AI credits as everything else. Pro
+// than quietly eating into the same 20 AI credits as everything else. Pro
 // and Max are uncapped. Purely client-side (same trust model as credits
 // everywhere else in this app — no server enforcement exists yet).
 const SYLLABUS_SCAN_LIMIT=3;
