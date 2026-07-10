@@ -9086,7 +9086,8 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     {id:"Subjects & Labels",icon:Icon.layers},
     {id:"Calendar Preferences",icon:Icon.cal},
     {id:"Integrations",icon:Icon.link},
-    {id:"Subscription",icon:Icon.zap},
+    {id:"Usage",icon:Icon.zap},
+    {id:"Subscription",icon:Icon.layers},
     {id:"Danger zone",icon:Icon.xmark},
   ];
   const Toggle = ({k}) => (
@@ -9455,6 +9456,43 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             </Card>
           </>)}
 
+          {active==="Usage" && (()=>{
+            const cr=getCredits();const lim=getCreditLimit();const plan=getPlan();
+            const used=Math.max(0,lim-cr);const pct=Math.min(100,Math.round(used/lim*100));
+            const barColor=pct<50?T.lime:pct<80?"#F5A623":"#E05252";
+            const daysLeft=(()=>{const n=new Date();const e=new Date(n.getFullYear(),n.getMonth()+1,1);return Math.ceil((e-n)/86400000);})();
+            return(<>
+              <Card style={{marginBottom:12}}>
+                <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:2}}>AI Credits</div>
+                <div style={{fontSize:12,color:T.muted,marginBottom:18}}>Resets in {daysLeft} day{daysLeft!==1?"s":""} · {plan} plan</div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                  <span style={{fontSize:12.5,color:T.text}}>{plan} plan</span>
+                  <span style={{fontSize:12.5,color:pct>=80?"#E05252":T.text,fontWeight:600}}>{pct}% used</span>
+                </div>
+                <div style={{height:6,background:T.card2,borderRadius:99,overflow:"hidden",marginBottom:8}}>
+                  <div style={{height:"100%",width:pct+"%",background:barColor,borderRadius:99,transition:"width 0.4s"}} />
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:11.5,color:T.muted}}>
+                  <span>{used} used</span>
+                  <span>{cr} remaining / {lim}</span>
+                </div>
+              </Card>
+              <Card style={{marginBottom:12}}>
+                <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>Credit breakdown</div>
+                {[["Basic AI chat","1 credit per message"],["File scan (PDF, image)","2 credits per scan"],["YouTube transcription","3 credits per video"],["Essay rewrite / polish","2 credits per action"],["AI flashcard generation","1 credit per batch"]].map(([action,cost],i)=>(
+                  <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:i<4?`1px solid ${T.border}`:"none"}}>
+                    <span style={{fontSize:12.5,color:T.text}}>{action}</span>
+                    <span style={{fontSize:12,color:T.muted,fontFamily:T.mono}}>{cost}</span>
+                  </div>
+                ))}
+              </Card>
+              {plan==="Free"&&<Card style={{background:T.lime,border:"none"}}>
+                <div style={{fontSize:13,fontWeight:700,color:T.ink,marginBottom:4}}>Get 10x more credits</div>
+                <div style={{fontSize:12,color:T.ink,opacity:0.75,marginBottom:14}}>Upgrade to Pro for 200 credits/month plus all AI models.</div>
+                <button onClick={()=>{}} style={{background:T.ink,color:T.lime,border:"none",padding:"8px 18px",borderRadius:8,fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Upgrade to Pro</button>
+              </Card>}
+            </>);
+          })()}
           {active==="Subscription" && (<>
             <Card style={{marginBottom:12,background:T.lime,border:"none"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
@@ -11526,20 +11564,6 @@ function App() {
               <button onClick={e=>{e.stopPropagation();setActive("settings");}} title="Settings" style={{width:26,height:26,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:"none",color:sidebarMuted,cursor:"pointer",borderRadius:6,flexShrink:0}}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
               </button>
-            </div>
-            {/* Usage row */}
-            <div onClick={()=>setCreditsOpen(true)} style={{padding:"8px 10px",borderRadius:9,cursor:"pointer",transition:"background 0.15s"}} onMouseEnter={e=>e.currentTarget.style.background=sidebarCardBg} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                <span style={{fontSize:11,fontWeight:500,color:sidebarMuted}}>AI Credits</span>
-                <span style={{fontSize:10.5,color:pct<80?sidebarMuted:"#E05252"}}>{pct}% used</span>
-              </div>
-              <div style={{height:3,background:sidebarBorder,borderRadius:99,overflow:"hidden",marginBottom:5}}>
-                <div style={{height:"100%",width:pct+"%",background:barColor,borderRadius:99,transition:"width 0.4s"}} />
-              </div>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <span style={{fontSize:10,color:sidebarFaint}}>{cr} remaining · resets in {daysLeft}d</span>
-                {plan==="Free"&&<button onClick={e=>{e.stopPropagation();setPricingOpen(true);}} style={{fontSize:9.5,fontWeight:700,color:T.lime,background:T.lime+"14",border:`1px solid ${T.lime}30`,padding:"2px 7px",borderRadius:4,cursor:"pointer",fontFamily:T.font}}>Upgrade</button>}
-              </div>
             </div>
           </div>);
         })()}
