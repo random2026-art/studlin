@@ -4445,7 +4445,21 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange}={}){
   const noResults=searchQ.trim()&&!searching&&searchResults.length===0;
 
   const sendEmailInvite=()=>{if(!inviteEmail.trim())return;setEmailSent(true);setTimeout(()=>{setEmailSent(false);setInviteEmail("");},2500);};
-  const copyLink=()=>{navigator.clipboard&&navigator.clipboard.writeText(inviteLink);setCopied(true);setTimeout(()=>setCopied(false),2200);};
+  const copyLink=()=>{
+    const doCopy=()=>{
+      try{
+        if(navigator.clipboard&&window.isSecureContext){
+          navigator.clipboard.writeText(inviteLink).catch(()=>{});
+        } else {
+          const ta=document.createElement("textarea");
+          ta.value=inviteLink;ta.style.position="fixed";ta.style.opacity="0";
+          document.body.appendChild(ta);ta.focus();ta.select();
+          document.execCommand("copy");document.body.removeChild(ta);
+        }
+      }catch(e){}
+    };
+    doCopy();setCopied(true);setTimeout(()=>setCopied(false),2200);
+  };
 
   // Sending a request when the other person already has a pending request in
   // to us just accepts theirs instead of creating a redundant duplicate doc.
