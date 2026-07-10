@@ -11396,23 +11396,35 @@ function App() {
           {bottomItems.map(item=><NavItem key={item.id} item={item} />)}
         </div>
         {/* AI credits card */}
-        {(()=>{const cr=getCredits();const lim=Math.max(cr,getCreditLimit());const plan=getPlan();const daysLeft=(()=>{const n=new Date();const e=new Date(n.getFullYear(),n.getMonth()+1,1);return Math.ceil((e-n)/86400000);})();const pct=Math.min(100,Math.round(cr/lim*100));
-        if(navCollapsed){return(
-        <div onClick={()=>setCreditsOpen(true)} title={cr+" / "+getCreditLimit()+" AI credits"} style={{background:T.lime,borderRadius:10,padding:"8px 0",marginTop:"auto",border:`1px solid ${T.limeDk}`,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
-          <span style={{fontFamily:T.hand,fontSize:18,fontWeight:700,color:T.ink,lineHeight:1}}>{cr}</span>
-          <div style={{width:"60%",height:3,background:"rgba(8,12,40,0.15)",borderRadius:99,overflow:"hidden"}}><div style={{height:"100%",width:pct+"%",background:T.ink,borderRadius:99}} /></div>
-        </div>);}
-        return(
-        <div onClick={()=>setCreditsOpen(true)} style={{background:T.lime,borderRadius:12,padding:"12px 14px",marginTop:"auto",border:`1px solid ${T.limeDk}`,cursor:"pointer",position:"relative",overflow:"hidden",boxShadow:`0 12px 24px -12px ${T.lime}80`}}>
-          <div style={{position:"absolute",right:-30,top:-30,width:90,height:90,background:"radial-gradient(circle,rgba(255,255,255,0.5),transparent 70%)",pointerEvents:"none"}} />
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
-            <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",fontWeight:600,color:"rgba(8,12,40,0.65)"}}>AI CREDITS</span>
-            <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.14em",fontWeight:700,background:T.ink,color:T.lime,padding:"2px 6px",borderRadius:4}}>{plan.toUpperCase()}</span>
-          </div>
-          <div style={{fontFamily:T.hand,fontSize:36,fontWeight:700,color:T.ink,lineHeight:0.85,marginTop:6}}>{cr}<span style={{fontFamily:T.font,fontSize:13,fontWeight:500,color:"rgba(8,12,40,0.5)",marginLeft:2}}>/ {getCreditLimit()}</span></div>
-          <div style={{fontSize:10.5,color:"rgba(8,12,40,0.6)",marginTop:2,position:"relative"}}>Resets in {daysLeft} day{daysLeft===1?"":"s"}</div>
-          <div style={{height:4,background:"rgba(8,12,40,0.15)",borderRadius:99,marginTop:10,overflow:"hidden"}}><div style={{height:"100%",width:pct+"%",background:T.ink,borderRadius:99}} /></div>
-        </div>);})()}
+        {(()=>{
+          const cr=getCredits();const lim=getCreditLimit();const plan=getPlan();
+          const used=Math.max(0,lim-cr);const pct=Math.min(100,Math.round(cr/lim*100));
+          const barColor=pct>50?T.lime:pct>20?"#F5A623":"#E05252";
+          const daysLeft=(()=>{const n=new Date();const e=new Date(n.getFullYear(),n.getMonth()+1,1);return Math.ceil((e-n)/86400000);})();
+          if(navCollapsed){return(
+          <div onClick={()=>setCreditsOpen(true)} title={cr+" credits remaining"} style={{background:T.card,borderRadius:10,padding:"10px 0",marginTop:"auto",border:`1px solid ${T.border}`,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+            <span style={{fontSize:15,fontWeight:700,color:pct>20?T.lime:"#E05252",lineHeight:1}}>{cr}</span>
+            <div style={{width:"60%",height:3,background:T.border,borderRadius:99,overflow:"hidden"}}><div style={{height:"100%",width:pct+"%",background:barColor,borderRadius:99,transition:"width 0.4s"}} /></div>
+          </div>);}
+          return(
+          <div onClick={()=>setCreditsOpen(true)} style={{background:T.card,borderRadius:12,padding:"13px 14px",marginTop:"auto",border:`1px solid ${T.border}`,cursor:"pointer",overflow:"hidden"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <span style={{fontSize:10,fontWeight:700,color:T.muted,letterSpacing:"0.08em",textTransform:"uppercase"}}>AI Credits</span>
+              <span style={{fontSize:9.5,fontWeight:700,color:plan==="Free"?T.muted:T.lime,background:plan==="Free"?T.border:T.lime+"18",padding:"2px 7px",borderRadius:4,letterSpacing:"0.04em"}}>{plan.toUpperCase()}</span>
+            </div>
+            <div style={{display:"flex",alignItems:"baseline",gap:4,marginBottom:8}}>
+              <span style={{fontSize:30,fontWeight:700,color:pct>20?T.text:"#E05252",lineHeight:1,letterSpacing:"-0.03em"}}>{cr}</span>
+              <span style={{fontSize:12,color:T.muted,fontWeight:400}}>/ {lim}</span>
+            </div>
+            <div style={{height:3,background:T.border,borderRadius:99,overflow:"hidden",marginBottom:8}}>
+              <div style={{height:"100%",width:pct+"%",background:barColor,borderRadius:99,transition:"width 0.4s"}} />
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{fontSize:10.5,color:T.muted}}>{used} used · resets in {daysLeft}d</span>
+              {plan==="Free"&&<button onClick={e=>{e.stopPropagation();setPricingOpen(true);}} style={{fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"14",border:`1px solid ${T.lime}30`,padding:"2px 8px",borderRadius:5,cursor:"pointer",fontFamily:T.font}}>Upgrade</button>}
+            </div>
+          </div>);
+        })()}
       </div>
 
       {/* MAIN AREA */}
