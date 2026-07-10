@@ -796,6 +796,14 @@ const getRoutineOccurrencesForDate=(dateKey)=>expandRoutineOccurrences(getWeekly
 // within the user's preferred daily window. Shared by aiArrange's
 // deterministic hard-lock enforcement and the Routine Control Center's
 // conflict reconciliation (relocating a task that a routine edit now overlaps).
+// Flexible catch-up window tacked onto the end of the user's normal work
+// hours, reserved for late-dumped or overflow tasks. Dumping something at
+// 9pm with a 6pm work-end preference shouldn't have to skip straight to
+// tomorrow if there's genuinely still room tonight — this only ever kicks
+// in as a last resort, after the normal [workStart, workEnd] window for
+// today comes up empty, so it never disturbs how anything already-planned
+// in the normal hours gets scheduled.
+const CATCHUP_BUFFER_MINS=120;
 function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey){
   const prefStartMins=timeToMinutes(prefs.workStartTime);
   const prefEndMins=timeToMinutes(prefs.workEndTime);
@@ -823,7 +831,20 @@ function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,
       .map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
     let scanStart=dayOffset===0?Math.max(prefStartMins,timeToMinutes(desiredTime)):prefStartMins;
     if(dk===todayKey)scanStart=Math.max(scanStart,nowFloorMins);
-    if(scanStart+duration>prefEndMins)continue; // today's waking hours are already gone — fall through to tomorrow
+    if(scanStart+duration>prefEndMins){
+      // Normal hours are already full or behind us. For today specifically,
+      // try the end-of-day catch-up buffer before giving up and pushing to
+      // tomorrow — a late brain-dump deserves one more shot at landing
+      // today rather than automatically bumping.
+      if(dk===todayKey){
+        const catchupStart=Math.max(scanStart,prefEndMins);
+        const catchupEnd=prefEndMins+CATCHUP_BUFFER_MINS;
+        for(let t=catchupStart;t+duration<=catchupEnd;t+=15){
+          if(!occupied.some(o=>!(t+duration<=o.start||t>=o.end)))return {date:dk,time:minutesToTime(t)};
+        }
+      }
+      continue; // today's waking hours (plus catch-up) are exhausted — fall through to tomorrow
+    }
     for(let t=scanStart;t+duration<=prefEndMins;t+=15){
       if(!occupied.some(o=>!(t+duration<=o.start||t>=o.end)))return {date:dk,time:minutesToTime(t)};
     }
@@ -1098,7 +1119,13 @@ function mergeLeaderboard(profiles, realName, realMinutes, realStreak, myUid, sh
 const dayKey=(d)=>{const x=d||new Date();return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");};
 function daysOverdue(ev){if(!ev.deadline)return 0;if(ev.date<=ev.deadline)return 0;const d1=new Date(ev.date),d2=new Date(ev.deadline);return Math.ceil((d1-d2)/86400000);}
 function daysUntilDeadline(ev){if(!ev.deadline)return null;const d1=new Date(ev.deadline),d2=new Date(dayKey());return Math.ceil((d1-d2)/86400000);}
-function scheduleTaskNotif(task){try{if(!("Notification" in window)||Notification.permission!=="granted")return;const t=new Date(task.date+"T"+task.time);const delay=t.getTime()-10*60*1000-Date.now();if(delay<=0)return;setTimeout(()=>{new Notification("Studlin",{body:task.title+" starts in 10 minutes"});},delay);}catch(e){}}
+// Per-task one-shot notification scheduling used to live here, but it only
+// fired if the tab stayed open uninterrupted from the moment of creation —
+// it never survived a refresh, and never re-armed after a drag/rebalance
+// moved a task to a new time. Replaced by the polling-based upcomingTask
+// reminder effect in App() (checks the live task list every 30s against the
+// real clock), which covers every task regardless of when/how it was
+// scheduled. See that effect for the single source of truth now.
 function requestNotifPermission(){if(!("Notification" in window))return;Notification.requestPermission();}
 function stripHtml(html){return(html||"").replace(/<[^>]*>/g," ");}
 function sanitizeHtml(html){if(typeof DOMPurify==='undefined')return html||'';return DOMPurify.sanitize(html||'',{ALLOWED_TAGS:['p','br','h1','h2','h3','h4','h5','h6','ul','ol','li','strong','em','b','i','u','s','blockquote','span','a','code','pre','table','thead','tbody','tr','th','td','hr','sub','sup'],ALLOWED_ATTR:['href','target','rel'],FORCE_BODY:true,ALLOW_UNKNOWN_PROTOCOLS:false});}
@@ -1351,38 +1378,62 @@ function rebalanceDay(dateKey,allEvents,routines,prefs){
   const FIXED=new Set(["exam","class","busy block","reminder"]);
   const streak=getStreak();
   const isFixed=function(e){return FIXED.has(e.kind);};
-  const isFlexPending=function(e){return e.date===dateKey&&!isFixed(e)&&!e.checklist&&e.status!=="done"&&e.time;};
+  // userPinned tasks (manually dragged, or hand-typed a time in Add Task /
+  // Edit) are excluded from reshuffling the same way FIXED kinds are — they
+  // still occupy their slot (fall into `rest`, still block other tasks from
+  // landing on top of them) but the algorithm never picks them back up and
+  // moves them again just because a new task got added to the day.
+  const isFlexPending=function(e){return e.date===dateKey&&!isFixed(e)&&!e.checklist&&e.status!=="done"&&e.time&&!e.userPinned;};
 
   const flex=allEvents.filter(isFlexPending);
-  if(flex.length<2)return allEvents;
+  if(flex.length===0)return allEvents;
 
   const rest=allEvents.filter(function(e){return !isFlexPending(e);});
+
+  const occupiedBase=rest.filter(function(e){return e.date===dateKey&&e.time;}).map(function(e){
+    return{start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)};
+  });
+  expandRoutineOccurrences(routines||[],dateKey,dateKey)
+    .filter(function(r){return r.kind!=="free period";})
+    .forEach(function(r){occupiedBase.push({start:timeToMinutes(r.time),end:timeToMinutes(r.time)+(r.duration||30)});});
+
+  // With only one flexible task, there's nothing to reorder relative to —
+  // leave it exactly where it is unless it's actually colliding with
+  // something fixed/pinned it needs to route around (a pinned task now
+  // occupying that exact slot, for instance).
+  if(flex.length<2){
+    const solo=flex[0];
+    const soloStart=timeToMinutes(solo.time);
+    const soloEnd=soloStart+(solo.duration||60);
+    const collides=occupiedBase.some(function(o){return!(soloEnd<=o.start||soloStart>=o.end);});
+    if(!collides)return allEvents;
+  }
 
   const sorted=[...flex].sort(function(a,b){return scoreTask(b,prefs,streak)-scoreTask(a,prefs,streak);});
 
   let prefStart=timeToMinutes(prefs.workStartTime);
   const prefEnd=timeToMinutes(prefs.workEndTime);
+  const isToday=dateKey===dayKey();
   // Same "never re-slot into the past" floor as findOpenSlotFor — without
   // this, saving or editing any second task today silently snapped every
   // flexible task on the day back to workStartTime, clobbering times that
   // aiArrange/findOpenSlotFor had already correctly placed after "now".
-  if(dateKey===dayKey()){
+  if(isToday){
     const now=new Date();
     const nowFloorMins=Math.ceil((now.getHours()*60+now.getMinutes()+15)/15)*15;
     prefStart=Math.max(prefStart,nowFloorMins);
   }
+  // Same end-of-day catch-up buffer as findOpenSlotFor — a rebalance
+  // triggered late in the day (e.g. adding a second task at 9pm) shouldn't
+  // strand overflow tasks just because normal work hours are full.
+  const dayEnd=isToday?prefEnd+CATCHUP_BUFFER_MINS:prefEnd;
 
-  const occupied=rest.filter(function(e){return e.date===dateKey&&e.time;}).map(function(e){
-    return{start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)};
-  });
-  expandRoutineOccurrences(routines||[],dateKey,dateKey)
-    .filter(function(r){return r.kind!=="free period";})
-    .forEach(function(r){occupied.push({start:timeToMinutes(r.time),end:timeToMinutes(r.time)+(r.duration||30)});});
+  const occupied=occupiedBase.slice();
 
   const reassigned=sorted.map(function(task){
     const dur=task.duration||60;
-    if(prefStart+dur>prefEnd)return task; // no room left today — leave it where it was rather than force a slot
-    for(let t=prefStart;t+dur<=prefEnd;t+=15){
+    if(prefStart+dur>dayEnd)return task; // no room left even with the catch-up buffer — leave it where it was rather than force a slot
+    for(let t=prefStart;t+dur<=dayEnd;t+=15){
       if(!occupied.some(function(o){return!(t+dur<=o.start||t>=o.end);})){
         occupied.push({start:t,end:t+dur+computeBreathingRoom(dur)});
         return Object.assign({},task,{time:minutesToTime(t)});
@@ -2843,7 +2894,6 @@ function Flashcards() {
       status:"pending",timeSpent:0,completedAt:null,deckId:reviewSchedulePreview.deckId,
     }));
     lsSet("events",events.concat(newEvents));
-    newEvents.forEach(scheduleTaskNotif);
     setReviewSchedulePreview(null);
   };
 
@@ -4794,7 +4844,6 @@ function commitSyllabusEvents(noteId,tag,items){
     noteId,
   }));
   lsSet("events",existing.concat(newEvents));
-  newEvents.forEach(scheduleTaskNotif);
   return newEvents;
 }
 
@@ -6080,6 +6129,15 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
       weekScrollRef.current.scrollTop = Math.max(0, hour - 1) * WK_PX_HR;
     }
   },[]);
+  // Google-Calendar-style "now" line — minutes-since-midnight, refreshed
+  // every 60s. Only today's column ever reads this (see isToday below), so
+  // there's no work wasted redrawing six other days every tick.
+  const [nowMins, setNowMins] = useState(()=>{const n=new Date();return n.getHours()*60+n.getMinutes();});
+  useEffect(()=>{
+    const tick=()=>{const n=new Date();setNowMins(n.getHours()*60+n.getMinutes());};
+    const id=setInterval(tick,60000);
+    return ()=>clearInterval(id);
+  },[]);
   const [wkDragDeadline, setWkDragDeadline] = useState(null);
   const [wkDragOverDay, setWkDragOverDay] = useState(null);
   const [wkDropTime, setWkDropTime] = useState(null);
@@ -6207,6 +6265,12 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                 {isPastDeadline && (
                   <div style={{position:"absolute",inset:0,background:"rgba(217,128,107,0.07)",borderLeft:"2px solid rgba(217,128,107,0.35)",zIndex:5,pointerEvents:"none"}}>
                     <div style={{position:"sticky",top:6,textAlign:"center",fontSize:8,fontWeight:800,letterSpacing:"0.08em",color:"rgba(217,128,107,0.65)",padding:3}}>PAST DUE</div>
+                  </div>
+                )}
+                {dk===todayK && (
+                  <div style={{position:"absolute",top:nowMins*(WK_PX_HR/60),left:0,right:0,zIndex:6,pointerEvents:"none"}}>
+                    <div style={{position:"absolute",left:-4,top:-4,width:8,height:8,borderRadius:"50%",background:"#E5484D"}} />
+                    <div style={{borderTop:"2px solid #E5484D"}} />
                   </div>
                 )}
                 {layoutDayEvents(visibleEvs).map(({ev, col, totalCols}) => {
@@ -7004,13 +7068,17 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
     return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,kind:evKind,notes:evNotes,priority:evPriority,difficulty:evDifficulty,deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,...(splitInfo||{})};
   };
-  const commitTasks=(newTasks)=>{
+  const commitTasks=(newTasks,opts)=>{
     const prefs=getSchedulePreferences();
-    const datesAffected=new Set(newTasks.map(function(t){return t.date;}).filter(Boolean));
-    let next=events.concat(newTasks);
+    // opts.userPinned marks tasks whose time the user typed in directly
+    // (Add Task / split sessions) so rebalanceDay leaves them alone —
+    // distinct from algorithm-chosen times (Brain Dump, AI Arrange, Group
+    // Sync), which stay free to be reshuffled.
+    const tasksToAdd=(opts&&opts.userPinned)?newTasks.map(function(t){return {...t,userPinned:true};}):newTasks;
+    const datesAffected=new Set(tasksToAdd.map(function(t){return t.date;}).filter(Boolean));
+    let next=events.concat(tasksToAdd);
     datesAffected.forEach(function(dk){next=rebalanceDay(dk,next,routines,prefs);});
     setEvents(next);lsSet("events",next);
-    newTasks.forEach(t=>scheduleTaskNotif(t));
     resetForm();
     // Checklist items can have no date at all (a to-do with no due date) —
     // skip the day/month-jump entirely rather than feeding an empty string
@@ -7045,7 +7113,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
         "For each item return: \"title\" (short, e.g. \"Chem homework\" or \"Email counselor\"), "+
         "\"kind\" (\"study\" for anything that takes real focused work time — homework, studying, a project — or \"todo\" for a quick task with no real duration, like sending an email, a form, or a phone call), "+
         "\"durationMin\" (your best-guess minutes needed, ONLY for kind:\"study\" — null for kind:\"todo\"), "+
-        "\"dueDate\" (YYYY-MM-DD if a deadline was stated or clearly implied like \"Friday\", else null), "+
+        "\"dueDate\" (YYYY-MM-DD if a deadline or target day was stated or implied — \"today\"/\"tonight\" means the date given above, \"Friday\" means the next occurrence of that weekday, etc. Be literal: if the student named a specific day, always return it, even if it's today. Only use null when truly no timing was mentioned at all), "+
         "\"needsDuration\" (true ONLY if kind is \"study\" and you genuinely can't make a reasonable guess from context — be generous, most things can get a rough estimate). "+
         "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
         "{\"items\":[{\"title\":\"Chem homework\",\"kind\":\"study\",\"durationMin\":45,\"dueDate\":null,\"needsDuration\":false}]}. "+
@@ -7123,7 +7191,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     if(evSaveToRoutine&&(evKind==="exam"||evKind==="class"||evKind==="busy block")){saveToRoutineFromForm();return;}
     if(!evSplitEnabled){
       const slot=resolveManualSlot(evDate,evTime,evDuration);
-      commitTasks([buildTask(slot.date,slot.time)]);
+      commitTasks([buildTask(slot.date,slot.time)],{userPinned:true});
       return;
     }
     const groupId="split-"+Date.now();
@@ -7134,7 +7202,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
       const slot=resolveManualSlot(dayKey(d),evTime,perSession);
       tasks.push(buildTask(slot.date,slot.time," ("+(i+1)+"/"+evSplitCount+")",{splitGroup:groupId,splitIndex:i+1,splitTotal:evSplitCount,duration:perSession}));
     }
-    commitTasks(tasks);
+    commitTasks(tasks,{userPinned:true});
   };
   const aiArrange=async()=>{
     if(!evTitle.trim())return;
@@ -7242,7 +7310,12 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   const moveEvent=(id,newDate,newTime)=>{
     const ev=events.find(e=>e.id===id);
     if(ev&&ev.deadline&&newDate>ev.deadline){showDeadlineToast(ev.deadline);return;}
-    const next=events.map(e=>e.id===id?{...e,date:newDate,...(newTime?{time:newTime}:{})}:e);setEvents(next);lsSet("events",next);
+    // Dropping onto a specific time slot (WeeklyPlanner drag, or any future
+    // drag surface that computes one) is a deliberate placement choice —
+    // pin it so a later rebalanceDay never picks it back up and moves it
+    // again. A date-only move (Monthly grid drag, no explicit time) doesn't
+    // pin, since no specific time was actually chosen.
+    const next=events.map(e=>e.id===id?{...e,date:newDate,...(newTime?{time:newTime,userPinned:true}:{})}:e);setEvents(next);lsSet("events",next);
   };
   const markDone=(id)=>{const next=events.map(ev=>ev.id===id?{...ev,status:"done",completedAt:Date.now()}:ev);setEvents(next);lsSet("events",next);};
   const nav=(d)=>setYm(c=>{const m2=c.m+d;return {y:c.y+Math.floor(m2/12),m:((m2%12)+12)%12};});
@@ -7294,7 +7367,12 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     // Hard Wall (Tier 2) — the Edit modal must never silently save a date
     // past the task's own deadline, same rule enforced on every drag path.
     if(editDeadline&&editDate>editDeadline){setEditDeadlineErr("Can't schedule past the deadline ("+editDeadline+").");return;}
-    const updated=events.map(e=>e.id===editEv.id?{...e,title:editTitle.trim(),date:editDate,time:editTime,duration:editDuration,deadline:editDeadline||null,priority:editPriority,difficulty:editDifficulty,subject:editSubject,kind:editKind,notes:editNotes}:e);
+    // Only pin if the user actually touched date/time in this edit — a
+    // title/notes-only edit shouldn't newly exempt a task from rebalancing
+    // (though if it was already pinned from an earlier action, ...e keeps
+    // that flag as-is either way).
+    const timeChanged=editTime!==editEv.time||editDate!==editEv.date;
+    const updated=events.map(e=>e.id===editEv.id?{...e,title:editTitle.trim(),date:editDate,time:editTime,duration:editDuration,deadline:editDeadline||null,priority:editPriority,difficulty:editDifficulty,subject:editSubject,kind:editKind,notes:editNotes,...(timeChanged?{userPinned:true}:{})}:e);
     const prefs=getSchedulePreferences();
     const next=editDate?rebalanceDay(editDate,updated,routines,prefs):updated;
     setEvents(next);lsSet("events",next);closeEdit();
@@ -10770,6 +10848,51 @@ function NotifPermModal({onAllow=()=>{},onDeny=()=>{}}) {
 // ─── APP SHELL ────────────────────────────────────────────────────────────────
 function App() {
   seedEventsIfStale();
+  // Upcoming-task reminders — polls the live task list every 30s against
+  // the real clock, rather than the old approach of arming a single
+  // setTimeout at task-creation time. That old approach silently died on
+  // page refresh and never re-armed after a drag/rebalance moved a task,
+  // so most tasks never actually notified anyone. Lives here at the App
+  // shell level (not inside CalendarTab) so it keeps running no matter
+  // which tab is active. notifiedRef survives across polls for the life
+  // of the tab so each task+lead-time combo only fires once per session;
+  // it intentionally resets on reload — a reminder whose window already
+  // passed before a refresh isn't worth reconstructing.
+  const notifiedRef=useRef(new Set());
+  useEffect(()=>{
+    if(typeof Notification==="undefined")return;
+    const LEAD_TIMES=[10,5]; // minutes before start
+    const check=()=>{
+      if(Notification.permission!=="granted")return;
+      // Respect the "Task & App Notifications" master toggle in Settings
+      // (defaults on) — read fresh each poll so turning it off mid-session
+      // takes effect immediately instead of needing a reload.
+      if(lsGet("settings",{}).notifMaster===false)return;
+      const events=lsGet("events",[]);
+      const todayK=dayKey();
+      const now=Date.now();
+      events.forEach(ev=>{
+        if(!ev.time||ev.date!==todayK||ev.checklist||ev.status==="done")return;
+        const startMs=new Date(ev.date+"T"+ev.time).getTime();
+        const minsUntil=(startMs-now)/60000;
+        LEAD_TIMES.forEach(lead=>{
+          const key=ev.id+"-"+lead;
+          if(notifiedRef.current.has(key))return;
+          // Fires once minsUntil drops to/below the lead time, but only
+          // within a 1-minute trailing window — past that it's stale (the
+          // task started while the tab was closed) and firing late would
+          // be more confusing than useful.
+          if(minsUntil<=lead&&minsUntil>lead-1){
+            notifiedRef.current.add(key);
+            try{new Notification("Studlin",{body:ev.title+" starts in "+lead+" minutes"});}catch(e){}
+          }
+        });
+      });
+    };
+    check();
+    const id=setInterval(check,30000);
+    return ()=>clearInterval(id);
+  },[]);
   const [onboarded,setOnboarded]=useState(()=>!!lsGet("onboarded",false));
   // A freshly-completed onboarding.jsx signup leaves a one-shot flag asking
   // to land directly on a specific tab (with its first-run tour active)
