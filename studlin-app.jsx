@@ -1020,6 +1020,8 @@ const TIER0_HOUR_BUCKETS=[
   {id:"afternoon",startMin:15*60,endMin:18*60},
   {id:"evening",startMin:18*60,endMin:22*60},
 ];
+const PEAK_BUCKET_LABELS={morning:"Morning",midday:"Midday",afternoon:"Afternoon",evening:"Evening"};
+const peakChipStyle=(sel)=>({padding:"7px 12px",borderRadius:8,fontSize:12,fontWeight:sel?600:400,cursor:"pointer",border:`1px solid ${sel?T.lime+"66":T.border}`,background:sel?T.lime+"14":"transparent",color:sel?T.lime:T.muted,fontFamily:T.font});
 function hourBucket(timeStr){
   if(!timeStr)return null;
   const mins=timeToMinutes(timeStr);
@@ -1083,6 +1085,10 @@ function getBucketReliability(bucket){
 // without touching findOpenSlotFor itself.
 const TIER0_CANDIDATE_DAYS=4; // today + up to 3 more days
 const TIER0_SCORE_WEIGHTS={reliability:100,continuity:40,dayPreference:15,eviction:25};
+// Score assigned to a student-declared peak-focus bucket. Below 1.0 so a
+// bucket with genuinely excellent *inferred* reliability isn't dragged down
+// by a merely-declared preference — declared status is a floor, not a cap.
+const TIER0_PEAK_BUCKET_SCORE=0.9;
 function findTier0Slot(task,events,routines,prefs,todayKey){
   const dur=task.duration||30;
   const deadlineKey=task.deadline||null;
@@ -1100,7 +1106,12 @@ function findTier0Slot(task,events,routines,prefs,todayKey){
       if(!placement)return;
       const bucket=hourBucket(placement.time);
       const reliability=getBucketReliability(bucket);
-      const reliabilityScore=reliability===null?0.5:reliability;
+      const inferredScore=reliability===null?0.5:reliability;
+      // A student-declared peak bucket only ever raises the score, never
+      // lowers a non-declared one — and can outweigh even bad inferred data,
+      // since correcting the algorithm is the whole point of the control.
+      const isDeclaredPeak=bucket&&(prefs.peakHourBuckets||[]).includes(bucket);
+      const reliabilityScore=isDeclaredPeak?Math.max(TIER0_PEAK_BUCKET_SCORE,inferredScore):inferredScore;
       const continuityMins=Math.abs(timeToMinutes(placement.time)-desiredMins);
       const evictedCount=relocated.filter(e=>{
         const orig=events.find(o=>o.id===e.id);
@@ -1498,7 +1509,11 @@ function getSchedulePreferences(){
     // explicitly turns this on in Settings.
     weekendEnabled:false,
     weekendStartTime:"10:00",
-    weekendEndTime:"18:00"
+    weekendEndTime:"18:00",
+    // Student-declared peak-focus buckets (TIER0_HOUR_BUCKETS ids). Opt-in,
+    // empty by default — Tier 0 only special-cases a bucket here if the
+    // student explicitly added it; this is never inferred on its own.
+    peakHourBuckets:[],
   };
   const stored=lsGet("schedulePrefs",def);
   return {...def,...stored};
@@ -1993,6 +2008,8 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
   const [weekendEnabled,setWeekendEnabled]=useState(prefs.weekendEnabled);
   const [weekendStart,setWeekendStart]=useState(prefs.weekendStartTime);
   const [weekendEnd,setWeekendEnd]=useState(prefs.weekendEndTime);
+  const [peakBuckets,setPeakBuckets]=useState(prefs.peakHourBuckets||[]);
+  const togglePeakBucket=(id)=>setPeakBuckets(peakBuckets.includes(id)?peakBuckets.filter(b=>b!==id):[...peakBuckets,id]);
   const [saved,setSaved]=useState(false);
 
   const handleSave=()=>{
@@ -2004,6 +2021,7 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
       weekendEnabled,
       weekendStartTime:weekendStart,
       weekendEndTime:weekendEnd,
+      peakHourBuckets:peakBuckets,
     };
     setSchedulePreferences(newPrefs);
     setSaved(true);
@@ -2022,7 +2040,7 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
         </div>
         
         <div style={{marginBottom:22}}>
-          <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>Peak Work Hours</label>
+          <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>Work Hours</label>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
             <div>
               <label style={{fontSize:12,color:T.text,marginBottom:4,display:"block"}}>Start time</label>
@@ -2085,7 +2103,22 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
             ))}
           </div>
         </div>
-        
+
+        <div style={{marginBottom:22}}>
+          <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>
+            Peak Focus Hours <span style={{textTransform:"none",fontWeight:400,color:T.faint}}>(optional)</span>
+          </label>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {TIER0_HOUR_BUCKETS.map(b=>(
+              <button key={b.id} type="button" onClick={()=>togglePeakBucket(b.id)} style={peakChipStyle(peakBuckets.includes(b.id))}>
+                {PEAK_BUCKET_LABELS[b.id]}
+                <span style={{opacity:0.7,marginLeft:4}}>{fmtClock12(minutesToTime(b.startMin))}–{fmtClock12(minutesToTime(b.endMin))}</span>
+              </button>
+            ))}
+          </div>
+          <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>Studlin prefers these times when rescheduling missed tasks. Pick 1-2 for the strongest effect — leave blank and Studlin will learn your best hours from your habits over time.</div>
+        </div>
+
         {saved&&<div style={{background:T.lime+"20",border:"1px solid "+T.lime+"44",borderRadius:8,padding:12,fontSize:12,color:T.lime,marginBottom:16,display:"flex",alignItems:"center",gap:8}}>
           <span style={{display:"inline-flex"}}>✓</span>
           Preferences saved! Your schedule will instantly re-sort.
@@ -9192,7 +9225,7 @@ function AiHumanizer() {
 
 
 // ─── SETTINGS ─────────────────────────────────────────────────────────────────
-function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineWizard=()=>{}}) {
+function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineWizard=()=>{}, setScheduleSettingsOpen=()=>{}}) {
   const [active,setActive]=useState("General");
   const [canvasTipOpen,setCanvasTipOpen]=useState(false);
   const [canvasSeeding,setCanvasSeeding]=useState(false);
@@ -9630,6 +9663,11 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
           </>)}
 
           {active==="Calendar Preferences" && (<>
+            <Card style={{marginBottom:12}}>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:3}}>Study Schedule</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Work hours, weekend schedule, difficulty, and peak focus hours.</div>
+              <Btn onClick={()=>setScheduleSettingsOpen(true)}>Customize Schedule</Btn>
+            </Card>
             <Card>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:3}}>Weekly Routine</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Your classes, sports, and shifts — the times the AI treats as absolute and never schedules over.</div>
@@ -11943,7 +11981,7 @@ function App() {
             keeps the entrance animation but stops that side effect. */}
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
           {active==="dashboard"?<Dashboard setActive={setActive} setScheduleSettingsOpen={setScheduleSettingsOpen} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} />:
-           active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} />:
+           active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} />:
            active==="calendar"?<CalendarTab onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} />:
            active==="lectures"?<Lectures setActive={setActive} setPricingOpen={setPricingOpen} />:
