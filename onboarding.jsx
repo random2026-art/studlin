@@ -231,8 +231,7 @@ function StepSignup({ state, set, advance }) {
               <span className="tchip">{Ic.check} 60-second setup</span>
             </div>
             <div className="trust-foot">
-              <div className="tf-avatars"><span></span><span></span><span></span><span></span></div>
-              Made for real student life.
+              Made for Students by Students
             </div>
           </div>
         </>
