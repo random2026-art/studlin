@@ -7059,19 +7059,64 @@ function computeVelocityImpact(task,events){
   return {tomorrow,taskMins,baseMins,pct,isHigh:pct>=15};
 }
 
+const RESCHEDULE_SCAN_DAYS=7;
+const RESCHEDULE_MAX_CANDIDATES=3;
+// Replaces the old "always tomorrow" behavior — scans forward (bounded by
+// the task's own deadline) and ranks candidate days by workload impact so
+// rescheduling doesn't force a fit onto a day that's already packed when a
+// lighter day is available. Never reconsiders today — the whole point of
+// Reschedule is freeing up today. Returns [] if nothing legal exists before
+// the deadline, same guarantee as the old single-day Hard Wall check, just
+// generalized across however many days are actually in play.
+function computeRescheduleCandidates(task,events,routines,prefs){
+  const deadlineKey=task.deadline||null;
+  const taskMins=task.duration||30;
+  const desiredTime=prefs.workStartTime;
+  const candidates=[];
+  for(let i=1;i<=RESCHEDULE_SCAN_DAYS;i++){
+    const d=(()=>{const x=new Date();x.setDate(x.getDate()+i);return dayKey(x);})();
+    if(deadlineKey&&d>deadlineKey)break;
+    const {events:relocated,placement}=findSlotWithEviction(events,routines,prefs,d,desiredTime,taskMins,deadlineKey);
+    if(!placement)continue;
+    const dayEvents=events.filter(e=>e.date===d&&e.status!=="done"&&e.id!==task.id);
+    // rawBaseMins (actual existing load, 0 for a genuinely empty day) is what
+    // ranking uses — a free day should always win. `baseMins` below may get
+    // swapped for a fallback average purely so the displayed percentage
+    // doesn't read as an undefined/infinite jump; that fallback must never
+    // leak into ranking, or a busy day (small % increase relative to its
+    // own large existing load) would rank ahead of an empty one — the
+    // opposite of "find the lightest day."
+    const rawBaseMins=dayEvents.reduce((a,e)=>a+(e.duration||0),0);
+    let baseMins=rawBaseMins;
+    if(baseMins<=0){
+      const today=dayKey();
+      const start=(()=>{const x=new Date();x.setDate(x.getDate()-7);return dayKey(x);})();
+      const recent=events.filter(e=>e.date>=start&&e.date<today&&e.status!=="done");
+      baseMins=Math.round(recent.reduce((a,e)=>a+(e.duration||0),0)/7);
+    }
+    const pct=baseMins>0?Math.round((taskMins/baseMins)*100):100;
+    const evictedCount=relocated.filter(e=>{
+      const orig=events.find(o=>o.id===e.id);
+      return orig&&orig.date===d&&e.date!==d;
+    }).length;
+    candidates.push({date:d,dayOffset:i,placement,events:relocated,taskMins,baseMins,rawBaseMins,pct,isHigh:pct>=15,evictedCount});
+  }
+  candidates.sort((a,b)=>a.rawBaseMins-b.rawBaseMins||a.evictedCount-b.evictedCount||a.dayOffset-b.dayOffset);
+  return candidates.slice(0,RESCHEDULE_MAX_CANDIDATES);
+}
+
 function RescheduleModal({task,events,commit,onClose}){
-  const [err,setErr]=useState("");
-  const {tomorrow,taskMins,pct,isHigh}=computeVelocityImpact(task,events);
+  const prefs=getSchedulePreferences();
+  const routines=getWeeklyRoutine();
+  const candidates=useMemo(()=>computeRescheduleCandidates(task,events,routines,prefs),[task.id]);
+  const [selectedIdx,setSelectedIdx]=useState(0);
+  const selected=candidates[selectedIdx];
+  const taskMins=task.duration||30;
 
   const confirm=()=>{
-    if(task.deadline&&tomorrow>task.deadline){setErr("Can't reschedule past "+task.deadline+" — that's the deadline.");return;}
-    const prefs=getSchedulePreferences();
-    const routines=getWeeklyRoutine();
-    const {events:relocated,placement}=findSlotWithEviction(events,routines,prefs,tomorrow,prefs.workStartTime,taskMins,task.deadline||null);
-    if(!placement){setErr("No open slot before its deadline, even after freeing up what we can — try a manual edit instead.");return;}
-    const finalEvents=relocated.map(e=>e.id===task.id?{...e,date:placement.date,time:placement.time}:e);
-    const evictedCount=relocated.filter(e=>{const orig=events.find(o=>o.id===e.id);return orig&&orig.date===tomorrow&&e.date!==tomorrow;}).length;
-    commit(finalEvents,evictedCount);
+    if(!selected)return;
+    const finalEvents=selected.events.map(e=>e.id===task.id?{...e,date:selected.placement.date,time:selected.placement.time}:e);
+    commit(finalEvents,selected.evictedCount);
     onClose();
   };
 
@@ -7079,12 +7124,31 @@ function RescheduleModal({task,events,commit,onClose}){
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
       <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:420,background:T.card,border:`1px solid ${T.border}`,borderRadius:18,padding:24,animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
         <div style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:10}}>Reschedule "{task.title}"?</div>
-        <div style={{fontSize:13.5,color:T.text,lineHeight:1.65,marginBottom:18}}>
-          Rescheduling this gives you <strong>{fmtMinsDur(taskMins)}</strong> of rest right now, but increases tomorrow's active workload by <strong style={{color:isHigh?T.amber:T.muted}}>{pct}%</strong>.
-        </div>
-        {err&&<div style={{fontSize:12.5,color:T.red,marginBottom:14,padding:"10px 12px",background:T.red+"14",borderRadius:9}}>{err}</div>}
+        {candidates.length===0
+          ? <div style={{fontSize:12.5,color:T.red,marginBottom:14,padding:"10px 12px",background:T.red+"14",borderRadius:9}}>No open slot before its deadline, even after freeing up what we can — try a manual edit instead.</div>
+          : <>
+            <div style={{fontSize:13.5,color:T.text,lineHeight:1.5,marginBottom:14}}>
+              Rescheduling this gives you <strong>{fmtMinsDur(taskMins)}</strong> back today. Studlin found the lightest days coming up:
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:18}}>
+              {candidates.map((c,i)=>(
+                <div key={c.date} onClick={()=>setSelectedIdx(i)} style={{cursor:"pointer",padding:"12px 14px",borderRadius:12,border:`1px solid ${selectedIdx===i?T.lime+"66":T.border}`,background:selectedIdx===i?T.lime+"14":T.card2}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <span style={{fontSize:13,fontWeight:600,color:selectedIdx===i?T.lime:T.white}}>
+                      {i===0?"Lightest day — ":""}{new Date(c.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}
+                    </span>
+                    {selectedIdx===i&&<span style={{color:T.lime,fontSize:12}}>✓</span>}
+                  </div>
+                  <div style={{fontSize:12,color:T.muted,marginTop:3}}>
+                    Adds <strong style={{color:c.isHigh?T.amber:T.muted}}>{c.pct}%</strong> to that day's workload{c.evictedCount>0?` · bumps ${c.evictedCount} other${c.evictedCount!==1?"s":""}`:""}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        }
         <div style={{display:"flex",gap:8}}>
-          <Btn onClick={confirm} style={{flex:1,justifyContent:"center"}}>Confirm Reschedule</Btn>
+          <Btn onClick={confirm} disabled={candidates.length===0} style={{flex:1,justifyContent:"center",opacity:candidates.length===0?0.45:1}}>Confirm Reschedule</Btn>
           <Btn variant="subtle" onClick={onClose} style={{flex:1,justifyContent:"center"}}>Cancel</Btn>
         </div>
       </div>
