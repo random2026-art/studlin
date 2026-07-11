@@ -990,6 +990,152 @@ function findSlotWithEviction(events,routines,prefs,desiredDate,desiredTime,dura
   const placement=findOpenSlotFor(working,routines,prefs,desiredDate,desiredTime,duration,deadlineKey);
   return {events:pool,placement};
 }
+// Tier 0 — automatic reflow. A task counts as "missed" once its date has
+// passed while it's still pending; fixed-kind events, checklist items,
+// date-less items, and anything the student has pinned are never eligible,
+// mirroring rebalanceDay's isFlexPending exclusions. Deliberately does not
+// introduce a new task.status value ("missed") — several existing filters
+// (findSlotWithEviction, computePausePlan, applyOverduePenalties, the daily
+// rollover detection itself) do exact-equality checks on status that a new
+// enum value would silently break; status stays "pending"|"done".
+const TIER0_FIXED_KINDS=new Set(["exam","class","busy block","reminder"]);
+function isTier0Missed(ev,todayKey){
+  if(ev.status!=="pending")return false;
+  if(ev.checklist)return false;
+  if(!ev.time)return false;
+  if(ev.userPinned)return false;
+  if(TIER0_FIXED_KINDS.has(ev.kind))return false;
+  if(ev.deadline&&ev.deadline<todayKey)return false;
+  return ev.date<todayKey;
+}
+// Hour-of-day buckets for completion-reliability inference. Keyed off
+// completedAt/task-completion-happening (not timeSpent) — only the Lock-In
+// Timer path populates timeSpent, so keying off it would starve the sample
+// to timer-only completions. Times outside all four windows (overnight,
+// ~22:00-06:00) map to null and fall back to the neutral 0.5 default
+// everywhere — Tier 0 rarely places anything there anyway.
+const TIER0_HOUR_BUCKETS=[
+  {id:"morning",startMin:6*60,endMin:11*60},
+  {id:"midday",startMin:11*60,endMin:15*60},
+  {id:"afternoon",startMin:15*60,endMin:18*60},
+  {id:"evening",startMin:18*60,endMin:22*60},
+];
+function hourBucket(timeStr){
+  if(!timeStr)return null;
+  const mins=timeToMinutes(timeStr);
+  const b=TIER0_HOUR_BUCKETS.find(b=>mins>=b.startMin&&mins<b.endMin);
+  return b?b.id:null;
+}
+// Append-only log, one entry per known outcome — mirrors the `sessions`
+// array logSession writes (scan-on-demand, no running aggregate). Silently
+// no-ops for time-less events (checklist items) since they have no bucket.
+function logCompletionOutcome(outcome,timeStr){
+  const bucket=hourBucket(timeStr);
+  if(!bucket)return;
+  const log=lsGet("completionLog",[]);
+  log.push({bucket,outcome,t:Date.now()});
+  lsSet("completionLog",log);
+}
+// Fraction of tasks placed in `bucket` that actually got done vs. missed.
+// Returns null below TIER0_MIN_BUCKET_SAMPLE — an honest "not enough data
+// yet" signal callers must treat as neutral, never fabricated confidence.
+const TIER0_MIN_BUCKET_SAMPLE=8;
+function getBucketReliability(bucket){
+  if(!bucket)return null;
+  const entries=lsGet("completionLog",[]).filter(e=>e.bucket===bucket);
+  if(entries.length<TIER0_MIN_BUCKET_SAMPLE)return null;
+  return entries.filter(e=>e.outcome==="done").length/entries.length;
+}
+// Finds where Studlin should silently move a missed task. Adds no new
+// scanning logic on top of findSlotWithEviction/findLegalSlotOrNull — every
+// candidate it considers is already deadline-safe and non-overlapping by
+// construction, so a legal placement here is always safe to apply without a
+// student click. Widens the search to today..+3 days (still hard-capped by
+// deadlineKey), takes one candidate per day, and scores each on: how
+// reliably this student actually finishes tasks placed in that hour bucket
+// (neutral 0.5 until there's real data — never fabricates confidence),
+// continuity with the task's original time-of-day, a same-day/soonest-day
+// nudge (so reliability alone can't push everything to day+3), and blast
+// radius (heavier penalty per evicted task). Highest score among legal
+// candidates wins; null iff no day in the window yields a legal
+// placement — leaving the task untouched, Tier 1 catches it.
+//
+// Anchor times: the task's own original time is always tried (so
+// continuity is always a real option, not just a tiebreaker), plus one
+// anchor per hour bucket. Trying only the original time per day would make
+// the reliability signal inert whenever that original time is open every
+// day (the common case) — the search would never even look at a different
+// time-of-day to compare against. Sampling a bucket-start anchor alongside
+// the original time is what lets a proven-unreliable original slot actually
+// lose to a proven-reliable one on the same day.
+//
+// Anchors are filtered to the student's actual work window (per-day, since
+// weekend hours can differ) before ever being handed to
+// findSlotWithEviction. findOpenSlotFor has a last-resort fallback that
+// returns the raw requested time verbatim when nothing legal is found in
+// its forward scan — that's safe for a normal in-window time (an in-window
+// double-booking still gets caught by findLegalSlotOrNull's conflict
+// check), but a bucket anchor sitting outside the work window (e.g. a
+// 6am "morning" anchor when the student's day starts at 9am) can slip
+// through that fallback looking "legal" simply because nothing is
+// scheduled that early to conflict with — it was never a real candidate.
+// Restricting anchors to the window sidesteps that edge case entirely
+// without touching findOpenSlotFor itself.
+const TIER0_CANDIDATE_DAYS=4; // today + up to 3 more days
+const TIER0_SCORE_WEIGHTS={reliability:100,continuity:40,dayPreference:15,eviction:25};
+function findTier0Slot(task,events,routines,prefs,todayKey){
+  const dur=task.duration||30;
+  const deadlineKey=task.deadline||null;
+  const desiredTime=task.time||prefs.workStartTime;
+  const desiredMins=timeToMinutes(desiredTime);
+  const candidates=[];
+  for(let i=0;i<TIER0_CANDIDATE_DAYS;i++){
+    const d=(()=>{const x=new Date(todayKey+"T12:00:00");x.setDate(x.getDate()+i);return dayKey(x);})();
+    if(deadlineKey&&d>deadlineKey)break;
+    const{start:winStart,end:winEnd}=getWorkWindowMinsFor(prefs,d);
+    const anchorTimes=Array.from(new Set([desiredTime,...TIER0_HOUR_BUCKETS.map(b=>minutesToTime(b.startMin))]))
+      .filter(t=>{const m=timeToMinutes(t);return m>=winStart&&m<winEnd;});
+    anchorTimes.forEach(anchor=>{
+      const {events:relocated,placement}=findSlotWithEviction(events,routines,prefs,d,anchor,dur,deadlineKey);
+      if(!placement)return;
+      const bucket=hourBucket(placement.time);
+      const reliability=getBucketReliability(bucket);
+      const reliabilityScore=reliability===null?0.5:reliability;
+      const continuityMins=Math.abs(timeToMinutes(placement.time)-desiredMins);
+      const evictedCount=relocated.filter(e=>{
+        const orig=events.find(o=>o.id===e.id);
+        return orig&&(orig.date!==e.date||orig.time!==e.time);
+      }).length;
+      const score=
+        TIER0_SCORE_WEIGHTS.reliability*reliabilityScore
+        -TIER0_SCORE_WEIGHTS.continuity*(continuityMins/1440)
+        -TIER0_SCORE_WEIGHTS.dayPreference*i
+        -TIER0_SCORE_WEIGHTS.eviction*evictedCount;
+      candidates.push({events:relocated,placement,score});
+    });
+  }
+  if(candidates.length===0)return null;
+  candidates.sort((a,b)=>b.score-a.score);
+  return {events:candidates[0].events,placement:candidates[0].placement};
+}
+// Restores a Tier0-moved task to its pre-move {date,time} and strips the
+// marker fields. Doesn't re-run collision detection — this is an explicit,
+// deliberate "put it back" action, and the original slot was always legal
+// by construction (it's exactly where the task legitimately was before
+// Tier 0 touched it).
+function undoTier0Move(taskId){
+  const events=lsGet("events",[]);
+  const next=events.map(e=>{
+    if(e.id!==taskId||!e.movedByStudlin||!e.movedFrom)return e;
+    const {date,time}=e.movedFrom;
+    const {movedByStudlin,movedFrom,movedAt,...rest}=e;
+    return {...rest,date,time};
+  });
+  lsSet("events",next);
+  return next;
+}
+function fmtClock12(t){if(!t)return"";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+ap;}
+function fmtMovedFrom(mf){if(!mf)return"";const dk=mf.date===dayKey()?"today":mf.date;return dk+" "+fmtClock12(mf.time);}
 // Places a student-reported "I need more time" extension for an assignment
 // into the next open gap(s) before its deadline. Splits anything over 90min
 // into multiple sessions (same chunking ceiling aiArrange uses), each placed
@@ -6425,6 +6571,13 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                           <span style={{fontSize:8,lineHeight:1}}>📌</span>
                         </div>
                       )}
+                      {ev.movedByStudlin && !isRoutine && (
+                        <div onClick={(e)=>{e.stopPropagation();setEvents(undoTier0Move(ev.id));}}
+                          title={"Studlin moved this from "+fmtMovedFrom(ev.movedFrom)+". Click to undo."}
+                          style={{position:"absolute",top:2,left:2,width:13,height:13,borderRadius:"50%",background:"rgba(0,0,0,0.28)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",zIndex:1}}>
+                          <span style={{fontSize:8,lineHeight:1}}>↻</span>
+                        </div>
+                      )}
                       {isRoutine&&editRoutineMode&&hoveredRoutineId===ev.routineId&&(
                         <button onClick={(e)=>{e.stopPropagation();if(onDeleteRoutine)onDeleteRoutine(ev.routineId);if(setHoveredRoutineId)setHoveredRoutineId(null);}} title="Delete this routine block (every week)"
                           style={{position:"absolute",top:-8,right:-8,width:18,height:18,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.red,fontSize:11,lineHeight:1,cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 4px 10px -2px rgba(0,0,0,0.4)"}}>×</button>
@@ -6649,7 +6802,7 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
 
 // The "Today"/selected-day + Upcoming agenda column — shared by Monthly and
 // Weekly views so the collapsible panel behaves identically in both.
-function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, colorOf, openNew, openEdit, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, routines, openRoutineEdit, deleteRoutineItem, markDone, removeEvent, setSelDay, setYm, dragId, setDragId, openReschedule}) {
+function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, colorOf, openNew, openEdit, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, routines, openRoutineEdit, deleteRoutineItem, markDone, removeEvent, setSelDay, setYm, dragId, setDragId, openReschedule, setEvents}) {
   return (
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       <Card style={{padding:16}}>
@@ -6693,6 +6846,7 @@ function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, c
                   {ev.priority&&<span style={{width:7,height:7,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority||3],flexShrink:0}} />}
                   {isExam&&<span style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:9.5,fontWeight:800,letterSpacing:"0.04em",color,background:color+"1E",border:`1px solid ${color}55`,borderRadius:5,padding:"1px 6px",flexShrink:0}}><span style={{width:4,height:4,borderRadius:"50%",background:color,flexShrink:0}} />EXAM</span>}
                   {isRoutine&&<span style={{fontSize:9,fontWeight:800,letterSpacing:"0.04em",color,background:color+"14",border:`1px solid ${color}44`,borderRadius:5,padding:"1px 6px",flexShrink:0}}>WEEKLY</span>}
+                  {ev.movedByStudlin&&<span onClick={(e)=>{e.stopPropagation();setEvents(undoTier0Move(ev.id));}} title={"Studlin moved this from "+fmtMovedFrom(ev.movedFrom)+". Click to undo."} style={{fontSize:10,flexShrink:0,cursor:"pointer"}}>↻</span>}
                   <span style={{fontSize:12.5,fontWeight:600,color:titleColor,lineHeight:1.35,textDecoration:isDone?"line-through":"none",minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",display:"block"}} title={ev.title}>{ev.title}</span>
                 </div>
                 <div style={{fontSize:11,color:subColor,marginTop:2,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
@@ -7542,9 +7696,22 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
         }
       }
     }
-    const next=events.map(e=>e.id===id?{...e,date:newDate,...(checkTime?{time:finalTime,userPinned:true}:{})}:e);setEvents(next);lsSet("events",next);
+    const next=events.map(e=>{
+      if(e.id!==id)return e;
+      const merged={...e,date:newDate,...(checkTime?{time:finalTime,userPinned:true}:{})};
+      // A deliberate manual move (any time chosen) supersedes Studlin's own
+      // move — clear the Tier 0 marker so the badge/banner don't linger.
+      if(checkTime){const {movedByStudlin,movedFrom,movedAt,...rest}=merged;return rest;}
+      return merged;
+    });
+    setEvents(next);lsSet("events",next);
   };
-  const markDone=(id)=>{const next=events.map(ev=>ev.id===id?{...ev,status:"done",completedAt:Date.now()}:ev);setEvents(next);lsSet("events",next);};
+  const markDone=(id)=>{
+    const target=events.find(ev=>ev.id===id);
+    if(target&&target.time)logCompletionOutcome("done",target.time);
+    const next=events.map(ev=>{if(ev.id!==id)return ev;const {movedByStudlin,movedFrom,movedAt,...rest}=ev;return {...rest,status:"done",completedAt:Date.now()};});
+    setEvents(next);lsSet("events",next);
+  };
   const nav=(d)=>setYm(c=>{const m2=c.m+d;return {y:c.y+Math.floor(m2/12),m:((m2%12)+12)%12};});
   const toSliderVal=(v,def)=>{const n=v!=null?v:def;return n>10?n:n*100;};
   const openEdit=(ev)=>{setEditEv(ev);setEditTitle(ev.title||"");setEditDate(ev.date||dayKey());setEditTime(ev.time||"14:30");setEditDuration(ev.duration||60);setEditDeadline(ev.deadline||"");setEditDeadlineErr("");setEditPriority(toSliderVal(ev.priority,5));setEditDifficulty(toSliderVal(ev.difficulty,5));setEditMoreOpen(!!(ev.priority&&(ev.priority>10?ev.priority!==500:ev.priority!==5)));setEditSubject(ev.subject||"Chemistry");setEditKind(ev.kind||"deadline");setEditNotes(ev.notes||"");setEditOpen(true);};
@@ -7599,7 +7766,12 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     // (though if it was already pinned from an earlier action, ...e keeps
     // that flag as-is either way).
     const timeChanged=editTime!==editEv.time||editDate!==editEv.date;
-    const updated=events.map(e=>e.id===editEv.id?{...e,title:editTitle.trim(),date:editDate,time:editTime,duration:editDuration,deadline:editDeadline||null,priority:editPriority,difficulty:editDifficulty,subject:editSubject,kind:editKind,notes:editNotes,...(timeChanged?{userPinned:true}:{})}:e);
+    const updated=events.map(e=>{
+      if(e.id!==editEv.id)return e;
+      const merged={...e,title:editTitle.trim(),date:editDate,time:editTime,duration:editDuration,deadline:editDeadline||null,priority:editPriority,difficulty:editDifficulty,subject:editSubject,kind:editKind,notes:editNotes,...(timeChanged?{userPinned:true}:{})};
+      if(timeChanged){const {movedByStudlin,movedFrom,movedAt,...rest}=merged;return rest;}
+      return merged;
+    });
     const prefs=getSchedulePreferences();
     const next=editDate?rebalanceDay(editDate,updated,routines,prefs):updated;
     setEvents(next);lsSet("events",next);closeEdit();
@@ -7730,7 +7902,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
         ))}
       </div>
       {calView==="monthly"&&(<CollapsibleAgendaLayout isAgendaCollapsed={isAgendaCollapsed} setIsAgendaCollapsed={setIsAgendaCollapsed}
-        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,markDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask}}>
+        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,markDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask,setEvents}}>
         <Card style={{padding:16}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,padding:"4px 6px"}}>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
@@ -7770,6 +7942,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
                       return <div key={j} style={{fontSize:9,fontWeight:600,color:tagColor,background:tagColor+(isExam?"22":"16"),border:isRoutine&&editRoutineMode?`1px solid ${T.lime}`:isExam?`1px solid ${tagColor}`:"none",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%",display:"flex",alignItems:"center",gap:3,opacity:dimmedByRoutineMode?0.3:1}}>
                         {ev.priority&&ev.priority>=4&&<span style={{width:5,height:5,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority],flexShrink:0}} />}
                         {ev.userPinned&&<span style={{flexShrink:0,fontSize:7}} title="Pinned — won't be auto-rescheduled">📌</span>}
+                        {ev.movedByStudlin&&<span style={{flexShrink:0,fontSize:7}} title={"Studlin moved this from "+fmtMovedFrom(ev.movedFrom)}>↻</span>}
                         {ev.title}
                       </div>;
                     })}
@@ -7783,7 +7956,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
         </Card>
       </CollapsibleAgendaLayout>)}
       {calView==="weekly"&&(<CollapsibleAgendaLayout isAgendaCollapsed={isAgendaCollapsed} setIsAgendaCollapsed={setIsAgendaCollapsed}
-        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,markDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask}}>
+        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,markDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask,setEvents}}>
         <WeeklyPlanner events={events} setEvents={setEvents} moveEvent={moveEvent} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openNew={openNew} openEdit={openEdit}
           routines={routines} editRoutineMode={editRoutineMode} hoveredRoutineId={hoveredRoutineId} setHoveredRoutineId={setHoveredRoutineId}
           onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
@@ -8046,6 +8219,15 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
               setEvents(next);lsSet("events",next);
               setEditEv(prev=>prev?{...prev,userPinned:false}:prev);
             }} style={{background:"none",border:"none",color:T.lime,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Unpin</button>
+          </div>
+        )}
+        {editEv&&editEv.movedByStudlin&&(
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:T.muted}}>
+            <span>↻ Studlin moved this from {fmtMovedFrom(editEv.movedFrom)}.</span>
+            <button type="button" onClick={()=>{
+              setEvents(undoTier0Move(editEv.id));
+              closeEdit();
+            }} style={{background:"none",border:"none",color:T.lime,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Undo</button>
           </div>
         )}
         {editDeadlineErr&&<div style={{fontSize:12,color:T.red,marginTop:-8,marginBottom:14}}>{editDeadlineErr}</div>}
@@ -10026,6 +10208,8 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
   const [checklistDraft,setChecklistDraft]=useState("");
   const toggleChecklistItem=(id)=>{
     const all=lsGet("events",[]);
+    const target=all.find(ev=>ev.id===id);
+    if(target&&target.status!=="done"&&target.time)logCompletionOutcome("done",target.time);
     const next=all.map(ev=>ev.id===id?{...ev,status:ev.status==="done"?"pending":"done",completedAt:ev.status==="done"?null:Date.now()}:ev);
     lsSet("events",next);forcePlan(x=>x+1);
   };
@@ -11258,6 +11442,12 @@ function App() {
   // the student clicks "Roll over".
   const [rolloverPending,setRolloverPending]=useState([]);
   const [rolloverToast,setRolloverToast]=useState("");
+  // Tier 0 — automatic reflow. Unlike Tier 1, this moves eligible missed
+  // tasks with no click required; tier0Batch is only the after-the-fact
+  // summary the student can see/undo, never a proposal awaiting approval.
+  const [tier0Batch,setTier0Batch]=useState([]);
+  const getTier0SeenIds=()=>new Set(lsGet("tier0BannerSeenIds",[]));
+  const markTier0BannerSeen=(ids)=>{const seen=getTier0SeenIds();ids.forEach(id=>seen.add(id));lsSet("tier0BannerSeenIds",Array.from(seen));};
   const fmtRolloverClock=(t)=>{if(!t)return"";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+ap;};
   // Preview of exactly where each pending task would land — computed once
   // per rolloverPending change (not re-derived on every render) so what the
@@ -11556,11 +11746,46 @@ function App() {
     const evs=lsGet("events",[]);
     const cleaned=evs.filter(ev=>!(ev.status==="pending"&&ev.deadline&&ev.deadline<today));
     if(cleaned.length!==evs.length)lsSet("events",cleaned);
+    // Completion-reliability signal — logged regardless of tier0Enabled so
+    // the data keeps accumulating even if Tier 0 itself is off. Gated to
+    // ev.date===yesterday (not just date<today) so a task that stays stuck
+    // across multiple days only logs one "missed" per occurrence, not once
+    // per day it remains overdue.
+    const yesterday=(()=>{const d=new Date(today+"T12:00:00");d.setDate(d.getDate()-1);return dayKey(d);})();
+    cleaned.filter(ev=>isTier0Missed(ev,today)&&ev.date===yesterday).forEach(ev=>logCompletionOutcome("missed",ev.time));
+    // Tier 0 — the trigger is silent (no click needed to move an eligible
+    // missed task), but the result never is: every move gets recorded into
+    // movedBatch so the banner below and the per-task badge can always show
+    // the student what changed and offer a one-tap undo.
+    let working=cleaned;
+    const movedBatch=[];
+    if(lsGet("tier0Enabled",true)){
+      const routines=getWeeklyRoutine();
+      const prefs=getSchedulePreferences();
+      cleaned.filter(ev=>isTier0Missed(ev,today)).forEach(ev=>{
+        const result=findTier0Slot(ev,working,routines,prefs,today);
+        if(!result)return;
+        working=result.events.map(e=>e.id===ev.id?{
+          ...e,date:result.placement.date,time:result.placement.time,
+          movedByStudlin:true,movedFrom:{date:ev.date,time:ev.time},movedAt:Date.now(),
+        }:e);
+        movedBatch.push({id:ev.id,title:ev.title,from:{date:ev.date,time:ev.time},to:result.placement});
+      });
+    }
+    if(working!==cleaned)lsSet("events",working);
+    if(movedBatch.length>0){
+      const seen=getTier0SeenIds();
+      const unseen=movedBatch.filter(m=>!seen.has(m.id));
+      if(unseen.length>0)setTier0Batch(unseen);
+    }
     // Detect yesterday-or-earlier pending tasks and prompt — the actual
     // move (via the same conflict-aware gap-finder AI-arrange/extension-
     // scheduling use, instead of the old naive back-to-back stacking) only
-    // runs when the student clicks "Roll over" on the prompt below.
-    const od=cleaned.filter(ev=>ev.status==="pending"&&ev.date<today&&!(ev.deadline&&ev.deadline<today));
+    // runs when the student clicks "Roll over" on the prompt below. Tasks
+    // Tier 0 already handled above are excluded — Tier 1 is now only the
+    // fallback for tasks Tier 0 couldn't legally place.
+    const movedIds=new Set(movedBatch.map(m=>m.id));
+    const od=working.filter(ev=>ev.status==="pending"&&ev.date<today&&!(ev.deadline&&ev.deadline<today)&&!movedIds.has(ev.id));
     if(od.length>0)setRolloverPending(od);
   },[]);
   const navSections=[
@@ -11878,12 +12103,34 @@ function App() {
         }}
         onComplete={(mins)=>{
         logSession(mins,"Task: "+timerTask.title);
+        if(timerTask.time)logCompletionOutcome("done",timerTask.time);
         const next=lsGet("events",[]).map(ev=>ev.id===timerTask.id?{...ev,status:"done",timeSpent:mins,completedAt:Date.now()}:ev);
         lsSet("events",next);
         // Modal stays open to show the XP/leaderboard reward summary — it
         // closes itself (setTimerTask(null) via onClose) once dismissed.
       }} />}
 
+      {tier0Batch.length>0&&(
+        <div style={{position:"fixed",top:76,left:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+          <div style={{fontSize:13,color:T.white,marginBottom:10}}>
+            <strong style={{color:T.lime}}>{tier0Batch.length} task{tier0Batch.length!==1?"s":""}</strong> auto-moved by Studlin — you missed the original time:
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12,maxHeight:160,overflowY:"auto"}}>
+            {tier0Batch.map(m=>(
+              <div key={m.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,fontSize:12,padding:"6px 9px",background:T.card2,borderRadius:8}}>
+                <span style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.title}</span>
+                <span style={{color:T.muted,flexShrink:0,fontFamily:T.mono,fontSize:11}}>→ {m.to.date===dayKey()?"Today":m.to.date} {fmtRolloverClock(m.to.time)}</span>
+                <button onClick={()=>{
+                  undoTier0Move(m.id);
+                  markTier0BannerSeen([m.id]);
+                  setTier0Batch(b=>b.filter(x=>x.id!==m.id));
+                }} style={{background:"none",border:"none",color:T.lime,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",flexShrink:0,padding:0}}>Undo</button>
+              </div>
+            ))}
+          </div>
+          <Btn variant="ghost" onClick={()=>{markTier0BannerSeen(tier0Batch.map(m=>m.id));setTier0Batch([]);}} style={{padding:"7px 14px",fontSize:12,width:"100%",justifyContent:"center"}}>Dismiss</Btn>
+        </div>
+      )}
       {rolloverPending.length>0&&(
         <div style={{position:"fixed",top:76,right:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           <div style={{fontSize:13,color:T.white,marginBottom:10}}>
