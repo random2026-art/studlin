@@ -129,6 +129,7 @@ function App() {
 
   const googleSign = () => {
     setGlobalError("");setLoading(true);
+    if(window.__isInAppBrowser&&window.__isInAppBrowser()){setGlobalError("Google sign-in isn't available in this app's built-in browser. Tap the ⋯ or ⋮ menu and choose \"Open in Browser\" to continue.");setLoading(false);return;}
     if(typeof google==="undefined"||!google.accounts){setGlobalError("Google sign-in is still loading. Please try again.");setLoading(false);return;}
     const client = google.accounts.oauth2.initTokenClient({
       client_id:"16831354472-lbsnd5rithhidj57gfh5rqsqvc3cv7as.apps.googleusercontent.com",
