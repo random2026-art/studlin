@@ -380,7 +380,7 @@ function TourStep({ targetRef, title, body, step, total, onNext, onSkip, isLast 
   return ReactDOM.createPortal((
     <div style={{position:"fixed",inset:0,zIndex:900,animation:"studlinFade 0.18s ease-out"}}>
       {anchored ? (
-        <div style={{position:"fixed",top:rect.top-10,left:rect.left-10,width:rect.width+20,height:rect.height+20,borderRadius:14,border:`3px solid ${T.lime}`,boxShadow:`0 0 0 4000px rgba(8,12,10,0.75), 0 0 0 6px ${T.lime}33`,pointerEvents:"none"}} />
+        <div style={{position:"fixed",top:rect.top-10,left:rect.left-10,width:rect.width+20,height:rect.height+20,borderRadius:14,border:`3px solid ${T.lime}`,boxShadow:`0 0 0 4000px rgba(0,0,0,0.92), 0 0 0 6px ${T.lime}33`,pointerEvents:"none"}} />
       ) : (
         <div style={{position:"absolute",inset:0,background:"rgba(8,12,10,0.75)",backdropFilter:"blur(4px)"}} />
       )}
