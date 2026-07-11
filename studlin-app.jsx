@@ -11702,8 +11702,8 @@ function App() {
       </Modal>
       {/* PAYWALL INTERCEPT — full-screen, shown once right after the first Calendar tour finishes/skips */}
       {paywallOpen && (
-        <div style={{position:"fixed",inset:0,zIndex:1000,background:"rgba(8,12,10,0.82)",backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px",overflowY:"auto"}}>
-          <div style={{width:"100%",maxWidth:900,background:T.surface,border:`1px solid ${T.border}`,borderRadius:22,padding:"40px 40px 32px",boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease",margin:"24px 0"}}>
+        <div style={{position:"fixed",inset:0,zIndex:1000,background:"rgba(8,12,10,0.82)",backdropFilter:"blur(10px)",display:"flex",alignItems:"flex-start",justifyContent:"center",padding:"24px 16px",overflowY:"auto"}}>
+          <div style={{width:"100%",maxWidth:900,background:T.surface,border:`1px solid ${T.border}`,borderRadius:22,padding:"40px 40px 32px",boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease",margin:"auto",marginTop:24,marginBottom:24}}>
             <div style={{textAlign:"center",marginBottom:24}}>
               <div style={{fontSize:24,fontWeight:700,color:T.cream,letterSpacing:"-0.02em",marginBottom:6}}>Unlock your full potential</div>
               <div style={{fontSize:13.5,color:"rgba(246,241,230,0.65)"}}>Students on Pro study 2.4× more and report a full letter-grade jump. Try it free for 7 days.</div>
