@@ -359,8 +359,13 @@ function TourStep({ targetRef, title, body, step, total, onNext, onSkip, isLast 
   const anchored = !!rect;
   const vw = typeof window!=="undefined"?window.innerWidth:1200;
   const vh = typeof window!=="undefined"?window.innerHeight:800;
+  const isRight = anchored && rect.left > vw/2;
   const calloutStyle = anchored
-    ? { position:"fixed", top:Math.min(rect.bottom+14, vh-240), left:Math.max(16,Math.min(rect.left, vw-336)), width:320 }
+    ? { position:"fixed", top:Math.min(rect.bottom+16, vh-240),
+        ...(isRight
+          ? { right:Math.max(16, vw-rect.right-4), left:"auto" }
+          : { left:Math.max(16, rect.left), right:"auto" }
+        ), width:320 }
     : { position:"fixed", top:"50%", left:"50%", transform:"translate(-50%,-50%)", width:380 };
 
   // Portaled straight to <body> — the tab content wrapper has a CSS
@@ -372,9 +377,9 @@ function TourStep({ targetRef, title, body, step, total, onNext, onSkip, isLast 
   return ReactDOM.createPortal((
     <div style={{position:"fixed",inset:0,zIndex:900,animation:"studlinFade 0.18s ease-out"}}>
       {anchored ? (
-        <div style={{position:"fixed",top:rect.top-8,left:rect.left-8,width:rect.width+16,height:rect.height+16,borderRadius:12,border:`2px solid ${T.lime}`,boxShadow:"0 0 0 4000px rgba(8,12,10,0.6)",pointerEvents:"none"}} />
+        <div style={{position:"fixed",top:rect.top-10,left:rect.left-10,width:rect.width+20,height:rect.height+20,borderRadius:14,border:`3px solid ${T.lime}`,boxShadow:`0 0 0 4000px rgba(8,12,10,0.75), 0 0 0 6px ${T.lime}33`,pointerEvents:"none",animation:"studlinPulse 1.8s ease-in-out infinite"}} />
       ) : (
-        <div style={{position:"absolute",inset:0,background:"rgba(8,12,10,0.6)",backdropFilter:"blur(4px)"}} />
+        <div style={{position:"absolute",inset:0,background:"rgba(8,12,10,0.75)",backdropFilter:"blur(4px)"}} />
       )}
       <div data-tour-callout style={{...calloutStyle, background:T.card, border:`1px solid ${T.border}`, borderRadius:14, padding:"18px 20px", boxShadow:"0 24px 60px -16px rgba(0,0,0,0.55)", zIndex:910, animation:"studlinPop 0.2s cubic-bezier(.2,.85,.3,1)"}}>
         <div style={{display:"flex",gap:5,marginBottom:12}}>
