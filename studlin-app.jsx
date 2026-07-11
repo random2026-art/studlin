@@ -6929,11 +6929,11 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   // accounts skip this old auto-condition entirely — calTourStep below
   // opens it explicitly once the new walkthrough finishes.
   const [routineWizardOpen,setRoutineWizardOpen]=useState(()=>!lsGet("hasConfiguredRoutine",false)&&lsGet("events",[]).some(e=>!e.id.startsWith("seed-"))&&!isFreshAccount);
-  // First-time guided walkthrough — Add Task/Brain Dump -> Studlin
-  // Reschedule -> (chains into Routine, then Subjects, via their own
-  // finish/skip handlers below). Replaces three independent modals that
-  // used to compete for the same first-run moment with one linear sequence
-  // that shows what the app does before asking for any setup.
+  // First-time guided walkthrough — Add Task -> Studlin Reschedule ->
+  // (chains into Routine, then Subjects, via their own finish/skip handlers
+  // below). Replaces three independent modals that used to compete for the
+  // same first-run moment with one linear sequence that shows what the app
+  // does before asking for any setup.
   const addTaskBtnRef=useRef(null);
   const brainDumpLinkRef=useRef(null);
   const rescheduleBtnRef=useRef(null);
@@ -7028,7 +7028,22 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   const [brainDumpOpen,setBrainDumpOpen]=useState(false);
   const [brainDumpText,setBrainDumpText]=useState("");
   const [brainDumpLoading,setBrainDumpLoading]=useState(false);
-  const [brainDumpReview,setBrainDumpReview]=useState(null); // {items:[{id,title,kind,durationMin,dueDate,needsDuration,include}]}
+  const [brainDumpReview,setBrainDumpReview]=useState(null); // {items:[{id,title,kind,durationMin,dueDate,dueTime,needsDuration,clarify,include}]}
+  // Voice input — same SpeechRecognition pattern as the lecture-recording
+  // mic elsewhere in the app, but appends onto whatever's already typed
+  // instead of replacing it, since a brain dump can mix typing and talking.
+  const [bdListening,setBdListening]=useState(false);
+  const bdRecRef=useRef(null);
+  const startBdRec=()=>{
+    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    if(!SR)return;
+    const base=brainDumpText.trim();
+    const r=new SR();r.continuous=true;r.interimResults=true;r.lang="en-US";
+    r.onresult=(e)=>{let t="";for(let i=0;i<e.results.length;i++)t+=e.results[i][0].transcript;setBrainDumpText((base?base+" ":"")+t);};
+    r.onend=()=>setBdListening(false);
+    bdRecRef.current=r;r.start();setBdListening(true);
+  };
+  const stopBdRec=()=>{if(bdRecRef.current)bdRecRef.current.stop();setBdListening(false);};
   // One-shot deep link from Dashboard's empty-Today's-Plan "Brain dump
   // everything" button — matches the openDeckId/openNoteId pattern used
   // elsewhere for cross-tab one-shot triggers.
@@ -7274,12 +7289,18 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
       const prompt="A student just brain-dumped everything they need to do, in their own words, in one go. Break it into separate individual items. "+
         "Today's date is "+dayKey()+" ("+new Date().toLocaleDateString("en-US",{weekday:"long"})+"). "+
         "For each item return: \"title\" (short, e.g. \"Chem homework\" or \"Email counselor\"), "+
-        "\"kind\" (\"study\" for anything that takes real focused work time — homework, studying, a project — or \"todo\" for a quick task with no real duration, like sending an email, a form, or a phone call), "+
-        "\"durationMin\" (your best-guess minutes needed, ONLY for kind:\"study\" — null for kind:\"todo\"), "+
-        "\"dueDate\" (YYYY-MM-DD if a deadline or target day was stated or implied — \"today\"/\"tonight\" means the date given above, \"Friday\" means the next occurrence of that weekday, etc. Be literal: if the student named a specific day, always return it, even if it's today. Only use null when truly no timing was mentioned at all), "+
-        "\"needsDuration\" (true ONLY if kind is \"study\" and you genuinely can't make a reasonable guess from context — be generous, most things can get a rough estimate). "+
+        "\"kind\", one of: "+
+        "\"study\" — anything that takes real focused work time (homework, studying, a project) — Studlin finds an open slot for it; "+
+        "\"todo\" — a quick task with no real duration and no fixed time, like sending an email, a form, or a phone call; "+
+        "\"event\" — something happening at a specific real-world time that Studlin should never move, like an appointment, a class, a shift, a meeting; "+
+        "\"reminder\" — a quick nudge at a specific time, e.g. \"remind me to...\" or \"don't forget to... at...\". "+
+        "\"durationMin\" (your best-guess minutes needed, for kind:\"study\" or kind:\"event\" — null otherwise), "+
+        "\"dueDate\" (YYYY-MM-DD. For \"study\"/\"todo\" this is the deadline; for \"event\"/\"reminder\" this is the day it happens. \"today\"/\"tonight\" means the date given above, \"Friday\" means the next occurrence of that weekday. Be literal: if the student named a specific day, always return it, even if it's today. Only use null when truly no timing was mentioned at all), "+
+        "\"dueTime\" (HH:MM 24-hour — ONLY for kind:\"event\" or kind:\"reminder\", when a specific time was stated or clearly implied like \"tonight\"=20:00 or \"this morning\"=9:00; null if genuinely no time was said), "+
+        "\"needsDuration\" (true ONLY if kind is \"study\" and you genuinely can't make a reasonable guess from context — be generous, most things can get a rough estimate), "+
+        "\"clarify\" (a short, specific follow-up question ONLY if something essential is truly missing and you can't reasonably guess it — e.g. an \"event\" or \"reminder\" with no time at all mentioned, or a title too vague to act on. null otherwise — most items should NOT have this). "+
         "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
-        "{\"items\":[{\"title\":\"Chem homework\",\"kind\":\"study\",\"durationMin\":45,\"dueDate\":null,\"needsDuration\":false}]}. "+
+        "{\"items\":[{\"title\":\"Chem homework\",\"kind\":\"study\",\"durationMin\":45,\"dueDate\":null,\"dueTime\":null,\"needsDuration\":false,\"clarify\":null}]}. "+
         "If nothing usable is in the text, respond {\"items\":[]}.\n\n"+text.slice(0,4000);
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
       const data=await res.json();
@@ -7291,11 +7312,13 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   };
   const submitBrainDump=async()=>{
     if(!brainDumpText.trim()||brainDumpLoading)return;
+    if(bdListening)stopBdRec();
     setBrainDumpLoading(true);
     const items=await parseBrainDump(brainDumpText);
     setBrainDumpLoading(false);
     setBrainDumpOpen(false);
-    setBrainDumpReview({items:items.map((it,i)=>({id:"bd-"+i,title:it.title,kind:it.kind==="study"?"study":"todo",durationMin:it.durationMin||30,dueDate:it.dueDate||"",needsDuration:!!it.needsDuration,include:true}))});
+    const validKinds=["study","todo","event","reminder"];
+    setBrainDumpReview({items:items.map((it,i)=>({id:"bd-"+i,title:it.title,kind:validKinds.includes(it.kind)?it.kind:"todo",durationMin:it.durationMin||30,dueDate:it.dueDate||"",dueTime:it.dueTime||"",needsDuration:!!it.needsDuration,clarify:it.clarify||"",include:true}))});
   };
   // Study-kind items get a real slot via the same deterministic placement
   // engine every other scheduling path trusts — no separate AI call per
@@ -7314,6 +7337,17 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     });
     items.filter(it=>it.kind==="todo").forEach(it=>{
       newTasks.push({id:String(Date.now()+Math.random()*1000),title:it.title,date:it.dueDate||"",time:"",subject:"",kind:"deadline",notes:"",checklist:true,deadline:it.dueDate||null,priority:5,difficulty:5,duration:0,status:"pending",timeSpent:0,completedAt:null});
+    });
+    // Event/reminder items are fixed real-world times, same as the "busy
+    // block"/"reminder" kinds in the manual Add Task flow — never placed via
+    // findOpenSlotFor, just saved at whatever date/time the review screen has
+    // (falling back to today/9am only so the row is never left blank; the
+    // clarify banner is what actually flags a missing time to the student).
+    items.filter(it=>it.kind==="event").forEach(it=>{
+      newTasks.push({id:String(Date.now()+Math.random()*1000),title:it.title,date:it.dueDate||today,time:it.dueTime||"09:00",subject:"",kind:"busy block",notes:"",priority:5,difficulty:5,deadline:null,duration:Math.max(5,it.durationMin||30),status:"pending",timeSpent:0,completedAt:null});
+    });
+    items.filter(it=>it.kind==="reminder").forEach(it=>{
+      newTasks.push({id:String(Date.now()+Math.random()*1000),title:it.title,date:it.dueDate||today,time:it.dueTime||"09:00",subject:"",kind:"reminder",notes:"",priority:5,difficulty:5,deadline:null,duration:0,status:"pending",timeSpent:0,completedAt:null});
     });
     commitTasks(newTasks);
   };
@@ -7683,7 +7717,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
         this div instead of nested inside it, so it centers against the real
         viewport regardless of scroll position or animation state. */}
     <div>
-      <PH title="Studlin Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><span ref={rescheduleBtnRef} style={{display:"inline-flex"}}><Btn variant="danger" onClick={()=>{setPauseOpen(true);setPauseError("");setPausePreview(null);}}>Studlin Reschedule</Btn></span><Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>setRoutineCenterOpen(true)}>Routine</Btn><span ref={addTaskBtnRef} style={{display:"inline-flex"}}><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></span></div>} />
+      <PH title="Studlin Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><span ref={rescheduleBtnRef} style={{display:"inline-flex"}}><Btn variant="danger" onClick={()=>{setPauseOpen(true);setPauseError("");setPausePreview(null);}}>Studlin Reschedule</Btn></span><Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>setRoutineCenterOpen(true)}>Routine</Btn><span ref={brainDumpLinkRef} style={{display:"inline-flex"}}><Btn variant="ghost" onClick={()=>{resetForm();setBrainDumpOpen(true);}}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.sparkles,"Brain dump")}</Btn></span><span ref={addTaskBtnRef} style={{display:"inline-flex"}}><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></span></div>} />
       {editRoutineMode&&(
         <div style={{display:"flex",alignItems:"center",gap:12,padding:"9px 14px",background:T.lime+"10",border:`1px solid ${T.lime}33`,borderRadius:10,marginBottom:14,fontSize:12.5,color:T.text}}>
           <span style={{flex:1}}>Editing your Weekly Routine — one-off tasks are dimmed. Click a routine block to edit it, or hover and tap × to delete it everywhere it repeats.</span>
@@ -7809,7 +7843,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
                 ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!evTitle.trim()||!evDate.trim()||!evTime.trim()} style={{flex:1,justifyContent:"center",opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>Save to Calendar</Btn></>
                 : <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={aiArrange} disabled={aiLoading||!evTitle.trim()} style={{flex:1,justifyContent:"center",opacity:aiLoading?1:(!evTitle.trim()?0.45:1)}}>{aiLoading?"Scheduling...":"Add Task with AI"}</Btn></>
         }>
-        <button ref={brainDumpLinkRef} type="button" onClick={()=>{resetForm();setBrainDumpOpen(true);}} style={{display:"block",width:"100%",textAlign:"left",background:T.lime+"0d",border:`1px solid ${T.lime}33`,borderRadius:10,padding:"10px 12px",marginBottom:16,cursor:"pointer",fontFamily:T.font,fontSize:12.5,color:T.lime,fontWeight:600}}>
+        <button type="button" onClick={()=>{resetForm();setBrainDumpOpen(true);}} style={{display:"block",width:"100%",textAlign:"left",background:T.lime+"0d",border:`1px solid ${T.lime}33`,borderRadius:10,padding:"10px 12px",marginBottom:16,cursor:"pointer",fontFamily:T.font,fontSize:12.5,color:T.lime,fontWeight:600}}>
           Got more than one thing on your plate? Brain dump it all at once →
         </button>
         <Field label="Title"><Input placeholder="e.g. Study Bio chapter 4-6" value={evTitle} onChange={ev=>setEvTitle(ev.target.value)} autoFocus /></Field>
@@ -7933,9 +7967,15 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
       </Modal>
 
       {/* ── BRAIN DUMP — tell Studlin everything at once instead of one task at a time ── */}
-      <Modal open={brainDumpOpen} onClose={()=>{setBrainDumpOpen(false);setBrainDumpText("");}} title="Brain dump" sub="Tell Studlin everything you need to do — it'll sort out the rest." width={560}
-        footer={<><Btn variant="subtle" onClick={()=>{setBrainDumpOpen(false);setBrainDumpText("");}}>Cancel</Btn><Btn onClick={submitBrainDump} disabled={brainDumpLoading||!brainDumpText.trim()} style={{flex:1,justifyContent:"center",opacity:brainDumpLoading?1:(!brainDumpText.trim()?0.45:1)}}>{brainDumpLoading?"Sorting it out...":"Sort it out →"}</Btn></>}>
-        <Textarea placeholder="e.g. I have chem homework, need to email my counselor about my schedule, and my bio project is due Friday..." value={brainDumpText} onChange={e=>setBrainDumpText(e.target.value)} style={{minHeight:140}} autoFocus />
+      <Modal open={brainDumpOpen} onClose={()=>{if(bdListening)stopBdRec();setBrainDumpOpen(false);setBrainDumpText("");}} title="Brain dump" sub="Tell Studlin everything you need to do — it'll sort out the rest." width={560}
+        footer={<><Btn variant="subtle" onClick={()=>{if(bdListening)stopBdRec();setBrainDumpOpen(false);setBrainDumpText("");}}>Cancel</Btn><Btn onClick={submitBrainDump} disabled={brainDumpLoading||!brainDumpText.trim()} style={{flex:1,justifyContent:"center",opacity:brainDumpLoading?1:(!brainDumpText.trim()?0.45:1)}}>{brainDumpLoading?"Sorting it out...":"Sort it out →"}</Btn></>}>
+        <div style={{position:"relative"}}>
+          <Textarea placeholder="e.g. I have chem homework, need to email my counselor about my schedule, and my bio project is due Friday..." value={brainDumpText} onChange={e=>setBrainDumpText(e.target.value)} style={{minHeight:140,paddingRight:44}} autoFocus />
+          {(window.SpeechRecognition||window.webkitSpeechRecognition)&&(
+            <button type="button" onClick={bdListening?stopBdRec:startBdRec} title={bdListening?"Stop listening":"Speak instead of typing"} style={{position:"absolute",right:8,bottom:8,width:30,height:30,borderRadius:"50%",border:"none",background:bdListening?T.red:T.lime,color:bdListening?"#fff":T.ink,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{bdListening?<span style={{width:10,height:10,background:"#fff",borderRadius:2}} />:Icon.mic}</button>
+          )}
+        </div>
+        {bdListening&&<div style={{fontSize:11.5,color:T.red,marginTop:6}}>Listening... tap the mic to stop</div>}
       </Modal>
 
       {/* ── BRAIN DUMP REVIEW — preview-then-commit, same discipline as the syllabus review in Notes ── */}
@@ -7961,14 +8001,27 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
                     <Input value={it.title} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,title:ev.target.value}:x)}))} style={{flex:1}} />
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                    <SelectChip options={[{value:"study",label:"Study Session"},{value:"todo",label:"To-Do"}]} value={it.kind} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v}:x)}))} />
+                    <SelectChip options={[{value:"study",label:"Study Session"},{value:"todo",label:"To-Do"},{value:"event",label:"Event"},{value:"reminder",label:"Reminder"}]} value={it.kind} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v}:x)}))} />
                     {it.kind==="study"&&(
                       <div style={{display:"flex",alignItems:"center",gap:6}}>
                         <NumField min={5} max={480} fallback={30} value={it.durationMin} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,durationMin:v}:x)}))} />
                         <span style={{fontSize:11.5,color:T.muted}}>min</span>
                       </div>
                     )}
+                    {(it.kind==="event"||it.kind==="reminder")&&(
+                      <>
+                        <Input type="date" value={it.dueDate} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueDate:ev.target.value}:x)}))} style={{width:138}} />
+                        <TimeInput value={it.dueTime} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueTime:v}:x)}))} />
+                      </>
+                    )}
+                    {it.kind==="event"&&(
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <NumField min={5} max={480} fallback={30} value={it.durationMin} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,durationMin:v}:x)}))} />
+                        <span style={{fontSize:11.5,color:T.muted}}>min</span>
+                      </div>
+                    )}
                     {it.kind==="study"&&it.needsDuration&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>Wasn't sure how long this takes — check the estimate</span>}
+                    {it.clarify&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>{it.clarify}</span>}
                   </div>
                 </div>
               </div>
