@@ -340,20 +340,23 @@ function TourStep({ targetRef, title, body, step, total, onNext, onSkip, isLast 
     setRect(null);
     if (!targetRef) return;
     let cancelled = false;
-    let pollId = null;
-    // targetRef.current read here always reflects the *previous* commit —
-    // callers that open a modal to reveal the target do so from their own
-    // effect, one render after this one starts, so a plain "current is
-    // still null" check misses it permanently. Poll briefly until it
-    // mounts instead of depending on ref identity in the deps array.
-    const tryMeasure = () => {
-      if (cancelled) return;
-      if (targetRef.current) setRect(targetRef.current.getBoundingClientRect());
-      else pollId = setTimeout(tryMeasure, 50);
+    const measure = () => {
+      if (cancelled || !targetRef.current) return;
+      setRect(targetRef.current.getBoundingClientRect());
     };
-    tryMeasure();
-    window.addEventListener("resize", tryMeasure);
-    return () => { cancelled = true; if (pollId) clearTimeout(pollId); window.removeEventListener("resize", tryMeasure); };
+    // Delay measurement so page entry animations finish before we snapshot
+    // the button's position — immediate reads land during the translateY
+    // keyframe and produce an offset rect.
+    const t1 = setTimeout(measure, 100);
+    const t2 = setTimeout(measure, 350);
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, true);
+    return () => {
+      cancelled = true;
+      clearTimeout(t1); clearTimeout(t2);
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+    };
   }, [targetRef, step]);
 
   const anchored = !!rect;
