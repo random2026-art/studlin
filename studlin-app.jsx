@@ -866,7 +866,7 @@ function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,
     // after it rather than allowing zero-gap back-to-back placement.
     const occupied=events.filter(e=>e.date===dk&&e.time)
       .concat(expandRoutineOccurrences(routines,dk,dk).filter(o=>o.kind!=="free period"))
-      .map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
+      .map(e=>({start:timeToMinutes(e.time)-(TIER0_FIXED_KINDS.has(e.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
     let scanStart=dayOffset===0?Math.max(prefStartMins,timeToMinutes(desiredTime)):prefStartMins;
     if(dk===todayKey)scanStart=Math.max(scanStart,nowFloorMins);
     if(scanStart+duration>prefEndMins){
@@ -907,7 +907,7 @@ function findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,durat
   if(deadlineKey&&slot.date>deadlineKey)return null;
   const occupied=events.filter(e=>e.date===slot.date&&e.time)
     .concat(expandRoutineOccurrences(routines,slot.date,slot.date).filter(o=>o.kind!=="free period"))
-    .map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
+    .map(e=>({start:timeToMinutes(e.time)-(TIER0_FIXED_KINDS.has(e.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
   const tMins=timeToMinutes(slot.time);
   const conflict=occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end));
   return conflict?null:slot;
@@ -921,7 +921,7 @@ function dayHasRoomFor(events,routines,prefs,dateKey,duration){
   const prefEndMins=dayWindow.end;
   const occupied=events.filter(e=>e.date===dateKey&&e.time)
     .concat(expandRoutineOccurrences(routines,dateKey,dateKey).filter(o=>o.kind!=="free period"))
-    .map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
+    .map(e=>({start:timeToMinutes(e.time)-(TIER0_FIXED_KINDS.has(e.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
   for(let t=prefStartMins;t+duration<=prefEndMins;t+=15){
     if(!occupied.some(o=>!(t+duration<=o.start||t>=o.end)))return true;
   }
@@ -999,6 +999,11 @@ function findSlotWithEviction(events,routines,prefs,desiredDate,desiredTime,dura
 // rollover detection itself) do exact-equality checks on status that a new
 // enum value would silently break; status stays "pending"|"done".
 const TIER0_FIXED_KINDS=new Set(["exam","class","busy block","reminder"]);
+// Leading buffer subtracted from a FIXED-kind block's start when computing
+// occupied ranges — the mirror of computeBreathingRoom's trailing buffer,
+// but fixed (not proportional) and only ever applied before
+// TIER0_FIXED_KINDS blocks, never between two ordinary flexible blocks.
+const LEAD_IN_BUFFER_MINS=15;
 function isTier0Missed(ev,todayKey){
   if(ev.status!=="pending")return false;
   if(ev.checklist)return false;
@@ -1581,7 +1586,7 @@ function scoreTask(task,prefs,streak){
 // Re-score and re-slot all pending flexible tasks on dateKey.
 // Returns the full updated events array; does not persist.
 function rebalanceDay(dateKey,allEvents,routines,prefs){
-  const FIXED=new Set(["exam","class","busy block","reminder"]);
+  const FIXED=TIER0_FIXED_KINDS;
   const streak=getStreak();
   const isFixed=function(e){return FIXED.has(e.kind);};
   // userPinned tasks (manually dragged, or hand-typed a time in Add Task /
@@ -1597,11 +1602,11 @@ function rebalanceDay(dateKey,allEvents,routines,prefs){
   const rest=allEvents.filter(function(e){return !isFlexPending(e);});
 
   const occupiedBase=rest.filter(function(e){return e.date===dateKey&&e.time;}).map(function(e){
-    return{start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)};
+    return{start:timeToMinutes(e.time)-(isFixed(e)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)};
   });
   expandRoutineOccurrences(routines||[],dateKey,dateKey)
     .filter(function(r){return r.kind!=="free period";})
-    .forEach(function(r){occupiedBase.push({start:timeToMinutes(r.time),end:timeToMinutes(r.time)+(r.duration||30)});});
+    .forEach(function(r){occupiedBase.push({start:timeToMinutes(r.time)-(isFixed(r)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(r.time)+(r.duration||30)});});
 
   // With only one flexible task, there's nothing to reorder relative to —
   // leave it exactly where it is unless it's actually colliding with
@@ -7515,27 +7520,42 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     const prefs=getSchedulePreferences();
     const today=dayKey();
     let working=events;
-    const newTasks=[];
-    items.filter(it=>it.kind==="study").forEach(it=>{
-      const duration=Math.max(5,it.durationMin||30);
-      const slot=findOpenSlotFor(working,routines,prefs,today,prefs.workStartTime,duration,it.dueDate||null);
-      const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:slot.date,time:slot.time,subject:"",kind:"study block",notes:"",priority:5,difficulty:5,deadline:it.dueDate||null,duration,status:"pending",timeSpent:0,completedAt:null};
-      newTasks.push(task);working=working.concat([task]);
-    });
-    items.filter(it=>it.kind==="todo").forEach(it=>{
-      newTasks.push({id:String(Date.now()+Math.random()*1000),title:it.title,date:it.dueDate||"",time:"",subject:"",kind:"deadline",notes:"",checklist:true,deadline:it.dueDate||null,priority:5,difficulty:5,duration:0,status:"pending",timeSpent:0,completedAt:null});
-    });
+    const studyTasks=[],todoTasks=[],eventTasks=[],reminderTasks=[];
     // Event/reminder items are fixed real-world times, same as the "busy
     // block"/"reminder" kinds in the manual Add Task flow — never placed via
     // findOpenSlotFor, just saved at whatever date/time the review screen has
     // (falling back to today/9am only so the row is never left blank; the
     // clarify banner is what actually flags a missing time to the student).
+    // Placed BEFORE study items (and folded into `working`) so a same-batch
+    // fixed event is visible to findOpenSlotFor when it places a same-batch
+    // study item — previously only already-saved events were visible, so a
+    // brain dump containing both "chem homework" and "work 4-11pm" in one
+    // submission could schedule the study block into the work shift.
     items.filter(it=>it.kind==="event").forEach(it=>{
-      newTasks.push({id:String(Date.now()+Math.random()*1000),title:it.title,date:it.dueDate||today,time:it.dueTime||"09:00",subject:"",kind:"busy block",notes:"",priority:5,difficulty:5,deadline:null,duration:Math.max(5,it.durationMin||30),status:"pending",timeSpent:0,completedAt:null});
+      const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:it.dueDate||today,time:it.dueTime||"09:00",subject:"",kind:"busy block",notes:"",priority:5,difficulty:5,deadline:null,duration:Math.max(5,it.durationMin||30),status:"pending",timeSpent:0,completedAt:null};
+      eventTasks.push(task);working=working.concat([task]);
     });
     items.filter(it=>it.kind==="reminder").forEach(it=>{
-      newTasks.push({id:String(Date.now()+Math.random()*1000),title:it.title,date:it.dueDate||today,time:it.dueTime||"09:00",subject:"",kind:"reminder",notes:"",priority:5,difficulty:5,deadline:null,duration:0,status:"pending",timeSpent:0,completedAt:null});
+      const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:it.dueDate||today,time:it.dueTime||"09:00",subject:"",kind:"reminder",notes:"",priority:5,difficulty:5,deadline:null,duration:0,status:"pending",timeSpent:0,completedAt:null};
+      reminderTasks.push(task);working=working.concat([task]);
     });
+    // Study-kind items get a real slot via the same deterministic placement
+    // engine every other scheduling path trusts — no separate AI call per
+    // item, the one parseBrainDump call above already did the understanding.
+    items.filter(it=>it.kind==="study").forEach(it=>{
+      const duration=Math.max(5,it.durationMin||30);
+      const slot=findOpenSlotFor(working,routines,prefs,today,prefs.workStartTime,duration,it.dueDate||null);
+      const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:slot.date,time:slot.time,subject:"",kind:"study block",notes:"",priority:5,difficulty:5,deadline:it.dueDate||null,duration,status:"pending",timeSpent:0,completedAt:null};
+      studyTasks.push(task);working=working.concat([task]);
+    });
+    // Todo-kind items skip scheduling entirely, same shape as saveChecklistItem.
+    items.filter(it=>it.kind==="todo").forEach(it=>{
+      todoTasks.push({id:String(Date.now()+Math.random()*1000),title:it.title,date:it.dueDate||"",time:"",subject:"",kind:"deadline",notes:"",checklist:true,deadline:it.dueDate||null,priority:5,difficulty:5,duration:0,status:"pending",timeSpent:0,completedAt:null});
+    });
+    // Final order intentionally kept identical to the original code — only
+    // internal placement order changed above — since commitTasks reads
+    // newTasks[0].date to decide which date to navigate the calendar to.
+    const newTasks=[...studyTasks,...todoTasks,...eventTasks,...reminderTasks];
     commitTasks(newTasks);
   };
   // Turns the current form into a recurring routine rule instead of a
@@ -7563,9 +7583,9 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   const resolveManualSlot=(date,time,duration)=>{
     if(evKind==="exam"||evKind==="class"||evKind==="busy block")return {date,time};
     const occupied=events.filter(e=>e.date===date&&e.time)
-      .map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}))
+      .map(e=>({start:timeToMinutes(e.time)-(TIER0_FIXED_KINDS.has(e.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}))
       .concat(expandRoutineOccurrences(routines,date,date).filter(o=>o.kind!=="free period")
-        .map(o=>({start:timeToMinutes(o.time),end:timeToMinutes(o.time)+(o.duration||30)})));
+        .map(o=>({start:timeToMinutes(o.time)-(TIER0_FIXED_KINDS.has(o.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(o.time)+(o.duration||30)})));
     const tMins=timeToMinutes(time);
     const conflict=occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end));
     return conflict?findOpenSlotFor(events,routines,getSchedulePreferences(),date,time,duration):{date,time};
