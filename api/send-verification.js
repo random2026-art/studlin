@@ -85,73 +85,201 @@ async function sendCode(user, res) {
 
   const deliverTo = process.env.RESEND_TEST_EMAIL || toEmail;
   const resend = new Resend(apiKey);
+  const year = new Date().getFullYear();
+  const digitBoxes = code.split('').map(d =>
+    `<td style="padding:0 5px;"><table cellpadding="0" cellspacing="0" style="border-collapse:separate;border-spacing:0;"><tr><td width="62" height="72" align="center" valign="middle" style="width:62px;height:72px;background:#0A0F0A;border:1.5px solid #2A4A1A;border-radius:12px;font-size:38px;font-weight:800;color:#FFFFFF;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',monospace;text-align:center;letter-spacing:0;">${d}</td></tr></table></td>`
+  ).join('');
 
   try {
     const { error } = await resend.emails.send({
       from: FROM,
       to: [deliverTo],
       subject: 'Your Studlin verification code',
-      html: `
-<!DOCTYPE html>
+      html: `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Verify your email</title>
 </head>
-<body style="margin:0;padding:0;background:#F4F0E6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#F4F0E6;padding:48px 16px;">
-    <tr><td align="center">
-      <table width="500" cellpadding="0" cellspacing="0" style="max-width:500px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(14,31,24,0.08);">
+<body style="margin:0;padding:0;background:#070D07;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#070D07;padding:40px 16px;">
+<tr><td align="center">
+<table width="580" cellpadding="0" cellspacing="0" style="max-width:580px;width:100%;">
 
-        <!-- Header -->
-        <tr>
-          <td style="background:#0D120F;padding:28px 36px 24px;">
-            <table cellpadding="0" cellspacing="0">
-              <tr>
-                <td style="width:32px;height:32px;background:#AECE5E;border-radius:8px;text-align:center;vertical-align:middle;">
-                  <span style="font-size:17px;font-weight:800;color:#0D120F;line-height:32px;">S</span>
-                </td>
-                <td style="padding-left:10px;vertical-align:middle;">
-                  <span style="font-size:18px;font-weight:700;color:#ffffff;letter-spacing:-0.02em;">Studlin</span>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
+  <!-- HEADER CARD -->
+  <tr><td style="background:#111810;border:1px solid #1C2C18;border-radius:20px;padding:0;overflow:hidden;">
+    <table width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td style="padding:32px 36px 36px;text-align:center;background:radial-gradient(ellipse 60% 40% at 50% 110%,rgba(174,206,94,0.18) 0%,transparent 70%),#111810;">
+          <!-- Corner decorations -->
+          <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
+            <tr>
+              <td width="20" style="font-size:16px;font-weight:300;color:#AECE5E;vertical-align:top;line-height:1;">+</td>
+              <td align="center">
+                <!-- Logo -->
+                <table cellpadding="0" cellspacing="0" align="center">
+                  <tr>
+                    <td style="width:36px;height:36px;background:#AECE5E;border-radius:9px;text-align:center;vertical-align:middle;">
+                      <span style="font-size:14px;font-weight:900;color:#0D120F;font-family:monospace;letter-spacing:-1px;">|||</span>
+                    </td>
+                    <td style="padding-left:10px;vertical-align:middle;">
+                      <span style="font-size:20px;font-weight:700;color:#FFFFFF;letter-spacing:-0.03em;">Studlin</span>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+              <td width="20" style="font-size:16px;font-weight:300;color:#AECE5E;vertical-align:top;text-align:right;line-height:1;">+</td>
+            </tr>
+          </table>
+          <!-- Badge -->
+          <table cellpadding="0" cellspacing="0" align="center" style="margin-bottom:20px;">
+            <tr>
+              <td style="border:1px solid #AECE5E;border-radius:99px;padding:7px 18px;">
+                <span style="font-size:11px;font-weight:700;color:#AECE5E;letter-spacing:0.12em;text-transform:uppercase;">&#128274; SECURE VERIFICATION</span>
+              </td>
+            </tr>
+          </table>
+          <!-- Heading -->
+          <h1 style="margin:0 0 10px;font-size:34px;font-weight:800;color:#FFFFFF;letter-spacing:-0.03em;line-height:1.15;">Welcome to Studlin</h1>
+          <p style="margin:0;font-size:15px;color:#7A8A78;line-height:1.6;">One step away from accessing your workspace.</p>
+          <!-- Bottom corner decorations -->
+          <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;">
+            <tr>
+              <td width="20" style="font-size:16px;font-weight:300;color:#AECE5E;line-height:1;">+</td>
+              <td></td>
+              <td width="20" style="font-size:16px;font-weight:300;color:#AECE5E;text-align:right;line-height:1;">+</td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
 
-        <!-- Body -->
-        <tr>
-          <td style="padding:36px 36px 28px;">
-            <h1 style="margin:0 0 10px;font-size:22px;font-weight:700;color:#0D120F;letter-spacing:-0.02em;line-height:1.25;">
-              Verify your email address
-            </h1>
-            <p style="margin:0 0 24px;font-size:14.5px;color:#555;line-height:1.7;">
-              Enter this code in Studlin to confirm your email and access your workspace.
-            </p>
+  <tr><td height="10"></td></tr>
 
-            <div style="text-align:center;margin-bottom:24px;">
-              <span style="display:inline-block;padding:16px 28px;font-size:32px;font-weight:800;letter-spacing:8px;color:#0D120F;background:#F4F0E6;border-radius:12px;">${code}</span>
-            </div>
+  <!-- CODE CARD -->
+  <tr><td style="background:#111810;border:1px solid #1C2C18;border-radius:20px;padding:28px 32px;">
+    <!-- Label -->
+    <table cellpadding="0" cellspacing="0" style="margin-bottom:22px;">
+      <tr>
+        <td style="width:22px;height:22px;border:1.5px solid #AECE5E;border-radius:6px;text-align:center;vertical-align:middle;">
+          <span style="font-size:11px;color:#AECE5E;line-height:1;">&#10003;</span>
+        </td>
+        <td style="padding-left:10px;font-size:11px;font-weight:700;color:#AECE5E;letter-spacing:0.12em;text-transform:uppercase;vertical-align:middle;">YOUR VERIFICATION CODE</td>
+      </tr>
+    </table>
+    <!-- Digit boxes -->
+    <table cellpadding="0" cellspacing="0" style="margin-bottom:22px;">
+      <tr>${digitBoxes}</tr>
+    </table>
+    <!-- Expiry + Copy -->
+    <table width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td style="font-size:13px;color:#666;vertical-align:middle;">
+          <span style="margin-right:6px;">&#9203;</span> This code expires in <span style="color:#AECE5E;font-weight:600;">10 minutes.</span>
+        </td>
+        <td align="right" style="vertical-align:middle;">
+          <table cellpadding="0" cellspacing="0">
+            <tr>
+              <td style="border:1px solid #2A4A1A;border-radius:8px;padding:8px 16px;">
+                <span style="font-size:12px;color:#AECE5E;font-weight:500;">&#128203; Copy code</span>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
 
-            <p style="margin:0;font-size:13px;color:#999;line-height:1.5;">
-              This code expires in 10 minutes. If you didn't create a Studlin account, you can safely ignore this email.
-            </p>
-          </td>
-        </tr>
+  <tr><td height="10"></td></tr>
 
-        <!-- Footer -->
-        <tr>
-          <td style="padding:18px 36px 24px;border-top:1px solid #f0ede4;">
-            <p style="margin:0;font-size:11px;color:#ccc;line-height:1.6;">
-              Sent to ${toEmail} &middot; © 2026 Studlin
-            </p>
-          </td>
-        </tr>
+  <!-- FEATURES CARD -->
+  <tr><td style="background:#111810;border:1px solid #1C2C18;border-radius:20px;padding:28px 24px;">
+    <table width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td width="33%" style="text-align:center;padding:0 16px 0 8px;vertical-align:top;">
+          <table cellpadding="0" cellspacing="0" align="center" style="margin-bottom:12px;">
+            <tr>
+              <td style="width:44px;height:44px;border:1.5px solid #2A4A1A;border-radius:10px;text-align:center;vertical-align:middle;">
+                <span style="font-size:20px;line-height:1;">&#9889;</span>
+              </td>
+            </tr>
+          </table>
+          <p style="margin:0 0 6px;font-size:13px;font-weight:700;color:#FFFFFF;line-height:1.3;">Instant verification</p>
+          <p style="margin:0;font-size:12px;color:#666;line-height:1.5;">Verify your email and get started right away.</p>
+        </td>
+        <td width="1" style="background:#1C2C18;"></td>
+        <td width="33%" style="text-align:center;padding:0 16px;vertical-align:top;">
+          <table cellpadding="0" cellspacing="0" align="center" style="margin-bottom:12px;">
+            <tr>
+              <td style="width:44px;height:44px;border:1.5px solid #2A4A1A;border-radius:10px;text-align:center;vertical-align:middle;">
+                <span style="font-size:20px;line-height:1;">&#128274;</span>
+              </td>
+            </tr>
+          </table>
+          <p style="margin:0 0 6px;font-size:13px;font-weight:700;color:#FFFFFF;line-height:1.3;">End-to-end secured</p>
+          <p style="margin:0;font-size:12px;color:#666;line-height:1.5;">Your data is encrypted and always protected.</p>
+        </td>
+        <td width="1" style="background:#1C2C18;"></td>
+        <td width="33%" style="text-align:center;padding:0 8px 0 16px;vertical-align:top;">
+          <table cellpadding="0" cellspacing="0" align="center" style="margin-bottom:12px;">
+            <tr>
+              <td style="width:44px;height:44px;border:1.5px solid #2A4A1A;border-radius:10px;text-align:center;vertical-align:middle;">
+                <span style="font-size:20px;line-height:1;">&#128737;</span>
+              </td>
+            </tr>
+          </table>
+          <p style="margin:0 0 6px;font-size:13px;font-weight:700;color:#FFFFFF;line-height:1.3;">Protected workspace access</p>
+          <p style="margin:0;font-size:12px;color:#666;line-height:1.5;">Enterprise-grade security for your workspace.</p>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
 
-      </table>
-    </td></tr>
-  </table>
+  <tr><td height="10"></td></tr>
+
+  <!-- CTA CARD -->
+  <tr><td style="background:#111810;border:1px solid #1C2C18;border-radius:20px;padding:32px 36px;text-align:center;">
+    <table cellpadding="0" cellspacing="0" align="center" style="margin-bottom:16px;">
+      <tr>
+        <td style="background:#AECE5E;border-radius:12px;padding:16px 48px;">
+          <a href="https://studlin.com/app" style="font-size:16px;font-weight:700;color:#0D120F;text-decoration:none;letter-spacing:-0.01em;">Open Studlin &rarr;</a>
+        </td>
+      </tr>
+    </table>
+    <p style="margin:0;font-size:12.5px;color:#555;line-height:1.6;">If you didn't request this code, you can safely ignore this email.</p>
+  </td></tr>
+
+  <tr><td height="10"></td></tr>
+
+  <!-- FOOTER -->
+  <tr><td style="padding:16px 8px;">
+    <table width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td style="vertical-align:top;">
+          <table cellpadding="0" cellspacing="0">
+            <tr>
+              <td style="width:28px;height:28px;border:1.5px solid #2A4A1A;border-radius:6px;text-align:center;vertical-align:middle;">
+                <span style="font-size:13px;color:#AECE5E;">&#9993;</span>
+              </td>
+            </tr>
+          </table>
+          <p style="margin:6px 0 0;font-size:11px;color:#555;line-height:1.5;">Sent to<br><span style="color:#AECE5E;">${toEmail}</span></p>
+        </td>
+        <td style="text-align:center;vertical-align:top;font-size:11px;color:#555;line-height:1.6;">
+          Studlin &copy; ${year}<br>All rights reserved.
+        </td>
+        <td style="text-align:right;vertical-align:top;font-size:11px;color:#555;line-height:1.6;">
+          Privacy &bull; Security &bull; Support
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+
+</table>
+</td></tr>
+</table>
 </body>
 </html>`,
     });
