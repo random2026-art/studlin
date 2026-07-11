@@ -1,5 +1,4 @@
 {
-  "cleanUrls": true,
   "rewrites": [
     { "source": "/app", "destination": "/Studlin Web App.html" },
     { "source": "/app/(.*)", "destination": "/Studlin Web App.html" },
