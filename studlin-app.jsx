@@ -7509,6 +7509,10 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     const items=await parseBrainDump(brainDumpText);
     setBrainDumpLoading(false);
     setBrainDumpOpen(false);
+    // The text has already been consumed by parseBrainDump above — clear it
+    // now so the next time Brain Dump is opened (any entry point) it starts
+    // blank instead of showing this submission's leftover prompt.
+    setBrainDumpText("");
     const validKinds=["study","todo","event","reminder"];
     setBrainDumpReview({items:items.map((it,i)=>({id:"bd-"+i,title:it.title,kind:validKinds.includes(it.kind)?it.kind:"todo",durationMin:it.durationMin||30,dueDate:it.dueDate||"",dueTime:it.dueTime||"",needsDuration:!!it.needsDuration,clarify:it.clarify||"",include:true}))});
   };
