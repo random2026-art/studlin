@@ -409,19 +409,19 @@ const PRICING_PLANS=(billing)=>([
   {
     key:"free",name:"Free",price:"$0",per:"forever",tag:null,
     desc:"Get organized. No credit card needed.",
-    features:["20 AI credits / month","Basic AI chat (Flash model)","Manual flashcards & notes — unlimited","Calendar, tasks & focus timer","Streaks & XP"],
+    features:["120 AI chat messages / month","3 syllabus scans / month","3 AI note scans / month — files, lectures & YouTube","3 AI flashcard generations / month","Manual flashcards & notes — unlimited","Calendar, tasks, focus timer, streaks & XP"],
     cta:"Get started free",variant:"subtle",
   },
   {
     key:"pro",name:"Pro",price:billing==="annual"?"$7.99":"$9.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:"7 DAYS FREE",
     desc:"Everything on Free is still manual. Pro is where the AI actually does the work.",
-    features:["200 AI credits / month (10× more)","All AI models — Flash, Standard & Research","AI flashcards from notes, PDFs & YouTube","Full essay suite — grammar, rewrite & citations","AI note cleanup, syllabus scan & study groups"],
+    features:["Unlimited AI chat, syllabus scans, note scans & flashcard generation","All AI models — Flash, Standard & Research","AI flashcards from notes, PDFs & YouTube","Full essay suite — grammar, rewrite & citations","AI note cleanup & study groups"],
     cta:"Start free trial",variant:"lime",featured:true,
   },
   {
     key:"max",name:"Max",price:billing==="annual"?"$19.99":"$24.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:null,
     desc:"For the heaviest workload: every subject, every week, no caps.",
-    features:["500 AI credits / month","Everything in Pro","Priority AI — faster responses, no queue","Bulk flashcard generation — 100 at once","3× XP multiplier + advanced analytics"],
+    features:["Everything in Pro, completely unlimited","Priority AI — faster responses, no queue","Bulk flashcard generation — 100 at once","3× XP multiplier + advanced analytics"],
     cta:"Upgrade to Max",variant:"ink",
   },
 ]);
@@ -1397,24 +1397,44 @@ function sessionStats(){
 const fmtH=(m)=>m>=60?Math.floor(m/60)+"h "+(m%60)+"m":m+"m";
 function getPlan(){return lsGet("plan","Free");}
 function setPlanLS(p){lsSet("plan",p);}
-function getCreditLimit(){const p=getPlan();return p==="Max"?500:p==="Pro"?200:20;}
+function getCreditLimit(){const p=getPlan();return p==="Max"?500:p==="Pro"?200:120;}
 function getCredits(){return lsGet("credits",getCreditLimit());}
 function setCreditsLS(n){lsSet("credits",Math.max(0,n));}
 const CREDIT_COST={standard:1,flash:1};
-// Syllabus scans are capped at 3/month on Free — a separate, more visible
-// gate than the general credit pool, since the syllabus feature is the
-// centerpiece "aha moment" and deserves its own honest usage counter rather
-// than quietly eating into the same 20 AI credits as everything else. Pro
-// and Max are uncapped. Purely client-side (same trust model as credits
-// everywhere else in this app — no server enforcement exists yet).
-const SYLLABUS_SCAN_LIMIT=3;
-function getSyllabusScanUsage(){
-  const monthKey=new Date().toISOString().slice(0,7);
-  const stored=lsGet("syllabusScans",{month:monthKey,count:0});
-  return stored.month===monthKey?stored:{month:monthKey,count:0};
+// Named, per-feature monthly limits on Free — each capped feature gets its
+// own honest counter ("3 syllabus scans left this month") instead of
+// quietly eating into one abstract "AI credits" pool nobody understands.
+// Pro and Max are uncapped on all three. Purely client-side (same trust
+// model as credits everywhere else in this app — no server enforcement
+// exists yet).
+function makeMonthlyUsage(storageKey){
+  return function(){
+    const monthKey=new Date().toISOString().slice(0,7);
+    const stored=lsGet(storageKey,{month:monthKey,count:0});
+    return stored.month===monthKey?stored:{month:monthKey,count:0};
+  };
 }
+function daysUntilReset(){const n=new Date();const e=new Date(n.getFullYear(),n.getMonth()+1,1);return Math.ceil((e-n)/86400000);}
+
+const SYLLABUS_SCAN_LIMIT=3;
+const getSyllabusScanUsage=makeMonthlyUsage("syllabusScans");
 function canScanSyllabus(){return getPlan()!=="Free"||getSyllabusScanUsage().count<SYLLABUS_SCAN_LIMIT;}
 function recordSyllabusScan(){const u=getSyllabusScanUsage();lsSet("syllabusScans",{month:u.month,count:u.count+1});}
+
+// AI note scans — "Scan a file", "Record lecture" and "YouTube link" all
+// turn raw material into AI-summarized notes, so they share one pool
+// (distinct from manual "Write", which stays unlimited).
+const NOTE_SCAN_LIMIT=3;
+const getNoteScanUsage=makeMonthlyUsage("noteScans");
+function canScanNote(){return getPlan()!=="Free"||getNoteScanUsage().count<NOTE_SCAN_LIMIT;}
+function recordNoteScan(){const u=getNoteScanUsage();lsSet("noteScans",{month:u.month,count:u.count+1});}
+
+// AI flashcard generation from notes (distinct from manual deck creation,
+// which stays unlimited).
+const FLASHCARD_GEN_LIMIT=3;
+const getFlashcardGenUsage=makeMonthlyUsage("flashcardGens");
+function canGenFlashcards(){return getPlan()!=="Free"||getFlashcardGenUsage().count<FLASHCARD_GEN_LIMIT;}
+function recordFlashcardGen(){const u=getFlashcardGenUsage();lsSet("flashcardGens",{month:u.month,count:u.count+1});}
 
 // ─── XP · LEVEL · STREAK · PLAN (all derived from real activity) ───────────────
 const DOW_FULL=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
@@ -2142,8 +2162,8 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
 function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
   if(!open)return null;
   const tiers=[
-    {name:"Pro",price:"$9.99",perks:["~6× more AI credits (200/month)","Every AI model + 4 study modes","Unlimited decks + notes scanning"],color:T.lime},
-    {name:"Max",price:"$24.99",perks:["500 AI credits / month","Everything in Pro, unlimited","Advanced analytics + learning paths"],color:T.purple},
+    {name:"Pro",price:"$9.99",perks:["Unlimited AI chat, scans & flashcard generation","Every AI model + 4 study modes","Unlimited decks + notes scanning"],color:T.lime},
+    {name:"Max",price:"$24.99",perks:["Everything in Pro, completely unlimited","Priority AI — faster, no queue","Advanced analytics + learning paths"],color:T.purple},
   ];
   const choose=(name)=>{setPlanLS(name);onClose();if(onUpgraded)onUpgraded(name);};
   return (
@@ -3477,8 +3497,12 @@ function Notes(){
   const [syllabusText,setSyllabusText]=useState("");
   const syllabusFileRef=useRef(null);
   const [syllabusReview,setSyllabusReview]=useState(null); // {noteId, items:[{id,title,date,kind,confidence,include}]}
-  const [syllabusToast,setSyllabusToast]=useState("");
+  const [syllabusToast,setSyllabusToast]=useState(""); // success confirmation only — limit-hit now opens upgradeModal below
   const [deleteNoteConfirm,setDeleteNoteConfirm]=useState(null); // {idx, linked:[events]}
+  // Contextual paywall — opened at the exact moment a free-tier limit (note
+  // scans, flashcard gens, syllabus scans) is actually hit, never before.
+  const [upgradeModal,setUpgradeModal]=useState(null); // {feature, detail}
+  const resetNote=(feature,limit,saved)=>"You've used all "+limit+" free "+feature+" this month"+(saved?" — "+saved:"")+". They reset in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+", or upgrade for unlimited right now.";
 
   // One-shot deep link from Dashboard's "Pick up where you left off" card —
   // matches the pendingTour/pendingRoutineWizard pattern used elsewhere.
@@ -3689,12 +3713,14 @@ function Notes(){
     setCleaning(false);
   };
 
+  const noteScansLeft=Math.max(0,NOTE_SCAN_LIMIT-getNoteScanUsage().count);
+  const noteScanBadge=getPlan()==="Free"?noteScansLeft+" scan"+(noteScansLeft===1?"":"s")+" left":null;
   const sources=[
     {id:"write",label:"Write",desc:"Type directly on the canvas",icon:Icon.pen,cost:null},
-    {id:"file",label:"Scan a file",desc:"PDF, slides, or photos of the board",icon:Icon.file,cost:"2 credits"},
-    {id:"record",label:"Record lecture",desc:"Live transcription + summary",icon:MicIcon,cost:"3 credits"},
-    {id:"youtube",label:"YouTube link",desc:"Transcribes and summarises a video",icon:Icon.link,cost:"3 credits"},
-    {id:"syllabus",label:"Syllabus",desc:getPlan()==="Free"?Math.max(0,SYLLABUS_SCAN_LIMIT-getSyllabusScanUsage().count)+" free scan"+(SYLLABUS_SCAN_LIMIT-getSyllabusScanUsage().count===1?"":"s")+" left this month":"Paste or upload — Studlin finds every deadline",icon:Icon.cal,cost:"1 credit"},
+    {id:"file",label:"Scan a file",desc:"PDF, slides, or photos of the board",icon:Icon.file,cost:noteScanBadge},
+    {id:"record",label:"Record lecture",desc:"Live transcription + summary",icon:MicIcon,cost:noteScanBadge},
+    {id:"youtube",label:"YouTube link",desc:"Transcribes and summarises a video",icon:Icon.link,cost:noteScanBadge},
+    {id:"syllabus",label:"Syllabus",desc:getPlan()==="Free"?Math.max(0,SYLLABUS_SCAN_LIMIT-getSyllabusScanUsage().count)+" free scan"+(SYLLABUS_SCAN_LIMIT-getSyllabusScanUsage().count===1?"":"s")+" left this month":"Paste or upload — Studlin finds every deadline",icon:Icon.cal,cost:null},
   ];
 
   const startRec=()=>{
@@ -3773,14 +3799,35 @@ function Notes(){
       if(!title)title="Untitled note";
     }else if(src==="file"){
       if(!title)title="Scanned notes";
-      body=fileText.trim()?await aiSummarize(fileText,"document/file"):"<p>No file content.</p>";
+      if(!fileText.trim())body="<p>No file content.</p>";
+      else if(canScanNote()){
+        body=await aiSummarize(fileText,"document/file");
+        recordNoteScan();
+      }else{
+        body="<p>"+fileText.trim().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/\n/g,"<br>")+"</p>";
+        setUpgradeModal({feature:"AI note scans",detail:resetNote("AI note scans",NOTE_SCAN_LIMIT,"this file was saved as plain text, not AI-summarized")});
+      }
     }else if(src==="record"){
       if(!title)title="Lecture notes – "+fmtRec(recSecs);
-      body=recText.trim()?await aiSummarize(recText,"lecture transcription"):"<p>No audio captured.</p>";
+      if(!recText.trim())body="<p>No audio captured.</p>";
+      else if(canScanNote()){
+        body=await aiSummarize(recText,"lecture transcription");
+        recordNoteScan();
+      }else{
+        body="<p>"+recText.trim().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/\n/g,"<br>")+"</p>";
+        setUpgradeModal({feature:"AI note scans",detail:resetNote("AI note scans",NOTE_SCAN_LIMIT,"the transcript was saved as plain text, not AI-summarized")});
+      }
     }else if(src==="youtube"){
       if(!title)title=ytInfo?"Notes: "+ytInfo:"Notes from video";
       const topic=ytInfo||yt.trim();
-      body=topic?await aiSummarize("Create comprehensive study notes on a YouTube video titled: \""+topic+"\". Include headings, definitions, bullet points, summary.","YouTube study notes"):"<p>Paste a YouTube link.</p>";
+      if(!topic)body="<p>Paste a YouTube link.</p>";
+      else if(canScanNote()){
+        body=await aiSummarize("Create comprehensive study notes on a YouTube video titled: \""+topic+"\". Include headings, definitions, bullet points, summary.","YouTube study notes");
+        recordNoteScan();
+      }else{
+        body="<p>Video: "+topic+"</p>";
+        setUpgradeModal({feature:"AI note scans",detail:resetNote("AI note scans",NOTE_SCAN_LIMIT,"the link was saved, but AI notes need Pro")});
+      }
     }else if(src==="syllabus"){
       if(!title)title="Syllabus";
       if(syllabusText.trim()){
@@ -3792,8 +3839,7 @@ function Notes(){
           recordSyllabusScan();
         }else{
           syllabusItems=[];
-          setSyllabusToast("You've used all "+SYLLABUS_SCAN_LIMIT+" free syllabus scans this month — the note saved, but deadline extraction needs Pro.");
-          setTimeout(()=>setSyllabusToast(""),4200);
+          setUpgradeModal({feature:"syllabus scans",detail:resetNote("syllabus scans",SYLLABUS_SCAN_LIMIT,"the note saved, but deadline extraction needs Pro")});
         }
       }else{
         body="<p>Paste or upload a syllabus.</p>";
@@ -3886,6 +3932,10 @@ function Notes(){
   const genFlashcardsFromNote=async()=>{
     const text=getNotePlainText();
     if(!text){setPanelMsg("This note is empty — write something first.");return;}
+    if(!canGenFlashcards()){
+      setUpgradeModal({feature:"AI flashcard generations",detail:resetNote("AI flashcard generations",FLASHCARD_GEN_LIMIT,"you can still build cards manually anytime")});
+      return;
+    }
     setPanelLoading("cards");setPanelMsg("");
     try{
       const prompt="Create 10 flashcards from these study notes. Format them as a JSON array where each card has a \"q\" key for the question and an \"a\" key for the answer. Return only the JSON array, no markdown fences.\n\n"+text.slice(0,15000);
@@ -3900,6 +3950,7 @@ function Notes(){
       const nd={id:String(Date.now()),name:activeNote.title,count:cards.length,done:0,color:colorOf(activeNote.tag),cards};
       const decks=lsGet("decks",[]);
       lsSet("decks",[nd,...decks]);
+      recordFlashcardGen();
       setPanelMsg("✓ Saved "+cards.length+" cards to Flashcards — \""+nd.name+"\"");
     }catch(e){setPanelMsg("Something went wrong. Try again.");}
     setPanelLoading(null);
@@ -4107,12 +4158,16 @@ function Notes(){
         <div style={{fontSize:11.5,color:T.muted,marginTop:8,lineHeight:1.5}}>Leave this unchecked to keep those deadlines on your calendar even after the note is gone.</div>
       </Modal>
 
-      {/* ── SYLLABUS COMMIT TOAST ── */}
+      {/* ── SYLLABUS COMMIT TOAST — success confirmation only ── */}
       {syllabusToast&&(
         <div style={{position:"fixed",bottom:20,right:20,zIndex:999,padding:"11px 18px",borderRadius:10,background:T.teal,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           {syllabusToast}
         </div>
       )}
+
+      {/* ── FREE-LIMIT UPGRADE PROMPT — shown at the moment a cap is actually
+          hit (syllabus scans, note scans, flashcard gens), never upfront ── */}
+      <UpgradeModal open={!!upgradeModal} feature={upgradeModal?upgradeModal.feature:""} detail={upgradeModal?upgradeModal.detail:""} onClose={()=>setUpgradeModal(null)} onUpgraded={()=>setUpgradeModal(null)} />
 
       {/* ── PRACTICE QUIZ OVERLAY — generated from the active note ── */}
       <Modal open={!!quizOverlay} onClose={()=>setQuizOverlay(null)} title="Practice Quiz" sub={activeNote?activeNote.title:""} width={520}>
@@ -4303,7 +4358,7 @@ function Notes(){
                 {/* ── AI STUDY TOOLS — turn this note into flashcards, a quiz, or a summary ── */}
                 <div style={{display:"flex",alignItems:"center",gap:8,padding:"12px 20px",borderTop:`1px solid ${T.border}`,background:T.card2,flexWrap:"wrap"}}>
                   <span style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.faint,marginRight:2}}>Turn into</span>
-                  <BtnSm variant="subtle" onClick={genFlashcardsFromNote} disabled={panelLoading!==null}>{panelLoading==="cards"?"Generating…":<>{Icon.layers} Create Flashcards</>}</BtnSm>
+                  <BtnSm variant="subtle" onClick={genFlashcardsFromNote} disabled={panelLoading!==null}>{panelLoading==="cards"?"Generating…":<>{Icon.layers} Create Flashcards{getPlan()==="Free"&&" ("+Math.max(0,FLASHCARD_GEN_LIMIT-getFlashcardGenUsage().count)+" left)"}</>}</BtnSm>
                   <BtnSm variant="subtle" onClick={genQuizFromNote} disabled={panelLoading!==null}>{panelLoading==="quiz"?"Generating…":<>{Icon.check} Create Practice Quiz</>}</BtnSm>
                   <BtnSm variant="subtle" onClick={genSummaryFromNote} disabled={panelLoading!==null}>{panelLoading==="summary"?"Generating…":<>{Icon.file} Generate Summary</>}</BtnSm>
                   {panelMsg&&<span style={{fontSize:11,color:panelMsg.startsWith("✓")?T.teal:T.red,marginLeft:4}}>{panelMsg}</span>}
@@ -9313,7 +9368,7 @@ function AiHumanizer() {
 
 
 // ─── SETTINGS ─────────────────────────────────────────────────────────────────
-function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineWizard=()=>{}, setScheduleSettingsOpen=()=>{}}) {
+function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineWizard=()=>{}, setScheduleSettingsOpen=()=>{}, setPricingOpen=()=>{}}) {
   const [active,setActive]=useState("General");
   const [canvasTipOpen,setCanvasTipOpen]=useState(false);
   const [canvasSeeding,setCanvasSeeding]=useState(false);
@@ -9842,7 +9897,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             const daysLeft=(()=>{const n=new Date();const e=new Date(n.getFullYear(),n.getMonth()+1,1);return Math.ceil((e-n)/86400000);})();
             return(<>
               <Card style={{marginBottom:12}}>
-                <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:2}}>AI Credits</div>
+                <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:2}}>AI chat messages</div>
                 <div style={{fontSize:12,color:T.muted,marginBottom:18}}>Resets in {daysLeft} day{daysLeft!==1?"s":""} · {plan} plan</div>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                   <span style={{fontSize:12.5,color:T.text}}>{plan} plan</span>
@@ -9857,18 +9912,22 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 </div>
               </Card>
               <Card style={{marginBottom:12}}>
-                <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>Credit breakdown</div>
-                {[["Basic AI chat","1 credit per message"],["File scan (PDF, image)","2 credits per scan"],["YouTube transcription","3 credits per video"],["Essay rewrite / polish","2 credits per action"],["AI flashcard generation","1 credit per batch"]].map(([action,cost],i)=>(
-                  <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:i<4?`1px solid ${T.border}`:"none"}}>
+                <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>Your AI features</div>
+                {[
+                  ["Syllabus scans",plan==="Free"?getSyllabusScanUsage().count+" / "+SYLLABUS_SCAN_LIMIT+" this month":"Unlimited"],
+                  ["AI note scans — files, lectures & YouTube",plan==="Free"?getNoteScanUsage().count+" / "+NOTE_SCAN_LIMIT+" this month":"Unlimited"],
+                  ["AI flashcard generations",plan==="Free"?getFlashcardGenUsage().count+" / "+FLASHCARD_GEN_LIMIT+" this month":"Unlimited"],
+                ].map(([action,status],i)=>(
+                  <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:i<2?`1px solid ${T.border}`:"none"}}>
                     <span style={{fontSize:12.5,color:T.text}}>{action}</span>
-                    <span style={{fontSize:12,color:T.muted,fontFamily:T.mono}}>{cost}</span>
+                    <span style={{fontSize:12,color:T.muted,fontFamily:T.mono}}>{status}</span>
                   </div>
                 ))}
               </Card>
               {plan==="Free"&&<Card style={{background:T.lime,border:"none"}}>
-                <div style={{fontSize:13,fontWeight:700,color:T.ink,marginBottom:4}}>Get 10x more credits</div>
-                <div style={{fontSize:12,color:T.ink,opacity:0.75,marginBottom:14}}>Upgrade to Pro for 200 credits/month plus all AI models.</div>
-                <button onClick={()=>{}} style={{background:T.ink,color:T.lime,border:"none",padding:"8px 18px",borderRadius:8,fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Upgrade to Pro</button>
+                <div style={{fontSize:13,fontWeight:700,color:T.ink,marginBottom:4}}>Unlock unlimited AI</div>
+                <div style={{fontSize:12,color:T.ink,opacity:0.75,marginBottom:14}}>Upgrade to Pro for unlimited AI chat, scans & flashcard generation.</div>
+                <button onClick={()=>setPricingOpen(true)} style={{background:T.ink,color:T.lime,border:"none",padding:"8px 18px",borderRadius:8,fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Upgrade to Pro</button>
               </Card>}
             </>);
           })()}
@@ -9881,9 +9940,9 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   <div style={{fontSize:13,color:T.bg,opacity:0.75,marginTop:4}}>$9.99/mo · renews Jul 12, 2026</div>
                 </div>
                 <div style={{textAlign:"right"}}>
-                  <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.bg,opacity:0.6}}>AI CREDITS</div>
+                  <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.bg,opacity:0.6}}>AI CHAT MESSAGES</div>
                   <div style={{fontSize:26,fontWeight:700,color:T.bg,letterSpacing:"-0.02em",marginTop:4}}>{getCredits()} / {getCreditLimit()}</div>
-                  <div style={{fontSize:13,color:T.bg,opacity:0.75,marginTop:4}}>Resets in 12 days</div>
+                  <div style={{fontSize:13,color:T.bg,opacity:0.75,marginTop:4}}>Resets in {daysUntilReset()} day{daysUntilReset()!==1?"s":""}</div>
                 </div>
               </div>
               <div style={{display:"flex",gap:8,marginTop:18,flexWrap:"wrap"}}>
@@ -11647,12 +11706,6 @@ function App() {
   // fixes that.
   const [rescheduleTask,setRescheduleTask]=useState(null);
   const [dashToast,setDashToast]=useState("");
-  // Strategic paywall intercept — shown once, right after the student's first
-  // real task save (not during signup, and not behind a forced walkthrough —
-  // this is the actual "aha moment": they just watched Studlin place their
-  // first task). Gated so it only ever auto-fires this one time.
-  const [paywallOpen,setPaywallOpen]=useState(false);
-  const [paywallBilling,setPaywallBilling]=useState("monthly");
   const [notifOpen,setNotifOpen]=useState(false);
   const [seriousMode,setSeriousMode]=useState(()=>lsGet("settings",{}).seriousMode||false);
   // Fresh accounts skip this forced first-run prompt permanently — they get
@@ -11683,19 +11736,13 @@ function App() {
   // after onboarding — the first time it's actually relevant (a task with a
   // reminder was just saved, or a friend request was just sent), not before.
   const askNotifIfNeeded=()=>{ if(!lsGet("notifAsked",false)) setNotifPermModal(true); };
-  // Fires on every task save. The paywall and the notification-permission ask
-  // used to both be gated off this same event, which meant a student's very
-  // first save could trigger both at once — right after doing the thing you
-  // wanted, get hit with two separate asks. Made them mutually exclusive: the
-  // first-ever save shows only the paywall (the real "aha moment"), and the
-  // notification ask is deferred to the save after that.
+  // Fires on every task save. Used to force a full-screen paywall on the very
+  // first save — before the student had gotten any real value out of the
+  // app. Pricing is now only ever shown contextually, at the moment a free
+  // limit is actually hit (see UpgradeModal in Notes), so this just handles
+  // the notification-permission ask.
   const handleTaskSaved=()=>{
-    if(!lsGet("paywallShown",false)){
-      lsSet("paywallShown",true);
-      setPaywallOpen(true);
-    }else{
-      askNotifIfNeeded();
-    }
+    askNotifIfNeeded();
   };
   // Cross-tab deep link for Settings > Calendar Preferences' "Manage Routine"
   // link — CalendarTab owns the wizard's actual open/closed state, so this
@@ -12069,7 +12116,7 @@ function App() {
             keeps the entrance animation but stops that side effect. */}
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
           {active==="dashboard"?<Dashboard setActive={setActive} setScheduleSettingsOpen={setScheduleSettingsOpen} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} />:
-           active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} />:
+           active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} />:
            active==="calendar"?<CalendarTab onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} />:
            active==="lectures"?<Lectures setActive={setActive} setPricingOpen={setPricingOpen} />:
@@ -12104,33 +12151,6 @@ function App() {
           <div style={{fontSize:12,color:T.muted}}>All plans include a 14-day money-back guarantee. No credit card for Free or trial.</div>
         </div>
       </Modal>
-      {/* PAYWALL INTERCEPT — full-screen, shown once right after the first Calendar tour finishes/skips */}
-      {paywallOpen && (
-        <div style={{position:"fixed",inset:0,zIndex:1000,background:"rgba(8,12,10,0.82)",backdropFilter:"blur(10px)",display:"flex",alignItems:"flex-start",justifyContent:"center",padding:"24px 16px",overflowY:"auto"}}>
-          <div style={{width:"100%",maxWidth:900,background:T.surface,border:`1px solid ${T.border}`,borderRadius:22,padding:"40px 40px 32px",boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease",margin:"auto",marginTop:24,marginBottom:24}}>
-            <div style={{textAlign:"center",marginBottom:24}}>
-              <div style={{fontSize:24,fontWeight:700,color:T.cream,letterSpacing:"-0.02em",marginBottom:6}}>Unlock your full potential</div>
-              <div style={{fontSize:13.5,color:"rgba(246,241,230,0.65)"}}>Students on Pro study 2.4× more and report a full letter-grade jump. Try it free for 7 days.</div>
-            </div>
-            <div style={{display:"flex",justifyContent:"center",marginBottom:24}}>
-              <div style={{display:"inline-flex",background:T.card2,border:`1px solid ${T.border}`,borderRadius:99,padding:3,gap:2}}>
-                {["monthly","annual"].map(b=>(
-                  <button key={b} onClick={()=>setPaywallBilling(b)} style={{padding:"8px 18px",borderRadius:99,border:"none",fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,background:paywallBilling===b?T.lime:"transparent",color:paywallBilling===b?T.ink:T.muted,textTransform:"capitalize",display:"flex",alignItems:"center",gap:6}}>
-                    {b}{b==="annual"&&<span style={{fontSize:10,fontWeight:700,color:paywallBilling===b?T.ink:T.lime}}>Save 20%</span>}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <PlanCards billing={paywallBilling} onSelect={(key)=>{
-              setPaywallOpen(false);
-              if(key!=="free")window.location.href="checkout.html?plan="+key+"&billing="+paywallBilling;
-            }} />
-            <div style={{textAlign:"center",marginTop:22}}>
-              <button onClick={()=>setPaywallOpen(false)} style={{background:"none",border:"none",color:T.muted,fontSize:13,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Maybe later — continue with free plan</button>
-            </div>
-          </div>
-        </div>
-      )}
       <Modal open={creditsOpen} onClose={()=>{setCreditsOpen(false);setCreditCheckout(null);setBoughtMsg("");}} title={creditCheckout?"Complete purchase":"AI Credits"} sub={creditCheckout?("Purchase "+creditCheckout.label+" for "+creditCheckout.price):"Every AI action uses credits. Top up, upgrade, or just check your balance."} width={620}
         footer={creditCheckout
           ?<><Btn variant="subtle" onClick={()=>{setCreditCheckout(null);setBoughtMsg("");}}>← Back</Btn><Btn onClick={confirmCreditPurchase} disabled={creditProcessing} style={{background:T.lime,color:T.ink}}>{creditProcessing?"Processing...":"Pay "+creditCheckout.price}</Btn></>
@@ -12160,7 +12180,7 @@ function App() {
                 <div>
                   <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",fontWeight:600,color:"rgba(8,12,40,0.6)"}}>CURRENT BALANCE</div>
                   <div style={{fontFamily:T.hand,fontSize:54,fontWeight:700,color:T.ink,lineHeight:0.9,marginTop:4}}>{getCredits()}<span style={{fontFamily:T.font,fontSize:18,fontWeight:500,color:"rgba(8,12,40,0.55)",marginLeft:4}}>/ {getCreditLimit()}</span></div>
-                  <div style={{fontSize:12,color:"rgba(8,12,40,0.65)",marginTop:4}}>Resets in 12 days · {getCreditLimit()-getCredits()} used this cycle</div>
+                  <div style={{fontSize:12,color:"rgba(8,12,40,0.65)",marginTop:4}}>Resets in {daysUntilReset()} day{daysUntilReset()!==1?"s":""} · {getCreditLimit()-getCredits()} used this cycle</div>
                 </div>
                 <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.16em",fontWeight:700,background:T.ink,color:T.lime,padding:"4px 8px",borderRadius:5}}>PRO</span>
               </div>

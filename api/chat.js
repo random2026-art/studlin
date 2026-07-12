@@ -178,7 +178,7 @@ You are Studlin AI. Your purpose is helping people learn better than they could 
 const FLASH_PROMPT = `You are Studlin Flash, a quick-answer study assistant. Give the most direct, concise answer possible. Sound like a smart study buddy, not a textbook. 1-3 sentences max unless the question genuinely needs more. Use bullet points to keep it scannable. Be helpful but brief.`;
 
 const CREDIT_COST = { standard: 1, flash: 1 };
-const DEFAULT_CREDITS = 30; // Free plan limit
+const DEFAULT_CREDITS = 120; // Free plan limit — must match api/me.js, the actual account-creation default
 const RATE_LIMIT_PER_MIN = 20;
 
 module.exports = withSentry(async (req, res) => {

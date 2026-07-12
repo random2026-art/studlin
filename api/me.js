@@ -2,6 +2,11 @@ const { db } = require('./_lib/firebase-admin');
 const { setCors, verifyAuth } = require('./_lib/auth');
 const { withSentry } = require('./_lib/sentry');
 
+// Source of truth for the Free plan's monthly AI chat allowance — this is
+// what actually creates the user doc on first load. Must match
+// api/chat.js's DEFAULT_CREDITS (a same-value fallback for the rare case a
+// chat request beats the profile fetch) and studlin-app.jsx's
+// getCreditLimit() Free branch.
 const DEFAULT_CREDITS = 120;
 
 module.exports = withSentry(async (req, res) => {
