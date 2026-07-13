@@ -1283,6 +1283,64 @@ function scheduleAssignmentExtension(task,deadlineKey,totalMins){
   });
   lsSet("events",events.concat(newEvents));
 }
+// Attack Block — calibration-based duration estimation. Instead of asking a
+// student to guess how long an ambiguous task takes (the exact skill they're
+// missing, hence procrastination), run a short timed probe session, then let
+// them self-report how far along they got, and extrapolate the rest.
+const ATTACK_BLOCK_DEFAULT_PROBE_MINS=30;
+const ATTACK_BLOCK_PADDING=1.2; // pacing is rarely linear — pad the extrapolation
+// Starts a new chain: places the first probe session via findReliableSlotFor.
+// No separate "parent" record — this session IS the task, linked to its
+// eventual follow-ups only by attackChainId, same idiom as split-session
+// tasks link via splitGroup/splitIndex/splitTotal.
+function startAttackBlockChain(fields,events,routines,prefs,desiredDate,desiredTime){
+  const chainId="attack-"+Date.now()+"-"+Math.random().toString(36).slice(2,7);
+  const probeMins=fields.probeMins||ATTACK_BLOCK_DEFAULT_PROBE_MINS;
+  const slot=findReliableSlotFor(events,routines,prefs,desiredDate,desiredTime,probeMins,fields.deadline||null,fields.difficulty);
+  return {
+    id:String(Date.now()+Math.random()*1000),
+    title:fields.title,date:slot.date,time:slot.time,
+    subject:fields.subject||"",notes:fields.notes||"",kind:"study block",duration:probeMins,
+    priority:fields.priority??500,difficulty:fields.difficulty??500,
+    deadline:fields.deadline||null,status:"pending",timeSpent:0,completedAt:null,
+    isAttackBlock:true,attackChainId:chainId,attackIndex:1,
+    placementReason:slot.reason||null,
+    ...(fields.noteId?{noteId:fields.noteId}:{}),
+  };
+}
+// Schedules the next session in an existing chain once the student's
+// self-reported % (via TaskTimerModal's attackCheckIn phase) has produced a
+// recommended nextMins. Sibling to scheduleAssignmentExtension, not an
+// extension of it — that function's semantics (assignmentId copied onto
+// every chunk) are Canvas-assignment-specific. Uses findReliableSlotFor
+// (this session's reliability-aware placement), unlike
+// scheduleAssignmentExtension which predates that engine.
+function scheduleAttackBlockFollowUp(task,nextMins){
+  const events=lsGet("events",[]);
+  const routines=getWeeklyRoutine();
+  const prefs=getSchedulePreferences();
+  const CHUNK=90;
+  const chunks=[];
+  let remaining=Math.max(5,nextMins);
+  while(remaining>0){const c=Math.min(CHUNK,remaining);chunks.push(c);remaining-=c;}
+  let cursorDate=dayKey(),cursorTime=prefs.workStartTime;
+  const newEvents=[];
+  chunks.forEach((m,i)=>{
+    const slot=findReliableSlotFor(events.concat(newEvents),routines,prefs,cursorDate,cursorTime,m,task.deadline||null,task.difficulty);
+    newEvents.push({
+      id:String(Date.now()+i)+"-ab-"+i,
+      title:task.title,date:slot.date,time:slot.time,
+      subject:task.subject,notes:task.notes||"",kind:"study block",duration:m,
+      priority:task.priority,difficulty:task.difficulty,
+      status:"pending",timeSpent:0,completedAt:null,deadline:task.deadline||null,
+      isAttackBlock:true,attackChainId:task.attackChainId,attackIndex:(task.attackIndex||1)+1+i,
+      placementReason:slot.reason||null,
+    });
+    const d=new Date(slot.date+"T12:00:00");d.setDate(d.getDate()+1);
+    cursorDate=dayKey(d);cursorTime=prefs.workStartTime;
+  });
+  lsSet("events",events.concat(newEvents));
+}
 // Dev-only demo seeder for the (mocked, Coming Soon) Canvas connector —
 // creates one course + a few assignments in Firestore, then generates each
 // assignment's first "Attack Block" via the same gap-finder real Canvas sync
@@ -3955,7 +4013,7 @@ function Notes(){
     setSel(0);
     setPopover(null);
     if(syllabusItems!==null){
-      setSyllabusReview({noteId:newNote.id,tag,items:syllabusItems.map((d,i)=>({id:"si-"+i,...d,include:true}))});
+      setSyllabusReview({noteId:newNote.id,tag,items:syllabusItems.map((d,i)=>({id:"si-"+i,...d,include:true,attackBlock:false}))});
     }
   };
 
@@ -4232,13 +4290,19 @@ function Notes(){
                   <div style={{display:"flex",alignItems:"center",gap:8}}>
                     <SelectChip options={[{value:"deadline",label:"To-Do"},{value:"exam",label:"Exam"}]} value={it.kind} onChange={v=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v}:x)}))} />
                     {it.confidence==="low"&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>Low confidence — double-check</span>}
+                    {it.kind==="deadline"&&(
+                      <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:T.muted,cursor:"pointer"}}>
+                        <input type="checkbox" checked={!!it.attackBlock} onChange={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,attackBlock:!x.attackBlock}:x)}))} />
+                        Needs prep time — schedule an Attack Block
+                      </label>
+                    )}
                   </div>
                 </div>
               </div>
             </div>
           ))}
         </div>
-        <button type="button" onClick={()=>setSyllabusReview(r=>({...r,items:[...r.items,{id:"si-manual-"+Date.now(),title:"",date:dayKey(),kind:"deadline",confidence:"low",include:true}]}))} style={{marginTop:10,width:"100%",padding:"10px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12.5}}>
+        <button type="button" onClick={()=>setSyllabusReview(r=>({...r,items:[...r.items,{id:"si-manual-"+Date.now(),title:"",date:dayKey(),kind:"deadline",confidence:"low",include:true,attackBlock:false}]}))} style={{marginTop:10,width:"100%",padding:"10px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12.5}}>
           + Add a deadline manually
         </button>
       </Modal>
@@ -5276,7 +5340,7 @@ function injectClassEvents(selectedClasses){
 // note's review never double-injects.
 function commitSyllabusEvents(noteId,tag,items){
   const existing=lsGet("events",[]);
-  const newEvents=items.map((it,i)=>({
+  const markerEvents=items.map((it,i)=>({
     id:"syl-"+noteId+"-"+i,
     title:it.title,
     date:it.date,
@@ -5293,8 +5357,21 @@ function commitSyllabusEvents(noteId,tag,items){
     completedAt:null,
     noteId,
   }));
-  lsSet("events",existing.concat(newEvents));
-  return newEvents;
+  // Opted-in deadline items additionally get a real Attack Block chain — the
+  // marker event above is just the "this is due" fact, unplaced and
+  // duration-less; this is the actual prep-time scheduling. Exams excluded
+  // from v1 — they'd need their own prep-window-before-exam-date logic
+  // rather than "now until the due date," a different design question.
+  let working=existing.concat(markerEvents);
+  const routines=getWeeklyRoutine();
+  const prefs=getSchedulePreferences();
+  const attackEvents=[];
+  items.filter(it=>it.kind==="deadline"&&it.attackBlock).forEach(it=>{
+    const task=startAttackBlockChain({title:it.title,deadline:it.date,priority:5,difficulty:5,noteId},working,routines,prefs,dayKey(),prefs.workStartTime);
+    attackEvents.push(task);working=working.concat([task]);
+  });
+  lsSet("events",existing.concat(markerEvents,attackEvents));
+  return markerEvents.concat(attackEvents);
 }
 
 // How many of the student's existing study blocks now time-overlap the
@@ -5925,7 +6002,7 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
 
 // ─── CALENDAR ─────────────────────────────────────────────────────────────────
 // ─── TASK TIMER MODAL ────────────────────────────────────────────────────────
-function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignmentExtend}){
+function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignmentExtend,onAttackBlockExtend}){
   // Snapshot of live leaderboard profiles, fetched once on mount — used for
   // the before/after rank comparison in the completion screen. A snapshot
   // is fine here (rather than re-fetching mid-session): competitors' XP
@@ -6026,6 +6103,24 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
     ?lsGet("events",[]).filter(e=>e.assignmentId===task.assignmentId&&e.id!==task.id&&e.status!=="done").length
     :0;
 
+  // ── Attack Block self-report sub-state (only used when
+  // phase==="attackCheckIn", i.e. task.isAttackBlock is set) ────────────────
+  const [abStep,setAbStep]=useState("choice"); // choice | slider
+  const [abPct,setAbPct]=useState(50);
+  // Sums verified minutes across the WHOLE chain so far, not just this
+  // session — using only the latest session would drop prior effort from the
+  // estimate and compound error on every loop, since Attack Block is
+  // designed to iterate several times.
+  const abPriorMins=phase==="attackCheckIn"
+    ?lsGet("events",[]).filter(e=>e.attackChainId===task.attackChainId&&e.status==="done").reduce((s,e)=>s+(e.timeSpent||e.duration||0),0)
+    :0;
+  const abTotalMins=abPriorMins+pendingMinsRef.current;
+  const abRecMins=(()=>{
+    const raw=abTotalMins*(100-abPct)/abPct;
+    const padded=raw*ATTACK_BLOCK_PADDING;
+    return Math.max(10,Math.min(90,Math.round(padded/5)*5));
+  })();
+
   // A soft three-note ascending chime (C5-E5-G5) rather than a single sharp
   // sweep — noticeable enough that a session-end never gets missed, but
   // pleasant enough that finishing a focus block doesn't feel like an alarm
@@ -6110,7 +6205,11 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
           // existing caller (real events without assignmentId, FriendsChat's
           // synthetic co-op task) never sets this field, so they take the
           // untouched completeSession(mins) path exactly as before.
-          if(task.assignmentId){
+          if(task.isAttackBlock){
+            pendingMinsRef.current=mins;
+            setRunning(false);
+            setPhase("attackCheckIn");
+          }else if(task.assignmentId){
             pendingMinsRef.current=mins;
             setRunning(false);
             setPhase("assignmentCheck");
@@ -6176,7 +6275,11 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
       focusStartRef.current=null;
       focusStartMonoRef.current=null;
     }
-    completeSession(verifiedMins());
+    const mins=verifiedMins();
+    // Attack Block's self-report IS the mechanic, not a side flow to skip —
+    // route early-finish through the same check-in the full timer would hit.
+    if(task.isAttackBlock){pendingMinsRef.current=mins;setPhase("attackCheckIn");return;}
+    completeSession(mins);
   };
 
   const updateBreakPos=(e)=>{
@@ -6346,6 +6449,44 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
             <div style={{display:"flex",gap:10}}>
               <Btn variant="subtle" onClick={()=>setAsgStep("choice")} style={{flex:1,justifyContent:"center"}}>Back</Btn>
               <Btn onClick={onScheduleExtension} style={{flex:1,justifyContent:"center"}}>Schedule +{asgFinalMins}m</Btn>
+            </div>
+          </>)}
+        </div>
+      </div>
+    );
+  }
+
+  if(phase==="attackCheckIn"){
+    const onFinishAttackBlock=()=>{
+      completeSession(pendingMinsRef.current);
+    };
+    const onScheduleFollowUp=()=>{
+      if(onAttackBlockExtend)onAttackBlockExtend(abTotalMins,abPct,abRecMins);
+      completeSession(pendingMinsRef.current);
+    };
+    return(
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(10px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+        <div style={{width:"100%",maxWidth:480,background:T.card,borderRadius:20,border:`1px solid ${T.border}`,padding:"36px 32px",textAlign:"center"}}>
+          {abStep==="choice"&&(<>
+            <div style={{fontSize:17,fontWeight:700,color:T.white,marginBottom:8}}>Time's up on "{task.title}"</div>
+            <div style={{fontSize:13,color:T.text,marginBottom:28,lineHeight:1.6}}>Did you finish it?</div>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <Btn onClick={onFinishAttackBlock} style={{width:"100%",justifyContent:"center"}}>Yes, I'm finished</Btn>
+              <Btn variant="subtle" onClick={()=>setAbStep("slider")} style={{width:"100%",justifyContent:"center"}}>Not yet</Btn>
+            </div>
+          </>)}
+
+          {abStep==="slider"&&(<>
+            <div style={{fontSize:17,fontWeight:700,color:T.white,marginBottom:8}}>How far along are you?</div>
+            <div style={{fontSize:13,color:T.text,marginBottom:24,lineHeight:1.6}}>Drag to estimate how much of "{task.title}" is done overall.</div>
+            <input type="range" min={5} max={95} step={1} value={abPct}
+              onChange={e=>setAbPct(parseInt(e.target.value,10))}
+              style={{width:"100%",marginBottom:8}} />
+            <div style={{fontSize:13,fontWeight:600,color:T.lime,marginBottom:20}}>{abPct}% complete</div>
+            <div style={{fontSize:13,color:T.text,marginBottom:24}}>Studlin will schedule <strong>+{abRecMins}m</strong> to finish it up.</div>
+            <div style={{display:"flex",gap:10}}>
+              <Btn variant="subtle" onClick={()=>setAbStep("choice")} style={{flex:1,justifyContent:"center"}}>Back</Btn>
+              <Btn onClick={onScheduleFollowUp} style={{flex:1,justifyContent:"center"}}>Schedule +{abRecMins}m</Btn>
             </div>
           </>)}
         </div>
@@ -7487,6 +7628,8 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   const [evSaveToRoutine,setEvSaveToRoutine]=useState(false);
   const [evSplitEnabled,setEvSplitEnabled]=useState(false);
   const [evSplitCount,setEvSplitCount]=useState(2);
+  const [evAttackBlock,setEvAttackBlock]=useState(false);
+  const [evAttackProbeMins,setEvAttackProbeMins]=useState(ATTACK_BLOCK_DEFAULT_PROBE_MINS);
   const [aiLoading,setAiLoading]=useState(false);
   const [toast,setToast]=useState(false);
   // Hard-Wall rejection message (Tier 2 of the rescheduling engine) — a
@@ -7670,8 +7813,8 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   // "let AI schedule this". The clicked day is remembered so fixed-time kinds
   // (exam/class/reminder), which always need a real date, can still default
   // to it once the user picks one of those types.
-  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("");setEvSubject("None");setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setNewOpen(true);};
-  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvDate("");setEvTime("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setAiLoading(false);setAsChecklist(false);};
+  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("");setEvSubject("None");setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setNewOpen(true);};
+  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvDate("");setEvTime("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setAiLoading(false);setAsChecklist(false);};
   const onEvKindChange=(k)=>{setEvKind(k);if((k==="exam"||k==="class"||k==="reminder"||k==="busy block")&&!evDate)setEvDate(evPrefillDate);};
   const buildTask=(date,time,titleSuffix,splitInfo)=>{
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
@@ -7759,7 +7902,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     // blank instead of showing this submission's leftover prompt.
     setBrainDumpText("");
     const validKinds=["study","todo","event","reminder"];
-    setBrainDumpReview({items:items.map((it,i)=>({id:"bd-"+i,title:it.title,kind:validKinds.includes(it.kind)?it.kind:"todo",durationMin:it.durationMin||30,dueDate:it.dueDate||"",dueTime:it.dueTime||"",needsDuration:!!it.needsDuration,clarify:it.clarify||"",include:true}))});
+    setBrainDumpReview({items:items.map((it,i)=>({id:"bd-"+i,title:it.title,kind:validKinds.includes(it.kind)?it.kind:"todo",durationMin:it.durationMin||30,dueDate:it.dueDate||"",dueTime:it.dueTime||"",needsDuration:!!it.needsDuration,attackBlock:!!it.needsDuration,clarify:it.clarify||"",include:true}))});
   };
   // Study-kind items get a real slot via the same deterministic placement
   // engine every other scheduling path trusts — no separate AI call per
@@ -7792,6 +7935,11 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     // engine every other scheduling path trusts — no separate AI call per
     // item, the one parseBrainDump call above already did the understanding.
     items.filter(it=>it.kind==="study").forEach(it=>{
+      if(it.attackBlock){
+        const task=startAttackBlockChain({title:it.title,deadline:it.dueDate||null,priority:5,difficulty:5},working,routines,prefs,today,prefs.workStartTime);
+        studyTasks.push(task);working=working.concat([task]);
+        return;
+      }
       const duration=Math.max(5,it.durationMin||30);
       const slot=findReliableSlotFor(working,routines,prefs,today,prefs.workStartTime,duration,it.dueDate||null,5);
       const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:slot.date,time:slot.time,subject:"",kind:"study block",notes:"",priority:5,difficulty:5,deadline:it.dueDate||null,duration,status:"pending",timeSpent:0,completedAt:null,placementReason:slot.reason||null};
@@ -7882,6 +8030,16 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     const isDesiredToday=desiredStartDate===tk;
     const windowStart=isDesiredToday?earliestTodayMins:desiredStartMins;
     const windowStartTime=isDesiredToday?earliestTodayTime:minutesToTime(desiredStartMins);
+    // Attack Block skips the AI call entirely — a single probe session needs
+    // deterministic placement, not LLM reasoning about a duration nobody has
+    // yet.
+    if(evAttackBlock){
+      const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
+      const task=startAttackBlockChain({title:evTitle.trim(),subject:subj,notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins},events,routines,prefs,desiredStartDate,windowStartTime);
+      commitTasks([task]);
+      setAiLoading(false);
+      return;
+    }
     const windowMins=Math.max(0,desiredEndMins-windowStart);
     const firstAvailDate=windowMins>=perSession?desiredStartDate:(()=>{const d=new Date(desiredStartDate+"T12:00:00");d.setDate(d.getDate()+1);return dayKey(d);})();
     const horizonEnd=(()=>{const d=new Date(desiredStartDate+"T12:00:00");d.setDate(d.getDate()+13);return dayKey(d);})();
@@ -8192,6 +8350,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   const selectTaskMode=(m)=>{
     setTaskMode(m);
     if(m==="ai"){setEvDate("");setEvTime("");}
+    if(m==="manual"){setEvAttackBlock(false);}
   };
   return (
     <>
@@ -8400,13 +8559,27 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
           </div>
         )}
 
-        {isTaskKind&&!isChecklistMode&&(
+        {isTaskKind&&!isChecklistMode&&!evAttackBlock&&(
           <Field label="Duration (minutes)" hint="How long you plan to spend">
             <NumField min={5} max={480} fallback={5} value={evDuration} onChange={setEvDuration} />
             {(()=>{const s=suggestDurationFor(evSubject,evKind);return s&&s!==evDuration&&(
               <div style={{fontSize:11.5,color:T.muted,marginTop:6}}>Similar tasks usually take you ~{s}m — <button type="button" onClick={()=>setEvDuration(s)} style={{background:"none",border:"none",color:T.lime,cursor:"pointer",fontSize:11.5,fontFamily:T.font,padding:0,textDecoration:"underline"}}>use this</button></div>
             );})()}
           </Field>
+        )}
+
+        {isTaskKind&&!isChecklistMode&&taskMode==="ai"&&!evSplitEnabled&&(
+          <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14}}>
+            <div onClick={()=>setEvAttackBlock(a=>!a)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+              <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>I don't know how long this takes</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Start with a short probe session — Studlin figures out the rest.</div></div>
+              <div style={{width:36,height:20,borderRadius:10,background:evAttackBlock?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer"}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:evAttackBlock?18:2,transition:"left 0.2s"}} /></div>
+            </div>
+            {evAttackBlock&&(
+              <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
+                <Field label="Probe session length"><NumField min={15} max={60} fallback={ATTACK_BLOCK_DEFAULT_PROBE_MINS} value={evAttackProbeMins} onChange={setEvAttackProbeMins} /></Field>
+              </div>
+            )}
+          </div>
         )}
 
         {isTaskKind&&!isChecklistMode&&taskMode==="ai"&&(
@@ -8438,7 +8611,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
           )
         )}
 
-        {isTaskKind&&!isChecklistMode&&(
+        {isTaskKind&&!isChecklistMode&&!evAttackBlock&&(
           <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14}}>
             <div onClick={()=>setEvSplitEnabled(s=>!s)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
               <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Split into sessions</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Spread this task across multiple days</div></div>
@@ -8492,7 +8665,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                     <SelectChip options={[{value:"study",label:"Study Session"},{value:"todo",label:"To-Do"},{value:"event",label:"Event"},{value:"reminder",label:"Reminder"}]} value={it.kind} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v}:x)}))} />
-                    {it.kind==="study"&&(
+                    {it.kind==="study"&&!it.attackBlock&&(
                       <div style={{display:"flex",alignItems:"center",gap:6}}>
                         <NumField min={5} max={480} fallback={30} value={it.durationMin} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,durationMin:v}:x)}))} />
                         <span style={{fontSize:11.5,color:T.muted}}>min</span>
@@ -8510,7 +8683,12 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
                         <span style={{fontSize:11.5,color:T.muted}}>min</span>
                       </div>
                     )}
-                    {it.kind==="study"&&it.needsDuration&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>Wasn't sure how long this takes — check the estimate</span>}
+                    {it.kind==="study"&&it.needsDuration&&(
+                      <button type="button" onClick={()=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,attackBlock:!x.attackBlock}:x)}))}
+                        style={{fontSize:10.5,fontWeight:600,color:it.attackBlock?T.ink:T.amber,background:it.attackBlock?T.lime:T.amber+"14",border:`1px solid ${it.attackBlock?T.lime:T.amber+"33"}`,borderRadius:6,padding:"3px 8px",cursor:"pointer",fontFamily:T.font}}>
+                        {it.attackBlock?"✓ Attack Block — probe session first":"Wasn't sure how long — start an Attack Block instead"}
+                      </button>
+                    )}
                     {it.clarify&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>{it.clarify}</span>}
                   </div>
                 </div>
@@ -12486,6 +12664,9 @@ function App() {
         }}
         onAssignmentExtend={(mins,pct,extensionMins)=>{
           scheduleAssignmentExtension(timerTask,timerTask.deadline,extensionMins);
+        }}
+        onAttackBlockExtend={(totalMinsSoFar,pct,nextMins)=>{
+          scheduleAttackBlockFollowUp(timerTask,nextMins);
         }}
         onComplete={(mins)=>{
         logSession(mins,"Task: "+timerTask.title);
