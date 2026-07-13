@@ -44,6 +44,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-analytics-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-check-compat.js"></script>
 <script>
 firebase.initializeApp({
   apiKey:"AIzaSyApWyzKeifMgGCSjSjZClCCipUKDAiao4U",
@@ -54,6 +55,8 @@ firebase.initializeApp({
   appId:"1:16831354472:web:50220e57868dba46c18ddd",
   measurementId:"FIREBASE_MEASUREMENT_ID"
 });
+// Monitor-mode bot detection — see Studlin Onboarding.html for details.
+firebase.appCheck().activate("6LfVzlAtAAAAABPOEifeDkmtnrcCqPA4ALxy58bn", true);
 firebase.analytics();
 if("serviceWorker" in navigator){navigator.serviceWorker.register("/service-worker.js").catch(function(){});}
 </script>

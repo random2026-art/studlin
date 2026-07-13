@@ -34,6 +34,23 @@ const Ic = {
 // is a standalone bundle.
 const isPasswordAccount = (u) => !!(u && u.providerData && u.providerData.some(p => p.providerId === "password"));
 
+// Common disposable/throwaway email providers — blocked at signup so a
+// single person can't script infinite free-tier accounts. Not exhaustive
+// (new disposable domains appear constantly), but stops the well-known
+// ones with zero cost to real users, who are never on these domains.
+const DISPOSABLE_EMAIL_DOMAINS = new Set([
+  "mailinator.com","10minutemail.com","10minutemail.net","guerrillamail.com",
+  "guerrillamail.info","guerrillamail.biz","guerrillamail.de","tempmail.com",
+  "temp-mail.org","yopmail.com","yopmail.fr","throwawaymail.com","trashmail.com",
+  "getnada.com","sharklasers.com","dispostable.com","fakeinbox.com","maildrop.cc",
+  "mintemail.com","mohmal.com","tempmailo.com","emailondeck.com","moakt.com",
+  "mailnesia.com","33mail.com","spamgourmet.com","tempinbox.com","discard.email",
+]);
+const isDisposableEmail = (email) => {
+  const domain = (email.split("@")[1] || "").toLowerCase().trim();
+  return DISPOSABLE_EMAIL_DOMAINS.has(domain);
+};
+
 const ERR_MAP = {
   "auth/email-already-in-use":"An account with this email already exists. Try signing in.",
   "auth/invalid-email":"Please enter a valid email address.",
@@ -187,6 +204,7 @@ function StepSignup({ state, set, advance }) {
     const errs = checkIdentityFields();
     if (!state.email?.trim()) errs.email = "Please enter your email address";
     else if (!/\S+@\S+\.\S+/.test(state.email)) errs.email = "Please enter a valid email address";
+    else if (isDisposableEmail(state.email)) errs.email = "Please use a permanent email address, not a temporary one";
     if (!allOk) errs.password = "Password must be at least 8 characters";
     setErrors(errs);
     if (Object.keys(errs).length > 0) return;
