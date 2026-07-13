@@ -10164,8 +10164,6 @@ function Profile({setActive}={}) {
   const [picSaved,setPicSaved]=useState(false);
   const fileInputRef=useRef(null);
   const camInputRef=useRef(null);
-  const prefs=getSchedulePreferences();
-  const [difficulty,setDifficulty]=useState(prefs.difficultyPreference||"balanced");
   const [prefSaved,setPrefSaved]=useState(false);
   const lvl=levelInfo();
   const streak=Math.max(1,getStreak());
@@ -10190,8 +10188,6 @@ function Profile({setActive}={}) {
     const updated={...getProfile(),status,affiliation,school:affiliation};
     lsSet("profile",updated);
     setProfState(updated);
-    const updatedPrefs={...getSchedulePreferences(),difficultyPreference:difficulty};
-    setSchedulePreferences(updatedPrefs);
     setPrefSaved(true);
     setTimeout(()=>setPrefSaved(false),2200);
   };
@@ -10242,10 +10238,14 @@ function Profile({setActive}={}) {
         </div>
       </Card>
 
-      {/* ── Onboarding preferences hub */}
+      {/* ── Identity — school/status only. Scheduling behavior (difficulty
+          order, peak hours, work window) lives entirely in Settings >
+          Calendar Preferences now — used to be duplicated here too, which
+          meant two controls silently wrote the same field under different
+          labels. */}
       <Card style={{marginBottom:16}}>
-        <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Your profile & schedule preferences</div>
-        <div style={{fontSize:12,color:T.muted,marginBottom:18}}>Update your answers from setup anytime. These train your scheduling algorithm.</div>
+        <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Your profile</div>
+        <div style={{fontSize:12,color:T.muted,marginBottom:18}}>Update your school info anytime.</div>
 
         <Field label="Status">
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -10259,14 +10259,6 @@ function Profile({setActive}={}) {
             <SchoolSelect value={affiliation} onChange={setAffiliation} placeholder={affiliationPlaceholder} />
           </Field>
         )}
-
-        <Field label="Task difficulty order">
-          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            {[{v:"easyFirst",l:"Easy first"},{v:"balanced",l:"Balanced"},{v:"hardFirst",l:"Hard first"}].map(o=>(
-              <button key={o.v} type="button" onClick={()=>setDifficulty(o.v)} style={{padding:"8px 14px",borderRadius:8,fontSize:12,fontWeight:difficulty===o.v?600:400,cursor:"pointer",border:`1.5px solid ${difficulty===o.v?T.lime+"66":T.border}`,background:difficulty===o.v?T.lime+"14":"transparent",color:difficulty===o.v?T.lime:T.muted,fontFamily:T.font,transition:"all 0.15s"}}>{o.l}</button>
-            ))}
-          </div>
-        </Field>
 
         <div style={{display:"flex",alignItems:"center",gap:12,marginTop:4}}>
           <Btn onClick={saveOnboarding}>Save preferences</Btn>
@@ -11293,14 +11285,19 @@ function InitWizard({onComplete}){
   const [step, setStep] = useState(0);
   const [status, setStatus] = useState(prof.status||"");
   const [affiliation, setAffiliation] = useState(prof.affiliation||prof.school||"");
-  const [workStart, setWorkStart] = useState(prefs.workStartTime||"09:00");
+  const [peakBuckets, setPeakBuckets] = useState(prefs.peakHourBuckets||[]);
+  const togglePeakBucket=(id)=>setPeakBuckets(b=>b.includes(id)?b.filter(x=>x!==id):[...b,id]);
   const [difficulty, setDifficulty] = useState(prefs.difficultyPreference||"balanced");
 
   const affiliationLabel = status==="highschool" ? "School name" : status==="college" ? "University name" : "Affiliation";
   const affiliationPlaceholder = status==="highschool" ? "e.g. Lincoln High School" : status==="college" ? "e.g. UCLA, NYU..." : "Your school or company";
 
   const save = () => {
-    const updatedPrefs = {...prefs, workStartTime:workStart, difficultyPreference:difficulty};
+    // peakHourBuckets is a local-only preference everywhere else in the app
+    // (ScheduleSettingsPanel's identical chip picker never syncs it to
+    // Firestore either) — matching that instead of inventing a new synced
+    // field here.
+    const updatedPrefs = {...prefs, peakHourBuckets:peakBuckets, difficultyPreference:difficulty};
     setSchedulePreferences(updatedPrefs);
     const updatedProf = {...getProfile(), status, affiliation, school:affiliation};
     lsSet("profile", updatedProf);
@@ -11313,7 +11310,7 @@ function InitWizard({onComplete}){
     if(u){
       fsdb().collection('users').doc(u.uid).set({
         status, affiliation, school:affiliation,
-        workStartTime:workStart, difficultyPreference:difficulty,
+        difficultyPreference:difficulty,
         onboarded:true,
         updatedAt:new Date().toISOString(),
       },{merge:true}).catch(()=>{});
@@ -11341,7 +11338,7 @@ function InitWizard({onComplete}){
 
   const STEPS = [
     {key:"status"},
-    {key:"workStart"},
+    {key:"peak"},
     {key:"difficulty"},
   ];
   const isLast = step === STEPS.length - 1;
@@ -11366,7 +11363,7 @@ function InitWizard({onComplete}){
   );
 
   return (
-    <div style={{minHeight:"100vh",background:bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 16px",fontFamily:`"Geist",system-ui,sans-serif`}}>
+    <div style={{minHeight:"100vh",height:"100%",overflowY:"auto",background:bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 16px",fontFamily:`"Geist",system-ui,sans-serif`}}>
       {/* Logo */}
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:40}}>
         <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#14342A,#0E1F18)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(158,200,61,0.35)"}}>
@@ -11410,10 +11407,16 @@ function InitWizard({onComplete}){
 
         {step===1 && (
           <div>
-            <div style={{fontSize:20,fontWeight:700,color:ink,marginBottom:6,letterSpacing:"-0.01em"}}>When do you prefer to study?</div>
-            <div style={{fontSize:13,color:muted,marginBottom:24}}>Tasks are scheduled inside this window so your time is protected.</div>
-            <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:muted,marginBottom:8}}>Peak study start time</label>
-            <TimeInput value={workStart} onChange={setWorkStart} style={{background:"#F0EBE0",border:`1.5px solid ${border}`,borderRadius:9,padding:"11px 14px",color:ink,fontSize:14,fontFamily:`"Geist",system-ui,sans-serif`,maxWidth:200}} />
+            <div style={{fontSize:20,fontWeight:700,color:ink,marginBottom:6,letterSpacing:"-0.01em"}}>When are you most productive?</div>
+            <div style={{fontSize:13,color:muted,marginBottom:24}}>Studlin schedules harder tasks around these hours. Leave blank and it'll learn your best hours from how you actually study.</div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {TIER0_HOUR_BUCKETS.map(b=>(
+                <button key={b.id} type="button" onClick={()=>togglePeakBucket(b.id)} style={{padding:"12px 16px",borderRadius:10,fontSize:13,fontWeight:peakBuckets.includes(b.id)?700:500,cursor:"pointer",border:`2px solid ${peakBuckets.includes(b.id)?lime:border}`,background:peakBuckets.includes(b.id)?lime+"18":"transparent",color:peakBuckets.includes(b.id)?ink:muted,fontFamily:`"Geist",system-ui,sans-serif`,transition:"all 0.15s",textAlign:"left"}}>
+                  <div>{PEAK_BUCKET_LABELS[b.id]}</div>
+                  <div style={{fontSize:11,opacity:0.75,marginTop:2}}>{fmtClock12(minutesToTime(b.startMin))}–{fmtClock12(minutesToTime(b.endMin))}</div>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
