@@ -11718,6 +11718,12 @@ function SharedChatView({shareId}){
 
 // ─── AUTH GATE ────────────────────────────────────────────────────────────────
 const isPasswordAccount=(u)=>!!(u.providerData&&u.providerData.some(p=>p.providerId==="password"));
+const isFreshOAuthAccount=(u)=>{
+  if(!u||isPasswordAccount(u)||lsGet("onboarded",false))return false;
+  const created=Date.parse(u.metadata&&u.metadata.creationTime);
+  const signedIn=Date.parse(u.metadata&&u.metadata.lastSignInTime);
+  return Number.isFinite(created)&&Number.isFinite(signedIn)&&Math.abs(signedIn-created)<60000;
+};
 function AuthGate(){
   const shareId=new URLSearchParams(window.location.search).get("share");
   const refId=new URLSearchParams(window.location.search).get("ref");
@@ -11726,6 +11732,12 @@ function AuthGate(){
   useEffect(()=>{
     if(shareId)return;
     return firebase.auth().onAuthStateChanged(async u=>{
+      if(isFreshOAuthAccount(u)){
+        try{await u.delete();}catch(e){try{await firebase.auth().signOut();}catch(e2){}}
+        setUser(null);
+        window.location.href="/onboarding";
+        return;
+      }
       setUser(u||null);
       if(u&&(!isPasswordAccount(u)||u.emailVerified)){
         fetchUserProfile();upsertProfile();
