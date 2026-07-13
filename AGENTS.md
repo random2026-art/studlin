@@ -406,6 +406,21 @@ When generating code:
 
 ---
 
+# Production-Sensitive Changes
+
+For billing, account deletion, auth, subscriptions, payments, privacy, and user data:
+
+* Treat the work as production-sensitive.
+* Before coding, call out risks that could cause data loss, billing mistakes, privacy leaks, or broken access.
+* Keep changes tightly scoped and do not change unrelated files.
+* Make sure backend behavior matches frontend copy.
+* Require explicit confirmation for irreversible or account-level destructive actions.
+* Tell me what could not be verified locally.
+
+For product-sensitive UX changes, briefly explain placement and copy tradeoffs before implementing.
+
+---
+
 # If Codex Is Helping With UI
 
 Prioritize:
