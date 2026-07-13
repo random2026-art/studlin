@@ -1835,6 +1835,17 @@ function rebalanceDay(dateKey,allEvents,routines,prefs){
 
   return rest.concat(reassigned);
 }
+// Standalone wrapper around rebalanceDay for callers outside CalendarTab's
+// React state (e.g. ChatDrawer, a sibling component with no access to
+// CalendarTab's own commitTasks closure) — reads/writes localStorage
+// directly, same idiom as scheduleAssignmentExtension and
+// scheduleAttackBlockFollowUp.
+function addTaskWithRebalance(task){
+  const events=lsGet("events",[]);
+  const next=rebalanceDay(task.date,events.concat([task]),getWeeklyRoutine(),getSchedulePreferences());
+  lsSet("events",next);
+  return next;
+}
 
 // Feature 3: Task priority scoring (0-1000 scale with exponential deadline urgency)
 function calculateTaskPriority(task,allTasks){
@@ -4658,9 +4669,15 @@ function fmtGroupCountdown(expiresAt){
 }
 // Live study-state sub-label for a friend's presence — masked to offline when
 // the friend has incognito on.
-function presenceInfo(u,{incognito=false}={}){
+// liveSession is a real studySessions doc (status:"live") this friend is a
+// joined participant in — the actual replacement for the old fake
+// u.presence "locked-in" stub. Every other state below is still simulated
+// (see the comment further down where u.presence is fabricated) — building
+// genuine ambient presence (heartbeats, idle detection) is materially
+// bigger than what was asked and stays out of scope here.
+function presenceInfo(u,{incognito=false,liveSession=null}={}){
+  if(!incognito&&liveSession)return{color:T.teal,text:"Locking In: "+(liveSession.subject||liveSession.title)+" — tap to join",joinable:true,sessionId:liveSession.id};
   const p=incognito?{state:"offline"}:(u.presence||{state:u.online?"idle":"offline"});
-  if(p.state==="locked-in")return{color:T.teal,text:"Locking In: "+p.subject+" ("+p.remainingMin+"m left)",joinable:true};
   if(p.state==="in-class")return{color:T.amber,text:"In Class",joinable:false};
   if(p.state==="idle")return{color:T.muted,text:"Idle",joinable:false};
   return{color:T.faint,text:"Offline",joinable:false};
@@ -4808,6 +4825,26 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange}={}){
     return unsub;
   },[myUid]);
 
+  // Real live study sessions I'm a member of — the actual replacement for
+  // the old fake u.presence "locked-in" stub. Two listeners (scheduled +
+  // live), same dual-query rebuild() idiom as the friendships listener
+  // above, merged into one map keyed by sessionId.
+  const [liveSessions,setLiveSessions]=useState({});
+  useEffect(()=>{
+    if(!myUid){setLiveSessions({});return;}
+    let scheduled={},live={},cancelled=false;
+    const rebuild=()=>{if(!cancelled)setLiveSessions({...scheduled,...live});};
+    const u1=fsdb().collection('studySessions').where('memberUids','array-contains',myUid).where('status','==','scheduled')
+      .onSnapshot(snap=>{scheduled={};snap.docs.forEach(d=>{scheduled[d.id]={id:d.id,...d.data()};});rebuild();},()=>{});
+    const u2=fsdb().collection('studySessions').where('memberUids','array-contains',myUid).where('status','==','live')
+      .onSnapshot(snap=>{live={};snap.docs.forEach(d=>{live[d.id]={id:d.id,...d.data()};});rebuild();},()=>{});
+    return ()=>{cancelled=true;u1();u2();};
+  },[myUid]);
+  // First live session (if any) a given friend is an actual joined
+  // participant in — used to render real presence instead of the simulated
+  // u.presence stub.
+  const liveSessionFor=(uid)=>Object.values(liveSessions).find(s=>s.status==="live"&&s.participants&&s.participants[uid]&&s.participants[uid].state==="joined");
+
   // ── Unified "All" / "Groups" inbox — combined, chronological ──────────────
   const [inboxTab,setInboxTab]=useState("All");
   const previewOf=(m)=>!m?null:(m.kind==="text"?m.text:m.kind==="calendar"?"Shared free time found":m.kind==="note"?"Note shared":m.kind==="deck"?"Deck shared":"New message");
@@ -4885,26 +4922,33 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange}={}){
   const acceptReq=async(id)=>{try{await fsdb().collection('friendships').doc(id).update({status:'accepted',updatedAt:new Date().toISOString()});}catch(e){}};
   const declineReq=async(id)=>{try{await fsdb().collection('friendships').doc(id).delete();}catch(e){}};
 
-  // ── Co-op "Join Lock-In" — simulated request/accept, then hands off to the
-  // global TaskTimerModal (via the same window._setTimerTask bridge Calendar uses)
+  // ── Co-op "Join Lock-In" — real Firestore-backed join, then hands off to
+  // the global TaskTimerModal (via the same window._setTimerTask bridge
+  // Calendar uses). sessionId comes from presenceInfo's real liveSession
+  // lookup above — this friend is genuinely locked-in right now.
   const [joinRevealFor,setJoinRevealFor]=useState(null);
   const [netToast,setNetToast]=useState(null);
   const showNetToast=(msg)=>{setNetToast(msg);setTimeout(()=>setNetToast(null),3200);};
-  const joinLockIn=(u)=>{
+  const joinLockIn=async(sessionId,u)=>{
     setJoinRevealFor(null);
-    showNetToast("Request sent to "+u.n+"…");
-    setTimeout(()=>{
-      showNetToast(u.n+" joined your session!");
-      const p=u.presence||{};
-      if(window._setTimerTask)window._setTimerTask({
-        id:"coop-"+Date.now(),
-        title:"Co-op session with "+u.n,
-        subject:p.subject||"Study session",
-        duration:Math.max(5,p.remainingMin||25),
-        kind:"study block",
-        coop:{name:u.n,initials:u.n.split(" ").map(x=>x[0]).join("")},
-      });
-    },1400);
+    const session=liveSessions[sessionId];
+    if(!session||!myUid)return;
+    showNetToast("Joining "+u.n+"'s session…");
+    const now=Date.now();
+    await fsdb().collection('studySessions').doc(sessionId).update({
+      ['participants.'+myUid+'.state']:'joined',
+      ['participants.'+myUid+'.joinedAt']:now,
+      updatedAt:new Date().toISOString(),
+    }).catch(()=>{});
+    if(window._setTimerTask)window._setTimerTask({
+      id:"coop-"+sessionId,
+      title:session.title,
+      subject:session.subject,
+      duration:Math.max(5,session.duration||25),
+      kind:"study block",
+      studySessionId:sessionId,
+      coop:computeCoopFromParticipants(session.participants,myUid),
+    });
   };
 
   const [cgName,setCgName]=useState("");
@@ -5120,7 +5164,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange}={}){
                   );
                 }
                 const u=row.user;
-                const pr=presenceInfo(u);
+                const pr=presenceInfo(u,{liveSession:liveSessionFor(u.uid)});
                 const revealed=joinRevealFor===u.h;
                 return (
                   <div key={row.key} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<inboxShown.length-1?`1px solid ${T.border}`:"none"}}>
@@ -5134,7 +5178,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange}={}){
                     </div>
                     {row.unread&&<div style={{width:8,height:8,borderRadius:"50%",background:T.lime,flexShrink:0}} />}
                     {revealed&&pr.joinable
-                      ?<button onClick={()=>joinLockIn(u)} style={{flexShrink:0,padding:"7px 14px",borderRadius:99,background:T.teal,color:T.ink,border:"none",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,boxShadow:`0 0 0 4px ${T.teal}22, 0 4px 14px -4px ${T.teal}88`,whiteSpace:"nowrap"}}>Join Lock-In</button>
+                      ?<button onClick={()=>joinLockIn(pr.sessionId,u)} style={{flexShrink:0,padding:"7px 14px",borderRadius:99,background:T.teal,color:T.ink,border:"none",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,boxShadow:`0 0 0 4px ${T.teal}22, 0 4px 14px -4px ${T.teal}88`,whiteSpace:"nowrap"}}>Join Lock-In</button>
                       :<button onClick={()=>setChatTarget({kind:"dm",user:u})} style={{width:32,height:32,borderRadius:9,border:`1px solid ${T.border}`,background:T.card2,color:T.lime,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.msgSquare}</button>
                     }
                   </div>
@@ -5538,7 +5582,16 @@ function ChatBubble({m,myUid,onRespond,onSchedule}){
   // collapses this whole block to its final "scheduled" layout) fires after
   // a beat so the click doesn't feel like it vanished into an abrupt cut.
   const [justChosen,setJustChosen]=useState(null);
+  const [pickingMode,setPickingMode]=useState(null);
   if(m.kind==="calendar"){
+    if(m.meta.noneFound){
+      return (
+        <div style={{alignSelf:"center",width:"100%",padding:"14px 15px",background:T.purple+"1A",border:`1px solid ${T.purple}40`,borderRadius:12}}>
+          <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:8,color:T.purple,fontSize:11,fontWeight:700}}>🤖 Studlin Match</div>
+          <div style={{fontSize:12.5,color:pp.text,lineHeight:1.55}}>No overlapping free time in that window — try a wider window, or message to rearrange something.</div>
+        </div>
+      );
+    }
     // options falls back to [m.meta] for messages sent before the
     // multi-slot refactor, which stored a single flat window as meta.
     const options=m.meta.options||[m.meta];
@@ -5561,11 +5614,25 @@ function ChatBubble({m,myUid,onRespond,onSchedule}){
                     {w.isBest&&<div style={{fontSize:9,fontWeight:800,letterSpacing:"0.08em",color:T.lime,marginBottom:2}}>BEST CHOICE</div>}
                     <div style={{fontSize:12,fontWeight:600,color:pp.text}}>{w.dayLabel} · {w.timeLabel} · {w.duration}m</div>
                   </div>
-                  <button onClick={()=>{
-                    if(justChosen!==null)return;
-                    setJustChosen(i);
-                    setTimeout(()=>onSchedule(m.id,i),1500);
-                  }} disabled={justChosen!==null} style={{flexShrink:0,padding:"7px 12px",borderRadius:7,background:justChosen===i?T.lime:(w.isBest?T.lime:pp.card2),color:justChosen===i?T.bg:(w.isBest?T.bg:pp.text),border:w.isBest||justChosen===i?"none":`1px solid ${pp.border}`,fontSize:11.5,fontWeight:700,cursor:justChosen!==null?"default":"pointer",fontFamily:T.font,opacity:justChosen!==null&&justChosen!==i?0.45:1,transition:"opacity 0.15s"}}>{justChosen===i?"✓ Scheduled":"Choose"}</button>
+                  {pickingMode===i?(
+                    <div style={{display:"flex",gap:6,flexShrink:0}}>
+                      <button onClick={()=>{
+                        if(justChosen!==null)return;
+                        setJustChosen(i);
+                        setTimeout(()=>onSchedule(m.id,i,"busy block"),1500);
+                      }} disabled={justChosen!==null} style={{padding:"7px 10px",borderRadius:7,background:pp.card2,color:pp.text,border:`1px solid ${pp.border}`,fontSize:11,fontWeight:700,cursor:justChosen!==null?"default":"pointer",fontFamily:T.font}}>Just meeting up</button>
+                      <button onClick={()=>{
+                        if(justChosen!==null)return;
+                        setJustChosen(i);
+                        setTimeout(()=>onSchedule(m.id,i,"study block"),1500);
+                      }} disabled={justChosen!==null} style={{padding:"7px 10px",borderRadius:7,background:T.lime,color:T.bg,border:"none",fontSize:11,fontWeight:700,cursor:justChosen!==null?"default":"pointer",fontFamily:T.font}}>Study together</button>
+                    </div>
+                  ):(
+                    <button onClick={()=>{
+                      if(justChosen!==null)return;
+                      setPickingMode(i);
+                    }} disabled={justChosen!==null} style={{flexShrink:0,padding:"7px 12px",borderRadius:7,background:justChosen===i?T.lime:(w.isBest?T.lime:pp.card2),color:justChosen===i?T.bg:(w.isBest?T.bg:pp.text),border:w.isBest||justChosen===i?"none":`1px solid ${pp.border}`,fontSize:11.5,fontWeight:700,cursor:justChosen!==null?"default":"pointer",fontFamily:T.font,opacity:justChosen!==null&&justChosen!==i?0.45:1,transition:"opacity 0.15s"}}>{justChosen===i?"✓ Scheduled":"Choose"}</button>
+                  )}
                 </div>
               ))}
             </div>
@@ -5695,7 +5762,10 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
     const events=lsGet("events",[]);
     const today=new Date();
     const EVENING_START=18*60;
-    const dayEvents=(dk)=>events.filter(e=>e.date===dk).map(e=>({s:timeToMinutes(e.time||"0:00"),e:timeToMinutes(e.time||"0:00")+(e.duration||60)})).sort((a,b)=>a.s-b.s);
+    const routines=getWeeklyRoutine();
+    const dayEvents=(dk)=>events.filter(e=>e.date===dk).map(e=>({s:timeToMinutes(e.time||"0:00"),e:timeToMinutes(e.time||"0:00")+(e.duration||60)}))
+      .concat(expandRoutineOccurrences(routines,dk,dk).filter(o=>o.kind!=="free period").map(o=>({s:timeToMinutes(o.time),e:timeToMinutes(o.time)+(o.duration||30)})))
+      .sort((a,b)=>a.s-b.s);
     const isFree=(occupied,start,end)=>!occupied.some(o=>!(end<=o.s||start>=o.e));
     const labelFor=(offset,d)=>offset===1?"tomorrow":d.toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"});
     const candidates=[];
@@ -5721,12 +5791,10 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
       }
     }
     if(candidates.length===0){
-      // Nothing fully free anywhere in range — fall back to the start of the
-      // preferred window on the last scanned day, so the feature never
-      // dead-ends with no suggestion at all.
-      const d=new Date(today);d.setDate(today.getDate()+scanDays);
-      const time=minutesToTime(prefStart);
-      return{options:[{date:dayKey(d),time,duration,dayLabel:labelFor(scanDays,d),timeLabel:fmtTimeLabel(time),isBest:true}]};
+      // Genuinely nothing free anywhere in range, including routine/class
+      // blocks now excluded above — say so honestly instead of forcing a
+      // slot that isn't actually free onto the calendar.
+      return{options:[],noneFound:true};
     }
     candidates.sort((a,b)=>b.score-a.score);
     // Cap at one suggestion per day so the options presented are genuinely
@@ -5748,21 +5816,46 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
     const params={timeMode:fwTimeMode,timeFrom:fwTimeFrom,timeTo:fwTimeTo,lookAheadDayRange,durationInMinutes:fwDuration};
     setTimeout(()=>{setSyncRunning(false);sendMessage({kind:"calendar",status:"unscheduled",meta:findSharedStudyWindow(params)});},2100);
   };
-  // Injects the chosen window into the current user's own calendar as a
-  // study block. (Only this browser's calendar can actually be written to —
-  // there's no backend to push the event into other members' accounts too.)
-  // optionIndex picks which suggested slot the user chose; msg.meta.options
-  // falls back to [msg.meta] for older messages sent before the multi-slot
-  // refactor, which had a single flat window object as meta.
-  const scheduleGroupSession=(id,optionIndex=0)=>{
+  // Injects the chosen window into the current user's own calendar. (Only
+  // this browser's calendar can actually be written to — there's no backend
+  // to push the event into other members' accounts too; each participant
+  // independently opens this chat and books their own copy.) optionIndex
+  // picks which suggested slot the user chose; msg.meta.options falls back
+  // to [msg.meta] for older messages sent before the multi-slot refactor.
+  // mode is "busy block" (just meeting up, no live session) or
+  // "study block" (real parallel Lock-In — creates a studySessions doc so
+  // hitting Begin on this task later goes live for everyone in it).
+  const scheduleGroupSession=async(id,optionIndex=0,mode="busy block")=>{
     const msg=messages.find(x=>x.id===id);
     if(!msg||!roomId)return;
     const w=(msg.meta.options||[msg.meta])[optionIndex];
     if(!w)return;
-    const events=lsGet("events",[]);
-    const ev={id:"netsync-"+Date.now(),date:w.date,time:w.time,duration:w.duration,title:peerName+" study session",subject:peerName,kind:"study block"};
-    lsSet("events",[...events,ev]);
-    fsdb().collection('chatRooms').doc(roomId).collection('messages').doc(id).update({status:"scheduled",scheduledOption:optionIndex}).catch(()=>{});
+    let studySessionId=null;
+    if(mode==="study block"&&myUid){
+      const memberUids=isGroup?target.group.memberUids:[myUid,target.user.uid].sort();
+      const memberNames=isGroup?(target.group.memberNames||{}):{[myUid]:getUserName()||"You",[target.user.uid]:target.user.n};
+      const now=new Date().toISOString();
+      const doc=await fsdb().collection('studySessions').add({
+        memberUids,createdBy:myUid,roomId,
+        title:(isGroup?target.group.name:peerName)+" study session",subject:peerName,
+        scheduledDate:w.date,scheduledTime:w.time,duration:w.duration,
+        status:"scheduled",startedBy:null,startedAt:null,endedAt:null,
+        participants:Object.fromEntries(memberUids.map(uid=>{
+          const name=memberNames[uid]||"Studlin User";
+          return [uid,{name,initials:name.split(" ").map(x=>x[0]).join(""),state:"invited",joinedAt:null,leftAt:null}];
+        })),
+        createdAt:now,updatedAt:now,
+      }).catch(()=>null);
+      studySessionId=doc&&doc.id;
+    }
+    addTaskWithRebalance({
+      id:"netsync-"+Date.now(),date:w.date,time:w.time,duration:w.duration,
+      title:mode==="study block"?peerName+" study session":"Meet up with "+peerName,
+      subject:peerName,kind:mode,notes:"",
+      priority:5,difficulty:5,deadline:null,status:"pending",timeSpent:0,completedAt:null,
+      ...(studySessionId?{studySessionId}:{}),
+    });
+    fsdb().collection('chatRooms').doc(roomId).collection('messages').doc(id).update({status:"scheduled",scheduledOption:optionIndex,scheduledMode:mode}).catch(()=>{});
   };
   // Sharing a note/deck posts a pending card first — a lightweight one-click
   // confirmation before it actually goes out (mirrors the same verification
@@ -6000,6 +6093,14 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
   );
 }
 
+// Derives the live "who else is locked in" list from a studySessions doc's
+// participants map — used by TaskTimerModal's coop UI, joinLockIn, and the
+// App-level invite banner. Never includes the current user themselves.
+function computeCoopFromParticipants(participants,myUid){
+  return Object.entries(participants||{})
+    .filter(([uid,p])=>uid!==myUid&&p.state==="joined")
+    .map(([uid,p])=>({uid,name:p.name,initials:p.initials}));
+}
 // ─── CALENDAR ─────────────────────────────────────────────────────────────────
 // ─── TASK TIMER MODAL ────────────────────────────────────────────────────────
 function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignmentExtend,onAttackBlockExtend}){
@@ -6014,6 +6115,22 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
     return ()=>{cancelled=true;};
   },[]);
   const totalMins=task.duration||25;
+  const myUid=firebase.auth().currentUser?.uid||null;
+  // Live studySessions subscription — scoped to this modal's own mount
+  // lifetime only (deps on task.studySessionId), unlike the App-level
+  // ref-mirror listeners which deliberately outlive re-renders: it's
+  // correct for this one to stop the moment the modal closes.
+  const [liveSession,setLiveSession]=useState(null);
+  useEffect(()=>{
+    if(!task.studySessionId)return;
+    const unsub=fsdb().collection('studySessions').doc(task.studySessionId)
+      .onSnapshot(snap=>{if(snap.exists)setLiveSession({id:snap.id,...snap.data()});},()=>{});
+    return unsub;
+  },[task.studySessionId]);
+  // Real participants once the live subscription above has data, falling
+  // back to the synthetic single-entry task.coop the co-op "Join Lock-In"
+  // flow passes directly for its own optimistic first-render UI.
+  const coop=liveSession?computeCoopFromParticipants(liveSession.participants,myUid):(task.coop||[]);
   const quoteRef=useRef(QUOTES[Math.floor(Math.random()*QUOTES.length)]);
   const breakIdeaRef=useRef(BREAK_IDEAS[Math.floor(Math.random()*BREAK_IDEAS.length)]);
   const focusElapsed=useRef(0);
@@ -6259,6 +6376,17 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
 
   const startLockIn=()=>{
     focusElapsed.current=0;
+    // Flip the shared session live the moment the owner actually begins —
+    // not at booking time — so "joined" genuinely means "here right now."
+    if(task.studySessionId&&myUid){
+      const now=Date.now();
+      fsdb().collection('studySessions').doc(task.studySessionId).update({
+        status:'live',startedBy:myUid,startedAt:now,
+        ['participants.'+myUid+'.state']:'joined',
+        ['participants.'+myUid+'.joinedAt']:now,
+        updatedAt:new Date().toISOString(),
+      }).catch(()=>{});
+    }
     if(breakOn&&totalMins>=15&&focus2Mins>0){
       setPhase("focus1");setSecs(breakPos*60);setRunning(true);
     }else{
@@ -6512,21 +6640,21 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
             <h2 style={{fontSize:23,fontWeight:700,color:T.white,margin:"0 0 4px"}}>{mins} min focused</h2>
             <div style={{fontSize:13,color:T.muted,marginBottom:22}}>{task.title}</div>
 
-            <div style={{display:"grid",gridTemplateColumns:task.coop?"1fr 1fr":"1fr",gap:10,marginBottom:tieredUp||rankRose?16:22}}>
+            <div style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(coop.length+1,3)},1fr)`,gap:10,marginBottom:tieredUp||rankRose?16:22}}>
               <div style={{background:T.card2,borderRadius:14,padding:"18px 20px",textAlign:"left"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:9}}>
-                  <span style={{fontSize:12,color:T.muted,fontWeight:600}}>{task.coop?"You":tierAfter}</span>
+                  <span style={{fontSize:12,color:T.muted,fontWeight:600}}>{coop.length?"You":tierAfter}</span>
                   <span style={{fontFamily:T.mono,fontSize:16,fontWeight:700,color:T.lime}}>+{gain}m</span>
                 </div>
                 <div style={{height:6,background:T.border,borderRadius:99,overflow:"hidden"}}>
                   <div style={{height:"100%",width:(barFilled?prog.pct:0)+"%",background:T.lime,borderRadius:99,transition:"width 1.1s cubic-bezier(.2,.8,.2,1)"}}/>
                 </div>
-                <div style={{fontSize:11,color:T.faint,marginTop:7}}>{task.coop?tierAfter:(prog.next?`${(prog.next.minMinutes-minutesAfter).toLocaleString()}m to ${prog.next.title}`:"Maximum rank achieved")}</div>
+                <div style={{fontSize:11,color:T.faint,marginTop:7}}>{coop.length?tierAfter:(prog.next?`${(prog.next.minMinutes-minutesAfter).toLocaleString()}m to ${prog.next.title}`:"Maximum rank achieved")}</div>
               </div>
-              {task.coop&&(
-                <div style={{background:T.card2,borderRadius:14,padding:"18px 20px",textAlign:"left"}}>
+              {coop.slice(0,2).map((p,i)=>(
+                <div key={p.uid||i} style={{background:T.card2,borderRadius:14,padding:"18px 20px",textAlign:"left"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:9}}>
-                    <span style={{fontSize:12,color:T.muted,fontWeight:600}}>{task.coop.name}</span>
+                    <span style={{fontSize:12,color:T.muted,fontWeight:600}}>{p.name}</span>
                     <span style={{fontFamily:T.mono,fontSize:16,fontWeight:700,color:T.teal}}>+{gain}m</span>
                   </div>
                   <div style={{height:6,background:T.border,borderRadius:99,overflow:"hidden"}}>
@@ -6534,8 +6662,9 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
                   </div>
                   <div style={{fontSize:11,color:T.faint,marginTop:7}}>Locked in together</div>
                 </div>
-              )}
+              ))}
             </div>
+            {coop.length>2&&<div style={{fontSize:11.5,color:T.muted,marginTop:-6,marginBottom:16}}>+{coop.length-2} more locked in together</div>}
 
             {tieredUp&&(
               <div style={{fontSize:13,fontWeight:700,color:T.lime,marginBottom:rankRose?14:22,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
@@ -6584,12 +6713,34 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
   // then unmounts once minimizeFocus's timeout lands the widget back in its
   // collapsed circular state.
   if(fullscreen){
+    const fsR=120,fsCirc=2*Math.PI*fsR;
     return(
       <div style={{position:"fixed",inset:0,zIndex:600,background:T.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:40,textAlign:"center",fontFamily:T.font,opacity:focusExiting?0:1,transform:focusExiting?"scale(0.97)":"scale(1)",transition:"opacity 0.22s ease, transform 0.22s ease"}}>
         <button onClick={minimizeFocus} title="Minimize" style={{position:"absolute",top:24,right:24,width:40,height:40,borderRadius:12,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer"}}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
         </button>
-        <div style={{fontFamily:T.mono,fontSize:64,fontWeight:800,color:timerColor,letterSpacing:"-0.02em",marginBottom:28}}>{fmt(secs)}</div>
+        <div style={{position:"relative",width:280,height:280,marginBottom:28,borderRadius:"50%",animation:"studlinGlow 2.4s ease-in-out infinite",["--glow"]:hexA(timerColor,0.35)}}>
+          <svg viewBox="0 0 256 256" style={{width:280,height:280,transform:"rotate(-90deg)"}}>
+            <circle cx="128" cy="128" r={fsR} fill="none" stroke={T.border} strokeWidth="10"/>
+            <circle cx="128" cy="128" r={fsR} fill="none" stroke={timerColor} strokeWidth="10" strokeLinecap="round"
+              strokeDasharray={fsCirc}
+              strokeDashoffset={fsCirc*(1-phasePct)}
+              style={{transition:"stroke-dashoffset 0.5s"}}/>
+          </svg>
+          <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <div style={{fontFamily:T.mono,fontSize:56,fontWeight:800,color:timerColor,letterSpacing:"-0.02em"}}>{fmt(secs)}</div>
+          </div>
+        </div>
+        {coop.length>0&&(
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16}}>
+            <div style={{display:"flex"}}>
+              {coop.slice(0,4).map((p,i)=>(
+                <div key={p.uid||i} style={{marginLeft:i>0?-10:0,border:`2px solid ${T.bg}`,borderRadius:"50%"}}><Av initials={p.initials} color={T.teal} size={32} picUrl="" /></div>
+              ))}
+            </div>
+            <span style={{fontSize:13,color:T.muted}}>{coop.length===1?"Locked in with "+coop[0].name:"Locked in with "+coop.length+" others"}</span>
+          </div>
+        )}
         <div style={{fontSize:16,color:T.text,maxWidth:480,lineHeight:1.65}}>Studlin is running in the background. Minimize this window when you are ready to execute, or leave it open to stay completely zeroed in.</div>
       </div>
     );
@@ -6628,14 +6779,14 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
                 strokeDashoffset={widgetCirc*(1-phasePct)}
                 style={{transition:"stroke-dashoffset 0.5s"}}/>
             </svg>
-            {task.coop&&(
-              <div title={"Locked in with "+task.coop.name} style={{position:"absolute",bottom:-3,right:-3,width:20,height:20,borderRadius:"50%",background:T.teal,border:`2px solid ${T.card}`,display:"grid",placeItems:"center",fontSize:8.5,fontWeight:800,color:T.ink}}>{task.coop.initials}</div>
+            {coop.length>0&&(
+              <div title={"Locked in with "+coop.map(p=>p.name).join(", ")} style={{position:"absolute",bottom:-3,right:-3,width:20,height:20,borderRadius:"50%",background:T.teal,border:`2px solid ${T.card}`,display:"grid",placeItems:"center",fontSize:8.5,fontWeight:800,color:T.ink}}>{coop.length===1?coop[0].initials:"+"+coop.length}</div>
             )}
           </div>
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.09em",textTransform:"uppercase",color:timerColor,marginBottom:2}}>{phaseLabel}</div>
             <div style={{fontFamily:T.mono,fontSize:19,fontWeight:800,color:T.white,letterSpacing:"-0.02em"}}>{fmt(secs)}</div>
-            <div style={{fontSize:11,color:T.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{task.coop?"With "+task.coop.name:task.title}</div>
+            <div style={{fontSize:11,color:T.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{coop.length?"With "+(coop.length===1?coop[0].name:coop.length+" others"):task.title}</div>
           </div>
           <button onClick={()=>setSoundOn(s=>!s)} title={soundOn?"Mute alarm":"Unmute alarm"} style={{width:28,height:28,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:soundOn?T.text:T.faint,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{soundOn?Icon.volume:Icon.volOff}</button>
         </div>
@@ -7759,14 +7910,6 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     deleteRoutineItem(routineEditItem.id);
     closeRoutineEdit();
   };
-  const [groupSyncOpen,setGroupSyncOpen]=useState(false);
-  const [gsStep,setGsStep]=useState(1);
-  const [gsDueDate,setGsDueDate]=useState(dayKey());
-  const [gsDuration,setGsDuration]=useState(120);
-  const [gsStartTime,setGsStartTime]=useState("15:00");
-  const [gsEndTime,setGsEndTime]=useState("17:00");
-  const [gsInvitees,setGsInvitees]=useState("");
-  const [gsResults,setGsResults]=useState(null);
   const [editTitle,setEditTitle]=useState("");
   const [editDate,setEditDate]=useState("");
   const [editTime,setEditTime]=useState("14:30");
@@ -8187,46 +8330,6 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   const nav=(d)=>setYm(c=>{const m2=c.m+d;return {y:c.y+Math.floor(m2/12),m:((m2%12)+12)%12};});
   const toSliderVal=(v,def)=>{const n=v!=null?v:def;return n>10?n:n*100;};
   const openEdit=(ev)=>{setEditEv(ev);setEditTitle(ev.title||"");setEditDate(ev.date||dayKey());setEditTime(ev.time||"14:30");setEditDuration(ev.duration||60);setEditDeadline(ev.deadline||"");setEditDeadlineErr("");setEditPriority(toSliderVal(ev.priority,5));setEditDifficulty(toSliderVal(ev.difficulty,5));setEditMoreOpen(!!(ev.priority&&(ev.priority>10?ev.priority!==500:ev.priority!==5)));setEditSubject(ev.subject||"Chemistry");setEditKind(ev.kind||"deadline");setEditNotes(ev.notes||"");setEditOpen(true);};
-  const runGroupSync=()=>{
-    if(!gsDueDate.trim())return;
-    const prefStart=timeToMinutes(gsStartTime);
-    const prefEnd=timeToMinutes(gsEndTime);
-    const dur=gsDuration;
-    const slots=[];
-    const today=new Date();
-    const due=new Date(gsDueDate);
-    for(let offset=0;offset<=14;offset++){
-      const d=new Date(today);d.setDate(today.getDate()+offset);
-      if(d>due)break;
-      const dk=dayKey(d);
-      const dayEvs=events.filter(e=>e.date===dk);
-      const occupied=dayEvs.map(e=>({s:timeToMinutes(e.time||"0:00"),e:timeToMinutes(e.time||"0:00")+(e.duration||60)}));
-      const isFree=(start,end)=>!occupied.some(o=>!(end<=o.s||start>=o.e));
-      if(prefEnd-prefStart>=dur&&isFree(prefStart,prefStart+dur)){
-        slots.push({tier:1,date:dk,start:gsStartTime,end:minutesToTime(prefStart+dur),day:d.toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})});
-      }
-      if(slots.length>=3)break;
-    }
-    if(slots.length===0){
-      const altWindows=[{s:"09:00",e:"11:00"},{s:"13:00",e:"15:00"},{s:"18:00",e:"20:00"},{s:"20:00",e:"22:00"}];
-      for(let offset=0;offset<=14&&slots.length<3;offset++){
-        const d=new Date(today);d.setDate(today.getDate()+offset);
-        if(d>due)break;
-        const dk=dayKey(d);
-        const dayEvs=events.filter(e=>e.date===dk);
-        const occupied=dayEvs.map(e=>({s:timeToMinutes(e.time||"0:00"),e:timeToMinutes(e.time||"0:00")+(e.duration||60)}));
-        const isFree=(start,end)=>!occupied.some(o=>!(end<=o.s||start>=o.e));
-        for(const w of altWindows){
-          const ws=timeToMinutes(w.s);const we=timeToMinutes(w.e);
-          if(we-ws>=dur&&isFree(ws,ws+dur)){
-            slots.push({tier:2,date:dk,start:w.s,end:minutesToTime(ws+dur),day:d.toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})});
-            break;
-          }
-        }
-      }
-    }
-    setGsResults(slots);setGsStep(2);
-  };
   const closeEdit=()=>{setEditOpen(false);setEditEv(null);};
   const saveEdit=()=>{
     if(!editEv||!editTitle.trim())return;
@@ -8845,49 +8948,6 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
           <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={30} value={riDuration} onChange={setRiDuration} /></Field>
         </div>
         <Field label="Subject"><SelectChip options={SUBJ} value={riSubject} onChange={setRiSubject} /></Field>
-      </Modal>
-      <Modal open={groupSyncOpen} onClose={()=>setGroupSyncOpen(false)} title="Group Smart Match" sub="Find a time slot when everyone is free." width={540}
-        footer={gsStep===1?<><Btn variant="subtle" onClick={()=>setGroupSyncOpen(false)}>Cancel</Btn><Btn onClick={runGroupSync} disabled={!gsDueDate.trim()} style={{opacity:gsDueDate.trim()?1:0.45}}>Find slots</Btn></>:<><Btn variant="subtle" onClick={()=>{setGsStep(1);setGsResults(null);}}>← Back</Btn><Btn variant="subtle" onClick={()=>setGroupSyncOpen(false)}>Done</Btn></>}>
-        {gsStep===1&&(
-          <>
-            <Field label="Project due date"><Input type="date" value={gsDueDate} onChange={e=>setGsDueDate(e.target.value)} /></Field>
-            <Field label="Total meeting duration (minutes)" hint="e.g. 120 for a 2-hour session"><NumField min={15} max={480} fallback={60} value={gsDuration} onChange={setGsDuration} /></Field>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-              <Field label="Preferred window — start"><TimeInput value={gsStartTime} onChange={setGsStartTime} /></Field>
-              <Field label="Preferred window — end"><TimeInput value={gsEndTime} onChange={setGsEndTime} /></Field>
-            </div>
-            <Field label="Group members (optional)" hint="Enter usernames or emails, comma-separated"><Input placeholder="e.g. @alex, @sam, jamie@school.edu" value={gsInvitees} onChange={e=>setGsInvitees(e.target.value)} /></Field>
-          </>
-        )}
-        {gsStep===2&&(
-          <div>
-            {gsResults&&gsResults.length===0&&<div style={{textAlign:"center",padding:"24px 0",color:T.muted,fontSize:13}}>No available slots found before the due date. Try extending the window or increasing flexibility.</div>}
-            {gsResults&&gsResults.length>0&&(
-              <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                {gsResults.some(s=>s.tier===1)&&<div style={{fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.lime,marginBottom:4}}>Ideal matches — everyone is free</div>}
-                {gsResults.filter(s=>s.tier===1).map((s,i)=>(
-                  <div key={"t1-"+i} style={{display:"flex",alignItems:"center",justify:"space-between",padding:"14px 16px",background:T.lime+"0e",border:`1px solid ${T.lime}33`,borderRadius:10}}>
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:13,fontWeight:600,color:T.white}}>{s.day}</div>
-                      <div style={{fontSize:12,color:T.lime}}>{s.start} – {s.end} · {gsDuration} min</div>
-                    </div>
-                    <BtnSm onClick={()=>{commitTasks([{id:String(Date.now()),title:"Group meeting",date:s.date,time:s.start,subject:"Other",kind:"study block",notes:gsInvitees?"Members: "+gsInvitees:"",priority:4,difficulty:2,deadline:gsDueDate,duration:gsDuration,status:"pending",timeSpent:0,completedAt:null}]);setGroupSyncOpen(false);}}>Book it</BtnSm>
-                  </div>
-                ))}
-                {gsResults.some(s=>s.tier===2)&&<div style={{fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.amber,margin:"8px 0 4px"}}>Alternative slots</div>}
-                {gsResults.filter(s=>s.tier===2).map((s,i)=>(
-                  <div key={"t2-"+i} style={{display:"flex",alignItems:"center",padding:"14px 16px",background:T.amber+"0a",border:`1px solid ${T.amber}33`,borderRadius:10}}>
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:13,fontWeight:600,color:T.white}}>{s.day}</div>
-                      <div style={{fontSize:12,color:T.amber}}>{s.start} – {s.end} · {gsDuration} min</div>
-                    </div>
-                    <BtnSm onClick={()=>{commitTasks([{id:String(Date.now()),title:"Group meeting",date:s.date,time:s.start,subject:"Other",kind:"study block",notes:gsInvitees?"Members: "+gsInvitees:"",priority:4,difficulty:2,deadline:gsDueDate,duration:gsDuration,status:"pending",timeSpent:0,completedAt:null}]);setGroupSyncOpen(false);}}>Book it</BtnSm>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </Modal>
     </>
   );
@@ -12241,6 +12301,46 @@ function App() {
     return unsub;
   },[myUid]);
 
+  // Real-time "someone just went live" invite banner — FriendsChat (where
+  // the inbox's own liveSessions listener lives) unmounts on tab switch, so
+  // this is the same long-lived-listener problem the unread-count router
+  // above already solves, reusing its exact ref-mirror technique.
+  const [liveInvite,setLiveInvite]=useState(null);
+  const seenLiveRef=useRef(new Set());
+  useEffect(()=>{
+    if(!myUid)return;
+    const unsub=fsdb().collection('studySessions')
+      .where('memberUids','array-contains',myUid).where('status','==','live')
+      .onSnapshot(snap=>{
+        snap.docChanges().forEach(ch=>{
+          if(ch.type==='removed')return;
+          const s={id:ch.doc.id,...ch.doc.data()};
+          if(s.startedBy===myUid)return; // I'm the one who started it
+          if(timerTaskRef.current&&timerTaskRef.current.studySessionId===s.id)return; // already in it
+          if(seenLiveRef.current.has(s.id))return; // already surfaced this one
+          seenLiveRef.current.add(s.id);
+          setLiveInvite(s);
+        });
+      },()=>{});
+    return unsub;
+  },[myUid]);
+  const joinLiveInvite=async()=>{
+    if(!liveInvite||!myUid)return;
+    const now=Date.now();
+    await fsdb().collection('studySessions').doc(liveInvite.id).update({
+      ['participants.'+myUid+'.state']:'joined',
+      ['participants.'+myUid+'.joinedAt']:now,
+      updatedAt:new Date().toISOString(),
+    }).catch(()=>{});
+    setTimerTask({
+      id:"coop-"+liveInvite.id,title:liveInvite.title,subject:liveInvite.subject,
+      duration:Math.max(5,liveInvite.duration||25),kind:"study block",
+      studySessionId:liveInvite.id,
+      coop:computeCoopFromParticipants(liveInvite.participants,myUid),
+    });
+    setLiveInvite(null);
+  };
+
   // First time the user opens Studlin Network, ask for desktop notification
   // permission and (if granted) register a device token for real push. A
   // second Notification.requestPermission() call when already granted/denied
@@ -12667,7 +12767,16 @@ function App() {
         )}
       </Modal>
 
-      {timerTask&&<TaskTimerModal task={timerTask} onClose={()=>setTimerTask(null)}
+      {timerTask&&<TaskTimerModal task={timerTask} onClose={()=>{
+        if(timerTask.studySessionId&&myUid){
+          fsdb().collection('studySessions').doc(timerTask.studySessionId).update({
+            ['participants.'+myUid+'.state']:'left',
+            ['participants.'+myUid+'.leftAt']:Date.now(),
+            updatedAt:new Date().toISOString(),
+          }).catch(()=>{});
+        }
+        setTimerTask(null);
+      }}
         onAssignmentComplete={()=>{
           const aid=timerTask.assignmentId;
           fsdb().collection('assignments').doc(aid).update({status:"completed",updatedAt:new Date().toISOString()}).catch(()=>{});
@@ -12746,10 +12855,23 @@ function App() {
         </div>
       )}
 
+      {liveInvite&&(
+        <div style={{position:"fixed",bottom:headsUpEvent?110:20,left:20,zIndex:999,padding:"12px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.teal}55`,boxShadow:`0 8px 24px rgba(0,0,0,0.35), 0 0 0 1px ${T.teal}22`,animation:"studlinPop 0.2s ease",maxWidth:300,display:"flex",alignItems:"center",gap:12}}>
+          <div style={{fontSize:12.5,color:T.text,flex:1}}>
+            <strong>{liveInvite.title}</strong> is locking in right now — join?
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:6,flexShrink:0}}>
+            <BtnSm onClick={joinLiveInvite} style={{padding:"6px 12px",fontSize:11,background:T.teal}}>Join now</BtnSm>
+            <button onClick={()=>setLiveInvite(null)} style={{background:"none",border:"none",color:T.faint,fontSize:11,cursor:"pointer",fontFamily:T.font}}>Dismiss</button>
+          </div>
+        </div>
+      )}
+
       <ScheduleSettingsPanel open={scheduleSettingsOpen} onClose={()=>setScheduleSettingsOpen(false)} onSave={()=>{}} />
 
       <style>{`
         @keyframes studlinPulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.7)} }
+        @keyframes studlinGlow { 0%,100%{box-shadow:0 0 0 0 var(--glow)} 50%{box-shadow:0 0 32px 8px var(--glow)} }
         @keyframes studlinFade { from{opacity:0} to{opacity:1} }
         @keyframes studlinPop { from{opacity:0;transform:scale(0.96) translateY(8px)} to{opacity:1;transform:none} }
         @keyframes studlinRise {
