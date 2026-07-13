@@ -132,7 +132,7 @@ function App() {
     if(window.__isInAppBrowser&&window.__isInAppBrowser()){setGlobalError("Google sign-in isn't available in this app's built-in browser. Tap the ⋯ or ⋮ menu and choose \"Open in Browser\" to continue.");setLoading(false);return;}
     if(typeof google==="undefined"||!google.accounts){setGlobalError("Google sign-in is still loading. Please try again.");setLoading(false);return;}
     const client = google.accounts.oauth2.initTokenClient({
-      client_id:"1040364882429-jsnnda6kot7gfq205ieaqmvqrong28o9.apps.googleusercontent.com",
+      client_id:"16831354472-rp345qhnnqcthvsq2m528e6o8n4vhfp2.apps.googleusercontent.com",
       scope:"email profile",
       callback: async (tokenResponse) => {
         if(tokenResponse.error){setGlobalError("Google sign-in was cancelled.");setLoading(false);return;}
