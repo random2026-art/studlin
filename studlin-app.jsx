@@ -7728,8 +7728,8 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
         "For each item return: \"title\" (short, e.g. \"Chem homework\" or \"Email counselor\"), "+
         "\"kind\", one of: "+
         "\"study\" — anything that takes real focused work time (homework, studying, a project) — Studlin finds an open slot for it; "+
-        "\"todo\" — a quick task with no real duration and no fixed time, like sending an email, a form, or a phone call; "+
-        "\"event\" — something happening at a specific real-world time that Studlin should never move, like an appointment, a class, a shift, a meeting; "+
+        "\"todo\" — a quick task with no real duration and no fixed time, like sending an email, a form, or a phone call — this includes submitting or sending anything related to a class or exam (e.g. \"send AP exam scores to a college\", \"submit lab report\"), since the ACTION being done is a quick task even though the subject matter is academic; classify by the verb, not by incidental words like \"exam\" or \"class\" in the title; "+
+        "\"event\" — something the student personally attends or is present for at a specific real-world time that Studlin should never move, like an appointment, a class, a shift, a meeting, or taking an exam itself — never an action ABOUT an exam or class, like sending, submitting, or emailing something related to one; "+
         "\"reminder\" — a quick nudge at a specific time, e.g. \"remind me to...\" or \"don't forget to... at...\". "+
         "\"durationMin\" (your best-guess minutes needed, for kind:\"study\" or kind:\"event\" — null otherwise), "+
         "\"dueDate\" (YYYY-MM-DD. For \"study\"/\"todo\" this is the deadline; for \"event\"/\"reminder\" this is the day it happens. \"today\"/\"tonight\" means the date given above, \"Friday\" means the next occurrence of that weekday. Be literal: if the student named a specific day, always return it, even if it's today. Only use null when truly no timing was mentioned at all), "+
@@ -11363,7 +11363,7 @@ function InitWizard({onComplete}){
   );
 
   return (
-    <div style={{minHeight:"100vh",height:"100%",overflowY:"auto",background:bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 16px",fontFamily:`"Geist",system-ui,sans-serif`}}>
+    <div style={{height:"100vh",overflowY:"auto",background:bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 16px",fontFamily:`"Geist",system-ui,sans-serif`}}>
       {/* Logo */}
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:40}}>
         <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#14342A,#0E1F18)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(158,200,61,0.35)"}}>
