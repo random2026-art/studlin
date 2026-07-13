@@ -3,6 +3,7 @@ const { auth, db } = require('./_lib/firebase-admin');
 const { setCors, verifyAuth } = require('./_lib/auth');
 const { Resend } = require('resend');
 const { withSentry } = require('./_lib/sentry');
+const { checkRateLimit } = require('./_lib/rateLimit');
 
 const FROM = 'Studlin <noreply@studlin.com>';
 const OTP_TTL_MS = 10 * 60 * 1000;
@@ -63,6 +64,9 @@ async function verifyCode(user, submittedCode, res) {
 async function sendCode(user, res) {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) return res.status(503).json({ error: 'Email service not configured' });
+
+  const { allowed } = await checkRateLimit(`send-verification:${user.uid}`, 3, 10 * 60 * 1000);
+  if (!allowed) return res.status(429).json({ error: 'Too many codes requested. Please wait a few minutes.' });
 
   const firebaseUser = await auth.getUser(user.uid).catch(() => null);
   if (!firebaseUser) return res.status(404).json({ error: 'User not found' });

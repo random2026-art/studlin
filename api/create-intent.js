@@ -1,6 +1,7 @@
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { setCors, verifyAuth } = require('./_lib/auth');
 const { withSentry } = require('./_lib/sentry');
+const { checkRateLimit } = require('./_lib/rateLimit');
 
 const CREDIT_PACKS = {
   150:  499,
@@ -26,6 +27,9 @@ module.exports = withSentry(async (req, res) => {
 
   const user = await verifyAuth(req);
   if (!user) return res.status(401).json({ error: 'Sign in required.' });
+
+  const { allowed } = await checkRateLimit(`create-intent:${user.uid}`, 10, 15 * 60 * 1000);
+  if (!allowed) return res.status(429).json({ error: 'Too many requests. Please try again later.' });
 
   try {
     const { mode, credits, customAmount, plan, country, paymentMethodId } = req.body;
