@@ -41,6 +41,12 @@ module.exports = withSentry(async (req, res) => {
       plan: data.plan || 'Free',
       credits: data.credits ?? DEFAULT_CREDITS,
       email: data.email || user.email || null,
+      stripeSubscriptionId: data.stripeSubscriptionId || null,
+      subscriptionStatus: data.subscriptionStatus || null,
+      subscriptionInterval: data.subscriptionInterval || null,
+      subscriptionCancelAtPeriodEnd: !!data.subscriptionCancelAtPeriodEnd,
+      subscriptionCurrentPeriodEnd: data.subscriptionCurrentPeriodEnd || null,
+      subscriptionEndsAt: data.subscriptionEndsAt || null,
     });
   } catch (err) {
     console.warn('Profile lookup unavailable, returning defaults:', err.message);
