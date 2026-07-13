@@ -1043,25 +1043,49 @@ function hourBucket(timeStr){
   const b=TIER0_HOUR_BUCKETS.find(b=>mins>=b.startMin&&mins<b.endMin);
   return b?b.id:null;
 }
+// Two-tier split only — day-of-week/subject dimensions deliberately not
+// added, sample sizes don't support 3 new dimensions on an already-thin
+// signal. Uses normalizeTaskVal (below) rather than a raw difficulty>=3
+// check because task.difficulty is stored in two incompatible scales across
+// this file (raw 0-10 at several hardcoded creation sites, 0-1000 from the
+// Add/Edit Task slider) — a naive >=3 check would misclassify almost every
+// slider-created task as "hard" regardless of what the student picked.
+const DIFFICULTY_HARD_THRESHOLD=0.3; // matches the existing raw-scale >=3 semantic
+function difficultyTierOf(task){
+  return normalizeTaskVal(task&&task.difficulty,5)>=DIFFICULTY_HARD_THRESHOLD?"hard":"easy";
+}
 // Append-only log, one entry per known outcome — mirrors the `sessions`
 // array logSession writes (scan-on-demand, no running aggregate). Silently
 // no-ops for time-less events (checklist items) since they have no bucket.
-function logCompletionOutcome(outcome,timeStr){
+// `tier` (from difficultyTierOf) is optional so old entries stay untiered
+// rather than being misclassified.
+function logCompletionOutcome(outcome,timeStr,tier){
   const bucket=hourBucket(timeStr);
   if(!bucket)return;
   const log=lsGet("completionLog",[]);
-  log.push({bucket,outcome,t:Date.now()});
+  const entry={bucket,outcome,t:Date.now()};
+  if(tier)entry.tier=tier;
+  log.push(entry);
   lsSet("completionLog",log);
 }
 // Fraction of tasks placed in `bucket` that actually got done vs. missed.
 // Returns null below TIER0_MIN_BUCKET_SAMPLE — an honest "not enough data
 // yet" signal callers must treat as neutral, never fabricated confidence.
+// Optional `tier` prefers a difficulty-specific rate once that combo alone
+// has enough samples; otherwise falls back to the bucket-wide aggregate
+// (which includes both tiered and legacy untiered rows) exactly as before —
+// old entries with no `tier` key never match `e.tier===tier`, so they can
+// only ever contribute to the fallback, never get miscounted into a tier.
 const TIER0_MIN_BUCKET_SAMPLE=8;
-function getBucketReliability(bucket){
+function getBucketReliability(bucket,tier){
   if(!bucket)return null;
-  const entries=lsGet("completionLog",[]).filter(e=>e.bucket===bucket);
-  if(entries.length<TIER0_MIN_BUCKET_SAMPLE)return null;
-  return entries.filter(e=>e.outcome==="done").length/entries.length;
+  const all=lsGet("completionLog",[]).filter(e=>e.bucket===bucket);
+  if(tier){
+    const tiered=all.filter(e=>e.tier===tier);
+    if(tiered.length>=TIER0_MIN_BUCKET_SAMPLE)return tiered.filter(e=>e.outcome==="done").length/tiered.length;
+  }
+  if(all.length<TIER0_MIN_BUCKET_SAMPLE)return null;
+  return all.filter(e=>e.outcome==="done").length/all.length;
 }
 // Finds where Studlin should silently move a missed task. Adds no new
 // scanning logic on top of findSlotWithEviction/findLegalSlotOrNull — every
@@ -1109,6 +1133,7 @@ function findTier0Slot(task,events,routines,prefs,todayKey){
   const deadlineKey=task.deadline||null;
   const desiredTime=task.time||prefs.workStartTime;
   const desiredMins=timeToMinutes(desiredTime);
+  const tier=difficultyTierOf(task);
   const candidates=[];
   for(let i=0;i<TIER0_CANDIDATE_DAYS;i++){
     const d=(()=>{const x=new Date(todayKey+"T12:00:00");x.setDate(x.getDate()+i);return dayKey(x);})();
@@ -1120,7 +1145,7 @@ function findTier0Slot(task,events,routines,prefs,todayKey){
       const {events:relocated,placement}=findSlotWithEviction(events,routines,prefs,d,anchor,dur,deadlineKey);
       if(!placement)return;
       const bucket=hourBucket(placement.time);
-      const reliability=getBucketReliability(bucket);
+      const reliability=getBucketReliability(bucket,tier);
       const inferredScore=reliability===null?0.5:reliability;
       // A student-declared peak bucket only ever raises the score, never
       // lowers a non-declared one — and can outweigh even bad inferred data,
@@ -1156,8 +1181,9 @@ function findTier0Slot(task,events,routines,prefs,todayKey){
 // nowFloorMins) and bounded to the day's real work window, so a bucket
 // anchor sitting in the past or outside work hours never becomes a fake
 // candidate just because nothing conflicts with it that early/late.
-function findReliableSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey){
+function findReliableSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey,difficulty){
   const baseline=findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey);
+  const tier=difficultyTierOf({difficulty});
   const{start:winStart,end:winEnd}=getWorkWindowMinsFor(prefs,baseline.date);
   let floorMins=winStart;
   if(baseline.date===dayKey()){
@@ -1173,17 +1199,27 @@ function findReliableSlotFor(events,routines,prefs,desiredDate,desiredTime,durat
     const tMins=timeToMinutes(t);
     if(occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end)))return;
     const bucket=hourBucket(t);
-    const reliability=getBucketReliability(bucket);
+    const reliability=getBucketReliability(bucket,tier);
     const inferredScore=reliability===null?0.5:reliability;
     const isDeclaredPeak=bucket&&(prefs.peakHourBuckets||[]).includes(bucket);
     const reliabilityScore=isDeclaredPeak?Math.max(TIER0_PEAK_BUCKET_SCORE,inferredScore):inferredScore;
     const continuityMins=Math.abs(tMins-desiredMins);
     const score=TIER0_SCORE_WEIGHTS.reliability*reliabilityScore-TIER0_SCORE_WEIGHTS.continuity*(continuityMins/1440);
-    candidates.push({date:baseline.date,time:t,score});
+    candidates.push({date:baseline.date,time:t,score,bucket,isDeclaredPeak,reliability});
   });
   if(candidates.length===0)return baseline;
   candidates.sort((a,b)=>b.score-a.score);
-  return {date:candidates[0].date,time:candidates[0].time};
+  const win=candidates[0];
+  // Only claim a reason when the reliability engine actually changed the
+  // outcome vs. the plain baseline, and only when it's backed by a real
+  // signal (declared peak, or an actual inferred rate) — never fabricate a
+  // "why" for a slot that just happened to tie with the baseline.
+  let reason=null;
+  if(win.time!==baseline.time){
+    if(win.isDeclaredPeak)reason={type:"peak",bucket:win.bucket,tier};
+    else if(win.reliability!==null)reason={type:"reliability",bucket:win.bucket,pct:win.reliability,tier};
+  }
+  return {date:win.date,time:win.time,reason};
 }
 // Restores a Tier0-moved task to its pre-move {date,time} and strips the
 // marker fields. Doesn't re-run collision detection — this is an explicit,
@@ -1203,6 +1239,20 @@ function undoTier0Move(taskId){
 }
 function fmtClock12(t){if(!t)return"";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+ap;}
 function fmtMovedFrom(mf){if(!mf)return"";const dk=mf.date===dayKey()?"today":mf.date;return dk+" "+fmtClock12(mf.time);}
+// Copy for a findReliableSlotFor `.reason` — includes the difficulty tier
+// word once Direction 4's tiering is live, since the same bucket can now
+// show different percentages for a hard vs. easy task ("87% of hard evening
+// tasks" vs "61% of easy evening tasks") and the copy needs to say why.
+function fmtPlacementReason(reason,timeStr){
+  if(!reason)return "";
+  const label=(PEAK_BUCKET_LABELS[reason.bucket]||"").toLowerCase();
+  if(reason.type==="peak")return "Scheduled in your peak "+label+" hours.";
+  if(reason.type==="reliability"){
+    const diffWord=reason.tier==="easy"?" easy":reason.tier==="hard"?" hard":"";
+    return "Scheduled for "+fmtClock12(timeStr)+" — you finish "+Math.round(reason.pct*100)+"% of"+diffWord+" "+label+" tasks.";
+  }
+  return "";
+}
 // Places a student-reported "I need more time" extension for an assignment
 // into the next open gap(s) before its deadline. Splits anything over 90min
 // into multiple sessions (same chunking ceiling aiArrange uses), each placed
@@ -1677,7 +1727,7 @@ function rebalanceDay(dateKey,allEvents,routines,prefs){
   });
   expandRoutineOccurrences(routines||[],dateKey,dateKey)
     .filter(function(r){return r.kind!=="free period";})
-    .forEach(function(r){occupiedBase.push({start:timeToMinutes(r.time)-(isFixed(r)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(r.time)+(r.duration||30)});});
+    .forEach(function(r){occupiedBase.push({start:timeToMinutes(r.time)-(isFixed(r)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(r.time)+(r.duration||30)+computeBreathingRoom(r.duration||30)});});
 
   // With only one flexible task, there's nothing to reorder relative to —
   // leave it exactly where it is unless it's actually colliding with
@@ -3209,9 +3259,9 @@ function Flashcards() {
     const prefs=getSchedulePreferences();
     let working=events;
     const sessions=dates.map(date=>{
-      const slot=findReliableSlotFor(working,routines,prefs,date,prefs.workStartTime,duration,exam.date);
+      const slot=findReliableSlotFor(working,routines,prefs,date,prefs.workStartTime,duration,exam.date,5);
       working=working.concat([{date:slot.date,time:slot.time,duration}]);
-      return {date:slot.date,time:slot.time,duration,include:true};
+      return {date:slot.date,time:slot.time,duration,include:true,placementReason:slot.reason||null};
     });
     setReviewSchedulePreview({deckId:deck.id,deckName:deck.name,examTitle:exam.title,examDate:exam.date,sessions});
   };
@@ -3225,6 +3275,7 @@ function Flashcards() {
       subject:"",kind:"study block",notes:"",priority:5,difficulty:5,
       deadline:reviewSchedulePreview.examDate,duration:s.duration,
       status:"pending",timeSpent:0,completedAt:null,deckId:reviewSchedulePreview.deckId,
+      placementReason:s.placementReason||null,
     }));
     lsSet("events",events.concat(newEvents));
     setReviewSchedulePreview(null);
@@ -7182,8 +7233,21 @@ function computeRescheduleCandidates(task,events,routines,prefs){
   for(let i=1;i<=RESCHEDULE_SCAN_DAYS;i++){
     const d=(()=>{const x=new Date();x.setDate(x.getDate()+i);return dayKey(x);})();
     if(deadlineKey&&d>deadlineKey)break;
-    const {events:relocated,placement}=findSlotWithEviction(events,routines,prefs,d,desiredTime,taskMins,deadlineKey);
+    // Ask the reliability engine what time it'd prefer on day d — but only
+    // trust it if the engine actually stayed on day d (findOpenSlotFor's own
+    // forward-scan inside it can roll to a different day if a later
+    // reliability-preferred anchor narrows the window past what's open, even
+    // when d genuinely had room earlier in it).
+    const reliable=findReliableSlotFor(events,routines,prefs,d,desiredTime,taskMins,deadlineKey,task.difficulty);
+    const timeForDay=(reliable.date===d)?reliable.time:desiredTime;
+    let {events:relocated,placement}=findSlotWithEviction(events,routines,prefs,d,timeForDay,taskMins,deadlineKey);
+    // If the reliability time produced no placement, or drifted off d anyway
+    // (same forward-scan risk, post-eviction), retry with the original time.
+    if(timeForDay!==desiredTime&&(!placement||placement.date!==d)){
+      ({events:relocated,placement}=findSlotWithEviction(events,routines,prefs,d,desiredTime,taskMins,deadlineKey));
+    }
     if(!placement)continue;
+    const reason=(timeForDay!==desiredTime&&placement.time===timeForDay)?(reliable.reason||null):null;
     const dayEvents=events.filter(e=>e.date===d&&e.status!=="done"&&e.id!==task.id);
     // rawBaseMins (actual existing load, 0 for a genuinely empty day) is what
     // ranking uses — a free day should always win. `baseMins` below may get
@@ -7205,7 +7269,7 @@ function computeRescheduleCandidates(task,events,routines,prefs){
       const orig=events.find(o=>o.id===e.id);
       return orig&&orig.date===d&&e.date!==d;
     }).length;
-    candidates.push({date:d,dayOffset:i,placement,events:relocated,taskMins,baseMins,rawBaseMins,pct,isHigh:pct>=15,evictedCount});
+    candidates.push({date:d,dayOffset:i,placement,events:relocated,reason,taskMins,baseMins,rawBaseMins,pct,isHigh:pct>=15,evictedCount});
   }
   candidates.sort((a,b)=>a.rawBaseMins-b.rawBaseMins||a.evictedCount-b.evictedCount||a.dayOffset-b.dayOffset);
   return candidates.slice(0,RESCHEDULE_MAX_CANDIDATES);
@@ -7221,7 +7285,7 @@ function RescheduleModal({task,events,commit,onClose}){
 
   const confirm=()=>{
     if(!selected)return;
-    const finalEvents=selected.events.map(e=>e.id===task.id?{...e,date:selected.placement.date,time:selected.placement.time}:e);
+    const finalEvents=selected.events.map(e=>e.id===task.id?{...e,date:selected.placement.date,time:selected.placement.time,placementReason:selected.reason||null}:e);
     commit(finalEvents,selected.evictedCount);
     onClose();
   };
@@ -7434,6 +7498,11 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   // rescheduled, null when closed.
   const [rescheduleTask,setRescheduleTask]=useState(null);
   const [rescheduleToast,setRescheduleToast]=useState("");
+  // "Why here" confirmation — only shown for a clean single-task commit with
+  // a real placementReason (see commitTasks below); a multi-task batch can't
+  // attribute one reason to the whole toast, so those keep the plain "Task
+  // added" toast instead and rely on the edit-modal banner per-task.
+  const [placementToast,setPlacementToast]=useState("");
   // Tier 3 — Global Emergency "Studlin Reschedule". pausePreview holds the
   // computed (not-yet-committed) plan: {label, moved:[...], couldntMove:[...]}.
   const [pauseOpen,setPauseOpen]=useState(false);
@@ -7628,7 +7697,13 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
       setSelDay(d);
       if(d.slice(0,7)!==(ym.y+"-"+String(ym.m+1).padStart(2,"0"))){const p=d.split("-");setYm({y:+p[0],m:+p[1]-1});}
     }
-    setToast(true);setTimeout(()=>setToast(false),2200);
+    const withReason=tasksToAdd.filter(function(t){return t.placementReason;});
+    if(tasksToAdd.length===1&&withReason.length===1){
+      setPlacementToast(fmtPlacementReason(withReason[0].placementReason,withReason[0].time));
+      setTimeout(()=>setPlacementToast(""),3200);
+    }else{
+      setToast(true);setTimeout(()=>setToast(false),2200);
+    }
     if(onTaskSaved)onTaskSaved();
   };
   // A checklist item is deliberately minimal — title and an optional due
@@ -7718,8 +7793,8 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     // item, the one parseBrainDump call above already did the understanding.
     items.filter(it=>it.kind==="study").forEach(it=>{
       const duration=Math.max(5,it.durationMin||30);
-      const slot=findReliableSlotFor(working,routines,prefs,today,prefs.workStartTime,duration,it.dueDate||null);
-      const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:slot.date,time:slot.time,subject:"",kind:"study block",notes:"",priority:5,difficulty:5,deadline:it.dueDate||null,duration,status:"pending",timeSpent:0,completedAt:null};
+      const slot=findReliableSlotFor(working,routines,prefs,today,prefs.workStartTime,duration,it.dueDate||null,5);
+      const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:slot.date,time:slot.time,subject:"",kind:"study block",notes:"",priority:5,difficulty:5,deadline:it.dueDate||null,duration,status:"pending",timeSpent:0,completedAt:null,placementReason:slot.reason||null};
       studyTasks.push(task);working=working.concat([task]);
     });
     // Todo-kind items skip scheduling entirely, same shape as saveChecklistItem.
@@ -7759,17 +7834,17 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     const occupied=events.filter(e=>e.date===date&&e.time)
       .map(e=>({start:timeToMinutes(e.time)-(TIER0_FIXED_KINDS.has(e.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}))
       .concat(expandRoutineOccurrences(routines,date,date).filter(o=>o.kind!=="free period")
-        .map(o=>({start:timeToMinutes(o.time)-(TIER0_FIXED_KINDS.has(o.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(o.time)+(o.duration||30)})));
+        .map(o=>({start:timeToMinutes(o.time)-(TIER0_FIXED_KINDS.has(o.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(o.time)+(o.duration||30)+computeBreathingRoom(o.duration||30)})));
     const tMins=timeToMinutes(time);
     const conflict=occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end));
-    return conflict?findReliableSlotFor(events,routines,getSchedulePreferences(),date,time,duration):{date,time};
+    return conflict?findReliableSlotFor(events,routines,getSchedulePreferences(),date,time,duration,undefined,evDifficulty):{date,time,reason:null};
   };
   const saveManual=()=>{
     if(!evTitle.trim()||!evDate.trim()||!evTime.trim())return;
     if(evSaveToRoutine&&(evKind==="exam"||evKind==="class"||evKind==="busy block")){saveToRoutineFromForm();return;}
     if(!evSplitEnabled){
       const slot=resolveManualSlot(evDate,evTime,evDuration);
-      commitTasks([buildTask(slot.date,slot.time)],{userPinned:true});
+      commitTasks([{...buildTask(slot.date,slot.time),placementReason:slot.reason||null}],{userPinned:true});
       return;
     }
     const groupId="split-"+Date.now();
@@ -7778,7 +7853,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     for(let i=0;i<evSplitCount;i++){
       const d=new Date(evDate);d.setDate(d.getDate()+i);
       const slot=resolveManualSlot(dayKey(d),evTime,perSession);
-      tasks.push(buildTask(slot.date,slot.time," ("+(i+1)+"/"+evSplitCount+")",{splitGroup:groupId,splitIndex:i+1,splitTotal:evSplitCount,duration:perSession}));
+      tasks.push({...buildTask(slot.date,slot.time," ("+(i+1)+"/"+evSplitCount+")",{splitGroup:groupId,splitIndex:i+1,splitTotal:evSplitCount,duration:perSession}),placementReason:slot.reason||null});
     }
     commitTasks(tasks,{userPinned:true});
   };
@@ -7821,7 +7896,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     // Deterministic hard-lock enforcement — the prompt below asks the LLM to
     // avoid conflicts and prefer free-period windows, but "strictly
     // forbidden" needs a real guarantee, not just advisory text.
-    const findOpenSlot=(desiredDate,desiredTime,duration)=>findReliableSlotFor(events,routines,prefs,desiredDate,desiredTime,duration);
+    const findOpenSlot=(desiredDate,desiredTime,duration)=>findReliableSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,undefined,evDifficulty);
     const prompt="You are a scheduling AI. The user's LIVE clock reads "+nowTime+" on "+tk+". Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+priorityLabel+(evDeadline?". Deadline: "+evDeadline+" "+(evDeadlineTime||"23:59"):"")+". Existing schedule, including recurring classes/activities that repeat weekly — treat every one of these as a hard block you may NEVER overlap: "+JSON.stringify(existing)+". Free/open windows (free periods or study halls) good for short sub-20-minute sessions specifically: "+JSON.stringify(freeAhead)+". The user's preferred daily study window is "+prefs.workStartTime+"–"+prefs.workEndTime+" on weekdays"+(prefs.weekendEnabled?" and "+prefs.weekendStartTime+"–"+prefs.weekendEndTime+" on weekends (Sat/Sun)":"")+" — always fill that window first, chronologically from the start, before ever using time outside it. CRITICAL USER INTENT: The user explicitly selected "+desiredStartDate+" on the calendar. Start scheduling on "+desiredStartDate+" — do NOT place any session before this date. STRICT RULES (violations are forbidden): 1) NEVER schedule before "+desiredStartDate+". 2) The first available slot on "+desiredStartDate+" starts at "+windowStartTime+". 3) If "+desiredStartDate+" has no open window at or after "+windowStartTime+", start from "+firstAvailDate+" instead. 4) Prefer sessions within that day's preferred window; only expand outside it (up to 08:00-22:00) if the preferred window is fully booked that day. 5) Higher priority = earlier slots within the allowed date range. 6) Must be before deadline. 7) NEVER overlap anything in the existing schedule, including recurring blocks — this is non-negotiable. 8) If this session is 20 minutes or less, prefer placing it inside one of the free/open windows listed above. 9) Spread splits across consecutive days starting from "+desiredStartDate+". Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
     // If the AI call fails or returns nothing usable, fall back to a fully
     // deterministic placement — evDate/evTime are blank in AI mode, so
@@ -7832,7 +7907,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
       let cursorDate=firstAvailDate,cursorTime=windowStartTime;
       for(let i=0;i<splitCount;i++){
         const slot=findOpenSlot(cursorDate,cursorTime,perSession);
-        tasks.push(buildTask(slot.date,slot.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})));
+        tasks.push({...buildTask(slot.date,slot.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})),placementReason:slot.reason||null});
         const d=new Date(slot.date+"T12:00:00");d.setDate(d.getDate()+1);
         cursorDate=dayKey(d);cursorTime=minutesToTime(getWorkWindowMinsFor(prefs,cursorDate).start);
       }
@@ -7854,16 +7929,18 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
           }
           // Deterministic conflict check — reject/reshift anything that
           // actually overlaps a real event or routine shield, rather than
-          // trusting the LLM followed the prompt's rules.
-          const occupied=events.filter(e=>e.date===date&&e.time)
-            .concat(getRoutineOccurrencesForDate(date).filter(o=>o.kind!=="free period"))
-            .map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)}));
+          // trusting the LLM followed the prompt's rules. Uses the same
+          // shared lead-in/breathing-room formula every other placement path
+          // trusts (this used to be a weaker, buffer-less check of its own).
+          const occupied=computeOccupiedIntervals(events,routines,prefs,date);
           const tMins=timeToMinutes(time);
           const conflict=occupied.some(o=>!(tMins+perSession<=o.start||tMins>=o.end));
-          return conflict?findOpenSlot(date,time,perSession):{date,time};
+          // The AI's own happy-path slot (no conflict) has no reason to
+          // attach — the reliability engine was never consulted for it.
+          return conflict?findOpenSlot(date,time,perSession):{date,time,reason:null};
         });
         const groupId=splitCount>1?"split-"+Date.now():null;
-        const tasks=sanitized.slice(0,splitCount).map((s,i)=>buildTask(s.date,s.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})));
+        const tasks=sanitized.slice(0,splitCount).map((s,i)=>({...buildTask(s.date,s.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})),placementReason:s.reason||null}));
         commitTasks(tasks);
       }else{fallbackSchedule();}
     }catch(e){fallbackSchedule();}
@@ -7899,9 +7976,17 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     let finalTime=checkTime;
     if(checkTime){
       const dur=ev.duration||30;
+      // Routine/class occurrences are folded into the same occupied array as
+      // real events (previously checked only against events — a drag could
+      // silently land directly on top of a class with zero pushback) so the
+      // existing nearest-open-slot search below relocates around both
+      // uniformly, instead of a separate reject-and-explain path.
       const occupied=events.filter(e=>e.id!==id&&e.date===newDate&&e.time&&e.kind!=="free period").map(e=>({
         start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)
-      }));
+      })).concat(expandRoutineOccurrences(routines,newDate,newDate).filter(o=>o.kind!=="free period").map(o=>({
+        start:timeToMinutes(o.time)-(TIER0_FIXED_KINDS.has(o.kind)?LEAD_IN_BUFFER_MINS:0),
+        end:timeToMinutes(o.time)+(o.duration||30)+computeBreathingRoom(o.duration||30)
+      })));
       const checkMins=timeToMinutes(checkTime);
       const collides=occupied.some(o=>!(checkMins+dur<=o.start||checkMins>=o.end));
       if(collides){
@@ -7928,14 +8013,16 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
       const merged={...e,date:newDate,...(checkTime?{time:finalTime,userPinned:true}:{})};
       // A deliberate manual move (any time chosen) supersedes Studlin's own
       // move — clear the Tier 0 marker so the badge/banner don't linger.
-      if(checkTime){const {movedByStudlin,movedFrom,movedAt,...rest}=merged;return rest;}
+      // placementReason goes too: it would otherwise keep claiming a "why"
+      // for a slot the student picked themselves, not one Studlin chose.
+      if(checkTime){const {movedByStudlin,movedFrom,movedAt,placementReason,...rest}=merged;return rest;}
       return merged;
     });
     setEvents(next);lsSet("events",next);
   };
   const markDone=(id)=>{
     const target=events.find(ev=>ev.id===id);
-    if(target&&target.time)logCompletionOutcome("done",target.time);
+    if(target&&target.time)logCompletionOutcome("done",target.time,difficultyTierOf(target));
     const next=events.map(ev=>{if(ev.id!==id)return ev;const {movedByStudlin,movedFrom,movedAt,...rest}=ev;return {...rest,status:"done",completedAt:Date.now()};});
     setEvents(next);lsSet("events",next);
   };
@@ -7996,7 +8083,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     const updated=events.map(e=>{
       if(e.id!==editEv.id)return e;
       const merged={...e,title:editTitle.trim(),date:editDate,time:editTime,duration:editDuration,deadline:editDeadline||null,priority:editPriority,difficulty:editDifficulty,subject:editSubject,kind:editKind,notes:editNotes,...(timeChanged?{userPinned:true}:{})};
-      if(timeChanged){const {movedByStudlin,movedFrom,movedAt,...rest}=merged;return rest;}
+      if(timeChanged){const {movedByStudlin,movedFrom,movedAt,placementReason,...rest}=merged;return rest;}
       return merged;
     });
     const prefs=getSchedulePreferences();
@@ -8216,6 +8303,9 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
       )}
       {toast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} Task added</div>
+      )}
+      {placementToast&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {placementToast}</div>
       )}
       {deadlineToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.red,color:"#fff",fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)"}}>{deadlineToast}</div>
@@ -8455,6 +8545,11 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
               setEvents(undoTier0Move(editEv.id));
               closeEdit();
             }} style={{background:"none",border:"none",color:T.lime,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Undo</button>
+          </div>
+        )}
+        {editEv&&editEv.placementReason&&(
+          <div style={{display:"flex",alignItems:"center",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:T.muted}}>
+            <span>🕒 {fmtPlacementReason(editEv.placementReason,editEv.time)}</span>
           </div>
         )}
         {editDeadlineErr&&<div style={{fontSize:12,color:T.red,marginTop:-8,marginBottom:14}}>{editDeadlineErr}</div>}
@@ -10445,7 +10540,7 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
   const toggleChecklistItem=(id)=>{
     const all=lsGet("events",[]);
     const target=all.find(ev=>ev.id===id);
-    if(target&&target.status!=="done"&&target.time)logCompletionOutcome("done",target.time);
+    if(target&&target.status!=="done"&&target.time)logCompletionOutcome("done",target.time,difficultyTierOf(target));
     const next=all.map(ev=>ev.id===id?{...ev,status:ev.status==="done"?"pending":"done",completedAt:ev.status==="done"?null:Date.now()}:ev);
     lsSet("events",next);forcePlan(x=>x+1);
   };
@@ -11976,7 +12071,7 @@ function App() {
     // across multiple days only logs one "missed" per occurrence, not once
     // per day it remains overdue.
     const yesterday=(()=>{const d=new Date(today+"T12:00:00");d.setDate(d.getDate()-1);return dayKey(d);})();
-    cleaned.filter(ev=>isTier0Missed(ev,today)&&ev.date===yesterday).forEach(ev=>logCompletionOutcome("missed",ev.time));
+    cleaned.filter(ev=>isTier0Missed(ev,today)&&ev.date===yesterday).forEach(ev=>logCompletionOutcome("missed",ev.time,difficultyTierOf(ev)));
     // Tier 0 — the trigger is silent (no click needed to move an eligible
     // missed task), but the result never is: every move gets recorded into
     // movedBatch so the banner below and the per-task badge can always show
@@ -12300,7 +12395,7 @@ function App() {
         }}
         onComplete={(mins)=>{
         logSession(mins,"Task: "+timerTask.title);
-        if(timerTask.time)logCompletionOutcome("done",timerTask.time);
+        if(timerTask.time)logCompletionOutcome("done",timerTask.time,difficultyTierOf(timerTask));
         const next=lsGet("events",[]).map(ev=>ev.id===timerTask.id?{...ev,status:"done",timeSpent:mins,completedAt:Date.now()}:ev);
         lsSet("events",next);
         // Modal stays open to show the XP/leaderboard reward summary — it
