@@ -97,9 +97,34 @@ service cloud.firestore {
           && request.auth.uid in get(/databases/$(database)/documents/chatRooms/$(roomId)).data.memberUids;
         allow update: if request.auth != null
           && request.auth.uid in get(/databases/$(database)/documents/chatRooms/$(roomId)).data.memberUids
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','scheduledOption','scheduledMode']);
         allow delete: if false;
       }
+    }
+
+    // Real live study sessions — shared/parallel Lock-In. memberUids is
+    // frozen at create, same convention as chatRooms, and drives every
+    // membership check below. Rules can't cheaply restrict "may only write
+    // your own key inside participants" (Firestore rules operate on whole-
+    // document diffs, not per-map-key ACLs) — chatRooms already accepts this
+    // same trust boundary for memberNames, so this mirrors that posture
+    // rather than inventing a workaround; every member is already an
+    // accepted friend.
+    match /studySessions/{sessionId} {
+      allow read: if request.auth != null && request.auth.uid in resource.data.memberUids;
+      allow create: if request.auth != null
+        && request.auth.uid in request.resource.data.memberUids
+        && request.resource.data.memberUids.size() >= 2
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.status == 'scheduled'
+        && request.resource.data.startedBy == null;
+      allow update: if request.auth != null && request.auth.uid in resource.data.memberUids
+        && request.resource.data.memberUids == resource.data.memberUids
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.roomId == resource.data.roomId
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['participants','status','startedBy','startedAt','endedAt','updatedAt']);
+      allow delete: if request.auth != null && request.auth.uid == resource.data.createdBy;
     }
 
     // Username reservations — a doc ID existing at all means that handle is
