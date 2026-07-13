@@ -11,6 +11,10 @@ const PLAN_MAP = {
 
 const PLAN_CREDITS = { Pro: 200, Max: 500 };
 
+function isoFromStripeSeconds(value) {
+  return value ? new Date(value * 1000).toISOString() : null;
+}
+
 async function handlePaymentSucceeded(intent) {
   const uid = intent.metadata?.firebase_uid;
   if (!uid) return;
@@ -39,6 +43,7 @@ async function handleSubscriptionUpdated(subscription) {
   const priceId = item?.price?.id;
   const plan = PLAN_MAP[priceId] || 'Free';
   const active = ['active', 'trialing'].includes(subscription.status);
+  const currentPeriodEnd = isoFromStripeSeconds(subscription.current_period_end);
 
   const userRef = db.collection('users').doc(uid);
   await db.runTransaction(async (tx) => {
@@ -48,6 +53,11 @@ async function handleSubscriptionUpdated(subscription) {
       plan: active ? plan : 'Free',
       stripeSubscriptionId: subscription.id,
       stripeCustomerId: subscription.customer,
+      subscriptionStatus: subscription.status,
+      subscriptionInterval: item?.price?.recurring?.interval || null,
+      subscriptionCancelAtPeriodEnd: !!subscription.cancel_at_period_end,
+      subscriptionCurrentPeriodEnd: currentPeriodEnd,
+      subscriptionEndsAt: subscription.cancel_at_period_end ? currentPeriodEnd : null,
     };
     if (doc.exists) {
       tx.update(userRef, update);
@@ -88,7 +98,14 @@ async function handleSubscriptionDeleted(subscription) {
   const userRef = db.collection('users').doc(uid);
   const doc = await userRef.get();
   if (doc.exists) {
-    await userRef.update({ plan: 'Free', stripeSubscriptionId: null });
+    await userRef.update({
+      plan: 'Free',
+      stripeSubscriptionId: null,
+      subscriptionStatus: 'canceled',
+      subscriptionCancelAtPeriodEnd: false,
+      subscriptionCurrentPeriodEnd: null,
+      subscriptionEndsAt: null,
+    });
   }
 }
 
