@@ -1343,7 +1343,7 @@ const prioLabel=(v)=>{const p=v/10;return p<=20?"Low":p<=40?"Low–Medium":p<=60
 const diffLabel=(v)=>{const p=v/10;return p<=20?"Very Easy":p<=40?"Easy":p<=60?"Medium":p<=80?"Hard":"Very Hard";};
 async function getAuthToken(){try{const u=firebase.auth().currentUser;if(!u)return null;return await u.getIdToken();}catch(e){return null;}}
 async function authFetch(url,opts={}){try{const token=await getAuthToken();const h=Object.assign({},opts.headers||{});if(token)h["Authorization"]="Bearer "+token;return fetch(url,Object.assign({},opts,{headers:h}));}catch(e){return fetch(url,opts);}}
-async function fetchUserProfile(){try{const res=await authFetch("/api/me");if(!res.ok)return null;const d=await res.json();lsSet("credits",d.credits);lsSet("plan",d.plan||"Free");return d;}catch(e){return null;}}
+async function fetchUserProfile(){try{const res=await authFetch("/api/me");if(!res.ok)return null;const d=await res.json();lsSet("credits",d.credits);lsSet("plan",d.plan||"Free");["stripeSubscriptionId","subscriptionStatus","subscriptionInterval","subscriptionCancelAtPeriodEnd","subscriptionCurrentPeriodEnd","subscriptionEndsAt"].forEach(k=>lsSet(k,d[k]===undefined?null:d[k]));return d;}catch(e){return null;}}
 
 // ─── FIRESTORE (client SDK) — live user directory + friend graph ────────────
 // Everything privacy-sensitive (credits, plan, email) stays server-only via
@@ -9552,6 +9552,39 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   };
   const [profile,setProfileState]=useState(()=>getProfile());
   const updProfile=(patch)=>{const n={...profile,...patch};setProfileState(n);saveProfile(n);};
+  const [account,setAccount]=useState(()=>({
+    plan:getPlan(),
+    credits:getCredits(),
+    email:firebase.auth().currentUser?.email||profile.email,
+    stripeSubscriptionId:lsGet("stripeSubscriptionId",null),
+    subscriptionStatus:lsGet("subscriptionStatus",null),
+    subscriptionInterval:lsGet("subscriptionInterval",null),
+    subscriptionCancelAtPeriodEnd:!!lsGet("subscriptionCancelAtPeriodEnd",false),
+    subscriptionCurrentPeriodEnd:lsGet("subscriptionCurrentPeriodEnd",null),
+    subscriptionEndsAt:lsGet("subscriptionEndsAt",null),
+  }));
+  useEffect(()=>{
+    let alive=true;
+    fetchUserProfile().then(d=>{if(d&&alive)setAccount(a=>({...a,...d}));});
+    return()=>{alive=false;};
+  },[]);
+  const fmtBillingDate=(iso)=>{
+    if(!iso)return "the end of your billing period";
+    try{return new Date(iso).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});}catch(e){return "the end of your billing period";}
+  };
+  const planPriceText=(plan,interval)=>{
+    if(plan==="Max")return interval==="year"?"$239.88/year":"$24.99/mo";
+    if(plan==="Pro")return interval==="year"?"$95.88/year":"$9.99/mo";
+    return "Free";
+  };
+  const subscriptionPlanLine=()=>{
+    const plan=account.plan||getPlan();
+    if(plan==="Free")return "Free plan";
+    const end=account.subscriptionCurrentPeriodEnd||account.subscriptionEndsAt;
+    return account.subscriptionCancelAtPeriodEnd
+      ?"Active until "+fmtBillingDate(end)
+      :planPriceText(plan,account.subscriptionInterval)+" - renews "+fmtBillingDate(end);
+  };
 
   // Gathers every studlin-* localStorage key into one JSON file and downloads
   // it — same blob pattern as downloadEssay (Essays/WriteStudio).
@@ -9568,9 +9601,44 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   };
   const [chatHistoryLoading,setChatHistoryLoading]=useState(false);
   const [deleteAccountOpen,setDeleteAccountOpen]=useState(false);
-  const confirmDeleteAccount=()=>{
-    Object.keys(localStorage).forEach(k=>{if(k.indexOf("studlin-")===0)localStorage.removeItem(k);});
-    firebase.auth().signOut().then(()=>{window.location.href="/";});
+  const [deleteConfirmText,setDeleteConfirmText]=useState("");
+  const [deleteAccountLoading,setDeleteAccountLoading]=useState(false);
+  const [deleteAccountError,setDeleteAccountError]=useState("");
+  const [subscriptionAction,setSubscriptionAction]=useState(null);
+  const [subscriptionLoading,setSubscriptionLoading]=useState(false);
+  const [subscriptionError,setSubscriptionError]=useState("");
+  const applyAccountUpdate=(data)=>{
+    setAccount(a=>({...a,...data}));
+    ["stripeSubscriptionId","subscriptionStatus","subscriptionInterval","subscriptionCancelAtPeriodEnd","subscriptionCurrentPeriodEnd","subscriptionEndsAt"].forEach(k=>lsSet(k,data[k]===undefined?null:data[k]));
+  };
+  const runSubscriptionAction=async(action)=>{
+    if(subscriptionLoading)return;
+    setSubscriptionLoading(true);setSubscriptionError("");
+    try{
+      const res=await authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action})});
+      const data=await res.json().catch(()=>({}));
+      if(!res.ok)throw new Error(data.error||"Could not update subscription.");
+      applyAccountUpdate(data);
+      setSubscriptionAction(null);
+    }catch(e){
+      setSubscriptionError(e.message||"Could not update subscription.");
+    }
+    setSubscriptionLoading(false);
+  };
+  const confirmDeleteAccount=async()=>{
+    if(deleteConfirmText.trim().toUpperCase()!=="DELETE"||deleteAccountLoading)return;
+    setDeleteAccountLoading(true);setDeleteAccountError("");
+    try{
+      const res=await authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"delete-account"})});
+      const data=await res.json().catch(()=>({}));
+      if(!res.ok)throw new Error(data.error||"Could not delete account.");
+      Object.keys(localStorage).forEach(k=>{if(k.indexOf("studlin-")===0)localStorage.removeItem(k);});
+      try{await firebase.auth().signOut();}catch(e){}
+      window.location.href="/";
+    }catch(e){
+      setDeleteAccountError(e.message||"Could not delete account. Please contact support.");
+      setDeleteAccountLoading(false);
+    }
   };
   const downloadChatHistory=async()=>{
     const myUid=firebase.auth().currentUser?.uid;
@@ -9663,7 +9731,6 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     {id:"Integrations",icon:Icon.link},
     {id:"Usage",icon:Icon.zap},
     {id:"Subscription",icon:Icon.layers},
-    {id:"Danger zone",icon:Icon.xmark},
   ];
   const Toggle = ({k}) => (
     <div onClick={()=>tog(k)} style={{width:38,height:20,borderRadius:10,background:toggles[k]?T.lime:T.card2,border:`1px solid ${toggles[k]?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
@@ -9759,7 +9826,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 <button onClick={()=>firebase.auth().signOut().then(()=>{window.location.href="/";})} style={{padding:"8px 18px",borderRadius:8,border:"1px solid rgba(248,113,113,0.3)",background:"rgba(248,113,113,0.08)",color:"#f87171",fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Sign out</button>
               </div>
             </Card>
-            <Card>
+            <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Connected accounts</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Sync your calendar and cloud notes.</div>
               {[["Google Calendar","Synced",true,true],["Apple Calendar","Connect",false,false],["Notion workspace","Connect",false,false],["Dropbox","Connect",false,false]].map(([n,st,on,live],i)=>(
@@ -9769,6 +9836,28 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 </div>
               ))}
             </Card>
+            <Card style={{border:"1px solid rgba(224,90,71,0.22)"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:18}}>
+                <div>
+                  <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Delete account</div>
+                  <div style={{fontSize:12,color:T.muted,lineHeight:1.55}}>Permanently delete your account and study data. You'll be removed from groups, and old shared messages may remain as Deleted user.</div>
+                </div>
+                <Btn variant="danger" onClick={()=>{setDeleteConfirmText("");setDeleteAccountError("");setDeleteAccountOpen(true);}} style={{flexShrink:0}}>Delete my account</Btn>
+              </div>
+            </Card>
+            <Modal open={deleteAccountOpen} onClose={()=>{if(!deleteAccountLoading)setDeleteAccountOpen(false);}} title="Delete your account?" sub="This permanently removes your Studlin account and cannot be undone."
+              footer={<>
+                <Btn variant="subtle" disabled={deleteAccountLoading} onClick={()=>setDeleteAccountOpen(false)}>Cancel</Btn>
+                <Btn variant="danger" disabled={deleteAccountLoading||deleteConfirmText.trim().toUpperCase()!=="DELETE"} onClick={confirmDeleteAccount}>{deleteAccountLoading?"Deleting...":"Delete my account"}</Btn>
+              </>}>
+              <div style={{fontSize:12.5,color:T.text,lineHeight:1.65,marginBottom:14}}>
+                This deletes your profile, private account data, Canvas-linked courses and assignments, friend connections, and Firebase sign-in. If you have an active subscription, future billing is canceled. Group chats will remove you as a member and show your old messages as Deleted user.
+              </div>
+              <Field label='Type "DELETE" to confirm'>
+                <Input value={deleteConfirmText} onChange={e=>setDeleteConfirmText(e.target.value)} disabled={deleteAccountLoading} />
+              </Field>
+              {deleteAccountError&&<div style={{fontSize:12,color:T.red,marginTop:10,lineHeight:1.5}}>{deleteAccountError}</div>}
+            </Modal>
           </>)}
 
           {active==="Appearance" && (<>
@@ -10082,8 +10171,8 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                 <div>
                   <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.bg,opacity:0.6}}>CURRENT PLAN</div>
-                  <div style={{fontSize:26,fontWeight:700,color:T.bg,letterSpacing:"-0.02em",marginTop:4}}>Pro</div>
-                  <div style={{fontSize:13,color:T.bg,opacity:0.75,marginTop:4}}>$9.99/mo · renews Jul 12, 2026</div>
+                  <div style={{fontSize:26,fontWeight:700,color:T.bg,letterSpacing:"-0.02em",marginTop:4}}>{account.plan||getPlan()}</div>
+                  <div style={{fontSize:13,color:T.bg,opacity:0.75,marginTop:4}}>{subscriptionPlanLine()}</div>
                 </div>
                 <div style={{textAlign:"right"}}>
                   <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.bg,opacity:0.6}}>AI CHAT MESSAGES</div>
@@ -10094,9 +10183,23 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <div style={{display:"flex",gap:8,marginTop:18,flexWrap:"wrap"}}>
                 <a href="checkout.html?credits=500" style={{background:T.bg,color:T.lime,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Buy credit packs</a>
                 <a href="checkout.html?plan=max&billing=monthly" style={{background:"transparent",border:`1px solid ${T.bg}55`,color:T.bg,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Upgrade to Max</a>
-                <button onClick={()=>{if(confirm("Are you sure you want to cancel your Pro plan? You'll keep access until Jul 12, 2026.")){alert("Your plan has been cancelled. You'll retain access until your current billing period ends.");}}} style={{background:"transparent",border:`1px solid ${T.bg}44`,color:T.bg,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,opacity:0.7}}>Cancel plan</button>
               </div>
             </Card>
+            {account.stripeSubscriptionId&&(
+              <Card style={{marginBottom:12}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:16}}>
+                  <div>
+                    <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Manage subscription</div>
+                    <div style={{fontSize:12,color:T.muted,lineHeight:1.55}}>
+                      {account.subscriptionCancelAtPeriodEnd?"Your subscription is canceled. You'll keep "+(account.plan||getPlan())+" perks until "+fmtBillingDate(account.subscriptionCurrentPeriodEnd||account.subscriptionEndsAt)+".":"Cancel future payments and keep "+(account.plan||getPlan())+" through "+fmtBillingDate(account.subscriptionCurrentPeriodEnd||account.subscriptionEndsAt)+"."}
+                    </div>
+                  </div>
+                  {account.subscriptionCancelAtPeriodEnd
+                    ?<Btn variant="subtle" onClick={()=>{setSubscriptionError("");setSubscriptionAction("resume");}} style={{flexShrink:0}}>Resume subscription</Btn>
+                    :<Btn variant="subtle" onClick={()=>{setSubscriptionError("");setSubscriptionAction("cancel");}} style={{flexShrink:0}}>Cancel subscription</Btn>}
+                </div>
+              </Card>
+            )}
             <Card style={{marginBottom:12}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                 <div style={{fontSize:14,fontWeight:700,color:T.white}}>Payment methods</div>
@@ -10122,30 +10225,18 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 </div>
               ))}
             </Card>
-          </>)}
-
-          {active==="Danger zone" && (<>
-            <Card style={{marginBottom:12,border:"1px solid rgba(214,117,96,0.3)"}}>
-              <div style={{fontSize:13,fontWeight:700,color:T.red,marginBottom:4}}>Reset progress</div>
-              <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Wipe your streak, focus minutes, level, and Wrapped history. Notes and essays are kept.</div>
-              <Btn variant="danger">Reset all progress</Btn>
-            </Card>
-            <Card style={{marginBottom:12,border:"1px solid rgba(214,117,96,0.3)"}}>
-              <div style={{fontSize:13,fontWeight:700,color:T.red,marginBottom:4}}>Pause subscription</div>
-              <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Pause billing for up to 90 days. We'll keep your data intact and email you when it's about to resume.</div>
-              <Btn variant="danger">Pause for 30 days</Btn>
-            </Card>
-            <Card style={{border:"1px solid rgba(214,117,96,0.3)"}}>
-              <div style={{fontSize:13,fontWeight:700,color:T.red,marginBottom:4}}>Delete account</div>
-              <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Permanently remove your account, notes, essays, flashcards, and squad memberships. This cannot be undone.</div>
-              <Btn variant="danger" onClick={()=>setDeleteAccountOpen(true)}>Delete my account</Btn>
-            </Card>
-            <Modal open={deleteAccountOpen} onClose={()=>setDeleteAccountOpen(false)} title="Delete your account?" sub="Are you sure? This will permanently delete your schedules, notes, and optimized plans."
+            <Modal open={!!subscriptionAction} onClose={()=>{if(!subscriptionLoading)setSubscriptionAction(null);}} title={subscriptionAction==="cancel"?"Cancel subscription?":"Resume subscription?"}
+              sub={subscriptionAction==="cancel"?"Future payments stop, but your paid access stays active through this billing period.":"Your subscription will renew as usual."}
               footer={<>
-                <Btn variant="subtle" onClick={()=>setDeleteAccountOpen(false)}>Cancel</Btn>
-                <Btn variant="danger" onClick={confirmDeleteAccount}>Delete my account</Btn>
+                <Btn variant="subtle" disabled={subscriptionLoading} onClick={()=>setSubscriptionAction(null)}>{subscriptionAction==="cancel"?"Keep subscription":"Not now"}</Btn>
+                <Btn disabled={subscriptionLoading} onClick={()=>runSubscriptionAction(subscriptionAction)}>{subscriptionLoading?(subscriptionAction==="cancel"?"Canceling...":"Resuming..."):(subscriptionAction==="cancel"?"Cancel subscription":"Resume subscription")}</Btn>
               </>}>
-              <div style={{fontSize:12.5,color:T.text,lineHeight:1.6}}>This cannot be undone. You'll be signed out immediately.</div>
+              <div style={{fontSize:13,color:T.text,lineHeight:1.6}}>
+                {subscriptionAction==="cancel"
+                  ?"You'll keep "+(account.plan||getPlan())+" until "+fmtBillingDate(account.subscriptionCurrentPeriodEnd||account.subscriptionEndsAt)+". We won't charge you again after that."
+                  :"Your "+(account.plan||getPlan())+" subscription will renew on "+fmtBillingDate(account.subscriptionCurrentPeriodEnd||account.subscriptionEndsAt)+"."}
+              </div>
+              {subscriptionError&&<div style={{fontSize:12,color:T.red,marginTop:12,lineHeight:1.5}}>{subscriptionError}</div>}
             </Modal>
           </>)}
         </div>
