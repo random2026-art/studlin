@@ -51,6 +51,47 @@ const isDisposableEmail = (email) => {
   return DISPOSABLE_EMAIL_DOMAINS.has(domain);
 };
 
+// Hard block: charset/length/repeated-character sanity that no real name
+// ever fails. Deliberately loose (allows accented Latin letters, hyphens,
+// apostrophes, spaces) so it never rejects a legitimate name.
+const isValidNameShape = (name) => {
+  const t = (name||"").trim();
+  if (t.length < 2 || t.length > 40) return false;
+  if (!/^[A-Za-zÀ-ɏḀ-ỿ' -]+$/.test(t)) return false;
+  if (/([A-Za-z])\1{3,}/.test(t)) return false; // e.g. "jjjj", "aaaa"
+  return true;
+};
+
+// Soft signal only — flags keyboard-mash-looking names (4+ consonants in a
+// row) for a non-blocking warning. NOT a hard rule: real surnames (Schmidt,
+// Strickland, Krzysztof...) hit this same pattern, so it must never block
+// submission, only nudge a second look.
+const looksLikeGibberishName = (name) => {
+  const t = (name||"").trim();
+  return /[bcdfghjklmnpqrstvwxyzBCDFGHJKLMNPQRSTVWXYZ]{4,}/.test(t);
+};
+
+// Have I Been Pwned's k-anonymity range API: only the first 5 hex chars of
+// the SHA-1 hash ever leave the browser, so the real password is never
+// transmitted, logged, or reconstructable by the API. Fails open (treats
+// as "not pwned") on any network/API error — a third-party outage must
+// never block signup.
+async function isPasswordPwned(password) {
+  try {
+    const enc = new TextEncoder().encode(password);
+    const digest = await crypto.subtle.digest("SHA-1", enc);
+    const hashHex = Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,"0")).join("").toUpperCase();
+    const prefix = hashHex.slice(0,5);
+    const suffix = hashHex.slice(5);
+    const res = await fetch(`https://api.pwnedpasswords.com/range/${prefix}`);
+    if (!res.ok) return false;
+    const text = await res.text();
+    return text.split("\n").some(line => line.split(":")[0].trim() === suffix);
+  } catch(e) {
+    return false;
+  }
+}
+
 const ERR_MAP = {
   "auth/email-already-in-use":"An account with this email already exists. Try signing in.",
   "auth/invalid-email":"Please enter a valid email address.",
@@ -60,7 +101,7 @@ const ERR_MAP = {
   "auth/account-exists-with-different-credential":"An account exists with this email using a different method.",
 };
 
-function TextField({ label, value, onChange, type="text", hint, error, autoFocus, autoComplete }) {
+function TextField({ label, value, onChange, type="text", hint, error, warning, autoFocus, autoComplete }) {
   const [focused, setFocused] = useState(false);
   const [show, setShow] = useState(false);
   const isPw = type === "password";
@@ -74,7 +115,8 @@ function TextField({ label, value, onChange, type="text", hint, error, autoFocus
         {isPw && <button type="button" className="pwd-toggle" onClick={()=>setShow(s=>!s)}>{show ? Ic.eyeOff : Ic.eye}</button>}
       </div>
       {error && <div className="field-error">{error}</div>}
-      {!error && hint && <div className="field-hint">{hint}</div>}
+      {!error && warning && <div className="field-hint" style={{color:"#B8860B"}}>{warning}</div>}
+      {!error && !warning && hint && <div className="field-hint">{hint}</div>}
     </div>
   );
 }
@@ -210,6 +252,13 @@ function StepSignup({ state, set, advance }) {
     if (Object.keys(errs).length > 0) return;
 
     setAuthError("");setLoading(true);
+
+    if (await isPasswordPwned(state.password)) {
+      setErrors(e => ({ ...e, password: "This password has appeared in a data breach. Please choose a different one." }));
+      setLoading(false);
+      return;
+    }
+
     try {
       const cred = await firebase.auth().createUserWithEmailAndPassword(state.email, state.password);
       // Full name is collected later, in StepProfile (First/Last name) —
@@ -383,6 +432,13 @@ function StepProfile({ state, set }) {
     }
   }, []);
 
+  const firstNameVal = state.firstName || "";
+  const lastNameVal = state.lastName || "";
+  const firstNameError = firstNameVal && !isValidNameShape(firstNameVal) ? "Enter a valid first name" : "";
+  const lastNameError = lastNameVal && !isValidNameShape(lastNameVal) ? "Enter a valid last name" : "";
+  const firstNameWarning = !firstNameError && firstNameVal && looksLikeGibberishName(firstNameVal) ? "This doesn't look like a typical name — go ahead if it's correct" : "";
+  const lastNameWarning = !lastNameError && lastNameVal && looksLikeGibberishName(lastNameVal) ? "This doesn't look like a typical name — go ahead if it's correct" : "";
+
   return (
     <div className="frame">
       <div className="frame-head">
@@ -390,8 +446,8 @@ function StepProfile({ state, set }) {
         <p>Just the basics — everything else you can set up later.</p>
       </div>
 
-      <TextField label="First name" value={state.firstName||""} onChange={v=>set({...state, firstName:v})} autoFocus autoComplete="given-name" />
-      <TextField label="Last name" value={state.lastName||""} onChange={v=>set({...state, lastName:v})} autoComplete="family-name" />
+      <TextField label="First name" value={state.firstName||""} onChange={v=>set({...state, firstName:v})} autoFocus autoComplete="given-name" error={firstNameError} warning={firstNameWarning} />
+      <TextField label="Last name" value={state.lastName||""} onChange={v=>set({...state, lastName:v})} autoComplete="family-name" error={lastNameError} warning={lastNameWarning} />
       <TextField label="Enter your University / School" value={state.school||""} onChange={v=>set({...state, school:v})} hint="Just the name — no need to search a list." />
     </div>
   );
@@ -437,7 +493,7 @@ function App() {
       return !!state.terms && (!!firebase.auth().currentUser || !!(state.provider) || !!(state.email && (state.password||"").length >= 8));
     }
     if (step === 1) return isVerifiedOrGoogle(firebase.auth().currentUser);
-    if (step === 2) return !!(state.firstName||"").trim() && !!(state.lastName||"").trim() && !!(state.school||"").trim();
+    if (step === 2) return isValidNameShape(state.firstName) && isValidNameShape(state.lastName) && !!(state.school||"").trim();
     return true;
   };
 
