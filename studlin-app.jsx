@@ -843,6 +843,16 @@ function getWorkWindowMinsFor(prefs,dk){
   return {start:timeToMinutes(prefs.workStartTime),end:timeToMinutes(prefs.workEndTime)};
 }
 const CATCHUP_BUFFER_MINS=120;
+// Shared occupied-interval computation for a single day — mirrors the inline
+// pattern already duplicated across findOpenSlotFor, findLegalSlotOrNull,
+// dayHasRoomFor and resolveManualSlot. Only findReliableSlotFor (below) uses
+// this shared version; the existing call sites are left as-is to avoid any
+// behavior risk from touching working code.
+function computeOccupiedIntervals(events,routines,prefs,dateKey){
+  return events.filter(e=>e.date===dateKey&&e.time)
+    .concat(expandRoutineOccurrences(routines,dateKey,dateKey).filter(o=>o.kind!=="free period"))
+    .map(e=>({start:timeToMinutes(e.time)-(TIER0_FIXED_KINDS.has(e.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
+}
 function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey){
   // Never hand back a slot that's already passed today. Most callers (Brain
   // Dump, assignment extensions, review sessions, overdue rollover) pass a
@@ -1133,6 +1143,47 @@ function findTier0Slot(task,events,routines,prefs,todayKey){
   if(candidates.length===0)return null;
   candidates.sort((a,b)=>b.score-a.score);
   return {events:candidates[0].events,placement:candidates[0].placement};
+}
+// New-task placement with same-day reliability-aware time-of-day scoring —
+// the fresh-task counterpart to findTier0Slot's missed-task reflow. Never
+// changes which DAY a task lands on: that's still exactly whatever
+// findOpenSlotFor decides (catch-up buffer, deadline capping, past-time
+// safety, 14-day fallback all untouched). Only refines the TIME within that
+// day, using the same declared-peak/inferred-reliability signal Tier 0
+// already trusts — a fresh task should still land ASAP the way it does
+// today, just at a smarter hour if more than one legal slot exists.
+// Anchors are floored to "now" for today (mirrors findOpenSlotFor's own
+// nowFloorMins) and bounded to the day's real work window, so a bucket
+// anchor sitting in the past or outside work hours never becomes a fake
+// candidate just because nothing conflicts with it that early/late.
+function findReliableSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey){
+  const baseline=findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey);
+  const{start:winStart,end:winEnd}=getWorkWindowMinsFor(prefs,baseline.date);
+  let floorMins=winStart;
+  if(baseline.date===dayKey()){
+    const now=new Date();
+    floorMins=Math.max(floorMins,Math.ceil((now.getHours()*60+now.getMinutes()+15)/15)*15);
+  }
+  const desiredMins=timeToMinutes(baseline.time);
+  const occupied=computeOccupiedIntervals(events,routines,prefs,baseline.date);
+  const anchorTimes=Array.from(new Set([baseline.time,...TIER0_HOUR_BUCKETS.map(b=>minutesToTime(b.startMin))]))
+    .filter(t=>{const m=timeToMinutes(t);return m>=floorMins&&m+duration<=winEnd;});
+  const candidates=[];
+  anchorTimes.forEach(t=>{
+    const tMins=timeToMinutes(t);
+    if(occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end)))return;
+    const bucket=hourBucket(t);
+    const reliability=getBucketReliability(bucket);
+    const inferredScore=reliability===null?0.5:reliability;
+    const isDeclaredPeak=bucket&&(prefs.peakHourBuckets||[]).includes(bucket);
+    const reliabilityScore=isDeclaredPeak?Math.max(TIER0_PEAK_BUCKET_SCORE,inferredScore):inferredScore;
+    const continuityMins=Math.abs(tMins-desiredMins);
+    const score=TIER0_SCORE_WEIGHTS.reliability*reliabilityScore-TIER0_SCORE_WEIGHTS.continuity*(continuityMins/1440);
+    candidates.push({date:baseline.date,time:t,score});
+  });
+  if(candidates.length===0)return baseline;
+  candidates.sort((a,b)=>b.score-a.score);
+  return {date:candidates[0].date,time:candidates[0].time};
 }
 // Restores a Tier0-moved task to its pre-move {date,time} and strips the
 // marker fields. Doesn't re-run collision detection — this is an explicit,
@@ -3158,7 +3209,7 @@ function Flashcards() {
     const prefs=getSchedulePreferences();
     let working=events;
     const sessions=dates.map(date=>{
-      const slot=findOpenSlotFor(working,routines,prefs,date,prefs.workStartTime,duration,exam.date);
+      const slot=findReliableSlotFor(working,routines,prefs,date,prefs.workStartTime,duration,exam.date);
       working=working.concat([{date:slot.date,time:slot.time,duration}]);
       return {date:slot.date,time:slot.time,duration,include:true};
     });
@@ -7667,7 +7718,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     // item, the one parseBrainDump call above already did the understanding.
     items.filter(it=>it.kind==="study").forEach(it=>{
       const duration=Math.max(5,it.durationMin||30);
-      const slot=findOpenSlotFor(working,routines,prefs,today,prefs.workStartTime,duration,it.dueDate||null);
+      const slot=findReliableSlotFor(working,routines,prefs,today,prefs.workStartTime,duration,it.dueDate||null);
       const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:slot.date,time:slot.time,subject:"",kind:"study block",notes:"",priority:5,difficulty:5,deadline:it.dueDate||null,duration,status:"pending",timeSpent:0,completedAt:null};
       studyTasks.push(task);working=working.concat([task]);
     });
@@ -7711,7 +7762,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
         .map(o=>({start:timeToMinutes(o.time)-(TIER0_FIXED_KINDS.has(o.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(o.time)+(o.duration||30)})));
     const tMins=timeToMinutes(time);
     const conflict=occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end));
-    return conflict?findOpenSlotFor(events,routines,getSchedulePreferences(),date,time,duration):{date,time};
+    return conflict?findReliableSlotFor(events,routines,getSchedulePreferences(),date,time,duration):{date,time};
   };
   const saveManual=()=>{
     if(!evTitle.trim()||!evDate.trim()||!evTime.trim())return;
@@ -7770,7 +7821,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     // Deterministic hard-lock enforcement — the prompt below asks the LLM to
     // avoid conflicts and prefer free-period windows, but "strictly
     // forbidden" needs a real guarantee, not just advisory text.
-    const findOpenSlot=(desiredDate,desiredTime,duration)=>findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration);
+    const findOpenSlot=(desiredDate,desiredTime,duration)=>findReliableSlotFor(events,routines,prefs,desiredDate,desiredTime,duration);
     const prompt="You are a scheduling AI. The user's LIVE clock reads "+nowTime+" on "+tk+". Schedule "+splitCount+" session(s) of "+perSession+" minutes each for the task: \""+evTitle.trim()+"\". Priority: "+priorityLabel+(evDeadline?". Deadline: "+evDeadline+" "+(evDeadlineTime||"23:59"):"")+". Existing schedule, including recurring classes/activities that repeat weekly — treat every one of these as a hard block you may NEVER overlap: "+JSON.stringify(existing)+". Free/open windows (free periods or study halls) good for short sub-20-minute sessions specifically: "+JSON.stringify(freeAhead)+". The user's preferred daily study window is "+prefs.workStartTime+"–"+prefs.workEndTime+" on weekdays"+(prefs.weekendEnabled?" and "+prefs.weekendStartTime+"–"+prefs.weekendEndTime+" on weekends (Sat/Sun)":"")+" — always fill that window first, chronologically from the start, before ever using time outside it. CRITICAL USER INTENT: The user explicitly selected "+desiredStartDate+" on the calendar. Start scheduling on "+desiredStartDate+" — do NOT place any session before this date. STRICT RULES (violations are forbidden): 1) NEVER schedule before "+desiredStartDate+". 2) The first available slot on "+desiredStartDate+" starts at "+windowStartTime+". 3) If "+desiredStartDate+" has no open window at or after "+windowStartTime+", start from "+firstAvailDate+" instead. 4) Prefer sessions within that day's preferred window; only expand outside it (up to 08:00-22:00) if the preferred window is fully booked that day. 5) Higher priority = earlier slots within the allowed date range. 6) Must be before deadline. 7) NEVER overlap anything in the existing schedule, including recurring blocks — this is non-negotiable. 8) If this session is 20 minutes or less, prefer placing it inside one of the free/open windows listed above. 9) Spread splits across consecutive days starting from "+desiredStartDate+". Respond with ONLY valid JSON: {\"sessions\":[{\"date\":\"YYYY-MM-DD\",\"time\":\"HH:MM\"}]}";
     // If the AI call fails or returns nothing usable, fall back to a fully
     // deterministic placement — evDate/evTime are blank in AI mode, so
