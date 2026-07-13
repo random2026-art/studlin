@@ -19,6 +19,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-check-compat.js"></script>
 <script>
 firebase.initializeApp({
   apiKey:"AIzaSyApWyzKeifMgGCSjSjZClCCipUKDAiao4U",
@@ -28,6 +29,11 @@ firebase.initializeApp({
   messagingSenderId:"16831354472",
   appId:"1:16831354472:web:50220e57868dba46c18ddd"
 });
+// Monitor-mode bot detection — attaches App Check tokens to Firebase
+// requests so we can see abuse signals in the console. Not yet enforced
+// (that's a separate toggle in Firebase Console > App Check > APIs), so
+// this can't block any real user even if misconfigured.
+firebase.appCheck().activate("6LfVzlAtAAAAABPOEifeDkmtnrcCqPA4ALxy58bn", true);
 </script>
 <script src="https://accounts.google.com/gsi/client"></script>
 <!-- PostHog analytics — replace POSTHOG_KEY with your project key from app.posthog.com -->
