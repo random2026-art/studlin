@@ -13,15 +13,13 @@
     "api/create-intent.js": { "memory": 256, "maxDuration": 10 },
     "api/search-videos.js": { "memory": 128, "maxDuration": 10 },
     "api/chat.js": { "memory": 256, "maxDuration": 30 },
-    "api/me.js": { "memory": 256, "maxDuration": 10 },
+    "api/me.js": { "memory": 256, "maxDuration": 30 },
     "api/stripe-webhook.js": { "memory": 256, "maxDuration": 15 },
     "api/notify.js": { "memory": 256, "maxDuration": 10 },
     "api/send-verification.js": { "memory": 256, "maxDuration": 10 },
     "api/cal-proxy.js": { "memory": 256, "maxDuration": 10 },
     "api/export-users.js": { "memory": 256, "maxDuration": 30 },
-    "api/get-shared-chat.js": { "memory": 128, "maxDuration": 10 },
-    "api/subscription.js": { "memory": 256, "maxDuration": 10 },
-    "api/delete-account.js": { "memory": 256, "maxDuration": 30 }
+    "api/get-shared-chat.js": { "memory": 128, "maxDuration": 10 }
   },
   "headers": [
     {

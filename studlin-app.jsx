@@ -9469,7 +9469,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     if(subscriptionLoading)return;
     setSubscriptionLoading(true);setSubscriptionError("");
     try{
-      const res=await authFetch("/api/subscription",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action})});
+      const res=await authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action})});
       const data=await res.json().catch(()=>({}));
       if(!res.ok)throw new Error(data.error||"Could not update subscription.");
       applyAccountUpdate(data);
@@ -9483,7 +9483,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     if(deleteConfirmText.trim().toUpperCase()!=="DELETE"||deleteAccountLoading)return;
     setDeleteAccountLoading(true);setDeleteAccountError("");
     try{
-      const res=await authFetch("/api/delete-account",{method:"POST"});
+      const res=await authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"delete-account"})});
       const data=await res.json().catch(()=>({}));
       if(!res.ok)throw new Error(data.error||"Could not delete account.");
       Object.keys(localStorage).forEach(k=>{if(k.indexOf("studlin-")===0)localStorage.removeItem(k);});
