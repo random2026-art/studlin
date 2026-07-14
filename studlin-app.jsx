@@ -1315,6 +1315,11 @@ function startAttackBlockChain(fields,events,routines,prefs,desiredDate,desiredT
     isAttackBlock:true,attackChainId:chainId,attackIndex:1,
     placementReason:slot.reason||null,
     ...(fields.noteId?{noteId:fields.noteId}:{}),
+    // dueEventId links this chain back to the plain due-date marker it was
+    // generated from (e.g. a syllabus-scanned assignment) — lets a single
+    // "cancel prep sessions for this" action on the due-date event find and
+    // remove every session in the chain, not just this first one.
+    ...(fields.dueEventId?{dueEventId:fields.dueEventId}:{}),
   };
 }
 // Schedules the next session in an existing chain once the student's
@@ -1344,6 +1349,11 @@ function scheduleAttackBlockFollowUp(task,nextMins){
       status:"pending",timeSpent:0,completedAt:null,deadline:task.deadline||null,
       isAttackBlock:true,attackChainId:task.attackChainId,attackIndex:(task.attackIndex||1)+1+i,
       placementReason:slot.reason||null,
+      // Carries the chain's dueEventId forward so every follow-up stays
+      // findable by a single "all sessions linked to this due date" query,
+      // not just the chain's first session (see the cancel-all action on
+      // the due-date event's edit modal).
+      ...(task.dueEventId?{dueEventId:task.dueEventId}:{}),
     });
     const d=new Date(slot.date+"T12:00:00");d.setDate(d.getDate()+1);
     cursorDate=dayKey(d);cursorTime=prefs.workStartTime;
@@ -1531,27 +1541,39 @@ function logSession(mins,mode){const s=lsGet("sessions",[]);s.push({d:dayKey(),m
 // subject+kind. Removes the time-blindness guesswork of estimating a new
 // task's length from scratch every time; returns null until there's at
 // least one real data point to go on.
-// Phase 3 — flashcard review sessions counting down to an exam. Pure
+// Phase 3 — flashcard/exam review sessions counting down to a date. Pure
 // scheduling math, no AI/credit cost: spacing gets denser the closer the
-// exam gets (classic spaced-repetition shape), capped at 4 sessions so a
-// far-off exam doesn't flood the calendar. Offsets are "days before the
-// exam date"; anything that would land in the past (or on the exam day
-// itself) is dropped.
-function computeReviewOffsets(daysUntil){
+// date gets (classic spaced-repetition shape). desiredCount is student-
+// chosen (clamped to 1-6) rather than a hardcoded cap, so "how many
+// sessions do you want" is a real choice, not something the algorithm
+// decides alone — offsets still contract toward the date the same way
+// the old fixed 4-session curve did. Offsets are "days before the target
+// date"; anything that would land in the past (or on the date itself) is
+// dropped, so asking for more sessions than there's room for just yields
+// fewer, never schedules into the past.
+function computeReviewOffsets(daysUntil,desiredCount){
+  const count=Math.max(1,Math.min(6,desiredCount||4));
   if(daysUntil<2)return [];
-  if(daysUntil<=3)return [1];
-  if(daysUntil<=7)return [3,1];
-  if(daysUntil<=14)return [8,4,1];
-  return [16,10,5,2];
+  const offsets=[];
+  let offset=1;
+  for(let i=0;i<count;i++){
+    if(offset>=daysUntil)break;
+    offsets.push(offset);
+    offset=offset*2+1; // 1, 3, 7, 15, 31, 63 days out
+  }
+  return offsets.reverse();
 }
-function computeReviewDates(examDateKey,todayKey){
+function computeReviewDates(examDateKey,todayKey,desiredCount){
   const exam=new Date(examDateKey+"T12:00:00");
   const today=new Date(todayKey+"T12:00:00");
   const daysUntil=Math.round((exam-today)/86400000);
-  return computeReviewOffsets(daysUntil).filter(o=>o<daysUntil).map(o=>{
+  return computeReviewOffsets(daysUntil,desiredCount).map(o=>{
     const d=new Date(exam);d.setDate(d.getDate()-o);return dayKey(d);
   }).sort();
 }
+// A pop quiz doesn't deserve the same 4-session buildup as a final — lighter
+// default, still fully student-adjustable via the count stepper either way.
+const defaultSessionCountFor=(examWeight)=>examWeight==="quiz"?2:4;
 function suggestDurationFor(subject,kind){
   const events=lsGet("events",[]).filter(e=>e.status==="done"&&e.timeSpent&&e.subject===subject&&e.kind===kind);
   if(events.length===0)return null;
@@ -1629,7 +1651,7 @@ function regexScanDeadlines(text){
   const numericPattern=/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/g;
   const now=new Date();
   const titleFrom=(line)=>{const t=line.replace(/^[\s\-*•\d.)]+/,"").trim().slice(0,60);return t||"Deadline";};
-  const kindFrom=(line)=>/exam|midterm|final/i.test(line)?"exam":"deadline";
+  const kindFrom=(line)=>/exam|midterm|final|quiz|test/i.test(line)?"exam":"deadline";
   const rollYear=(month,day,year)=>{
     if(year)return year.length===2?"20"+year:year;
     const candidate=new Date(now.getFullYear(),month,day);
@@ -3327,28 +3349,38 @@ function Flashcards() {
   // findOpenSlotFor, the same deterministic engine every other scheduling
   // path in the app already trusts.
   const [linkExamDeckId,setLinkExamDeckId]=useState(null);
-  const [reviewSchedulePreview,setReviewSchedulePreview]=useState(null); // {deckId,deckName,examTitle,examDate,sessions:[{date,time,duration,include}]}
+  const [reviewSchedulePreview,setReviewSchedulePreview]=useState(null); // {deckId,deckName,examTitle,examDate,examSubject,count,sessions:[{date,time,duration,include}]}
   const upcomingExams=()=>lsGet("events",[]).filter(e=>e.kind==="exam"&&e.date>=dayKey()).sort((a,b)=>a.date.localeCompare(b.date));
   const linkDeckToExam=(deckId,examEventId)=>{
     const next=deckList.map(d=>d.id===deckId?{...d,examEventId}:d);
     setDeckList(next);lsSet("decks",next);setLinkExamDeckId(null);
   };
-  const openReviewSchedule=(deck)=>{
-    const exam=lsGet("events",[]).find(e=>e.id===deck.examEventId);
-    if(!exam)return;
-    const dates=computeReviewDates(exam.date,dayKey());
-    if(dates.length===0)return;
-    const duration=suggestDurationFor(exam.subject,"study block")||25;
+  // Shared by the initial open and by the count stepper re-rolling the
+  // preview — one place computing "N sessions counting down to examDate",
+  // so changing the count never drifts from how it was first built.
+  const buildReviewSessions=(examDate,subject,count)=>{
+    const dates=computeReviewDates(examDate,dayKey(),count);
+    const duration=suggestDurationFor(subject,"study block")||25;
     const events=lsGet("events",[]);
     const routines=getWeeklyRoutine();
     const prefs=getSchedulePreferences();
     let working=events;
-    const sessions=dates.map(date=>{
-      const slot=findReliableSlotFor(working,routines,prefs,date,prefs.workStartTime,duration,exam.date,5);
+    return dates.map(date=>{
+      const slot=findReliableSlotFor(working,routines,prefs,date,prefs.workStartTime,duration,examDate,5);
       working=working.concat([{date:slot.date,time:slot.time,duration}]);
       return {date:slot.date,time:slot.time,duration,include:true,placementReason:slot.reason||null};
     });
-    setReviewSchedulePreview({deckId:deck.id,deckName:deck.name,examTitle:exam.title,examDate:exam.date,sessions});
+  };
+  const openReviewSchedule=(deck)=>{
+    const exam=lsGet("events",[]).find(e=>e.id===deck.examEventId);
+    if(!exam)return;
+    const count=4;
+    const sessions=buildReviewSessions(exam.date,exam.subject,count);
+    if(sessions.length===0)return;
+    setReviewSchedulePreview({deckId:deck.id,deckName:deck.name,examTitle:exam.title,examDate:exam.date,examSubject:exam.subject,count,sessions});
+  };
+  const changeReviewCount=(count)=>{
+    setReviewSchedulePreview(r=>r?{...r,count,sessions:buildReviewSessions(r.examDate,r.examSubject,count)}:r);
   };
   const commitReviewSchedule=()=>{
     if(!reviewSchedulePreview)return;
@@ -3489,6 +3521,11 @@ function Flashcards() {
             {"Add "+(reviewSchedulePreview?reviewSchedulePreview.sessions.filter(s=>s.include).length:0)+" to Calendar →"}
           </Btn>
         </>}>
+        {reviewSchedulePreview&&(
+          <Field label="Number of sessions" hint="Sessions space out more as the exam gets closer. Ask for more than the time allows and you'll just get as many as fit.">
+            <NumField min={1} max={6} fallback={4} value={reviewSchedulePreview.count} onChange={changeReviewCount} />
+          </Field>
+        )}
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           {reviewSchedulePreview&&reviewSchedulePreview.sessions.map((s,i)=>(
             <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,background:s.include?T.card2:T.card,opacity:s.include?1:0.55}}>
@@ -3497,6 +3534,9 @@ function Flashcards() {
               <div style={{fontSize:11,color:T.muted}}>{s.duration}m</div>
             </div>
           ))}
+          {reviewSchedulePreview&&reviewSchedulePreview.sessions.length===0&&(
+            <div style={{textAlign:"center",padding:"20px 0",color:T.muted,fontSize:13}}>Not enough time left before the exam to fit a session.</div>
+          )}
         </div>
       </Modal>
       <Modal open={editDeckOpen} onClose={()=>setEditDeckOpen(false)} title="Edit deck" sub="Rename the deck or fix any card." width={540}
@@ -3703,10 +3743,16 @@ function Notes(){
   // as openNoteId above. Opens the New note modal pre-set to the file-upload
   // source so a syllabus can go straight to the AI date-extraction review
   // (see continueToCanvas) without the student picking a source manually.
+  // viaSyllabusScan additionally trims the modal down to just Class + file
+  // drop (see the New note Modal below) — arriving from a button literally
+  // labeled "Scan syllabus" already answers "what source," so re-asking is
+  // just friction, and there's no note yet to name.
+  const [viaSyllabusScan,setViaSyllabusScan]=useState(false);
   useEffect(()=>{
     if(!lsGet("openSyllabusScan",false))return;
     lsSet("openSyllabusScan",false);
     setSrc("file");
+    setViaSyllabusScan(true);
     setNewOpen(true);
   },[]);
 
@@ -3943,7 +3989,7 @@ function Notes(){
     recordSyllabusScan();
     setScanningDates(false);
     if(found.length>0){
-      setSyllabusReview({noteId:notes[sel].id,tag:notes[sel].tag,items:found.map((d,i)=>({id:"si-"+i,...d,include:true,attackBlock:false}))});
+      setSyllabusReview({noteId:notes[sel].id,tag:notes[sel].tag,priorScanCount:priorSyllabusScanCount(notes[sel].tag,notes[sel].id),items:found.map((d,i)=>({id:"si-"+i,...d,include:true,attackBlock:d.kind==="deadline",proposeSessions:d.kind==="exam",sessionCount:defaultSessionCountFor(d.examWeight)}))});
     }else{
       setSyllabusToast("No dates found in this note");
       setTimeout(()=>setSyllabusToast(""),3200);
@@ -4004,10 +4050,11 @@ function Notes(){
         "Today's date is "+dayKey()+". If a date has no year, infer the most likely upcoming year given today's date. "+
         "For each item return: \"title\" (short, e.g. \"Problem Set 3\" or \"Midterm Exam\"), "+
         "\"date\" (YYYY-MM-DD, your best guess — never omit even if uncertain), "+
-        "\"kind\" (either \"deadline\" for assignments/readings/papers or \"exam\" for tests/midterms/finals), "+
+        "\"kind\" (either \"deadline\" for assignments/readings/papers or \"exam\" for quizzes, tests, midterms, and finals), "+
+        "\"examWeight\" (ONLY when kind is \"exam\": \"quiz\" for a quiz or short in-class test worth relatively little, \"major\" for a midterm, final, or unit exam worth significant grade weight — omit entirely when kind is \"deadline\"), "+
         "\"confidence\" (\"high\" if an explicit date was stated, \"low\" if you inferred/guessed it, e.g. from \"the Friday after spring break\"). "+
         "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
-        "{\"deadlines\":[{\"title\":\"Problem Set 3\",\"date\":\"2026-09-22\",\"kind\":\"deadline\",\"confidence\":\"high\"}]}. "+
+        "{\"deadlines\":[{\"title\":\"Problem Set 3\",\"date\":\"2026-09-22\",\"kind\":\"deadline\",\"confidence\":\"high\"},{\"title\":\"Unit 2 Midterm\",\"date\":\"2026-10-03\",\"kind\":\"exam\",\"examWeight\":\"major\",\"confidence\":\"high\"}]}. "+
         "If you find no dates at all, respond with {\"deadlines\":[]}.\n\n"+text.slice(0,30000);
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
       const data=await res.json();
@@ -4038,7 +4085,7 @@ function Notes(){
     if(src==="write"){
       if(!title)title="Untitled note";
     }else if(src==="file"){
-      if(!title)title="Scanned notes";
+      if(!title)title=viaSyllabusScan?tag+" Syllabus":"Scanned notes";
       if(!fileText.trim())body="<p>No file content.</p>";
       else if(canScanNote()){
         body=await aiSummarize(fileText,"document/file");
@@ -4075,11 +4122,11 @@ function Notes(){
     const newNote={id:String(Date.now()),title,body,tag,date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now()};
     const next=[newNote,...notes];
     setNotes(next);lsSet("notes",next);
-    setNewOpen(false);setNewTitle("");setYt("");setYtInfo("");setRec(false);setRecSecs(0);setRecText("");setSrc("write");setFileText("");setSearch("");
+    setNewOpen(false);setNewTitle("");setYt("");setYtInfo("");setRec(false);setRecSecs(0);setRecText("");setSrc("write");setFileText("");setSearch("");setViaSyllabusScan(false);
     setSel(0);
     setPopover(null);
     if(syllabusItems!==null){
-      setSyllabusReview({noteId:newNote.id,tag,items:syllabusItems.map((d,i)=>({id:"si-"+i,...d,include:true,attackBlock:false}))});
+      setSyllabusReview({noteId:newNote.id,tag,priorScanCount:priorSyllabusScanCount(tag,newNote.id),items:syllabusItems.map((d,i)=>({id:"si-"+i,...d,include:true,attackBlock:d.kind==="deadline",proposeSessions:d.kind==="exam",sessionCount:defaultSessionCountFor(d.examWeight)}))});
     }
   };
 
@@ -4262,20 +4309,22 @@ function Notes(){
       </Modal>
 
       {/* ── NEW NOTE MODAL — metadata only, no body field ── */}
-      <Modal open={newOpen} onClose={()=>{setNewOpen(false);stopRec();}} title="New note" sub="Configure your note. You'll write on the canvas next." width={560}
-        footer={<><Btn variant="subtle" onClick={()=>{setNewOpen(false);stopRec();}}>Cancel</Btn><Btn onClick={continueToCanvas} disabled={aiLoading}>{aiLoading?"Processing…":"Continue to Canvas →"}</Btn></>}>
-        <Field label="Source">
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            {sources.map(o=>(
-              <button key={o.id} type="button" onClick={()=>setSrc(o.id)} style={{padding:"12px 14px",borderRadius:10,border:"1px solid "+(src===o.id?T.lime+"66":T.border),background:src===o.id?T.lime+"10":T.card2,color:T.text,cursor:"pointer",textAlign:"left",fontFamily:T.font,position:"relative"}}>
-                {o.cost&&<span style={{position:"absolute",top:8,right:10,fontSize:9,fontFamily:T.mono,color:src===o.id?T.lime:T.faint,letterSpacing:"0.05em"}}>{o.cost}</span>}
-                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}><span style={{color:src===o.id?T.lime:T.muted,display:"flex"}}>{o.icon}</span><span style={{fontSize:12.5,fontWeight:600}}>{o.label}</span></div>
-                <div style={{fontSize:11,color:T.muted}}>{o.desc}</div>
-              </button>
-            ))}
-          </div>
-        </Field>
-        <Field label="Title"><Input placeholder="e.g. Macbeth Act IV notes" value={newTitle} onChange={ev=>setNewTitle(ev.target.value)} autoFocus /></Field>
+      <Modal open={newOpen} onClose={()=>{setNewOpen(false);stopRec();setViaSyllabusScan(false);setSrc("write");}} title={viaSyllabusScan?"Scan your syllabus":"New note"} sub={viaSyllabusScan?"Which class is this for? Studlin reads the file and finds every date.":"Configure your note. You'll write on the canvas next."} width={560}
+        footer={<><Btn variant="subtle" onClick={()=>{setNewOpen(false);stopRec();setViaSyllabusScan(false);setSrc("write");}}>Cancel</Btn><Btn onClick={continueToCanvas} disabled={aiLoading||(viaSyllabusScan&&!fileText.trim())}>{aiLoading?"Processing…":viaSyllabusScan?"Scan & Continue →":"Continue to Canvas →"}</Btn></>}>
+        {!viaSyllabusScan&&(
+          <Field label="Source">
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              {sources.map(o=>(
+                <button key={o.id} type="button" onClick={()=>setSrc(o.id)} style={{padding:"12px 14px",borderRadius:10,border:"1px solid "+(src===o.id?T.lime+"66":T.border),background:src===o.id?T.lime+"10":T.card2,color:T.text,cursor:"pointer",textAlign:"left",fontFamily:T.font,position:"relative"}}>
+                  {o.cost&&<span style={{position:"absolute",top:8,right:10,fontSize:9,fontFamily:T.mono,color:src===o.id?T.lime:T.faint,letterSpacing:"0.05em"}}>{o.cost}</span>}
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}><span style={{color:src===o.id?T.lime:T.muted,display:"flex"}}>{o.icon}</span><span style={{fontSize:12.5,fontWeight:600}}>{o.label}</span></div>
+                  <div style={{fontSize:11,color:T.muted}}>{o.desc}</div>
+                </button>
+              ))}
+            </div>
+          </Field>
+        )}
+        {!viaSyllabusScan&&<Field label="Title"><Input placeholder="e.g. Macbeth Act IV notes" value={newTitle} onChange={ev=>setNewTitle(ev.target.value)} autoFocus /></Field>}
         <Field label="Class"><SelectChip options={tagOptions} value={newTag} onChange={setNewTag} /></Field>
         {newTag==="Other"&&<Field label="Custom class"><Input placeholder="e.g. Physics, SAT prep..." value={customTag} onChange={ev=>setCustomTag(ev.target.value)} /></Field>}
         {/* No body textarea for "write" — canvas is the editor */}
@@ -4319,6 +4368,11 @@ function Notes(){
             setSyllabusReview(null);
           }}>{aiLoading?"Processing…":"Add "+(syllabusReview?syllabusReview.items.filter(i=>i.include).length:0)+" to Calendar →"}</Btn>
         </>}>
+        {syllabusReview&&syllabusReview.priorScanCount>0&&(
+          <div style={{fontSize:12,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:8,padding:"8px 12px",marginBottom:10}}>
+            You've already got {syllabusReview.priorScanCount} item{syllabusReview.priorScanCount!==1?"s":""} on your calendar from an earlier scan of this class. New ones will be added alongside them, nothing gets removed automatically.
+          </div>
+        )}
         {syllabusReview&&syllabusReview.items.length===0&&(
           <div style={{textAlign:"center",padding:"24px 0",color:T.muted,fontSize:13}}>
             No dates found. Add one manually below, or skip and save just the note.
@@ -4335,21 +4389,36 @@ function Notes(){
                     <Input type="date" value={it.date} onChange={ev=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,date:ev.target.value}:x)}))} style={{width:150}} />
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:8}}>
-                    <SelectChip options={[{value:"deadline",label:"To-Do"},{value:"exam",label:"Exam"}]} value={it.kind} onChange={v=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v}:x)}))} />
+                    <SelectChip options={[{value:"deadline",label:"To-Do"},{value:"exam",label:"Exam"}]} value={it.kind} onChange={v=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v,attackBlock:v==="deadline",proposeSessions:v==="exam",sessionCount:x.sessionCount||defaultSessionCountFor()}:x)}))} />
                     {it.confidence==="low"&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>Low confidence, double-check</span>}
                     {it.kind==="deadline"&&(
                       <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:T.muted,cursor:"pointer"}}>
                         <input type="checkbox" checked={!!it.attackBlock} onChange={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,attackBlock:!x.attackBlock}:x)}))} />
-                        Needs prep time — schedule an Attack Block
+                        Needs prep time, schedule an Attack Block
+                      </label>
+                    )}
+                    {it.kind==="exam"&&(
+                      <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:T.muted,cursor:"pointer"}}>
+                        <input type="checkbox" checked={!!it.proposeSessions} onChange={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,proposeSessions:!x.proposeSessions}:x)}))} />
+                        Schedule study sessions leading up to this
                       </label>
                     )}
                   </div>
+                  {it.kind==="exam"&&it.proposeSessions&&(()=>{
+                    const dates=computeReviewDates(it.date,dayKey(),it.sessionCount||4);
+                    return (
+                      <div style={{display:"flex",alignItems:"center",gap:10,marginTop:6}}>
+                        <NumField min={1} max={6} fallback={4} value={it.sessionCount||4} onChange={v=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,sessionCount:v}:x)}))} style={{width:52}} />
+                        <span style={{fontSize:11,color:T.muted}}>{dates.length===0?"Too close to the exam to fit a session":dates.length+" session"+(dates.length!==1?"s":"")+": "+dates.join(", ")}</span>
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             </div>
           ))}
         </div>
-        <button type="button" onClick={()=>setSyllabusReview(r=>({...r,items:[...r.items,{id:"si-manual-"+Date.now(),title:"",date:dayKey(),kind:"deadline",confidence:"low",include:true,attackBlock:false}]}))} style={{marginTop:10,width:"100%",padding:"10px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12.5}}>
+        <button type="button" onClick={()=>setSyllabusReview(r=>({...r,items:[...r.items,{id:"si-manual-"+Date.now(),title:"",date:dayKey(),kind:"deadline",confidence:"low",include:true,attackBlock:true,proposeSessions:false}]}))} style={{marginTop:10,width:"100%",padding:"10px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12.5}}>
           + Add a deadline manually
         </button>
       </Modal>
@@ -5422,40 +5491,115 @@ function injectClassEvents(selectedClasses){
 // writes localStorage directly, same lsGet→concat→lsSet shape as
 // injectClassEvents above. Deterministic ids mean re-confirming the same
 // note's review never double-injects.
+// An Attack Block's whole point is probing a duration nobody knows yet, so
+// scheduling one the instant a syllabus is scanned — for an assignment due
+// two months out — just produces a stale estimate sitting on the calendar
+// for weeks, getting shuffled around by reflow with nothing gained. Real
+// prep scheduling only happens once the assignment is close enough to
+// actually start; anything further out just gets marked prepPending so the
+// daily actionable-window sweep can pick it up later, visibly, when it's
+// actually time. Exams don't need this gate — computeReviewOffsets already
+// self-limits to "sessions near the exam," never proposing anything for the
+// too-far-out portion of the timeline, so there's nothing stale to defer.
+const ASSIGNMENT_ATTACK_ACTIONABLE_DAYS=7;
+// "ask" (default) — the daily sweep surfaces a visible accept/decline
+// banner once a prepPending assignment crosses into its actionable window.
+// "auto" — schedules it automatically once it's close enough, still
+// visible via an after-the-fact toast, never silent. "off" — the sweep
+// never runs at all; items just sit as plain due-date pills forever,
+// scheduled only if the student does it manually. Settings > Calendar
+// Preferences controls this (see SettingsTab's "Auto-schedule prep time").
+function getPrepScheduleMode(){return lsGet("prepScheduleMode","ask");}
+function setPrepScheduleModeLS(m){lsSet("prepScheduleMode",m);}
+
+// How many syllabus-scan marker events already exist for this class, from
+// a note other than the one currently being reviewed — used to warn on a
+// re-scan instead of silently doubling everything up. Cheap full-scan
+// match on the "syl-" id prefix rather than real dedup (same title/date
+// matching across scans is a fuzzier problem for later); this is just
+// visibility, not prevention.
+function priorSyllabusScanCount(tag,excludeNoteId){
+  return lsGet("events",[]).filter(e=>e.id.startsWith("syl-")&&e.subject===tag&&e.noteId!==excludeNoteId).length;
+}
+
+// Shared by commitSyllabusEvents (exam items) and commitBrainDump (exam
+// items) — builds real scheduled study sessions counting down to a date,
+// on the same computeReviewOffsets curve Flashcards' deck-linked review
+// already uses (see openReviewSchedule). No actionable-window gate needed
+// here the way Attack Blocks get one — that curve already refuses to
+// propose anything for the too-far-out portion of the timeline on its own.
+// Caller merges the returned events into its own working array/lsSet.
+function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,working,routines,prefs,extraFields){
+  const dates=computeReviewDates(examDate,dayKey(),count);
+  const duration=suggestDurationFor(subject,"study block")||25;
+  let localWorking=working;
+  return dates.map((date,si)=>{
+    const slot=findReliableSlotFor(localWorking,routines,prefs,date,prefs.workStartTime,duration,examDate,5);
+    const ev={
+      id:idPrefix+"-"+si,
+      title:"Study: "+examTitle,date:slot.date,time:slot.time,
+      subject,notes:"",kind:"study block",duration,
+      priority:5,difficulty:5,deadline:examDate,
+      status:"pending",timeSpent:0,completedAt:null,
+      placementReason:slot.reason||null,
+      ...extraFields,
+    };
+    localWorking=localWorking.concat([ev]);
+    return ev;
+  });
+}
+
 function commitSyllabusEvents(noteId,tag,items){
   const existing=lsGet("events",[]);
-  const markerEvents=items.map((it,i)=>({
-    id:"syl-"+noteId+"-"+i,
-    title:it.title,
-    date:it.date,
-    time:it.kind==="exam"?"09:00":"23:59",
-    subject:tag,
-    kind:it.kind==="exam"?"exam":"deadline",
-    notes:"",
-    priority:5,
-    difficulty:5,
-    deadline:it.kind==="deadline"?it.date:null,
-    duration:null,
-    status:"pending",
-    timeSpent:0,
-    completedAt:null,
-    noteId,
-  }));
-  // Opted-in deadline items additionally get a real Attack Block chain — the
-  // marker event above is just the "this is due" fact, unplaced and
-  // duration-less; this is the actual prep-time scheduling. Exams excluded
-  // from v1 — they'd need their own prep-window-before-exam-date logic
-  // rather than "now until the due date," a different design question.
+  const today=dayKey();
+  const daysUntil=(dateKey)=>Math.ceil((new Date(dateKey+"T12:00:00")-new Date(today+"T12:00:00"))/86400000);
+  const markerEvents=items.map((it,i)=>{
+    const wantsAttack=it.kind==="deadline"&&it.attackBlock;
+    const isActionableNow=wantsAttack&&daysUntil(it.date)<=ASSIGNMENT_ATTACK_ACTIONABLE_DAYS;
+    return {
+      id:"syl-"+noteId+"-"+i,
+      title:it.title,
+      date:it.date,
+      time:it.kind==="exam"?"09:00":"23:59",
+      subject:tag,
+      kind:it.kind==="exam"?"exam":"deadline",
+      notes:"",
+      priority:5,
+      difficulty:5,
+      deadline:it.kind==="deadline"?it.date:null,
+      duration:null,
+      status:"pending",
+      timeSpent:0,
+      completedAt:null,
+      noteId,
+      prepPending:(wantsAttack&&!isActionableNow)?true:undefined,
+    };
+  });
+  // Opted-in deadline items that are already close enough get a real Attack
+  // Block chain right away — the marker event above is just the "this is
+  // due" fact, unplaced and duration-less; this is the actual prep-time
+  // scheduling. Anything further out stays prepPending (see above) instead
+  // of scheduling now.
   let working=existing.concat(markerEvents);
   const routines=getWeeklyRoutine();
   const prefs=getSchedulePreferences();
   const attackEvents=[];
-  items.filter(it=>it.kind==="deadline"&&it.attackBlock).forEach(it=>{
-    const task=startAttackBlockChain({title:it.title,deadline:it.date,priority:5,difficulty:5,noteId},working,routines,prefs,dayKey(),prefs.workStartTime);
+  items.forEach((it,i)=>{
+    if(it.kind!=="deadline"||!it.attackBlock)return;
+    if(daysUntil(it.date)>ASSIGNMENT_ATTACK_ACTIONABLE_DAYS)return;
+    const task=startAttackBlockChain({title:it.title,deadline:it.date,priority:5,difficulty:5,noteId,dueEventId:markerEvents[i].id},working,routines,prefs,dayKey(),prefs.workStartTime);
     attackEvents.push(task);working=working.concat([task]);
   });
-  lsSet("events",existing.concat(markerEvents,attackEvents));
-  return markerEvents.concat(attackEvents);
+  // Opted-in exam items get real spaced study sessions counting down to
+  // the exam date (see buildExamSessionEvents above).
+  let examSessionEvents=[];
+  items.forEach((it,i)=>{
+    if(it.kind!=="exam"||!it.proposeSessions)return;
+    const sessions=buildExamSessionEvents(it.title,it.date,tag,it.sessionCount||4,"examrev-"+noteId+"-"+i,working,routines,prefs,{noteId,dueEventId:markerEvents[i].id});
+    examSessionEvents=examSessionEvents.concat(sessions);working=working.concat(sessions);
+  });
+  lsSet("events",existing.concat(markerEvents,attackEvents,examSessionEvents));
+  return markerEvents.concat(attackEvents,examSessionEvents);
 }
 
 // How many of the student's existing study blocks now time-overlap the
@@ -6974,6 +7118,16 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
   // never-persisted expansion CalendarTab does for the Monthly grid.
   expandRoutineOccurrences(routines||[], dayKey(weekDays[0]), dayKey(weekDays[6]))
     .forEach(ev => { (byDay[ev.date] = byDay[ev.date] || []).push(ev); });
+  // A syllabus-scanned due date (assignment or exam) has no real duration —
+  // it's a fact, not an appointment. Positioning it in the timed grid below
+  // used to mean a fake 30-min block pinned at 23:59, a near-invisible
+  // sliver at the bottom of the day. These render as pills in the day
+  // header instead (see weekDays.map below), same "untimed fact" treatment
+  // Checklist items already get, just visible here rather than hidden.
+  // Scoped to deadline/exam specifically — a reminder is also duration:0
+  // but its time is the whole point (a nudge AT 6pm), so it stays a normal
+  // timed block rather than getting demoted to a date-only pill.
+  const isDuePill = (ev) => !ev.checklist && !ev.duration && (ev.kind==="deadline"||ev.kind==="exam");
 
   const handleDragOver = (e, dk) => {
     e.preventDefault();
@@ -7021,10 +7175,25 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
           const dk = dayKey(d);
           const isToday = dk === todayK;
           const isSel = selDay!=null && dk === selDay;
+          const duePills = (byDay[dk] || []).filter(isDuePill);
           return (
             <div key={i} onClick={()=>{if(setSelDay)setSelDay(dk);}} style={{textAlign:"center",padding:"7px 4px 9px",borderLeft:`1px solid ${T.border}`,cursor:setSelDay?"pointer":"default",background:isSel?T.card2:"transparent"}}>
               <div style={{fontSize:9,fontWeight:700,letterSpacing:"0.1em",color:T.muted,marginBottom:4}}>{DAY_NAMES[i]}</div>
               <div onDoubleClick={(e)=>{e.stopPropagation();openNew(dk);}} style={{width:28,height:28,borderRadius:"50%",background:isToday?T.lime:"transparent",color:isToday?T.ink:T.white,fontSize:13,fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>{d.getDate()}</div>
+              {duePills.length>0&&(
+                <div style={{display:"flex",flexDirection:"column",gap:2,marginTop:5,textAlign:"left"}}>
+                  {duePills.slice(0,2).map((ev,j)=>{
+                    const isExam=ev.kind==="exam";
+                    const tagColor=colorOf(ev.subject);
+                    return (
+                      <div key={j} onClick={(e)=>{e.stopPropagation();openEdit(ev);}} title={ev.title} style={{fontSize:9,fontWeight:600,color:tagColor,background:tagColor+(isExam?"22":"16"),border:isExam?`1px solid ${tagColor}`:"none",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",cursor:"pointer"}}>
+                        {ev.title}
+                      </div>
+                    );
+                  })}
+                  {duePills.length>2&&<div style={{fontSize:8.5,color:T.muted}}>+{duePills.length-2} more</div>}
+                </div>
+              )}
             </div>
           );
         })}
@@ -7040,7 +7209,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
         <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",flex:1,minWidth:0}}>
           {weekDays.map((day, colIdx) => {
             const dk = dayKey(day);
-            const colEvs = (byDay[dk] || []).filter(ev => ev.time);
+            const colEvs = (byDay[dk] || []).filter(ev => ev.time && !isDuePill(ev));
             // Free periods are an open window, not a task — they only ever
             // render as the transparent punch-out in the School Hours mask
             // below, never as their own block. The reserved "hs-school" block
@@ -7900,6 +8069,21 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
   const [isAgendaCollapsed,setIsAgendaCollapsed]=useState(false);
   const [editOpen,setEditOpen]=useState(false);
   const [editEv,setEditEv]=useState(null);
+  // Cancel-all for prep sessions Studlin generated off a due-date fact (an
+  // Attack Block chain or exam study sessions) — every such session carries
+  // dueEventId back to the marker/exam event it came from, so one query
+  // finds the whole set regardless of how it was built. Confirm-gated per
+  // the delete-needs-a-confirm-modal guardrail; the due-date event itself
+  // is untouched, only its generated sessions are removed.
+  const [cancelPrepEv,setCancelPrepEv]=useState(null);
+  const linkedPrepSessions=(ev)=>ev?events.filter(e=>e.dueEventId===ev.id):[];
+  const confirmCancelPrepSessions=()=>{
+    if(!cancelPrepEv)return;
+    const next=events.filter(e=>e.dueEventId!==cancelPrepEv.id);
+    setEvents(next);lsSet("events",next);
+    setCancelPrepEv(null);
+    closeEdit();
+  };
   // Weekly Routine ("Time Shields") — recurring rules, kept in React state so
   // add/edit/delete re-renders immediately, mirrored to localStorage on every
   // change via saveWeeklyRoutine.
@@ -8100,15 +8284,17 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
         "\"kind\", one of: "+
         "\"study\" — anything that takes real focused work time (homework, studying, a project) — Studlin finds an open slot for it; "+
         "\"todo\" — a quick task with no real duration and no fixed time, like sending an email, a form, or a phone call — this includes submitting or sending anything related to a class or exam (e.g. \"send AP exam scores to a college\", \"submit lab report\"), since the ACTION being done is a quick task even though the subject matter is academic; classify by the verb, not by incidental words like \"exam\" or \"class\" in the title; "+
-        "\"event\" — something the student personally attends or is present for at a specific real-world time that Studlin should never move, like an appointment, a class, a shift, a meeting, or taking an exam itself — never an action ABOUT an exam or class, like sending, submitting, or emailing something related to one; "+
+        "\"event\" — something the student personally attends or is present for at a specific real-world time that Studlin should never move, like an appointment, a class, a shift, or a meeting — never taking an exam/test/quiz itself (that's its own kind below), and never an action ABOUT an exam or class, like sending, submitting, or emailing something related to one; "+
+        "\"exam\" — the student is taking a quiz, test, midterm, or final at a specific date (e.g. \"I have a chem test Friday\", \"my bio midterm is the 12th\") — never an action about an exam like submitting or sending something; "+
         "\"reminder\" — a quick nudge at a specific time, e.g. \"remind me to...\" or \"don't forget to... at...\". "+
         "\"durationMin\" (your best-guess minutes needed, for kind:\"study\" or kind:\"event\" — null otherwise), "+
-        "\"dueDate\" (YYYY-MM-DD. For \"study\"/\"todo\" this is the deadline; for \"event\"/\"reminder\" this is the day it happens. \"today\"/\"tonight\" means the date given above, \"Friday\" means the next occurrence of that weekday. Be literal: if the student named a specific day, always return it, even if it's today. Only use null when truly no timing was mentioned at all), "+
+        "\"dueDate\" (YYYY-MM-DD. For \"study\"/\"todo\" this is the deadline; for \"event\"/\"exam\"/\"reminder\" this is the day it happens. \"today\"/\"tonight\" means the date given above, \"Friday\" means the next occurrence of that weekday. Be literal: if the student named a specific day, always return it, even if it's today. Only use null when truly no timing was mentioned at all), "+
         "\"dueTime\" (HH:MM 24-hour — ONLY for kind:\"event\" or kind:\"reminder\", when a specific time was stated or clearly implied like \"tonight\"=20:00 or \"this morning\"=9:00; null if genuinely no time was said), "+
+        "\"examWeight\" (ONLY when kind is \"exam\": \"quiz\" for a quiz or short in-class test worth relatively little, \"major\" for a midterm, final, or unit exam worth significant grade weight — omit otherwise), "+
         "\"needsDuration\" (true ONLY if kind is \"study\" and you genuinely can't make a reasonable guess from context — be generous, most things can get a rough estimate), "+
-        "\"clarify\" (a short, specific follow-up question ONLY if something essential is truly missing and you can't reasonably guess it — e.g. an \"event\" or \"reminder\" with no time at all mentioned, or a title too vague to act on. null otherwise — most items should NOT have this). "+
+        "\"clarify\" (a short, specific follow-up question ONLY if something essential is truly missing and you can't reasonably guess it — e.g. an \"event\", \"exam\", or \"reminder\" with no date/time at all mentioned, or a title too vague to act on. null otherwise — most items should NOT have this). "+
         "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
-        "{\"items\":[{\"title\":\"Chem homework\",\"kind\":\"study\",\"durationMin\":45,\"dueDate\":null,\"dueTime\":null,\"needsDuration\":false,\"clarify\":null}]}. "+
+        "{\"items\":[{\"title\":\"Chem homework\",\"kind\":\"study\",\"durationMin\":45,\"dueDate\":null,\"dueTime\":null,\"needsDuration\":false,\"clarify\":null},{\"title\":\"Chem test\",\"kind\":\"exam\",\"dueDate\":\"2026-07-17\",\"examWeight\":\"major\",\"clarify\":null}]}. "+
         "If nothing usable is in the text, respond {\"items\":[]}.\n\n"+text.slice(0,4000);
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",format:"json"})});
       const data=await res.json().catch(()=>({}));
@@ -8152,8 +8338,8 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
     // blank instead of showing this submission's leftover prompt.
     setBrainDumpText("");
     setBdError("");
-    const validKinds=["study","todo","event","reminder"];
-    setBrainDumpReview({warning:error||"",items:items.map((it,i)=>({id:"bd-"+i,title:it.title,kind:validKinds.includes(it.kind)?it.kind:"todo",durationMin:it.durationMin||30,dueDate:it.dueDate||"",dueTime:it.dueTime||"",needsDuration:!!it.needsDuration,attackBlock:!!it.needsDuration,clarify:it.clarify||"",include:true}))});
+    const validKinds=["study","todo","event","exam","reminder"];
+    setBrainDumpReview({warning:error||"",items:items.map((it,i)=>({id:"bd-"+i,title:it.title,kind:validKinds.includes(it.kind)?it.kind:"todo",durationMin:it.durationMin||30,dueDate:it.dueDate||"",dueTime:it.dueTime||"",needsDuration:!!it.needsDuration,attackBlock:!!it.needsDuration,proposeSessions:it.kind==="exam",sessionCount:defaultSessionCountFor(it.examWeight),clarify:it.clarify||"",include:true}))});
   };
   // Study-kind items get a real slot via the same deterministic placement
   // engine every other scheduling path trusts — no separate AI call per
@@ -8163,7 +8349,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
     const prefs=getSchedulePreferences();
     const today=dayKey();
     let working=events;
-    const studyTasks=[],todoTasks=[],eventTasks=[],reminderTasks=[];
+    const studyTasks=[],todoTasks=[],eventTasks=[],reminderTasks=[],examTasks=[];
     // Event/reminder items are fixed real-world times, same as the "busy
     // block"/"reminder" kinds in the manual Add Task flow — never placed via
     // findOpenSlotFor, just saved at whatever date/time the review screen has
@@ -8181,6 +8367,20 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
     items.filter(it=>it.kind==="reminder").forEach(it=>{
       const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:it.dueDate||today,time:it.dueTime||"09:00",subject:"",kind:"reminder",notes:"",priority:5,difficulty:5,deadline:null,duration:0,status:"pending",timeSpent:0,completedAt:null};
       reminderTasks.push(task);working=working.concat([task]);
+    });
+    // Exam items are a due-date fact, same shape as a syllabus-scanned exam
+    // marker (no real duration — see WeeklyPlanner's isDuePill), plus real
+    // spaced study sessions if the student kept "Schedule study sessions"
+    // checked in the review screen (buildExamSessionEvents, shared with
+    // commitSyllabusEvents).
+    items.filter(it=>it.kind==="exam").forEach(it=>{
+      const examDate=it.dueDate||today;
+      const examTask={id:String(Date.now()+Math.random()*1000),title:it.title,date:examDate,time:it.dueTime||"09:00",subject:"",kind:"exam",notes:"",priority:5,difficulty:5,deadline:null,duration:null,status:"pending",timeSpent:0,completedAt:null};
+      examTasks.push(examTask);working=working.concat([examTask]);
+      if(it.proposeSessions){
+        const sessions=buildExamSessionEvents(it.title,examDate,"",it.sessionCount||4,"bdexam-"+examTask.id,working,routines,prefs,{dueEventId:examTask.id});
+        examTasks.push(...sessions);working=working.concat(sessions);
+      }
     });
     // Study-kind items get a real slot via the same deterministic placement
     // engine every other scheduling path trusts — no separate AI call per
@@ -8203,7 +8403,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
     // Final order intentionally kept identical to the original code — only
     // internal placement order changed above — since commitTasks reads
     // newTasks[0].date to decide which date to navigate the calendar to.
-    const newTasks=[...studyTasks,...todoTasks,...eventTasks,...reminderTasks];
+    const newTasks=[...studyTasks,...todoTasks,...eventTasks,...reminderTasks,...examTasks];
     commitTasks(newTasks);
   };
   // Turns the current form into a recurring routine rule instead of a
@@ -8921,7 +9121,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
                     <Input value={it.title} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,title:ev.target.value}:x)}))} style={{flex:1}} />
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                    <SelectChip options={[{value:"study",label:"Study Session"},{value:"todo",label:"To-Do"},{value:"event",label:"Event"},{value:"reminder",label:"Reminder"}]} value={it.kind} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v}:x)}))} />
+                    <SelectChip options={[{value:"study",label:"Study Session"},{value:"todo",label:"To-Do"},{value:"event",label:"Event"},{value:"exam",label:"Exam"},{value:"reminder",label:"Reminder"}]} value={it.kind} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v,proposeSessions:v==="exam",sessionCount:x.sessionCount||4}:x)}))} />
                     {it.kind==="study"&&!it.attackBlock&&(
                       <div style={{display:"flex",alignItems:"center",gap:6}}>
                         <NumField min={5} max={480} fallback={30} value={it.durationMin} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,durationMin:v}:x)}))} />
@@ -8946,8 +9146,26 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
                         {it.attackBlock?"✓ Attack Block — probe session first":"Wasn't sure how long — start an Attack Block instead"}
                       </button>
                     )}
+                    {it.kind==="exam"&&(
+                      <Input type="date" value={it.dueDate} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueDate:ev.target.value}:x)}))} style={{width:138}} />
+                    )}
                     {it.clarify&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>{it.clarify}</span>}
                   </div>
+                  {it.kind==="exam"&&(
+                    <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:T.muted,cursor:"pointer",marginTop:6}}>
+                      <input type="checkbox" checked={!!it.proposeSessions} onChange={()=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,proposeSessions:!x.proposeSessions}:x)}))} />
+                      Schedule study sessions leading up to this
+                    </label>
+                  )}
+                  {it.kind==="exam"&&it.proposeSessions&&it.dueDate&&(()=>{
+                    const dates=computeReviewDates(it.dueDate,dayKey(),it.sessionCount||4);
+                    return (
+                      <div style={{display:"flex",alignItems:"center",gap:10,marginTop:6}}>
+                        <NumField min={1} max={6} fallback={4} value={it.sessionCount||4} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,sessionCount:v}:x)}))} style={{width:52}} />
+                        <span style={{fontSize:11,color:T.muted}}>{dates.length===0?"Too close to the exam to fit a session":dates.length+" session"+(dates.length!==1?"s":"")+": "+dates.join(", ")}</span>
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             </div>
@@ -8987,6 +9205,12 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
             <span>🕒 {fmtPlacementReason(editEv.placementReason,editEv.time)}</span>
           </div>
         )}
+        {editEv&&linkedPrepSessions(editEv).length>0&&(
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:T.muted}}>
+            <span>Studlin scheduled {linkedPrepSessions(editEv).length} prep session{linkedPrepSessions(editEv).length!==1?"s":""} for this.</span>
+            <button type="button" onClick={()=>setCancelPrepEv(editEv)} style={{background:"none",border:"none",color:T.red,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Cancel sessions</button>
+          </div>
+        )}
         {editDeadlineErr&&<div style={{fontSize:12,color:T.red,marginTop:-8,marginBottom:14}}>{editDeadlineErr}</div>}
         {editKind!=="reminder"&&(
           <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={5} value={editDuration} onChange={setEditDuration} /></Field>
@@ -9023,6 +9247,10 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
           </>
         )}
         <Field label="Notes (optional)"><Textarea value={editNotes} onChange={e=>setEditNotes(e.target.value)} /></Field>
+      </Modal>
+      <Modal open={!!cancelPrepEv} onClose={()=>setCancelPrepEv(null)} title="Cancel prep sessions?" sub="The due date stays on your calendar. Only the scheduled study time Studlin added for it gets removed." width={420}
+        footer={<><Btn variant="subtle" onClick={()=>setCancelPrepEv(null)}>Never mind</Btn><Btn variant="danger" onClick={confirmCancelPrepSessions}>{"Cancel "+linkedPrepSessions(cancelPrepEv).length+" session"+(linkedPrepSessions(cancelPrepEv).length!==1?"s":"")}</Btn></>}>
+        <div style={{fontSize:13,color:T.text}}>{cancelPrepEv&&cancelPrepEv.title}</div>
       </Modal>
       <Modal open={pauseOpen} onClose={()=>{setPauseOpen(false);setPausePreview(null);setPauseError("");}}
         title={pausePreview?pausePreview.label:"Studlin Reschedule"}
@@ -9909,6 +10137,7 @@ function AiHumanizer() {
 // ─── SETTINGS ─────────────────────────────────────────────────────────────────
 function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineWizard=()=>{}, setScheduleSettingsOpen=()=>{}, setPricingOpen=()=>{}}) {
   const [active,setActive]=useState("General");
+  const [prepScheduleMode,setPrepScheduleMode]=useState(()=>getPrepScheduleMode());
   const [canvasTipOpen,setCanvasTipOpen]=useState(false);
   const [canvasSeeding,setCanvasSeeding]=useState(false);
   const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,sr:true,auto:true,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true},...lsGet("settings",{})}));
@@ -10474,10 +10703,15 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Work hours, weekend schedule, difficulty, and peak focus hours.</div>
               <Btn onClick={()=>setScheduleSettingsOpen(true)}>Customize Schedule</Btn>
             </Card>
-            <Card>
+            <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:3}}>Weekly Routine</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Your classes, sports, and shifts: the times the AI treats as absolute and never schedules over.</div>
               <Btn onClick={onOpenRoutineWizard}>Manage Routine</Btn>
+            </Card>
+            <Card>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:3}}>Auto-schedule prep time</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:16}}>How Studlin handles study sessions for assignments and exams pulled from a syllabus scan, once they're actually coming up.</div>
+              <SelectChip options={[{value:"ask",label:"Always ask"},{value:"auto",label:"Auto-add"},{value:"off",label:"Off"}]} value={prepScheduleMode} onChange={v=>{setPrepScheduleMode(v);setPrepScheduleModeLS(v);}} />
             </Card>
           </>)}
 
@@ -12332,6 +12566,35 @@ function App() {
   const [tier0Batch,setTier0Batch]=useState([]);
   const getTier0SeenIds=()=>new Set(lsGet("tier0BannerSeenIds",[]));
   const markTier0BannerSeen=(ids)=>{const seen=getTier0SeenIds();ids.forEach(id=>seen.add(id));lsSet("tier0BannerSeenIds",Array.from(seen));};
+  // Actionable-window prep prompt — same "silent trigger, visible result"
+  // idiom as Tier 0 above, but for syllabus assignments that were too far
+  // out to schedule real prep time for when the syllabus was first scanned
+  // (see prepPending / ASSIGNMENT_ATTACK_ACTIONABLE_DAYS in
+  // commitSyllabusEvents). "ask" mode populates this batch for an
+  // accept/decline banner; "auto" mode schedules immediately and uses
+  // prepAutoToast instead; "off" never populates either.
+  const [prepPromptBatch,setPrepPromptBatch]=useState([]);
+  const [prepAutoToast,setPrepAutoToast]=useState("");
+  const acceptPrepPrompt=(item)=>{
+    const events=lsGet("events",[]);
+    const routines=getWeeklyRoutine();
+    const prefs=getSchedulePreferences();
+    const task=startAttackBlockChain({title:item.title,deadline:item.date,priority:item.priority,difficulty:item.difficulty,noteId:item.noteId,dueEventId:item.id},events,routines,prefs,dayKey(),prefs.workStartTime);
+    const next=events.map(e=>e.id===item.id?{...e,prepPending:false}:e).concat([task]);
+    lsSet("events",next);
+    setPrepPromptBatch(b=>b.filter(x=>x.id!==item.id));
+  };
+  const declinePrepPrompt=(item)=>{
+    const events=lsGet("events",[]);
+    lsSet("events",events.map(e=>e.id===item.id?{...e,prepPending:false}:e));
+    setPrepPromptBatch(b=>b.filter(x=>x.id!==item.id));
+  };
+  const declineAllPrepPrompts=()=>{
+    const events=lsGet("events",[]);
+    const ids=new Set(prepPromptBatch.map(m=>m.id));
+    lsSet("events",events.map(e=>ids.has(e.id)?{...e,prepPending:false}:e));
+    setPrepPromptBatch([]);
+  };
   const fmtRolloverClock=(t)=>{if(!t)return"";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+ap;};
   // Preview of exactly where each pending task would land — computed once
   // per rolloverPending change (not re-derived on every render) so what the
@@ -12699,6 +12962,33 @@ function App() {
         movedBatch.push({id:ev.id,title:ev.title,from:{date:ev.date,time:ev.time},to:result.placement});
       });
     }
+    // Actionable-window sweep — same once-a-day tick as Tier 0 above, but
+    // for syllabus assignments deferred at scan time because they were too
+    // far from their due date to probe yet (see prepPending in
+    // commitSyllabusEvents). "off" leaves them as plain due-date pills
+    // forever; "auto" schedules real prep time now and surfaces it via a
+    // toast; "ask" (default) surfaces an accept/decline banner instead of
+    // acting on its own.
+    const prepMode=getPrepScheduleMode();
+    if(prepMode!=="off"){
+      const nowActionable=working.filter(ev=>ev.prepPending&&ev.kind==="deadline"&&ev.status==="pending"&&Math.ceil((new Date(ev.date+"T12:00:00")-new Date(today+"T12:00:00"))/86400000)<=ASSIGNMENT_ATTACK_ACTIONABLE_DAYS);
+      if(nowActionable.length>0){
+        if(prepMode==="auto"){
+          const routines2=getWeeklyRoutine();
+          const prefs2=getSchedulePreferences();
+          const scheduledTitles=[];
+          nowActionable.forEach(ev=>{
+            const task=startAttackBlockChain({title:ev.title,deadline:ev.date,priority:ev.priority,difficulty:ev.difficulty,noteId:ev.noteId,dueEventId:ev.id},working,routines2,prefs2,today,prefs2.workStartTime);
+            working=working.map(e=>e.id===ev.id?{...e,prepPending:false}:e).concat([task]);
+            scheduledTitles.push(ev.title);
+          });
+          setPrepAutoToast("Studlin scheduled prep time for "+scheduledTitles.length+" assignment"+(scheduledTitles.length!==1?"s":"")+" due soon");
+          setTimeout(()=>setPrepAutoToast(""),4200);
+        }else{
+          setPrepPromptBatch(nowActionable.map(ev=>({id:ev.id,title:ev.title,date:ev.date,noteId:ev.noteId,priority:ev.priority,difficulty:ev.difficulty})));
+        }
+      }
+    }
     if(working!==cleaned)lsSet("events",working);
     if(movedBatch.length>0){
       const seen=getTier0SeenIds();
@@ -13045,6 +13335,33 @@ function App() {
             ))}
           </div>
           <Btn variant="ghost" onClick={()=>{markTier0BannerSeen(tier0Batch.map(m=>m.id));setTier0Batch([]);}} style={{padding:"7px 14px",fontSize:12,width:"100%",justifyContent:"center"}}>Dismiss</Btn>
+        </div>
+      )}
+      {prepPromptBatch.length>0&&(
+        <div style={{position:"fixed",bottom:20,right:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+          <div style={{fontSize:13,color:T.white,marginBottom:10}}>
+            Due soon. Want Studlin to find prep time for these?
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12,maxHeight:200,overflowY:"auto"}}>
+            {prepPromptBatch.map(m=>(
+              <div key={m.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,fontSize:12,padding:"6px 9px",background:T.card2,borderRadius:8}}>
+                <div style={{minWidth:0}}>
+                  <div style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.title}</div>
+                  <div style={{color:T.muted,fontSize:10.5}}>Due {m.date}</div>
+                </div>
+                <div style={{display:"flex",gap:6,flexShrink:0}}>
+                  <button onClick={()=>acceptPrepPrompt(m)} style={{background:"none",border:"none",color:T.lime,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",padding:0}}>Schedule</button>
+                  <button onClick={()=>declinePrepPrompt(m)} style={{background:"none",border:"none",color:T.muted,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font,padding:0}}>Not now</button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <Btn variant="ghost" onClick={declineAllPrepPrompts} style={{padding:"7px 14px",fontSize:12,width:"100%",justifyContent:"center"}}>Dismiss all</Btn>
+        </div>
+      )}
+      {prepAutoToast&&(
+        <div style={{position:"fixed",bottom:20,right:20,zIndex:999,padding:"11px 18px",borderRadius:10,background:T.teal,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+          {prepAutoToast}
         </div>
       )}
       {rolloverPending.length>0&&(
