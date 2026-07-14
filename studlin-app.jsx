@@ -5615,6 +5615,9 @@ function ChatBubble({m,myUid,onRespond,onSchedule}){
                     <div style={{fontSize:12,fontWeight:600,color:pp.text}}>{w.dayLabel} · {w.timeLabel} · {w.duration}m</div>
                   </div>
                   {pickingMode===i?(
+                    justChosen===i?(
+                      <div style={{flexShrink:0,padding:"7px 12px",borderRadius:7,background:T.lime,color:T.bg,fontSize:11.5,fontWeight:700,fontFamily:T.font}}>✓ Scheduled</div>
+                    ):(
                     <div style={{display:"flex",gap:6,flexShrink:0}}>
                       <button onClick={()=>{
                         if(justChosen!==null)return;
@@ -5627,6 +5630,7 @@ function ChatBubble({m,myUid,onRespond,onSchedule}){
                         setTimeout(()=>onSchedule(m.id,i,"study block"),1500);
                       }} disabled={justChosen!==null} style={{padding:"7px 10px",borderRadius:7,background:T.lime,color:T.bg,border:"none",fontSize:11,fontWeight:700,cursor:justChosen!==null?"default":"pointer",fontFamily:T.font}}>Study together</button>
                     </div>
+                    )
                   ):(
                     <button onClick={()=>{
                       if(justChosen!==null)return;
