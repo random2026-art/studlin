@@ -4921,6 +4921,20 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange}={}){
   };
   const acceptReq=async(id)=>{try{await fsdb().collection('friendships').doc(id).update({status:'accepted',updatedAt:new Date().toISOString()});}catch(e){}};
   const declineReq=async(id)=>{try{await fsdb().collection('friendships').doc(id).delete();}catch(e){}};
+  // The accepted friendship's doc id was never cached client-side (only the
+  // other uid), so unfriending looks it up fresh in whichever direction it
+  // was created — either party can be senderId, and Firestore rules allow
+  // either party to delete it.
+  const unfriend=async(targetUid)=>{
+    if(!myUid||!targetUid)return;
+    try{
+      const [asSenderSnap,asReceiverSnap]=await Promise.all([
+        fsdb().collection('friendships').where('senderId','==',myUid).where('receiverId','==',targetUid).where('status','==','accepted').get(),
+        fsdb().collection('friendships').where('senderId','==',targetUid).where('receiverId','==',myUid).where('status','==','accepted').get(),
+      ]);
+      await Promise.all([...asSenderSnap.docs,...asReceiverSnap.docs].map(d=>d.ref.delete()));
+    }catch(e){}
+  };
 
   // ── Co-op "Join Lock-In" — real Firestore-backed join, then hands off to
   // the global TaskTimerModal (via the same window._setTimerTask bridge
@@ -5297,7 +5311,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange}={}){
         )}
       </Modal>
 
-      <ChatDrawer open={!!chatTarget} myUid={myUid} target={chatTarget&&chatTarget.kind==="group"&&myRooms[chatTarget.group.id]?{...chatTarget,group:myRooms[chatTarget.group.id]}:chatTarget} onClose={()=>setChatTarget(null)} onMakePermanent={makeGroupPermanent} onDeleteGroup={deleteGroup} />
+      <ChatDrawer open={!!chatTarget} myUid={myUid} target={chatTarget&&chatTarget.kind==="group"&&myRooms[chatTarget.group.id]?{...chatTarget,group:myRooms[chatTarget.group.id]}:chatTarget} onClose={()=>setChatTarget(null)} onMakePermanent={makeGroupPermanent} onDeleteGroup={deleteGroup} onUnfriend={unfriend} />
       {netTourStep!==null&&(
         <TourStep
           targetRef={null}
@@ -5675,7 +5689,7 @@ function ChatBubble({m,myUid,onRespond,onSchedule}){
 }
 
 // ─── NETWORK: sliding chat drawer (DM + Group, w/ Quick Actions) ─────────────
-function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
+function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onUnfriend}){
   const isGroup=!!(target&&target.kind==="group");
   const roomId=target?(isGroup?target.group.id:(myUid&&target.user.uid?dmRoomId(myUid,target.user.uid):null)):null;
   const [messages,setMessages]=useState([]);
@@ -5685,6 +5699,7 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
   const [deckPicker,setDeckPicker]=useState(false);
   const [syncRunning,setSyncRunning]=useState(false);
   const [settingsOpen,setSettingsOpen]=useState(false);
+  const [unfriendConfirmOpen,setUnfriendConfirmOpen]=useState(false);
   const [findWindowOpen,setFindWindowOpen]=useState(false);
   const [fwTimeMode,setFwTimeMode]=useState("anytime");
   const [fwTimeFrom,setFwTimeFrom]=useState("15:00");
@@ -5701,22 +5716,35 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
   // messages subcollection's security rules (which look up its memberUids)
   // resolve for reads/writes.
   useEffect(()=>{
-    setInput("");setQuickOpen(false);setNotePicker(false);setDeckPicker(false);setSyncRunning(false);setSettingsOpen(false);setFindWindowOpen(false);
+    setInput("");setQuickOpen(false);setNotePicker(false);setDeckPicker(false);setSyncRunning(false);setSettingsOpen(false);setFindWindowOpen(false);setUnfriendConfirmOpen(false);
     if(!roomId||!myUid){setMessages([]);return;}
     let cancelled=false;
-    if(!isGroup){
-      const now=new Date().toISOString();
-      fsdb().collection('chatRooms').doc(roomId).set({
-        type:"dm",memberUids:[myUid,target.user.uid].sort(),createdBy:myUid,
-        createdAt:now,updatedAt:now,lastMessage:null,
-      },{merge:true}).catch(()=>{});
-    }
-    // Marks the room read the moment it's opened — the sidebar badge and
-    // inbox dots clear on their own via their own onSnapshot listeners,
-    // nothing to manually decrement.
-    fsdb().collection('chatRooms').doc(roomId).update({['lastReadAt.'+myUid]:Date.now()}).catch(()=>{});
-    const unsub=fsdb().collection('chatRooms').doc(roomId).collection('messages').orderBy('ts','asc')
-      .onSnapshot(snap=>{if(!cancelled)setMessages(snap.docs.map(d=>({id:d.id,...d.data()})));},()=>{});
+    let unsub=()=>{};
+    // The messages subcollection's security rules do a get() on the parent
+    // room doc to check membership — for a brand-new DM (first time ever
+    // chatting with this friend) that doc doesn't exist yet, so the room
+    // create must be awaited before the messages listener attaches.
+    // Firing both at once raced the listener's first read against the
+    // room-doc write and silently dropped it into a dead, unretried
+    // permission-denied state (the onSnapshot error callback below is a
+    // no-op) until something else — e.g. a few messages later — happened to
+    // reset the listener.
+    (async()=>{
+      if(!isGroup){
+        const now=new Date().toISOString();
+        await fsdb().collection('chatRooms').doc(roomId).set({
+          type:"dm",memberUids:[myUid,target.user.uid].sort(),createdBy:myUid,
+          createdAt:now,updatedAt:now,lastMessage:null,
+        },{merge:true}).catch(()=>{});
+      }
+      if(cancelled)return;
+      // Marks the room read the moment it's opened — the sidebar badge and
+      // inbox dots clear on their own via their own onSnapshot listeners,
+      // nothing to manually decrement.
+      fsdb().collection('chatRooms').doc(roomId).update({['lastReadAt.'+myUid]:Date.now()}).catch(()=>{});
+      unsub=fsdb().collection('chatRooms').doc(roomId).collection('messages').orderBy('ts','asc')
+        .onSnapshot(snap=>{if(!cancelled)setMessages(snap.docs.map(d=>({id:d.id,...d.data()})));},()=>{});
+    })();
     return ()=>{cancelled=true;unsub();};
   },[roomId]);
 
@@ -5951,6 +5979,14 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
             </div>
           )}
 
+          {target&&!isGroup&&(
+            <div onClick={()=>setUnfriendConfirmOpen(true)} style={{display:"flex",alignItems:"center",gap:8,padding:"9px 18px",borderBottom:`1px solid ${pp.border}`,cursor:"pointer",background:pp.card2}}>
+              <span style={{color:pp.muted,display:"flex"}}>{Icon.users}</span>
+              <span style={{fontSize:11.5,color:pp.muted,flex:1}}>Friends</span>
+              <span style={{fontSize:10.5,color:pp.faint}}>Remove friend ›</span>
+            </div>
+          )}
+
           <div ref={scrollRef} style={{flex:1,overflowY:"auto",padding:"16px 18px",display:"flex",flexDirection:"column",gap:10}}>
             {messages.length===0&&<div style={{textAlign:"center",color:pp.faint,fontSize:12,marginTop:40}}>No messages yet. Say hi.</div>}
             {messages.map(m=><ChatBubble key={m.id} m={m} myUid={myUid} onRespond={respondToShare} onSchedule={scheduleGroupSession} />)}
@@ -6042,6 +6078,15 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup}){
             }
             {target.group.createdBy===myUid&&<Btn variant="danger" onClick={()=>{setSettingsOpen(false);onDeleteGroup(target.group.id);}} style={{width:"100%",justifyContent:"center"}}>{Icon.xmark} Delete group</Btn>}
           </div>
+        </Modal>
+      )}
+
+      {target&&!isGroup&&(
+        <Modal open={unfriendConfirmOpen} onClose={()=>setUnfriendConfirmOpen(false)} title={"Remove "+peerFirst+"?"} sub="They'll need to send a new friend request to reconnect. Your chat history stays." width={400}
+          footer={<>
+            <Btn variant="subtle" onClick={()=>setUnfriendConfirmOpen(false)}>Cancel</Btn>
+            <Btn variant="danger" onClick={()=>{setUnfriendConfirmOpen(false);onClose();onUnfriend(target.user.uid);}}>{Icon.xmark} Remove friend</Btn>
+          </>}>
         </Modal>
       )}
 
