@@ -307,7 +307,7 @@ function StepSignup({ state, set, advance }) {
 
       {mode === "email" && (
         <>
-          <TextField label="Email address" value={state.email} onChange={v=>set({...state, email:v})} hint={errors.email?null:"Any email works — school, Gmail, whatever."} error={errors.email} type="email" autoComplete="email" autoFocus />
+          <TextField label="Email address" value={state.email} onChange={v=>set({...state, email:v})} hint={errors.email?null:"Any email works: school, Gmail, whatever."} error={errors.email} type="email" autoComplete="email" autoFocus />
           <TextField label="Create password" value={state.password} onChange={v=>set({...state, password:v})} type="password" autoComplete="new-password" error={errors.password} hint={errors.password?null:"At least 8 characters."} />
           <div style={{marginTop:18}}>
             <button className="provider" onClick={()=>setMode("providers")} style={{padding:"10px 14px",fontSize:13}}>← Use Google instead</button>
@@ -414,7 +414,7 @@ function StepVerify({ advanceToProfile }) {
         {checking ? "Verifying…" : "Verify email"}
       </button>
       <button className="provider" disabled={sendStatus==="sending"||sendStatus==="sent"} onClick={resend}>
-        {sendStatus==="sending" ? "Sending…" : sendStatus==="sent" ? "Sent — check your inbox" : "Resend code"}
+        {sendStatus==="sending" ? "Sending…" : sendStatus==="sent" ? "Sent, check your inbox" : "Resend code"}
       </button>
     </div>
   );
@@ -445,19 +445,19 @@ function StepProfile({ state, set }) {
   const lastNameVal = state.lastName || "";
   const firstNameError = firstNameVal && !isValidNameShape(firstNameVal) ? "Enter a valid first name" : "";
   const lastNameError = lastNameVal && !isValidNameShape(lastNameVal) ? "Enter a valid last name" : "";
-  const firstNameWarning = !firstNameError && firstNameVal && looksLikeGibberishName(firstNameVal) ? "This doesn't look like a typical name — go ahead if it's correct" : "";
-  const lastNameWarning = !lastNameError && lastNameVal && looksLikeGibberishName(lastNameVal) ? "This doesn't look like a typical name — go ahead if it's correct" : "";
+  const firstNameWarning = !firstNameError && firstNameVal && looksLikeGibberishName(firstNameVal) ? "This doesn't look like a typical name, go ahead if it's correct" : "";
+  const lastNameWarning = !lastNameError && lastNameVal && looksLikeGibberishName(lastNameVal) ? "This doesn't look like a typical name, go ahead if it's correct" : "";
 
   return (
     <div className="frame">
       <div className="frame-head">
         <h2>Tell us <em>about you</em></h2>
-        <p>Just the basics — everything else you can set up later.</p>
+        <p>Just the basics. Everything else you can set up later.</p>
       </div>
 
       <TextField label="First name" value={state.firstName||""} onChange={v=>set({...state, firstName:v})} autoFocus autoComplete="given-name" error={firstNameError} warning={firstNameWarning} />
       <TextField label="Last name" value={state.lastName||""} onChange={v=>set({...state, lastName:v})} autoComplete="family-name" error={lastNameError} warning={lastNameWarning} />
-      <TextField label="Enter your University / School" value={state.school||""} onChange={v=>set({...state, school:v})} hint="Just the name — no need to search a list." />
+      <TextField label="Enter your University / School" value={state.school||""} onChange={v=>set({...state, school:v})} hint="Just the name, no need to search a list." />
     </div>
   );
 }
@@ -614,7 +614,7 @@ function App() {
     return ()=>window.removeEventListener("keydown", fn);
   });
 
-  const CTA_LABEL = ["Sign up for free","I've verified — continue","Continue"][step];
+  const CTA_LABEL = ["Sign up for free","I've verified, continue","Continue"][step];
 
   return (
     <div className="shell">

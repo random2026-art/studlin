@@ -409,19 +409,19 @@ const PRICING_PLANS=(billing)=>([
   {
     key:"free",name:"Free",price:"$0",per:"forever",tag:null,
     desc:"Get organized. No credit card needed.",
-    features:["120 AI chat messages / month","3 syllabus scans / month","3 AI note scans / month — files, lectures & YouTube","3 AI flashcard generations / month","Manual flashcards & notes — unlimited","Calendar, tasks, focus timer, streaks & XP"],
+    features:["120 AI chat messages / month","3 syllabus scans / month","3 AI note scans / month (files, lectures & YouTube)","3 AI flashcard generations / month","Manual flashcards & notes: unlimited","Calendar, tasks, focus timer, streaks & XP"],
     cta:"Get started free",variant:"subtle",
   },
   {
     key:"pro",name:"Pro",price:billing==="annual"?"$7.99":"$9.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:"7 DAYS FREE",
     desc:"Everything on Free is still manual. Pro is where the AI actually does the work.",
-    features:["Unlimited AI chat, syllabus scans, note scans & flashcard generation","All AI models — Flash, Standard & Research","AI flashcards from notes, PDFs & YouTube","Full essay suite — grammar, rewrite & citations","AI note cleanup & study groups"],
+    features:["Unlimited AI chat, syllabus scans, note scans & flashcard generation","All AI models: Flash, Standard & Research","AI flashcards from notes, PDFs & YouTube","Full essay suite: grammar, rewrite & citations","AI note cleanup & study groups"],
     cta:"Start free trial",variant:"lime",featured:true,
   },
   {
     key:"max",name:"Max",price:billing==="annual"?"$19.99":"$24.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:null,
     desc:"For the heaviest workload: every subject, every week, no caps.",
-    features:["Everything in Pro, completely unlimited","Priority AI — faster responses, no queue","Bulk flashcard generation — 100 at once","3× XP multiplier + advanced analytics"],
+    features:["Everything in Pro, completely unlimited","Priority AI: faster responses, no queue","Bulk flashcard generation (100 at once)","3× XP multiplier + advanced analytics"],
     cta:"Upgrade to Max",variant:"ink",
   },
 ]);
@@ -720,16 +720,16 @@ const DEMO_CLASSES_COLLEGE=[
   {code:"ME 101",title:"Intro to Mechanical Engineering",instructor:"Prof. Alan Reyes",events:[
     {title:"Syllabus Quiz",dayOffset:2,time:"09:00",kind:"deadline"},
     {title:"Problem Set 1 Due",dayOffset:5,time:"23:59",kind:"deadline"},
-    {title:"Lab 1 — Statics",dayOffset:7,time:"14:00",kind:"class",duration:120},
+    {title:"Lab 1: Statics",dayOffset:7,time:"14:00",kind:"class",duration:120},
     {title:"Midterm Exam 1",dayOffset:14,time:"10:00",kind:"exam",duration:90},
     {title:"Problem Set 2 Due",dayOffset:19,time:"23:59",kind:"deadline"},
-    {title:"Lab 2 — Dynamics",dayOffset:21,time:"14:00",kind:"class",duration:120},
+    {title:"Lab 2: Dynamics",dayOffset:21,time:"14:00",kind:"class",duration:120},
     {title:"Problem Set 3 Due",dayOffset:26,time:"23:59",kind:"deadline"},
     {title:"Midterm Exam 2",dayOffset:35,time:"10:00",kind:"exam",duration:90},
-    {title:"Lab 3 — Thermodynamics",dayOffset:38,time:"14:00",kind:"class",duration:120},
+    {title:"Lab 3: Thermodynamics",dayOffset:38,time:"14:00",kind:"class",duration:120},
     {title:"Problem Set 4 Due",dayOffset:42,time:"23:59",kind:"deadline"},
     {title:"Design Project Proposal Due",dayOffset:47,time:"23:59",kind:"deadline"},
-    {title:"Lab 4 — Fluid Mechanics",dayOffset:49,time:"14:00",kind:"class",duration:120},
+    {title:"Lab 4: Fluid Mechanics",dayOffset:49,time:"14:00",kind:"class",duration:120},
     {title:"Project 1",dayOffset:52,time:"23:59",kind:"deadline"},
     {title:"Final Exam",dayOffset:63,time:"09:00",kind:"exam",duration:120},
     {title:"Final Project Presentation",is_TBD:true,kind:"deadline"},
@@ -2318,7 +2318,7 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
               </button>
             ))}
           </div>
-          <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>Studlin prefers these times when rescheduling missed tasks. Pick 1-2 for the strongest effect — leave blank and Studlin will learn your best hours from your habits over time.</div>
+          <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>Studlin prefers these times when rescheduling missed tasks. Pick 1-2 for the strongest effect. Leave blank and Studlin will learn your best hours from your habits over time.</div>
         </div>
 
         {saved&&<div style={{background:T.lime+"20",border:"1px solid "+T.lime+"44",borderRadius:8,padding:12,fontSize:12,color:T.lime,marginBottom:16,display:"flex",alignItems:"center",gap:8}}>
@@ -3413,7 +3413,7 @@ function Flashcards() {
       {showExamLinkTip&&(
         <div style={{display:"flex",alignItems:"center",gap:12,background:T.lime+"0d",border:`1px solid ${T.lime}33`,borderRadius:12,padding:"12px 16px",marginBottom:16}}>
           <span style={{fontSize:18,flexShrink:0}}>🎯</span>
-          <div style={{flex:1,fontSize:12.5,color:T.text,lineHeight:1.5}}><strong style={{color:T.lime}}>Tip:</strong> Link a deck to an exam on your calendar and Studlin schedules spaced review sessions for you — no cramming.</div>
+          <div style={{flex:1,fontSize:12.5,color:T.text,lineHeight:1.5}}><strong style={{color:T.lime}}>Tip:</strong> Link a deck to an exam on your calendar and Studlin schedules spaced review sessions for you, no cramming.</div>
           <button onClick={dismissExamLinkTip} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:18,padding:"2px 6px",fontFamily:T.font,lineHeight:1,flexShrink:0}}>×</button>
         </div>
       )}
@@ -3461,7 +3461,7 @@ function Flashcards() {
       {/* ── LINK DECK TO EXAM ── */}
       <Modal open={!!linkExamDeckId} onClose={()=>setLinkExamDeckId(null)} title="Link to an exam" sub="Studlin will propose review sessions counting down to the exam date." width={440}>
         {upcomingExams().length===0
-          ? <div style={{fontSize:13,color:T.muted,padding:"18px 0",textAlign:"center"}}>No upcoming exams on your calendar yet — add one in Calendar first.</div>
+          ? <div style={{fontSize:13,color:T.muted,padding:"18px 0",textAlign:"center"}}>No upcoming exams on your calendar yet. Add one in Calendar first.</div>
           : <div style={{display:"flex",flexDirection:"column",gap:8}}>
               {upcomingExams().map(ex=>(
                 <button key={ex.id} onClick={()=>linkDeckToExam(linkExamDeckId,ex.id)} style={{textAlign:"left",padding:"11px 14px",borderRadius:10,border:`1px solid ${T.border}`,background:T.card2,cursor:"pointer",fontFamily:T.font}}>
@@ -3512,7 +3512,7 @@ function Flashcards() {
         <Field label="Deck name"><Input placeholder="e.g. Bio chapter 4 cards" value={dName} onChange={e=>setDName(e.target.value)} autoFocus /></Field>
         <Field label="Source">
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            {[{id:"manual",label:"Build manually",desc:"Type Q&A cards yourself",icon:Icon.pen},{id:"file",label:"From file",desc:"PDF or notes — AI generates cards",icon:Icon.file},{id:"youtube",label:"From YouTube",desc:"Video topic — AI generates cards",icon:Icon.link},{id:"record",label:"From lecture",desc:"Record audio — AI generates cards",icon:MicIcon}].map(o=>(
+            {[{id:"manual",label:"Build manually",desc:"Type Q&A cards yourself",icon:Icon.pen},{id:"file",label:"From file",desc:"AI generates cards from your PDF or notes",icon:Icon.file},{id:"youtube",label:"From YouTube",desc:"AI generates cards from a video topic",icon:Icon.link},{id:"record",label:"From lecture",desc:"AI generates cards from recorded audio",icon:MicIcon}].map(o=>(
               <button key={o.id} type="button" onClick={()=>setDSource(o.id)} style={{padding:12,borderRadius:10,border:"1px solid "+(dSource===o.id?T.lime+"66":T.border),background:dSource===o.id?T.lime+"10":T.card2,color:T.text,cursor:"pointer",textAlign:"left",fontFamily:T.font}}>
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}><span style={{color:dSource===o.id?T.lime:T.muted,display:"flex"}}>{o.icon}</span><span style={{fontSize:12.5,fontWeight:600}}>{o.label}</span></div>
                 <div style={{fontSize:11,color:T.muted}}>{o.desc}</div>
@@ -3553,7 +3553,7 @@ function Flashcards() {
             {ytFetching&&<div style={{fontSize:11,color:T.lime,marginTop:6}}>Detecting video...</div>}
           </Field>
           <Field label="Topic / subject" hint="Auto-filled from the video — edit or type manually if detection fails.">
-            <Input placeholder="e.g. AP Physics 1 — Newton's Laws" value={ytTopic} onChange={e=>setYtTopic(e.target.value)} />
+            <Input placeholder="e.g. AP Physics 1: Newton's Laws" value={ytTopic} onChange={e=>setYtTopic(e.target.value)} />
           </Field>
           </>
         )}
@@ -3745,6 +3745,21 @@ function Notes(){
   };
 
   const execFmt=(cmd,arg=null)=>{if(editorRef.current)editorRef.current.focus();document.execCommand(cmd,false,arg);};
+  // execCommand("fontSize") only understands the legacy 1-7 HTML scale, not
+  // real px values — the standard workaround is forcing size 7 (guaranteed
+  // to wrap the selection in one <font> tag) then swapping that tag's size
+  // attribute for an actual style.fontSize. Runs outside execCommand's own
+  // event, so onEditorInput needs an explicit call to persist it.
+  const setFontSize=(px)=>{
+    if(!editorRef.current||!px)return;
+    editorRef.current.focus();
+    document.execCommand("fontSize",false,"7");
+    editorRef.current.querySelectorAll('font[size="7"]').forEach(el=>{
+      el.removeAttribute("size");
+      el.style.fontSize=px+"px";
+    });
+    onEditorInput();
+  };
 
   const handleEditorMouseUp=()=>{
     const s=window.getSelection();
@@ -4279,9 +4294,9 @@ function Notes(){
       </Modal>
 
       {/* ── SYLLABUS DEADLINE REVIEW — preview-then-commit, never a silent write ── */}
-      <Modal open={!!syllabusReview} onClose={()=>setSyllabusReview(null)} title="Review extracted deadlines" sub="AI dates are guesses — check them before they go on your calendar. Low-confidence guesses are flagged." width={620}
+      <Modal open={!!syllabusReview} onClose={()=>setSyllabusReview(null)} title="Review extracted deadlines" sub="AI dates are guesses. Check them before they go on your calendar. Low-confidence guesses are flagged." width={620}
         footer={<>
-          <Btn variant="subtle" onClick={()=>setSyllabusReview(null)}>Skip — just save the note</Btn>
+          <Btn variant="subtle" onClick={()=>setSyllabusReview(null)}>Skip, just save the note</Btn>
           <Btn disabled={aiLoading||!syllabusReview||syllabusReview.items.filter(i=>i.include).length===0} onClick={()=>{
             const included=syllabusReview.items.filter(i=>i.include);
             commitSyllabusEvents(syllabusReview.noteId,syllabusReview.tag,included);
@@ -4307,7 +4322,7 @@ function Notes(){
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:8}}>
                     <SelectChip options={[{value:"deadline",label:"To-Do"},{value:"exam",label:"Exam"}]} value={it.kind} onChange={v=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v}:x)}))} />
-                    {it.confidence==="low"&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>Low confidence — double-check</span>}
+                    {it.confidence==="low"&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>Low confidence, double-check</span>}
                     {it.kind==="deadline"&&(
                       <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:T.muted,cursor:"pointer"}}>
                         <input type="checkbox" checked={!!it.attackBlock} onChange={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,attackBlock:!x.attackBlock}:x)}))} />
@@ -4389,7 +4404,7 @@ function Notes(){
         {quizOverlay&&quizOverlay.done&&(
           <div style={{textAlign:"center",padding:"20px 0"}}>
             <div style={{fontSize:32,fontWeight:800,color:T.lime,marginBottom:6}}>{quizOverlay.score}/{quizOverlay.questions.length}</div>
-            <div style={{fontSize:13,color:T.muted,marginBottom:16}}>Nice work — quiz complete.</div>
+            <div style={{fontSize:13,color:T.muted,marginBottom:16}}>Nice work, quiz complete.</div>
             <Btn variant="subtle" onClick={()=>setQuizOverlay(null)}>Close</Btn>
           </div>
         )}
@@ -4454,6 +4469,11 @@ function Notes(){
                     <option value="'Courier New', monospace">Courier</option>
                     <option value="'JetBrains Mono', monospace">Mono</option>
                   </select>
+                  {/* Font size */}
+                  <select onMouseDown={e=>e.stopPropagation()} onChange={e=>setFontSize(e.target.value)} defaultValue="" style={{padding:"4px 6px",borderRadius:5,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer",outline:"none",height:28}}>
+                    <option value="" disabled>Size</option>
+                    {[10,12,14,16,18,20,24,28,32,36].map(sz=><option key={sz} value={sz}>{sz}</option>)}
+                  </select>
                   <div style={{width:1,height:18,background:T.border,margin:"0 2px"}} />
                   {/* Bold */}
                   <button style={tbBtn()} onMouseDown={e=>{e.preventDefault();execFmt("bold");}} title="Bold"><strong style={{fontSize:13}}>B</strong></button>
@@ -4483,10 +4503,10 @@ function Notes(){
                   <BtnSm variant="subtle" onClick={()=>exportNote(activeNote)}>{Icon.copy} Copy</BtnSm>
                   <BtnSm variant="subtle" onClick={()=>setSendNoteOpen(true)}>{Icon.send} Send</BtnSm>
                   <div style={{flex:1}} />
-                  <button onClick={openDocComment} title="Attach a note to the whole document — no highlight needed" style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${T.blue}44`,background:T.blue+"14",color:T.blue,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
+                  <button onClick={openDocComment} title="Attach a note to the whole document (no highlight needed)" style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${T.blue}44`,background:T.blue+"14",color:T.blue,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
                     {Icon.chat} Add Comment
                   </button>
-                  <button onClick={openTutorForDocument} title="Ask the AI Tutor about this whole note — no highlight needed" style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${T.amber}44`,background:T.amber+"14",color:T.amber,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
+                  <button onClick={openTutorForDocument} title="Ask the AI Tutor about this whole note (no highlight needed)" style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${T.amber}44`,background:T.amber+"14",color:T.amber,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
                     {Icon.brain} Ask Tutor
                   </button>
                   <button onClick={cleanNotes} disabled={cleaning} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${T.lime}44`,background:cleaning?T.card2:T.lime+"14",color:cleaning?T.muted:T.lime,cursor:cleaning?"default":"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
@@ -5591,7 +5611,7 @@ function ChatBubble({m,myUid,onRespond,onSchedule}){
       return (
         <div style={{alignSelf:"center",width:"100%",padding:"14px 15px",background:T.purple+"1A",border:`1px solid ${T.purple}40`,borderRadius:12}}>
           <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:8,color:T.purple,fontSize:11,fontWeight:700}}>🤖 Studlin Match</div>
-          <div style={{fontSize:12.5,color:pp.text,lineHeight:1.55}}>No overlapping free time in that window — try a wider window, or message to rearrange something.</div>
+          <div style={{fontSize:12.5,color:pp.text,lineHeight:1.55}}>No overlapping free time in that window. Try a wider window, or message to rearrange something.</div>
         </div>
       );
     }
@@ -5605,7 +5625,7 @@ function ChatBubble({m,myUid,onRespond,onSchedule}){
         {m.status==="scheduled"?(
           <>
             <div style={{fontSize:12.5,color:pp.text,lineHeight:1.55,marginBottom:8}}>Booked <strong>{chosen.duration}-minute</strong> session <strong>{chosen.dayLabel} at {chosen.timeLabel}</strong>.</div>
-            <div style={{fontSize:11.5,color:T.lime,fontWeight:600}}>✓ Scheduled — added to your calendar</div>
+            <div style={{fontSize:11.5,color:T.lime,fontWeight:600}}>✓ Scheduled, added to your calendar</div>
           </>
         ):(
           <>
@@ -6063,7 +6083,7 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
                   </div>
                   <Btn variant="subtle" onClick={()=>onMakePermanent(target.group.id)} style={{width:"100%",justifyContent:"center",marginBottom:8}}>{Icon.users} Make permanent</Btn>
                 </>)
-              :<div style={{fontSize:12.5,color:T.muted,marginBottom:10}}>This is a standard ongoing group — it will never auto-archive.</div>
+              :<div style={{fontSize:12.5,color:T.muted,marginBottom:10}}>This is a standard ongoing group. It will never auto-archive.</div>
             }
             {target.group.createdBy===myUid&&<Btn variant="danger" onClick={()=>{setSettingsOpen(false);onDeleteGroup(target.group.id);}} style={{width:"100%",justifyContent:"center"}}>{Icon.xmark} Delete group</Btn>}
           </div>
@@ -7091,7 +7111,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                       {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:1}}>{fmtTime(ev.time)}{dur ? " · "+dur+"m" : ""}</div>}
                       {ev.userPinned && !isRoutine && (
                         <div onClick={(e)=>{e.stopPropagation();const next=events.map(x=>x.id===ev.id?{...x,userPinned:false}:x);setEvents(next);lsSet("events",next);}}
-                          title="Pinned — Studlin won't move this. Click to let it auto-schedule again."
+                          title="Pinned. Studlin won't move this. Click to let it auto-schedule again."
                           style={{position:"absolute",top:2,right:2,width:13,height:13,borderRadius:"50%",background:"rgba(0,0,0,0.28)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",zIndex:1}}>
                           <span style={{fontSize:8,lineHeight:1}}>📌</span>
                         </div>
@@ -7625,7 +7645,7 @@ function RescheduleModal({task,events,commit,onClose}){
       <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:420,background:T.card,border:`1px solid ${T.border}`,borderRadius:18,padding:24,animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
         <div style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:10}}>Reschedule "{task.title}"?</div>
         {candidates.length===0
-          ? <div style={{fontSize:12.5,color:T.red,marginBottom:14,padding:"10px 12px",background:T.red+"14",borderRadius:9}}>No open slot before its deadline, even after freeing up what we can — try a manual edit instead.</div>
+          ? <div style={{fontSize:12.5,color:T.red,marginBottom:14,padding:"10px 12px",background:T.red+"14",borderRadius:9}}>No open slot before its deadline, even after freeing up what we can. Try a manual edit instead.</div>
           : <>
             <div style={{fontSize:13.5,color:T.text,lineHeight:1.5,marginBottom:14}}>
               Rescheduling this gives you <strong>{fmtMinsDur(taskMins)}</strong> back today. Studlin found the lightest days coming up:
@@ -7694,8 +7714,8 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   const brainDumpLinkRef=useRef(null);
   const rescheduleBtnRef=useRef(null);
   const CAL_TOUR_STEPS=[
-    {targetRef:addTaskBtnRef,title:"Add anything, one place",body:"A class, an assignment, a reminder — tap Add Task and Studlin finds the time for it."},
-    {targetRef:rescheduleBtnRef,title:"When things don't go as planned",body:"Tell Studlin what happened and it reschedules everything around it — deadlines stay safe, nothing gets crammed in."},
+    {targetRef:addTaskBtnRef,title:"Add anything, one place",body:"A class, an assignment, a reminder. Tap Add Task and Studlin finds the time for it."},
+    {targetRef:rescheduleBtnRef,title:"When things don't go as planned",body:"Tell Studlin what happened and it reschedules everything around it. Deadlines stay safe, nothing gets crammed in."},
   ];
   const [calTourStep,setCalTourStep]=useState(()=>isFreshAccount?0:-1);
   const advanceCalTour=()=>{
@@ -8539,7 +8559,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
       <PH title="Studlin Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><span ref={rescheduleBtnRef} style={{display:"inline-flex"}}><Btn variant="danger" onClick={()=>{setPauseOpen(true);setPauseError("");setPausePreview(null);}}>Studlin Reschedule</Btn></span><Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>setRoutineCenterOpen(true)}>Routine</Btn><span ref={brainDumpLinkRef} style={{display:"inline-flex"}}><Btn variant="ghost" onClick={()=>{resetForm();setBrainDumpOpen(true);}}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.sparkles,"Brain dump")}</Btn></span><span ref={addTaskBtnRef} style={{display:"inline-flex"}}><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></span></div>} />
       {editRoutineMode&&(
         <div style={{display:"flex",alignItems:"center",gap:12,padding:"9px 14px",background:T.lime+"10",border:`1px solid ${T.lime}33`,borderRadius:10,marginBottom:14,fontSize:12.5,color:T.text}}>
-          <span style={{flex:1}}>Editing your Weekly Routine — one-off tasks are dimmed. Click a routine block to edit it, or hover and tap × to delete it everywhere it repeats.</span>
+          <span style={{flex:1}}>Editing your Weekly Routine. One-off tasks are dimmed. Click a routine block to edit it, or hover and tap × to delete it everywhere it repeats.</span>
           <BtnSm variant="subtle" onClick={()=>{setEditRoutineMode(false);setHoveredRoutineId(null);}}>Done</BtnSm>
         </div>
       )}
@@ -8588,7 +8608,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
                       const dimmedByRoutineMode=editRoutineMode&&!isRoutine;
                       return <div key={j} style={{fontSize:9,fontWeight:600,color:tagColor,background:tagColor+(isExam?"22":"16"),border:isRoutine&&editRoutineMode?`1px solid ${T.lime}`:isExam?`1px solid ${tagColor}`:"none",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%",display:"flex",alignItems:"center",gap:3,opacity:dimmedByRoutineMode?0.3:1}}>
                         {ev.priority&&ev.priority>=4&&<span style={{width:5,height:5,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority],flexShrink:0}} />}
-                        {ev.userPinned&&<span style={{flexShrink:0,fontSize:7}} title="Pinned — won't be auto-rescheduled">📌</span>}
+                        {ev.userPinned&&<span style={{flexShrink:0,fontSize:7}} title="Pinned, won't be auto-rescheduled">📌</span>}
                         {ev.movedByStudlin&&<span style={{flexShrink:0,fontSize:7}} title={"Studlin moved this from "+fmtMovedFrom(ev.movedFrom)}>↻</span>}
                         {ev.title}
                       </div>;
@@ -8678,8 +8698,8 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
         {evKind==="deadline"&&(
           <label className="checkbox" onClick={()=>setAsChecklist(s=>!s)} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:14,fontSize:12.5,color:T.text}}>
             <span style={{width:16,height:16,borderRadius:4,border:`1.5px solid ${asChecklist?T.lime:T.border}`,background:asChecklist?T.lime:"transparent",display:"grid",placeItems:"center",flexShrink:0,color:T.ink}}>{asChecklist&&Icon.check}</span>
-            No specific time — add to checklist instead
-            <span style={{color:T.muted,fontWeight:400}}>— skips the calendar, shows up as a checkbox on your Dashboard</span>
+            No specific time, add to checklist instead
+            <span style={{color:T.muted,fontWeight:400}}>(skips the calendar, shows up as a checkbox on your Dashboard)</span>
           </label>
         )}
 
@@ -8712,7 +8732,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
             <label className="checkbox" onClick={()=>setEvSaveToRoutine(s=>!s)} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:14,fontSize:12.5,color:T.text}}>
               <span style={{width:16,height:16,borderRadius:4,border:`1.5px solid ${evSaveToRoutine?T.lime:T.border}`,background:evSaveToRoutine?T.lime:"transparent",display:"grid",placeItems:"center",flexShrink:0,color:T.ink}}>{evSaveToRoutine&&Icon.check}</span>
               Save to my Weekly Routine
-              <span style={{color:T.muted,fontWeight:400}}>— repeats every week on this day instead of just once</span>
+              <span style={{color:T.muted,fontWeight:400}}>(repeats every week on this day instead of just once)</span>
             </label>
           </>
         )}
@@ -8745,7 +8765,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
         {isTaskKind&&!isChecklistMode&&taskMode==="ai"&&!evSplitEnabled&&(
           <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14}}>
             <div onClick={()=>setEvAttackBlock(a=>!a)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
-              <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>I don't know how long this takes</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Start with a short probe session — Studlin figures out the rest.</div></div>
+              <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>I don't know how long this takes</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Start with a short probe session. Studlin figures out the rest.</div></div>
               <div style={{width:36,height:20,borderRadius:10,background:evAttackBlock?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer"}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:evAttackBlock?18:2,transition:"left 0.2s"}} /></div>
             </div>
             {evAttackBlock&&(
@@ -8804,7 +8824,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
       </Modal>
 
       {/* ── BRAIN DUMP — tell Studlin everything at once instead of one task at a time ── */}
-      <Modal open={brainDumpOpen} onClose={()=>{if(bdListening)stopBdRec();setBrainDumpOpen(false);setBrainDumpText("");setBdError("");setBdMicError("");}} title="Brain dump" sub="Tell Studlin everything you need to do — it'll sort out the rest." width={560}
+      <Modal open={brainDumpOpen} onClose={()=>{if(bdListening)stopBdRec();setBrainDumpOpen(false);setBrainDumpText("");setBdError("");setBdMicError("");}} title="Brain dump" sub="Tell Studlin everything you need to do. It'll sort out the rest." width={560}
         footer={<><Btn variant="subtle" onClick={()=>{if(bdListening)stopBdRec();setBrainDumpOpen(false);setBrainDumpText("");setBdError("");setBdMicError("");}}>Cancel</Btn><Btn onClick={submitBrainDump} disabled={brainDumpLoading||!brainDumpText.trim()} style={{flex:1,justifyContent:"center",opacity:brainDumpLoading?1:(!brainDumpText.trim()?0.45:1)}}>{brainDumpLoading?"Sorting it out...":"Sort it out →"}</Btn></>}>
         <div style={{position:"relative"}}>
           <Textarea placeholder="e.g. I have chem homework, need to email my counselor about my schedule, and my bio project is due Friday..." value={brainDumpText} onChange={e=>setBrainDumpText(e.target.value)} style={{minHeight:140,paddingRight:44}} autoFocus />
@@ -8819,7 +8839,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
       </Modal>
 
       {/* ── BRAIN DUMP REVIEW — preview-then-commit, same discipline as the syllabus review in Notes ── */}
-      <Modal open={!!brainDumpReview} onClose={()=>setBrainDumpReview(null)} title="Review your plan" sub="Studlin sorted these out — check them before they're added." width={620}
+      <Modal open={!!brainDumpReview} onClose={()=>setBrainDumpReview(null)} title="Review your plan" sub="Studlin sorted these out. Check them before they're added." width={620}
         footer={<>
           <Btn variant="subtle" onClick={()=>setBrainDumpReview(null)}>Cancel</Btn>
           <Btn disabled={!brainDumpReview||brainDumpReview.items.filter(i=>i.include).length===0} onClick={()=>{
@@ -8829,7 +8849,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
           }}>{"Add "+(brainDumpReview?brainDumpReview.items.filter(i=>i.include).length:0)+" to your plan →"}</Btn>
         </>}>
         {brainDumpReview&&brainDumpReview.items.length===0&&(
-          <div style={{textAlign:"center",padding:"24px 0",color:T.muted,fontSize:13}}>Couldn't find anything in that — try rephrasing.</div>
+          <div style={{textAlign:"center",padding:"24px 0",color:T.muted,fontSize:13}}>Couldn't find anything in that. Try rephrasing.</div>
         )}
         {brainDumpReview&&brainDumpReview.warning&&(
           <div style={{fontSize:12,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:8,padding:"8px 12px",marginBottom:10}}>{brainDumpReview.warning}</div>
@@ -8888,7 +8908,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
         </div>
         {editEv&&editEv.userPinned&&(
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:T.muted}}>
-            <span>📌 Pinned — Studlin won't move this automatically.</span>
+            <span>📌 Pinned. Studlin won't move this automatically.</span>
             <button type="button" onClick={()=>{
               const next=events.map(x=>x.id===editEv.id?{...x,userPinned:false}:x);
               setEvents(next);lsSet("events",next);
@@ -9480,7 +9500,7 @@ function WriteStudio(){
         ):(
           <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,padding:40,textAlign:"center"}}>
             <div style={{width:56,height:56,borderRadius:14,background:T.lime+"14",border:"1px solid "+T.lime+"33",display:"grid",placeItems:"center",color:T.lime}}>{Icon.pen}</div>
-            <div><div style={{fontSize:17,fontWeight:700,color:T.white,marginBottom:6}}>Writing Suite</div><div style={{fontSize:13,color:T.text,maxWidth:280,lineHeight:1.6}}>Your essays, AI tutor, grammar check, and rewrite tools — all in one place. Create a doc or pick a template to get started.</div></div>
+            <div><div style={{fontSize:17,fontWeight:700,color:T.white,marginBottom:6}}>Writing Suite</div><div style={{fontSize:13,color:T.text,maxWidth:280,lineHeight:1.6}}>Your essays, AI tutor, grammar check, and rewrite tools, all in one place. Create a doc or pick a template to get started.</div></div>
             <Btn onClick={()=>setNewOpen(true)}>{Icon.plus} New doc</Btn>
           </div>
         )}
@@ -9510,7 +9530,7 @@ function WriteStudio(){
       <Modal open={citeOpen} onClose={()=>{setCiteOpen(false);setCiteResult("");}} title="Cite a source"
         footer={<><Btn variant="subtle" onClick={()=>{setCiteOpen(false);setCiteResult("");}}>Cancel</Btn>{citeResult?<Btn onClick={insertCitation}>Insert into doc</Btn>:<Btn onClick={generateCitation} disabled={citeLoading||!citeSource.trim()}>{citeLoading?"Formatting...":"Generate"}</Btn>}</>}>
         <Field label="Style"><SelectChip options={[{value:"MLA",label:"MLA"},{value:"APA",label:"APA"},{value:"Chicago",label:"Chicago"}]} value={citeStyle} onChange={setCiteStyle} /></Field>
-        <Field label="Source details"><Textarea placeholder="Author, title, publication, year, URL — whatever you have." value={citeSource} onChange={e=>setCiteSource(e.target.value)} /></Field>
+        <Field label="Source details"><Textarea placeholder="Author, title, publication, year, URL. Whatever you have." value={citeSource} onChange={e=>setCiteSource(e.target.value)} /></Field>
         {citeResult&&<div style={{background:T.card2,border:"1px solid "+T.border,borderRadius:8,padding:"12px 14px",fontSize:13,color:T.text}}>{citeResult}</div>}
       </Modal>
 
@@ -9681,7 +9701,7 @@ function GrammarPolish() {
 
   return (
     <div>
-      <PH title="Grammar & Polish" sub="AI-powered writing analysis — fix errors, elevate your prose" />
+      <PH title="Grammar & Polish" sub="AI-powered writing analysis: fix errors, elevate your prose" />
       <div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:16}}>
         <div>
           <Card style={{marginBottom:14}}>
@@ -10246,11 +10266,11 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
           {active==="Notifications" && (<>
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Notification Preferences</div>
-              <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Control how incoming chat messages reach you — a soft chime, a native desktop alert, or both, depending on what you're doing.</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Control how incoming chat messages reach you: a soft chime, a native desktop alert, or both, depending on what you're doing.</div>
               <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:14,padding:"13px 0",borderBottom:`1px solid ${T.border}`}}>
                 <div style={{flex:1,marginRight:14}}>
                   <div style={{fontSize:13,color:T.text,fontWeight:500}}>Enable Desktop Notifications</div>
-                  <div style={{fontSize:11.5,color:T.muted,marginTop:2,lineHeight:1.45}}>Native desktop alerts for incoming chat messages and study session updates — even when this tab is closed or in the background.</div>
+                  <div style={{fontSize:11.5,color:T.muted,marginTop:2,lineHeight:1.45}}>Native desktop alerts for incoming chat messages and study session updates, even when this tab is closed or in the background.</div>
                 </div>
                 <div onClick={handleSysPushToggle} style={{width:38,height:20,borderRadius:10,background:toggles.sysPush?T.lime:T.card2,border:`1px solid ${toggles.sysPush?T.lime:T.border}`,position:"relative",cursor:sysPushStatus==="denied"?"not-allowed":"pointer",transition:"all 0.2s",flexShrink:0,opacity:sysPushStatus==="unsupported"?0.45:1}}>
                   <div style={{width:14,height:14,borderRadius:"50%",background:toggles.sysPush?T.bg:"#fff",position:"absolute",top:2,left:toggles.sysPush?21:2,transition:"left 0.2s"}} />
@@ -10317,7 +10337,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Row label="Public profile" sub="Let others find you by name or handle." k="profile" />
               <Row label="Share Weekly Wrapped" sub="Allow sharing your stats card on social." k="share" />
               <Row label="Show Online Status" sub="When off, your presence dot is hidden from friends and you'll appear offline in the Studlin Network." k="onlineStatus" />
-              <Row label="Incognito Mode" sub="Completely masks your live study status — you'll appear offline everywhere and won't receive Join Lock-In requests." k="incognito" />
+              <Row label="Incognito Mode" sub="Completely masks your live study status. You'll appear offline everywhere and won't receive Join Lock-In requests." k="incognito" />
             </Card>
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Data &amp; AI</div>
@@ -10398,7 +10418,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             </Card>
             <Card>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:3}}>Weekly Routine</div>
-              <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Your classes, sports, and shifts — the times the AI treats as absolute and never schedules over.</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Your classes, sports, and shifts: the times the AI treats as absolute and never schedules over.</div>
               <Btn onClick={onOpenRoutineWizard}>Manage Routine</Btn>
             </Card>
           </>)}
@@ -10411,7 +10431,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             )}
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Calendar Integrations</div>
-              <div style={{fontSize:12,color:T.text,marginBottom:16,lineHeight:1.6}}>Pull your existing events into Studlin. Your data is never stored on our servers — events are cached locally on this device only.</div>
+              <div style={{fontSize:12,color:T.text,marginBottom:16,lineHeight:1.6}}>Pull your existing events into Studlin. Your data is never stored on our servers. Events are cached locally on this device only.</div>
               <div style={{display:"flex",flexDirection:"column",gap:10}}>
                 <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${calGoogleLinked?T.teal+"44":T.border}`,transition:"border-color 0.2s"}}>
                   <div style={{width:40,height:40,borderRadius:10,background:"rgba(66,133,244,0.10)",border:"1px solid rgba(66,133,244,0.22)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
@@ -10562,7 +10582,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 <div style={{fontSize:11.5,color:T.muted,marginLeft:"auto"}}>Exp 08/27</div>
                 <BtnSm variant="subtle">Update</BtnSm>
               </div>
-              <div style={{fontSize:11.5,color:T.muted,lineHeight:1.5}}>Your default card is used for subscription renewals and credit purchases. Add more cards by making a purchase — we'll save it securely via Stripe.</div>
+              <div style={{fontSize:11.5,color:T.muted,lineHeight:1.5}}>Your default card is used for subscription renewals and credit purchases. Add more cards by making a purchase. We'll save it securely via Stripe.</div>
             </Card>
             <Card>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:10}}>Billing history</div>
@@ -10891,7 +10911,7 @@ function LeaderboardModal({open,onClose,currentMinutes,currentName,currentStreak
 // Disabled "for now" per request — flip back to true to restore the inline
 // Global Leaderboard card on the dashboard.
 const SHOW_GLOBAL_LEADERBOARD=false;
-function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false, rescheduleTask, setRescheduleTask, dashToast, setDashToast}) {
+function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleTask, dashToast, setDashToast}) {
   const realStats=sessionStats();
   const realStreak=Math.max(1,getStreak());
   const lvl=levelInfo();
@@ -11053,10 +11073,9 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
           <div style={{position:"relative"}}>
             <div style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.45)",marginBottom:6}}>{todayLabel()} · Week {weekNo()} · <span style={{color:T.purple,letterSpacing:"0.12em"}}>SERIOUS MODE</span></div>
             <div style={{fontFamily:T.hand,fontSize:50,lineHeight:0.95,fontWeight:600,color:T.cream,margin:"0 0 10px"}}>{greet}, <span style={{color:T.lime}}>{firstName}.</span></div>
-            <p style={{fontSize:13.5,color:"rgba(246,241,230,0.7)",margin:"0 0 18px",lineHeight:1.5,maxWidth:560}}>{planLeft>0?<>You have <strong style={{color:T.cream}}>{planLeft} task{planLeft===1?"":"s"} left</strong> today. No distractions — just get it done.</>:plan.length>0?<>All <strong style={{color:T.cream}}>{plan.length} tasks complete</strong> today. Outstanding focus.</>:<>Nothing scheduled yet. Add tasks to your calendar to get started.</>}</p>
+            <p style={{fontSize:13.5,color:"rgba(246,241,230,0.7)",margin:"0 0 18px",lineHeight:1.5,maxWidth:560}}>{planLeft>0?<>You have <strong style={{color:T.cream}}>{planLeft} task{planLeft===1?"":"s"} left</strong> today. No distractions. Just get it done.</>:plan.length>0?<>All <strong style={{color:T.cream}}>{plan.length} tasks complete</strong> today. Outstanding focus.</>:<>Nothing scheduled yet. Add tasks to your calendar to get started.</>}</p>
             <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
               <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"10px 18px",background:T.lime,color:T.ink,borderRadius:99,fontSize:13,fontWeight:600,border:"none",cursor:"pointer",fontFamily:T.font}}>Open calendar</button>
-              <button onClick={()=>setScheduleSettingsOpen(true)} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"10px 18px",color:T.cream,border:"1px solid rgba(246,241,230,0.18)",background:"transparent",borderRadius:99,fontSize:13,fontWeight:500,cursor:"pointer",fontFamily:T.font}}>Customize schedule</button>
             </div>
           </div>
         </div>
@@ -11075,7 +11094,6 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
                 Ask Studlin AI
               </button>
               <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",color:T.cream,border:"1px solid rgba(246,241,230,0.18)",background:"transparent",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>View today's plan</button>
-              <button onClick={()=>setScheduleSettingsOpen(true)} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",color:T.cream,border:"1px solid rgba(246,241,230,0.18)",background:"transparent",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Customize schedule</button>
             </div>
           </div>
         </div>
@@ -11235,9 +11253,9 @@ function Dashboard({setActive, setScheduleSettingsOpen=()=>{}, seriousMode=false
           {checklistItems.length===0
             ? <div style={{fontSize:12.5,color:T.muted,padding:"6px 0 4px",textAlign:"center"}}>Nothing on your checklist.</div>
             : checklistItems.map(item=>(
-              <div key={item.id} onClick={()=>toggleChecklistItem(item.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer"}}>
-                <div style={{width:18,height:18,borderRadius:"50%",border:`1.5px solid ${T.faint}`,background:"transparent",flex:"none",display:"grid",placeItems:"center"}} />
-                <div style={{flex:1,minWidth:0,fontSize:12.5,color:T.text,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.title}</div>
+              <div key={item.id} onClick={()=>toggleChecklistItem(item.id)} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"9px 12px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer"}}>
+                <div style={{width:18,height:18,borderRadius:"50%",border:`1.5px solid ${T.faint}`,background:"transparent",flex:"none",marginTop:1,display:"grid",placeItems:"center"}} />
+                <div style={{flex:1,minWidth:0,fontSize:12.5,color:T.text,fontWeight:500,lineHeight:1.4,overflowWrap:"break-word"}}>{item.title}</div>
               </div>
             ))}
         </div>
@@ -12058,7 +12076,7 @@ function SharedChatView({shareId}){
         ))}
         <div style={{marginTop:40,padding:"28px 24px",borderRadius:16,background:card,border:`1px solid rgba(255,255,255,0.07)`,textAlign:"center"}}>
           <div style={{fontSize:17,fontWeight:700,color:text,marginBottom:8}}>Study smarter with Studlin AI</div>
-          <div style={{fontSize:13,color:muted,marginBottom:20,lineHeight:1.6}}>Your AI study assistant, flashcards, notes, and calendar — all in one place.</div>
+          <div style={{fontSize:13,color:muted,marginBottom:20,lineHeight:1.6}}>Your AI study assistant, flashcards, notes, and calendar. All in one place.</div>
           <a href="/app" style={{display:"inline-flex",padding:"11px 28px",borderRadius:99,background:lime,color:"#0E1F18",fontSize:14,fontWeight:700,textDecoration:"none"}}>Get started free</a>
         </div>
       </div>
@@ -12792,7 +12810,7 @@ function App() {
             container instead of the real viewport. Clearing it once done
             keeps the entrance animation but stops that side effect. */}
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
-          {active==="dashboard"?<Dashboard setActive={setActive} setScheduleSettingsOpen={setScheduleSettingsOpen} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} />:
+          {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} />:
            active==="calendar"?<CalendarTab onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
@@ -12891,7 +12909,7 @@ function App() {
               <button onClick={buyCustom} style={{background:T.lime,color:T.ink,border:"none",borderRadius:10,padding:"0 24px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Buy now</button>
             </div>
             {boughtMsg&&<div style={{fontSize:12.5,color:boughtMsg.startsWith("✓")?T.lime:T.red,fontWeight:600,marginBottom:8}}>{boughtMsg}</div>}
-            <div style={{fontSize:11,color:T.muted,marginBottom:18}}>Buy any amount you want — $5 minimum, $100,000 max. Roughly 30 credits per $1.</div>
+            <div style={{fontSize:11,color:T.muted,marginBottom:18}}>Buy any amount you want. $5 minimum, $100,000 max. Roughly 30 credits per $1.</div>
 
             <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.muted,textTransform:"uppercase",marginBottom:10}}>What costs what</div>
             <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"4px 14px"}}>

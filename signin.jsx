@@ -87,7 +87,7 @@ function LeftRail() {
         <div className="rail-tile">
           <div className="ic">{Ic.clock}</div>
           <div className="t">Back in seconds</div>
-          <div className="s">One tap with Google — or use your email</div>
+          <div className="s">One tap with Google, or use your email</div>
         </div>
       </div>
     </aside>
