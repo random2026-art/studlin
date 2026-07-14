@@ -615,6 +615,15 @@ const StatNum = ({label,value,sub,accent,style={}}) => (
 // ─── PERSISTENCE + MONETIZATION HELPERS ──────────────────────────────────────
 const lsGet=(k,d)=>{try{const v=localStorage.getItem("studlin-"+k);return v===null?d:JSON.parse(v);}catch(e){return d;}};
 const lsSet=(k,v)=>{try{localStorage.setItem("studlin-"+k,JSON.stringify(v));}catch(e){}};
+// A fire-and-forget write failing used to just vanish — no record anywhere,
+// for us or the student. This is the one place that decides "does a caught
+// error get reported," so a silent .catch(()=>{}) can become
+// .catch(reportError("some context")) without repeating the Sentry-presence
+// check at every call site. Never throws itself — a broken error reporter
+// must not become a second bug on top of the first one.
+const reportError=(context)=>(e)=>{
+  try{if(typeof Sentry!=="undefined")Sentry.captureException(e,{tags:{context}});}catch(e2){}
+};
 // Read the user's AI Tutor preferences (Settings > Study preferences) for
 // attaching to genuine chat/tutoring /api/chat calls only — one-shot utility
 // generations (citations, grammar, flashcard gen, etc.) never call this, so
@@ -1888,6 +1897,97 @@ function rebalanceDay(dateKey,allEvents,routines,prefs){
 
   return rest.concat(reassigned);
 }
+
+// Studlin Reschedule's actual planning engine ("push everything back N
+// days" / "clear this day" / "clear this week" / "skip class today").
+// Lives at module scope (not inside CalendarTab, where it originally sat)
+// because it never actually closed over any component-local state — every
+// dependency (dayKey, getWeeklyRoutine, getSchedulePreferences, lsGet,
+// findLegalSlotOrNull) is already module-level, so moving it here is a
+// pure relocation with no behavior change. Two things that make this worth
+// doing: it's testable in isolation now, and it's the exact function where
+// a real bug was found and fixed (a duration-less due-date marker could
+// have its actual due date moved by these commands — see isQualifying's
+// carve-out below).
+const PAUSE_QUALIFYING_KINDS=new Set(["study block","deadline","reminder"]);
+function computePausePlan(intent){
+  const today=dayKey();
+  // A syllabus-scanned due-date marker is kind:"deadline" but duration:null
+  // (a real assignment's own scheduled work block always has a real
+  // duration) — without this carve-out, "push everything back"/"clear
+  // this week" would move the actual due date itself, which is a fact set
+  // by the professor, not student time Studlin is free to reschedule.
+  // Reminders keep duration:0 by design (a point-in-time nudge, not a
+  // block) and are legitimately reschedulable, so this only excludes
+  // "deadline" specifically, not the whole qualifying set.
+  const isQualifying=(ev)=>ev.status==="pending"&&PAUSE_QUALIFYING_KINDS.has(ev.kind)&&!(ev.kind==="deadline"&&ev.duration==null);
+  if(intent.intent==="skip_class"){
+    const date=intent.date||today;
+    const dow=(new Date(date+"T12:00:00").getDay()+6)%7;
+    const routinesAll=getWeeklyRoutine();
+    const skippedIds=routinesAll.filter(r=>r.kind==="class"&&r.days&&r.days.includes(dow)).map(r=>r.id);
+    const label=skippedIds.length===0?"No class scheduled "+date:"Skip class, "+date;
+    if(skippedIds.length===0)return{label,moved:[],couldntMove:[],skipRoutine:null};
+    // Preview the freed slot without touching localStorage yet — pass a
+    // routines list with the skipped rule(s) filtered out, same idea as
+    // Tier 3's other intents computing entirely in-memory until Confirm.
+    // The actual persisted skip (which every other scheduler in the app
+    // also needs to see, not just this preview) only gets written in
+    // confirmPausePlan.
+    const routinesMinusSkipped=routinesAll.filter(r=>!skippedIds.includes(r.id));
+    const prefsNow=getSchedulePreferences();
+    const all=lsGet("events",[]);
+    const candidates=all.filter(ev=>isQualifying(ev)&&ev.date>date)
+      .sort((a,b)=>a.date===b.date?((a.time||"")<(b.time||"")?-1:1):(a.date<b.date?-1:1));
+    let working=all;
+    const moved=[];
+    for(const ev of candidates){
+      if(moved.length>=4)break;
+      const slot=findLegalSlotOrNull(working.filter(e=>e.id!==ev.id),routinesMinusSkipped,prefsNow,date,prefsNow.workStartTime,ev.duration||30,ev.deadline||null);
+      if(slot&&slot.date===date){
+        moved.push({id:ev.id,title:ev.title,oldDate:ev.date,oldTime:ev.time,newDate:slot.date,newTime:slot.time});
+        working=working.map(e=>e.id===ev.id?{...e,date:slot.date,time:slot.time}:e);
+      }
+    }
+    return{label,moved,couldntMove:[],skipRoutine:{date,routineIds:skippedIds}};
+  }
+  let label,inWindow,computeNewDate;
+  if(intent.intent==="shift"){
+    const days=Math.max(1,Math.min(14,intent.days||1));
+    label="Push everything back "+days+" day"+(days!==1?"s":"");
+    inWindow=(ev)=>isQualifying(ev)&&ev.date>=today;
+    computeNewDate=(ev)=>{const d=new Date(ev.date+"T12:00:00");d.setDate(d.getDate()+days);return dayKey(d);};
+  }else if(intent.intent==="clear_day"){
+    const date=intent.date||today;
+    label="Clear "+date;
+    inWindow=(ev)=>isQualifying(ev)&&ev.date===date;
+    computeNewDate=()=>{const d=new Date(date+"T12:00:00");d.setDate(d.getDate()+1);return dayKey(d);};
+  }else{
+    const end=(()=>{const d=new Date();d.setDate(d.getDate()+6);return dayKey(d);})();
+    label="Clear this week";
+    inWindow=(ev)=>isQualifying(ev)&&ev.date>=today&&ev.date<=end;
+    computeNewDate=()=>{const d=new Date();d.setDate(d.getDate()+7);return dayKey(d);};
+  }
+  const all=lsGet("events",[]);
+  const routinesNow=getWeeklyRoutine();
+  const prefsNow=getSchedulePreferences();
+  const affected=all.filter(inWindow).sort((a,b)=>a.date===b.date?((a.time||"")<(b.time||"")?-1:1):(a.date<b.date?-1:1));
+  let working=all.filter(ev=>!inWindow(ev));
+  const moved=[],couldntMove=[];
+  affected.forEach(ev=>{
+    const desiredDate=computeNewDate(ev);
+    const slot=findLegalSlotOrNull(working,routinesNow,prefsNow,desiredDate,ev.time||prefsNow.workStartTime,ev.duration||30,ev.deadline||null);
+    if(slot){
+      moved.push({id:ev.id,title:ev.title,oldDate:ev.date,oldTime:ev.time,newDate:slot.date,newTime:slot.time});
+      working=working.concat([{...ev,date:slot.date,time:slot.time}]);
+    }else{
+      couldntMove.push({id:ev.id,title:ev.title,deadline:ev.deadline});
+      working=working.concat([ev]);
+    }
+  });
+  return {label,moved,couldntMove};
+}
+
 // Standalone wrapper around rebalanceDay for callers outside CalendarTab's
 // React state (e.g. ChatDrawer, a sibling component with no access to
 // CalendarTab's own commitTasks closure) — reads/writes localStorage
@@ -6097,12 +6197,12 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
     if(!roomId||!myUid)return;
     const ts=Date.now();
     const roomRef=fsdb().collection('chatRooms').doc(roomId);
-    roomRef.collection('messages').add({senderId:myUid,ts,...fields}).catch(()=>{});
-    roomRef.update({lastMessage:{text:fields.text||null,kind:fields.kind,ts,senderId:myUid},updatedAt:new Date().toISOString()}).catch(()=>{});
+    roomRef.collection('messages').add({senderId:myUid,ts,...fields}).catch(reportError("sendMessage-add"));
+    roomRef.update({lastMessage:{text:fields.text||null,kind:fields.kind,ts,senderId:myUid},updatedAt:new Date().toISOString()}).catch(reportError("sendMessage-lastMessage"));
     // Server-side push — checks the recipient's own preference before
     // sending, so this is a request to try, not a guarantee it fires.
     const preview=fields.text||(fields.kind==="calendar"?"Shared free time found":fields.kind==="note"?"Note shared":fields.kind==="deck"?"Deck shared":"New message");
-    authFetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"push",roomId,preview})}).catch(()=>{});
+    authFetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"push",roomId,preview})}).catch(reportError("sendMessage-push"));
   };
 
   const sendText=()=>{if(!input.trim())return;sendMessage({kind:"text",text:input.trim()});setInput("");};
@@ -6773,7 +6873,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
         ['participants.'+myUid+'.state']:'joined',
         ['participants.'+myUid+'.joinedAt']:now,
         updatedAt:new Date().toISOString(),
-      }).catch(()=>{if(onLockInError)onLockInError("Couldn't sync with your group. Your timer's still running, but try Lock In again to reconnect them.");});
+      }).catch(e=>{reportError("startLockIn")(e);if(onLockInError)onLockInError("Couldn't sync with your group. Your timer's still running, but try Lock In again to reconnect them.");});
     }
     if(breakOn&&totalMins>=15&&focus2Mins>0){
       setPhase("focus1");setSecs(breakPos*60);setRunning(true);
@@ -8837,86 +8937,10 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
   // the one-click fallback presets — the model (when used at all) only ever
   // picks one of a few known intents, it never proposes dates/times itself,
   // so a misclassification can only ever result in "the wrong known action
-  // ran," never an invented/hallucinated calendar change.
-  const PAUSE_QUALIFYING_KINDS=new Set(["study block","deadline","reminder"]);
-  const computePausePlan=(intent)=>{
-    const today=dayKey();
-    // A syllabus-scanned due-date marker is kind:"deadline" but duration:null
-    // (a real assignment's own scheduled work block always has a real
-    // duration) — without this carve-out, "push everything back"/"clear
-    // this week" would move the actual due date itself, which is a fact set
-    // by the professor, not student time Studlin is free to reschedule.
-    // Reminders keep duration:0 by design (a point-in-time nudge, not a
-    // block) and are legitimately reschedulable, so this only excludes
-    // "deadline" specifically, not the whole qualifying set.
-    const isQualifying=(ev)=>ev.status==="pending"&&PAUSE_QUALIFYING_KINDS.has(ev.kind)&&!(ev.kind==="deadline"&&ev.duration==null);
-    if(intent.intent==="skip_class"){
-      const date=intent.date||today;
-      const dow=(new Date(date+"T12:00:00").getDay()+6)%7;
-      const routinesAll=getWeeklyRoutine();
-      const skippedIds=routinesAll.filter(r=>r.kind==="class"&&r.days&&r.days.includes(dow)).map(r=>r.id);
-      const label=skippedIds.length===0?"No class scheduled "+date:"Skip class, "+date;
-      if(skippedIds.length===0)return{label,moved:[],couldntMove:[],skipRoutine:null};
-      // Preview the freed slot without touching localStorage yet — pass a
-      // routines list with the skipped rule(s) filtered out, same idea as
-      // Tier 3's other intents computing entirely in-memory until Confirm.
-      // The actual persisted skip (which every other scheduler in the app
-      // also needs to see, not just this preview) only gets written in
-      // confirmPausePlan.
-      const routinesMinusSkipped=routinesAll.filter(r=>!skippedIds.includes(r.id));
-      const prefsNow=getSchedulePreferences();
-      const all=lsGet("events",[]);
-      const candidates=all.filter(ev=>isQualifying(ev)&&ev.date>date)
-        .sort((a,b)=>a.date===b.date?((a.time||"")<(b.time||"")?-1:1):(a.date<b.date?-1:1));
-      let working=all;
-      const moved=[];
-      for(const ev of candidates){
-        if(moved.length>=4)break;
-        const slot=findLegalSlotOrNull(working.filter(e=>e.id!==ev.id),routinesMinusSkipped,prefsNow,date,prefsNow.workStartTime,ev.duration||30,ev.deadline||null);
-        if(slot&&slot.date===date){
-          moved.push({id:ev.id,title:ev.title,oldDate:ev.date,oldTime:ev.time,newDate:slot.date,newTime:slot.time});
-          working=working.map(e=>e.id===ev.id?{...e,date:slot.date,time:slot.time}:e);
-        }
-      }
-      return{label,moved,couldntMove:[],skipRoutine:{date,routineIds:skippedIds}};
-    }
-    let label,inWindow,computeNewDate;
-    if(intent.intent==="shift"){
-      const days=Math.max(1,Math.min(14,intent.days||1));
-      label="Push everything back "+days+" day"+(days!==1?"s":"");
-      inWindow=(ev)=>isQualifying(ev)&&ev.date>=today;
-      computeNewDate=(ev)=>{const d=new Date(ev.date+"T12:00:00");d.setDate(d.getDate()+days);return dayKey(d);};
-    }else if(intent.intent==="clear_day"){
-      const date=intent.date||today;
-      label="Clear "+date;
-      inWindow=(ev)=>isQualifying(ev)&&ev.date===date;
-      computeNewDate=()=>{const d=new Date(date+"T12:00:00");d.setDate(d.getDate()+1);return dayKey(d);};
-    }else{
-      const end=(()=>{const d=new Date();d.setDate(d.getDate()+6);return dayKey(d);})();
-      label="Clear this week";
-      inWindow=(ev)=>isQualifying(ev)&&ev.date>=today&&ev.date<=end;
-      computeNewDate=()=>{const d=new Date();d.setDate(d.getDate()+7);return dayKey(d);};
-    }
-    const all=lsGet("events",[]);
-    const routinesNow=getWeeklyRoutine();
-    const prefsNow=getSchedulePreferences();
-    const affected=all.filter(inWindow).sort((a,b)=>a.date===b.date?((a.time||"")<(b.time||"")?-1:1):(a.date<b.date?-1:1));
-    let working=all.filter(ev=>!inWindow(ev));
-    const moved=[],couldntMove=[];
-    affected.forEach(ev=>{
-      const desiredDate=computeNewDate(ev);
-      const slot=findLegalSlotOrNull(working,routinesNow,prefsNow,desiredDate,ev.time||prefsNow.workStartTime,ev.duration||30,ev.deadline||null);
-      if(slot){
-        moved.push({id:ev.id,title:ev.title,oldDate:ev.date,oldTime:ev.time,newDate:slot.date,newTime:slot.time});
-        working=working.concat([{...ev,date:slot.date,time:slot.time}]);
-      }else{
-        couldntMove.push({id:ev.id,title:ev.title,deadline:ev.deadline});
-        working=working.concat([ev]);
-      }
-    });
-    return {label,moved,couldntMove};
-  };
-
+  // ran," never an invented/hallucinated calendar change. computePausePlan
+  // and PAUSE_QUALIFYING_KINDS themselves now live at module scope (see
+  // rebalanceDay's neighborhood) — they never actually depended on anything
+  // local to this component.
   const applyPausePreset=(intent)=>{setPauseError("");setPausePreview(computePausePlan(intent));};
 
   const submitPauseCommand=async()=>{
@@ -10362,7 +10386,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   // truth for the UI (instant, no round-trip), this write is fire-and-forget.
   const syncPushPref=(enabled)=>{
     if(!myUid)return;
-    fsdb().collection('users').doc(myUid).update({'preferences.pushNotificationsEnabled':enabled,updatedAt:new Date().toISOString()}).catch(()=>{});
+    fsdb().collection('users').doc(myUid).update({'preferences.pushNotificationsEnabled':enabled,updatedAt:new Date().toISOString()}).catch(reportError("syncPushPref"));
   };
   // The write above is one-way, so a fresh browser/profile/reinstalled PWA
   // defaults this toggle to "off" locally while the real server-enforced
@@ -13042,8 +13066,8 @@ function App() {
   useEffect(()=>{
     if(!myUid)return;
     const roomId=(active==="friends"&&openChatRoomId)?openChatRoomId:null;
-    fsdb().collection('users').doc(myUid).set({activeRoomId:roomId},{merge:true}).catch(()=>{});
-    return ()=>{fsdb().collection('users').doc(myUid).set({activeRoomId:null},{merge:true}).catch(()=>{});};
+    fsdb().collection('users').doc(myUid).set({activeRoomId:roomId},{merge:true}).catch(reportError("activeRoomId-set"));
+    return ()=>{fsdb().collection('users').doc(myUid).set({activeRoomId:null},{merge:true}).catch(reportError("activeRoomId-clear"));};
   },[myUid,active,openChatRoomId]);
   useEffect(()=>{
     if(!myUid){setUnreadCount(0);return;}
@@ -13905,5 +13929,32 @@ function App() {
 }
 
 
+// Catches a render-time crash anywhere in the tree — without this, React
+// unmounts the whole app on an uncaught error, leaving a blank page with no
+// explanation and no recovery path. Reports to Sentry (already initialized
+// in the HTML shell) so a crash is visible to us, not just invisible to the
+// student staring at a blank screen. Deliberately a class component — this
+// is the one place React still requires it, no hook equivalent exists for
+// componentDidCatch/getDerivedStateFromError.
+class ErrorBoundary extends React.Component{
+  constructor(props){super(props);this.state={hasError:false};}
+  static getDerivedStateFromError(){return{hasError:true};}
+  componentDidCatch(error,info){
+    if(typeof Sentry!=="undefined")Sentry.captureException(error,{extra:{componentStack:info.componentStack}});
+  }
+  render(){
+    if(this.state.hasError){
+      return (
+        <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14,background:"#0D120F",color:"#E8EFE7",fontFamily:"Geist,-apple-system,BlinkMacSystemFont,sans-serif",textAlign:"center",padding:24}}>
+          <div style={{fontSize:18,fontWeight:700}}>Something went wrong.</div>
+          <div style={{fontSize:13,color:"rgba(232,239,231,0.6)",maxWidth:320,lineHeight:1.5}}>Studlin hit an error it couldn't recover from. Your data's safe — refreshing usually fixes this.</div>
+          <button onClick={()=>window.location.reload()} style={{padding:"10px 24px",borderRadius:10,background:"#AECE5E",color:"#0D120F",fontSize:14,fontWeight:700,border:"none",cursor:"pointer",fontFamily:"inherit"}}>Refresh</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // Mount
-ReactDOM.createRoot(document.getElementById('root')).render(<AuthGate />);
+ReactDOM.createRoot(document.getElementById('root')).render(<ErrorBoundary><AuthGate /></ErrorBoundary>);
