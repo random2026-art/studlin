@@ -2,6 +2,7 @@
   "rewrites": [
     { "source": "/app", "destination": "/Studlin Web App.html" },
     { "source": "/app/(.*)", "destination": "/Studlin Web App.html" },
+    { "source": "/network", "destination": "/Studlin Web App.html" },
     { "source": "/onboarding", "destination": "/Studlin Onboarding.html" },
     { "source": "/signup", "destination": "/Studlin Onboarding.html" },
     { "source": "/signin", "destination": "/Studlin Sign In.html" },

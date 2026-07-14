@@ -4690,7 +4690,7 @@ function presenceInfo(u,{incognito=false,liveSession=null}={}){
   return{color:T.faint,text:"Offline",joinable:false};
 }
 
-function FriendsChat({onFriendRequestSent,onActiveChatChange}={}){
+function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onInitialTargetConsumed}={}){
   const [searchQ,setSearchQ]=useState("");
   const [searchFilter,setSearchFilter]=useState("All");
   const [inviteEmail,setInviteEmail]=useState("");
@@ -4830,6 +4830,22 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange}={}){
       },()=>{});
     return unsub;
   },[myUid]);
+
+  // Resolves a notification deep link (see the App()-level pendingChatTarget
+  // that produced this prop) into an actual chatTarget once the relevant
+  // data has loaded — friends/rooms populate async via the listeners above,
+  // so this just keeps checking on every update until it can resolve, then
+  // tells App() to drop the one-shot flag so it can't reopen itself later.
+  useEffect(()=>{
+    if(!initialTarget)return;
+    if(initialTarget.kind==="dm"){
+      const u=friends.find(f=>f.uid===initialTarget.uid);
+      if(u){setChatTarget({kind:"dm",user:u});if(onInitialTargetConsumed)onInitialTargetConsumed();}
+    }else if(initialTarget.kind==="group"){
+      const g=myRooms[initialTarget.id];
+      if(g){setChatTarget({kind:"group",group:g});if(onInitialTargetConsumed)onInitialTargetConsumed();}
+    }
+  },[initialTarget,friends,myRooms]);
 
   // Real live study sessions I'm a member of — the actual replacement for
   // the old fake u.presence "locked-in" stub. Two listeners (scheduled +
@@ -12152,10 +12168,24 @@ function App() {
     return ()=>clearInterval(id);
   },[]);
   const [onboarded,setOnboarded]=useState(()=>!!lsGet("onboarded",false));
+  // A desktop push notification's deep link (see api/notify.js sendPush and
+  // service-worker.js) lands here as /network?dm=<uid> or /network?group=
+  // <roomId> — consumed once (and stripped from the URL) so FriendsChat can
+  // resolve it into an actual chatTarget once its friends/rooms data loads.
+  const [pendingChatTarget,setPendingChatTarget]=useState(()=>{
+    const params=new URLSearchParams(window.location.search);
+    const dm=params.get("dm"),group=params.get("group");
+    if(!dm&&!group)return null;
+    const url=new URL(window.location.href);
+    url.searchParams.delete("dm");url.searchParams.delete("group");
+    window.history.replaceState({},"",url.pathname+url.search);
+    return dm?{kind:"dm",uid:dm}:{kind:"group",id:group};
+  });
   // A freshly-completed onboarding.jsx signup leaves a one-shot flag asking
   // to land directly on a specific tab (with its first-run tour active)
   // instead of the default dashboard — consumed once, then cleared.
   const [active,setActive]=useState(()=>{
+    if(pendingChatTarget)return "friends";
     const pending=lsGet("pendingTour",null);
     if(pending){try{localStorage.removeItem("studlin-pendingTour");}catch(e){}return pending;}
     // First-ever load for this account has no stored tab yet — land on
@@ -12720,7 +12750,7 @@ function App() {
           {active==="dashboard"?<Dashboard setActive={setActive} setScheduleSettingsOpen={setScheduleSettingsOpen} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} />:
            active==="calendar"?<CalendarTab onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} />:
-           active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} />:
+           active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="lectures"?<Lectures setActive={setActive} setPricingOpen={setPricingOpen} />:
            active==="profile"?<Profile setActive={setActive} />:
            ActivePage?<ActivePage />:null}
