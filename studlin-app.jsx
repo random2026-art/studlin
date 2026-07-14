@@ -1401,7 +1401,14 @@ const prioLabel=(v)=>{const p=v/10;return p<=20?"Low":p<=40?"Low–Medium":p<=60
 const diffLabel=(v)=>{const p=v/10;return p<=20?"Very Easy":p<=40?"Easy":p<=60?"Medium":p<=80?"Hard":"Very Hard";};
 async function getAuthToken(){try{const u=firebase.auth().currentUser;if(!u)return null;return await u.getIdToken();}catch(e){return null;}}
 async function authFetch(url,opts={}){try{const token=await getAuthToken();const h=Object.assign({},opts.headers||{});if(token)h["Authorization"]="Bearer "+token;return fetch(url,Object.assign({},opts,{headers:h}));}catch(e){return fetch(url,opts);}}
-async function fetchUserProfile(){try{const res=await authFetch("/api/me");if(!res.ok)return null;const d=await res.json();lsSet("credits",d.credits);lsSet("plan",d.plan||"Free");["stripeSubscriptionId","subscriptionStatus","subscriptionInterval","subscriptionCancelAtPeriodEnd","subscriptionCurrentPeriodEnd","subscriptionEndsAt"].forEach(k=>lsSet(k,d[k]===undefined?null:d[k]));return d;}catch(e){return null;}}
+async function fetchUserProfile(){try{const res=await authFetch("/api/me");if(!res.ok)return null;const d=await res.json();lsSet("credits",d.credits);lsSet("plan",d.plan||"Free");["stripeSubscriptionId","subscriptionStatus","subscriptionInterval","subscriptionCancelAtPeriodEnd","subscriptionCurrentPeriodEnd","subscriptionEndsAt"].forEach(k=>lsSet(k,d[k]===undefined?null:d[k]));
+  // "onboarded" otherwise lives only in this browser's localStorage, so a
+  // fresh browser/Incognito window/device makes an already-onboarded account
+  // repeat the wizard. Only ever upgrades false->true here, never the
+  // reverse — a slow/failed write to this same flag elsewhere shouldn't be
+  // able to un-onboard someone mid-session.
+  if(d.onboarded)lsSet("onboarded",true);
+  return d;}catch(e){return null;}}
 
 // ─── FIRESTORE (client SDK) — live user directory + friend graph ────────────
 // Everything privacy-sensitive (credits, plan, email) stays server-only via
@@ -4712,7 +4719,6 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange}={}){
   const myUid=firebase.auth().currentUser?.uid||null;
   const refCode=myUid||me.toLowerCase().replace(/\s+/g,"");
   const inviteLink="https://studlin.com/app?ref="+refCode;
-  const qrUrl="https://chart.googleapis.com/chart?cht=qr&chs=150x150&chl="+encodeURIComponent(inviteLink)+"&chco=AECE5E&chf=bg,s,0D120F";
 
   // Reports which thread (if any) is actively open up to App(), so its
   // cross-tab notification listener can suppress alerts for a thread the
@@ -5007,95 +5013,89 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange}={}){
     <div>
       <PH title="Studlin Network" sub="Study together. Stay in sync." />
 
-      {/* ── ADD FRIENDS / SEARCH ── */}
-      <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8}}>Add Friends</div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 296px",gap:14,marginBottom:24}}>
-        <div>
-          <div style={{display:"flex",gap:6,marginBottom:10}}>
-            {["All","@username","Name","School"].map(f=>(
-              <button key={f} onClick={()=>setSearchFilter(f)} style={{padding:"5px 11px",borderRadius:6,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font,border:`1px solid ${searchFilter===f?T.lime+"44":T.border}`,background:searchFilter===f?T.lime+"14":"transparent",color:searchFilter===f?T.lime:T.muted,transition:"all 0.12s"}}>{f}</button>
-            ))}
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 13px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:9,marginBottom:12}}>
-            <span style={{color:T.muted,display:"flex",flexShrink:0}}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
-            <input value={searchQ} onChange={e=>{setSearchQ(e.target.value);setEmailSent(false);}} placeholder={searchFilter==="@username"?"Search by @username…":searchFilter==="School"?"Search by university or college…":searchFilter==="Name"?"Search by first or last name…":"Search by name, @username, or school…"} style={{flex:1,background:"none",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}} />
-            {searchQ&&<button onClick={()=>setSearchQ("")} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:0,display:"flex",lineHeight:1,flexShrink:0}}>{Icon.xmark}</button>}
+      {/* ── INCOMING FRIEND REQUESTS — surfaced first, needs action ── */}
+      {incomingReqs.length>0&&(
+        <div style={{marginBottom:16}}>
+          <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8,display:"flex",alignItems:"center",gap:8}}>
+            Incoming Requests
+            <span style={{background:T.amber,color:T.ink,fontSize:9,fontWeight:800,borderRadius:4,padding:"1px 6px"}}>{incomingReqs.length}</span>
           </div>
           <Card style={{padding:0,overflow:"hidden"}}>
-            {!searchQ.trim()
-              ?<div style={{padding:24,textAlign:"center",fontSize:12.5,color:T.muted,lineHeight:1.6}}>Search by username, name, or school to find classmates already on Studlin.</div>
-              :searching
-                ?<div style={{padding:24,textAlign:"center",fontSize:12.5,color:T.muted}}>Searching…</div>
-                :!noResults
-                  ?searchResults.map((u,i,arr)=>{
-                      const isFriend=friends.some(f=>f.uid===u.uid);
-                      const incomingFromThem=incomingReqs.find(r=>r.senderId===u.uid);
-                      const isPendingOut=outgoingReqIds.has(u.uid);
-                      const label=isFriend?"Following":incomingFromThem?"Accept":isPendingOut?"Pending":"Add";
-                      const onClickBtn=isFriend||isPendingOut?undefined:incomingFromThem?()=>acceptReq(incomingFromThem.id):()=>sendFriendRequest(u.uid);
-                      return (
-                        <div key={u.uid} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
-                          <div style={{position:"relative",flexShrink:0}}>
-                            <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={34} picUrl="" />
-                          </div>
-                          <div style={{flex:1,minWidth:0}}>
-                            <div style={{fontSize:13,fontWeight:600,color:T.white}}>{u.n}</div>
-                            <div style={{fontSize:11,color:T.muted}}>{u.h}{u.s&&<> · <span style={{color:T.blue}}>{u.s}</span></>}</div>
-                          </div>
-                          <BtnSm variant={label==="Add"||label==="Accept"?"lime":"subtle"} onClick={onClickBtn} style={{flexShrink:0,opacity:onClickBtn?1:0.7}}>{label}</BtnSm>
-                        </div>
-                      );
-                    })
-                  :<div style={{padding:20}}>
-                      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
-                        <div style={{width:34,height:34,borderRadius:9,background:T.blue+"18",border:`1px solid ${T.blue}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.blue,flexShrink:0}}>{Icon.mail}</div>
-                        <div>
-                          <div style={{fontSize:13,fontWeight:700,color:T.white}}>No one found for "{searchQ}"</div>
-                          <div style={{fontSize:11,color:T.muted}}>Invite them to join Studlin via email.</div>
-                        </div>
-                      </div>
-                      <input value={inviteEmail} onChange={e=>setInviteEmail(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")sendEmailInvite();}} placeholder="friend@university.edu" style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",boxSizing:"border-box",marginBottom:10}} />
-                      {emailSent&&<div style={{fontSize:12,color:T.teal,marginBottom:8}}>Invite sent!</div>}
-                      <Btn onClick={sendEmailInvite} style={{width:"100%",justifyContent:"center",opacity:inviteEmail.trim()?1:0.45}}>{Icon.mail} Send invite</Btn>
-                    </div>
-            }
-          </Card>
-        </div>
-
-        <div style={{display:"flex",flexDirection:"column"}}>
-          <Card style={{padding:18,textAlign:"center",flex:1}}>
-            <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>Invite via QR</div>
-            <div style={{fontSize:11,color:T.muted,marginBottom:14,lineHeight:1.55}}>Opens Studlin invite for instant sign-up.</div>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"center",marginBottom:12}}>
-              <div style={{padding:10,background:T.card2,borderRadius:12,border:`1px solid ${T.border}`}}>
-                <img src={qrUrl} width={130} height={130} alt="Scan to invite" style={{display:"block",borderRadius:6}}
-                  onError={e=>{
-                    e.target.style.display="none";
-                    if(e.target.nextSibling)e.target.nextSibling.style.display="flex";
-                  }}
-                />
-                {/* SVG fallback QR */}
-                <div style={{display:"none",width:130,height:130,alignItems:"center",justifyContent:"center",flexDirection:"column",gap:6}}>
-                  <svg width="100" height="100" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <rect x="6" y="6" width="28" height="28" rx="3" fill="none" stroke={T.lime} strokeWidth="3"/>
-                    <rect x="11" y="11" width="18" height="18" rx="2" fill={T.lime}/>
-                    <rect x="66" y="6" width="28" height="28" rx="3" fill="none" stroke={T.lime} strokeWidth="3"/>
-                    <rect x="71" y="11" width="18" height="18" rx="2" fill={T.lime}/>
-                    <rect x="6" y="66" width="28" height="28" rx="3" fill="none" stroke={T.lime} strokeWidth="3"/>
-                    <rect x="11" y="71" width="18" height="18" rx="2" fill={T.lime}/>
-                    {[[40,6],[46,6],[52,6],[58,6],[40,12],[58,12],[40,18],[46,18],[52,18],[58,18],[40,24],[52,24],[40,30],[46,30],[52,30],[58,30],[6,40],[12,40],[18,40],[24,40],[30,40],[40,40],[52,40],[58,40],[64,40],[70,40],[76,40],[82,40],[88,40],[94,40],[6,46],[18,46],[30,46],[40,46],[52,46],[64,46],[76,46],[88,46],[6,52],[12,52],[18,52],[24,52],[30,52],[40,52],[46,52],[52,52],[58,52],[64,52],[76,52],[88,52],[94,52],[6,58],[18,58],[30,58],[40,58],[52,58],[58,58],[64,58],[76,58],[88,58],[40,66],[46,66],[52,66],[58,66],[64,66],[76,66],[82,66],[88,66],[94,66],[40,72],[52,72],[58,72],[64,72],[76,72],[88,72],[40,78],[46,78],[52,78],[58,78],[70,78],[82,78],[94,78],[40,84],[52,84],[64,84],[76,84],[88,84],[40,90],[46,90],[58,90],[70,90],[82,90],[94,90]].map(([x,y],i)=>(
-                      <rect key={i} x={x} y={y} width="5" height="5" rx="1" fill={T.lime} opacity="0.78"/>
-                    ))}
-                  </svg>
-                  <div style={{fontSize:8.5,color:T.muted,letterSpacing:"0.04em"}}>studlin.com</div>
+            {incomingReqs.map((req,i)=>(
+              <div key={req.id} style={{display:"flex",alignItems:"center",gap:12,padding:"13px 16px",borderBottom:i<incomingReqs.length-1?`1px solid ${T.border}`:"none",transition:"background 0.15s"}}>
+                <Av initials={req.n.split(" ").map(x=>x[0]).join("")} color={T.amber} size={36} picUrl="" />
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:600,color:T.white}}>{req.n}</div>
+                  <div style={{fontSize:11,color:T.muted}}>{req.h} · <span style={{color:T.blue}}>{req.s}</span></div>
+                </div>
+                <div style={{display:"flex",gap:7,flexShrink:0}}>
+                  <button onClick={()=>acceptReq(req.id)} style={{padding:"6px 14px",borderRadius:7,background:T.lime,color:T.ink,border:"none",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Accept</button>
+                  <button onClick={()=>declineReq(req.id)} style={{padding:"6px 13px",borderRadius:7,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Decline</button>
                 </div>
               </div>
-            </div>
-            <div style={{fontSize:10,color:T.faint,marginBottom:12,fontFamily:T.mono,padding:"6px 9px",background:T.card2,borderRadius:6,border:`1px solid ${T.border}`,wordBreak:"break-all",textAlign:"left"}}>{inviteLink}</div>
-            <Btn onClick={copyLink} style={{width:"100%",justifyContent:"center"}}>{copied?Icon.check:Icon.copy} {copied?"Copied!":"Copy invite link"}</Btn>
+            ))}
           </Card>
         </div>
+      )}
+
+      {/* ── UNIFIED INBOX — "All" (DMs + groups, chronological) / "Groups" — the
+           primary daily-use content, so it leads the page instead of search ── */}
+      <div style={{marginBottom:24}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+          <div style={{display:"flex",gap:6}}>
+            {["All","Groups"].map(t=>(
+              <button key={t} onClick={()=>setInboxTab(t)} style={{padding:"5px 13px",borderRadius:99,fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,border:`1px solid ${inboxTab===t?T.lime+"55":T.border}`,background:inboxTab===t?T.lime+"14":"transparent",color:inboxTab===t?T.lime:T.muted,transition:"all 0.12s"}}>{t}</button>
+            ))}
+          </div>
+          <button onClick={()=>{resetCreateGroup();setCreateGroupOpen(true);}} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:T.lime,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>{Icon.plus} Create Group</button>
+        </div>
+        <Card style={{padding:0,overflow:"hidden"}}>
+          {inboxShown.length===0
+            ?<div style={{padding:20,fontSize:12.5,color:T.muted,lineHeight:1.6}}>{inboxTab==="Groups"?"No groups yet. Create one to start a project chat.":"No friends or groups yet. Search below to add classmates."}</div>
+            :inboxShown.map((row,i)=>{
+                if(row.kind==="group"){
+                  const g=row.group;
+                  const expiry=fmtGroupCountdown(g.expiresAt);
+                  return (
+                    <div key={row.key} onClick={()=>setChatTarget({kind:"group",group:g})} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<inboxShown.length-1?`1px solid ${T.border}`:"none",cursor:"pointer"}}>
+                      <div style={{width:34,height:34,borderRadius:10,background:T.purple+"18",border:`1px solid ${T.purple}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.purple,flexShrink:0}}>{Icon.users}</div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:600,color:T.white}}>{g.name}</div>
+                        <div style={{fontSize:11,color:T.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{row.preview||g.memberUids.length+" members"}{expiry?<> · <span style={{color:expiry.urgent?T.amber:T.purple}}>Archives in {expiry.label}</span></>:""}</div>
+                      </div>
+                      {row.unread&&<div style={{width:8,height:8,borderRadius:"50%",background:T.lime,flexShrink:0}} />}
+                      <button onClick={e=>{e.stopPropagation();setChatTarget({kind:"group",group:g});}} style={{width:32,height:32,borderRadius:9,border:`1px solid ${T.border}`,background:T.card2,color:T.lime,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.msgSquare}</button>
+                    </div>
+                  );
+                }
+                const u=row.user;
+                const pr=presenceInfo(u,{liveSession:liveSessionFor(u.uid)});
+                const revealed=joinRevealFor===u.h;
+                return (
+                  <div key={row.key} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<inboxShown.length-1?`1px solid ${T.border}`:"none"}}>
+                    <div onClick={()=>setChatTarget({kind:"dm",user:u})} style={{position:"relative",flexShrink:0,cursor:"pointer"}}>
+                      <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={34} picUrl="" />
+                      <div style={{position:"absolute",bottom:0,right:0,width:9,height:9,borderRadius:"50%",background:pr.color,border:`2px solid ${T.card}`}} />
+                    </div>
+                    <div onClick={()=>setChatTarget({kind:"dm",user:u})} style={{flex:1,minWidth:0,cursor:"pointer"}}>
+                      <div style={{fontSize:13,fontWeight:600,color:T.white}}>{u.n}</div>
+                      <div onClick={e=>{if(pr.joinable){e.stopPropagation();setJoinRevealFor(revealed?null:u.h);}}} style={{fontSize:11,color:pr.color,fontWeight:pr.joinable?600:400,cursor:pr.joinable?"pointer":"default",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{row.preview&&!pr.joinable?row.preview:pr.text}</div>
+                    </div>
+                    {row.unread&&<div style={{width:8,height:8,borderRadius:"50%",background:T.lime,flexShrink:0}} />}
+                    {revealed&&pr.joinable
+                      ?<button onClick={()=>joinLockIn(pr.sessionId,u)} style={{flexShrink:0,padding:"7px 14px",borderRadius:99,background:T.teal,color:T.ink,border:"none",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,boxShadow:`0 0 0 4px ${T.teal}22, 0 4px 14px -4px ${T.teal}88`,whiteSpace:"nowrap"}}>Join Lock-In</button>
+                      :<button onClick={()=>setChatTarget({kind:"dm",user:u})} style={{width:32,height:32,borderRadius:9,border:`1px solid ${T.border}`,background:T.card2,color:T.lime,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.msgSquare}</button>
+                    }
+                  </div>
+                );
+              })
+          }
+        </Card>
       </div>
+
+      {netToast&&(
+        <div style={{position:"fixed",bottom:22,left:"50%",transform:"translateX(-50%)",zIndex:900,padding:"10px 18px",background:T.ink,color:T.cream,borderRadius:99,fontSize:12.5,fontWeight:600,boxShadow:"0 16px 40px -12px rgba(0,0,0,0.5)",animation:"studlinPop 0.2s cubic-bezier(.2,.85,.3,1)"}}>{netToast}</div>
+      )}
 
       {/* ── CLASSMATES AT MY SCHOOL — real, auto-populated ── */}
       {mySchool&&(
@@ -5148,88 +5148,61 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange}={}){
         </button>
       </div>
 
-      {/* ── UNIFIED INBOX — "All" (DMs + groups, chronological) / "Groups" ── */}
+      {/* ── ADD FRIENDS / SEARCH — a secondary, occasional action, so it trails
+           the friends list instead of leading the page. QR invite removed:
+           the invite link above/in the modal already covers link-sharing. ── */}
       <div style={{marginBottom:24}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-          <div style={{display:"flex",gap:6}}>
-            {["All","Groups"].map(t=>(
-              <button key={t} onClick={()=>setInboxTab(t)} style={{padding:"5px 13px",borderRadius:99,fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,border:`1px solid ${inboxTab===t?T.lime+"55":T.border}`,background:inboxTab===t?T.lime+"14":"transparent",color:inboxTab===t?T.lime:T.muted,transition:"all 0.12s"}}>{t}</button>
-            ))}
-          </div>
-          <button onClick={()=>{resetCreateGroup();setCreateGroupOpen(true);}} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:T.lime,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>{Icon.plus} Create Group</button>
+        <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8}}>Add Friends</div>
+        <div style={{display:"flex",gap:6,marginBottom:10}}>
+          {["All","@username","Name","School"].map(f=>(
+            <button key={f} onClick={()=>setSearchFilter(f)} style={{padding:"5px 11px",borderRadius:6,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font,border:`1px solid ${searchFilter===f?T.lime+"44":T.border}`,background:searchFilter===f?T.lime+"14":"transparent",color:searchFilter===f?T.lime:T.muted,transition:"all 0.12s"}}>{f}</button>
+          ))}
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 13px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:9,marginBottom:12}}>
+          <span style={{color:T.muted,display:"flex",flexShrink:0}}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+          <input value={searchQ} onChange={e=>{setSearchQ(e.target.value);setEmailSent(false);}} placeholder={searchFilter==="@username"?"Search by @username…":searchFilter==="School"?"Search by university or college…":searchFilter==="Name"?"Search by first or last name…":"Search by name, @username, or school…"} style={{flex:1,background:"none",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}} />
+          {searchQ&&<button onClick={()=>setSearchQ("")} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:0,display:"flex",lineHeight:1,flexShrink:0}}>{Icon.xmark}</button>}
         </div>
         <Card style={{padding:0,overflow:"hidden"}}>
-          {inboxShown.length===0
-            ?<div style={{padding:20,fontSize:12.5,color:T.muted,lineHeight:1.6}}>{inboxTab==="Groups"?"No groups yet. Create one to start a project chat.":"No friends or groups yet. Search above to add classmates."}</div>
-            :inboxShown.map((row,i)=>{
-                if(row.kind==="group"){
-                  const g=row.group;
-                  const expiry=fmtGroupCountdown(g.expiresAt);
-                  return (
-                    <div key={row.key} onClick={()=>setChatTarget({kind:"group",group:g})} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<inboxShown.length-1?`1px solid ${T.border}`:"none",cursor:"pointer"}}>
-                      <div style={{width:34,height:34,borderRadius:10,background:T.purple+"18",border:`1px solid ${T.purple}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.purple,flexShrink:0}}>{Icon.users}</div>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:13,fontWeight:600,color:T.white}}>{g.name}</div>
-                        <div style={{fontSize:11,color:T.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{row.preview||g.memberUids.length+" members"}{expiry?<> · <span style={{color:expiry.urgent?T.amber:T.purple}}>Archives in {expiry.label}</span></>:""}</div>
+          {!searchQ.trim()
+            ?<div style={{padding:24,textAlign:"center",fontSize:12.5,color:T.muted,lineHeight:1.6}}>Search by username, name, or school to find classmates already on Studlin.</div>
+            :searching
+              ?<div style={{padding:24,textAlign:"center",fontSize:12.5,color:T.muted}}>Searching…</div>
+              :!noResults
+                ?searchResults.map((u,i,arr)=>{
+                    const isFriend=friends.some(f=>f.uid===u.uid);
+                    const incomingFromThem=incomingReqs.find(r=>r.senderId===u.uid);
+                    const isPendingOut=outgoingReqIds.has(u.uid);
+                    const label=isFriend?"Following":incomingFromThem?"Accept":isPendingOut?"Pending":"Add";
+                    const onClickBtn=isFriend||isPendingOut?undefined:incomingFromThem?()=>acceptReq(incomingFromThem.id):()=>sendFriendRequest(u.uid);
+                    return (
+                      <div key={u.uid} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
+                        <div style={{position:"relative",flexShrink:0}}>
+                          <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={34} picUrl="" />
+                        </div>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:13,fontWeight:600,color:T.white}}>{u.n}</div>
+                          <div style={{fontSize:11,color:T.muted}}>{u.h}{u.s&&<> · <span style={{color:T.blue}}>{u.s}</span></>}</div>
+                        </div>
+                        <BtnSm variant={label==="Add"||label==="Accept"?"lime":"subtle"} onClick={onClickBtn} style={{flexShrink:0,opacity:onClickBtn?1:0.7}}>{label}</BtnSm>
                       </div>
-                      {row.unread&&<div style={{width:8,height:8,borderRadius:"50%",background:T.lime,flexShrink:0}} />}
-                      <button onClick={e=>{e.stopPropagation();setChatTarget({kind:"group",group:g});}} style={{width:32,height:32,borderRadius:9,border:`1px solid ${T.border}`,background:T.card2,color:T.lime,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.msgSquare}</button>
+                    );
+                  })
+                :<div style={{padding:20}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+                      <div style={{width:34,height:34,borderRadius:9,background:T.blue+"18",border:`1px solid ${T.blue}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.blue,flexShrink:0}}>{Icon.mail}</div>
+                      <div>
+                        <div style={{fontSize:13,fontWeight:700,color:T.white}}>No one found for "{searchQ}"</div>
+                        <div style={{fontSize:11,color:T.muted}}>Invite them to join Studlin via email.</div>
+                      </div>
                     </div>
-                  );
-                }
-                const u=row.user;
-                const pr=presenceInfo(u,{liveSession:liveSessionFor(u.uid)});
-                const revealed=joinRevealFor===u.h;
-                return (
-                  <div key={row.key} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<inboxShown.length-1?`1px solid ${T.border}`:"none"}}>
-                    <div onClick={()=>setChatTarget({kind:"dm",user:u})} style={{position:"relative",flexShrink:0,cursor:"pointer"}}>
-                      <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={34} picUrl="" />
-                      <div style={{position:"absolute",bottom:0,right:0,width:9,height:9,borderRadius:"50%",background:pr.color,border:`2px solid ${T.card}`}} />
-                    </div>
-                    <div onClick={()=>setChatTarget({kind:"dm",user:u})} style={{flex:1,minWidth:0,cursor:"pointer"}}>
-                      <div style={{fontSize:13,fontWeight:600,color:T.white}}>{u.n}</div>
-                      <div onClick={e=>{if(pr.joinable){e.stopPropagation();setJoinRevealFor(revealed?null:u.h);}}} style={{fontSize:11,color:pr.color,fontWeight:pr.joinable?600:400,cursor:pr.joinable?"pointer":"default",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{row.preview&&!pr.joinable?row.preview:pr.text}</div>
-                    </div>
-                    {row.unread&&<div style={{width:8,height:8,borderRadius:"50%",background:T.lime,flexShrink:0}} />}
-                    {revealed&&pr.joinable
-                      ?<button onClick={()=>joinLockIn(pr.sessionId,u)} style={{flexShrink:0,padding:"7px 14px",borderRadius:99,background:T.teal,color:T.ink,border:"none",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,boxShadow:`0 0 0 4px ${T.teal}22, 0 4px 14px -4px ${T.teal}88`,whiteSpace:"nowrap"}}>Join Lock-In</button>
-                      :<button onClick={()=>setChatTarget({kind:"dm",user:u})} style={{width:32,height:32,borderRadius:9,border:`1px solid ${T.border}`,background:T.card2,color:T.lime,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.msgSquare}</button>
-                    }
+                    <input value={inviteEmail} onChange={e=>setInviteEmail(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")sendEmailInvite();}} placeholder="friend@university.edu" style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",boxSizing:"border-box",marginBottom:10}} />
+                    {emailSent&&<div style={{fontSize:12,color:T.teal,marginBottom:8}}>Invite sent!</div>}
+                    <Btn onClick={sendEmailInvite} style={{width:"100%",justifyContent:"center",opacity:inviteEmail.trim()?1:0.45}}>{Icon.mail} Send invite</Btn>
                   </div>
-                );
-              })
           }
         </Card>
       </div>
-
-      {netToast&&(
-        <div style={{position:"fixed",bottom:22,left:"50%",transform:"translateX(-50%)",zIndex:900,padding:"10px 18px",background:T.ink,color:T.cream,borderRadius:99,fontSize:12.5,fontWeight:600,boxShadow:"0 16px 40px -12px rgba(0,0,0,0.5)",animation:"studlinPop 0.2s cubic-bezier(.2,.85,.3,1)"}}>{netToast}</div>
-      )}
-
-      {/* ── INCOMING FRIEND REQUESTS ── */}
-      {incomingReqs.length>0&&(
-        <div style={{marginBottom:16}}>
-          <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8,display:"flex",alignItems:"center",gap:8}}>
-            Incoming Requests
-            <span style={{background:T.amber,color:T.ink,fontSize:9,fontWeight:800,borderRadius:4,padding:"1px 6px"}}>{incomingReqs.length}</span>
-          </div>
-          <Card style={{padding:0,overflow:"hidden"}}>
-            {incomingReqs.map((req,i)=>(
-              <div key={req.id} style={{display:"flex",alignItems:"center",gap:12,padding:"13px 16px",borderBottom:i<incomingReqs.length-1?`1px solid ${T.border}`:"none",transition:"background 0.15s"}}>
-                <Av initials={req.n.split(" ").map(x=>x[0]).join("")} color={T.amber} size={36} picUrl="" />
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:13,fontWeight:600,color:T.white}}>{req.n}</div>
-                  <div style={{fontSize:11,color:T.muted}}>{req.h} · <span style={{color:T.blue}}>{req.s}</span></div>
-                </div>
-                <div style={{display:"flex",gap:7,flexShrink:0}}>
-                  <button onClick={()=>acceptReq(req.id)} style={{padding:"6px 14px",borderRadius:7,background:T.lime,color:T.ink,border:"none",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Accept</button>
-                  <button onClick={()=>declineReq(req.id)} style={{padding:"6px 13px",borderRadius:7,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Decline</button>
-                </div>
-              </div>
-            ))}
-          </Card>
-        </div>
-      )}
 
       {/* ── INVITE MODAL ── */}
       {inviteOpen&&(
@@ -12064,9 +12037,15 @@ function AuthGate(){
         window.location.href="/onboarding";
         return;
       }
-      setUser(u||null);
       if(u&&(!isPasswordAccount(u)||u.emailVerified)){
-        fetchUserProfile();upsertProfile();
+        const profilePromise=fetchUserProfile();upsertProfile();
+        // "onboarded" otherwise lives only in this browser's localStorage —
+        // if it's not already set here, wait for the profile fetch (which
+        // reconciles it against the account's own record) before mounting
+        // the app, so signing in on a new browser/device/Incognito window
+        // doesn't flash the onboarding wizard for an account that already
+        // finished it.
+        if(!lsGet("onboarded",false))await profilePromise;
         const ref=sessionStorage.getItem("studlin-ref");
         if(ref&&ref!==u.uid){
           try{
@@ -12082,6 +12061,7 @@ function AuthGate(){
           }catch(e){}
         }
       }
+      setUser(u||null);
     });
   },[shareId]);
   if(shareId)return <SharedChatView shareId={shareId} />;

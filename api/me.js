@@ -247,7 +247,7 @@ module.exports = withSentry(async (req, res) => {
         email: user.email || null,
       };
       await ref.set(data);
-      return res.status(200).json(data);
+      return res.status(200).json({ ...data, onboarded: false });
     }
 
     const data = doc.data();
@@ -261,6 +261,7 @@ module.exports = withSentry(async (req, res) => {
       subscriptionCancelAtPeriodEnd: !!data.subscriptionCancelAtPeriodEnd,
       subscriptionCurrentPeriodEnd: data.subscriptionCurrentPeriodEnd || null,
       subscriptionEndsAt: data.subscriptionEndsAt || null,
+      onboarded: !!data.onboarded,
     });
   } catch (err) {
     console.warn('Profile lookup unavailable, returning defaults:', err.message);
