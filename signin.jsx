@@ -142,7 +142,13 @@ function App() {
           suppressAuthRedirect.current = true;
           const result = await firebase.auth().signInWithCredential(credential);
           if(result.additionalUserInfo&&result.additionalUserInfo.isNewUser){
-            try{await result.user.delete();}catch(e){try{await firebase.auth().signOut();}catch(e2){}}
+            // No account existed for this Google identity — instead of
+            // discarding the account we just created and forcing a second
+            // Google click on /onboarding, keep them signed in and send
+            // them straight there. onboarding.jsx's own step logic
+            // (isVerifiedOrGoogle) already detects an already-authenticated
+            // Google user on mount and jumps straight to the Profile step,
+            // so this is a single-click signup, not two.
             window.location.href = "/onboarding";
             return;
           }

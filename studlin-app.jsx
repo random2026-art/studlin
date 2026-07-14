@@ -7751,15 +7751,25 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   // mic elsewhere in the app, but appends onto whatever's already typed
   // instead of replacing it, since a brain dump can mix typing and talking.
   const [bdListening,setBdListening]=useState(false);
+  const [bdMicError,setBdMicError]=useState("");
   const bdRecRef=useRef(null);
-  const startBdRec=()=>{
+  const startBdRec=async()=>{
     const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-    if(!SR)return;
+    if(!SR){setBdMicError("Speech recognition isn't supported in this browser. Try Chrome or Edge.");return;}
+    setBdMicError("");
+    // Same permission pre-check as the Chat tab's mic (toggleVoice) — without
+    // this, a denied/failed mic left bdListening stuck on "Listening..."
+    // forever with no explanation, since SpeechRecognition's own error only
+    // surfaces async and there was no onerror handler to catch it.
+    try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});stream.getTracks().forEach(t=>t.stop());}
+    catch(e){setBdMicError("Microphone access denied. Please allow mic access and try again.");return;}
     const base=brainDumpText.trim();
     const r=new SR();r.continuous=true;r.interimResults=true;r.lang="en-US";
+    r.onstart=()=>setBdListening(true);
     r.onresult=(e)=>{let t="";for(let i=0;i<e.results.length;i++)t+=e.results[i][0].transcript;setBrainDumpText((base?base+" ":"")+t);};
     r.onend=()=>setBdListening(false);
-    bdRecRef.current=r;r.start();setBdListening(true);
+    r.onerror=(e)=>{setBdListening(false);if(e.error!=="aborted")setBdMicError("Mic error: "+e.error);};
+    bdRecRef.current=r;r.start();
   };
   const stopBdRec=()=>{if(bdRecRef.current)bdRecRef.current.stop();setBdListening(false);};
   // One-shot deep link from Dashboard's empty-Today's-Plan "Brain dump
@@ -8007,7 +8017,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   // brain dump into items in one shot rather than one call per task. Same
   // "AI attempt, then deterministic fallback" shape as extractSyllabusDeadlines.
   const parseBrainDump=async(text)=>{
-    if(!text||!text.trim())return [];
+    if(!text||!text.trim())return {items:[],error:""};
     try{
       const prompt="A student just brain-dumped everything they need to do, in their own words, in one go. Break it into separate individual items. "+
         "Today's date is "+dayKey()+" ("+new Date().toLocaleDateString("en-US",{weekday:"long"})+"). "+
@@ -8025,27 +8035,50 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
         "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
         "{\"items\":[{\"title\":\"Chem homework\",\"kind\":\"study\",\"durationMin\":45,\"dueDate\":null,\"dueTime\":null,\"needsDuration\":false,\"clarify\":null}]}. "+
         "If nothing usable is in the text, respond {\"items\":[]}.\n\n"+text.slice(0,4000);
-      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
-      const data=await res.json();
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",format:"json"})});
+      const data=await res.json().catch(()=>({}));
+      // A failed request (auth, out of credits, rate-limited, or a transient
+      // AI error) used to silently fall through to the dumb comma-splitter
+      // below — every item became an unscheduled "todo" with no explanation,
+      // which is exactly what looked like "brain dump doesn't work." Surface
+      // the real reason instead of pretending it succeeded.
+      if(!res.ok)return {items:[],error:data.error||"Couldn't reach Studlin AI. Please try again."};
       const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
-      const parsed=JSON.parse(raw);
-      if(parsed&&Array.isArray(parsed.items)&&parsed.items.length>0)return parsed.items;
-      return fallbackSplitBrainDump(text);
-    }catch(e){return fallbackSplitBrainDump(text);}
+      let parsed=null;
+      try{parsed=JSON.parse(raw);}catch(e){parsed=null;}
+      if(parsed&&Array.isArray(parsed.items)){
+        return {items:parsed.items,error:""};
+      }
+      // The request succeeded but the model didn't return clean JSON — fall
+      // back to a basic split so the student still gets something, but flag
+      // it as degraded so they know to double-check what came out.
+      return {items:fallbackSplitBrainDump(text),error:"Couldn't fully understand that — here's a basic breakdown. Edit anything that's off."};
+    }catch(e){
+      return {items:[],error:"Something went wrong reaching Studlin AI. Check your connection and try again."};
+    }
   };
+  const [bdError,setBdError]=useState("");
   const submitBrainDump=async()=>{
     if(!brainDumpText.trim()||brainDumpLoading)return;
     if(bdListening)stopBdRec();
     setBrainDumpLoading(true);
-    const items=await parseBrainDump(brainDumpText);
+    setBdError("");
+    const {items,error}=await parseBrainDump(brainDumpText);
     setBrainDumpLoading(false);
+    if(items.length===0&&error){
+      // Hard failure — keep the modal open with the text intact so the
+      // student can just retry instead of losing what they typed or said.
+      setBdError(error);
+      return;
+    }
     setBrainDumpOpen(false);
     // The text has already been consumed by parseBrainDump above — clear it
     // now so the next time Brain Dump is opened (any entry point) it starts
     // blank instead of showing this submission's leftover prompt.
     setBrainDumpText("");
+    setBdError("");
     const validKinds=["study","todo","event","reminder"];
-    setBrainDumpReview({items:items.map((it,i)=>({id:"bd-"+i,title:it.title,kind:validKinds.includes(it.kind)?it.kind:"todo",durationMin:it.durationMin||30,dueDate:it.dueDate||"",dueTime:it.dueTime||"",needsDuration:!!it.needsDuration,attackBlock:!!it.needsDuration,clarify:it.clarify||"",include:true}))});
+    setBrainDumpReview({warning:error||"",items:items.map((it,i)=>({id:"bd-"+i,title:it.title,kind:validKinds.includes(it.kind)?it.kind:"todo",durationMin:it.durationMin||30,dueDate:it.dueDate||"",dueTime:it.dueTime||"",needsDuration:!!it.needsDuration,attackBlock:!!it.needsDuration,clarify:it.clarify||"",include:true}))});
   };
   // Study-kind items get a real slot via the same deterministic placement
   // engine every other scheduling path trusts — no separate AI call per
@@ -8733,8 +8766,8 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
       </Modal>
 
       {/* ── BRAIN DUMP — tell Studlin everything at once instead of one task at a time ── */}
-      <Modal open={brainDumpOpen} onClose={()=>{if(bdListening)stopBdRec();setBrainDumpOpen(false);setBrainDumpText("");}} title="Brain dump" sub="Tell Studlin everything you need to do — it'll sort out the rest." width={560}
-        footer={<><Btn variant="subtle" onClick={()=>{if(bdListening)stopBdRec();setBrainDumpOpen(false);setBrainDumpText("");}}>Cancel</Btn><Btn onClick={submitBrainDump} disabled={brainDumpLoading||!brainDumpText.trim()} style={{flex:1,justifyContent:"center",opacity:brainDumpLoading?1:(!brainDumpText.trim()?0.45:1)}}>{brainDumpLoading?"Sorting it out...":"Sort it out →"}</Btn></>}>
+      <Modal open={brainDumpOpen} onClose={()=>{if(bdListening)stopBdRec();setBrainDumpOpen(false);setBrainDumpText("");setBdError("");setBdMicError("");}} title="Brain dump" sub="Tell Studlin everything you need to do — it'll sort out the rest." width={560}
+        footer={<><Btn variant="subtle" onClick={()=>{if(bdListening)stopBdRec();setBrainDumpOpen(false);setBrainDumpText("");setBdError("");setBdMicError("");}}>Cancel</Btn><Btn onClick={submitBrainDump} disabled={brainDumpLoading||!brainDumpText.trim()} style={{flex:1,justifyContent:"center",opacity:brainDumpLoading?1:(!brainDumpText.trim()?0.45:1)}}>{brainDumpLoading?"Sorting it out...":"Sort it out →"}</Btn></>}>
         <div style={{position:"relative"}}>
           <Textarea placeholder="e.g. I have chem homework, need to email my counselor about my schedule, and my bio project is due Friday..." value={brainDumpText} onChange={e=>setBrainDumpText(e.target.value)} style={{minHeight:140,paddingRight:44}} autoFocus />
           {(window.SpeechRecognition||window.webkitSpeechRecognition)&&(
@@ -8742,6 +8775,9 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
           )}
         </div>
         {bdListening&&<div style={{fontSize:11.5,color:T.red,marginTop:6}}>Listening... tap the mic to stop</div>}
+        {!bdListening&&bdMicError&&<div style={{fontSize:11.5,color:T.red,marginTop:6}}>{bdMicError}</div>}
+        {brainDumpLoading&&<div style={{fontSize:11.5,color:T.muted,marginTop:6}}>Reading through everything you said...</div>}
+        {!brainDumpLoading&&bdError&&<div style={{fontSize:11.5,color:T.red,marginTop:6}}>{bdError}</div>}
       </Modal>
 
       {/* ── BRAIN DUMP REVIEW — preview-then-commit, same discipline as the syllabus review in Notes ── */}
@@ -8756,6 +8792,9 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
         </>}>
         {brainDumpReview&&brainDumpReview.items.length===0&&(
           <div style={{textAlign:"center",padding:"24px 0",color:T.muted,fontSize:13}}>Couldn't find anything in that — try rephrasing.</div>
+        )}
+        {brainDumpReview&&brainDumpReview.warning&&(
+          <div style={{fontSize:12,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:8,padding:"8px 12px",marginBottom:10}}>{brainDumpReview.warning}</div>
         )}
         <div style={{display:"flex",flexDirection:"column",gap:10,maxHeight:400,overflowY:"auto"}}>
           {brainDumpReview&&brainDumpReview.items.map((it,i)=>(
