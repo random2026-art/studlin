@@ -367,7 +367,16 @@ function StepVerify({ advanceToProfile }) {
   const [code, setCode] = useState("");
   const [checking, setChecking] = useState(false);
   const [err, setErr] = useState("");
-  const user = firebase.auth().currentUser;
+  // firebase.auth().currentUser is a plain snapshot, not reactive — if this
+  // step is reached by resuming an in-progress signup (step is persisted in
+  // localStorage, so a reload can land here directly), this component can
+  // mount before Firebase finishes restoring auth state, capturing user as
+  // null forever (React won't re-render this on its own once currentUser
+  // resolves). That showed up as a blank email in the message above and
+  // "Couldn't send the email" on Resend, since user.getIdToken() was
+  // throwing on null. Subscribing here instead of reading once fixes both.
+  const [user, setUser] = useState(()=>firebase.auth().currentUser);
+  useEffect(()=>firebase.auth().onAuthStateChanged(setUser), []);
 
   const resend = async () => {
     setSendStatus("sending"); setErr("");
