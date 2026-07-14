@@ -12556,7 +12556,11 @@ function App() {
     // Tier 0 already handled above are excluded — Tier 1 is now only the
     // fallback for tasks Tier 0 couldn't legally place.
     const movedIds=new Set(movedBatch.map(m=>m.id));
-    const od=working.filter(ev=>ev.status==="pending"&&ev.date<today&&!(ev.deadline&&ev.deadline<today)&&!movedIds.has(ev.id));
+    // Checklist items are plain to-dos with no inherent time (see the
+    // Checklist card comment in Dashboard) — same exclusion isTier0Missed
+    // already applies above, so a rollover from yesterday never assigns
+    // them a time slot the way a real study block/exam gets.
+    const od=working.filter(ev=>ev.status==="pending"&&!ev.checklist&&ev.date<today&&!(ev.deadline&&ev.deadline<today)&&!movedIds.has(ev.id));
     if(od.length>0)setRolloverPending(od);
   },[]);
   const navSections=[
