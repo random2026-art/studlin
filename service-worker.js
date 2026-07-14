@@ -33,9 +33,19 @@ self.addEventListener("notificationclick", (event) => {
   const url = (event.notification.data && event.notification.data.url) || "/network";
   event.waitUntil(
     clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
-      const existing = list.find((c) => c.url.includes("/network"));
+      // Studlin is a client-routed single-page app — it never actually
+      // navigates its pathname to "/network", so matching on that (the old
+      // approach) essentially never found the tab the student already had
+      // open, and every click opened a brand-new window instead. Any
+      // existing client of this origin is the tab to reuse; postMessage
+      // carries the deep-link info in so the already-running app can jump
+      // straight to the right chat (see the App()-level message listener),
+      // instead of the service worker trying (and failing) to drive
+      // navigation itself.
+      const existing = list[0];
       if (existing) {
-        return existing.focus().then((c) => (c.navigate ? c.navigate(url) : c));
+        existing.postMessage({ type: "studlin-notification-click", url });
+        return existing.focus();
       }
       return clients.openWindow(url);
     })

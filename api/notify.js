@@ -347,6 +347,13 @@ async function sendPush(user, req, res) {
       if (!recipSnap.exists) continue;
       const recip = recipSnap.data();
       if (!recip.preferences || recip.preferences.pushNotificationsEnabled !== true) continue;
+      // activeRoomId is a presence signal the client keeps in sync with
+      // whichever chat it currently has open (see the useEffect in App()
+      // right by openChatRoomId) — skip the push entirely if the recipient
+      // is already looking straight at this room, rather than leaving that
+      // decision to Firebase's own foreground/background routing, which is
+      // keyed on OS window focus, not on which chat is open in-app.
+      if (recip.activeRoomId === roomId) continue;
       const tokens = recip.fcmTokens || [];
       if (tokens.length === 0) continue;
 

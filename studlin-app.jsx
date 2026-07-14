@@ -6484,7 +6484,7 @@ function computeCoopFromParticipants(participants,myUid){
 }
 // ─── CALENDAR ─────────────────────────────────────────────────────────────────
 // ─── TASK TIMER MODAL ────────────────────────────────────────────────────────
-function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignmentExtend,onAttackBlockExtend}){
+function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignmentExtend,onAttackBlockExtend,onLockInError}){
   // Snapshot of live leaderboard profiles, fetched once on mount — used for
   // the before/after rank comparison in the completion screen. A snapshot
   // is fine here (rather than re-fetching mid-session): competitors' XP
@@ -6759,6 +6759,13 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
     focusElapsed.current=0;
     // Flip the shared session live the moment the owner actually begins —
     // not at booking time — so "joined" genuinely means "here right now."
+    // A failure here doesn't block the student's own timer (below) from
+    // starting — they can still study solo — but it's surfaced via
+    // onLockInError (a toast at the App level, since this modal moves
+    // through several phase-specific screens and a banner scoped to just
+    // this one would vanish the instant the phase below changes) instead
+    // of silently leaving the group session never actually live for
+    // anyone, with the student having no idea anything went wrong.
     if(task.studySessionId&&myUid){
       const now=Date.now();
       fsdb().collection('studySessions').doc(task.studySessionId).update({
@@ -6766,7 +6773,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
         ['participants.'+myUid+'.state']:'joined',
         ['participants.'+myUid+'.joinedAt']:now,
         updatedAt:new Date().toISOString(),
-      }).catch(()=>{});
+      }).catch(()=>{if(onLockInError)onLockInError("Couldn't sync with your group. Your timer's still running, but try Lock In again to reconnect them.");});
     }
     if(breakOn&&totalMins>=15&&focus2Mins>0){
       setPhase("focus1");setSecs(breakPos*60);setRunning(true);
@@ -10357,6 +10364,25 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     if(!myUid)return;
     fsdb().collection('users').doc(myUid).update({'preferences.pushNotificationsEnabled':enabled,updatedAt:new Date().toISOString()}).catch(()=>{});
   };
+  // The write above is one-way, so a fresh browser/profile/reinstalled PWA
+  // defaults this toggle to "off" locally while the real server-enforced
+  // flag (set from a different device or session) could still be true —
+  // the toggle would show off while api/notify.js keeps sending real
+  // pushes anyway, with nothing here to reveal the mismatch. Reconcile once
+  // on load: Firestore is the actual gate the server checks, so it wins
+  // over whatever this browser's local storage happened to default to.
+  useEffect(()=>{
+    if(!myUid)return;
+    fsdb().collection('users').doc(myUid).get().then(snap=>{
+      const real=!!(snap.exists&&snap.data().preferences&&snap.data().preferences.pushNotificationsEnabled);
+      setToggles(t=>{
+        if(t.sysPush===real)return t;
+        const n={...t,sysPush:real};
+        lsSet("settings",n);
+        return n;
+      });
+    }).catch(()=>{});
+  },[myUid]);
   const handleSysPushToggle=()=>{
     if(toggles.sysPush){
       tog("sysPush");syncPushPref(false);return;
@@ -12727,6 +12753,24 @@ function App() {
     window.history.replaceState({},"",url.pathname+url.search);
     return dm?{kind:"dm",uid:dm}:{kind:"group",id:group};
   });
+  // Same deep link, arriving later — a notification clicked while this tab
+  // was already open and running. The service worker can't drive an
+  // already-loaded SPA's navigation itself (it never changed its pathname
+  // to "/network" in the first place), so it postMessages the URL here
+  // instead of trying to open/navigate a window.
+  useEffect(()=>{
+    if(!("serviceWorker" in navigator))return;
+    const onMessage=(event)=>{
+      if(!event.data||event.data.type!=="studlin-notification-click")return;
+      const params=new URL(event.data.url,window.location.origin).searchParams;
+      const dm=params.get("dm"),group=params.get("group");
+      if(!dm&&!group)return;
+      setPendingChatTarget(dm?{kind:"dm",uid:dm}:{kind:"group",id:group});
+      setActive("friends");
+    };
+    navigator.serviceWorker.addEventListener("message",onMessage);
+    return ()=>navigator.serviceWorker.removeEventListener("message",onMessage);
+  },[]);
   // A freshly-completed onboarding.jsx signup leaves a one-shot flag asking
   // to land directly on a specific tab (with its first-run tour active)
   // instead of the default dashboard — consumed once, then cleared.
@@ -12776,6 +12820,12 @@ function App() {
   // prepAutoToast instead; "off" never populates either.
   const [prepPromptBatch,setPrepPromptBatch]=useState([]);
   const [prepAutoToast,setPrepAutoToast]=useState("");
+  // Surfaces startLockIn's group-sync failure (see TaskTimerModal) — a
+  // toast here rather than a banner inside the modal itself, since the
+  // modal moves through several phase-specific screens right after the
+  // failing call fires and a banner scoped to just one of them would
+  // disappear before the student had a chance to read it.
+  const [lockInErrorToast,setLockInErrorToast]=useState("");
   const acceptPrepPrompt=(item)=>{
     const events=lsGet("events",[]);
     const routines=getWeeklyRoutine();
@@ -12983,6 +13033,18 @@ function App() {
   const timerTaskRef=useRef(timerTask);timerTaskRef.current=timerTask;
   const openChatRoomIdRef=useRef(openChatRoomId);openChatRoomIdRef.current=openChatRoomId;
   const lastMsgRef=useRef({}); // roomId -> last seen lastMessage.ts, for new-message dedup
+  // Presence signal for the server push (api/notify.js sendPush) — lets it
+  // skip a recipient who already has this exact room open, instead of
+  // relying entirely on Firebase's own foreground/background routing (which
+  // is keyed on whether the browser WINDOW has OS focus, not on which chat
+  // is open in-app — so a real push could otherwise still fire while the
+  // student is looking straight at the conversation, just not OS-focused).
+  useEffect(()=>{
+    if(!myUid)return;
+    const roomId=(active==="friends"&&openChatRoomId)?openChatRoomId:null;
+    fsdb().collection('users').doc(myUid).set({activeRoomId:roomId},{merge:true}).catch(()=>{});
+    return ()=>{fsdb().collection('users').doc(myUid).set({activeRoomId:null},{merge:true}).catch(()=>{});};
+  },[myUid,active,openChatRoomId]);
   useEffect(()=>{
     if(!myUid){setUnreadCount(0);return;}
     const unsub=fsdb().collection('chatRooms').where('memberUids','array-contains',myUid)
@@ -13062,36 +13124,46 @@ function App() {
   };
 
   // First time the user opens Studlin Network, ask for desktop notification
-  // permission and (if granted) register a device token for real push. A
-  // second Notification.requestPermission() call when already granted/denied
-  // is a harmless no-op — browsers only ever show the native prompt once.
+  // permission. Gated one-shot purely because browsers only ever show the
+  // native prompt once anyway — this effect no longer owns token
+  // registration (see below), just the ask.
   useEffect(()=>{
     if(active!=="friends"||!myUid||!FCM_CONFIGURED)return;
     if(lsGet("networkPushAsked",false))return;
     lsSet("networkPushAsked",true);
     if(typeof Notification==="undefined")return;
-    Notification.requestPermission().then(perm=>{
-      if(perm!=="granted"||!("serviceWorker"in navigator))return;
-      navigator.serviceWorker.ready.then(reg=>
-        firebase.messaging().getToken({vapidKey:FCM_VAPID_KEY,serviceWorkerRegistration:reg})
-      ).then(token=>{
-        if(!token)return;
-        const userRef=fsdb().collection('users').doc(myUid);
-        // Plain arrayUnion let this list grow forever — every browser
-        // context that ever got this far (including a fresh service worker
-        // + token on each new Incognito session) added its own entry, and
-        // sendPush fires one native notification per token, so a pile of
-        // long-dead tokens meant one message showing up as N popups. Only
-        // FCM send-time failures pruned entries before, which a merely-
-        // stale-but-not-yet-rejected token doesn't trigger. Capping to the
-        // newest few real devices bounds that growth going forward.
-        userRef.get().then(snap=>{
-          const existing=(snap.exists&&snap.data().fcmTokens)||[];
-          const next=[...existing.filter(t=>t!==token),token].slice(-5);
-          return userRef.set({fcmTokens:next,updatedAt:new Date().toISOString()},{merge:true});
-        }).catch(()=>{});
+    Notification.requestPermission();
+  },[active,myUid]);
+
+  // Registers/refreshes this browser's device token every time Studlin
+  // Network is opened with permission already granted — deliberately NOT
+  // gated by the one-shot ask above, which only controls the native
+  // permission prompt. Before this split, token registration ran exactly
+  // once per browser ever, so an account that had already piled up stale
+  // tokens (every browser context that ever got this far — including a
+  // fresh service worker + token on each new Incognito session — added its
+  // own entry, and sendPush fires one native popup per token) stayed stuck
+  // at whatever it had: a returning user on the same browser never
+  // re-registered, so the cap-to-5/dedup below never got a chance to run
+  // for them. Re-registering is cheap (getToken mostly returns the same
+  // token unchanged, and the write below short-circuits once already
+  // clean), so existing accounts self-heal the next time they open Studlin
+  // Network instead of needing the manual "Reset devices" link in Settings.
+  useEffect(()=>{
+    if(active!=="friends"||!myUid||!FCM_CONFIGURED)return;
+    if(typeof Notification==="undefined"||Notification.permission!=="granted"||!("serviceWorker"in navigator))return;
+    navigator.serviceWorker.ready.then(reg=>
+      firebase.messaging().getToken({vapidKey:FCM_VAPID_KEY,serviceWorkerRegistration:reg})
+    ).then(token=>{
+      if(!token)return;
+      const userRef=fsdb().collection('users').doc(myUid);
+      userRef.get().then(snap=>{
+        const existing=(snap.exists&&snap.data().fcmTokens)||[];
+        if(existing.length<=5&&existing.includes(token))return; // already clean
+        const next=[...existing.filter(t=>t!==token),token].slice(-5);
+        return userRef.set({fcmTokens:next,updatedAt:new Date().toISOString()},{merge:true});
       }).catch(()=>{});
-    });
+    }).catch(()=>{});
   },[active,myUid]);
 
   // Foreground push handler — FCM routes here (instead of the service
@@ -13550,6 +13622,7 @@ function App() {
         onAttackBlockExtend={(totalMinsSoFar,pct,nextMins)=>{
           scheduleAttackBlockFollowUp(timerTask,nextMins);
         }}
+        onLockInError={(msg)=>{setLockInErrorToast(msg);setTimeout(()=>setLockInErrorToast(""),4500);}}
         onComplete={(mins)=>{
         logSession(mins,"Task: "+timerTask.title);
         if(timerTask.time)logCompletionOutcome("done",timerTask.time,difficultyTierOf(timerTask));
@@ -13609,6 +13682,11 @@ function App() {
       {prepAutoToast&&(
         <div style={{position:"fixed",bottom:20,right:20,zIndex:999,padding:"11px 18px",borderRadius:10,background:T.teal,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           {prepAutoToast}
+        </div>
+      )}
+      {lockInErrorToast&&(
+        <div style={{position:"fixed",bottom:20,right:20,zIndex:1001,padding:"11px 18px",borderRadius:10,background:T.red,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+          {lockInErrorToast}
         </div>
       )}
       <Modal open={!!examCheckIn} onClose={()=>setExamCheckIn(null)} title="How'd that go?" sub={examCheckIn?"Quick check-in on \""+examCheckIn.title+"\". Skippable, helps Studlin plan the rest.":""} width={380}>
