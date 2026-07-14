@@ -9865,6 +9865,33 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
       if(perm==="granted"){tog("sysPush");syncPushPref(true);new Notification("Studlin",{body:"Desktop notifications are on. We'll keep you in sync."});}
     });
   };
+  const [resettingDevices,setResettingDevices]=useState(false);
+  const [devicesResetMsg,setDevicesResetMsg]=useState("");
+  // Wipes every registered push token (accumulated device/browser
+  // registrations, including long-dead ones from old sessions — see the
+  // App()-level FCM registration effect) and re-registers just this one
+  // browser fresh. Fixes "I got N popups for one message": that's N stale
+  // tokens on the account each getting their own push.
+  const resetPushDevices=async()=>{
+    if(!myUid||!FCM_CONFIGURED||resettingDevices)return;
+    setResettingDevices(true);
+    setDevicesResetMsg("");
+    try{
+      await fsdb().collection('users').doc(myUid).set({fcmTokens:[],updatedAt:new Date().toISOString()},{merge:true});
+      if(Notification.permission==="granted"&&"serviceWorker"in navigator){
+        const reg=await navigator.serviceWorker.ready;
+        const token=await firebase.messaging().getToken({vapidKey:FCM_VAPID_KEY,serviceWorkerRegistration:reg});
+        if(token){
+          await fsdb().collection('users').doc(myUid).set({fcmTokens:[token],updatedAt:new Date().toISOString()},{merge:true});
+        }
+      }
+      setDevicesResetMsg("Done — this browser is now the only registered device.");
+    }catch(e){
+      setDevicesResetMsg("Couldn't reset right now — try again in a moment.");
+    }
+    setResettingDevices(false);
+    setTimeout(()=>setDevicesResetMsg(""),4000);
+  };
   const [profile,setProfileState]=useState(()=>getProfile());
   const updProfile=(patch)=>{const n={...profile,...patch};setProfileState(n);saveProfile(n);};
   const [account,setAccount]=useState(()=>({
@@ -10240,6 +10267,14 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               {sysPushStatus==="granted"&&toggles.sysPush&&(
                 <div style={{fontSize:11.5,color:T.teal,background:T.teal+"10",border:`1px solid ${T.teal}22`,borderRadius:7,padding:"9px 12px",lineHeight:1.5,marginTop:10}}>
                   Active · Studlin will send alerts to your desktop even when this tab is in the background.
+                </div>
+              )}
+              {sysPushStatus==="granted"&&toggles.sysPush&&(
+                <div style={{display:"flex",alignItems:"center",gap:10,marginTop:10}}>
+                  <button onClick={resetPushDevices} disabled={resettingDevices} style={{background:"none",border:"none",color:T.muted,fontSize:11.5,fontWeight:600,cursor:resettingDevices?"default":"pointer",fontFamily:T.font,padding:0,textDecoration:"underline",opacity:resettingDevices?0.6:1}}>
+                    {resettingDevices?"Resetting…":"Getting duplicate notifications? Reset devices"}
+                  </button>
+                  {devicesResetMsg&&<span style={{fontSize:11,color:T.teal}}>{devicesResetMsg}</span>}
                 </div>
               )}
               <Row label="Enable Message Audio Chimes" sub="A soft chime when a message arrives while you're elsewhere in Studlin. Muted automatically during a lock-in session." k="chatChimes" />
@@ -12454,9 +12489,19 @@ function App() {
         firebase.messaging().getToken({vapidKey:FCM_VAPID_KEY,serviceWorkerRegistration:reg})
       ).then(token=>{
         if(!token)return;
-        fsdb().collection('users').doc(myUid).update({
-          fcmTokens:firebase.firestore.FieldValue.arrayUnion(token),
-          updatedAt:new Date().toISOString(),
+        const userRef=fsdb().collection('users').doc(myUid);
+        // Plain arrayUnion let this list grow forever — every browser
+        // context that ever got this far (including a fresh service worker
+        // + token on each new Incognito session) added its own entry, and
+        // sendPush fires one native notification per token, so a pile of
+        // long-dead tokens meant one message showing up as N popups. Only
+        // FCM send-time failures pruned entries before, which a merely-
+        // stale-but-not-yet-rejected token doesn't trigger. Capping to the
+        // newest few real devices bounds that growth going forward.
+        userRef.get().then(snap=>{
+          const existing=(snap.exists&&snap.data().fcmTokens)||[];
+          const next=[...existing.filter(t=>t!==token),token].slice(-5);
+          return userRef.set({fcmTokens:next,updatedAt:new Date().toISOString()},{merge:true});
         }).catch(()=>{});
       }).catch(()=>{});
     });
