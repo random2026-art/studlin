@@ -5522,6 +5522,97 @@ function priorSyllabusScanCount(tag,excludeNoteId){
   return lsGet("events",[]).filter(e=>e.id.startsWith("syl-")&&e.subject===tag&&e.noteId!==excludeNoteId).length;
 }
 
+// How loaded is the week containing dateKey already, and what's the single
+// most pressing thing competing for that time — used by the adaptive
+// confidence check-in to decide whether trimming or adding an exam-prep
+// session actually costs the student something. Excludes the exam's own
+// remaining sessions from the load (a chain shouldn't count as pressure
+// against itself). Capacity is the student's own declared work window,
+// same prefs every other scheduling path already trusts.
+function weekPrepLoad(dateKey,examEvent,events,prefs){
+  const d=new Date(dateKey+"T12:00:00");
+  const dow=(d.getDay()+6)%7; // Monday-first 0..6
+  const monday=new Date(d);monday.setDate(d.getDate()-dow);
+  const weekDates=Array.from({length:7},(_,i)=>{const x=new Date(monday);x.setDate(monday.getDate()+i);return dayKey(x);});
+  const weekSet=new Set(weekDates);
+  const minsOf=(t)=>{const p=(t||"0:0").split(":").map(Number);return p[0]*60+p[1];};
+  const capacityPerDay=(dk)=>{
+    const isWeekend=((new Date(dk+"T12:00:00").getDay()+6)%7)>=5;
+    if(isWeekend&&!prefs.weekendEnabled)return 0;
+    const start=isWeekend?prefs.weekendStartTime:prefs.workStartTime;
+    const end=isWeekend?prefs.weekendEndTime:prefs.workEndTime;
+    return Math.max(0,minsOf(end)-minsOf(start));
+  };
+  const totalCapacity=weekDates.reduce((sum,dk)=>sum+capacityPerDay(dk),0);
+  const loadEvents=events.filter(e=>weekSet.has(e.date)&&e.status==="pending"&&e.duration&&e.kind==="study block"&&e.dueEventId!==examEvent.id);
+  const usedMins=loadEvents.reduce((sum,e)=>sum+(e.duration||0),0);
+  const ratio=totalCapacity>0?usedMins/totalCapacity:1;
+  const competing=events.filter(e=>weekSet.has(e.date)&&e.status==="pending"&&e.id!==examEvent.id&&!e.isExamPrepSession&&(e.kind==="exam"||e.kind==="deadline"))
+    .sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:(b.priority||0)-(a.priority||0))[0];
+  return {isPressured:ratio>=0.65,ratio,competingTitle:competing?competing.title:null};
+}
+
+// The adaptive check-in's actual decision — called with examEvent already
+// carrying the rating just given as the last entry of its confidenceLog.
+// Never auto-executes anything; always returns a plain-language reason
+// alongside whatever it's proposing, and the caller renders that as a
+// dismissible suggestion.
+//
+// Rules, in order of how they were reasoned through:
+// - A single "solid" is a weak signal on its own (fresh recall right after
+//   studying reads as mastery whether or not it actually is — the whole
+//   reason spacing works is that forgetting happens between sessions, so
+//   today's confidence says little about retention two weeks out). Two
+//   consecutive "solid" reports, with real time between them, is a much
+//   stronger signal — that's the bar before anything gets suggested.
+// - A major exam never loses a session outright, only gets its next one
+//   shortened — the cost of being wrong is too high to trade away spacing
+//   itself, only the time spent per sitting.
+// - A quiz can have its remaining sessions dropped, but only once the
+//   week is actually short on room; otherwise spacing is "free" and there's
+//   no reason to touch it.
+// - "Still shaky" tries to pull the next session closer; if the week's
+//   packed it says so honestly instead of silently overloading it. The
+//   last scheduled session before the exam gets an honest heads-up
+//   instead of inventing a slot this close to the date.
+function evaluateExamPrepAdjustment(examEvent,events,prefs){
+  const log=examEvent.confidenceLog||[];
+  const rating=log[log.length-1];
+  if(!rating||rating==="okay")return null;
+  const remaining=events.filter(e=>e.dueEventId===examEvent.id&&e.status==="pending").sort((a,b)=>a.date<b.date?-1:1);
+  if(rating==="solid"){
+    const lastTwoSolid=log.length>=2&&log[log.length-1]==="solid"&&log[log.length-2]==="solid";
+    if(!lastTwoSolid||remaining.length===0)return null;
+    const next=remaining[0];
+    if(examEvent.examWeight==="major"){
+      const newDuration=Math.max(15,Math.round((next.duration*0.6)/5)*5);
+      if(newDuration>=next.duration)return null;
+      return {type:"shorten",examId:examEvent.id,sessionId:next.id,oldDuration:next.duration,newDuration,
+        reason:"You've felt solid on "+examEvent.title+" twice in a row. It's a major exam, so we're keeping every session, but the next one could drop from "+next.duration+"m to "+newDuration+"m."};
+    }
+    const pressure=weekPrepLoad(next.date,examEvent,events,prefs);
+    if(pressure.isPressured){
+      return {type:"drop-remaining",examId:examEvent.id,sessionIds:remaining.map(r=>r.id),
+        reason:"You've felt solid on "+examEvent.title+" twice in a row, and it's just a quiz. Your week's tight"+(pressure.competingTitle?" with "+pressure.competingTitle:"")+", so you could drop the remaining "+remaining.length+" session"+(remaining.length!==1?"s":"")+" and free that time up."};
+    }
+    return {type:"ahead-of-pace",examId:examEvent.id,
+      reason:"You're ahead of pace on "+examEvent.title+" and your week's open, so we'll leave the rest of the plan as-is. Skip any session anytime if you want to."};
+  }
+  // rating==="shaky"
+  if(remaining.length===0){
+    return {type:"last-session",examId:examEvent.id,
+      reason:"That was your last scheduled session before "+examEvent.title+" on "+examEvent.date+". Worth fitting in extra review yourself, or flagging your weak spots now."};
+  }
+  const next=remaining[0];
+  const pressure=weekPrepLoad(next.date,examEvent,events,prefs);
+  if(pressure.isPressured){
+    return {type:"shaky-packed",examId:examEvent.id,sessionId:next.id,
+      reason:"You said this one didn't click. Normally we'd move your next session closer, but your week's full"+(pressure.competingTitle?" with "+pressure.competingTitle:"")+". Want to fit it in anyway, or leave it where it is?"};
+  }
+  return {type:"pull-closer",examId:examEvent.id,sessionId:next.id,
+    reason:"You said this one didn't click. Want us to move your next session on "+examEvent.title+" closer instead of waiting?"};
+}
+
 // Shared by commitSyllabusEvents (exam items) and commitBrainDump (exam
 // items) — builds real scheduled study sessions counting down to a date,
 // on the same computeReviewOffsets curve Flashcards' deck-linked review
@@ -5542,6 +5633,11 @@ function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,workin
       priority:5,difficulty:5,deadline:examDate,
       status:"pending",timeSpent:0,completedAt:null,
       placementReason:slot.reason||null,
+      // Marks this specifically as one of the adaptive spaced-review
+      // sessions (as opposed to an Attack Block probe, which already has
+      // its own separate probe/extrapolate adaptivity) — the confidence
+      // check-in after completion only fires for these.
+      isExamPrepSession:true,
       ...extraFields,
     };
     localWorking=localWorking.concat([ev]);
@@ -5573,6 +5669,11 @@ function commitSyllabusEvents(noteId,tag,items){
       completedAt:null,
       noteId,
       prepPending:(wantsAttack&&!isActionableNow)?true:undefined,
+      // examWeight ("quiz" vs "major") and confidenceLog together drive the
+      // adaptive check-in after each linked study session completes — see
+      // evaluateExamPrepAdjustment. Only meaningful for kind:"exam".
+      examWeight:it.kind==="exam"?(it.examWeight||"major"):undefined,
+      confidenceLog:it.kind==="exam"?[]:undefined,
     };
   });
   // Opted-in deadline items that are already close enough get a real Attack
@@ -8339,7 +8440,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
     setBrainDumpText("");
     setBdError("");
     const validKinds=["study","todo","event","exam","reminder"];
-    setBrainDumpReview({warning:error||"",items:items.map((it,i)=>({id:"bd-"+i,title:it.title,kind:validKinds.includes(it.kind)?it.kind:"todo",durationMin:it.durationMin||30,dueDate:it.dueDate||"",dueTime:it.dueTime||"",needsDuration:!!it.needsDuration,attackBlock:!!it.needsDuration,proposeSessions:it.kind==="exam",sessionCount:defaultSessionCountFor(it.examWeight),clarify:it.clarify||"",include:true}))});
+    setBrainDumpReview({warning:error||"",items:items.map((it,i)=>({id:"bd-"+i,title:it.title,kind:validKinds.includes(it.kind)?it.kind:"todo",durationMin:it.durationMin||30,dueDate:it.dueDate||"",dueTime:it.dueTime||"",needsDuration:!!it.needsDuration,attackBlock:!!it.needsDuration,proposeSessions:it.kind==="exam",sessionCount:defaultSessionCountFor(it.examWeight),examWeight:it.examWeight||"major",clarify:it.clarify||"",include:true}))});
   };
   // Study-kind items get a real slot via the same deterministic placement
   // engine every other scheduling path trusts — no separate AI call per
@@ -8375,7 +8476,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
     // commitSyllabusEvents).
     items.filter(it=>it.kind==="exam").forEach(it=>{
       const examDate=it.dueDate||today;
-      const examTask={id:String(Date.now()+Math.random()*1000),title:it.title,date:examDate,time:it.dueTime||"09:00",subject:"",kind:"exam",notes:"",priority:5,difficulty:5,deadline:null,duration:null,status:"pending",timeSpent:0,completedAt:null};
+      const examTask={id:String(Date.now()+Math.random()*1000),title:it.title,date:examDate,time:it.dueTime||"09:00",subject:"",kind:"exam",notes:"",priority:5,difficulty:5,deadline:null,duration:null,status:"pending",timeSpent:0,completedAt:null,examWeight:it.examWeight||"major",confidenceLog:[]};
       examTasks.push(examTask);working=working.concat([examTask]);
       if(it.proposeSessions){
         const sessions=buildExamSessionEvents(it.title,examDate,"",it.sessionCount||4,"bdexam-"+examTask.id,working,routines,prefs,{dueEventId:examTask.id});
@@ -12595,6 +12696,48 @@ function App() {
     lsSet("events",events.map(e=>ids.has(e.id)?{...e,prepPending:false}:e));
     setPrepPromptBatch([]);
   };
+  // Adaptive confidence check-in — one tap after a spaced exam-prep session
+  // completes (see onComplete below). examCheckIn holds the just-finished
+  // session while the student answers; examPrepSuggestion holds whatever
+  // evaluateExamPrepAdjustment proposes off the back of that answer, if
+  // anything. Both are plain suggestions — nothing here ever changes the
+  // calendar without a separate accept.
+  const [examCheckIn,setExamCheckIn]=useState(null);
+  const [examPrepSuggestion,setExamPrepSuggestion]=useState(null);
+  const submitExamCheckIn=(rating)=>{
+    if(!examCheckIn)return;
+    const events=lsGet("events",[]);
+    const examEvent=events.find(e=>e.id===examCheckIn.dueEventId);
+    setExamCheckIn(null);
+    if(!examEvent)return;
+    const updatedExam={...examEvent,confidenceLog:[...(examEvent.confidenceLog||[]),rating]};
+    const nextEvents=events.map(e=>e.id===examEvent.id?updatedExam:e);
+    lsSet("events",nextEvents);
+    const suggestion=evaluateExamPrepAdjustment(updatedExam,nextEvents,getSchedulePreferences());
+    if(suggestion)setExamPrepSuggestion(suggestion);
+  };
+  const dismissExamPrepSuggestion=()=>setExamPrepSuggestion(null);
+  const acceptExamPrepSuggestion=()=>{
+    if(!examPrepSuggestion)return;
+    const s=examPrepSuggestion;
+    const events=lsGet("events",[]);
+    if(s.type==="shorten"){
+      lsSet("events",events.map(e=>e.id===s.sessionId?{...e,duration:s.newDuration}:e));
+    }else if(s.type==="drop-remaining"){
+      const ids=new Set(s.sessionIds);
+      lsSet("events",events.filter(e=>!ids.has(e.id)));
+    }else if(s.type==="pull-closer"||s.type==="shaky-packed"){
+      const session=events.find(e=>e.id===s.sessionId);
+      if(session){
+        const routines=getWeeklyRoutine();
+        const prefs=getSchedulePreferences();
+        const others=events.filter(e=>e.id!==s.sessionId);
+        const slot=findReliableSlotFor(others,routines,prefs,dayKey(),prefs.workStartTime,session.duration,session.deadline||null,5);
+        lsSet("events",events.map(e=>e.id===s.sessionId?{...e,date:slot.date,time:slot.time,placementReason:slot.reason||null}:e));
+      }
+    }
+    setExamPrepSuggestion(null);
+  };
   const fmtRolloverClock=(t)=>{if(!t)return"";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+ap;};
   // Preview of exactly where each pending task would land — computed once
   // per rolloverPending change (not re-derived on every render) so what the
@@ -13312,6 +13455,10 @@ function App() {
         if(timerTask.time)logCompletionOutcome("done",timerTask.time,difficultyTierOf(timerTask));
         const next=lsGet("events",[]).map(ev=>ev.id===timerTask.id?{...ev,status:"done",timeSpent:mins,completedAt:Date.now()}:ev);
         lsSet("events",next);
+        // A spaced exam-prep session (not an Attack Block probe, which has
+        // its own separate check-in) gets one extra one-tap prompt once the
+        // XP screen above is dismissed — see examCheckIn below.
+        if(timerTask.isExamPrepSession&&timerTask.dueEventId)setExamCheckIn(timerTask);
         // Modal stays open to show the XP/leaderboard reward summary — it
         // closes itself (setTimerTask(null) via onClose) once dismissed.
       }} />}
@@ -13362,6 +13509,28 @@ function App() {
       {prepAutoToast&&(
         <div style={{position:"fixed",bottom:20,right:20,zIndex:999,padding:"11px 18px",borderRadius:10,background:T.teal,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           {prepAutoToast}
+        </div>
+      )}
+      <Modal open={!!examCheckIn} onClose={()=>setExamCheckIn(null)} title="How'd that go?" sub={examCheckIn?"Quick check-in on \""+examCheckIn.title+"\". Skippable, helps Studlin plan the rest.":""} width={380}>
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          <Btn variant="ghost" onClick={()=>submitExamCheckIn("solid")} style={{width:"100%",justifyContent:"center"}}>🙂 Solid, I've got this</Btn>
+          <Btn variant="ghost" onClick={()=>submitExamCheckIn("okay")} style={{width:"100%",justifyContent:"center"}}>😐 Okay, still sinking in</Btn>
+          <Btn variant="ghost" onClick={()=>submitExamCheckIn("shaky")} style={{width:"100%",justifyContent:"center"}}>😟 Still shaky</Btn>
+        </div>
+      </Modal>
+      {examPrepSuggestion&&(
+        <div style={{position:"fixed",bottom:20,right:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:360}}>
+          <div style={{fontSize:13,color:T.text,marginBottom:12,lineHeight:1.5}}>{examPrepSuggestion.reason}</div>
+          <div style={{display:"flex",gap:8}}>
+            {["shorten","drop-remaining","pull-closer","shaky-packed"].includes(examPrepSuggestion.type)&&(
+              <Btn onClick={acceptExamPrepSuggestion} style={{flex:1,justifyContent:"center",fontSize:12,padding:"7px 14px"}}>
+                {examPrepSuggestion.type==="shorten"?"Shorten it":examPrepSuggestion.type==="drop-remaining"?"Drop them":examPrepSuggestion.type==="shaky-packed"?"Fit it in anyway":"Move it closer"}
+              </Btn>
+            )}
+            <Btn variant="ghost" onClick={dismissExamPrepSuggestion} style={{flex:1,justifyContent:"center",fontSize:12,padding:"7px 14px"}}>
+              {["ahead-of-pace","last-session"].includes(examPrepSuggestion.type)?"Got it":"Leave it"}
+            </Btn>
+          </div>
         </div>
       )}
       {rolloverPending.length>0&&(
