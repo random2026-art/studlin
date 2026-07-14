@@ -3699,6 +3699,17 @@ function Notes(){
     if(i>=0)setSel(i);
   },[]);
 
+  // One-shot deep link from Calendar's "Scan syllabus" button — same idiom
+  // as openNoteId above. Opens the New note modal pre-set to the file-upload
+  // source so a syllabus can go straight to the AI date-extraction review
+  // (see continueToCanvas) without the student picking a source manually.
+  useEffect(()=>{
+    if(!lsGet("openSyllabusScan",false))return;
+    lsSet("openSyllabusScan",false);
+    setSrc("file");
+    setNewOpen(true);
+  },[]);
+
   // Canvas / editor state
   const editorRef=useRef(null);
   const activeSel=useRef(sel); // tracks last sel without re-render side-effects
@@ -7682,7 +7693,7 @@ function RescheduleModal({task,events,commit,onClose}){
   );
 }
 
-function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}={}){
+function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,onScanSyllabus}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.muted},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   const colorOf=(sub)=>{if(!sub||sub==="None"||sub==="")return T.muted;const x=userSubjects.find(s=>s.label===sub);return x?x.color:T.lime;};
@@ -8602,7 +8613,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
         this div instead of nested inside it, so it centers against the real
         viewport regardless of scroll position or animation state. */}
     <div>
-      <PH title="Studlin Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><span ref={rescheduleBtnRef} style={{display:"inline-flex"}}><Btn variant="danger" onClick={()=>{setPauseOpen(true);setPauseError("");setPausePreview(null);}}>Studlin Reschedule</Btn></span><Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>setRoutineCenterOpen(true)}>Routine</Btn><span ref={brainDumpLinkRef} style={{display:"inline-flex"}}><Btn variant="ghost" onClick={()=>{resetForm();setBrainDumpOpen(true);}}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.sparkles,"Brain dump")}</Btn></span><span ref={addTaskBtnRef} style={{display:"inline-flex"}}><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></span></div>} />
+      <PH title="Studlin Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><span ref={rescheduleBtnRef} style={{display:"inline-flex"}}><Btn variant="danger" onClick={()=>{setPauseOpen(true);setPauseError("");setPausePreview(null);}}>Studlin Reschedule</Btn></span><Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>setRoutineCenterOpen(true)}>Routine</Btn><span ref={brainDumpLinkRef} style={{display:"inline-flex"}}><Btn variant="ghost" onClick={()=>{resetForm();setBrainDumpOpen(true);}}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.sparkles,"Brain dump")}</Btn></span><Btn variant="ghost" onClick={onScanSyllabus}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.file,"Scan syllabus")}</Btn><span ref={addTaskBtnRef} style={{display:"inline-flex"}}><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></span></div>} />
       {editRoutineMode&&(
         <div style={{display:"flex",alignItems:"center",gap:12,padding:"9px 14px",background:T.lime+"10",border:`1px solid ${T.lime}33`,borderRadius:10,marginBottom:14,fontSize:12.5,color:T.text}}>
           <span style={{flex:1}}>Editing your Weekly Routine. One-off tasks are dimmed. Click a routine block to edit it, or hover and tap × to delete it everywhere it repeats.</span>
@@ -12437,6 +12448,11 @@ function App() {
   // just switches tabs and leaves a one-shot flag for it to pick up on mount.
   const [pendingRoutineWizard,setPendingRoutineWizard]=useState(false);
   const openRoutineWizardOnCalendar=()=>{setActive("calendar");setPendingRoutineWizard(true);};
+  // Same one-shot deep-link idiom, reversed: Calendar's "Scan syllabus" button
+  // switches to Notes and leaves a flag for Notes' own openSyllabusScan
+  // useEffect to pick up on mount (mirrors the openNoteId deep link already
+  // used there).
+  const openSyllabusScanOnNotes=()=>{lsSet("openSyllabusScan",true);setActive("notes");};
   const myUid=firebase.auth().currentUser?.uid||null;
 
   // Global unread count for the sidebar badge — mounted here (not inside
@@ -12859,7 +12875,7 @@ function App() {
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
           {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} />:
-           active==="calendar"?<CalendarTab onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} />:
+           active==="calendar"?<CalendarTab onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} onScanSyllabus={openSyllabusScanOnNotes} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="lectures"?<Lectures setActive={setActive} setPricingOpen={setPricingOpen} />:
            active==="profile"?<Profile setActive={setActive} />:
