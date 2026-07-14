@@ -29,11 +29,16 @@ firebase.initializeApp({
   messagingSenderId:"16831354472",
   appId:"1:16831354472:web:50220e57868dba46c18ddd"
 });
-// Monitor-mode bot detection — attaches App Check tokens to Firebase
-// requests so we can see abuse signals in the console. Not yet enforced
-// (that's a separate toggle in Firebase Console > App Check > APIs), so
-// this can't block any real user even if misconfigured.
-firebase.appCheck().activate("6LfVzlAtAAAAABPOEifeDkmtnrcCqPA4ALxy58bn", true);
+// App Check disabled — despite the "not enforced server-side, so it can't
+// block real users" assumption above, the reCAPTCHA provider actually fails
+// to initialize client-side ("Cannot read properties of null (reading
+// 'appendChild')"), and since App Check attaches itself to every subsequent
+// Firestore request, the failed token fetch silently broke real reads
+// app-wide (onSnapshot's error callback swallows it — e.g. the friends list
+// just rendered empty with no visible error). Re-enable once the reCAPTCHA
+// site key is confirmed registered for this domain in the reCAPTCHA admin
+// console.
+// firebase.appCheck().activate("6LfVzlAtAAAAABPOEifeDkmtnrcCqPA4ALxy58bn", true);
 </script>
 <script src="https://accounts.google.com/gsi/client"></script>
 <!-- PostHog analytics — replace POSTHOG_KEY with your project key from app.posthog.com -->

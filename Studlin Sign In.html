@@ -28,8 +28,10 @@ firebase.initializeApp({
   messagingSenderId:"16831354472",
   appId:"1:16831354472:web:50220e57868dba46c18ddd"
 });
-// Monitor-mode bot detection — see Studlin Onboarding.html for details.
-firebase.appCheck().activate("6LfVzlAtAAAAABPOEifeDkmtnrcCqPA4ALxy58bn", true);
+// App Check disabled — see Studlin Onboarding.html for details (the
+// reCAPTCHA provider fails to initialize and was silently breaking real
+// Firestore reads app-wide).
+// firebase.appCheck().activate("6LfVzlAtAAAAABPOEifeDkmtnrcCqPA4ALxy58bn", true);
 </script>
 <script src="https://accounts.google.com/gsi/client"></script>
 <!-- PostHog analytics — replace POSTHOG_KEY with your project key from app.posthog.com -->

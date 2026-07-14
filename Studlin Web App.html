@@ -55,8 +55,14 @@ firebase.initializeApp({
   appId:"1:16831354472:web:50220e57868dba46c18ddd",
   measurementId:"FIREBASE_MEASUREMENT_ID"
 });
-// Monitor-mode bot detection — see Studlin Onboarding.html for details.
-firebase.appCheck().activate("6LfVzlAtAAAAABPOEifeDkmtnrcCqPA4ALxy58bn", true);
+// App Check disabled — the reCAPTCHA provider fails to initialize
+// ("Cannot read properties of null (reading 'appendChild')"), and since App
+// Check attaches itself to every subsequent Firestore request, the failed
+// token fetch was silently breaking real reads app-wide (onSnapshot's error
+// callback swallows it, so e.g. the friends list just renders empty with no
+// visible error). Re-enable once the reCAPTCHA site key is confirmed
+// registered for this domain in the reCAPTCHA admin console.
+// firebase.appCheck().activate("6LfVzlAtAAAAABPOEifeDkmtnrcCqPA4ALxy58bn", true);
 firebase.analytics();
 if("serviceWorker" in navigator){navigator.serviceWorker.register("/service-worker.js").catch(function(){});}
 </script>
