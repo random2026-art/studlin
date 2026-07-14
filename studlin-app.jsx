@@ -1029,6 +1029,14 @@ function isTier0Missed(ev,todayKey){
   if(!ev.time)return false;
   if(ev.userPinned)return false;
   if(TIER0_FIXED_KINDS.has(ev.kind))return false;
+  // A syllabus-scanned due-date marker (kind:"deadline", duration:null) is
+  // currently also caught by the deadline<todayKey check below, since its
+  // deadline is always set equal to its own date — but that's an implicit
+  // side effect of today's data shape, not a real rule. Explicit here so
+  // this stays safe even if that assumption ever changes: a fact with no
+  // duration is never "missed" work to reflow, only a real duration means
+  // there's something to actually move.
+  if(ev.kind==="deadline"&&!ev.duration)return false;
   if(ev.deadline&&ev.deadline<todayKey)return false;
   return ev.date<todayKey;
 }
@@ -1811,7 +1819,14 @@ function rebalanceDay(dateKey,allEvents,routines,prefs){
   // still occupy their slot (fall into `rest`, still block other tasks from
   // landing on top of them) but the algorithm never picks them back up and
   // moves them again just because a new task got added to the day.
-  const isFlexPending=function(e){return e.date===dateKey&&!isFixed(e)&&!e.checklist&&e.status!=="done"&&e.time&&!e.userPinned;};
+  // A duration-less deadline marker (a syllabus-scanned "this is due" fact,
+  // not a real work block) isn't a FIXED kind — only kind:"exam" is — so
+  // without this it would get pulled into the reshuffle, scored as
+  // maximally urgent (its own deadline is its own date), and given a fake
+  // 60-min footprint at the front of the day, potentially displacing real
+  // study blocks. Same "no duration = fact, not a task" rule as isDuePill
+  // in WeeklyPlanner and isTier0Missed's implicit same-day-deadline guard.
+  const isFlexPending=function(e){return e.date===dateKey&&!isFixed(e)&&!e.checklist&&e.status!=="done"&&e.time&&e.duration&&!e.userPinned;};
 
   const flex=allEvents.filter(isFlexPending);
   if(flex.length===0)return allEvents;
@@ -3989,7 +4004,7 @@ function Notes(){
     recordSyllabusScan();
     setScanningDates(false);
     if(found.length>0){
-      setSyllabusReview({noteId:notes[sel].id,tag:notes[sel].tag,priorScanCount:priorSyllabusScanCount(notes[sel].tag,notes[sel].id),items:found.map((d,i)=>({id:"si-"+i,...d,include:true,attackBlock:d.kind==="deadline",proposeSessions:d.kind==="exam",sessionCount:defaultSessionCountFor(d.examWeight)}))});
+      setSyllabusReview({noteId:notes[sel].id,tag:notes[sel].tag,priorScanCount:priorSyllabusScanCount(notes[sel].tag,notes[sel].id),items:found.map((d,i)=>({id:"si-"+i,...d,include:true,attackBlock:d.kind==="deadline",proposeSessions:d.kind==="exam",sessionCount:defaultSessionCountFor(d.examWeight),difficulty:500,moreOpen:false}))});
     }else{
       setSyllabusToast("No dates found in this note");
       setTimeout(()=>setSyllabusToast(""),3200);
@@ -4126,7 +4141,7 @@ function Notes(){
     setSel(0);
     setPopover(null);
     if(syllabusItems!==null){
-      setSyllabusReview({noteId:newNote.id,tag,priorScanCount:priorSyllabusScanCount(tag,newNote.id),items:syllabusItems.map((d,i)=>({id:"si-"+i,...d,include:true,attackBlock:d.kind==="deadline",proposeSessions:d.kind==="exam",sessionCount:defaultSessionCountFor(d.examWeight)}))});
+      setSyllabusReview({noteId:newNote.id,tag,priorScanCount:priorSyllabusScanCount(tag,newNote.id),items:syllabusItems.map((d,i)=>({id:"si-"+i,...d,include:true,attackBlock:d.kind==="deadline",proposeSessions:d.kind==="exam",sessionCount:defaultSessionCountFor(d.examWeight),difficulty:500,moreOpen:false}))});
     }
   };
 
@@ -4373,6 +4388,19 @@ function Notes(){
             You've already got {syllabusReview.priorScanCount} item{syllabusReview.priorScanCount!==1?"s":""} on your calendar from an earlier scan of this class. New ones will be added alongside them, nothing gets removed automatically.
           </div>
         )}
+        {syllabusReview&&(()=>{
+          const pressured=pressuredExamItems(syllabusReview.items,lsGet("events",[]),getSchedulePreferences());
+          if(pressured.length===0)return null;
+          return (
+            <div style={{fontSize:12,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:8,padding:"8px 12px",marginBottom:10,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+              <span>{pressured.length===1?"The week this starts in is already busy for "+pressured[0].title+".":"The weeks these start in are already busy for "+pressured.length+" of these."} You can add them as planned, or spread them out.</span>
+              <button type="button" onClick={()=>{
+                const ids=new Set(pressured.map(p=>p.id));
+                setSyllabusReview(r=>({...r,items:r.items.map(x=>ids.has(x.id)?{...x,sessionCount:Math.max(1,(x.sessionCount||4)-1)}:x)}));
+              }} style={{background:"none",border:"none",color:T.amber,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",flexShrink:0,padding:0}}>Spread out</button>
+            </div>
+          );
+        })()}
         {syllabusReview&&syllabusReview.items.length===0&&(
           <div style={{textAlign:"center",padding:"24px 0",color:T.muted,fontSize:13}}>
             No dates found. Add one manually below, or skip and save just the note.
@@ -4407,9 +4435,20 @@ function Notes(){
                   {it.kind==="exam"&&it.proposeSessions&&(()=>{
                     const dates=computeReviewDates(it.date,dayKey(),it.sessionCount||4);
                     return (
-                      <div style={{display:"flex",alignItems:"center",gap:10,marginTop:6}}>
-                        <NumField min={1} max={6} fallback={4} value={it.sessionCount||4} onChange={v=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,sessionCount:v}:x)}))} style={{width:52}} />
-                        <span style={{fontSize:11,color:T.muted}}>{dates.length===0?"Too close to the exam to fit a session":dates.length+" session"+(dates.length!==1?"s":"")+": "+dates.join(", ")}</span>
+                      <div style={{marginTop:6}}>
+                        <div style={{display:"flex",alignItems:"center",gap:10}}>
+                          <NumField min={1} max={6} fallback={4} value={it.sessionCount||4} onChange={v=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,sessionCount:v}:x)}))} style={{width:52}} />
+                          <span style={{fontSize:11,color:T.muted}}>{dates.length===0?"Too close to the exam to fit a session":dates.length+" session"+(dates.length!==1?"s":"")+": "+dates.join(", ")}</span>
+                        </div>
+                        {it.moreOpen ? (
+                          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6}}>
+                            <span style={{fontSize:10.5,color:T.muted}}>Easy</span>
+                            <input type="range" min={0} max={1000} value={it.difficulty??500} onChange={ev=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,difficulty:+ev.target.value}:x)}))} style={{flex:1,accentColor:T.lime,height:5,borderRadius:3,cursor:"pointer"}} />
+                            <span style={{fontSize:10.5,color:T.muted}}>Hard</span>
+                          </div>
+                        ) : (
+                          <button type="button" onClick={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,moreOpen:true}:x)}))} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,marginTop:6,textDecoration:"underline"}}>+ How hard is this for you?</button>
+                        )}
                       </div>
                     );
                   })()}
@@ -5552,6 +5591,24 @@ function weekPrepLoad(dateKey,examEvent,events,prefs){
   return {isPressured:ratio>=0.65,ratio,competingTitle:competing?competing.title:null};
 }
 
+// Proactive version of the same pressure check the adaptive check-in uses
+// reactively — run at review time (before anything's committed) so a
+// student scanning several syllabi at once finds out a week's getting
+// crowded up front, not only after they've started studying. Works for
+// both Syllabus review items (it.date) and Brain Dump review items
+// (it.dueDate). No real event exists yet, so a throwaway id is enough to
+// satisfy weekPrepLoad's self-exclusion.
+function pressuredExamItems(items,events,prefs){
+  return items.filter(it=>{
+    if(it.kind!=="exam"||!it.proposeSessions||!it.include)return false;
+    const examDate=it.date||it.dueDate;
+    if(!examDate)return false;
+    const dates=computeReviewDates(examDate,dayKey(),it.sessionCount||4);
+    if(dates.length===0)return false;
+    return weekPrepLoad(dates[0],{id:"__preview__"},events,prefs).isPressured;
+  });
+}
+
 // The adaptive check-in's actual decision — called with examEvent already
 // carrying the rating just given as the last entry of its confidenceLog.
 // Never auto-executes anything; always returns a plain-language reason
@@ -5620,17 +5677,17 @@ function evaluateExamPrepAdjustment(examEvent,events,prefs){
 // here the way Attack Blocks get one — that curve already refuses to
 // propose anything for the too-far-out portion of the timeline on its own.
 // Caller merges the returned events into its own working array/lsSet.
-function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,working,routines,prefs,extraFields){
+function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,working,routines,prefs,extraFields,difficulty){
   const dates=computeReviewDates(examDate,dayKey(),count);
   const duration=suggestDurationFor(subject,"study block")||25;
   let localWorking=working;
   return dates.map((date,si)=>{
-    const slot=findReliableSlotFor(localWorking,routines,prefs,date,prefs.workStartTime,duration,examDate,5);
+    const slot=findReliableSlotFor(localWorking,routines,prefs,date,prefs.workStartTime,duration,examDate,difficulty??500);
     const ev={
       id:idPrefix+"-"+si,
       title:"Study: "+examTitle,date:slot.date,time:slot.time,
       subject,notes:"",kind:"study block",duration,
-      priority:5,difficulty:5,deadline:examDate,
+      priority:5,difficulty:difficulty??500,deadline:examDate,
       status:"pending",timeSpent:0,completedAt:null,
       placementReason:slot.reason||null,
       // Marks this specifically as one of the adaptive spaced-review
@@ -5674,6 +5731,10 @@ function commitSyllabusEvents(noteId,tag,items){
       // evaluateExamPrepAdjustment. Only meaningful for kind:"exam".
       examWeight:it.kind==="exam"?(it.examWeight||"major"):undefined,
       confidenceLog:it.kind==="exam"?[]:undefined,
+      // Overrides the flat difficulty:5 above, exam items only — a
+      // deadline marker's difficulty field is unused today, so it's left
+      // alone rather than risk touching it.
+      ...(it.kind==="exam"?{difficulty:it.difficulty??500}:{}),
     };
   });
   // Opted-in deadline items that are already close enough get a real Attack
@@ -5696,7 +5757,7 @@ function commitSyllabusEvents(noteId,tag,items){
   let examSessionEvents=[];
   items.forEach((it,i)=>{
     if(it.kind!=="exam"||!it.proposeSessions)return;
-    const sessions=buildExamSessionEvents(it.title,it.date,tag,it.sessionCount||4,"examrev-"+noteId+"-"+i,working,routines,prefs,{noteId,dueEventId:markerEvents[i].id});
+    const sessions=buildExamSessionEvents(it.title,it.date,tag,it.sessionCount||4,"examrev-"+noteId+"-"+i,working,routines,prefs,{noteId,dueEventId:markerEvents[i].id},it.difficulty);
     examSessionEvents=examSessionEvents.concat(sessions);working=working.concat(sessions);
   });
   lsSet("events",existing.concat(markerEvents,attackEvents,examSessionEvents));
@@ -8180,7 +8241,10 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
   const linkedPrepSessions=(ev)=>ev?events.filter(e=>e.dueEventId===ev.id):[];
   const confirmCancelPrepSessions=()=>{
     if(!cancelPrepEv)return;
-    const next=events.filter(e=>e.dueEventId!==cancelPrepEv.id);
+    // Only pending sessions get removed — a session the student already
+    // completed is real history, not something "cancel the rest" implies
+    // touching.
+    const next=events.filter(e=>!(e.dueEventId===cancelPrepEv.id&&e.status==="pending"));
     setEvents(next);lsSet("events",next);
     setCancelPrepEv(null);
     closeEdit();
@@ -8440,7 +8504,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
     setBrainDumpText("");
     setBdError("");
     const validKinds=["study","todo","event","exam","reminder"];
-    setBrainDumpReview({warning:error||"",items:items.map((it,i)=>({id:"bd-"+i,title:it.title,kind:validKinds.includes(it.kind)?it.kind:"todo",durationMin:it.durationMin||30,dueDate:it.dueDate||"",dueTime:it.dueTime||"",needsDuration:!!it.needsDuration,attackBlock:!!it.needsDuration,proposeSessions:it.kind==="exam",sessionCount:defaultSessionCountFor(it.examWeight),examWeight:it.examWeight||"major",clarify:it.clarify||"",include:true}))});
+    setBrainDumpReview({warning:error||"",items:items.map((it,i)=>({id:"bd-"+i,title:it.title,kind:validKinds.includes(it.kind)?it.kind:"todo",durationMin:it.durationMin||30,dueDate:it.dueDate||"",dueTime:it.dueTime||"",needsDuration:!!it.needsDuration,attackBlock:!!it.needsDuration,proposeSessions:it.kind==="exam",sessionCount:defaultSessionCountFor(it.examWeight),examWeight:it.examWeight||"major",difficulty:500,moreOpen:false,clarify:it.clarify||"",include:true}))});
   };
   // Study-kind items get a real slot via the same deterministic placement
   // engine every other scheduling path trusts — no separate AI call per
@@ -8476,10 +8540,10 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
     // commitSyllabusEvents).
     items.filter(it=>it.kind==="exam").forEach(it=>{
       const examDate=it.dueDate||today;
-      const examTask={id:String(Date.now()+Math.random()*1000),title:it.title,date:examDate,time:it.dueTime||"09:00",subject:"",kind:"exam",notes:"",priority:5,difficulty:5,deadline:null,duration:null,status:"pending",timeSpent:0,completedAt:null,examWeight:it.examWeight||"major",confidenceLog:[]};
+      const examTask={id:String(Date.now()+Math.random()*1000),title:it.title,date:examDate,time:it.dueTime||"09:00",subject:"",kind:"exam",notes:"",priority:5,difficulty:it.difficulty??500,deadline:null,duration:null,status:"pending",timeSpent:0,completedAt:null,examWeight:it.examWeight||"major",confidenceLog:[]};
       examTasks.push(examTask);working=working.concat([examTask]);
       if(it.proposeSessions){
-        const sessions=buildExamSessionEvents(it.title,examDate,"",it.sessionCount||4,"bdexam-"+examTask.id,working,routines,prefs,{dueEventId:examTask.id});
+        const sessions=buildExamSessionEvents(it.title,examDate,"",it.sessionCount||4,"bdexam-"+examTask.id,working,routines,prefs,{dueEventId:examTask.id},it.difficulty);
         examTasks.push(...sessions);working=working.concat(sessions);
       }
     });
@@ -8770,7 +8834,15 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
   const PAUSE_QUALIFYING_KINDS=new Set(["study block","deadline","reminder"]);
   const computePausePlan=(intent)=>{
     const today=dayKey();
-    const isQualifying=(ev)=>ev.status==="pending"&&PAUSE_QUALIFYING_KINDS.has(ev.kind);
+    // A syllabus-scanned due-date marker is kind:"deadline" but duration:null
+    // (a real assignment's own scheduled work block always has a real
+    // duration) — without this carve-out, "push everything back"/"clear
+    // this week" would move the actual due date itself, which is a fact set
+    // by the professor, not student time Studlin is free to reschedule.
+    // Reminders keep duration:0 by design (a point-in-time nudge, not a
+    // block) and are legitimately reschedulable, so this only excludes
+    // "deadline" specifically, not the whole qualifying set.
+    const isQualifying=(ev)=>ev.status==="pending"&&PAUSE_QUALIFYING_KINDS.has(ev.kind)&&!(ev.kind==="deadline"&&ev.duration==null);
     if(intent.intent==="skip_class"){
       const date=intent.date||today;
       const dow=(new Date(date+"T12:00:00").getDay()+6)%7;
@@ -9212,6 +9284,19 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
         {brainDumpReview&&brainDumpReview.warning&&(
           <div style={{fontSize:12,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:8,padding:"8px 12px",marginBottom:10}}>{brainDumpReview.warning}</div>
         )}
+        {brainDumpReview&&(()=>{
+          const pressured=pressuredExamItems(brainDumpReview.items,lsGet("events",[]),getSchedulePreferences());
+          if(pressured.length===0)return null;
+          return (
+            <div style={{fontSize:12,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:8,padding:"8px 12px",marginBottom:10,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+              <span>{pressured.length===1?"The week this starts in is already busy for "+pressured[0].title+".":"The weeks these start in are already busy for "+pressured.length+" of these."} You can add them as planned, or spread them out.</span>
+              <button type="button" onClick={()=>{
+                const ids=new Set(pressured.map(p=>p.id));
+                setBrainDumpReview(r=>({...r,items:r.items.map(x=>ids.has(x.id)?{...x,sessionCount:Math.max(1,(x.sessionCount||4)-1)}:x)}));
+              }} style={{background:"none",border:"none",color:T.amber,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",flexShrink:0,padding:0}}>Spread out</button>
+            </div>
+          );
+        })()}
         <div style={{display:"flex",flexDirection:"column",gap:10,maxHeight:400,overflowY:"auto"}}>
           {brainDumpReview&&brainDumpReview.items.map((it,i)=>(
             <div key={it.id} style={{padding:"12px 14px",borderRadius:10,border:`1px solid ${T.border}`,background:it.include?T.card2:T.card,opacity:it.include?1:0.55}}>
@@ -9261,9 +9346,20 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
                   {it.kind==="exam"&&it.proposeSessions&&it.dueDate&&(()=>{
                     const dates=computeReviewDates(it.dueDate,dayKey(),it.sessionCount||4);
                     return (
-                      <div style={{display:"flex",alignItems:"center",gap:10,marginTop:6}}>
-                        <NumField min={1} max={6} fallback={4} value={it.sessionCount||4} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,sessionCount:v}:x)}))} style={{width:52}} />
-                        <span style={{fontSize:11,color:T.muted}}>{dates.length===0?"Too close to the exam to fit a session":dates.length+" session"+(dates.length!==1?"s":"")+": "+dates.join(", ")}</span>
+                      <div style={{marginTop:6}}>
+                        <div style={{display:"flex",alignItems:"center",gap:10}}>
+                          <NumField min={1} max={6} fallback={4} value={it.sessionCount||4} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,sessionCount:v}:x)}))} style={{width:52}} />
+                          <span style={{fontSize:11,color:T.muted}}>{dates.length===0?"Too close to the exam to fit a session":dates.length+" session"+(dates.length!==1?"s":"")+": "+dates.join(", ")}</span>
+                        </div>
+                        {it.moreOpen ? (
+                          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6}}>
+                            <span style={{fontSize:10.5,color:T.muted}}>Easy</span>
+                            <input type="range" min={0} max={1000} value={it.difficulty??500} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,difficulty:+ev.target.value}:x)}))} style={{flex:1,accentColor:T.lime,height:5,borderRadius:3,cursor:"pointer"}} />
+                            <span style={{fontSize:10.5,color:T.muted}}>Hard</span>
+                          </div>
+                        ) : (
+                          <button type="button" onClick={()=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,moreOpen:true}:x)}))} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,marginTop:6,textDecoration:"underline"}}>+ How hard is this for you?</button>
+                        )}
                       </div>
                     );
                   })()}
@@ -9306,12 +9402,16 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
             <span>🕒 {fmtPlacementReason(editEv.placementReason,editEv.time)}</span>
           </div>
         )}
-        {editEv&&linkedPrepSessions(editEv).length>0&&(
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:T.muted}}>
-            <span>Studlin scheduled {linkedPrepSessions(editEv).length} prep session{linkedPrepSessions(editEv).length!==1?"s":""} for this.</span>
-            <button type="button" onClick={()=>setCancelPrepEv(editEv)} style={{background:"none",border:"none",color:T.red,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Cancel sessions</button>
-          </div>
-        )}
+        {editEv&&linkedPrepSessions(editEv).length>0&&(()=>{
+          const sessions=linkedPrepSessions(editEv);
+          const doneCount=sessions.filter(s=>s.status==="done").length;
+          return (
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:T.muted}}>
+              <span>Studlin scheduled {sessions.length} prep session{sessions.length!==1?"s":""} for this{doneCount>0?" ("+doneCount+" of "+sessions.length+" done)":""}.</span>
+              {doneCount<sessions.length&&<button type="button" onClick={()=>setCancelPrepEv(editEv)} style={{background:"none",border:"none",color:T.red,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Cancel sessions</button>}
+            </div>
+          );
+        })()}
         {editDeadlineErr&&<div style={{fontSize:12,color:T.red,marginTop:-8,marginBottom:14}}>{editDeadlineErr}</div>}
         {editKind!=="reminder"&&(
           <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={5} value={editDuration} onChange={setEditDuration} /></Field>
@@ -9349,8 +9449,8 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
         )}
         <Field label="Notes (optional)"><Textarea value={editNotes} onChange={e=>setEditNotes(e.target.value)} /></Field>
       </Modal>
-      <Modal open={!!cancelPrepEv} onClose={()=>setCancelPrepEv(null)} title="Cancel prep sessions?" sub="The due date stays on your calendar. Only the scheduled study time Studlin added for it gets removed." width={420}
-        footer={<><Btn variant="subtle" onClick={()=>setCancelPrepEv(null)}>Never mind</Btn><Btn variant="danger" onClick={confirmCancelPrepSessions}>{"Cancel "+linkedPrepSessions(cancelPrepEv).length+" session"+(linkedPrepSessions(cancelPrepEv).length!==1?"s":"")}</Btn></>}>
+      <Modal open={!!cancelPrepEv} onClose={()=>setCancelPrepEv(null)} title="Cancel prep sessions?" sub="The due date stays on your calendar. Only the scheduled study time Studlin added for it gets removed. Sessions you've already completed stay put." width={420}
+        footer={<><Btn variant="subtle" onClick={()=>setCancelPrepEv(null)}>Never mind</Btn><Btn variant="danger" onClick={confirmCancelPrepSessions}>{"Cancel "+linkedPrepSessions(cancelPrepEv).filter(s=>s.status==="pending").length+" session"+(linkedPrepSessions(cancelPrepEv).filter(s=>s.status==="pending").length!==1?"s":"")}</Btn></>}>
         <div style={{fontSize:13,color:T.text}}>{cancelPrepEv&&cancelPrepEv.title}</div>
       </Modal>
       <Modal open={pauseOpen} onClose={()=>{setPauseOpen(false);setPausePreview(null);setPauseError("");}}
