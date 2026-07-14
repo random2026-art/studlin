@@ -409,13 +409,13 @@ const PRICING_PLANS=(billing)=>([
   {
     key:"free",name:"Free",price:"$0",per:"forever",tag:null,
     desc:"Get organized. No credit card needed.",
-    features:["120 AI chat messages / month","3 syllabus scans / month","3 AI note scans / month (files, lectures & YouTube)","3 AI flashcard generations / month","Manual flashcards & notes: unlimited","Calendar, tasks, focus timer, streaks & XP"],
+    features:["120 AI chat messages / month","3 deadline scans / month","3 AI note scans / month (files, lectures & YouTube)","3 AI flashcard generations / month","Manual flashcards & notes: unlimited","Calendar, tasks, focus timer, streaks & XP"],
     cta:"Get started free",variant:"subtle",
   },
   {
     key:"pro",name:"Pro",price:billing==="annual"?"$7.99":"$9.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:"7 DAYS FREE",
     desc:"Everything on Free is still manual. Pro is where the AI actually does the work.",
-    features:["Unlimited AI chat, syllabus scans, note scans & flashcard generation","All AI models: Flash, Standard & Research","AI flashcards from notes, PDFs & YouTube","Full essay suite: grammar, rewrite & citations","AI note cleanup & study groups"],
+    features:["Unlimited AI chat, deadline scans, note scans & flashcard generation","All AI models: Flash, Standard & Research","AI flashcards from notes, PDFs & YouTube","Full essay suite: grammar, rewrite & citations","AI note cleanup & study groups"],
     cta:"Start free trial",variant:"lime",featured:true,
   },
   {
@@ -790,17 +790,26 @@ const DEMO_CLASSES_BY_SCHOOL={[DEMO_SCHOOL_COLLEGE]:DEMO_CLASSES_COLLEGE,[DEMO_S
 // any bulk-update pass.
 const getWeeklyRoutine=()=>lsGet("weeklyRoutine",[]);
 const saveWeeklyRoutine=(r)=>lsSet("weeklyRoutine",r);
+// One-off exceptions to an otherwise-recurring routine rule ("skip today's
+// class") — keyed by date so a lookup during expansion is O(1), value is
+// the list of routine ids not to expand for that one date. The rule itself
+// is untouched, so every other week is unaffected. Written by "Studlin
+// Reschedule"'s skip_class intent (see computePausePlan/confirmPausePlan).
+const getRoutineSkips=()=>lsGet("routineSkips",{});
 const ROUTINE_KIND_TO_EVENT_KIND={class:"class",busy:"busy block",free:"free period"};
 function expandRoutineOccurrences(routines,startDateKey,endDateKey){
   const out=[];
   if(!routines||routines.length===0)return out;
+  const skips=getRoutineSkips();
   const start=new Date(startDateKey+"T00:00:00");
   const end=new Date(endDateKey+"T00:00:00");
   for(let d=new Date(start);d<=end;d.setDate(d.getDate()+1)){
     const dk=dayKey(d);
     const dow=(d.getDay()+6)%7; // JS Sunday=0 → Monday-first 0..6
+    const skippedToday=skips[dk]||[];
     routines.forEach(r=>{
       if(!r.days||!r.days.includes(dow))return;
+      if(skippedToday.includes(r.id))return;
       out.push({
         id:"routine-"+r.id+"-"+dk,
         routineId:r.id,
@@ -2340,7 +2349,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
   if(!open)return null;
   const tiers=[
     {name:"Pro",price:"$9.99",perks:["Unlimited AI chat, scans & flashcard generation","Every AI model + 4 study modes","Unlimited decks + notes scanning"],color:T.lime},
-    {name:"Max",price:"$24.99",perks:["Everything in Pro, completely unlimited","Priority AI — faster, no queue","Advanced analytics + learning paths"],color:T.purple},
+    {name:"Max",price:"$24.99",perks:["Everything in Pro, completely unlimited","Priority AI: faster, no queue","Advanced analytics + learning paths"],color:T.purple},
   ];
   const choose=(name)=>{setPlanLS(name);onClose();if(onUpgraded)onUpgraded(name);};
   return (
@@ -3650,8 +3659,6 @@ function Notes(){
   const colorOf=(tg)=>{const s=userSubjects.find(x=>x.label===tg);return s?s.color:T.lime;};
 
   const [notes,setNotes]=useState(()=>{const n=lsGet("notes",null);return(n&&Array.isArray(n))?n.filter(x=>x&&x.title):[];});
-  const [showSyllabusTip,setShowSyllabusTip]=useState(()=>!lsGet("seenNotesSyllabusTip",false));
-  const dismissSyllabusTip=()=>{lsSet("seenNotesSyllabusTip",true);setShowSyllabusTip(false);};
   const [sel,setSel]=useState(null);
   const [search,setSearch]=useState("");
   const filtered=notes.filter(n=>n.title.toLowerCase().includes(search.toLowerCase())||(n.body||"").replace(/<[^>]+>/g," ").toLowerCase().includes(search.toLowerCase()));
@@ -3672,8 +3679,6 @@ function Notes(){
   const [aiLoading,setAiLoading]=useState(false);
   const [fileText,setFileText]=useState("");
   const fileRef=useRef(null);
-  const [syllabusText,setSyllabusText]=useState("");
-  const syllabusFileRef=useRef(null);
   const [syllabusReview,setSyllabusReview]=useState(null); // {noteId, items:[{id,title,date,kind,confidence,include}]}
   const [syllabusToast,setSyllabusToast]=useState(""); // success confirmation only — limit-hit now opens upgradeModal below
   const [deleteNoteConfirm,setDeleteNoteConfirm]=useState(null); // {idx, linked:[events]}
@@ -3906,6 +3911,34 @@ function Notes(){
     setCleaning(false);
   };
 
+  // Manual trigger for "Write" notes, which skip the automatic detection
+  // that file/record/youtube sources get for free alongside their existing
+  // AI summarize call (see continueToCanvas) — this is its own AI call, so
+  // it spends its own deadline-scan credit, same limit as the old dedicated
+  // Syllabus source used.
+  const [scanningDates,setScanningDates]=useState(false);
+  const scanNoteForDates=async()=>{
+    if(sel===null||scanningDates||!editorRef.current)return;
+    const html=editorRef.current.innerHTML;
+    const tmp=document.createElement("div");tmp.innerHTML=html;
+    const plain=(tmp.textContent||tmp.innerText||"").trim();
+    if(!plain)return;
+    if(!canScanSyllabus()){
+      setUpgradeModal({feature:"deadline scans",detail:resetNote("deadline scans",SYLLABUS_SCAN_LIMIT,"upgrade to keep scanning notes for dates")});
+      return;
+    }
+    setScanningDates(true);
+    const found=await extractSyllabusDeadlines(plain);
+    recordSyllabusScan();
+    setScanningDates(false);
+    if(found.length>0){
+      setSyllabusReview({noteId:notes[sel].id,tag:notes[sel].tag,items:found.map((d,i)=>({id:"si-"+i,...d,include:true,attackBlock:false}))});
+    }else{
+      setSyllabusToast("No dates found in this note");
+      setTimeout(()=>setSyllabusToast(""),3200);
+    }
+  };
+
   const noteScansLeft=Math.max(0,NOTE_SCAN_LIMIT-getNoteScanUsage().count);
   const noteScanBadge=getPlan()==="Free"?noteScansLeft+" scan"+(noteScansLeft===1?"":"s")+" left":null;
   const sources=[
@@ -3913,7 +3946,6 @@ function Notes(){
     {id:"file",label:"Scan a file",desc:"PDF, slides, or photos of the board",icon:Icon.file,cost:noteScanBadge},
     {id:"record",label:"Record lecture",desc:"Live transcription + summary",icon:MicIcon,cost:noteScanBadge},
     {id:"youtube",label:"YouTube link",desc:"Transcribes and summarises a video",icon:Icon.link,cost:noteScanBadge},
-    {id:"syllabus",label:"Syllabus",desc:getPlan()==="Free"?Math.max(0,SYLLABUS_SCAN_LIMIT-getSyllabusScanUsage().count)+" free scan"+(SYLLABUS_SCAN_LIMIT-getSyllabusScanUsage().count===1?"":"s")+" left this month":"Paste or upload — Studlin finds every deadline",icon:Icon.cal,cost:null},
   ];
 
   const startRec=()=>{
@@ -3934,17 +3966,6 @@ function Notes(){
     }else{const reader=new FileReader();reader.onload=()=>{setFileText(reader.result);if(!newTitle)setNewTitle("Notes from "+file.name);};reader.readAsText(file);}
   };
 
-  // Same PDF/text extraction as handleFile, just targeting syllabusText —
-  // cloned rather than threading src through handleFile's closure, since
-  // the two sources (scanned notes vs. a syllabus) shouldn't share state.
-  const handleSyllabusFile=async(e)=>{
-    const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
-    const ext=file.name.split(".").pop().toLowerCase();
-    if(ext==="pdf"){
-      try{const pdfjsLib=await window._pdfjs;const buf=await file.arrayBuffer();const pdf=await pdfjsLib.getDocument({data:buf}).promise;let text="";for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();text+=tc.items.map(it=>it.str).join(" ")+"\n\n";}setSyllabusText(text);if(!newTitle)setNewTitle("Notes from "+file.name);}catch(err){setSyllabusText("Could not read PDF: "+err.message);}
-    }else{const reader=new FileReader();reader.onload=()=>{setSyllabusText(reader.result);if(!newTitle)setNewTitle("Notes from "+file.name);};reader.readAsText(file);}
-  };
-
   const aiSummarize=async(text,context)=>{
     setAiLoading(true);
     try{
@@ -3955,17 +3976,21 @@ function Notes(){
     }catch(e){setAiLoading(false);return text;}
   };
 
-  // Extracts every deadline/exam/assignment date from a pasted or scanned
-  // syllabus as structured JSON — deliberately model:"standard" not "flash"
-  // (a real syllabus can hold 15-30 dates; flash's 512-token cap and
-  // brevity-biased system prompt risks truncating a list that long, and
-  // standard costs the same 1 credit). Same "AI attempt, then deterministic
-  // fallback" shape aiArrange uses for AI Schedule Mode — never dead-ends.
+  // Extracts every deadline/exam/assignment date mentioned in a note's text
+  // (a syllabus pasted in, a lecture transcript, scanned slides, whatever)
+  // as structured JSON — deliberately model:"standard" not "flash" (a real
+  // syllabus can hold 15-30 dates; flash's 512-token cap and brevity-biased
+  // system prompt risks truncating a list that long, and standard costs the
+  // same 1 credit). Same "AI attempt, then deterministic fallback" shape
+  // aiArrange uses for AI Schedule Mode — never dead-ends. Runs automatically
+  // as part of the note-scan sources (file/record/youtube already spend an
+  // AI note-scan credit on the same content, so this rides along for free);
+  // "Write" notes get it via the manual "Scan for dates" toolbar button.
   const extractSyllabusDeadlines=async(text)=>{
     if(!text||!text.trim())return [];
     try{
-      const prompt="Extract every deadline, due date, exam date, and assignment date from this course syllabus. "+
-        "Today's date is "+dayKey()+" — if a date has no year, infer the most likely upcoming year given today's date. "+
+      const prompt="Extract every deadline, due date, exam date, and assignment date mentioned in this text (it may be a syllabus, lecture notes, a transcript, or anything else; only extract dates that are actually present, most text has none). "+
+        "Today's date is "+dayKey()+". If a date has no year, infer the most likely upcoming year given today's date. "+
         "For each item return: \"title\" (short, e.g. \"Problem Set 3\" or \"Midterm Exam\"), "+
         "\"date\" (YYYY-MM-DD, your best guess — never omit even if uncertain), "+
         "\"kind\" (either \"deadline\" for assignments/readings/papers or \"exam\" for tests/midterms/finals), "+
@@ -3988,6 +4013,17 @@ function Notes(){
     let title=newTitle.trim();
     let body="<p><br></p>";
     let syllabusItems=null;
+    // Any note built from a real source text rides the same AI note-scan
+    // credit that source already spends on aiSummarize — no separate
+    // "syllabus scan" charge, and no dedicated Syllabus source needed
+    // anymore: pasting a syllabus into a plain Scan-a-file note (or having
+    // one turn up in a lecture recording) gets exactly the same detection.
+    const detectDates=async(text)=>{
+      setAiLoading(true);
+      const found=await extractSyllabusDeadlines(text);
+      setAiLoading(false);
+      if(found.length>0)syllabusItems=found;
+    };
     if(src==="write"){
       if(!title)title="Untitled note";
     }else if(src==="file"){
@@ -3996,6 +4032,7 @@ function Notes(){
       else if(canScanNote()){
         body=await aiSummarize(fileText,"document/file");
         recordNoteScan();
+        await detectDates(fileText);
       }else{
         body="<p>"+fileText.trim().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/\n/g,"<br>")+"</p>";
         setUpgradeModal({feature:"AI note scans",detail:resetNote("AI note scans",NOTE_SCAN_LIMIT,"this file was saved as plain text, not AI-summarized")});
@@ -4006,6 +4043,7 @@ function Notes(){
       else if(canScanNote()){
         body=await aiSummarize(recText,"lecture transcription");
         recordNoteScan();
+        await detectDates(recText);
       }else{
         body="<p>"+recText.trim().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/\n/g,"<br>")+"</p>";
         setUpgradeModal({feature:"AI note scans",detail:resetNote("AI note scans",NOTE_SCAN_LIMIT,"the transcript was saved as plain text, not AI-summarized")});
@@ -4017,32 +4055,16 @@ function Notes(){
       else if(canScanNote()){
         body=await aiSummarize("Create comprehensive study notes on a YouTube video titled: \""+topic+"\". Include headings, definitions, bullet points, summary.","YouTube study notes");
         recordNoteScan();
+        await detectDates(body.replace(/<[^>]+>/g," "));
       }else{
         body="<p>Video: "+topic+"</p>";
         setUpgradeModal({feature:"AI note scans",detail:resetNote("AI note scans",NOTE_SCAN_LIMIT,"the link was saved, but AI notes need Pro")});
-      }
-    }else if(src==="syllabus"){
-      if(!title)title="Syllabus";
-      if(syllabusText.trim()){
-        body=await aiSummarize(syllabusText,"course syllabus");
-        if(canScanSyllabus()){
-          setAiLoading(true);
-          syllabusItems=await extractSyllabusDeadlines(syllabusText);
-          setAiLoading(false);
-          recordSyllabusScan();
-        }else{
-          syllabusItems=[];
-          setUpgradeModal({feature:"syllabus scans",detail:resetNote("syllabus scans",SYLLABUS_SCAN_LIMIT,"the note saved, but deadline extraction needs Pro")});
-        }
-      }else{
-        body="<p>Paste or upload a syllabus.</p>";
-        syllabusItems=[];
       }
     }
     const newNote={id:String(Date.now()),title,body,tag,date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now()};
     const next=[newNote,...notes];
     setNotes(next);lsSet("notes",next);
-    setNewOpen(false);setNewTitle("");setYt("");setYtInfo("");setRec(false);setRecSecs(0);setRecText("");setSrc("write");setFileText("");setSyllabusText("");setSearch("");
+    setNewOpen(false);setNewTitle("");setYt("");setYtInfo("");setRec(false);setRecSecs(0);setRecText("");setSrc("write");setFileText("");setSearch("");
     setSel(0);
     setPopover(null);
     if(syllabusItems!==null){
@@ -4196,14 +4218,6 @@ function Notes(){
     <div>
       <PH title="Notes" sub="Write, scan, record, or import" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New note")}</Btn>} />
 
-      {showSyllabusTip&&(
-        <div style={{display:"flex",alignItems:"center",gap:12,background:T.lime+"0d",border:`1px solid ${T.lime}33`,borderRadius:12,padding:"12px 16px",marginBottom:16}}>
-          <span style={{fontSize:18,flexShrink:0}}>📄</span>
-          <div style={{flex:1,fontSize:12.5,color:T.text,lineHeight:1.5}}><strong style={{color:T.lime}}>Tip:</strong> Paste or upload your syllabus — Studlin finds every deadline for that class automatically.</div>
-          <button onClick={dismissSyllabusTip} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:18,padding:"2px 6px",fontFamily:T.font,lineHeight:1,flexShrink:0}}>×</button>
-        </div>
-      )}
-
       {/* ── SEND NOTE MODAL ── */}
       <Modal open={sendNoteOpen} onClose={()=>{if(sendNoteStatus==="sending")return;setSendNoteOpen(false);setSendNoteTarget("");setSendNoteStatus("");setSendNoteError("");}} title="Send note to a friend" sub="Deliver this note directly to any email address." width={440}
         footer={sendNoteStatus==="sent"?null:(
@@ -4278,17 +4292,6 @@ function Notes(){
           <Field label="YouTube link" hint={ytInfo?"Found: "+ytInfo:"Paste any YouTube video link. Studlin will detect the topic and generate notes."}>
             <Input placeholder="https://youtube.com/watch?v=..." value={yt} onChange={ev=>{setYt(ev.target.value);const v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtLoading(true);authFetch("/api/search-videos",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(r=>r.json()).then(d=>{if(d.title){setYtInfo(d.title+(d.author?" by "+d.author:""));if(!newTitle)setNewTitle(d.title);}setYtLoading(false);}).catch(()=>setYtLoading(false));}}} />
             {ytLoading&&<div style={{fontSize:11,color:T.lime,marginTop:4}}>Detecting video…</div>}
-          </Field>
-        )}
-        {src==="syllabus"&&(
-          <Field label="Syllabus" hint="AI reads your syllabus and finds every deadline — you'll get to review before anything is added to your calendar.">
-            <input type="file" ref={syllabusFileRef} onChange={handleSyllabusFile} accept=".txt,.md,.csv,.pdf,.doc,.docx,.rtf" style={{display:"none"}} />
-            <div onClick={()=>syllabusFileRef.current&&syllabusFileRef.current.click()} style={{border:"1px dashed "+T.borderHover,borderRadius:10,padding:26,textAlign:"center",background:T.card2,cursor:"pointer",marginBottom:10}}>
-              <div style={{color:T.muted,marginBottom:6,display:"flex",justifyContent:"center"}}>{Icon.cal}</div>
-              <div style={{fontSize:13,color:T.text,fontWeight:500}}>{syllabusText?"File loaded — "+syllabusText.length+" chars":"Click to browse or drop a file"}</div>
-              <div style={{fontSize:11,color:T.muted,marginTop:4}}>PDF, TXT, MD, CSV, DOCX</div>
-            </div>
-            <Textarea placeholder="…or paste the syllabus text directly here" value={syllabusText} onChange={ev=>setSyllabusText(ev.target.value)} style={{minHeight:110}} />
           </Field>
         )}
       </Modal>
@@ -4511,6 +4514,9 @@ function Notes(){
                   </button>
                   <button onClick={cleanNotes} disabled={cleaning} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${T.lime}44`,background:cleaning?T.card2:T.lime+"14",color:cleaning?T.muted:T.lime,cursor:cleaning?"default":"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
                     {cleaning?<>Cleaning…</>:<>{Icon.wand} Clean Notes</>}
+                  </button>
+                  <button onClick={scanNoteForDates} disabled={scanningDates} title="Check this note for dates and offer to add them to your calendar" style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${T.purple}44`,background:scanningDates?T.card2:T.purple+"14",color:scanningDates?T.muted:T.purple,cursor:scanningDates?"default":"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
+                    {scanningDates?<>Scanning…</>:<>{Icon.cal} Scan for Dates</>}
                   </button>
                   <BtnSm variant="danger" onClick={()=>deleteNote(sel)}>Delete</BtnSm>
                 </div>
@@ -8453,6 +8459,36 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   const computePausePlan=(intent)=>{
     const today=dayKey();
     const isQualifying=(ev)=>ev.status==="pending"&&PAUSE_QUALIFYING_KINDS.has(ev.kind);
+    if(intent.intent==="skip_class"){
+      const date=intent.date||today;
+      const dow=(new Date(date+"T12:00:00").getDay()+6)%7;
+      const routinesAll=getWeeklyRoutine();
+      const skippedIds=routinesAll.filter(r=>r.kind==="class"&&r.days&&r.days.includes(dow)).map(r=>r.id);
+      const label=skippedIds.length===0?"No class scheduled "+date:"Skip class, "+date;
+      if(skippedIds.length===0)return{label,moved:[],couldntMove:[],skipRoutine:null};
+      // Preview the freed slot without touching localStorage yet — pass a
+      // routines list with the skipped rule(s) filtered out, same idea as
+      // Tier 3's other intents computing entirely in-memory until Confirm.
+      // The actual persisted skip (which every other scheduler in the app
+      // also needs to see, not just this preview) only gets written in
+      // confirmPausePlan.
+      const routinesMinusSkipped=routinesAll.filter(r=>!skippedIds.includes(r.id));
+      const prefsNow=getSchedulePreferences();
+      const all=lsGet("events",[]);
+      const candidates=all.filter(ev=>isQualifying(ev)&&ev.date>date)
+        .sort((a,b)=>a.date===b.date?((a.time||"")<(b.time||"")?-1:1):(a.date<b.date?-1:1));
+      let working=all;
+      const moved=[];
+      for(const ev of candidates){
+        if(moved.length>=4)break;
+        const slot=findLegalSlotOrNull(working.filter(e=>e.id!==ev.id),routinesMinusSkipped,prefsNow,date,prefsNow.workStartTime,ev.duration||30,ev.deadline||null);
+        if(slot&&slot.date===date){
+          moved.push({id:ev.id,title:ev.title,oldDate:ev.date,oldTime:ev.time,newDate:slot.date,newTime:slot.time});
+          working=working.map(e=>e.id===ev.id?{...e,date:slot.date,time:slot.time}:e);
+        }
+      }
+      return{label,moved,couldntMove:[],skipRoutine:{date,routineIds:skippedIds}};
+    }
     let label,inWindow,computeNewDate;
     if(intent.intent==="shift"){
       const days=Math.max(1,Math.min(14,intent.days||1));
@@ -8499,12 +8535,14 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     const tomorrow=dayKey(new Date(Date.now()+86400000));
     const weekday=new Date().toLocaleDateString("en-US",{weekday:"long"});
     const prompt="You are a scheduling-intent classifier for a student calendar app. Today is "+weekday+", "+today+". The student typed: \""+pauseText.trim()+"\". Classify this into EXACTLY one of these intents and respond with ONLY this JSON, no markdown fences, no explanation:\n"+
-      "{\"intent\":\"shift\"|\"clear_day\"|\"clear_week\"|\"unsupported\",\"days\":<integer 1-14 or null>,\"date\":\"YYYY-MM-DD or null\"}\n"+
-      "Rules: \"shift\" pushes everything from today onward back by a number of days — only use it if the student gave (or clearly implied) an explicit day count; never invent a number. \"clear_day\" empties one specific date — resolve relative phrases like \"tomorrow\" against today's date above. \"clear_week\" clears the next 7 days starting today, no parameters. If the request is ambiguous, asks for more than one action, implies permanently deleting/cancelling things, or doesn't clearly match one of these, respond \"unsupported\".\n"+
+      "{\"intent\":\"shift\"|\"clear_day\"|\"clear_week\"|\"skip_class\"|\"unsupported\",\"days\":<integer 1-14 or null>,\"date\":\"YYYY-MM-DD or null\"}\n"+
+      "Rules: \"shift\" pushes everything from today onward back by a number of days, only use it if the student gave (or clearly implied) an explicit day count, never invent a number. \"clear_day\" empties one specific date, resolve relative phrases like \"tomorrow\" against today's date above. \"clear_week\" clears the next 7 days starting today, no parameters. \"skip_class\" is for when the student says they aren't physically attending class/school on a specific day (sick, break, no school) and wants that day's class time opened up for other work, resolve relative phrases like \"today\"/\"tomorrow\" against today's date above. If the request is ambiguous, asks for more than one action, implies permanently deleting/cancelling things, or doesn't clearly match one of these, respond \"unsupported\".\n"+
       "Examples:\n"+
       "\"I'm sick, push everything back 3 days\" -> {\"intent\":\"shift\",\"days\":3,\"date\":null}\n"+
       "\"clear my day tomorrow\" -> {\"intent\":\"clear_day\",\"days\":null,\"date\":\""+tomorrow+"\"}\n"+
       "\"I need a break this week\" -> {\"intent\":\"clear_week\",\"days\":null,\"date\":null}\n"+
+      "\"I'm not going to school today, use that time for studying\" -> {\"intent\":\"skip_class\",\"days\":null,\"date\":\""+today+"\"}\n"+
+      "\"no school tomorrow\" -> {\"intent\":\"skip_class\",\"days\":null,\"date\":\""+tomorrow+"\"}\n"+
       "\"push things back a couple days\" -> {\"intent\":\"unsupported\",\"days\":null,\"date\":null}\n"+
       "\"cancel everything forever\" -> {\"intent\":\"unsupported\",\"days\":null,\"date\":null}";
     try{
@@ -8512,11 +8550,11 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
       const data=await res.json();
       const raw=(data.reply||"").replace(/```json?|```/g,"").trim();
       const parsed=JSON.parse(raw);
-      if(!parsed||!["shift","clear_day","clear_week"].includes(parsed.intent))throw new Error("unsupported");
+      if(!parsed||!["shift","clear_day","clear_week","skip_class"].includes(parsed.intent))throw new Error("unsupported");
       if(parsed.intent==="shift"&&!(parsed.days>=1&&parsed.days<=14))throw new Error("bad-days");
       setPausePreview(computePausePlan(parsed));
     }catch(e){
-      setPauseError("Couldn't understand that — try rephrasing, or use one of the quick actions below.");
+      setPauseError("Couldn't understand that. Try rephrasing, or use one of the quick actions below.");
     }
     setPauseLoading(false);
   };
@@ -8527,6 +8565,14 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     const all=lsGet("events",[]);
     const next=all.map(ev=>movedById.has(ev.id)?{...ev,date:movedById.get(ev.id).newDate,time:movedById.get(ev.id).newTime}:ev);
     setEvents(next);lsSet("events",next);
+    // skip_class only affects a routine RULE, never the one-off `events`
+    // array — the skip itself is written here (not in computePausePlan) so
+    // nothing is persisted until the student actually confirms the preview.
+    if(pausePreview.skipRoutine){
+      const{date,routineIds}=pausePreview.skipRoutine;
+      const skips=getRoutineSkips();
+      lsSet("routineSkips",{...skips,[date]:[...new Set([...(skips[date]||[]),...routineIds])]});
+    }
     setPausePreview(null);setPauseOpen(false);setPauseText("");
     setToast(true);setTimeout(()=>setToast(false),2200);
   };
@@ -8969,7 +9015,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
       </Modal>
       <Modal open={pauseOpen} onClose={()=>{setPauseOpen(false);setPausePreview(null);setPauseError("");}}
         title={pausePreview?pausePreview.label:"Studlin Reschedule"}
-        sub={pausePreview?(pausePreview.moved.length+" task"+(pausePreview.moved.length!==1?"s":"")+" affected"):"Tell Studlin what's going on — it'll reschedule around it."}
+        sub={pausePreview?(pausePreview.moved.length+" task"+(pausePreview.moved.length!==1?"s":"")+" affected"):"Tell Studlin what's going on. It'll reschedule around it."}
         width={520}
         footer={pausePreview?(
           <><Btn variant="subtle" onClick={()=>setPausePreview(null)}>Cancel</Btn><Btn onClick={confirmPausePlan}>Confirm</Btn></>
@@ -8984,6 +9030,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
             <Btn variant="subtle" onClick={()=>applyPausePreset({intent:"shift",days:3})}>Push everything back 3 days</Btn>
             <Btn variant="subtle" onClick={()=>applyPausePreset({intent:"clear_day",date:dayKey()})}>Clear today</Btn>
             <Btn variant="subtle" onClick={()=>applyPausePreset({intent:"clear_week"})}>Clear this week</Btn>
+            <Btn variant="subtle" onClick={()=>applyPausePreset({intent:"skip_class",date:dayKey()})}>Not going to class today, use that time</Btn>
           </div>
         </>)}
         {pausePreview&&(<>
@@ -8999,7 +9046,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
           )}
           {pausePreview.couldntMove.length>0&&(
             <div>
-              <div style={{fontSize:11,fontWeight:700,color:T.red,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>Couldn't reschedule — deadline conflict ({pausePreview.couldntMove.length})</div>
+              <div style={{fontSize:11,fontWeight:700,color:T.red,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>Couldn't reschedule, deadline conflict ({pausePreview.couldntMove.length})</div>
               <div style={{display:"flex",flexDirection:"column",gap:7,maxHeight:160,overflowY:"auto"}}>
                 {pausePreview.couldntMove.map(m=>(
                   <div key={m.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.red+"0d",borderRadius:8,border:`1px solid ${T.red}33`}}>
@@ -9011,7 +9058,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
             </div>
           )}
           {pausePreview.moved.length===0&&pausePreview.couldntMove.length===0&&(
-            <div style={{fontSize:13,color:T.muted}}>Nothing to reschedule.</div>
+            <div style={{fontSize:13,color:T.muted}}>{pausePreview.skipRoutine?"Class skipped. Nothing needed to move into the freed time.":"Nothing to reschedule."}</div>
           )}
         </>)}
       </Modal>
@@ -10519,8 +10566,8 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Card style={{marginBottom:12}}>
                 <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>Your AI features</div>
                 {[
-                  ["Syllabus scans",plan==="Free"?getSyllabusScanUsage().count+" / "+SYLLABUS_SCAN_LIMIT+" this month":"Unlimited"],
-                  ["AI note scans — files, lectures & YouTube",plan==="Free"?getNoteScanUsage().count+" / "+NOTE_SCAN_LIMIT+" this month":"Unlimited"],
+                  ["Deadline scans",plan==="Free"?getSyllabusScanUsage().count+" / "+SYLLABUS_SCAN_LIMIT+" this month":"Unlimited"],
+                  ["AI note scans (files, lectures & YouTube)",plan==="Free"?getNoteScanUsage().count+" / "+NOTE_SCAN_LIMIT+" this month":"Unlimited"],
                   ["AI flashcard generations",plan==="Free"?getFlashcardGenUsage().count+" / "+FLASHCARD_GEN_LIMIT+" this month":"Unlimited"],
                 ].map(([action,status],i)=>(
                   <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:i<2?`1px solid ${T.border}`:"none"}}>
