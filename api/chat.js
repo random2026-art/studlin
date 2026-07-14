@@ -177,6 +177,13 @@ You are Studlin AI. Your purpose is helping people learn better than they could 
 
 const FLASH_PROMPT = `You are Studlin Flash, a quick-answer study assistant. Give the most direct, concise answer possible. Sound like a smart study buddy, not a textbook. 1-3 sentences max unless the question genuinely needs more. Use bullet points to keep it scannable. Be helpful but brief.`;
 
+// For calls that need a strict machine-readable output (Brain Dump
+// extraction, and any future structured-parsing feature) — the tutor
+// persona above actively fights a "return ONLY JSON" instruction (it's
+// told to ask questions, use markdown, etc.), which made JSON-mode calls
+// unreliable. This prompt has no personality to override.
+const EXTRACTION_PROMPT = `You extract structured data from student input. Follow the user's formatting instructions exactly and completely. Respond with ONLY the requested output — no greeting, no explanation, no markdown code fences, no commentary before or after.`;
+
 const CREDIT_COST = { standard: 1, flash: 1 };
 const DEFAULT_CREDITS = 120; // Free plan limit — must match api/me.js, the actual account-creation default
 const RATE_LIMIT_PER_MIN = 20;
@@ -193,7 +200,7 @@ module.exports = withSentry(async (req, res) => {
   if (!user) return res.status(401).json({ error: 'Sign in required.' });
 
   try {
-    const { messages, model, verbosity, tutorStyle } = req.body;
+    const { messages, model, verbosity, tutorStyle, format } = req.body;
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({ error: 'Messages are required.' });
     }
@@ -255,7 +262,7 @@ module.exports = withSentry(async (req, res) => {
     }
 
     const claudeModel = MODEL_MAP[model] || MODEL_MAP.standard;
-    let systemPrompt = model === 'flash' ? FLASH_PROMPT : SYSTEM_PROMPT;
+    let systemPrompt = format === 'json' ? EXTRACTION_PROMPT : (model === 'flash' ? FLASH_PROMPT : SYSTEM_PROMPT);
     const maxTokens = MAX_TOKENS[model] || 2048;
 
     // Only genuine chat/tutoring surfaces send verbosity/tutorStyle — every
