@@ -90,9 +90,6 @@ async function sendCode(user, res) {
   const deliverTo = process.env.RESEND_TEST_EMAIL || toEmail;
   const resend = new Resend(apiKey);
   const year = new Date().getFullYear();
-  const digitBoxes = code.split('').map(d =>
-    `<td style="padding:0 5px;"><table cellpadding="0" cellspacing="0" style="border-collapse:separate;border-spacing:0;"><tr><td width="62" height="72" align="center" valign="middle" style="width:62px;height:72px;background:#0A0F0A;border:1.5px solid #2A4A1A;border-radius:12px;font-size:38px;font-weight:800;color:#FFFFFF;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',monospace;text-align:center;letter-spacing:0;">${d}</td></tr></table></td>`
-  ).join('');
 
   try {
     const { error } = await resend.emails.send({
@@ -140,7 +137,7 @@ async function sendCode(user, res) {
           <table cellpadding="0" cellspacing="0" align="center" style="margin-bottom:20px;">
             <tr>
               <td style="border:1px solid #AECE5E;border-radius:99px;padding:7px 18px;">
-                <span style="font-size:11px;font-weight:700;color:#AECE5E;letter-spacing:0.12em;text-transform:uppercase;">&#128274; SECURE VERIFICATION</span>
+                <span style="font-size:11px;font-weight:700;color:#AECE5E;letter-spacing:0.12em;text-transform:uppercase;">SECURE VERIFICATION</span>
               </td>
             </tr>
           </table>
@@ -163,37 +160,18 @@ async function sendCode(user, res) {
   <tr><td height="10"></td></tr>
 
   <!-- CODE CARD -->
-  <tr><td style="background:#111810;border:1px solid #1C2C18;border-radius:20px;padding:28px 32px;">
+  <tr><td style="background:#111810;border:1px solid #1C2C18;border-radius:20px;padding:28px 32px;text-align:center;">
     <!-- Label -->
-    <table cellpadding="0" cellspacing="0" style="margin-bottom:22px;">
+    <p style="margin:0 0 20px;font-size:11px;font-weight:700;color:#AECE5E;letter-spacing:0.12em;text-transform:uppercase;">Your verification code</p>
+    <!-- Code — one selectable block so it copies cleanly in a single tap/drag -->
+    <table cellpadding="0" cellspacing="0" align="center" style="margin-bottom:16px;">
       <tr>
-        <td style="width:22px;height:22px;border:1.5px solid #AECE5E;border-radius:6px;text-align:center;vertical-align:middle;">
-          <span style="font-size:11px;color:#AECE5E;line-height:1;">&#10003;</span>
-        </td>
-        <td style="padding-left:10px;font-size:11px;font-weight:700;color:#AECE5E;letter-spacing:0.12em;text-transform:uppercase;vertical-align:middle;">YOUR VERIFICATION CODE</td>
-      </tr>
-    </table>
-    <!-- Digit boxes -->
-    <table cellpadding="0" cellspacing="0" style="margin-bottom:22px;">
-      <tr>${digitBoxes}</tr>
-    </table>
-    <!-- Expiry + Copy -->
-    <table width="100%" cellpadding="0" cellspacing="0">
-      <tr>
-        <td style="font-size:13px;color:#666;vertical-align:middle;">
-          <span style="margin-right:6px;">&#9203;</span> This code expires in <span style="color:#AECE5E;font-weight:600;">10 minutes.</span>
-        </td>
-        <td align="right" style="vertical-align:middle;">
-          <table cellpadding="0" cellspacing="0">
-            <tr>
-              <td style="border:1px solid #2A4A1A;border-radius:8px;padding:8px 16px;">
-                <span style="font-size:12px;color:#AECE5E;font-weight:500;">&#128203; Copy code</span>
-              </td>
-            </tr>
-          </table>
+        <td style="background:#0A0F0A;border:1.5px solid #2A4A1A;border-radius:12px;padding:18px 28px;">
+          <span style="font-size:38px;font-weight:800;color:#FFFFFF;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',monospace;letter-spacing:12px;-webkit-user-select:all;user-select:all;">${code}</span>
         </td>
       </tr>
     </table>
+    <p style="margin:0;font-size:13px;color:#666;line-height:1.6;">This code expires in <span style="color:#AECE5E;font-weight:600;">10 minutes</span>.<br>Tap and hold the code to select and copy it.</p>
   </td></tr>
 
   <tr><td height="10"></td></tr>
@@ -203,37 +181,16 @@ async function sendCode(user, res) {
     <table width="100%" cellpadding="0" cellspacing="0">
       <tr>
         <td width="33%" style="text-align:center;padding:0 16px 0 8px;vertical-align:top;">
-          <table cellpadding="0" cellspacing="0" align="center" style="margin-bottom:12px;">
-            <tr>
-              <td style="width:44px;height:44px;border:1.5px solid #2A4A1A;border-radius:10px;text-align:center;vertical-align:middle;">
-                <span style="font-size:20px;line-height:1;">&#9889;</span>
-              </td>
-            </tr>
-          </table>
           <p style="margin:0 0 6px;font-size:13px;font-weight:700;color:#FFFFFF;line-height:1.3;">Instant verification</p>
           <p style="margin:0;font-size:12px;color:#666;line-height:1.5;">Verify your email and get started right away.</p>
         </td>
         <td width="1" style="background:#1C2C18;"></td>
         <td width="33%" style="text-align:center;padding:0 16px;vertical-align:top;">
-          <table cellpadding="0" cellspacing="0" align="center" style="margin-bottom:12px;">
-            <tr>
-              <td style="width:44px;height:44px;border:1.5px solid #2A4A1A;border-radius:10px;text-align:center;vertical-align:middle;">
-                <span style="font-size:20px;line-height:1;">&#128274;</span>
-              </td>
-            </tr>
-          </table>
           <p style="margin:0 0 6px;font-size:13px;font-weight:700;color:#FFFFFF;line-height:1.3;">End-to-end secured</p>
           <p style="margin:0;font-size:12px;color:#666;line-height:1.5;">Your data is encrypted and always protected.</p>
         </td>
         <td width="1" style="background:#1C2C18;"></td>
         <td width="33%" style="text-align:center;padding:0 8px 0 16px;vertical-align:top;">
-          <table cellpadding="0" cellspacing="0" align="center" style="margin-bottom:12px;">
-            <tr>
-              <td style="width:44px;height:44px;border:1.5px solid #2A4A1A;border-radius:10px;text-align:center;vertical-align:middle;">
-                <span style="font-size:20px;line-height:1;">&#128737;</span>
-              </td>
-            </tr>
-          </table>
           <p style="margin:0 0 6px;font-size:13px;font-weight:700;color:#FFFFFF;line-height:1.3;">Protected workspace access</p>
           <p style="margin:0;font-size:12px;color:#666;line-height:1.5;">Enterprise-grade security for your workspace.</p>
         </td>
@@ -262,14 +219,7 @@ async function sendCode(user, res) {
     <table width="100%" cellpadding="0" cellspacing="0">
       <tr>
         <td style="vertical-align:top;">
-          <table cellpadding="0" cellspacing="0">
-            <tr>
-              <td style="width:28px;height:28px;border:1.5px solid #2A4A1A;border-radius:6px;text-align:center;vertical-align:middle;">
-                <span style="font-size:13px;color:#AECE5E;">&#9993;</span>
-              </td>
-            </tr>
-          </table>
-          <p style="margin:6px 0 0;font-size:11px;color:#555;line-height:1.5;">Sent to<br><span style="color:#AECE5E;">${toEmail}</span></p>
+          <p style="margin:0;font-size:11px;color:#555;line-height:1.5;">Sent to<br><span style="color:#AECE5E;">${toEmail}</span></p>
         </td>
         <td style="text-align:center;vertical-align:top;font-size:11px;color:#555;line-height:1.6;">
           Studlin &copy; ${year}<br>All rights reserved.
