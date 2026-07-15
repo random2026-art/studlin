@@ -7927,7 +7927,16 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
 
 // The "Today"/selected-day + Upcoming agenda column — shared by Monthly and
 // Weekly views so the collapsible panel behaves identically in both.
+// A busy day shouldn't force the whole sidebar to scroll just to reach
+// "Upcoming" below it — cap the visible list and let the student expand it
+// on demand instead. Collapses back to capped every time the selected day
+// changes, so switching days never leaves a stale "expanded" list behind.
+const AGENDA_DAY_CAP=5;
 function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, colorOf, openNew, openEdit, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, routines, openRoutineEdit, deleteRoutineItem, markDone, removeEvent, setSelDay, setYm, dragId, setDragId, openReschedule, setEvents}) {
+  const [showAllToday,setShowAllToday]=useState(false);
+  useEffect(()=>{setShowAllToday(false);},[selDay]);
+  const hiddenCount=Math.max(0,dayEvents.length-AGENDA_DAY_CAP);
+  const visibleDayEvents=showAllToday?dayEvents:dayEvents.slice(0,AGENDA_DAY_CAP);
   return (
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       <Card style={{padding:16}}>
@@ -7940,7 +7949,7 @@ function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, c
         </div>
         {dayEvents.length===0
           ?<div style={{fontSize:12,color:T.muted,padding:"14px 0 6px",textAlign:"center"}}>Nothing scheduled</div>
-          :dayEvents.map(ev=>{
+          :visibleDayEvents.map(ev=>{
             const over=daysOverdue(ev);
             const isDone=ev.status==="done";
             const color=over>0?T.red:colorOf(ev.subject);
@@ -7985,7 +7994,7 @@ function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, c
                 <div style={{display:"flex",gap:4,flexShrink:0,alignItems:"center"}}>
                   {!isDone&&ev.duration&&(ev.kind==="study block"||ev.kind==="deadline")&&<BtnSm onClick={()=>{if(window._setTimerTask)window._setTimerTask(ev);}} style={{flexShrink:0,boxShadow:`0 2px 10px -3px ${T.lime}88`}}>Begin</BtnSm>}
                   {!isDone&&(ev.kind==="exam"||ev.kind==="class"||ev.kind==="reminder")&&<button onClick={()=>openEdit(ev)} title="View details" style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Details</button>}
-                  {!isDone&&ev.duration&&(ev.kind==="study block"||ev.kind==="deadline")&&<button onClick={()=>openReschedule(ev)} title="Reschedule" style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Reschedule</button>}
+                  {!isDone&&ev.duration&&(ev.kind==="study block"||ev.kind==="deadline")&&<button onClick={()=>openReschedule(ev)} title="Reschedule" style={{width:24,height:24,borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0,padding:0}}>{Icon.refresh}</button>}
                   {!isDone&&<button onClick={()=>markDone(ev.id)} title="Mark done" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",display:"flex"}}>{Icon.check}</button>}
                   <button onClick={()=>removeEvent(ev.id)} title="Delete" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,padding:2}}>×</button>
                 </div>
@@ -7996,6 +8005,11 @@ function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, c
               )}
             </div>
           );})}
+        {hiddenCount>0&&(
+          <button onClick={()=>setShowAllToday(s=>!s)} style={{width:"100%",textAlign:"center",padding:"8px 0 2px",background:"none",border:"none",color:T.muted,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>
+            {showAllToday?"Show less":"Show "+hiddenCount+" more"}
+          </button>
+        )}
       </Card>
       <div>
         <div style={{fontSize:12,fontWeight:600,color:T.muted,letterSpacing:"0.05em",textTransform:"uppercase",marginBottom:10}}>Upcoming</div>
