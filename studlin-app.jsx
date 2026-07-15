@@ -7358,6 +7358,11 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
   return(<>
     <div onPointerDown={widgetPointerDown} onPointerMove={widgetPointerMove} onPointerUp={widgetPointerUp}
       style={{position:"fixed",...(dragPos?{left:dragPos.x,top:dragPos.y,right:"auto",bottom:"auto"}:{bottom:20,right:collapsed?8:20}),zIndex:500,width:collapsed?64:284,background:T.card,border:`1px solid ${T.border}`,borderRadius:18,boxShadow:"0 20px 50px -14px rgba(0,0,0,0.5)",padding:collapsed?"30px 8px 14px":"14px 16px",fontFamily:T.font,animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)",transition:"width 0.28s cubic-bezier(.2,.85,.3,1), padding 0.28s cubic-bezier(.2,.85,.3,1)",overflow:"hidden",boxSizing:"border-box",cursor:"grab",touchAction:"none"}}>
+      {!collapsed&&(
+        <button onClick={()=>setSoundOn(s=>!s)} title={soundOn?"Mute alarm":"Unmute alarm"} style={{position:"absolute",top:10,right:66,width:22,height:22,borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:soundOn?T.muted:T.faint,display:"grid",placeItems:"center",cursor:"pointer",zIndex:1,padding:0}}>
+          {soundOn?Icon.volume:Icon.volOff}
+        </button>
+      )}
       <button onClick={()=>setFullscreen(true)} title="Full-screen focus" style={{position:"absolute",top:10,right:38,width:22,height:22,borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer",zIndex:1,padding:0}}>
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
       </button>
@@ -7379,7 +7384,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
           <div style={{fontFamily:T.mono,fontSize:11,fontWeight:800,color:timerColor,letterSpacing:"-0.02em"}}>{fmt(secs)}</div>
         </div>
       ) : (<>
-        <div style={{display:"flex",alignItems:"center",gap:12,paddingRight:26}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,paddingRight:92}}>
           <div style={{position:"relative",width:48,height:48,flexShrink:0}}>
             <svg viewBox="0 0 64 64" style={{width:48,height:48,transform:"rotate(-90deg)"}}>
               <circle cx="32" cy="32" r={widgetR} fill="none" stroke={T.border} strokeWidth="5"/>
@@ -7397,7 +7402,6 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
             <div style={{fontFamily:T.mono,fontSize:19,fontWeight:800,color:T.white,letterSpacing:"-0.02em"}}>{fmt(secs)}</div>
             <div style={{fontSize:11,color:T.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{coop.length?"With "+(coop.length===1?coop[0].name:coop.length+" others"):task.title}</div>
           </div>
-          <button onClick={()=>setSoundOn(s=>!s)} title={soundOn?"Mute alarm":"Unmute alarm"} style={{width:28,height:28,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:soundOn?T.text:T.faint,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{soundOn?Icon.volume:Icon.volOff}</button>
         </div>
 
         {isBreak&&(
