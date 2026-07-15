@@ -40,7 +40,8 @@ function loadStudlinModule() {
     "evaluateExamPrepAdjustment","buildExamSessionEvents","scoreTask",
     "normalizeTaskVal","PAUSE_QUALIFYING_KINDS","TIER0_FIXED_KINDS",
     "planBrainDumpTasks","matchEventByTitle","getWeeklyRoutine","saveWeeklyRoutine",
-    "getRoutineSkips","getRoutineOccurrencesForDate"];
+    "getRoutineSkips","getRoutineOccurrencesForDate","findHabitSlotForToday",
+    "materializeHabitsForDate"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }

@@ -203,6 +203,62 @@ describe("matchEventByTitle", () => {
   });
 });
 
+describe("materializeHabitsForDate (flexible daily habits)", () => {
+  const dow = (new Date("2026-07-20T12:00:00").getDay() + 6) % 7; // app's Monday-first convention
+
+  test("materializes a due habit into a real, concretely-timed event", () => {
+    const m = loadStudlinModule();
+    const habit = { id: "habit-gym", title: "Gym", kind: "habit", days: [dow], duration: 45, subject: "" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([habit]));
+    m.localStorage.setItem("studlin-events", JSON.stringify([]));
+    const created = m.materializeHabitsForDate("2026-07-20");
+    assert.equal(created.length, 1);
+    assert.equal(created[0].routineId, "habit-gym");
+    assert.equal(created[0].date, "2026-07-20");
+    assert.equal(created[0].kind, "study block");
+    assert.ok(created[0].time >= "10:00" && created[0].time < "23:00", "should land within workStartTime-bedtime");
+  });
+
+  test("is idempotent — a second call for the same date creates nothing new", () => {
+    const m = loadStudlinModule();
+    const habit = { id: "habit-gym", title: "Gym", kind: "habit", days: [dow], duration: 45, subject: "" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([habit]));
+    m.localStorage.setItem("studlin-events", JSON.stringify([]));
+    const first = m.materializeHabitsForDate("2026-07-20");
+    m.localStorage.setItem("studlin-events", JSON.stringify(first));
+    const second = m.materializeHabitsForDate("2026-07-20");
+    assert.equal(second.length, 0);
+  });
+
+  test("skips gracefully when the whole day is already booked, without throwing", () => {
+    const m = loadStudlinModule();
+    const habit = { id: "habit-gym", title: "Gym", kind: "habit", days: [dow], duration: 30, subject: "" };
+    const packed = { id: "packed-1", title: "Packed", date: "2026-07-20", time: "10:00", kind: "busy block", duration: 780, status: "pending" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([habit]));
+    m.localStorage.setItem("studlin-events", JSON.stringify([packed]));
+    const created = m.materializeHabitsForDate("2026-07-20");
+    assert.equal(created.length, 0, "a fully booked day should skip the habit, not throw or double-book");
+  });
+
+  test("skips a habit not scheduled for that weekday", () => {
+    const m = loadStudlinModule();
+    const otherDow = (dow + 1) % 7;
+    const habit = { id: "habit-gym", title: "Gym", kind: "habit", days: [otherDow], duration: 30, subject: "" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([habit]));
+    m.localStorage.setItem("studlin-events", JSON.stringify([]));
+    const created = m.materializeHabitsForDate("2026-07-20");
+    assert.equal(created.length, 0);
+  });
+
+  test("a habit routine is never virtually expanded (no fixed time to expand)", () => {
+    const m = loadStudlinModule();
+    const habit = { id: "habit-gym", title: "Gym", kind: "habit", days: [dow], duration: 30, subject: "" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([habit]));
+    const occurrences = m.getRoutineOccurrencesForDate("2026-07-20");
+    assert.equal(occurrences.length, 0, "habits must be excluded from expandRoutineOccurrences, not given a fake time");
+  });
+});
+
 describe("isTier0Missed", () => {
   test("a missed real study block is eligible for reflow", () => {
     const { isTier0Missed } = loadStudlinModule();

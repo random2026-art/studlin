@@ -818,6 +818,12 @@ function expandRoutineOccurrences(routines,startDateKey,endDateKey){
     const skippedToday=skips[dk]||[];
     routines.forEach(r=>{
       if(!r.days||!r.days.includes(dow))return;
+      // Habits have no startTime — they're never virtually expanded like
+      // class/busy/free routines, since every downstream consumer here
+      // (fmtTime, occupied-interval math, sort comparators) assumes a real
+      // time exists. They're materialized into real events once a day
+      // instead — see materializeHabitsForDate.
+      if(r.kind==="habit")return;
       if(skippedToday.includes(r.id))return;
       out.push({
         id:"routine-"+r.id+"-"+dk,
@@ -918,6 +924,53 @@ function findFixedEventSlot(events,routines,prefs,desiredDate,desiredTime,durati
     }
   }
   return{date:desiredDate,time:desiredTime};
+}
+// Places one day's occurrence of a "habit" routine (recurring, but with no
+// fixed clock time — see the kind:"habit" exclusion in
+// expandRoutineOccurrences). Deliberately same-day only, unlike
+// findFixedEventSlot/findOpenSlotFor: rolling an unplaceable habit forward
+// to tomorrow would double-book against tomorrow's own independently
+// materialized instance, so a day with no room simply skips that
+// occurrence instead. Scans workStartTime→bedtime rather than the narrower
+// study-hours window, since a habit like "gym" often sits outside it.
+function findHabitSlotForToday(events,routines,prefs,dateKey,duration){
+  const occupied=computeOccupiedIntervals(events,routines,prefs,dateKey);
+  const fits=(t)=>!occupied.some(o=>!(t+duration<=o.start||t>=o.end));
+  const start=timeToMinutes(prefs.workStartTime||"09:00");
+  const end=timeToMinutes(prefs.bedtime||"23:00");
+  for(let t=start;t+duration<=end;t+=15){
+    if(fits(t))return minutesToTime(t);
+  }
+  return null;
+}
+// Turns each "habit" routine rule due on this date into one real,
+// concretely-timed event — the one place a habit ever becomes real (see
+// expandRoutineOccurrences). Idempotent per date: dedups against any
+// existing event carrying the same routineId on this date, so it's safe to
+// call on every login (see the once-a-day gate that calls this). Mirrors
+// buildExamSessionEvents' shape — a pure function returning new events for
+// the caller to persist, not persisting anything itself.
+function materializeHabitsForDate(dateKey){
+  const habitRoutines=getWeeklyRoutine().filter(r=>r.kind==="habit");
+  if(habitRoutines.length===0)return[];
+  const dow=(new Date(dateKey+"T12:00:00").getDay()+6)%7;
+  const due=habitRoutines.filter(r=>r.days&&r.days.includes(dow));
+  if(due.length===0)return[];
+  const all=lsGet("events",[]);
+  const alreadyDone=new Set(all.filter(e=>e.date===dateKey&&e.routineId).map(e=>e.routineId));
+  const routinesNow=getWeeklyRoutine();
+  const prefsNow=getSchedulePreferences();
+  let working=all;
+  const created=[];
+  due.forEach(r=>{
+    if(alreadyDone.has(r.id))return;
+    const time=findHabitSlotForToday(working,routinesNow,prefsNow,dateKey,r.duration||30);
+    if(!time)return; // no room today — skip gracefully, never rolls to tomorrow
+    const ev={id:"habit-"+r.id+"-"+dateKey,title:r.title,date:dateKey,time,subject:r.subject||"",kind:"study block",notes:"",priority:5,difficulty:5,deadline:null,duration:r.duration||30,status:"pending",timeSpent:0,completedAt:null,routineId:r.id};
+    created.push(ev);
+    working=working.concat([ev]);
+  });
+  return created;
 }
 function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey){
   // Never hand back a slot that's already passed today. Most callers (Brain
@@ -8183,9 +8236,10 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
   const resetForm=()=>{setTitle("");setKind("class");setDays([]);setStartTime("15:30");setDuration(60);};
   const toggleDay=(i)=>setDays(d=>d.includes(i)?d.filter(x=>x!==i):[...d,i]);
   const isFree=kind==="free";
+  const isHabit=kind==="habit";
   const submitAdd=()=>{
     if((!isFree&&!title.trim())||days.length===0)return;
-    onAddRoutine({title:isFree?(title.trim()||"Free Period"):title.trim(),kind,days:[...days],startTime,duration});
+    onAddRoutine({title:isFree?(title.trim()||"Free Period"):title.trim(),kind,days:[...days],startTime:isHabit?null:startTime,duration});
     resetForm();
     setAddingRoutine(false);
   };
@@ -8206,7 +8260,7 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
             <div key={r.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,background:T.card2}}>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:13,fontWeight:600,color:T.white}}>{r.title}</div>
-                <div style={{fontSize:11,color:T.muted,marginTop:2}}>{formatDays(r.days)} · {fmtTime(r.startTime)} – {fmtTime(minutesToTime(timeToMinutes(r.startTime)+(r.duration||30)))}</div>
+                <div style={{fontSize:11,color:T.muted,marginTop:2}}>{formatDays(r.days)} · {r.kind==="habit"?"Anytime ("+(r.duration||30)+" min)":fmtTime(r.startTime)+" – "+fmtTime(minutesToTime(timeToMinutes(r.startTime)+(r.duration||30)))}</div>
               </div>
               <BtnSm variant="subtle" onClick={()=>onEditRoutine(r)}>Edit</BtnSm>
               <BtnSm variant="danger" onClick={()=>onDeleteRoutine(r.id)}>Delete</BtnSm>
@@ -8222,7 +8276,8 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
         : (
           <div style={{border:`1px solid ${T.border}`,borderRadius:10,padding:14}}>
             {!isFree&&<Field label="Name"><Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="e.g. Track Practice" autoFocus /></Field>}
-            <Field label="Type"><SelectChip options={[{value:"class",label:"Class"},{value:"busy",label:"Activity"},{value:"free",label:"Free Period"}]} value={kind} onChange={setKind} /></Field>
+            <Field label="Type"><SelectChip options={[{value:"class",label:"Class"},{value:"busy",label:"Activity"},{value:"free",label:"Free Period"},{value:"habit",label:"Habit"}]} value={kind} onChange={setKind} /></Field>
+            {isHabit&&<div style={{fontSize:11.5,color:T.muted,marginTop:-6,marginBottom:14}}>No fixed time — Studlin fits it in wherever there's room each day.</div>}
             <Field label="Repeats on" hint={days.length===0?"Pick at least one day":undefined}>
               <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                 {ROUTINE_DOW.map((d,i)=>{
@@ -8231,8 +8286,8 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
                 })}
               </div>
             </Field>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
-              <Field label="Start time"><TimeInput value={startTime} onChange={setStartTime} /></Field>
+            <div style={{display:"grid",gridTemplateColumns:isHabit?"1fr":"1fr 1fr",gap:12,marginBottom:14}}>
+              {!isHabit&&<Field label="Start time"><TimeInput value={startTime} onChange={setStartTime} /></Field>}
               <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={30} value={duration} onChange={setDuration} /></Field>
             </div>
             <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
@@ -8695,7 +8750,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
   const closeRoutineEdit=()=>setRoutineEditItem(null);
   const saveRoutineEdit=()=>{
     if(!routineEditItem||!riTitle.trim()||riDays.length===0)return;
-    persistRoutines(routines.map(r=>r.id===routineEditItem.id?{...r,title:riTitle.trim(),kind:riKind,days:riDays,startTime:riStartTime,duration:riDuration,subject:riSubject==="None"?"":riSubject}:r));
+    persistRoutines(routines.map(r=>r.id===routineEditItem.id?{...r,title:riTitle.trim(),kind:riKind,days:riDays,startTime:riKind==="habit"?null:riStartTime,duration:riDuration,subject:riSubject==="None"?"":riSubject}:r));
     closeRoutineEdit();
   };
   const deleteRoutineEdit=()=>{
@@ -9814,7 +9869,8 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
           </div>
         }>
         <Field label="Title"><Input value={riTitle} onChange={e=>setRiTitle(e.target.value)} autoFocus /></Field>
-        <Field label="Type"><SelectChip options={[{value:"class",label:"Class"},{value:"busy",label:"Activity"},{value:"free",label:"Free Period"}]} value={riKind} onChange={setRiKind} /></Field>
+        <Field label="Type"><SelectChip options={[{value:"class",label:"Class"},{value:"busy",label:"Activity"},{value:"free",label:"Free Period"},{value:"habit",label:"Habit"}]} value={riKind} onChange={setRiKind} /></Field>
+        {riKind==="habit"&&<div style={{fontSize:11.5,color:T.muted,marginTop:-6,marginBottom:14}}>No fixed time — Studlin fits it in wherever there's room each day.</div>}
         <Field label="Repeats on" hint={riDays.length===0?"Pick at least one day":undefined}>
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
             {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((d,i)=>{
@@ -9823,8 +9879,8 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
             })}
           </div>
         </Field>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <Field label="Start time"><TimeInput value={riStartTime} onChange={setRiStartTime} /></Field>
+        <div style={{display:"grid",gridTemplateColumns:riKind==="habit"?"1fr":"1fr 1fr",gap:12}}>
+          {riKind!=="habit"&&<Field label="Start time"><TimeInput value={riStartTime} onChange={setRiStartTime} /></Field>}
           <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={30} value={riDuration} onChange={setRiDuration} /></Field>
         </div>
         <Field label="Subject"><SelectChip options={SUBJ} value={riSubject} onChange={setRiSubject} /></Field>
@@ -13593,6 +13649,12 @@ function App() {
         }
       }
     }
+    // Habits (recurring, no fixed time — see kind:"habit") are never
+    // virtually expanded like class/busy/free routines; this is the one
+    // place each day's occurrence gets turned into a real, concretely
+    // timed task, same once-a-day cadence as everything else above.
+    const habitEvents=materializeHabitsForDate(today);
+    if(habitEvents.length)working=working.concat(habitEvents);
     if(working!==cleaned)lsSet("events",working);
     if(movedBatch.length>0){
       const seen=getTier0SeenIds();
