@@ -94,6 +94,113 @@ describe("computePausePlan (Studlin Reschedule)", () => {
     const touchedIds = [...result.moved, ...result.couldntMove].map((x) => x.id);
     assert.ok(touchedIds.includes("real-deadline-1"), "a deadline-kind item WITH a real duration must not be caught by the marker carve-out");
   });
+
+  test("move_event relocates a one-off fixed event to the requested day", () => {
+    const m = loadStudlinModule();
+    const gym = { id: "gym-1", title: "Gym", date: "2026-07-20", time: "19:15", subject: "", kind: "busy block", notes: "", priority: null, difficulty: null, deadline: null, duration: 60, status: "pending", timeSpent: 0, completedAt: null };
+    m.localStorage.setItem("studlin-events", JSON.stringify([gym]));
+    const result = m.computePausePlan({ intent: "move_event", target: "gym", targetDate: "2026-07-20", destDate: "2026-07-21" });
+    assert.equal(result.moved.length, 1);
+    assert.equal(result.moved[0].id, "gym-1");
+    assert.equal(result.moved[0].newDate, "2026-07-21");
+    assert.equal(result.moved[0].isRoutine, false);
+  });
+
+  test("move_event matches a recurring routine occurrence and flags it for a one-off override", () => {
+    const m = loadStudlinModule();
+    const dow = (new Date("2026-07-20T12:00:00").getDay() + 6) % 7; // app's Monday-first convention
+    const routine = { id: "routine-gym", title: "Gym", kind: "busy", days: [dow], startTime: "19:15", duration: 60, subject: "" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([routine]));
+    m.localStorage.setItem("studlin-events", JSON.stringify([]));
+    const result = m.computePausePlan({ intent: "move_event", target: "gym", targetDate: "2026-07-20", destDate: "2026-07-21" });
+    assert.equal(result.moved.length, 1);
+    assert.equal(result.moved[0].isRoutine, true);
+    assert.equal(result.moved[0].routineId, "routine-gym");
+    assert.equal(result.moved[0].oldDate, "2026-07-20");
+  });
+
+  test("retime_event reslots a study block that now collides with the new time", () => {
+    const m = loadStudlinModule();
+    const practice = { id: "practice-1", title: "Track practice", date: "2026-07-20", time: "18:00", subject: "", kind: "busy block", notes: "", priority: null, difficulty: null, deadline: null, duration: 60, status: "pending", timeSpent: 0, completedAt: null };
+    const study = realTask({ id: "study-1", date: "2026-07-20", time: "19:15", duration: 60 });
+    m.localStorage.setItem("studlin-events", JSON.stringify([practice, study]));
+    // New window 19:00-21:00 now overlaps the study block that used to sit safely after the old 18:00-19:00 practice.
+    const result = m.computePausePlan({ intent: "retime_event", target: "track practice", targetDate: "2026-07-20", newStart: "19:00", newDuration: 120 });
+    const practiceMoved = result.moved.find((x) => x.id === "practice-1");
+    const studyMoved = result.moved.find((x) => x.id === "study-1");
+    assert.ok(practiceMoved, "the retimed event itself should be in moved");
+    assert.equal(practiceMoved.newTime, "19:00");
+    assert.ok(studyMoved, "the colliding study block should be reslotted");
+    assert.notEqual(studyMoved.newTime, "19:15", "must not stay inside the new 19:00-21:00 window");
+  });
+
+  test("retime_event leaves non-colliding tasks untouched", () => {
+    const m = loadStudlinModule();
+    const practice = { id: "practice-1", title: "Track practice", date: "2026-07-20", time: "18:00", subject: "", kind: "busy block", notes: "", priority: null, difficulty: null, deadline: null, duration: 60, status: "pending", timeSpent: 0, completedAt: null };
+    const morningStudy = realTask({ id: "study-1", date: "2026-07-20", time: "10:00", duration: 30 });
+    m.localStorage.setItem("studlin-events", JSON.stringify([practice, morningStudy]));
+    const result = m.computePausePlan({ intent: "retime_event", target: "track practice", targetDate: "2026-07-20", newStart: "19:00", newDuration: 120 });
+    const touchedIds = result.moved.map((x) => x.id);
+    assert.ok(!touchedIds.includes("study-1"), "a task nowhere near the new time window should not move");
+  });
+
+  test("returns noMatch when nothing on the calendar resembles the named target", () => {
+    const m = loadStudlinModule();
+    m.localStorage.setItem("studlin-events", JSON.stringify([]));
+    const result = m.computePausePlan({ intent: "move_event", target: "gym", targetDate: "2026-07-20", destDate: "2026-07-21" });
+    assert.equal(result.noMatch, true);
+    assert.equal(result.moved.length, 0);
+  });
+
+  test("returns a disambiguation list when the target phrase matches more than one item, and a forced id resolves it", () => {
+    const m = loadStudlinModule();
+    const a = { id: "p1", title: "Track practice", date: "2026-07-20", time: "17:00", subject: "", kind: "busy block", notes: "", priority: null, difficulty: null, deadline: null, duration: 60, status: "pending", timeSpent: 0, completedAt: null };
+    const b = { id: "p2", title: "Piano practice", date: "2026-07-20", time: "19:00", subject: "", kind: "busy block", notes: "", priority: null, difficulty: null, deadline: null, duration: 30, status: "pending", timeSpent: 0, completedAt: null };
+    m.localStorage.setItem("studlin-events", JSON.stringify([a, b]));
+    const intent = { intent: "move_event", target: "practice", targetDate: "2026-07-20", destDate: "2026-07-21" };
+    const ambiguous = m.computePausePlan(intent);
+    assert.equal(ambiguous.disambiguate.length, 2);
+    const resolved = m.computePausePlan(intent, "p1");
+    assert.equal(resolved.moved[0].id, "p1");
+  });
+});
+
+describe("matchEventByTitle", () => {
+  test("returns no matches when nothing on that date resembles the phrase", () => {
+    const m = loadStudlinModule();
+    m.localStorage.setItem("studlin-events", JSON.stringify([realTask({ id: "t1", date: "2026-07-20", title: "Chem homework" })]));
+    const result = m.matchEventByTitle("gym", "2026-07-20");
+    assert.equal(result.matches.length, 0);
+  });
+
+  test("returns exactly one match for an unambiguous title", () => {
+    const m = loadStudlinModule();
+    const gym = { id: "gym-1", title: "Gym", date: "2026-07-20", time: "19:15", kind: "busy block", duration: 60, status: "pending" };
+    m.localStorage.setItem("studlin-events", JSON.stringify([gym]));
+    const result = m.matchEventByTitle("gym", "2026-07-20");
+    assert.equal(result.matches.length, 1);
+    assert.equal(result.matches[0].id, "gym-1");
+  });
+
+  test("returns every candidate when the phrase is ambiguous", () => {
+    const m = loadStudlinModule();
+    const a = { id: "p1", title: "Track practice", date: "2026-07-20", time: "17:00", kind: "busy block", duration: 60, status: "pending" };
+    const b = { id: "p2", title: "Piano practice", date: "2026-07-20", time: "19:00", kind: "busy block", duration: 30, status: "pending" };
+    m.localStorage.setItem("studlin-events", JSON.stringify([a, b]));
+    const result = m.matchEventByTitle("practice", "2026-07-20");
+    assert.equal(result.matches.length, 2);
+  });
+
+  test("matches a recurring routine occurrence expanded for that date", () => {
+    const m = loadStudlinModule();
+    const dow = (new Date("2026-07-20T12:00:00").getDay() + 6) % 7;
+    const routine = { id: "routine-gym", title: "Gym", kind: "busy", days: [dow], startTime: "19:15", duration: 60, subject: "" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([routine]));
+    m.localStorage.setItem("studlin-events", JSON.stringify([]));
+    const result = m.matchEventByTitle("gym", "2026-07-20");
+    assert.equal(result.matches.length, 1);
+    assert.equal(result.matches[0].isRoutine, true);
+  });
 });
 
 describe("isTier0Missed", () => {

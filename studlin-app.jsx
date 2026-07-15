@@ -836,6 +836,31 @@ function expandRoutineOccurrences(routines,startDateKey,endDateKey){
   return out;
 }
 const getRoutineOccurrencesForDate=(dateKey)=>expandRoutineOccurrences(getWeeklyRoutine(),dateKey,dateKey);
+// Matches a free-text phrase (e.g. "gym", "track practice") against the
+// calendar items on one date — used by Tier 3's move_event/retime_event
+// intents to resolve a student's plain-English target into a real event or
+// routine occurrence. Never guesses: returns every plausible match at the
+// best score tier and lets the caller decide (auto-proceed on exactly one,
+// disambiguate on many, "couldn't find" on zero).
+function matchEventByTitle(phrase,dateKey){
+  const q=(phrase||"").trim().toLowerCase();
+  if(!q)return{matches:[]};
+  const qWords=q.split(/\s+/).filter(Boolean);
+  const pool=lsGet("events",[]).filter(ev=>ev.date===dateKey&&ev.status==="pending")
+    .concat(getRoutineOccurrencesForDate(dateKey));
+  const scored=pool.map(ev=>{
+    const title=(ev.title||"").toLowerCase();
+    const subject=(ev.subject||"").toLowerCase();
+    let score=0;
+    if(title===q)score=3;
+    else if(title.includes(q)||q.includes(title))score=2;
+    else if(qWords.some(w=>title.includes(w)||subject.includes(w)))score=1;
+    return{ev,score};
+  }).filter(s=>s.score>0).sort((a,b)=>b.score-a.score);
+  if(scored.length===0)return{matches:[]};
+  const top=scored[0].score;
+  return{matches:scored.filter(s=>s.score===top).map(s=>s.ev)};
+}
 // Scans forward up to 14 days from a desired date/time for the next slot
 // that's actually open against both real events and Weekly Routine shields,
 // within the user's preferred daily window. Shared by aiArrange's
@@ -870,6 +895,29 @@ function computeOccupiedIntervals(events,routines,prefs,dateKey){
   return events.filter(e=>e.date===dateKey&&e.time)
     .concat(expandRoutineOccurrences(routines,dateKey,dateKey).filter(o=>o.kind!=="free period"))
     .map(e=>({start:timeToMinutes(e.time)-(TIER0_FIXED_KINDS.has(e.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
+}
+// Relocates a FIXED personal event (gym, practice, an appointment) to a new
+// day — deliberately NOT bounded by the student's work/study-hours window
+// the way findOpenSlotFor is, since evening commitments like this routinely
+// sit outside it and pulling gym into the 10am-6pm study window would be
+// wrong. Tries the same time-of-day on the desired date first (that's what
+// "move it to tomorrow" naturally means), falls back to scanning that whole
+// day, then rolls forward a day at a time. Always returns something (falls
+// back to the originally desired slot after two weeks) rather than leaving
+// a fixed event unplaced.
+function findFixedEventSlot(events,routines,prefs,desiredDate,desiredTime,duration){
+  const desiredMins=timeToMinutes(desiredTime);
+  for(let dayOffset=0;dayOffset<14;dayOffset++){
+    const d=new Date(desiredDate+"T12:00:00");d.setDate(d.getDate()+dayOffset);
+    const dk=dayKey(d);
+    const occupied=computeOccupiedIntervals(events,routines,prefs,dk);
+    const fits=(t)=>!occupied.some(o=>!(t+duration<=o.start||t>=o.end));
+    if(fits(desiredMins))return{date:dk,time:desiredTime};
+    for(let t=0;t+duration<=24*60;t+=15){
+      if(fits(t))return{date:dk,time:minutesToTime(t)};
+    }
+  }
+  return{date:desiredDate,time:desiredTime};
 }
 function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey){
   // Never hand back a slot that's already passed today. Most callers (Brain
@@ -1910,7 +1958,7 @@ function rebalanceDay(dateKey,allEvents,routines,prefs){
 // have its actual due date moved by these commands — see isQualifying's
 // carve-out below).
 const PAUSE_QUALIFYING_KINDS=new Set(["study block","deadline","reminder"]);
-function computePausePlan(intent){
+function computePausePlan(intent,forcedId){
   const today=dayKey();
   // A syllabus-scanned due-date marker is kind:"deadline" but duration:null
   // (a real assignment's own scheduled work block always has a real
@@ -1921,6 +1969,67 @@ function computePausePlan(intent){
   // block) and are legitimately reschedulable, so this only excludes
   // "deadline" specifically, not the whole qualifying set.
   const isQualifying=(ev)=>ev.status==="pending"&&PAUSE_QUALIFYING_KINDS.has(ev.kind)&&!(ev.kind==="deadline"&&ev.duration==null);
+  if(intent.intent==="move_event"||intent.intent==="retime_event"){
+    const targetDate=intent.targetDate||today;
+    let matched;
+    if(forcedId){
+      // Re-entry after the student picked one of several disambiguation
+      // candidates — skip fuzzy matching entirely and look the exact id up
+      // in the same pool matchEventByTitle would have searched.
+      const pool=lsGet("events",[]).filter(ev=>ev.date===targetDate).concat(getRoutineOccurrencesForDate(targetDate));
+      matched=pool.find(ev=>ev.id===forcedId)||null;
+      if(!matched)return{label:"That event isn't on the calendar anymore",moved:[],couldntMove:[],noMatch:true};
+    }else{
+      const{matches}=matchEventByTitle(intent.target||"",targetDate);
+      if(matches.length===0)return{label:"Couldn't find \""+(intent.target||"")+"\" on "+targetDate,moved:[],couldntMove:[],noMatch:true};
+      if(matches.length>1)return{label:"Which one did you mean?",moved:[],couldntMove:[],disambiguate:matches.map(ev=>({id:ev.id,title:ev.title,date:ev.date,time:ev.time,isRoutine:!!ev.isRoutine,routineId:ev.routineId||null}))};
+      matched=matches[0];
+    }
+    const all=lsGet("events",[]);
+    const routinesNow=getWeeklyRoutine();
+    const prefsNow=getSchedulePreferences();
+    if(intent.intent==="move_event"){
+      // No destination day named ("make it sometime") defaults to tomorrow,
+      // not today — the student just said they can't make the original
+      // slot, so offering that exact slot straight back would be wrong.
+      const dest=intent.destDate||dayKey(new Date(new Date(matched.date+"T12:00:00").getTime()+86400000));
+      const workingEvents=all.filter(e=>e.id!==matched.id);
+      const slot=findFixedEventSlot(workingEvents,routinesNow,prefsNow,dest,matched.time||"09:00",matched.duration||30);
+      const moved=[{id:matched.id,title:matched.title,oldDate:matched.date,oldTime:matched.time,newDate:slot.date,newTime:slot.time,newDuration:matched.duration||30,isRoutine:!!matched.isRoutine,routineId:matched.routineId||null,kind:matched.kind,subject:matched.subject||""}];
+      return{label:"Move "+matched.title,moved,couldntMove:[]};
+    }
+    // retime_event: figure out who else on targetDate now collides with the
+    // event's new time window and reslot just those, leaving everything
+    // else untouched.
+    const newStart=intent.newStart;
+    const newDuration=intent.newDuration||matched.duration||30;
+    const newStartMins=timeToMinutes(newStart);
+    const newEndMins=newStartMins+newDuration;
+    const sameDayOthers=all.filter(e=>e.date===targetDate&&e.id!==matched.id)
+      .concat(getRoutineOccurrencesForDate(targetDate).filter(o=>o.id!==matched.id));
+    const displaced=sameDayOthers.filter(ev=>{
+      if(!isQualifying(ev)||!ev.time)return false;
+      const s=timeToMinutes(ev.time),e=s+(ev.duration||30);
+      return !(newEndMins<=s||newStartMins>=e);
+    }).sort((a,b)=>(a.time||"")<(b.time||"")?-1:1);
+    // Drop the retimed item's own old-time entry (a no-op if it's a routine
+    // occurrence, which was never in `events`) and every displaced item,
+    // then stand in a synthetic block at the NEW time so nothing gets
+    // reslotted on top of it. Note: if the retimed item is a routine
+    // occurrence, its OLD-time slot still shows as occupied to the slot
+    // finder (the routine rule itself isn't touched until Confirm), which
+    // only makes reslotting slightly more conservative — it just won't
+    // offer displaced tasks the now-freed old slot, never a double-booking.
+    let working=all.filter(e=>e.id!==matched.id&&!displaced.some(d=>d.id===e.id))
+      .concat([{id:"__retimed__"+matched.id,date:targetDate,time:newStart,duration:newDuration,kind:matched.kind||"busy block",status:"pending"}]);
+    const moved=[{id:matched.id,title:matched.title,oldDate:matched.date,oldTime:matched.time,newDate:targetDate,newTime:newStart,newDuration,isRoutine:!!matched.isRoutine,routineId:matched.routineId||null,kind:matched.kind,subject:matched.subject||""}];
+    displaced.forEach(ev=>{
+      const slot=findOpenSlotFor(working,routinesNow,prefsNow,ev.date,ev.time,ev.duration||30,ev.deadline||null);
+      moved.push({id:ev.id,title:ev.title,oldDate:ev.date,oldTime:ev.time,newDate:slot.date,newTime:slot.time});
+      working=working.concat([{...ev,date:slot.date,time:slot.time}]);
+    });
+    return{label:"Retime "+matched.title,moved,couldntMove:[]};
+  }
   if(intent.intent==="skip_class"){
     const date=intent.date||today;
     const dow=(new Date(date+"T12:00:00").getDay()+6)%7;
@@ -8466,6 +8575,10 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
   const [pauseLoading,setPauseLoading]=useState(false);
   const [pauseError,setPauseError]=useState("");
   const [pausePreview,setPausePreview]=useState(null);
+  // The intent object that produced the current preview — kept so a
+  // disambiguation pick can re-run computePausePlan with a forced id
+  // instead of re-matching the free-text target.
+  const [pauseLastIntent,setPauseLastIntent]=useState(null);
   const [dragId,setDragId]=useState(null);
   // Sticky across tab switches — CalendarTab fully remounts every time the
   // user navigates away and back (key={active} at the App level), so plain
@@ -9049,7 +9162,8 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
   // and PAUSE_QUALIFYING_KINDS themselves now live at module scope (see
   // rebalanceDay's neighborhood) — they never actually depended on anything
   // local to this component.
-  const applyPausePreset=(intent)=>{setPauseError("");setPausePreview(computePausePlan(intent));};
+  const applyPausePreset=(intent)=>{setPauseError("");setPauseLastIntent(intent);setPausePreview(computePausePlan(intent));};
+  const pickDisambiguatedEvent=(id)=>{if(pauseLastIntent)setPausePreview(computePausePlan(pauseLastIntent,id));};
 
   const submitPauseCommand=async()=>{
     if(!pauseText.trim()||pauseLoading)return;
@@ -9058,23 +9172,31 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
     const tomorrow=dayKey(new Date(Date.now()+86400000));
     const weekday=new Date().toLocaleDateString("en-US",{weekday:"long"});
     const prompt="You are a scheduling-intent classifier for a student calendar app. Today is "+weekday+", "+today+". The student typed: \""+pauseText.trim()+"\". Classify this into EXACTLY one of these intents and respond with ONLY this JSON, no markdown fences, no explanation:\n"+
-      "{\"intent\":\"shift\"|\"clear_day\"|\"clear_week\"|\"skip_class\"|\"unsupported\",\"days\":<integer 1-14 or null>,\"date\":\"YYYY-MM-DD or null\"}\n"+
-      "Rules: \"shift\" pushes everything from today onward back by a number of days, only use it if the student gave (or clearly implied) an explicit day count, never invent a number. \"clear_day\" empties one specific date, resolve relative phrases like \"tomorrow\" against today's date above. \"clear_week\" clears the next 7 days starting today, no parameters. \"skip_class\" is for when the student says they aren't physically attending class/school on a specific day (sick, break, no school) and wants that day's class time opened up for other work, resolve relative phrases like \"today\"/\"tomorrow\" against today's date above. If the request is ambiguous, asks for more than one action, implies permanently deleting/cancelling things, or doesn't clearly match one of these, respond \"unsupported\".\n"+
+      "{\"intent\":\"shift\"|\"clear_day\"|\"clear_week\"|\"skip_class\"|\"move_event\"|\"retime_event\"|\"unsupported\",\"days\":<integer 1-14 or null>,\"date\":\"YYYY-MM-DD or null\",\"target\":\"<short name of the specific event, or null>\",\"targetDate\":\"YYYY-MM-DD or null\",\"destDate\":\"YYYY-MM-DD or null\",\"newStart\":\"HH:MM 24h or null\",\"newDuration\":<integer minutes or null>}\n"+
+      "Rules: \"shift\" pushes everything from today onward back by a number of days, only use it if the student gave (or clearly implied) an explicit day count, never invent a number. \"clear_day\" empties one specific date, resolve relative phrases like \"tomorrow\" against today's date above. \"clear_week\" clears the next 7 days starting today, no parameters. \"skip_class\" is for when the student says they aren't physically attending class/school on a specific day (sick, break, no school) and wants that day's class time opened up for other work, resolve relative phrases like \"today\"/\"tomorrow\" against today's date above. \"move_event\" is for when the student can't make ONE specific named fixed thing (a class, practice, gym, appointment) at its current time and wants just that one thing relocated, not their whole schedule — \"target\" is the event's name as the student said it, \"targetDate\" is the date it's currently on (default to today's date above if not mentioned), \"destDate\" is the day they want it moved to (resolve relative phrases against today's date above; leave null if they didn't specify a day, e.g. \"sometime\"). \"retime_event\" is for when ONE specific named fixed thing's own time changed (not cancelled — moved to a new time) and the student wants everything else fit around the new time — \"target\" and \"targetDate\" as above, \"newStart\" is the new start time in 24-hour HH:MM, \"newDuration\" is the length in minutes if a range was given (e.g. \"7-9pm\" is 120 minutes), null if only a start time was given. Leave every field not used by the chosen intent as null. If the request is ambiguous, asks for more than one action, doesn't name a specific event when one is required, implies permanently deleting/cancelling things, or doesn't clearly match one of these, respond \"unsupported\".\n"+
       "Examples:\n"+
-      "\"I'm sick, push everything back 3 days\" -> {\"intent\":\"shift\",\"days\":3,\"date\":null}\n"+
-      "\"clear my day tomorrow\" -> {\"intent\":\"clear_day\",\"days\":null,\"date\":\""+tomorrow+"\"}\n"+
-      "\"I need a break this week\" -> {\"intent\":\"clear_week\",\"days\":null,\"date\":null}\n"+
-      "\"I'm not going to school today, use that time for studying\" -> {\"intent\":\"skip_class\",\"days\":null,\"date\":\""+today+"\"}\n"+
-      "\"no school tomorrow\" -> {\"intent\":\"skip_class\",\"days\":null,\"date\":\""+tomorrow+"\"}\n"+
-      "\"push things back a couple days\" -> {\"intent\":\"unsupported\",\"days\":null,\"date\":null}\n"+
-      "\"cancel everything forever\" -> {\"intent\":\"unsupported\",\"days\":null,\"date\":null}";
+      "\"I'm sick, push everything back 3 days\" -> {\"intent\":\"shift\",\"days\":3,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null}\n"+
+      "\"clear my day tomorrow\" -> {\"intent\":\"clear_day\",\"days\":null,\"date\":\""+tomorrow+"\",\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null}\n"+
+      "\"I need a break this week\" -> {\"intent\":\"clear_week\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null}\n"+
+      "\"I'm not going to school today, use that time for studying\" -> {\"intent\":\"skip_class\",\"days\":null,\"date\":\""+today+"\",\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null}\n"+
+      "\"no school tomorrow\" -> {\"intent\":\"skip_class\",\"days\":null,\"date\":\""+tomorrow+"\",\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null}\n"+
+      "\"I won't be able to go to the gym today, make it sometime tomorrow\" -> {\"intent\":\"move_event\",\"days\":null,\"date\":null,\"target\":\"gym\",\"targetDate\":\""+today+"\",\"destDate\":\""+tomorrow+"\",\"newStart\":null,\"newDuration\":null}\n"+
+      "\"can't make practice, move it to tomorrow\" -> {\"intent\":\"move_event\",\"days\":null,\"date\":null,\"target\":\"practice\",\"targetDate\":\""+today+"\",\"destDate\":\""+tomorrow+"\",\"newStart\":null,\"newDuration\":null}\n"+
+      "\"my track practice got moved to 7-9pm\" -> {\"intent\":\"retime_event\",\"days\":null,\"date\":null,\"target\":\"track practice\",\"targetDate\":\""+today+"\",\"destDate\":null,\"newStart\":\"19:00\",\"newDuration\":120}\n"+
+      "\"chem class got pushed to 3pm today\" -> {\"intent\":\"retime_event\",\"days\":null,\"date\":null,\"target\":\"chem class\",\"targetDate\":\""+today+"\",\"destDate\":null,\"newStart\":\"15:00\",\"newDuration\":null}\n"+
+      "\"push things back a couple days\" -> {\"intent\":\"unsupported\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null}\n"+
+      "\"cancel everything forever\" -> {\"intent\":\"unsupported\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null}\n"+
+      "\"my stuff got moved around\" -> {\"intent\":\"unsupported\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null}";
     try{
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"flash"})});
       const data=await res.json();
       const raw=(data.reply||"").replace(/```json?|```/g,"").trim();
       const parsed=JSON.parse(raw);
-      if(!parsed||!["shift","clear_day","clear_week","skip_class"].includes(parsed.intent))throw new Error("unsupported");
+      if(!parsed||!["shift","clear_day","clear_week","skip_class","move_event","retime_event"].includes(parsed.intent))throw new Error("unsupported");
       if(parsed.intent==="shift"&&!(parsed.days>=1&&parsed.days<=14))throw new Error("bad-days");
+      if((parsed.intent==="move_event"||parsed.intent==="retime_event")&&!(typeof parsed.target==="string"&&parsed.target.trim()))throw new Error("no-target");
+      if(parsed.intent==="retime_event"&&!/^\d{2}:\d{2}$/.test(parsed.newStart||""))throw new Error("bad-time");
+      setPauseLastIntent(parsed);
       setPausePreview(computePausePlan(parsed));
     }catch(e){
       setPauseError("Couldn't understand that. Try rephrasing, or use one of the quick actions below.");
@@ -9084,9 +9206,29 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
 
   const confirmPausePlan=()=>{
     if(!pausePreview)return;
-    const movedById=new Map(pausePreview.moved.map(m=>[m.id,m]));
     const all=lsGet("events",[]);
-    const next=all.map(ev=>movedById.has(ev.id)?{...ev,date:movedById.get(ev.id).newDate,time:movedById.get(ev.id).newTime}:ev);
+    // A moved/retimed entry whose id points at a virtual routine occurrence
+    // (isRoutine:true — never in `events` to begin with, see
+    // expandRoutineOccurrences) can't be rewritten in place: it's skipped on
+    // its old date (same mechanism skip_class already uses) and a real
+    // one-off event is created for its new date/time/duration. A plain
+    // one-off event is just rewritten in place as before.
+    const routineMoves=pausePreview.moved.filter(m=>m.isRoutine);
+    const oneOffMoves=new Map(pausePreview.moved.filter(m=>!m.isRoutine).map(m=>[m.id,m]));
+    let next=all.map(ev=>{
+      if(!oneOffMoves.has(ev.id))return ev;
+      const m=oneOffMoves.get(ev.id);
+      return{...ev,date:m.newDate,time:m.newTime,duration:m.newDuration!=null?m.newDuration:ev.duration};
+    });
+    if(routineMoves.length){
+      const skips=getRoutineSkips();
+      const nextSkips={...skips};
+      routineMoves.forEach(m=>{
+        nextSkips[m.oldDate]=[...new Set([...(nextSkips[m.oldDate]||[]),m.routineId])];
+        next=next.concat([{id:String(Date.now()+Math.random()*1000),title:m.title,date:m.newDate,time:m.newTime,subject:m.subject||"",kind:m.kind,notes:"",priority:null,difficulty:null,deadline:null,duration:m.newDuration||30,status:"pending",timeSpent:0,completedAt:null}]);
+      });
+      lsSet("routineSkips",nextSkips);
+    }
     setEvents(next);lsSet("events",next);
     // skip_class only affects a routine RULE, never the one-off `events`
     // array — the skip itself is written here (not in computePausePlan) so
@@ -9594,10 +9736,16 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
       </Modal>
       <Modal open={pauseOpen} onClose={()=>{setPauseOpen(false);setPausePreview(null);setPauseError("");}}
         title={pausePreview?pausePreview.label:"Studlin Reschedule"}
-        sub={pausePreview?(pausePreview.moved.length+" task"+(pausePreview.moved.length!==1?"s":"")+" affected"):"Tell Studlin what's going on. It'll reschedule around it."}
+        sub={pausePreview?(
+          pausePreview.disambiguate?"A few things match that name — pick the right one.":
+          pausePreview.noMatch?"Try a different name, or reschedule it from the calendar instead.":
+          (pausePreview.moved.length+" task"+(pausePreview.moved.length!==1?"s":"")+" affected")
+        ):"Tell Studlin what's going on. It'll reschedule around it."}
         width={520}
         footer={pausePreview?(
-          <><Btn variant="subtle" onClick={()=>setPausePreview(null)}>Cancel</Btn><Btn onClick={confirmPausePlan}>Confirm</Btn></>
+          pausePreview.disambiguate||pausePreview.noMatch?
+            <Btn variant="subtle" onClick={()=>setPausePreview(null)}>Cancel</Btn>:
+            <><Btn variant="subtle" onClick={()=>setPausePreview(null)}>Cancel</Btn><Btn onClick={confirmPausePlan}>Confirm</Btn></>
         ):null}>
         {!pausePreview&&(<>
           <Textarea placeholder={'e.g. "I\'m sick, push everything back 3 days" or "clear my day tomorrow"'} value={pauseText} onChange={e=>setPauseText(e.target.value)} />
@@ -9612,7 +9760,16 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
             <Btn variant="subtle" onClick={()=>applyPausePreset({intent:"skip_class",date:dayKey()})}>Not going to class today, use that time</Btn>
           </div>
         </>)}
-        {pausePreview&&(<>
+        {pausePreview&&pausePreview.disambiguate&&(
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {pausePreview.disambiguate.map(ev=>(
+              <Btn key={ev.id} variant="subtle" onClick={()=>pickDisambiguatedEvent(ev.id)} style={{justifyContent:"space-between",width:"100%"}}>
+                <span>{ev.title}</span><span style={{color:T.muted,fontSize:12}}>{ev.date} {ev.time}</span>
+              </Btn>
+            ))}
+          </div>
+        )}
+        {pausePreview&&!pausePreview.disambiguate&&(<>
           {pausePreview.moved.length>0&&(
             <div style={{display:"flex",flexDirection:"column",gap:7,marginBottom:pausePreview.couldntMove.length?18:0,maxHeight:220,overflowY:"auto"}}>
               {pausePreview.moved.map(m=>(
@@ -9636,7 +9793,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
               </div>
             </div>
           )}
-          {pausePreview.moved.length===0&&pausePreview.couldntMove.length===0&&(
+          {pausePreview.moved.length===0&&pausePreview.couldntMove.length===0&&!pausePreview.noMatch&&(
             <div style={{fontSize:13,color:T.muted}}>{pausePreview.skipRoutine?"Class skipped. Nothing needed to move into the freed time.":"Nothing to reschedule."}</div>
           )}
         </>)}
