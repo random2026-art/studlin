@@ -7350,7 +7350,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
             <span style={{fontSize:13,color:T.muted}}>{coop.length===1?"Locked in with "+coop[0].name:"Locked in with "+coop.length+" others"}</span>
           </div>
         )}
-        <div style={{fontSize:16,color:T.text,maxWidth:480,lineHeight:1.65}}>Studlin is running in the background. Minimize this window when you are ready to execute, or leave it open to stay completely zeroed in.</div>
+        <div style={{fontSize:19,fontWeight:600,color:T.text,maxWidth:480}}>{task.title}</div>
       </div>
     );
   }
