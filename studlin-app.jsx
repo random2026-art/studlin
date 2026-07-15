@@ -5802,6 +5802,109 @@ function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,workin
   });
 }
 
+// Pure Brain Dump placement planner — takes the classified items plus
+// current events/routines/prefs, returns the tasks to commit. Pulled out of
+// CalendarTab's commitBrainDump (a closure over component state) into a
+// plain top-level function so it's callable from tests with plain data in,
+// plain data out — see tests/scheduling.test.js. Two real bugs (same-time
+// collision between two vague-time items, "then"-sequencing being ignored
+// entirely) were found in this exact logic by hand on 2026-07-15; this
+// split is what lets the next regression like that get caught by `npm test`
+// instead.
+function planBrainDumpTasks(items,events,routines,prefs){
+  const today=dayKey();
+  let working=events;
+  const studyTasks=[],todoTasks=[],eventTasks=[],reminderTasks=[],examTasks=[];
+  // Only a REAL stated clock time makes an event an unmovable fixed
+  // obstacle, same as the "busy block" kind in the manual Add Task flow —
+  // placed first (folded into `working`) so everything chained/placed
+  // below already sees it as occupied, the same reason a same-batch
+  // "work 4-11pm" event has to land before a same-batch "chem homework"
+  // study block is placed. Timeless events ("chill for a bit", "go to the
+  // gym" with no clock time given) are handled in the ordered chain pass
+  // below alongside study items, not here.
+  items.filter(it=>it.kind==="event"&&it.dueTime).forEach(it=>{
+    const duration=Math.max(5,it.durationMin||30);
+    const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:it.dueDate||today,time:it.dueTime,subject:"",kind:"busy block",notes:"",priority:5,difficulty:5,deadline:null,duration,status:"pending",timeSpent:0,completedAt:null};
+    eventTasks.push(task);working=working.concat([task]);
+  });
+  items.filter(it=>it.kind==="reminder").forEach(it=>{
+    const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:it.dueDate||today,time:it.dueTime||"09:00",subject:"",kind:"reminder",notes:"",priority:5,difficulty:5,deadline:null,duration:0,status:"pending",timeSpent:0,completedAt:null};
+    reminderTasks.push(task);working=working.concat([task]);
+  });
+  // Exam items are a due-date fact, same shape as a syllabus-scanned exam
+  // marker (no real duration — see WeeklyPlanner's isDuePill), plus real
+  // spaced study sessions if the student kept "Schedule study sessions"
+  // checked in the review screen (buildExamSessionEvents, shared with
+  // commitSyllabusEvents).
+  items.filter(it=>it.kind==="exam").forEach(it=>{
+    const examDate=it.dueDate||today;
+    const examTask={id:String(Date.now()+Math.random()*1000),title:it.title,date:examDate,time:it.dueTime||"09:00",subject:"",kind:"exam",notes:"",priority:5,difficulty:it.difficulty??500,deadline:null,duration:null,status:"pending",timeSpent:0,completedAt:null,examWeight:it.examWeight||"major",confidenceLog:[]};
+    examTasks.push(examTask);working=working.concat([examTask]);
+    if(it.proposeSessions){
+      const sessions=buildExamSessionEvents(it.title,examDate,"",it.sessionCount||4,"bdexam-"+examTask.id,working,routines,prefs,{dueEventId:examTask.id},it.difficulty);
+      examTasks.push(...sessions);working=working.concat(sessions);
+    }
+  });
+  // Study-kind items (and timeless events, see above) get a real slot via
+  // the same deterministic placement engine every other scheduling path
+  // trusts — no separate AI call per item, the one parseBrainDump call
+  // above already did the understanding.
+  //
+  // Walked in the ORIGINAL dump order (not grouped by kind) so a "chained"
+  // item — one the student described with "then"/"after that" — can cascade
+  // off wherever the item right before it actually landed, instead of every
+  // item independently picking its own "smartest" slot. cursorTime/cursorDate
+  // track that regardless of whether the current item itself is chained,
+  // since "then" always refers to whatever was just described, not
+  // necessarily something also mid-chain.
+  let cursorDate=null,cursorTime=null;
+  items.forEach(it=>{
+    if(it.kind==="event"&&!it.dueTime){
+      const duration=Math.max(5,it.durationMin||30);
+      const desiredDate=(it.chained&&cursorDate)?cursorDate:(it.dueDate||today);
+      const desiredTime=(it.chained&&cursorTime)?cursorTime:prefs.workStartTime;
+      const slot=findOpenSlotFor(working,routines,prefs,desiredDate,desiredTime,duration,it.dueDate||null);
+      const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:slot.date,time:slot.time,subject:"",kind:"busy block",notes:"",priority:5,difficulty:5,deadline:null,duration,status:"pending",timeSpent:0,completedAt:null};
+      eventTasks.push(task);working=working.concat([task]);
+      cursorDate=slot.date;cursorTime=minutesToTime(timeToMinutes(slot.time)+duration);
+    }else if(it.kind==="study"){
+      if(it.attackBlock){
+        const task=startAttackBlockChain({title:it.title,deadline:it.dueDate||null,priority:5,difficulty:5},working,routines,prefs,today,prefs.workStartTime);
+        studyTasks.push(task);working=working.concat([task]);
+        return;
+      }
+      const duration=Math.max(5,it.durationMin||30);
+      let slot;
+      if(it.chained&&cursorTime){
+        // Chain intent overrides the reliability engine entirely — the
+        // whole point of "then" was landing right after the previous item,
+        // not wherever's statistically smartest.
+        slot=findOpenSlotFor(working,routines,prefs,cursorDate||today,cursorTime,duration,it.dueDate||null);
+      }else if(it.immediate){
+        // "Now" items skip the reliability-bucket engine entirely and go
+        // straight to the plain nearest-open-gap finder — a declared
+        // peak-hour bucket should never be able to bump an explicit "now"
+        // request later than the actual next available slot.
+        slot=findOpenSlotFor(working,routines,prefs,today,prefs.workStartTime,duration,it.dueDate||null);
+      }else{
+        slot=findReliableSlotFor(working,routines,prefs,today,prefs.workStartTime,duration,it.dueDate||null,5);
+      }
+      const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:slot.date,time:slot.time,subject:"",kind:"study block",notes:"",priority:5,difficulty:5,deadline:it.dueDate||null,duration,status:"pending",timeSpent:0,completedAt:null,placementReason:slot.reason||null};
+      studyTasks.push(task);working=working.concat([task]);
+      cursorDate=slot.date;cursorTime=minutesToTime(timeToMinutes(slot.time)+duration);
+    }
+  });
+  // Todo-kind items skip scheduling entirely, same shape as saveChecklistItem.
+  items.filter(it=>it.kind==="todo").forEach(it=>{
+    todoTasks.push({id:String(Date.now()+Math.random()*1000),title:it.title,date:it.dueDate||"",time:"",subject:"",kind:"deadline",notes:"",checklist:true,deadline:it.dueDate||null,priority:5,difficulty:5,duration:0,status:"pending",timeSpent:0,completedAt:null});
+  });
+  // Final order intentionally kept identical to the original code — only
+  // internal placement order changed above — since commitTasks reads
+  // newTasks[0].date to decide which date to navigate the calendar to.
+  return [...studyTasks,...todoTasks,...eventTasks,...reminderTasks,...examTasks];
+}
+
 function commitSyllabusEvents(noteId,tag,items){
   const existing=lsGet("events",[]);
   const today=dayKey();
@@ -6643,6 +6746,11 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
   const [secs,setSecs]=useState(0);
   const [running,setRunning]=useState(false);
   const [soundOn,setSoundOn]=useState(true);
+  // True the instant a focus block ends and the modal is waiting on the
+  // student to act (start break / skip break / finish) — the chime alone is
+  // easy to miss, so this keeps it repeating until one of those three
+  // actions actually happens, not just on a timer.
+  const [alarmActive,setAlarmActive]=useState(false);
   const [completion,setCompletion]=useState(null);
   const [barFilled,setBarFilled]=useState(false);
   const [rankRisen,setRankRisen]=useState(false);
@@ -6739,6 +6847,18 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
     });
   }catch(e){}};
 
+  // Re-fires the chime every 10s for as long as the student hasn't responded
+  // — covers someone with headphones on, in another tab, or just not looking
+  // at their screen the instant the block ends. Stops the moment any of the
+  // three response actions fire (start break, skip break, finish), which all
+  // flip alarmActive off directly rather than relying on phase alone, so a
+  // later Pause mid-break can never accidentally resurrect it.
+  useEffect(()=>{
+    if(!alarmActive||!soundOn)return;
+    const id=setInterval(playBeep,10000);
+    return()=>clearInterval(id);
+  },[alarmActive,soundOn]);
+
   const focus2Mins=Math.max(1,totalMins-breakPos-breakMins);
   const fmt=s=>String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0");
 
@@ -6788,8 +6908,8 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
       const remaining=Math.max(0,Math.round((endTimeRef.current-Date.now())/1000));
       setSecs(remaining);
       if(remaining<=0){
-        if(phase==="focus1"){setPhase("break");setRunning(false);if(soundOn)playBeep();}
-        else if(phase==="break"){setPhase("breakDone");setRunning(false);if(soundOn)playBeep();}
+        if(phase==="focus1"){setPhase("break");setRunning(false);setAlarmActive(true);if(soundOn)playBeep();}
+        else if(phase==="break"){setPhase("breakDone");setRunning(false);setAlarmActive(true);if(soundOn)playBeep();}
         else if(phase==="focus2"){
           // Bank the current segment's real elapsed time NOW — the effect's
           // own cleanup below only runs after the setPhase() calls further
@@ -6882,9 +7002,10 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
     }
   };
 
-  const resume=()=>{setPhase("focus2");setSecs(focus2Mins*60);setRunning(true);setCollapsed(true);};
+  const resume=()=>{setAlarmActive(false);setPhase("focus2");setSecs(focus2Mins*60);setRunning(true);setCollapsed(true);};
 
   const finishEarly=()=>{
+    setAlarmActive(false);
     if(phase!=="break"&&focusStartRef.current){
       focusElapsed.current+=(Date.now()-focusStartRef.current)/1000;
       focusElapsedMono.current+=(performance.now()-focusStartMonoRef.current)/1000;
@@ -7286,7 +7407,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
         )}
 
         <div style={{display:"flex",gap:8,marginTop:12}}>
-          {phase==="break"&&!running&&<BtnSm onClick={()=>setRunning(true)} style={{flex:1,justifyContent:"center"}}>Start Break</BtnSm>}
+          {phase==="break"&&!running&&<BtnSm onClick={()=>{setAlarmActive(false);setRunning(true);}} style={{flex:1,justifyContent:"center"}}>Start Break</BtnSm>}
           {phase==="break"&&running&&<BtnSm variant="ghost" onClick={()=>setRunning(false)} style={{flex:1,justifyContent:"center"}}>Pause</BtnSm>}
           {phase==="breakDone"&&<BtnSm onClick={resume} style={{flex:1,justifyContent:"center"}}>Resume</BtnSm>}
           {phase!=="break"&&phase!=="breakDone"&&<BtnSm variant="ghost" onClick={()=>setRunning(r=>!r)} style={{flex:1,justifyContent:"center"}}>{running?"Pause":"Resume"}</BtnSm>}
@@ -8560,13 +8681,15 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
         "\"exam\" — the student is taking a quiz, test, midterm, or final at a specific date (e.g. \"I have a chem test Friday\", \"my bio midterm is the 12th\") — never an action about an exam like submitting or sending something; "+
         "\"reminder\" — a quick nudge at a specific time, e.g. \"remind me to...\" or \"don't forget to... at...\". "+
         "\"durationMin\" (your best-guess minutes needed, for kind:\"study\" or kind:\"event\" — null otherwise), "+
+        "\"immediate\" (true ONLY for kind:\"study\" when the student explicitly said \"now\"/\"right now\"/\"immediately\" — meaning start this the moment it's added, not just sometime today; false for everything else, including generic same-day urgency like \"today\" or \"tonight\" with no explicit \"now\"), "+
+        "\"chained\" (true ONLY for kind:\"study\" or a timeless kind:\"event\" when the student described it as coming right after the PREVIOUS item in this same dump — words like \"then\", \"after that\", \"next\", \"once I'm done with that\" — meaning it should start the moment the previous item ends, back-to-back in the order given, not get independently slotted wherever's smartest. The first item of a sequence has nothing before it, so it's \"chained\":false even if it kicks off an ordered plan — only items 2 and onward in that same plan are \"chained\":true. A plain list of separate homeworks with their own due dates and no \"then\"/sequence language is \"chained\":false throughout), "+
         "\"dueDate\" (YYYY-MM-DD. For \"study\"/\"todo\" this is the deadline; for \"event\"/\"exam\"/\"reminder\" this is the day it happens. \"today\"/\"tonight\" means the date given above, \"Friday\" means the next occurrence of that weekday. Be literal: if the student named a specific day, always return it, even if it's today. Only use null when truly no timing was mentioned at all), "+
         "\"dueTime\" (HH:MM 24-hour — ONLY for kind:\"event\" or kind:\"reminder\", when a specific time was stated or clearly implied like \"tonight\"=20:00 or \"this morning\"=9:00; null if genuinely no time was said), "+
         "\"examWeight\" (ONLY when kind is \"exam\": \"quiz\" for a quiz or short in-class test worth relatively little, \"major\" for a midterm, final, or unit exam worth significant grade weight — omit otherwise), "+
         "\"needsDuration\" (true ONLY if kind is \"study\" and you genuinely can't make a reasonable guess from context — be generous, most things can get a rough estimate), "+
         "\"clarify\" (a short, specific follow-up question ONLY if something essential is truly missing and you can't reasonably guess it — e.g. an \"event\", \"exam\", or \"reminder\" with no date/time at all mentioned, or a title too vague to act on. null otherwise — most items should NOT have this). "+
         "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
-        "{\"items\":[{\"title\":\"Chem homework\",\"kind\":\"study\",\"durationMin\":45,\"dueDate\":null,\"dueTime\":null,\"needsDuration\":false,\"clarify\":null},{\"title\":\"Chem test\",\"kind\":\"exam\",\"dueDate\":\"2026-07-17\",\"examWeight\":\"major\",\"clarify\":null}]}. "+
+        "{\"items\":[{\"title\":\"Chem homework\",\"kind\":\"study\",\"durationMin\":45,\"immediate\":false,\"chained\":false,\"dueDate\":null,\"dueTime\":null,\"needsDuration\":false,\"clarify\":null},{\"title\":\"Chem test\",\"kind\":\"exam\",\"dueDate\":\"2026-07-17\",\"examWeight\":\"major\",\"clarify\":null}]}. "+
         "If nothing usable is in the text, respond {\"items\":[]}.\n\n"+text.slice(0,4000);
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",format:"json"})});
       const data=await res.json().catch(()=>({}));
@@ -8611,71 +8734,38 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
     setBrainDumpText("");
     setBdError("");
     const validKinds=["study","todo","event","exam","reminder"];
-    setBrainDumpReview({warning:error||"",items:items.map((it,i)=>({id:"bd-"+i,title:it.title,kind:validKinds.includes(it.kind)?it.kind:"todo",durationMin:it.durationMin||30,dueDate:it.dueDate||"",dueTime:it.dueTime||"",needsDuration:!!it.needsDuration,attackBlock:!!it.needsDuration,proposeSessions:it.kind==="exam",sessionCount:defaultSessionCountFor(it.examWeight),examWeight:it.examWeight||"major",difficulty:500,moreOpen:false,clarify:it.clarify||"",include:true}))});
+    const prefs=getSchedulePreferences();
+    const todayKeyNow=dayKey();
+    const nowMins=(()=>{const n=new Date();return n.getHours()*60+n.getMinutes();})();
+    setBrainDumpReview({warning:error||"",items:items.map((it,i)=>{
+      const kind=validKinds.includes(it.kind)?it.kind:"todo";
+      let clarify=it.clarify||"";
+      // "Now"/"right now" study items get checked against the real calendar
+      // right here, before the student commits — silently placing it hours
+      // later with no explanation is exactly the confusing behavior that
+      // prompted this check; a >20min gap from the actual current time means
+      // there genuinely wasn't room right now, so say so instead of staying
+      // quiet about it.
+      if(kind==="study"&&it.immediate&&!it.needsDuration){
+        const duration=Math.max(5,it.durationMin||30);
+        const slot=findOpenSlotFor(events,routines,prefs,todayKeyNow,prefs.workStartTime,duration,it.dueDate||null);
+        if(slot.date!==todayKeyNow||timeToMinutes(slot.time)-nowMins>20){
+          clarify="No open time right now — the next slot that fits is "+fmtClock12(slot.time)+(slot.date!==todayKeyNow?" on "+slot.date:"")+".";
+        }
+      }
+      return {id:"bd-"+i,title:it.title,kind,durationMin:it.durationMin||30,dueDate:it.dueDate||"",dueTime:it.dueTime||"",needsDuration:!!it.needsDuration,attackBlock:!!it.needsDuration,proposeSessions:it.kind==="exam",sessionCount:defaultSessionCountFor(it.examWeight),examWeight:it.examWeight||"major",difficulty:500,moreOpen:false,clarify,immediate:!!it.immediate,chained:!!it.chained,include:true};
+    })});
   };
   // Study-kind items get a real slot via the same deterministic placement
   // engine every other scheduling path trusts — no separate AI call per
   // item, the one parseBrainDump call above already did the understanding.
   // Todo-kind items skip scheduling entirely, same shape as saveChecklistItem.
+  // Actual placement logic lives in the pure, top-level planBrainDumpTasks
+  // (testable in isolation — see tests/scheduling.test.js) — this is just
+  // the component-state wiring around it.
   const commitBrainDump=(items)=>{
     const prefs=getSchedulePreferences();
-    const today=dayKey();
-    let working=events;
-    const studyTasks=[],todoTasks=[],eventTasks=[],reminderTasks=[],examTasks=[];
-    // Event/reminder items are fixed real-world times, same as the "busy
-    // block"/"reminder" kinds in the manual Add Task flow — never placed via
-    // findOpenSlotFor, just saved at whatever date/time the review screen has
-    // (falling back to today/9am only so the row is never left blank; the
-    // clarify banner is what actually flags a missing time to the student).
-    // Placed BEFORE study items (and folded into `working`) so a same-batch
-    // fixed event is visible to findOpenSlotFor when it places a same-batch
-    // study item — previously only already-saved events were visible, so a
-    // brain dump containing both "chem homework" and "work 4-11pm" in one
-    // submission could schedule the study block into the work shift.
-    items.filter(it=>it.kind==="event").forEach(it=>{
-      const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:it.dueDate||today,time:it.dueTime||"09:00",subject:"",kind:"busy block",notes:"",priority:5,difficulty:5,deadline:null,duration:Math.max(5,it.durationMin||30),status:"pending",timeSpent:0,completedAt:null};
-      eventTasks.push(task);working=working.concat([task]);
-    });
-    items.filter(it=>it.kind==="reminder").forEach(it=>{
-      const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:it.dueDate||today,time:it.dueTime||"09:00",subject:"",kind:"reminder",notes:"",priority:5,difficulty:5,deadline:null,duration:0,status:"pending",timeSpent:0,completedAt:null};
-      reminderTasks.push(task);working=working.concat([task]);
-    });
-    // Exam items are a due-date fact, same shape as a syllabus-scanned exam
-    // marker (no real duration — see WeeklyPlanner's isDuePill), plus real
-    // spaced study sessions if the student kept "Schedule study sessions"
-    // checked in the review screen (buildExamSessionEvents, shared with
-    // commitSyllabusEvents).
-    items.filter(it=>it.kind==="exam").forEach(it=>{
-      const examDate=it.dueDate||today;
-      const examTask={id:String(Date.now()+Math.random()*1000),title:it.title,date:examDate,time:it.dueTime||"09:00",subject:"",kind:"exam",notes:"",priority:5,difficulty:it.difficulty??500,deadline:null,duration:null,status:"pending",timeSpent:0,completedAt:null,examWeight:it.examWeight||"major",confidenceLog:[]};
-      examTasks.push(examTask);working=working.concat([examTask]);
-      if(it.proposeSessions){
-        const sessions=buildExamSessionEvents(it.title,examDate,"",it.sessionCount||4,"bdexam-"+examTask.id,working,routines,prefs,{dueEventId:examTask.id},it.difficulty);
-        examTasks.push(...sessions);working=working.concat(sessions);
-      }
-    });
-    // Study-kind items get a real slot via the same deterministic placement
-    // engine every other scheduling path trusts — no separate AI call per
-    // item, the one parseBrainDump call above already did the understanding.
-    items.filter(it=>it.kind==="study").forEach(it=>{
-      if(it.attackBlock){
-        const task=startAttackBlockChain({title:it.title,deadline:it.dueDate||null,priority:5,difficulty:5},working,routines,prefs,today,prefs.workStartTime);
-        studyTasks.push(task);working=working.concat([task]);
-        return;
-      }
-      const duration=Math.max(5,it.durationMin||30);
-      const slot=findReliableSlotFor(working,routines,prefs,today,prefs.workStartTime,duration,it.dueDate||null,5);
-      const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:slot.date,time:slot.time,subject:"",kind:"study block",notes:"",priority:5,difficulty:5,deadline:it.dueDate||null,duration,status:"pending",timeSpent:0,completedAt:null,placementReason:slot.reason||null};
-      studyTasks.push(task);working=working.concat([task]);
-    });
-    // Todo-kind items skip scheduling entirely, same shape as saveChecklistItem.
-    items.filter(it=>it.kind==="todo").forEach(it=>{
-      todoTasks.push({id:String(Date.now()+Math.random()*1000),title:it.title,date:it.dueDate||"",time:"",subject:"",kind:"deadline",notes:"",checklist:true,deadline:it.dueDate||null,priority:5,difficulty:5,duration:0,status:"pending",timeSpent:0,completedAt:null});
-    });
-    // Final order intentionally kept identical to the original code — only
-    // internal placement order changed above — since commitTasks reads
-    // newTasks[0].date to decide which date to navigate the calendar to.
-    const newTasks=[...studyTasks,...todoTasks,...eventTasks,...reminderTasks,...examTasks];
+    const newTasks=planBrainDumpTasks(items,events,routines,prefs);
     commitTasks(newTasks);
   };
   // Turns the current form into a recurring routine rule instead of a

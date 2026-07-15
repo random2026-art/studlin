@@ -182,3 +182,77 @@ describe("findOpenSlotFor / findLegalSlotOrNull", () => {
     assert.ok(slot.date <= "2026-07-25");
   });
 });
+
+// planBrainDumpTasks always schedules against the real "today" (it calls
+// dayKey() internally, same as the app does live), so these tests deliberately
+// avoid asserting any specific absolute time -- only the RELATIONSHIP between
+// items, which holds no matter what day/time the test happens to run.
+function minutesOf(timeStr) {
+  const [h, m] = timeStr.split(":").map(Number);
+  return h * 60 + m;
+}
+// Chained placement goes through the same breathing-room buffer and 15-min
+// grid quantization every other placement does, so it won't land at the
+// *exact* end of the previous item -- just very shortly after. This is the
+// upper bound on "shortly": comfortably wider than breathing room + one grid
+// step, but far, far tighter than "hours later at a peak-hour bucket," which
+// is the actual regression these tests guard against.
+const MAX_CHAIN_GAP_MINS = 30;
+
+describe("planBrainDumpTasks (Brain Dump placement)", () => {
+  test("two timeless items (no stated clock time) never land at overlapping times", () => {
+    // Regression test for the 2026-07-15 bug: "Chill" and "Gym" both had no
+    // stated time and silently collapsed onto the same hardcoded 9am fallback.
+    const { planBrainDumpTasks } = loadStudlinModule();
+    const items = [
+      { kind: "event", title: "Chill", durationMin: 60, dueTime: null, dueDate: null },
+      { kind: "event", title: "Gym", durationMin: 60, dueTime: null, dueDate: null },
+    ];
+    const tasks = planBrainDumpTasks(items, [], [], DEFAULT_PREFS);
+    const chill = tasks.find((t) => t.title === "Chill");
+    const gym = tasks.find((t) => t.title === "Gym");
+    assert.ok(chill && gym);
+    if (chill.date === gym.date) {
+      const chillStart = minutesOf(chill.time), chillEnd = chillStart + chill.duration;
+      const gymStart = minutesOf(gym.time), gymEnd = gymStart + gym.duration;
+      const overlap = chillStart < gymEnd && gymStart < chillEnd;
+      assert.equal(overlap, false, "Chill and Gym landed at overlapping times");
+    }
+  });
+
+  test("a chained item lands immediately after the previous item, not wherever's independently best", () => {
+    // Regression test for the 2026-07-15 bug: a same-day "then"-sequenced
+    // dump ("find bugs, THEN paint the floor") got scheduled out of order,
+    // since each item was independently slotted with no concept of sequence.
+    const { planBrainDumpTasks } = loadStudlinModule();
+    const items = [
+      { kind: "study", title: "Find bugs", durationMin: 60, immediate: true, chained: false },
+      { kind: "study", title: "Paint floor", durationMin: 30, chained: true },
+    ];
+    const tasks = planBrainDumpTasks(items, [], [], DEFAULT_PREFS);
+    const bugs = tasks.find((t) => t.title === "Find bugs");
+    const paint = tasks.find((t) => t.title === "Paint floor");
+    assert.ok(bugs && paint);
+    assert.equal(paint.date, bugs.date);
+    const gap = minutesOf(paint.time) - (minutesOf(bugs.time) + bugs.duration);
+    assert.ok(gap >= 0 && gap <= MAX_CHAIN_GAP_MINS, `expected paint to start shortly after bugs ended, gap was ${gap}min`);
+  });
+
+  test("a chained item stays chained even when a declared peak-hour bucket would otherwise pull it elsewhere", () => {
+    // The reliability/peak-hour engine is exactly what pushed "now" tasks
+    // hours away in the original bug report -- chaining must override it.
+    const { planBrainDumpTasks } = loadStudlinModule();
+    const prefs = { ...DEFAULT_PREFS, peakHourBuckets: ["evening"] };
+    const items = [
+      { kind: "study", title: "First", durationMin: 60, immediate: false, chained: false },
+      { kind: "study", title: "Second", durationMin: 30, chained: true },
+    ];
+    const tasks = planBrainDumpTasks(items, [], [], prefs);
+    const first = tasks.find((t) => t.title === "First");
+    const second = tasks.find((t) => t.title === "Second");
+    assert.ok(first && second);
+    assert.equal(second.date, first.date);
+    const gap = minutesOf(second.time) - (minutesOf(first.time) + first.duration);
+    assert.ok(gap >= 0 && gap <= MAX_CHAIN_GAP_MINS, `expected second to stay chained to first instead of jumping to the evening bucket, gap was ${gap}min`);
+  });
+});
