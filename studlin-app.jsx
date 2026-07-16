@@ -8876,11 +8876,11 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
   // gear icon on the Calendar toolbar (as opposed to routineWizardOpen, which
   // is only the first-run setup flow).
   const [routineCenterOpen,setRoutineCenterOpen]=useState(false);
-  // Everything below "Add task"/"Studlin Reschedule" in frequency of use
-  // collapses into this one menu instead of sitting as four separate
-  // buttons — those two are the only actions used constantly enough to
-  // earn permanent screen space.
-  const [moreMenuOpen,setMoreMenuOpen]=useState(false);
+  // "Add task" is a decision point, not a form -- brain dump vs. syllabus
+  // scan vs. one task (manual or AI-placed) gets picked here, before any
+  // fields show, instead of being discovered partway through one dense
+  // modal that tries to be all four at once.
+  const [addMenuOpen,setAddMenuOpen]=useState(false);
   useEffect(()=>{
     if(openWizardOnMount){setRoutineWizardOpen(true);if(onWizardOpenedFromSettings)onWizardOpenedFromSettings();}
   },[openWizardOnMount]);
@@ -8913,96 +8913,6 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
     mk(5,"10:00","Calculus test · Derivatives","Calculus","exam"),
   ];
   const [events,setEvents]=useState(()=>{const ev=lsGet("events",null);return(ev&&Array.isArray(ev))?ev.filter(e=>!e.id.startsWith("seed-")):[];});
-
-  // Import a personal/work calendar via its .ics feed link -- see
-  // mergeImportedEvents + api/cal-proxy.js. Complements the separate,
-  // already-existing Google OAuth integration in Settings > Integrations:
-  // this path covers Outlook, iCloud, and (the real point of it) work
-  // shift-scheduling platforms like When I Work/Homebase/7shifts, none of
-  // which have a client-side OAuth flow like Google's to plug into.
-  const [importedCals,setImportedCals]=useState(()=>getImportedCalendars());
-  const [importCalOpen,setImportCalOpen]=useState(false);
-  const [importCalUrl,setImportCalUrl]=useState("");
-  const [importCalLabel,setImportCalLabel]=useState("");
-  const [importCalError,setImportCalError]=useState("");
-  const [importCalLoading,setImportCalLoading]=useState(false);
-  const [importCalReview,setImportCalReview]=useState(null); // {subId,label,sourceType,events,skippedAllDay}
-  const [removeCalConfirm,setRemoveCalConfirm]=useState(null); // subscription pending removal
-  const [importToast,setImportToast]=useState("");
-  const showImportToast=(msg)=>{setImportToast(msg);setTimeout(()=>setImportToast(""),2800);};
-
-  const openImportCalModal=()=>{
-    setImportCalUrl("");setImportCalLabel("");setImportCalError("");setImportCalReview(null);
-    setImportCalOpen(true);
-  };
-  const onImportCalUrlChange=(v)=>{
-    setImportCalUrl(v);
-    if(v.trim())setImportCalLabel(detectCalendarSourceType(v.trim()));
-  };
-  const fetchCalendarPreview=async()=>{
-    const url=importCalUrl.trim();
-    if(!url){setImportCalError("Paste a calendar link first.");return;}
-    setImportCalError("");setImportCalLoading(true);
-    try{
-      const res=await fetch("/api/cal-proxy?url="+encodeURIComponent(url));
-      const data=await res.json();
-      if(!res.ok||!data.ok)throw new Error(data.error||"Couldn't read that calendar link.");
-      setImportCalReview({
-        subId:"cal-"+Date.now().toString(36),
-        url,label:importCalLabel||detectCalendarSourceType(url),
-        sourceType:importCalLabel||detectCalendarSourceType(url),
-        events:data.events,skippedAllDay:data.skippedAllDay||0,
-      });
-    }catch(e){
-      setImportCalError(e.message||"Couldn't read that calendar link. Double-check it's a public/secret calendar URL.");
-    }finally{
-      setImportCalLoading(false);
-    }
-  };
-  const confirmImportCalendar=()=>{
-    if(!importCalReview)return;
-    const {subId,url,label,sourceType,events:fetched}=importCalReview;
-    const merged=mergeImportedEvents(lsGet("events",[]),subId,fetched);
-    setEvents(merged);lsSet("events",merged);
-    const sub={id:subId,url,label,sourceType,lastSyncedAt:Date.now()};
-    const nextSubs=[...importedCals,sub];
-    setImportedCals(nextSubs);saveImportedCalendars(nextSubs);
-    setImportCalOpen(false);setImportCalReview(null);
-    showImportToast(fetched.length+" event"+(fetched.length!==1?"s":"")+" synced from "+label);
-  };
-  // Shared by the manual "Sync now" action and the once-a-day silent
-  // auto-resync below -- no review gate here, since re-confirming a
-  // subscription that's already been approved once would defeat the
-  // point of "syncs automatically."
-  const resyncCalendar=async(sub)=>{
-    try{
-      const res=await fetch("/api/cal-proxy?url="+encodeURIComponent(sub.url));
-      const data=await res.json();
-      if(!res.ok||!data.ok)return;
-      const merged=mergeImportedEvents(lsGet("events",[]),sub.id,data.events);
-      setEvents(merged);lsSet("events",merged);
-      const nextSubs=importedCals.map(s=>s.id===sub.id?{...s,lastSyncedAt:Date.now()}:s);
-      setImportedCals(nextSubs);saveImportedCalendars(nextSubs);
-    }catch(e){}
-  };
-  const removeImportedCalendar=(sub)=>{
-    const remaining=lsGet("events",[]).filter(ev=>ev.importSubId!==sub.id);
-    setEvents(remaining);lsSet("events",remaining);
-    const nextSubs=importedCals.filter(s=>s.id!==sub.id);
-    setImportedCals(nextSubs);saveImportedCalendars(nextSubs);
-    setRemoveCalConfirm(null);
-    showImportToast(sub.label+" removed");
-  };
-  // Once-a-day silent resync -- same shape as every other once-a-day gate
-  // in the app, keyed off a dedicated flag rather than reusing an
-  // unrelated one.
-  useEffect(()=>{
-    const today=dayKey();
-    if(lsGet("calSyncedDay",null)===today)return;
-    lsSet("calSyncedDay",today);
-    const stale=getImportedCalendars().filter(s=>!s.lastSyncedAt||Date.now()-s.lastSyncedAt>24*60*60*1000);
-    stale.forEach(s=>resyncCalendar(s));
-  },[]);
 
   // Checklist to-dos — no duration, no calendar slot, just a checkbox.
   // Creation already lived here (saveChecklistItem, below) but viewing/
@@ -9305,6 +9215,11 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
   // (exam/class/reminder), which always need a real date, can still default
   // to it once the user picks one of those types.
   const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("");setEvSubject("None");setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setNewOpen(true);};
+  // Same form as openNew, just arriving with the scheduling mode already
+  // decided by which "Add task" menu option was tapped -- the in-modal
+  // manual/AI toggle stays visible so it's correctable, not a dead end.
+  const openNewManual=(dateK)=>{openNew(dateK);setTaskMode("manual");};
+  const openNewAI=(dateK)=>{openNew(dateK);setTaskMode("ai");};
   const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvDate("");setEvTime("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setAiLoading(false);setAsChecklist(false);};
   const onEvKindChange=(k)=>{setEvKind(k);if((k==="exam"||k==="class"||k==="reminder"||k==="busy block")&&!evDate)setEvDate(evPrefillDate);};
   const buildTask=(date,time,titleSuffix,splitInfo)=>{
@@ -9830,26 +9745,30 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
         viewport regardless of scroll position or animation state. */}
     <div>
       <PH title="Studlin Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}>
-        <span ref={rescheduleBtnRef} style={{display:"inline-flex"}}><Btn variant="ghost" onClick={()=>{setPauseOpen(true);setPauseError("");setPausePreview(null);}}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6,color:T.red}},Icon.refresh,React.createElement("span",{style:{color:"inherit"}},"Studlin Reschedule"))}</Btn></span>
-        <div style={{position:"relative"}}>
-          <Btn variant={moreMenuOpen?"lime":"ghost"} onClick={()=>setMoreMenuOpen(o=>!o)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"More")}</Btn>
-          {moreMenuOpen&&(<>
-            <div onClick={()=>setMoreMenuOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
-            <div style={{position:"absolute",top:"calc(100% + 6px)",right:0,width:210,background:T.card,border:`1px solid ${T.border}`,borderRadius:12,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
+        <span ref={rescheduleBtnRef} style={{display:"inline-flex"}}><Btn variant="ghost" onClick={()=>{setPauseOpen(true);setPauseError("");setPausePreview(null);}}><span style={{color:T.red}}>Studlin Reschedule</span></Btn></span>
+        <Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>setRoutineCenterOpen(true)}>Routine</Btn>
+        <div style={{position:"relative"}} ref={addTaskBtnRef}>
+          <Btn onClick={()=>setAddMenuOpen(o=>!o)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn>
+          {addMenuOpen&&(<>
+            <div onClick={()=>setAddMenuOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
+            <div style={{position:"absolute",top:"calc(100% + 6px)",right:0,width:230,background:T.card,border:`1px solid ${T.border}`,borderRadius:12,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
               {[
-                {icon:Icon.cal,label:"Routine",onClick:()=>{setMoreMenuOpen(false);setRoutineCenterOpen(true);}},
-                {icon:Icon.sparkles,label:"Brain dump",onClick:()=>{setMoreMenuOpen(false);resetForm();setBrainDumpOpen(true);}},
-                {icon:Icon.file,label:"Scan syllabus",onClick:()=>{setMoreMenuOpen(false);onScanSyllabus();}},
-                {icon:Icon.link,label:"Import calendar",onClick:()=>{setMoreMenuOpen(false);openImportCalModal();}},
+                {icon:Icon.sparkles,label:"Brain dump",sub:"Describe everything at once",onClick:()=>{setAddMenuOpen(false);resetForm();setBrainDumpOpen(true);}},
+                {icon:Icon.file,label:"Scan syllabus",sub:"Upload a doc, AI extracts dates",onClick:()=>{setAddMenuOpen(false);onScanSyllabus();}},
+                {icon:Icon.cal,label:"Quick add",sub:"One task, you pick the time",onClick:()=>{setAddMenuOpen(false);openNewManual(selDay);}},
+                {icon:Icon.zap,label:"AI schedule",sub:"One task, Studlin finds the time",onClick:()=>{setAddMenuOpen(false);openNewAI(selDay);}},
               ].map(item=>(
-                <div key={item.label} onClick={item.onClick} style={{display:"flex",alignItems:"center",gap:10,padding:"11px 14px",cursor:"pointer",fontSize:12.5,fontWeight:500,color:T.text}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                  <span style={{width:16,color:T.muted,display:"flex"}}>{item.icon}</span>{item.label}
+                <div key={item.label} onClick={item.onClick} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 14px",cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  <span style={{width:16,color:T.muted,display:"flex",marginTop:2}}>{item.icon}</span>
+                  <div>
+                    <div style={{fontSize:12.5,fontWeight:600,color:T.text}}>{item.label}</div>
+                    <div style={{fontSize:11,color:T.muted,marginTop:1}}>{item.sub}</div>
+                  </div>
                 </div>
               ))}
             </div>
           </>)}
         </div>
-        <span ref={addTaskBtnRef} style={{display:"inline-flex"}}><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></span>
       </div>} />
       {editRoutineMode&&(
         <div style={{display:"flex",alignItems:"center",gap:12,padding:"9px 14px",background:T.lime+"10",border:`1px solid ${T.lime}33`,borderRadius:10,marginBottom:14,fontSize:12.5,color:T.text}}>
@@ -9980,9 +9899,6 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
                 ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveManual} disabled={!evTitle.trim()||!evDate.trim()||!evTime.trim()} style={{flex:1,justifyContent:"center",opacity:evTitle.trim()&&evDate.trim()&&evTime.trim()?1:0.45}}>Save to Calendar</Btn></>
                 : <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={aiArrange} disabled={aiLoading||!evTitle.trim()} style={{flex:1,justifyContent:"center",opacity:aiLoading?1:(!evTitle.trim()?0.45:1)}}>{aiLoading?"Scheduling...":"Add Task with AI"}</Btn></>
         }>
-        <button type="button" onClick={()=>{resetForm();setBrainDumpOpen(true);}} style={{display:"block",width:"100%",textAlign:"left",background:T.lime+"0d",border:`1px solid ${T.lime}33`,borderRadius:10,padding:"10px 12px",marginBottom:16,cursor:"pointer",fontFamily:T.font,fontSize:12.5,color:T.lime,fontWeight:600}}>
-          Got more than one thing on your plate? Brain dump it all at once →
-        </button>
         <Field label="Title"><Input placeholder="e.g. Study Bio chapter 4-6" value={evTitle} onChange={ev=>setEvTitle(ev.target.value)} autoFocus /></Field>
 
         <Field label="Type" hint={isFixedKind?"Fixed real-world block — Studlin will never move or reschedule this.":"Choose what kind of entry this is"}>
@@ -10386,84 +10302,6 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
         onEditRoutine={openRoutineEdit} onDeleteRoutine={deleteRoutineItem}
         onAddRoutine={(rule)=>persistRoutines([...routines,{id:String(Date.now()+Math.random()*1000),...rule,subject:""}])}
         onEditOnCalendar={()=>{setRoutineCenterOpen(false);setEditRoutineMode(true);}} />
-      <Modal open={importCalOpen} onClose={()=>setImportCalOpen(false)}
-        title={importCalReview?"Review "+importCalReview.label:"Import a calendar"}
-        sub={importCalReview?"These will be added as fixed, occupied time — Studlin will plan around them.":"Paste a calendar or work-schedule link (Google, Outlook, iCloud, or your shift-scheduling app's calendar feed)."}
-        width={520}
-        footer={importCalReview?(
-          <>
-            <Btn variant="subtle" onClick={()=>setImportCalReview(null)}>Back</Btn>
-            <Btn onClick={confirmImportCalendar} disabled={importCalReview.events.length===0} style={{opacity:importCalReview.events.length===0?0.45:1}}>
-              Add {importCalReview.events.length} to Calendar →
-            </Btn>
-          </>
-        ):(
-          <>
-            <Btn variant="subtle" onClick={()=>setImportCalOpen(false)}>Cancel</Btn>
-            <Btn onClick={fetchCalendarPreview} disabled={importCalLoading} style={{opacity:importCalLoading?0.6:1}}>{importCalLoading?"Checking…":"Continue"}</Btn>
-          </>
-        )}>
-        {!importCalReview?(
-          <>
-            <Field label="Calendar link">
-              <Input value={importCalUrl} onChange={e=>onImportCalUrlChange(e.target.value)} placeholder="https://calendar.google.com/calendar/ical/…" autoFocus />
-              {importCalError&&<div style={{fontSize:11.5,color:T.red,marginTop:6}}>{importCalError}</div>}
-            </Field>
-            {importCalUrl.trim()&&(
-              <Field label="Label" hint="How this shows up in Studlin — edit it if you'd like.">
-                <Input value={importCalLabel} onChange={e=>setImportCalLabel(e.target.value)} />
-              </Field>
-            )}
-            {importedCals.length>0&&(
-              <div style={{marginTop:18,paddingTop:16,borderTop:`1px solid ${T.border}`}}>
-                <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:10}}>Connected calendars</div>
-                <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                  {importedCals.map(sub=>(
-                    <div key={sub.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",background:T.card2,borderRadius:9,border:`1px solid ${T.border}`}}>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:12.5,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sub.label}</div>
-                        <div style={{fontSize:11,color:T.muted,marginTop:1}}>synced {timeAgoLabel(sub.lastSyncedAt)}</div>
-                      </div>
-                      <button onClick={()=>resyncCalendar(sub)} title="Sync now" style={{width:26,height:26,borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.refresh}</button>
-                      <button onClick={()=>setRemoveCalConfirm(sub)} title="Remove" style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font,flexShrink:0}}>Remove</button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </>
-        ):(
-          <>
-            <div style={{fontSize:12,color:T.muted,marginBottom:10}}>
-              {importCalReview.events.length} event{importCalReview.events.length!==1?"s":""} found
-              {importCalReview.skippedAllDay>0&&(" · "+importCalReview.skippedAllDay+" all-day entr"+(importCalReview.skippedAllDay!==1?"ies":"y")+" skipped for now")}
-            </div>
-            {importCalReview.events.length===0?(
-              <div style={{padding:"24px 16px",textAlign:"center",color:T.muted,fontSize:12.5}}>Nothing to import from this link right now.</div>
-            ):(
-              <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                {importCalReview.events.map((ev,i)=>(
-                  <div key={i} style={{display:"flex",justifyContent:"space-between",gap:10,padding:"9px 12px",background:T.card2,borderRadius:8,fontSize:12.5}}>
-                    <span style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</span>
-                    <span style={{color:T.muted,flexShrink:0}}>{new Date(ev.date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})} · {fmtTime(ev.time)}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-      </Modal>
-      <Modal open={!!removeCalConfirm} onClose={()=>setRemoveCalConfirm(null)} title={"Remove "+(removeCalConfirm?removeCalConfirm.label:"")+"?"} sub="Its imported events come off your calendar too. This doesn't affect the original calendar." width={420}
-        footer={<>
-          <Btn variant="subtle" onClick={()=>setRemoveCalConfirm(null)}>Cancel</Btn>
-          <Btn variant="danger" onClick={()=>removeImportedCalendar(removeCalConfirm)}>Remove</Btn>
-        </>}>
-      </Modal>
-      {importToast&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:999,padding:"11px 18px",borderRadius:10,background:T.card,border:`1px solid ${T.border}`,color:T.text,fontSize:12.5,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease"}}>
-          {Icon.check} {importToast}
-        </div>
-      )}
       <Modal open={!!routineEditItem} onClose={closeRoutineEdit} title="Edit routine block" sub="Changes apply to every week this repeats." width={480}
         footer={
           <div style={{display:"flex",width:"100%",justifyContent:"space-between",alignItems:"center"}}>
@@ -11574,6 +11412,100 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     showToast("Google Calendar disconnected.");
   };
 
+  // Import a personal/work calendar via its .ics feed link -- see
+  // mergeImportedEvents + api/cal-proxy.js. Complements Google Calendar
+  // above: this path covers Outlook, iCloud, and (the real point of it)
+  // work shift-scheduling platforms like When I Work/Homebase/7shifts,
+  // none of which have a client-side OAuth flow like Google's to plug
+  // into. Lives here next to the other calendar connections rather than
+  // on the Calendar page itself -- connecting a recurring data source is
+  // a different kind of action than adding a task, and it belongs with
+  // Google/Apple/Canvas, not mixed in with task creation. Reads/writes
+  // the shared `events` array directly via lsGet/lsSet, same pattern
+  // Google sync above already uses, since SettingsTab doesn't hold
+  // CalendarTab's React events state.
+  const [importedCals,setImportedCals]=useState(()=>getImportedCalendars());
+  const [importCalOpen,setImportCalOpen]=useState(false);
+  const [importCalUrl,setImportCalUrl]=useState("");
+  const [importCalLabel,setImportCalLabel]=useState("");
+  const [importCalError,setImportCalError]=useState("");
+  const [importCalLoading,setImportCalLoading]=useState(false);
+  const [importCalReview,setImportCalReview]=useState(null); // {subId,label,sourceType,events,skippedAllDay}
+  const [removeCalConfirm,setRemoveCalConfirm]=useState(null); // subscription pending removal
+
+  const openImportCalModal=()=>{
+    setImportCalUrl("");setImportCalLabel("");setImportCalError("");setImportCalReview(null);
+    setImportCalOpen(true);
+  };
+  const onImportCalUrlChange=(v)=>{
+    setImportCalUrl(v);
+    if(v.trim())setImportCalLabel(detectCalendarSourceType(v.trim()));
+  };
+  const fetchCalendarPreview=async()=>{
+    const url=importCalUrl.trim();
+    if(!url){setImportCalError("Paste a calendar link first.");return;}
+    setImportCalError("");setImportCalLoading(true);
+    try{
+      const res=await fetch("/api/cal-proxy?url="+encodeURIComponent(url));
+      const data=await res.json();
+      if(!res.ok||!data.ok)throw new Error(data.error||"Couldn't read that calendar link.");
+      setImportCalReview({
+        subId:"cal-"+Date.now().toString(36),
+        url,label:importCalLabel||detectCalendarSourceType(url),
+        sourceType:importCalLabel||detectCalendarSourceType(url),
+        events:data.events,skippedAllDay:data.skippedAllDay||0,
+      });
+    }catch(e){
+      setImportCalError(e.message||"Couldn't read that calendar link. Double-check it's a public/secret calendar URL.");
+    }finally{
+      setImportCalLoading(false);
+    }
+  };
+  const confirmImportCalendar=()=>{
+    if(!importCalReview)return;
+    const {subId,url,label,sourceType,events:fetched}=importCalReview;
+    const merged=mergeImportedEvents(lsGet("events",[]),subId,fetched);
+    lsSet("events",merged);
+    const sub={id:subId,url,label,sourceType,lastSyncedAt:Date.now()};
+    const nextSubs=[...importedCals,sub];
+    setImportedCals(nextSubs);saveImportedCalendars(nextSubs);
+    setImportCalOpen(false);setImportCalReview(null);
+    showToast(fetched.length+" event"+(fetched.length!==1?"s":"")+" synced from "+label);
+  };
+  // Shared by the manual "Sync now" action and the once-a-day silent
+  // auto-resync below -- no review gate here, since re-confirming a
+  // subscription that's already been approved once would defeat the
+  // point of "syncs automatically."
+  const resyncCalendar=async(sub)=>{
+    try{
+      const res=await fetch("/api/cal-proxy?url="+encodeURIComponent(sub.url));
+      const data=await res.json();
+      if(!res.ok||!data.ok)return;
+      const merged=mergeImportedEvents(lsGet("events",[]),sub.id,data.events);
+      lsSet("events",merged);
+      const nextSubs=importedCals.map(s=>s.id===sub.id?{...s,lastSyncedAt:Date.now()}:s);
+      setImportedCals(nextSubs);saveImportedCalendars(nextSubs);
+    }catch(e){}
+  };
+  const removeImportedCalendar=(sub)=>{
+    const remaining=lsGet("events",[]).filter(ev=>ev.importSubId!==sub.id);
+    lsSet("events",remaining);
+    const nextSubs=importedCals.filter(s=>s.id!==sub.id);
+    setImportedCals(nextSubs);saveImportedCalendars(nextSubs);
+    setRemoveCalConfirm(null);
+    showToast(sub.label+" removed");
+  };
+  // Once-a-day silent resync -- same shape as every other once-a-day gate
+  // in the app, keyed off a dedicated flag rather than reusing an
+  // unrelated one.
+  useEffect(()=>{
+    const today=dayKey();
+    if(lsGet("calSyncedDay",null)===today)return;
+    lsSet("calSyncedDay",today);
+    const stale=getImportedCalendars().filter(s=>!s.lastSyncedAt||Date.now()-s.lastSyncedAt>24*60*60*1000);
+    stale.forEach(s=>resyncCalendar(s));
+  },[]);
+
   const toggleApple=()=>{
     const n=!calAppleLinked;
     setCalAppleLinked(n);
@@ -11952,13 +11884,25 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                     {googleSyncing?"Syncing…":calGoogleLinked?"Disconnect":"Connect"}
                   </BtnSm>
                 </div>
+                <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${importedCals.length>0?T.teal+"44":T.border}`,transition:"border-color 0.2s"}}>
+                  <div style={{width:40,height:40,borderRadius:10,background:T.lime+"14",border:`1px solid ${T.lime}33`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:T.lime}}>
+                    {Icon.link}
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:600,color:T.white}}>Calendar or work schedule</div>
+                    <div style={{fontSize:11,color:importedCals.length>0?T.teal:T.muted,marginTop:2}}>
+                      {importedCals.length>0?importedCals.length+" connected · Outlook, iCloud, or a shift-scheduling app":"Paste any calendar link — Outlook, iCloud, or your work shift schedule"}
+                    </div>
+                  </div>
+                  <BtnSm variant={importedCals.length>0?"subtle":"lime"} onClick={openImportCalModal} style={{flexShrink:0}}>{importedCals.length>0?"Manage":"Connect"}</BtnSm>
+                </div>
                 <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${T.border}`,opacity:0.5}}>
                   <div style={{width:40,height:40,borderRadius:10,background:"rgba(255,255,255,0.06)",border:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill={T.text}><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
                   </div>
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:13,fontWeight:600,color:T.white}}>Apple Calendar<span style={{marginLeft:8,fontSize:10.5,fontWeight:600,color:T.faint}}>(Coming Soon)</span></div>
-                    <div style={{fontSize:11,color:T.muted,marginTop:2}}>Import iCloud events into Studlin</div>
+                    <div style={{fontSize:13,fontWeight:600,color:T.white}}>Apple Calendar, one-tap<span style={{marginLeft:8,fontSize:10.5,fontWeight:600,color:T.faint}}>(Coming Soon)</span></div>
+                    <div style={{fontSize:11,color:T.muted,marginTop:2}}>Direct sign-in, no link to paste — you can already connect iCloud above in the meantime</div>
                   </div>
                   <BtnSm variant="subtle" disabled style={{flexShrink:0,cursor:"not-allowed"}}>Connect</BtnSm>
                 </div>
@@ -11996,8 +11940,81 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             </Card>
             <Card>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Coming soon</div>
-              <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>Notion and Outlook integrations are in development. They'll appear here when ready.</div>
+              <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>Notion integration is in development. It'll appear here when ready.</div>
             </Card>
+            <Modal open={importCalOpen} onClose={()=>setImportCalOpen(false)}
+              title={importCalReview?"Review "+importCalReview.label:"Connect a calendar or work schedule"}
+              sub={importCalReview?"These will be added as fixed, occupied time — Studlin will plan around them.":"Paste a calendar or work-schedule link (Google, Outlook, iCloud, or your shift-scheduling app's calendar feed)."}
+              width={520}
+              footer={importCalReview?(
+                <>
+                  <Btn variant="subtle" onClick={()=>setImportCalReview(null)}>Back</Btn>
+                  <Btn onClick={confirmImportCalendar} disabled={importCalReview.events.length===0} style={{opacity:importCalReview.events.length===0?0.45:1}}>
+                    Add {importCalReview.events.length} to Calendar →
+                  </Btn>
+                </>
+              ):(
+                <>
+                  <Btn variant="subtle" onClick={()=>setImportCalOpen(false)}>Cancel</Btn>
+                  <Btn onClick={fetchCalendarPreview} disabled={importCalLoading} style={{opacity:importCalLoading?0.6:1}}>{importCalLoading?"Checking…":"Continue"}</Btn>
+                </>
+              )}>
+              {!importCalReview?(
+                <>
+                  <Field label="Calendar link">
+                    <Input value={importCalUrl} onChange={e=>onImportCalUrlChange(e.target.value)} placeholder="https://calendar.google.com/calendar/ical/…" autoFocus />
+                    {importCalError&&<div style={{fontSize:11.5,color:T.red,marginTop:6}}>{importCalError}</div>}
+                  </Field>
+                  {importCalUrl.trim()&&(
+                    <Field label="Label" hint="How this shows up in Studlin — edit it if you'd like.">
+                      <Input value={importCalLabel} onChange={e=>setImportCalLabel(e.target.value)} />
+                    </Field>
+                  )}
+                  {importedCals.length>0&&(
+                    <div style={{marginTop:18,paddingTop:16,borderTop:`1px solid ${T.border}`}}>
+                      <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:10}}>Connected calendars</div>
+                      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                        {importedCals.map(sub=>(
+                          <div key={sub.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",background:T.card2,borderRadius:9,border:`1px solid ${T.border}`}}>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{fontSize:12.5,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sub.label}</div>
+                              <div style={{fontSize:11,color:T.muted,marginTop:1}}>synced {timeAgoLabel(sub.lastSyncedAt)}</div>
+                            </div>
+                            <button onClick={()=>resyncCalendar(sub)} title="Sync now" style={{width:26,height:26,borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0}}>{Icon.refresh}</button>
+                            <button onClick={()=>setRemoveCalConfirm(sub)} title="Remove" style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font,flexShrink:0}}>Remove</button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ):(
+                <>
+                  <div style={{fontSize:12,color:T.muted,marginBottom:10}}>
+                    {importCalReview.events.length} event{importCalReview.events.length!==1?"s":""} found
+                    {importCalReview.skippedAllDay>0&&(" · "+importCalReview.skippedAllDay+" all-day entr"+(importCalReview.skippedAllDay!==1?"ies":"y")+" skipped for now")}
+                  </div>
+                  {importCalReview.events.length===0?(
+                    <div style={{padding:"24px 16px",textAlign:"center",color:T.muted,fontSize:12.5}}>Nothing to import from this link right now.</div>
+                  ):(
+                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      {importCalReview.events.map((ev,i)=>(
+                        <div key={i} style={{display:"flex",justifyContent:"space-between",gap:10,padding:"9px 12px",background:T.card2,borderRadius:8,fontSize:12.5}}>
+                          <span style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</span>
+                          <span style={{color:T.muted,flexShrink:0}}>{new Date(ev.date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})} · {fmtClock12(ev.time)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </Modal>
+            <Modal open={!!removeCalConfirm} onClose={()=>setRemoveCalConfirm(null)} title={"Remove "+(removeCalConfirm?removeCalConfirm.label:"")+"?"} sub="Its imported events come off your calendar too. This doesn't affect the original calendar." width={420}
+              footer={<>
+                <Btn variant="subtle" onClick={()=>setRemoveCalConfirm(null)}>Cancel</Btn>
+                <Btn variant="danger" onClick={()=>removeImportedCalendar(removeCalConfirm)}>Remove</Btn>
+              </>}>
+            </Modal>
           </>)}
 
           {active==="Usage" && (()=>{
