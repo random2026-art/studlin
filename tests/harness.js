@@ -42,7 +42,9 @@ function loadStudlinModule() {
     "planBrainDumpTasks","matchEventByTitle","getWeeklyRoutine","saveWeeklyRoutine",
     "getRoutineSkips","getRoutineOccurrencesForDate","findHabitSlotForToday",
     "materializeHabitsForDate","findTier0Slot","findSlotWithEviction",
-    "examAlreadyPassedToday","getSchoolTerm","saveSchoolTerm"];
+    "examAlreadyPassedToday","getSchoolTerm","saveSchoolTerm",
+    "getTimerCheckpoint","checkpointTimerSession","clearTimerCheckpoint",
+    "resolveOrphanedCheckpoint"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }

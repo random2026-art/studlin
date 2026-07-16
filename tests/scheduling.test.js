@@ -581,3 +581,56 @@ describe("planBrainDumpTasks (Brain Dump placement)", () => {
     assert.ok(gap >= 0 && gap <= MAX_CHAIN_GAP_MINS, `expected second to stay chained to first instead of jumping to the evening bucket, gap was ${gap}min`);
   });
 });
+
+describe("Lock-In timer checkpoint + recovery (regression: a real session was lost when the tab backgrounded mid-timer with no trace)", () => {
+  test("checkpointTimerSession writes a record that getTimerCheckpoint reads back", () => {
+    const { checkpointTimerSession, getTimerCheckpoint } = loadStudlinModule();
+    assert.equal(getTimerCheckpoint(), null);
+    checkpointTimerSession("task-1", "Study chem", 30, 300, "focus2");
+    const cp = getTimerCheckpoint();
+    assert.equal(cp.taskId, "task-1");
+    assert.equal(cp.focusElapsedSecs, 300);
+    assert.equal(cp.phase, "focus2");
+  });
+
+  test("clearTimerCheckpoint removes the record", () => {
+    const { checkpointTimerSession, clearTimerCheckpoint, getTimerCheckpoint } = loadStudlinModule();
+    checkpointTimerSession("task-1", "Study chem", 30, 300, "focus2");
+    clearTimerCheckpoint();
+    assert.equal(getTimerCheckpoint(), null);
+  });
+
+  test("resolveOrphanedCheckpoint returns null when there's no checkpoint", () => {
+    const { resolveOrphanedCheckpoint } = loadStudlinModule();
+    assert.equal(resolveOrphanedCheckpoint(null, [realTask()]), null);
+  });
+
+  test("resolveOrphanedCheckpoint returns null when the checkpointed task no longer exists (deleted mid-session)", () => {
+    const { resolveOrphanedCheckpoint } = loadStudlinModule();
+    const cp = { taskId: "gone", totalMins: 30, focusElapsedSecs: 300 };
+    assert.equal(resolveOrphanedCheckpoint(cp, [realTask()]), null);
+  });
+
+  test("resolveOrphanedCheckpoint returns null when the task was already completed through another path (e.g. plain checkbox while the modal was backgrounded)", () => {
+    const { resolveOrphanedCheckpoint } = loadStudlinModule();
+    const cp = { taskId: "task-1", totalMins: 30, focusElapsedSecs: 300 };
+    assert.equal(resolveOrphanedCheckpoint(cp, [realTask({ status: "done" })]), null);
+  });
+
+  test("resolveOrphanedCheckpoint recovers a still-pending task with the checkpointed elapsed minutes", () => {
+    const { resolveOrphanedCheckpoint } = loadStudlinModule();
+    const cp = { taskId: "task-1", totalMins: 30, focusElapsedSecs: 300 };
+    const resolved = resolveOrphanedCheckpoint(cp, [realTask()]);
+    assert.ok(resolved);
+    assert.equal(resolved.task.id, "task-1");
+    assert.equal(resolved.elapsedMins, 5);
+  });
+
+  test("resolveOrphanedCheckpoint never credits more than the task's own planned duration (No-Lie cap, regression: must not extrapolate forward past the last real checkpoint)", () => {
+    const { resolveOrphanedCheckpoint } = loadStudlinModule();
+    // Checkpoint claims 90 elapsed minutes on a task only ever planned for 30.
+    const cp = { taskId: "task-1", totalMins: 30, focusElapsedSecs: 90 * 60 };
+    const resolved = resolveOrphanedCheckpoint(cp, [realTask({ duration: 30 })]);
+    assert.equal(resolved.elapsedMins, 30);
+  });
+});

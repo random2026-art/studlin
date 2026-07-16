@@ -1690,6 +1690,31 @@ function readabilityOf(html){
 function touchStreak(){const days=lsGet("days",[]);const t=dayKey();if(!days.includes(t)){days.push(t);lsSet("days",days);upsertProfile();}}
 function getStreak(){const days=new Set(lsGet("days",[]));let n=0;const d=new Date();while(days.has(dayKey(d))){n++;d.setDate(d.getDate()-1);}return n;}
 function logSession(mins,mode){const s=lsGet("sessions",[]);s.push({d:dayKey(),m:mins,t:Date.now(),mode:mode||"Focus"});lsSet("sessions",s);upsertProfile();}
+// Lightweight in-progress-session record, so a Lock-In session survives
+// the tab losing focus, the machine sleeping, or the timer widget getting
+// closed before it naturally finishes — none of which currently leave any
+// trace, silently discarding real focus time (see checkpointTimerSession's
+// callers in TaskTimerModal and the recovery check on app load). Written
+// once at start and every ~20s while running, not on every tick.
+const getTimerCheckpoint=()=>lsGet("activeTimerSession",null);
+const checkpointTimerSession=(taskId,title,totalMins,focusElapsedSecs,phase)=>lsSet("activeTimerSession",{taskId,title,totalMins,focusElapsedSecs,phase,lastCheckpointAt:Date.now()});
+const clearTimerCheckpoint=()=>lsSet("activeTimerSession",null);
+// Pure decision logic for what to do with a checkpoint found on app load —
+// kept separate from the UI/React wiring so it's directly testable. Never
+// recovers a checkpoint whose task no longer exists or is no longer
+// pending (already done some other way, deleted, etc.) — nothing to
+// recover in that case, not an error.
+function resolveOrphanedCheckpoint(checkpoint,events){
+  if(!checkpoint||!checkpoint.taskId)return null;
+  const task=events.find(e=>e.id===checkpoint.taskId);
+  if(!task||task.status!=="pending")return null;
+  // Never over-credit: the elapsed value is whatever was last checkpointed,
+  // never estimated forward from the gap since then (the tab could've been
+  // closed/asleep for any part of that gap) — same conservative instinct
+  // as completeSession's own safeMins=Math.min(mins,totalMins) cap.
+  const elapsedMins=Math.max(1,Math.min(checkpoint.totalMins||task.duration||1,Math.round((checkpoint.focusElapsedSecs||0)/60)));
+  return{task,elapsedMins,checkpoint};
+}
 // "Similar tasks usually take you ~Xm" — median of real logged time (not
 // the originally-guessed duration) for past completed tasks in the same
 // subject+kind. Removes the time-blindness guesswork of estimating a new
@@ -7089,7 +7114,7 @@ function computeCoopFromParticipants(participants,myUid){
 }
 // ─── CALENDAR ─────────────────────────────────────────────────────────────────
 // ─── TASK TIMER MODAL ────────────────────────────────────────────────────────
-function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignmentExtend,onAttackBlockExtend,onLockInError}){
+function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignmentExtend,onAttackBlockExtend,onLockInError,resumeElapsedSecs=0}){
   // Snapshot of live leaderboard profiles, fetched once on mount — used for
   // the before/after rank comparison in the completion screen. A snapshot
   // is fine here (rather than re-fetching mid-session): competitors' XP
@@ -7267,6 +7292,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
   // Logs the session, awards XP, then reveals the reward summary — the modal
   // stays open (as the "done" screen) until the student dismisses it.
   const completeSession=(mins)=>{
+    clearTimerCheckpoint();
     // No-Lie guard: a session can never claim more focus minutes than its
     // own block's stated duration, regardless of what the caller computed.
     const safeMins=Math.min(mins,totalMins);
@@ -7306,9 +7332,19 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
     if(!running)return;
     endTimeRef.current=Date.now()+secs*1000;
     if(phase!=="break"){focusStartRef.current=Date.now();focusStartMonoRef.current=performance.now();}
+    let lastCheckpointAt=Date.now();
     const id=setInterval(()=>{
       const remaining=Math.max(0,Math.round((endTimeRef.current-Date.now())/1000));
       setSecs(remaining);
+      // Periodic checkpoint (~20s, not every 250ms tick) -- this is what
+      // makes a session recoverable if the tab loses focus, the machine
+      // sleeps, or the widget gets closed before finishing (see
+      // resolveOrphanedCheckpoint / the recovery check on app load).
+      if(phase!=="break"&&Date.now()-lastCheckpointAt>=20000){
+        lastCheckpointAt=Date.now();
+        const liveElapsed=focusElapsed.current+(focusStartRef.current?(Date.now()-focusStartRef.current)/1000:0);
+        checkpointTimerSession(task.id,task.title,totalMins,liveElapsed,phase);
+      }
       if(remaining<=0){
         if(phase==="focus1"){setPhase("break");setRunning(false);setAlarmActive(true);if(soundOn)playBeep();}
         else if(phase==="break"){setPhase("breakDone");setRunning(false);setAlarmActive(true);if(soundOn)playBeep();}
@@ -7378,7 +7414,13 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
   },[phase,completion]);
 
   const startLockIn=()=>{
-    focusElapsed.current=0;
+    // Resuming a checkpointed session (see resolveOrphanedCheckpoint) seeds
+    // the elapsed tracker with what was already genuinely spent, and skips
+    // straight to focus2 with only the remaining time left on the clock —
+    // restarting the full countdown from the top would make "resume" feel
+    // like starting over, and would double-count the intro/break phase.
+    focusElapsed.current=resumeElapsedSecs||0;
+    checkpointTimerSession(task.id,task.title,totalMins,resumeElapsedSecs||0,resumeElapsedSecs?"focus2":(breakOn&&totalMins>=15&&focus2Mins>0?"focus1":"focus2"));
     // Flip the shared session live the moment the owner actually begins —
     // not at booking time — so "joined" genuinely means "here right now."
     // A failure here doesn't block the student's own timer (below) from
@@ -7397,7 +7439,9 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
         updatedAt:new Date().toISOString(),
       }).catch(e=>{reportError("startLockIn")(e);if(onLockInError)onLockInError("Couldn't sync with your group. Your timer's still running, but try Lock In again to reconnect them.");});
     }
-    if(breakOn&&totalMins>=15&&focus2Mins>0){
+    if(resumeElapsedSecs){
+      setPhase("focus2");setSecs(Math.max(60,totalMins*60-Math.round(resumeElapsedSecs)));setRunning(true);
+    }else if(breakOn&&totalMins>=15&&focus2Mins>0){
       setPhase("focus1");setSecs(breakPos*60);setRunning(true);
     }else{
       setPhase("focus2");setSecs(totalMins*60);setRunning(true);
@@ -8334,7 +8378,7 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
 // on demand instead. Collapses back to capped every time the selected day
 // changes, so switching days never leaves a stale "expanded" list behind.
 const AGENDA_DAY_CAP=5;
-function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, colorOf, openNew, openEdit, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, routines, openRoutineEdit, deleteRoutineItem, markDone, removeEvent, setSelDay, setYm, dragId, setDragId, openReschedule, setEvents}) {
+function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, colorOf, openNew, openEdit, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, routines, openRoutineEdit, deleteRoutineItem, markDone, uncrossDone, removeEvent, setSelDay, setYm, dragId, setDragId, openReschedule, setEvents}) {
   const [showAllToday,setShowAllToday]=useState(false);
   useEffect(()=>{setShowAllToday(false);},[selDay]);
   const hiddenCount=Math.max(0,dayEvents.length-AGENDA_DAY_CAP);
@@ -8398,6 +8442,7 @@ function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, c
                   {!isDone&&(ev.kind==="exam"||ev.kind==="class"||ev.kind==="reminder")&&<button onClick={()=>openEdit(ev)} title="View details" style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Details</button>}
                   {!isDone&&ev.duration&&(ev.kind==="study block"||ev.kind==="deadline")&&<button onClick={()=>openReschedule(ev)} title="Reschedule" style={{width:24,height:24,borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0,padding:0}}>{Icon.refresh}</button>}
                   {!isDone&&<button onClick={()=>markDone(ev.id)} title="Mark done" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",display:"flex"}}>{Icon.check}</button>}
+                  {isDone&&<button onClick={()=>uncrossDone(ev.id)} title="Reopen" style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font,flexShrink:0,display:"flex",alignItems:"center",gap:4}}>{Icon.refresh} Reopen</button>}
                   <button onClick={()=>removeEvent(ev.id)} title="Delete" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,padding:2}}>×</button>
                 </div>
               )}
@@ -9440,6 +9485,13 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
     const next=events.map(ev=>{if(ev.id!==id)return ev;const {movedByStudlin,movedFrom,movedAt,...rest}=ev;return {...rest,status:"done",completedAt:Date.now()};});
     setEvents(next);lsSet("events",next);
   };
+  // Deliberately does NOT clear timeSpent/completedAt -- that history is
+  // what stops a timer-completed task from being farmed for XP a second
+  // time on re-completion (see the onComplete double-count guard).
+  const uncrossDone=(id)=>{
+    const next=events.map(ev=>ev.id===id?{...ev,status:"pending"}:ev);
+    setEvents(next);lsSet("events",next);
+  };
   const nav=(d)=>setYm(c=>{const m2=c.m+d;return {y:c.y+Math.floor(m2/12),m:((m2%12)+12)%12};});
   const toSliderVal=(v,def)=>{const n=v!=null?v:def;return n>10?n:n*100;};
   const openEdit=(ev)=>{setEditEv(ev);setEditTitle(ev.title||"");setEditDate(ev.date||dayKey());setEditTime(ev.time||"14:30");setEditDuration(ev.duration||60);setEditDeadline(ev.deadline||"");setEditDeadlineErr("");setEditPriority(toSliderVal(ev.priority,5));setEditDifficulty(toSliderVal(ev.difficulty,5));setEditMoreOpen(!!(ev.priority&&(ev.priority>10?ev.priority!==500:ev.priority!==5)));setEditSubject(ev.subject||"Chemistry");setEditKind(ev.kind||"deadline");setEditNotes(ev.notes||"");setEditOpen(true);};
@@ -9592,7 +9644,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
         ))}
       </div>
       {calView==="monthly"&&(<CollapsibleAgendaLayout isAgendaCollapsed={isAgendaCollapsed} setIsAgendaCollapsed={setIsAgendaCollapsed}
-        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,markDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask,setEvents}}>
+        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,markDone,uncrossDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask,setEvents}}>
         <Card style={{padding:16}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,padding:"4px 6px"}}>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
@@ -9646,7 +9698,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
         </Card>
       </CollapsibleAgendaLayout>)}
       {calView==="weekly"&&(<CollapsibleAgendaLayout isAgendaCollapsed={isAgendaCollapsed} setIsAgendaCollapsed={setIsAgendaCollapsed}
-        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,markDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask,setEvents}}>
+        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,markDone,uncrossDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask,setEvents}}>
         <WeeklyPlanner events={events} setEvents={setEvents} moveEvent={moveEvent} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openNew={openNew} openEdit={openEdit}
           routines={routines} editRoutineMode={editRoutineMode} hoveredRoutineId={hoveredRoutineId} setHoveredRoutineId={setHoveredRoutineId}
           onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
@@ -13414,6 +13466,42 @@ function App() {
   const setAccent=(name)=>{ setAccentState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-accent",name); };
   const setDensity=(name)=>{ setDensityState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-density",name); };
   const [timerTask,setTimerTask]=useState(null);
+  // Shared by TaskTimerModal's own onComplete AND the orphaned-session
+  // recovery flow below, so both paths apply the exact same double-count
+  // guard (a task's minutes only ever get logged toward XP once, however
+  // many times it's later uncrossed and redone — see uncrossDone).
+  const completeTaskWithMinutes=(taskId,mins,evTime)=>{
+    const all=lsGet("events",[]);
+    const target=all.find(ev=>ev.id===taskId);
+    if(!target)return;
+    if(!target.timeSpent)logSession(mins,"Task: "+target.title);
+    if(evTime)logCompletionOutcome("done",evTime,difficultyTierOf(target));
+    const next=all.map(ev=>ev.id===taskId?{...ev,status:"done",timeSpent:mins,completedAt:Date.now()}:ev);
+    setEvents(next);lsSet("events",next);
+  };
+  // Orphaned Lock-In session recovery — see checkpointTimerSession /
+  // resolveOrphanedCheckpoint. Runs once on load, not gated to once-a-day
+  // like the other login-time checks, since a lost session should surface
+  // the very next time the app opens, not wait for tomorrow.
+  const [recoveredSession,setRecoveredSession]=useState(null);
+  useEffect(()=>{
+    const cp=getTimerCheckpoint();
+    if(!cp)return;
+    const resolved=resolveOrphanedCheckpoint(cp,lsGet("events",[]));
+    if(resolved)setRecoveredSession(resolved);
+    else clearTimerCheckpoint();
+  },[]);
+  const recoverMarkDone=()=>{
+    if(!recoveredSession)return;
+    completeTaskWithMinutes(recoveredSession.task.id,recoveredSession.elapsedMins,recoveredSession.task.time);
+    clearTimerCheckpoint();setRecoveredSession(null);
+  };
+  const recoverResume=()=>{
+    if(!recoveredSession)return;
+    setTimerTask({...recoveredSession.task,__resumeElapsedSecs:recoveredSession.elapsedMins*60});
+    setRecoveredSession(null);
+  };
+  const recoverDiscard=()=>{clearTimerCheckpoint();setRecoveredSession(null);};
   // Tier 1 of the rescheduling engine — detects yesterday-or-earlier
   // pending tasks and prompts (a dismissible banner, not a blocking modal)
   // rather than moving them silently; the actual move only happens once
@@ -14252,7 +14340,7 @@ function App() {
         )}
       </Modal>
 
-      {timerTask&&<TaskTimerModal task={timerTask} onClose={()=>{
+      {timerTask&&<TaskTimerModal task={timerTask} resumeElapsedSecs={timerTask.__resumeElapsedSecs||0} onClose={()=>{
         if(timerTask.studySessionId&&myUid){
           fsdb().collection('studySessions').doc(timerTask.studySessionId).update({
             ['participants.'+myUid+'.state']:'left',
@@ -14276,7 +14364,14 @@ function App() {
         }}
         onLockInError={(msg)=>{setLockInErrorToast(msg);setTimeout(()=>setLockInErrorToast(""),4500);}}
         onComplete={(mins)=>{
-        logSession(mins,"Task: "+timerTask.title);
+        // A task can be uncrossed and redone (see uncrossDone) — its
+        // minutes only ever get logged toward XP/focus time once, on the
+        // FIRST completion. timeSpent already being set here means this is
+        // a re-completion; still marks it done again below (and still logs
+        // the completion-reliability signal), just skips logSession so the
+        // same real minutes can't be farmed for XP twice.
+        const alreadyClaimed=!!(lsGet("events",[]).find(ev=>ev.id===timerTask.id)||{}).timeSpent;
+        if(!alreadyClaimed)logSession(mins,"Task: "+timerTask.title);
         if(timerTask.time)logCompletionOutcome("done",timerTask.time,difficultyTierOf(timerTask));
         const next=lsGet("events",[]).map(ev=>ev.id===timerTask.id?{...ev,status:"done",timeSpent:mins,completedAt:Date.now()}:ev);
         lsSet("events",next);
@@ -14287,6 +14382,19 @@ function App() {
         // Modal stays open to show the XP/leaderboard reward summary — it
         // closes itself (setTimerTask(null) via onClose) once dismissed.
       }} />}
+
+      {recoveredSession&&!timerTask&&(
+        <div style={{position:"fixed",top:76,right:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:320}}>
+          <div style={{fontSize:13,color:T.white,marginBottom:10}}>
+            Looks like you were <strong style={{color:T.lime}}>{recoveredSession.elapsedMins}min</strong> into "{recoveredSession.task.title}" — what happened?
+          </div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            <BtnSm onClick={recoverMarkDone}>Mark as done</BtnSm>
+            <BtnSm variant="subtle" onClick={recoverResume}>Resume</BtnSm>
+            <BtnSm variant="ghost" onClick={recoverDiscard}>Discard</BtnSm>
+          </div>
+        </div>
+      )}
 
       {tier0Batch.length>0&&(
         <div style={{position:"fixed",top:76,left:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
