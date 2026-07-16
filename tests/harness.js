@@ -42,7 +42,7 @@ function loadStudlinModule() {
     "planBrainDumpTasks","matchEventByTitle","getWeeklyRoutine","saveWeeklyRoutine",
     "getRoutineSkips","getRoutineOccurrencesForDate","findHabitSlotForToday",
     "materializeHabitsForDate","findTier0Slot","findSlotWithEviction",
-    "examAlreadyPassedToday"];
+    "examAlreadyPassedToday","getSchoolTerm","saveSchoolTerm"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }

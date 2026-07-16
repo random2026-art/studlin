@@ -805,11 +805,20 @@ const saveWeeklyRoutine=(r)=>lsSet("weeklyRoutine",r);
 // is untouched, so every other week is unaffected. Written by "Studlin
 // Reschedule"'s skip_class intent (see computePausePlan/confirmPausePlan).
 const getRoutineSkips=()=>lsGet("routineSkips",{});
+// The current school term's date range, {start,end} (both "YYYY-MM-DD")
+// or null if never set — opt-in, so a student who hasn't configured this
+// sees no change from today's always-on behavior. Governs only
+// kind:"class" routines (see expandRoutineOccurrences below); busy/habit
+// routines are untouched since a job, sports practice, or personal habit
+// isn't necessarily tied to the school calendar the way a class is.
+const getSchoolTerm=()=>lsGet("schoolTerm",null);
+const saveSchoolTerm=(t)=>lsSet("schoolTerm",t);
 const ROUTINE_KIND_TO_EVENT_KIND={class:"class",busy:"busy block",free:"free period"};
 function expandRoutineOccurrences(routines,startDateKey,endDateKey){
   const out=[];
   if(!routines||routines.length===0)return out;
   const skips=getRoutineSkips();
+  const term=getSchoolTerm();
   const start=new Date(startDateKey+"T00:00:00");
   const end=new Date(endDateKey+"T00:00:00");
   for(let d=new Date(start);d<=end;d.setDate(d.getDate()+1)){
@@ -824,6 +833,10 @@ function expandRoutineOccurrences(routines,startDateKey,endDateKey){
       // time exists. They're materialized into real events once a day
       // instead — see materializeHabitsForDate.
       if(r.kind==="habit")return;
+      // Outside the configured school term (e.g. summer break) — classes
+      // don't happen. Only applies once a term is actually set; nothing
+      // configured means nothing changes.
+      if(r.kind==="class"&&term&&(dk<term.start||dk>term.end))return;
       if(skippedToday.includes(r.id))return;
       out.push({
         id:"routine-"+r.id+"-"+dk,
@@ -936,7 +949,12 @@ function findFixedEventSlot(events,routines,prefs,desiredDate,desiredTime,durati
 function findHabitSlotForToday(events,routines,prefs,dateKey,duration){
   const occupied=computeOccupiedIntervals(events,routines,prefs,dateKey);
   const fits=(t)=>!occupied.some(o=>!(t+duration<=o.start||t>=o.end));
-  const start=timeToMinutes(prefs.workStartTime||"09:00");
+  // getWorkWindowMinsFor picks up weekendStartTime/weekendEnabled on a
+  // weekend — using a bare workStartTime here would ignore that and could
+  // place a habit at the weekday start time on a Saturday a student has
+  // explicitly configured a later start for. bedtime stays as-is: there's
+  // no separate weekend bedtime concept in the prefs schema.
+  const start=getWorkWindowMinsFor(prefs,dateKey).start;
   const end=timeToMinutes(prefs.bedtime||"23:00");
   for(let t=start;t+duration<=end;t+=15){
     if(fits(t))return minutesToTime(t);
@@ -2068,7 +2086,15 @@ function computePausePlan(intent,forcedId){
       // slot, so offering that exact slot straight back would be wrong.
       const dest=intent.destDate||dayKey(new Date(new Date(matched.date+"T12:00:00").getTime()+86400000));
       const workingEvents=all.filter(e=>e.id!==matched.id);
-      const slot=findFixedEventSlot(workingEvents,routinesNow,prefsNow,dest,matched.time||"09:00",matched.duration||30);
+      // If matched is a routine occurrence, its own rule is still active
+      // (skip_class hasn't been applied — that only happens on Confirm) and
+      // would otherwise self-collide with the search on any day it also
+      // recurs on (e.g. moving a daily habit-adjacent class, or a
+      // Mon/Wed/Fri class to another day it meets), falling all the way
+      // through to the last-resort scan and landing at midnight. Excluding
+      // the rule here mirrors skip_class's own routinesMinusSkipped pattern.
+      const routinesForSearch=matched.isRoutine?routinesNow.filter(r=>r.id!==matched.routineId):routinesNow;
+      const slot=findFixedEventSlot(workingEvents,routinesForSearch,prefsNow,dest,matched.time||"09:00",matched.duration||30);
       const moved=[{id:matched.id,title:matched.title,oldDate:matched.date,oldTime:matched.time,newDate:slot.date,newTime:slot.time,newDuration:matched.duration||30,isRoutine:!!matched.isRoutine,routineId:matched.routineId||null,kind:matched.kind,subject:matched.subject||""}];
       return{label:"Move "+matched.title,moved,couldntMove:[]};
     }
@@ -8253,6 +8279,15 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
   const [days,setDays]=useState([]);
   const [startTime,setStartTime]=useState("15:30");
   const [duration,setDuration]=useState(60);
+  // Self-contained: reads/writes schoolTerm storage directly rather than
+  // threading it through CalendarTab's already-large props/state surface —
+  // it's a standalone settings pair (see getSchoolTerm/saveSchoolTerm,
+  // consumed by expandRoutineOccurrences), nothing else needs it live.
+  const [termStart,setTermStartState]=useState(()=>{const t=getSchoolTerm();return t?t.start:"";});
+  const [termEnd,setTermEndState]=useState(()=>{const t=getSchoolTerm();return t?t.end:"";});
+  const saveTerm=(start,end)=>saveSchoolTerm(start&&end?{start,end}:null);
+  const setTermStart=(v)=>{setTermStartState(v);saveTerm(v,termEnd);};
+  const setTermEnd=(v)=>{setTermEndState(v);saveTerm(termStart,v);};
   useEffect(()=>{ if(!open)setAddingRoutine(false); },[open]);
   const resetForm=()=>{setTitle("");setKind("class");setDays([]);setStartTime("15:30");setDuration(60);};
   const toggleDay=(i)=>setDays(d=>d.includes(i)?d.filter(x=>x!==i):[...d,i]);
@@ -8292,6 +8327,14 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
       {routines.length>0&&onEditOnCalendar&&(
         <button type="button" onClick={onEditOnCalendar} style={{background:"none",border:"none",color:T.lime,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:"0 0 16px",textDecoration:"underline"}}>Edit directly on the calendar instead</button>
       )}
+      <div style={{border:`1px solid ${T.border}`,borderRadius:10,padding:14,marginBottom:16}}>
+        <div style={{fontSize:12,fontWeight:700,color:T.white,marginBottom:2}}>Term dates</div>
+        <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>Outside these dates — summer, before the term starts — Studlin stops expecting your classes. Everything else on your routine still applies.</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Field label="School starts"><Input type="date" value={termStart} onChange={e=>setTermStart(e.target.value)} /></Field>
+          <Field label="School ends"><Input type="date" value={termEnd} onChange={e=>setTermEnd(e.target.value)} /></Field>
+        </div>
+      </div>
       {!addingRoutine
         ? <Btn variant="subtle" onClick={()=>setAddingRoutine(true)} style={{width:"100%",justifyContent:"center"}}>+ Add Recurring Activity</Btn>
         : (

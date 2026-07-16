@@ -130,6 +130,20 @@ describe("computePausePlan (Studlin Reschedule)", () => {
     assert.equal(result.moved[0].oldDate, "2026-07-20");
   });
 
+  test("move_event on a routine that also recurs on the destination day doesn't self-collide and land at midnight (regression)", () => {
+    const m = loadStudlinModule();
+    // Recurs every day, so the destination day (tomorrow) also has an
+    // active occurrence of the same rule -- this used to self-collide and
+    // fall through to the last-resort full-day scan, landing at 00:00.
+    const routine = { id: "routine-band", title: "Band", kind: "class", days: [0, 1, 2, 3, 4, 5, 6], startTime: "15:00", duration: 60, subject: "" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([routine]));
+    m.localStorage.setItem("studlin-events", JSON.stringify([]));
+    const result = m.computePausePlan({ intent: "move_event", target: "band", targetDate: "2026-07-20", destDate: "2026-07-21" });
+    assert.equal(result.moved.length, 1);
+    assert.notEqual(result.moved[0].newTime, "00:00", "must not fall through to the midnight last-resort slot");
+    assert.equal(result.moved[0].newTime, "15:00", "the exact original time-of-day should be free once the self-collision is fixed");
+  });
+
   test("retime_event reslots a study block that now collides with the new time", () => {
     const m = loadStudlinModule();
     const practice = { id: "practice-1", title: "Track practice", date: "2026-07-20", time: "18:00", subject: "", kind: "busy block", notes: "", priority: null, difficulty: null, deadline: null, duration: 60, status: "pending", timeSpent: 0, completedAt: null };
@@ -268,12 +282,76 @@ describe("materializeHabitsForDate (flexible daily habits)", () => {
     assert.equal(created.length, 0);
   });
 
+  test("respects a later weekend start time instead of the weekday start (regression: used to ignore weekendStartTime entirely)", () => {
+    const m = loadStudlinModule();
+    // Find the next Saturday so getWorkWindowMinsFor's weekend branch engages.
+    let d = new Date("2026-07-20T12:00:00");
+    while (d.getDay() !== 6) d.setDate(d.getDate() + 1);
+    const saturday = d.toISOString().slice(0, 10);
+    const satDow = (d.getDay() + 6) % 7;
+    const habit = { id: "habit-gym", title: "Gym", kind: "habit", days: [satDow], duration: 30, subject: "" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([habit]));
+    m.localStorage.setItem("studlin-schedulePrefs", JSON.stringify({
+      workStartTime: "07:00", workEndTime: "18:00", bedtime: "23:00",
+      weekendEnabled: true, weekendStartTime: "11:00", weekendEndTime: "20:00",
+    }));
+    const created = m.materializeHabitsForDate(saturday, []);
+    assert.equal(created.length, 1);
+    assert.ok(created[0].time >= "11:00", "must respect the 11:00 weekend start, not the 07:00 weekday start");
+  });
+
   test("a habit routine is never virtually expanded (no fixed time to expand)", () => {
     const m = loadStudlinModule();
     const habit = { id: "habit-gym", title: "Gym", kind: "habit", days: [dow], duration: 30, subject: "" };
     m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([habit]));
     const occurrences = m.getRoutineOccurrencesForDate("2026-07-20");
     assert.equal(occurrences.length, 0, "habits must be excluded from expandRoutineOccurrences, not given a fake time");
+  });
+});
+
+describe("school term awareness (class routines suppressed outside term dates)", () => {
+  const dow = (new Date("2026-07-20T12:00:00").getDay() + 6) % 7;
+
+  test("a class routine still expands normally when no term is set (regression: must be opt-in, default behavior unchanged)", () => {
+    const m = loadStudlinModule();
+    const routine = { id: "r-chem", title: "Chemistry", kind: "class", days: [dow], startTime: "08:00", duration: 50, subject: "Chemistry" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([routine]));
+    const occurrences = m.getRoutineOccurrencesForDate("2026-07-20");
+    assert.equal(occurrences.length, 1, "no schoolTerm configured means no change from today's always-on behavior");
+  });
+
+  test("a class routine does not expand on a date outside the configured term (e.g. summer break)", () => {
+    const m = loadStudlinModule();
+    const routine = { id: "r-chem", title: "Chemistry", kind: "class", days: [dow], startTime: "08:00", duration: 50, subject: "Chemistry" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([routine]));
+    m.saveSchoolTerm({ start: "2026-09-01", end: "2026-12-15" });
+    const occurrences = m.getRoutineOccurrencesForDate("2026-07-20"); // mid-summer, before the term starts
+    assert.equal(occurrences.length, 0);
+  });
+
+  test("a class routine expands normally on a date inside the configured term", () => {
+    const m = loadStudlinModule();
+    const dowInSept = (new Date("2026-09-14T12:00:00").getDay() + 6) % 7;
+    const routine = { id: "r-chem", title: "Chemistry", kind: "class", days: [dowInSept], startTime: "08:00", duration: 50, subject: "Chemistry" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([routine]));
+    m.saveSchoolTerm({ start: "2026-09-01", end: "2026-12-15" });
+    const occurrences = m.getRoutineOccurrencesForDate("2026-09-14");
+    assert.equal(occurrences.length, 1);
+  });
+
+  test("busy and habit routines are unaffected by term dates — only class-kind is governed by the school calendar", () => {
+    const m = loadStudlinModule();
+    const busyRoutine = { id: "r-job", title: "Part-time job", kind: "busy", days: [dow], startTime: "17:00", duration: 120, subject: "" };
+    const habitRoutine = { id: "r-run", title: "Run", kind: "habit", days: [dow], duration: 30, subject: "" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([busyRoutine, habitRoutine]));
+    m.saveSchoolTerm({ start: "2026-09-01", end: "2026-12-15" });
+    const occurrences = m.getRoutineOccurrencesForDate("2026-07-20"); // mid-summer
+    assert.ok(occurrences.some((o) => o.routineId === "r-job"), "a job or activity shouldn't be silently hidden just because it's summer");
+    // Habits never virtually expand at all (materialized separately), so
+    // just confirm the class-only scoping didn't accidentally start
+    // affecting them via some other path.
+    const habitCreated = m.materializeHabitsForDate("2026-07-20", []);
+    assert.equal(habitCreated.length, 1, "a habit should still materialize during summer break");
   });
 });
 
