@@ -41,7 +41,8 @@ function loadStudlinModule() {
     "normalizeTaskVal","PAUSE_QUALIFYING_KINDS","TIER0_FIXED_KINDS",
     "planBrainDumpTasks","matchEventByTitle","getWeeklyRoutine","saveWeeklyRoutine",
     "getRoutineSkips","getRoutineOccurrencesForDate","findHabitSlotForToday",
-    "materializeHabitsForDate"];
+    "materializeHabitsForDate","findTier0Slot","findSlotWithEviction",
+    "examAlreadyPassedToday"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }

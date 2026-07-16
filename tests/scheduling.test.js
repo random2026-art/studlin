@@ -95,6 +95,17 @@ describe("computePausePlan (Studlin Reschedule)", () => {
     assert.ok(touchedIds.includes("real-deadline-1"), "a deadline-kind item WITH a real duration must not be caught by the marker carve-out");
   });
 
+  test("never assigns a checklist item a clock time (regression: 'push everything back' used to schedule plain to-dos)", () => {
+    const m = loadStudlinModule();
+    const checklistItem = realTask({ id: "checklist-1", date: "2026-07-15", time: null, duration: null, checklist: true });
+    const task = realTask({ id: "task-1", date: "2026-07-15" });
+    m.localStorage.setItem("studlin-events", JSON.stringify([checklistItem, task]));
+    const result = m.computePausePlan({ intent: "shift", days: 3 });
+    const touchedIds = [...result.moved, ...result.couldntMove].map((x) => x.id);
+    assert.ok(!touchedIds.includes("checklist-1"), "a checklist item must never be caught up in a bulk reschedule and given a fake time");
+    assert.ok(touchedIds.includes("task-1"), "a real study block should still be eligible to move");
+  });
+
   test("move_event relocates a one-off fixed event to the requested day", () => {
     const m = loadStudlinModule();
     const gym = { id: "gym-1", title: "Gym", date: "2026-07-20", time: "19:15", subject: "", kind: "busy block", notes: "", priority: null, difficulty: null, deadline: null, duration: 60, status: "pending", timeSpent: 0, completedAt: null };
@@ -210,8 +221,7 @@ describe("materializeHabitsForDate (flexible daily habits)", () => {
     const m = loadStudlinModule();
     const habit = { id: "habit-gym", title: "Gym", kind: "habit", days: [dow], duration: 45, subject: "" };
     m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([habit]));
-    m.localStorage.setItem("studlin-events", JSON.stringify([]));
-    const created = m.materializeHabitsForDate("2026-07-20");
+    const created = m.materializeHabitsForDate("2026-07-20", []);
     assert.equal(created.length, 1);
     assert.equal(created[0].routineId, "habit-gym");
     assert.equal(created[0].date, "2026-07-20");
@@ -223,11 +233,21 @@ describe("materializeHabitsForDate (flexible daily habits)", () => {
     const m = loadStudlinModule();
     const habit = { id: "habit-gym", title: "Gym", kind: "habit", days: [dow], duration: 45, subject: "" };
     m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([habit]));
-    m.localStorage.setItem("studlin-events", JSON.stringify([]));
-    const first = m.materializeHabitsForDate("2026-07-20");
-    m.localStorage.setItem("studlin-events", JSON.stringify(first));
-    const second = m.materializeHabitsForDate("2026-07-20");
+    const first = m.materializeHabitsForDate("2026-07-20", []);
+    const second = m.materializeHabitsForDate("2026-07-20", first);
     assert.equal(second.length, 0);
+  });
+
+  test("does not duplicate when the caller passes state where the instance was already moved elsewhere the same date (regression: Tier 0 moving yesterday's instance forward must not race a fresh materialization)", () => {
+    const m = loadStudlinModule();
+    const habit = { id: "habit-gym", title: "Gym", kind: "habit", days: [dow], duration: 45, subject: "" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([habit]));
+    // Simulate: yesterday's materialized instance just got Tier-0-reflowed
+    // forward onto today, in memory, by the caller -- BEFORE
+    // materializeHabitsForDate is asked about today.
+    const alreadyMovedInstance = { id: "habit-gym-2026-07-19", routineId: "habit-gym", title: "Gym", date: "2026-07-20", time: "11:00", kind: "study block", duration: 45, status: "pending" };
+    const created = m.materializeHabitsForDate("2026-07-20", [alreadyMovedInstance]);
+    assert.equal(created.length, 0, "must see the already-moved instance via workingEvents and not create a second one");
   });
 
   test("skips gracefully when the whole day is already booked, without throwing", () => {
@@ -235,8 +255,7 @@ describe("materializeHabitsForDate (flexible daily habits)", () => {
     const habit = { id: "habit-gym", title: "Gym", kind: "habit", days: [dow], duration: 30, subject: "" };
     const packed = { id: "packed-1", title: "Packed", date: "2026-07-20", time: "10:00", kind: "busy block", duration: 780, status: "pending" };
     m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([habit]));
-    m.localStorage.setItem("studlin-events", JSON.stringify([packed]));
-    const created = m.materializeHabitsForDate("2026-07-20");
+    const created = m.materializeHabitsForDate("2026-07-20", [packed]);
     assert.equal(created.length, 0, "a fully booked day should skip the habit, not throw or double-book");
   });
 
@@ -245,8 +264,7 @@ describe("materializeHabitsForDate (flexible daily habits)", () => {
     const otherDow = (dow + 1) % 7;
     const habit = { id: "habit-gym", title: "Gym", kind: "habit", days: [otherDow], duration: 30, subject: "" };
     m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([habit]));
-    m.localStorage.setItem("studlin-events", JSON.stringify([]));
-    const created = m.materializeHabitsForDate("2026-07-20");
+    const created = m.materializeHabitsForDate("2026-07-20", []);
     assert.equal(created.length, 0);
   });
 
@@ -256,6 +274,71 @@ describe("materializeHabitsForDate (flexible daily habits)", () => {
     m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([habit]));
     const occurrences = m.getRoutineOccurrencesForDate("2026-07-20");
     assert.equal(occurrences.length, 0, "habits must be excluded from expandRoutineOccurrences, not given a fake time");
+  });
+});
+
+describe("findSlotWithEviction", () => {
+  test("evicted tasks are stamped movedByStudlin/movedFrom (regression: they used to move with no flag, no banner entry, no undo)", () => {
+    const m = loadStudlinModule();
+    const today = m.dayKey();
+    // Pack the whole work window with freely-evictable study blocks (no
+    // deadline) so an imminent urgent task has nowhere to go without
+    // evicting something.
+    const packed = [];
+    let t = 9 * 60; // matches DEFAULT_PREFS.workStartTime
+    let idx = 0;
+    while (t + 30 <= 18 * 60) { // until DEFAULT_PREFS.workEndTime
+      packed.push({ id: "pack-" + idx, title: "Filler " + idx, date: today, time: `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`, kind: "study block", duration: 30, status: "pending", deadline: null });
+      t += 30; idx++;
+    }
+    // deadlineKey === today => daysOut 0 => the eviction path engages.
+    const result = m.findSlotWithEviction(packed, [], DEFAULT_PREFS, today, "09:00", 30, today);
+    const evicted = result.events.filter((e) => e.movedByStudlin);
+    assert.ok(evicted.length >= 1, "at least one task should have been evicted to make room");
+    evicted.forEach((e) => {
+      assert.ok(e.movedFrom && e.movedFrom.date && e.movedFrom.time, "an evicted task must carry movedFrom so the badge and undoTier0Move work for it too");
+    });
+  });
+});
+
+describe("examAlreadyPassedToday / exam-day-itself reflow (regression: review sessions scheduled after the exam already happened)", () => {
+  test("true when the linked exam is today and its time has already passed", () => {
+    const m = loadStudlinModule();
+    const linkedDue = { date: "2026-07-17", time: "09:00" };
+    assert.equal(m.examAlreadyPassedToday(linkedDue, "2026-07-17", 600), true); // 10:00am, after a 9am exam
+  });
+
+  test("false when the linked exam is today but hasn't happened yet", () => {
+    const m = loadStudlinModule();
+    const linkedDue = { date: "2026-07-17", time: "14:00" };
+    assert.equal(m.examAlreadyPassedToday(linkedDue, "2026-07-17", 600), false); // 10:00am, before a 2pm exam
+  });
+
+  test("false when there's no linked due event", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.examAlreadyPassedToday(null, "2026-07-17", 600), false);
+  });
+
+  test("false when the linked due event isn't today", () => {
+    const m = loadStudlinModule();
+    const linkedDue = { date: "2026-07-18", time: "09:00" };
+    assert.equal(m.examAlreadyPassedToday(linkedDue, "2026-07-17", 600), false);
+  });
+
+  test("end-to-end: a review session for a same-day already-passed exam gets placed tomorrow, not later today", () => {
+    const m = loadStudlinModule();
+    const today = "2026-07-17";
+    const tomorrow = "2026-07-18";
+    const yesterday = "2026-07-16";
+    const examMarker = { id: "exam-1", title: "Chem Exam", date: today, time: "09:00", kind: "exam", status: "pending" };
+    const session = { id: "session-1", title: "Chem review", date: yesterday, time: "16:00", kind: "study block", duration: 45, status: "pending", deadline: today, dueEventId: "exam-1" };
+    const nowMins = 600; // 10:00am — after the 9am exam
+    const passed = m.examAlreadyPassedToday(examMarker, today, nowMins);
+    assert.equal(passed, true);
+    const searchTask = { ...session, deadline: tomorrow };
+    const result = m.findTier0Slot(searchTask, [examMarker, session], [], DEFAULT_PREFS, tomorrow);
+    assert.ok(result, "should still find a legitimate placement, just not today");
+    assert.equal(result.placement.date, tomorrow, "must not land on the exam's own date once its time has passed");
   });
 });
 

@@ -946,21 +946,24 @@ function findHabitSlotForToday(events,routines,prefs,dateKey,duration){
 // Turns each "habit" routine rule due on this date into one real,
 // concretely-timed event — the one place a habit ever becomes real (see
 // expandRoutineOccurrences). Idempotent per date: dedups against any
-// existing event carrying the same routineId on this date, so it's safe to
-// call on every login (see the once-a-day gate that calls this). Mirrors
+// existing event carrying the same routineId on this date. Mirrors
 // buildExamSessionEvents' shape — a pure function returning new events for
-// the caller to persist, not persisting anything itself.
-function materializeHabitsForDate(dateKey){
+// the caller to persist, not persisting anything itself. Takes the
+// caller's current in-memory events array as `workingEvents` rather than
+// reading storage itself: the once-a-day gate that calls this can run
+// Tier 0 reflow first (which may move a habit's own prior instance
+// forward, in memory only) before this runs, and reading storage directly
+// here would see the pre-reflow state and materialize a duplicate.
+function materializeHabitsForDate(dateKey,workingEvents){
   const habitRoutines=getWeeklyRoutine().filter(r=>r.kind==="habit");
   if(habitRoutines.length===0)return[];
   const dow=(new Date(dateKey+"T12:00:00").getDay()+6)%7;
   const due=habitRoutines.filter(r=>r.days&&r.days.includes(dow));
   if(due.length===0)return[];
-  const all=lsGet("events",[]);
-  const alreadyDone=new Set(all.filter(e=>e.date===dateKey&&e.routineId).map(e=>e.routineId));
+  const alreadyDone=new Set(workingEvents.filter(e=>e.date===dateKey&&e.routineId).map(e=>e.routineId));
   const routinesNow=getWeeklyRoutine();
   const prefsNow=getSchedulePreferences();
-  let working=all;
+  let working=workingEvents;
   const created=[];
   due.forEach(r=>{
     if(alreadyDone.has(r.id))return;
@@ -1113,7 +1116,12 @@ function findSlotWithEviction(events,routines,prefs,desiredDate,desiredTime,dura
   events.forEach(ev=>{
     if(!evictedIds.has(ev.id))return;
     const newSlot=findOpenSlotFor(pool,routines,prefs,nextDay,prefs.workStartTime,ev.duration||30,ev.deadline||null);
-    pool=pool.concat([{...ev,date:newSlot.date,time:newSlot.time}]);
+    // An eviction is just as much "Studlin moved this" as the primary
+    // placement below — stamped the same way so the per-task badge and
+    // undoTier0Move (both keyed generically off movedByStudlin/movedFrom)
+    // work for it too. Without this, an evicted task moved silently with
+    // no visibility and no way to undo it.
+    pool=pool.concat([{...ev,date:newSlot.date,time:newSlot.time,movedByStudlin:true,movedFrom:{date:ev.date,time:ev.time},movedAt:Date.now()}]);
   });
 
   const placement=findOpenSlotFor(working,routines,prefs,desiredDate,desiredTime,duration,deadlineKey);
@@ -1149,6 +1157,16 @@ function isTier0Missed(ev,todayKey){
   if(ev.kind==="deadline"&&!ev.duration)return false;
   if(ev.deadline&&ev.deadline<todayKey)return false;
   return ev.date<todayKey;
+}
+// True when a missed review/prep session's linked exam or assignment
+// (dueEventId) is due today but its own recorded time has already passed
+// — the signal the once-a-day gate uses to search starting tomorrow
+// instead of scheduling pointless after-the-fact "review" time later
+// today. `nowMins` (minutes since midnight, real current moment) is
+// passed in rather than read internally so this stays directly testable
+// without mocking the clock.
+function examAlreadyPassedToday(linkedDue,todayKey,nowMins){
+  return !!(linkedDue&&linkedDue.date===todayKey&&linkedDue.time&&timeToMinutes(linkedDue.time)<=nowMins);
 }
 // Hour-of-day buckets for completion-reliability inference. Keyed off
 // completedAt/task-completion-happening (not timeSpent) — only the Lock-In
@@ -2021,7 +2039,10 @@ function computePausePlan(intent,forcedId){
   // Reminders keep duration:0 by design (a point-in-time nudge, not a
   // block) and are legitimately reschedulable, so this only excludes
   // "deadline" specifically, not the whole qualifying set.
-  const isQualifying=(ev)=>ev.status==="pending"&&PAUSE_QUALIFYING_KINDS.has(ev.kind)&&!(ev.kind==="deadline"&&ev.duration==null);
+  // !ev.checklist mirrors isTier0Missed's own exclusion — a checklist item
+  // is a plain to-do with no inherent time and must never be assigned one,
+  // here just as much as during Tier 0's rollover.
+  const isQualifying=(ev)=>ev.status==="pending"&&PAUSE_QUALIFYING_KINDS.has(ev.kind)&&!(ev.kind==="deadline"&&ev.duration==null)&&!ev.checklist;
   if(intent.intent==="move_event"||intent.intent==="retime_event"){
     const targetDate=intent.targetDate||today;
     let matched;
@@ -13612,14 +13633,42 @@ function App() {
     if(lsGet("tier0Enabled",true)){
       const routines=getWeeklyRoutine();
       const prefs=getSchedulePreferences();
+      const tomorrowKey=(()=>{const d=new Date(today+"T12:00:00");d.setDate(d.getDate()+1);return dayKey(d);})();
+      const nowMins=(()=>{const n=new Date();return n.getHours()*60+n.getMinutes();})();
       cleaned.filter(ev=>isTier0Missed(ev,today)).forEach(ev=>{
-        const result=findTier0Slot(ev,working,routines,prefs,today);
+        // Snapshot before this placement — findTier0Slot's eviction path
+        // (findSlotWithEviction) can silently relocate OTHER pending tasks
+        // to make room for this one. Those get the same movedByStudlin
+        // stamp as the primary move (see findSlotWithEviction), but only
+        // the primary move below ever used to get logged into movedBatch —
+        // diffing against this snapshot surfaces evictions into the same
+        // banner/undo batch instead of them moving with zero visibility.
+        const beforeSnapshot=new Map(working.map(e=>[e.id,{date:e.date,time:e.time}]));
+        // A review/prep session whose linked exam or assignment
+        // (dueEventId) is due TODAY at a time that's already passed gets
+        // searched starting tomorrow instead, with one extra day of grace
+        // on its deadline for just this placement call (the stored event's
+        // real deadline is never mutated) — otherwise Tier 0 would happily
+        // schedule "review" time for later this afternoon, after the exam
+        // it was meant to prepare for already happened.
+        const linkedDue=ev.dueEventId?working.find(e=>e.id===ev.dueEventId):null;
+        const passedAlready=examAlreadyPassedToday(linkedDue,today,nowMins);
+        const searchTask=passedAlready?{...ev,deadline:tomorrowKey}:ev;
+        const searchFrom=passedAlready?tomorrowKey:today;
+        const result=findTier0Slot(searchTask,working,routines,prefs,searchFrom);
         if(!result)return;
         working=result.events.map(e=>e.id===ev.id?{
           ...e,date:result.placement.date,time:result.placement.time,
           movedByStudlin:true,movedFrom:{date:ev.date,time:ev.time},movedAt:Date.now(),
         }:e);
         movedBatch.push({id:ev.id,title:ev.title,from:{date:ev.date,time:ev.time},to:result.placement});
+        working.forEach(e=>{
+          if(e.id===ev.id||!e.movedByStudlin)return;
+          const prior=beforeSnapshot.get(e.id);
+          if(prior&&(prior.date!==e.date||prior.time!==e.time)&&!movedBatch.some(m=>m.id===e.id)){
+            movedBatch.push({id:e.id,title:e.title,from:prior,to:{date:e.date,time:e.time}});
+          }
+        });
       });
     }
     // Actionable-window sweep — same once-a-day tick as Tier 0 above, but
@@ -13653,7 +13702,10 @@ function App() {
     // virtually expanded like class/busy/free routines; this is the one
     // place each day's occurrence gets turned into a real, concretely
     // timed task, same once-a-day cadence as everything else above.
-    const habitEvents=materializeHabitsForDate(today);
+    // Passing the current `working` (not a fresh storage read) matters:
+    // Tier 0 above may already have moved a habit's own prior instance
+    // forward in memory, and this needs to see that to avoid duplicating it.
+    const habitEvents=materializeHabitsForDate(today,working);
     if(habitEvents.length)working=working.concat(habitEvents);
     if(working!==cleaned)lsSet("events",working);
     if(movedBatch.length>0){
