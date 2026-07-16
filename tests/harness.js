@@ -44,7 +44,7 @@ function loadStudlinModule() {
     "materializeHabitsForDate","findTier0Slot","findSlotWithEviction",
     "examAlreadyPassedToday","getSchoolTerm","saveSchoolTerm",
     "getTimerCheckpoint","checkpointTimerSession","clearTimerCheckpoint",
-    "resolveOrphanedCheckpoint"];
+    "resolveOrphanedCheckpoint","mergeImportedEvents","detectCalendarSourceType"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }
