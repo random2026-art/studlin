@@ -8430,7 +8430,7 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
 // on demand instead. Collapses back to capped every time the selected day
 // changes, so switching days never leaves a stale "expanded" list behind.
 const AGENDA_DAY_CAP=5;
-function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, colorOf, openNew, openEdit, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, routines, openRoutineEdit, deleteRoutineItem, markDone, uncrossDone, removeEvent, setSelDay, setYm, dragId, setDragId, openReschedule, setEvents}) {
+function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, colorOf, openNew, openEdit, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, routines, openRoutineEdit, deleteRoutineItem, markDone, uncrossDone, removeEvent, setSelDay, setYm, dragId, setDragId, openReschedule, setEvents, checklistItems, checklistDraft, setChecklistDraft, addChecklistItem, toggleChecklistItem}) {
   const [showAllToday,setShowAllToday]=useState(false);
   useEffect(()=>{setShowAllToday(false);},[selDay]);
   const hiddenCount=Math.max(0,dayEvents.length-AGENDA_DAY_CAP);
@@ -8508,6 +8508,24 @@ function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, c
           <button onClick={()=>setShowAllToday(s=>!s)} style={{width:"100%",textAlign:"center",padding:"8px 0 2px",background:"none",border:"none",color:T.muted,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>
             {showAllToday?"Show less":"Show "+hiddenCount+" more"}
           </button>
+        )}
+      </Card>
+      <Card style={{padding:14}}>
+        <div style={{fontSize:11,fontWeight:700,color:T.muted,marginBottom:9,textTransform:"uppercase",letterSpacing:"0.06em"}}>To-dos</div>
+        <div style={{display:"flex",gap:6,marginBottom:checklistItems.length>0?9:0}}>
+          <Input value={checklistDraft} onChange={e=>setChecklistDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addChecklistItem();}} placeholder="Add a quick to-do…" style={{flex:1,fontSize:12.5,padding:"7px 10px"}} />
+          <BtnSm onClick={addChecklistItem} disabled={!checklistDraft.trim()} style={{opacity:checklistDraft.trim()?1:0.45,flexShrink:0}}>Add</BtnSm>
+        </div>
+        {checklistItems.length>0&&(
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            {checklistItems.map(it=>(
+              <div key={it.id} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 2px"}}>
+                <button onClick={()=>toggleChecklistItem(it.id)} title="Mark done" style={{width:15,height:15,borderRadius:4,border:`1.5px solid ${T.border}`,background:"transparent",cursor:"pointer",flexShrink:0,padding:0}} />
+                <span style={{fontSize:12,color:T.text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.title}</span>
+                {it.date&&<span style={{fontSize:10,color:T.muted,flexShrink:0}}>{new Date(it.date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span>}
+              </div>
+            ))}
+          </div>
         )}
       </Card>
       <div>
@@ -8858,6 +8876,11 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
   // gear icon on the Calendar toolbar (as opposed to routineWizardOpen, which
   // is only the first-run setup flow).
   const [routineCenterOpen,setRoutineCenterOpen]=useState(false);
+  // Everything below "Add task"/"Studlin Reschedule" in frequency of use
+  // collapses into this one menu instead of sitting as four separate
+  // buttons — those two are the only actions used constantly enough to
+  // earn permanent screen space.
+  const [moreMenuOpen,setMoreMenuOpen]=useState(false);
   useEffect(()=>{
     if(openWizardOnMount){setRoutineWizardOpen(true);if(onWizardOpenedFromSettings)onWizardOpenedFromSettings();}
   },[openWizardOnMount]);
@@ -9806,38 +9829,41 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
         this div instead of nested inside it, so it centers against the real
         viewport regardless of scroll position or animation state. */}
     <div>
-      <PH title="Studlin Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}><span ref={rescheduleBtnRef} style={{display:"inline-flex"}}><Btn variant="danger" onClick={()=>{setPauseOpen(true);setPauseError("");setPausePreview(null);}}>Studlin Reschedule</Btn></span><Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>setRoutineCenterOpen(true)}>Routine</Btn><span ref={brainDumpLinkRef} style={{display:"inline-flex"}}><Btn variant="ghost" onClick={()=>{resetForm();setBrainDumpOpen(true);}}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.sparkles,"Brain dump")}</Btn></span><Btn variant="ghost" onClick={onScanSyllabus}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.file,"Scan syllabus")}</Btn><Btn variant="ghost" onClick={openImportCalModal}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.link,"Import calendar")}</Btn><span ref={addTaskBtnRef} style={{display:"inline-flex"}}><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></span></div>} />
+      <PH title="Studlin Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}>
+        <span ref={rescheduleBtnRef} style={{display:"inline-flex"}}><Btn variant="ghost" onClick={()=>{setPauseOpen(true);setPauseError("");setPausePreview(null);}}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6,color:T.red}},Icon.refresh,React.createElement("span",{style:{color:"inherit"}},"Studlin Reschedule"))}</Btn></span>
+        <div style={{position:"relative"}}>
+          <Btn variant={moreMenuOpen?"lime":"ghost"} onClick={()=>setMoreMenuOpen(o=>!o)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"More")}</Btn>
+          {moreMenuOpen&&(<>
+            <div onClick={()=>setMoreMenuOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
+            <div style={{position:"absolute",top:"calc(100% + 6px)",right:0,width:210,background:T.card,border:`1px solid ${T.border}`,borderRadius:12,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
+              {[
+                {icon:Icon.cal,label:"Routine",onClick:()=>{setMoreMenuOpen(false);setRoutineCenterOpen(true);}},
+                {icon:Icon.sparkles,label:"Brain dump",onClick:()=>{setMoreMenuOpen(false);resetForm();setBrainDumpOpen(true);}},
+                {icon:Icon.file,label:"Scan syllabus",onClick:()=>{setMoreMenuOpen(false);onScanSyllabus();}},
+                {icon:Icon.link,label:"Import calendar",onClick:()=>{setMoreMenuOpen(false);openImportCalModal();}},
+              ].map(item=>(
+                <div key={item.label} onClick={item.onClick} style={{display:"flex",alignItems:"center",gap:10,padding:"11px 14px",cursor:"pointer",fontSize:12.5,fontWeight:500,color:T.text}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  <span style={{width:16,color:T.muted,display:"flex"}}>{item.icon}</span>{item.label}
+                </div>
+              ))}
+            </div>
+          </>)}
+        </div>
+        <span ref={addTaskBtnRef} style={{display:"inline-flex"}}><Btn onClick={()=>openNew(selDay)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn></span>
+      </div>} />
       {editRoutineMode&&(
         <div style={{display:"flex",alignItems:"center",gap:12,padding:"9px 14px",background:T.lime+"10",border:`1px solid ${T.lime}33`,borderRadius:10,marginBottom:14,fontSize:12.5,color:T.text}}>
           <span style={{flex:1}}>Editing your Weekly Routine. One-off tasks are dimmed. Click a routine block to edit it, or hover and tap × to delete it everywhere it repeats.</span>
           <BtnSm variant="subtle" onClick={()=>{setEditRoutineMode(false);setHoveredRoutineId(null);}}>Done</BtnSm>
         </div>
       )}
-      <Card style={{padding:14,marginBottom:16}}>
-        <div style={{fontSize:12,fontWeight:700,color:T.white,marginBottom:10,textTransform:"uppercase",letterSpacing:"0.06em"}}>To-dos</div>
-        <div style={{display:"flex",gap:8,marginBottom:checklistItems.length>0?10:0}}>
-          <Input value={checklistDraft} onChange={e=>setChecklistDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addChecklistItem();}} placeholder="Add a quick to-do…" style={{flex:1}} />
-          <BtnSm onClick={addChecklistItem} disabled={!checklistDraft.trim()} style={{opacity:checklistDraft.trim()?1:0.45,flexShrink:0}}>Add</BtnSm>
-        </div>
-        {checklistItems.length>0&&(
-          <div style={{display:"flex",flexDirection:"column",gap:6}}>
-            {checklistItems.map(it=>(
-              <div key={it.id} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 4px"}}>
-                <button onClick={()=>toggleChecklistItem(it.id)} title="Mark done" style={{width:18,height:18,borderRadius:5,border:`1.5px solid ${T.border}`,background:"transparent",cursor:"pointer",flexShrink:0,padding:0}} />
-                <span style={{fontSize:12.5,color:T.text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.title}</span>
-                {it.date&&<span style={{fontSize:11,color:T.muted,flexShrink:0}}>{new Date(it.date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span>}
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
       <div style={{display:"flex",gap:6,marginBottom:20}}>
         {["monthly","weekly"].map(v=>(
           <button key={v} onClick={()=>setCalView(v)} style={{padding:"6px 14px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",background:calView===v?T.lime+"14":"transparent",color:calView===v?T.lime:T.muted,border:`1px solid ${calView===v?T.lime+"44":T.border}`,fontFamily:T.font,transition:"all 0.15s",textTransform:"capitalize"}}>{v}</button>
         ))}
       </div>
       {calView==="monthly"&&(<CollapsibleAgendaLayout isAgendaCollapsed={isAgendaCollapsed} setIsAgendaCollapsed={setIsAgendaCollapsed}
-        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,markDone,uncrossDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask,setEvents}}>
+        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,markDone,uncrossDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask,setEvents,checklistItems,checklistDraft,setChecklistDraft,addChecklistItem,toggleChecklistItem}}>
         <Card style={{padding:16}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,padding:"4px 6px"}}>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
@@ -9891,7 +9917,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
         </Card>
       </CollapsibleAgendaLayout>)}
       {calView==="weekly"&&(<CollapsibleAgendaLayout isAgendaCollapsed={isAgendaCollapsed} setIsAgendaCollapsed={setIsAgendaCollapsed}
-        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,markDone,uncrossDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask,setEvents}}>
+        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,markDone,uncrossDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask,setEvents,checklistItems,checklistDraft,setChecklistDraft,addChecklistItem,toggleChecklistItem}}>
         <WeeklyPlanner events={events} setEvents={setEvents} moveEvent={moveEvent} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openNew={openNew} openEdit={openEdit}
           routines={routines} editRoutineMode={editRoutineMode} hoveredRoutineId={hoveredRoutineId} setHoveredRoutineId={setHoveredRoutineId}
           onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
