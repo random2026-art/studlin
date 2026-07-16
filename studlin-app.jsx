@@ -2801,7 +2801,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
 }
 
 // ─── NAV ICONS MAP ────────────────────────────────────────────────────────────
-const navIcon = {dashboard:Icon.grid,aichat:Icon.sparkles,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.users,lectures:Icon.mic,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,feedback:Icon.heart,settings:Icon.settings,profile:Icon.user};
+const navIcon = {aichat:Icon.sparkles,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.users,lectures:Icon.mic,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,feedback:Icon.heart,settings:Icon.settings,profile:Icon.user};
 
 // ─── AI CHAT ──────────────────────────────────────────────────────────────────
 function AiChat() {
@@ -3656,8 +3656,10 @@ function Flashcards() {
   const [draft,setDraft]=useState([]);
   const colorMap={Biology:T.teal,"English IV":T.purple,Calculus:T.blue,Spanish:T.amber,Chemistry:T.red};
 
-  // One-shot deep link from Dashboard's "Pick up where you left off" card —
-  // matches the pendingTour/pendingRoutineWizard pattern used elsewhere.
+  // One-shot deep-link flag (matches the pendingTour/pendingRoutineWizard
+  // pattern used elsewhere) — currently unset by anything since the
+  // Dashboard card that used to write it was removed, kept as reusable
+  // infrastructure for the next thing that wants to link straight to a deck.
   useEffect(()=>{
     const wantId=lsGet("openDeckId",null);
     if(!wantId)return;
@@ -4193,8 +4195,10 @@ function Notes(){
   const [upgradeModal,setUpgradeModal]=useState(null); // {feature, detail}
   const resetNote=(feature,limit,saved)=>"You've used all "+limit+" free "+feature+" this month"+(saved?" — "+saved:"")+". They reset in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+", or upgrade for unlimited right now.";
 
-  // One-shot deep link from Dashboard's "Pick up where you left off" card —
-  // matches the pendingTour/pendingRoutineWizard pattern used elsewhere.
+  // One-shot deep-link flag (matches the pendingTour/pendingRoutineWizard
+  // pattern used elsewhere) — currently unset by anything since the
+  // Dashboard card that used to write it was removed, kept as reusable
+  // infrastructure for the next thing that wants to link straight to a note.
   // sel is an INDEX into notes (matching the existing setSel(idx) click
   // handler in the note list below), not the note's own id.
   useEffect(()=>{
@@ -7792,7 +7796,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
 
             <div style={{display:"flex",gap:10}}>
               <Btn variant="ghost" onClick={onClose} style={{flex:1,justifyContent:"center"}}>Skip</Btn>
-              <Btn onClick={onClose} style={{flex:1,justifyContent:"center"}}>Back to dashboard</Btn>
+              <Btn onClick={onClose} style={{flex:1,justifyContent:"center"}}>Done</Btn>
             </div>
           </div>
         </div>
@@ -8977,6 +8981,29 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
     stale.forEach(s=>resyncCalendar(s));
   },[]);
 
+  // Checklist to-dos — no duration, no calendar slot, just a checkbox.
+  // Creation already lived here (saveChecklistItem, below) but viewing/
+  // checking items off used to only ever happen in the Dashboard tab;
+  // moved here now that Calendar is home and Dashboard is gone, so these
+  // items don't become permanently unreachable.
+  const checklistItems=events.filter(ev=>ev.checklist&&ev.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
+  const [checklistDraft,setChecklistDraft]=useState("");
+  const toggleChecklistItem=(id)=>{
+    const all=lsGet("events",[]);
+    const target=all.find(ev=>ev.id===id);
+    if(target&&target.status!=="done"&&target.time)logCompletionOutcome("done",target.time,difficultyTierOf(target));
+    const next=all.map(ev=>ev.id===id?{...ev,status:ev.status==="done"?"pending":"done",completedAt:ev.status==="done"?null:Date.now()}:ev);
+    setEvents(next);lsSet("events",next);
+  };
+  const addChecklistItem=()=>{
+    if(!checklistDraft.trim())return;
+    const all=lsGet("events",[]);
+    const item={id:String(Date.now()+Math.random()*1000),title:checklistDraft.trim(),date:"",time:"",subject:"",kind:"deadline",notes:"",checklist:true,deadline:null,priority:5,difficulty:5,duration:0,status:"pending",timeSpent:0,completedAt:null};
+    const next=[...all,item];
+    setEvents(next);lsSet("events",next);
+    setChecklistDraft("");
+  };
+
   const now=new Date();
   const [ym,setYm]=useState({y:now.getFullYear(),m:now.getMonth()});
   const [selDay,setSelDay]=useState(dayKey());
@@ -9038,9 +9065,9 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
     bdRecRef.current=r;r.start();
   };
   const stopBdRec=()=>{if(bdRecRef.current)bdRecRef.current.stop();setBdListening(false);};
-  // One-shot deep link from Dashboard's empty-Today's-Plan "Brain dump
-  // everything" button — matches the openDeckId/openNoteId pattern used
-  // elsewhere for cross-tab one-shot triggers.
+  // One-shot deep-link flag, matches the openDeckId/openNoteId pattern —
+  // currently unset by anything since the Dashboard card that used to
+  // write it was removed, kept as reusable cross-tab trigger infrastructure.
   useEffect(()=>{
     if(!lsGet("pendingBrainDump",false))return;
     try{localStorage.removeItem("studlin-pendingBrainDump");}catch(e){}
@@ -9248,7 +9275,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
   // month-grid-scoped `byDay`) so the agenda column stays correct even when
   // `selDay` falls in a week outside the visible month grid (Weekly view).
   // Checklist items are excluded everywhere here — they deliberately have no
-  // calendar presence, only a Dashboard checklist entry.
+  // calendar-grid presence, only a To-dos list entry (see above).
   const dayEvents=events.filter(ev=>!ev.checklist&&ev.date===selDay).concat(getRoutineOccurrencesForDate(selDay).filter(o=>o.kind!=="free period")).sort((a,b)=>a.time<b.time?-1:1);
   // Target Date/Start Time start blank — for tasks/study blocks, blank means
   // "let AI schedule this". The clicked day is remembered so fixed-time kinds
@@ -9294,7 +9321,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
   // date, nothing else. It's flagged checklist:true and carries no `time`,
   // so it's excluded from the calendar grid, agenda, and AI day-planning
   // (advancedSchedulePlanner) everywhere those filter on that flag, and
-  // instead only ever shows up in the Dashboard checklist.
+  // instead only ever shows up in the To-dos section above.
   const saveChecklistItem=()=>{
     if(!evTitle.trim())return;
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
@@ -9786,6 +9813,24 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
           <BtnSm variant="subtle" onClick={()=>{setEditRoutineMode(false);setHoveredRoutineId(null);}}>Done</BtnSm>
         </div>
       )}
+      <Card style={{padding:14,marginBottom:16}}>
+        <div style={{fontSize:12,fontWeight:700,color:T.white,marginBottom:10,textTransform:"uppercase",letterSpacing:"0.06em"}}>To-dos</div>
+        <div style={{display:"flex",gap:8,marginBottom:checklistItems.length>0?10:0}}>
+          <Input value={checklistDraft} onChange={e=>setChecklistDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addChecklistItem();}} placeholder="Add a quick to-do…" style={{flex:1}} />
+          <BtnSm onClick={addChecklistItem} disabled={!checklistDraft.trim()} style={{opacity:checklistDraft.trim()?1:0.45,flexShrink:0}}>Add</BtnSm>
+        </div>
+        {checklistItems.length>0&&(
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {checklistItems.map(it=>(
+              <div key={it.id} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 4px"}}>
+                <button onClick={()=>toggleChecklistItem(it.id)} title="Mark done" style={{width:18,height:18,borderRadius:5,border:`1.5px solid ${T.border}`,background:"transparent",cursor:"pointer",flexShrink:0,padding:0}} />
+                <span style={{fontSize:12.5,color:T.text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.title}</span>
+                {it.date&&<span style={{fontSize:11,color:T.muted,flexShrink:0}}>{new Date(it.date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
       <div style={{display:"flex",gap:6,marginBottom:20}}>
         {["monthly","weekly"].map(v=>(
           <button key={v} onClick={()=>setCalView(v)} style={{padding:"6px 14px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",background:calView===v?T.lime+"14":"transparent",color:calView===v?T.lime:T.muted,border:`1px solid ${calView===v?T.lime+"44":T.border}`,fontFamily:T.font,transition:"all 0.15s",textTransform:"capitalize"}}>{v}</button>
@@ -9922,7 +9967,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
           <label className="checkbox" onClick={()=>setAsChecklist(s=>!s)} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:14,fontSize:12.5,color:T.text}}>
             <span style={{width:16,height:16,borderRadius:4,border:`1.5px solid ${asChecklist?T.lime:T.border}`,background:asChecklist?T.lime:"transparent",display:"grid",placeItems:"center",flexShrink:0,color:T.ink}}>{asChecklist&&Icon.check}</span>
             No specific time, add to checklist instead
-            <span style={{color:T.muted,fontWeight:400}}>(skips the calendar, shows up as a checkbox on your Dashboard)</span>
+            <span style={{color:T.muted,fontWeight:400}}>(skips the calendar grid, shows up in your Calendar's To-dos list)</span>
           </label>
         )}
 
@@ -11753,7 +11798,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Private Account · Serious Mode</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Strip gamification and go heads-down. Focus minutes, levels, and Weekly Wrapped are hidden. Chat, calendar sharing, and notes stay fully accessible.</div>
-              <Row label="Private Account / Serious Mode" sub="Hides focus minutes, tiers, leaderboard, and Weekly Wrapped. Dashboard shows clean calendar + task grid only." k="_" right={
+              <Row label="Private Account / Serious Mode" sub="Hides focus minutes, tiers, and leaderboard on your Profile. Calendar stays a clean task grid either way." k="_" right={
                 <div onClick={()=>{const next=!seriousMode;setSeriousMode(next);const s=lsGet("settings",{});lsSet("settings",{...s,seriousMode:next});}} style={{width:38,height:20,borderRadius:10,background:seriousMode?T.purple:T.card2,border:`1px solid ${seriousMode?T.purple:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
                   <div style={{width:14,height:14,borderRadius:"50%",background:seriousMode?T.bg:"#fff",position:"absolute",top:2,left:seriousMode?21:2,transition:"left 0.2s"}} />
                 </div>
@@ -12051,7 +12096,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 
 
 // ─── PROFILE ──────────────────────────────────────────────────────────────────
-function Profile({setActive}={}) {
+function Profile({setActive,seriousMode=false}={}) {
   const [prof,setProfState]=useState(()=>getProfile());
   const [picUrl,setPicUrl]=useState(()=>getUserPicUrl());
   const [status,setStatus]=useState(prof.status||"");
@@ -12064,6 +12109,23 @@ function Profile({setActive}={}) {
   const streak=Math.max(1,getStreak());
   const ps=profileStats();
   const initials=((prof.name||"").split(" ").map(x=>x[0]).join("").slice(0,2).toUpperCase())||"S";
+  const firstName=(prof.name||"there").split(" ")[0];
+
+  // Rank + level roadmap -- moved here now that Dashboard (the only place
+  // that used to show them) is gone. Same fetch-once-per-mount shape
+  // Dashboard used; "you" is always merged in fresh via mergeLeaderboard
+  // so your own row never lags behind minutes you just earned.
+  const [topProfiles,setTopProfiles]=useState([]);
+  useEffect(()=>{
+    let cancelled=false;
+    fetchTopProfiles(20).then(rows=>{if(!cancelled)setTopProfiles(rows);});
+    return ()=>{cancelled=true;};
+  },[]);
+  const [levelRoadmapOpen,setLevelRoadmapOpen]=useState(false);
+  const [leaderboardOpen,setLeaderboardOpen]=useState(false);
+  const myUid=firebase.auth().currentUser?.uid;
+  const rankedAll=mergeLeaderboard(topProfiles,firstName,lvl.minutes,streak,myUid,0);
+  const yourRank=(rankedAll.find(u=>u.you)||{}).r||1;
 
   const handlePicFile=(e)=>{
     const file=e.target.files&&e.target.files[0];
@@ -12109,6 +12171,7 @@ function Profile({setActive}={}) {
   );
 
   return (
+    <>
     <div>
       {/* ── Header card */}
       <Card style={{display:"flex",alignItems:"center",gap:28,marginBottom:16,padding:28}}>
@@ -12132,18 +12195,20 @@ function Profile({setActive}={}) {
           <div style={{fontSize:13,color:T.muted,marginBottom:12}}>{affiliation||prof.school||"No affiliation set"}</div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             <Badge color={T.lime}>Pro</Badge>
-            <Badge color={T.amber}>{streak}-day streak</Badge>
-            <Badge color={T.blue}>{lvl.title}</Badge>
+            {!seriousMode&&<Badge color={T.amber}>{streak}-day streak</Badge>}
+            {!seriousMode&&<Badge color={T.blue}>{lvl.title}</Badge>}
             {status&&<Badge color={T.teal}>{status==="highschool"?"High School":"College"}</Badge>}
           </div>
           {picSaved&&<div style={{marginTop:8,fontSize:11.5,color:T.lime,fontWeight:600}}>Profile picture updated.</div>}
         </div>
-        <div style={{textAlign:"right"}}>
-          <div style={{fontSize:42,fontWeight:700,color:T.lime,letterSpacing:"-0.04em",lineHeight:1}}>{lvl.minutes.toLocaleString()}m</div>
-          <div style={{fontSize:12,color:T.muted,marginTop:3}}>Focused · {lvl.title}</div>
-          <div style={{marginTop:10,width:160}}><Prog pct={lvl.tierPct} /></div>
-          <div style={{fontSize:11,color:T.muted,marginTop:4}}>{lvl.nextTier?`${(lvl.nextTier.minMinutes-lvl.minutes).toLocaleString()}m to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
-        </div>
+        {!seriousMode&&(
+          <div onClick={()=>setLevelRoadmapOpen(true)} title="See level roadmap" style={{textAlign:"right",cursor:"pointer"}}>
+            <div style={{fontSize:42,fontWeight:700,color:T.lime,letterSpacing:"-0.04em",lineHeight:1}}>{lvl.minutes.toLocaleString()}m</div>
+            <div style={{fontSize:12,color:T.muted,marginTop:3}}>Focused · {lvl.title}</div>
+            <div style={{marginTop:10,width:160}}><Prog pct={lvl.tierPct} /></div>
+            <div style={{fontSize:11,color:T.muted,marginTop:4}}>{lvl.nextTier?`${(lvl.nextTier.minMinutes-lvl.minutes).toLocaleString()}m to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
+          </div>
+        )}
       </Card>
 
       {/* ── Identity — school/status only. Scheduling behavior (difficulty
@@ -12181,8 +12246,9 @@ function Profile({setActive}={}) {
         <ExploreClassesCard school={affiliation} classes={DEMO_CLASSES_BY_SCHOOL[affiliation]} setActive={setActive} />
       )}
 
-      {/* ── Stats (real data only) */}
-      {(()=>{
+      {/* ── Stats (real data only) — hidden in Serious Mode, same as the
+          Dashboard leaderboard/tiers used to be. */}
+      {!seriousMode&&(()=>{
         const allDecks=lsGet("decks",[]);
         const cardsMastered=allDecks.reduce((a,d)=>a+(d.done||0),0);
         const stats=[
@@ -12191,11 +12257,12 @@ function Profile({setActive}={}) {
           ["Cards mastered",String(cardsMastered),T.blue],
           ["Day streak",String(streak),T.amber],
           ["Level",lvl.title,T.red],
+          ["Rank","#"+yourRank,T.purple,()=>setLeaderboardOpen(true)],
         ];
         return(
-          <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10,marginBottom:16}}>
-            {stats.map(([l,v,c],i)=>(
-              <Card key={i} style={{textAlign:"center",padding:16}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:10,marginBottom:16}}>
+            {stats.map(([l,v,c,onClick],i)=>(
+              <Card key={i} onClick={onClick} style={{textAlign:"center",padding:16,cursor:onClick?"pointer":"default"}}>
                 <div style={{fontSize:26,fontWeight:700,color:c,letterSpacing:"-0.02em",lineHeight:1}}>{v}</div>
                 <div style={{fontSize:11,color:T.muted,marginTop:6}}>{l}</div>
               </Card>
@@ -12204,8 +12271,9 @@ function Profile({setActive}={}) {
         );
       })()}
 
-      {/* ── Weekly activity */}
-      {(()=>{
+      {/* ── Weekly activity — also hidden in Serious Mode (it's a focus-
+          minutes view, same category as the stats grid above). */}
+      {!seriousMode&&(()=>{
         const allSessions=lsGet("sessions",[]);
         const now=new Date();
         const dow=(now.getDay()+6)%7;
@@ -12246,6 +12314,9 @@ function Profile({setActive}={}) {
         );
       })()}
     </div>
+    <LevelRoadmapModal open={levelRoadmapOpen} onClose={()=>setLevelRoadmapOpen(false)} currentMinutes={lvl.minutes} />
+    <LeaderboardModal open={leaderboardOpen} onClose={()=>setLeaderboardOpen(false)} currentMinutes={lvl.minutes} currentName={firstName} currentStreak={streak} />
+    </>
   );
 }
 
@@ -12351,566 +12422,6 @@ function LeaderboardModal({open,onClose,currentMinutes,currentName,currentStreak
         </div>
       </div>
     </div>
-  );
-}
-
-// ─── DASHBOARD ────────────────────────────────────────────────────────────────
-// Disabled "for now" per request — flip back to true to restore the inline
-// Global Leaderboard card on the dashboard.
-const SHOW_GLOBAL_LEADERBOARD=false;
-function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleTask, dashToast, setDashToast}) {
-  const realStats=sessionStats();
-  const realStreak=Math.max(1,getStreak());
-  const lvl=levelInfo();
-  const wk=weekStreak();
-  // Live top profiles from Firestore, ranked by real XP — fetched once per
-  // mount; "you" is always merged in fresh on every render below so your own
-  // row never lags behind what you just earned.
-  const [topProfiles,setTopProfiles]=useState([]);
-  useEffect(()=>{
-    let cancelled=false;
-    fetchTopProfiles(8).then(rows=>{if(!cancelled)setTopProfiles(rows);});
-    return ()=>{cancelled=true;};
-  },[]);
-  const [,forcePlan]=useState(0);
-  const [levelRoadmapOpen,setLevelRoadmapOpen]=useState(false);
-  const [leaderboardOpen,setLeaderboardOpen]=useState(false);
-  const plan=todaysPlan();
-  const planDoneCount=plan.filter(t=>t.done).length;
-  const planLeft=Math.max(0,plan.length-planDoneCount);
-  const subjColor={Chemistry:T.red,"English IV":T.purple,Biology:T.teal,Calculus:T.blue,Spanish:T.amber,History:T.muted};
-  const scOf=(s)=>subjColor[s]||T.lime;
-  const fmtClock=(t)=>{if(!t)return"";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+ap;};
-  const prof=getProfile();
-  const firstName=(prof.name||"there").split(" ")[0];
-  const hr=new Date().getHours();
-  const greet=hr<12?"Good morning":hr<18?"Good afternoon":"Good evening";
-  // Real deck data from localStorage
-  const rawDecks=lsGet("decks",[]);
-  const realDecks=rawDecks.slice(0,6).map(d=>({
-    subj:(d.name||"Deck").slice(0,10).toUpperCase()+" · DECK",
-    title:d.name||"Untitled deck",
-    pct:d.cards&&d.cards.length>0?Math.round((d.done||0)/d.cards.length*100):0,
-    a:(d.cards?d.cards.length:(d.count||0))+" cards",
-    b:d.done>0?d.done+" done":"NEW",
-    bg:T.card2,
-    id:d.id,
-    kind:"deck",
-  }));
-  // Real notes from localStorage
-  const rawNotes=lsGet("notes",[]);
-  const noteCards=rawNotes.slice(0,3).map(n=>({
-    subj:(n.tag||"Note").slice(0,8).toUpperCase()+" · NOTES",
-    title:n.title||"Untitled note",
-    pct:50,
-    a:n.body?(n.body.split(" ").length+" words"):"0 words",
-    b:n.created?new Date(n.created).toLocaleDateString("en",{weekday:"short"}):"",
-    bg:T.card2,
-    id:n.id,
-    kind:"note",
-  }));
-  const pickUpItems=[...realDecks,...noteCards];
-  // Real upcoming events (next 14 days)
-  const allEvents=lsGet("events",[]);
-  const today=dayKey();
-  const in14days=new Date();in14days.setDate(in14days.getDate()+14);
-  const upcomingEvents=allEvents
-    .filter(ev=>!ev.checklist&&ev.date>=today&&ev.date<=dayKey(in14days)&&ev.status!=="done")
-    .sort((a,b)=>a.date.localeCompare(b.date)||((a.time||"").localeCompare(b.time||"")))
-    .slice(0,5)
-    .map(ev=>{
-      const evDate=new Date(ev.date+"T12:00:00");
-      const daysUntil=Math.ceil((new Date(ev.date)-new Date(today))/86400000);
-      return{
-        d:String(evDate.getDate()).padStart(2,"0"),
-        mo:["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"][evDate.getMonth()],
-        t:ev.title,
-        sub:(ev.subject||"")+(ev.kind?" · "+ev.kind:""),
-        cd:daysUntil===0?"Today":daysUntil===1?"Tomorrow":daysUntil+"d",
-        urgent:daysUntil<=2,
-        id:ev.id,
-      };
-    });
-  // Checklist to-dos — no duration, no calendar slot, just a checkbox. Kept
-  // in the same `events` localStorage array as everything else (same
-  // id/status shape markDone-style toggles already expect), just flagged
-  // and filtered out of every calendar/planner surface above.
-  const checklistItems=allEvents.filter(ev=>ev.checklist&&ev.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
-  const [checklistDraft,setChecklistDraft]=useState("");
-  const toggleChecklistItem=(id)=>{
-    const all=lsGet("events",[]);
-    const target=all.find(ev=>ev.id===id);
-    if(target&&target.status!=="done"&&target.time)logCompletionOutcome("done",target.time,difficultyTierOf(target));
-    const next=all.map(ev=>ev.id===id?{...ev,status:ev.status==="done"?"pending":"done",completedAt:ev.status==="done"?null:Date.now()}:ev);
-    lsSet("events",next);forcePlan(x=>x+1);
-  };
-  const addChecklistItem=()=>{
-    if(!checklistDraft.trim())return;
-    const all=lsGet("events",[]);
-    const item={id:String(Date.now()+Math.random()*1000),title:checklistDraft.trim(),date:"",time:"",subject:"",kind:"deadline",notes:"",checklist:true,deadline:null,priority:5,difficulty:5,duration:0,status:"pending",timeSpent:0,completedAt:null};
-    lsSet("events",[...all,item]);
-    setChecklistDraft("");forcePlan(x=>x+1);
-  };
-  // Real weekly wrapped stats
-  const weeklyFocusMin=realStats.weekMin;
-  // Real cards mastered + words written totals
-  const cardsMasteredTotal=rawDecks.reduce((a,d)=>a+(d.done||0),0);
-  const stripHtml=(html)=>(html||"").replace(/<[^>]*>/g," ");
-  const rawEssays=lsGet("essays",[]);
-  const wordsWrittenTotal=rawEssays.reduce((a,e)=>{
-    if(typeof e.words==="number")return a+e.words;
-    const txt=stripHtml(e.content).trim();
-    return a+(txt?txt.split(/\s+/).length:0);
-  },0);
-  // Real session activity for the last 7 days
-  const allSessions=lsGet("sessions",[]);
-  const weekDays7=(()=>{const arr=[];const now=new Date();const dow=(now.getDay()+6)%7;const mon=new Date(now);mon.setDate(now.getDate()-dow);for(let i=0;i<7;i++){const d=new Date(mon);d.setDate(mon.getDate()+i);arr.push(d);}return arr;})();
-  // Top subject this week — from completed plan tasks' subject field
-  const subjCounts={};
-  allEvents.filter(ev=>ev.status==="done"&&ev.date>=dayKey(weekDays7[0])).forEach(ev=>{subjCounts[ev.subject]=(subjCounts[ev.subject]||0)+1;});
-  const topSubjectEntry=Object.entries(subjCounts).sort((a,b)=>b[1]-a[1])[0];
-  const topSubjectThisWeek=topSubjectEntry?topSubjectEntry[0]:null;
-  // Real 91-day streak heatmap from login days + session minutes
-  const loginDaysSet=new Set(lsGet("days",[]));
-  const minsByDay={};
-  allSessions.forEach(s=>{minsByDay[s.d]=(minsByDay[s.d]||0)+(s.m||0);});
-  const heatmapCells=(()=>{const cells=[];const now=new Date();for(let i=90;i>=0;i--){const d=new Date(now);d.setDate(now.getDate()-i);const k=dayKey(d);const mins=minsByDay[k]||0;let lvl=0;if(loginDaysSet.has(k)||mins>0){lvl=mins>=120?4:mins>=60?3:mins>=30?2:1;}cells.push(lvl);}return cells;})();
-  const cellColor=(lvl)=>{
-    if(!lvl) return T.mode==="light"?"rgba(8,12,40,0.06)":"rgba(255,255,255,0.06)";
-    return [null,T.lime+"40",T.lime+"80",T.limeDk,T.forest][lvl];
-  };
-  // Mono label/eyebrow inside a card
-  const Eye=({children,style={}})=>(
-    <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.16em",textTransform:"uppercase",color:T.muted,padding:"4px 8px",border:`1px solid ${T.border}`,borderRadius:99,...style}}>{children}</span>
-  );
-  const Hand=({children,style={}})=>(
-    <h3 style={{fontFamily:T.hand,fontSize:30,lineHeight:1,fontWeight:600,margin:0,color:T.white,letterSpacing:"-0.01em",whiteSpace:"nowrap",...style}}>{children}</h3>
-  );
-  const CardHead=({title,label,more,light=false})=>(
-    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:12}}>
-      <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
-        <Hand style={light?{color:T.cream}:{}}>{title}</Hand>
-        {label&&<Eye style={light?{color:"rgba(246,241,230,0.6)",borderColor:"rgba(246,241,230,0.18)"}:{}}>{label}</Eye>}
-      </div>
-      {more&&<button style={{fontSize:12,color:light?"rgba(246,241,230,0.6)":T.muted,display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",background:"none",border:"none"}}>{more} <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>}
-    </div>
-  );
-  const isLight=T.mode==="light";
-  // Weekly Wrapped is no longer a permanent dashboard card — it now surfaces
-  // once as a full-screen popup during the Sunday/Monday evening window
-  // (>=6pm), gated by a per-week localStorage flag so it doesn't reappear
-  // once dismissed, but comes back fresh next week.
-  const wrappedWeekKey=today.slice(0,4)+"-"+weekNo();
-  const isWrappedWindow=(()=>{const d=new Date();const day=d.getDay();return(day===0||day===1)&&d.getHours()>=18;})();
-  const [wrappedOpen,setWrappedOpen]=useState(()=>isWrappedWindow&&!lsGet("wrapped-dismissed-"+wrappedWeekKey,false));
-  const dismissWrapped=()=>{lsSet("wrapped-dismissed-"+wrappedWeekKey,true);setWrappedOpen(false);};
-  // Dynamic leaderboard — real Firestore profiles ranked by actual focus minutes, "you" merged in live
-  const myUid=firebase.auth().currentUser?.uid||null;
-  const lbUsers=mergeLeaderboard(topProfiles, firstName, lvl.minutes, realStreak, myUid, 5);
-  const lbRankColor=(r)=>r===1?"#FFD700":r===2?"#C0C0C0":r===3?"#CD7F32":T.muted;
-  const lbRankBg=(r)=>r===1?"rgba(255,215,0,0.10)":r===2?"rgba(192,192,192,0.07)":r===3?"rgba(205,127,50,0.07)":"transparent";
-  return (
-    <>
-    <div style={{display:"flex",flexDirection:"column",gap:16,paddingBottom:40}}>
-
-      {/* GREETING STRIP — full 3-col in normal mode, single card in Serious Mode */}
-      {seriousMode ? (
-        <div style={{background:`linear-gradient(135deg, ${T.forest} 0%, #1B4536 100%)`,color:T.cream,borderRadius:22,padding:"28px 34px",position:"relative",overflow:"hidden"}}>
-          <div style={{position:"absolute",right:-40,top:-40,width:240,height:240,background:"radial-gradient(circle,rgba(200,255,90,0.18),transparent 70%)",pointerEvents:"none"}} />
-          <div style={{position:"relative"}}>
-            <div style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.45)",marginBottom:6}}>{todayLabel()} · Week {weekNo()} · <span style={{color:T.purple,letterSpacing:"0.12em"}}>SERIOUS MODE</span></div>
-            <div style={{fontFamily:T.hand,fontSize:50,lineHeight:0.95,fontWeight:600,color:T.cream,margin:"0 0 10px"}}>{greet}, <span style={{color:T.lime}}>{firstName}.</span></div>
-            <p style={{fontSize:13.5,color:"rgba(246,241,230,0.7)",margin:"0 0 18px",lineHeight:1.5,maxWidth:560}}>{planLeft>0?<>You have <strong style={{color:T.cream}}>{planLeft} task{planLeft===1?"":"s"} left</strong> today. No distractions. Just get it done.</>:plan.length>0?<>All <strong style={{color:T.cream}}>{plan.length} tasks complete</strong> today. Outstanding focus.</>:<>Nothing scheduled yet. Add tasks to your calendar to get started.</>}</p>
-            <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-              <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"10px 18px",background:T.lime,color:T.ink,borderRadius:99,fontSize:13,fontWeight:600,border:"none",cursor:"pointer",fontFamily:T.font}}>Open calendar</button>
-            </div>
-          </div>
-        </div>
-      ) : (
-      <div style={{display:"grid",gridTemplateColumns:"1.5fr 1fr 1fr",gap:16}}>
-        {/* Greeting */}
-        <div style={{background:`linear-gradient(135deg, ${T.forest} 0%, #1B4536 100%)`,color:T.cream,borderRadius:22,padding:"26px 30px",position:"relative",overflow:"hidden"}}>
-          <div style={{position:"absolute",right:-40,top:-40,width:240,height:240,background:"radial-gradient(circle,rgba(200,255,90,0.18),transparent 70%)",pointerEvents:"none"}} />
-          <div style={{position:"relative"}}>
-            <div style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)",marginBottom:6}}>{todayLabel()} · Week {weekNo()}</div>
-            <div style={{fontFamily:T.hand,fontSize:54,lineHeight:0.95,fontWeight:600,color:T.cream,margin:"0 0 4px",animation:"studlinRise 0.5s ease-out"}}>{greet}, <span style={{color:T.lime}}>{firstName}.</span></div>
-            <p style={{fontSize:13.5,color:"rgba(246,241,230,0.7)",margin:"8px 0 16px",lineHeight:1.5,maxWidth:380}}>{planLeft>0?<>You've got <strong style={{color:T.cream}}>{planLeft} task{planLeft===1?"":"s"} left</strong> on today's plan. Let's lock in.</>:plan.length>0?<>All <strong style={{color:T.cream}}>{plan.length} tasks done</strong> today. Outstanding work.</>:<>Nothing scheduled yet. Add a few tasks and let's lock in.</>}</p>
-            <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-              <button onClick={()=>setActive("aichat")} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",background:T.lime,color:T.ink,borderRadius:99,fontSize:13,fontWeight:600,border:"none",cursor:"pointer",fontFamily:T.font}}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 3c-4.97 0-9 3.185-9 7.115 0 2.557 1.522 4.82 3.889 6.115L6 21l4.339-2.308C11.536 18.888 12.746 19 14 19c4.97 0 9-3.185 9-7.115S16.97 3 12 3z"/></svg>
-                Ask Studlin AI
-              </button>
-              <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",color:T.cream,border:"1px solid rgba(246,241,230,0.18)",background:"transparent",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>View today's plan</button>
-            </div>
-          </div>
-        </div>
-
-        {/* Streak — medium green card matching design */}
-        <div onClick={()=>setActive("profile")} style={{background:isLight?"#5B8C2A":"#78BC2A",borderRadius:22,padding:22,cursor:"pointer",display:"flex",flexDirection:"column",position:"relative",overflow:"hidden"}}>
-          <div style={{position:"absolute",right:-20,top:-20,width:120,height:120,background:"radial-gradient(circle,rgba(174,206,94,0.15),transparent 70%)",pointerEvents:"none"}} />
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
-            <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)",fontWeight:600}}>Day Streak</span>
-            <svg width="22" height="22" viewBox="0 0 24 24" stroke="none">
-              <defs><linearGradient id="streakFlameGrad2" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#FFB347"/><stop offset="100%" stopColor="#FF6B00"/></linearGradient></defs>
-              <path fill="url(#streakFlameGrad2)" d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/>
-            </svg>
-          </div>
-          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.cream,margin:"10px 0 2px",position:"relative"}}>{realStreak}<span style={{fontSize:20,color:"rgba(246,241,230,0.55)",marginLeft:6}}>days</span></div>
-            <div style={{fontSize:12,color:"rgba(246,241,230,0.65)",marginBottom:4}}>Today{wk.find(d=>d.today)?.on?" · active":" · keep going!"}</div>
-            <div style={{display:"flex",gap:5,marginTop:"auto"}}>
-              {wk.map((d,i)=>{
-                const isToday=d.today, on=d.on;
-                return(
-                  <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
-                    <div style={{width:"100%",height:28,borderRadius:7,background:isToday?"rgba(174,206,94,0.25)":on?"rgba(246,241,230,0.12)":"rgba(246,241,230,0.05)",color:on?"#FF8C38":"rgba(246,241,230,0.25)",opacity:d.future?0.4:1,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:isToday?`0 0 0 1.5px ${T.lime}`:"none"}}>
-                      {on||isToday
-                        ?<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
-                        :<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="4"/></svg>
-                      }
-                    </div>
-                    <span style={{fontSize:9,fontFamily:T.mono,fontWeight:isToday?700:400,color:isToday?T.lime:"rgba(246,241,230,0.35)"}}>{d.lab}</span>
-                  </div>
-                );
-              })}
-            </div>
-        </div>
-
-        {/* Focus & Rank */}
-        <div onClick={()=>setLevelRoadmapOpen(true)} style={{background:T.card,borderRadius:22,padding:22,cursor:"pointer",display:"flex",flexDirection:"column"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,fontWeight:600}}>Focus &amp; Rank</span>
-            <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.10em",background:T.lime+"33",padding:"3px 9px",borderRadius:99,color:T.limeDk,border:`1px solid ${T.lime}55`,fontWeight:700}}>{lvl.title.toUpperCase()}</span>
-          </div>
-          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.text,margin:"10px 0 2px"}}>{lvl.minutes.toLocaleString()}<span style={{fontSize:18,color:T.muted,marginLeft:6,fontFamily:T.font,fontWeight:400}}>min</span></div>
-          <div style={{fontSize:12,color:T.muted,marginBottom:4}}>{lvl.nextTier?`${(lvl.nextTier.minMinutes-lvl.minutes).toLocaleString()} min to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
-          <div style={{height:6,background:T.card2,borderRadius:99,overflow:"hidden",marginTop:"auto"}}>
-            <div style={{height:"100%",width:lvl.tierPct+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}}/>
-          </div>
-          <div style={{fontSize:11,color:T.muted,marginTop:8,display:"flex",alignItems:"center",gap:4}}>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
-            View career roadmap
-          </div>
-        </div>
-      </div>
-      )} {/* end seriousMode ternary */}
-
-      {/* Quote of the Day */}
-      {!seriousMode&&(()=>{
-        const QUOTES=[
-          {text:"Your future self will thank you for the work you put in today.",author:"Anonymous"},
-          {text:"The secret of getting ahead is getting started.",author:"Mark Twain"},
-          {text:"You don't have to be great to start, but you have to start to be great.",author:"Zig Ziglar"},
-          {text:"Education is not the filling of a pail, but the lighting of a fire.",author:"W.B. Yeats"},
-          {text:"Success is the sum of small efforts repeated day in and day out.",author:"Robert Collier"},
-          {text:"The expert in anything was once a beginner.",author:"Helen Hayes"},
-          {text:"Push yourself, because no one else is going to do it for you.",author:"Anonymous"},
-          {text:"Don't watch the clock; do what it does. Keep going.",author:"Sam Levenson"},
-          {text:"Believe you can and you're halfway there.",author:"Theodore Roosevelt"},
-          {text:"It always seems impossible until it's done.",author:"Nelson Mandela"},
-          {text:"Hard work beats talent when talent doesn't work hard.",author:"Tim Notke"},
-          {text:"The more that you read, the more things you will know.",author:"Dr. Seuss"},
-          {text:"An investment in knowledge pays the best interest.",author:"Benjamin Franklin"},
-          {text:"Learning is not attained by chance — it must be sought with ardor.",author:"Abigail Adams"},
-        ];
-        const todayStr=new Date().toISOString().slice(0,10);
-        const stored=lsGet("quote-of-day",null);
-        let qIdx;
-        if(stored&&stored.date===todayStr){
-          qIdx=stored.idx;
-        }else{
-          const prev=stored?stored.idx:-1;
-          let next=Math.floor(Math.random()*QUOTES.length);
-          if(next===prev)next=(next+1)%QUOTES.length;
-          qIdx=next;
-          lsSet("quote-of-day",{date:todayStr,idx:qIdx});
-        }
-        const q=QUOTES[qIdx];
-        return(
-          <div style={{background:"#F5EE90",borderRadius:22,padding:"28px 32px",position:"relative",overflow:"hidden",display:"flex",alignItems:"flex-start",gap:24}}>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(14,31,24,0.4)",marginBottom:10,fontWeight:600}}>Quote of the day</div>
-              <p style={{fontFamily:"Georgia,serif",fontSize:18,fontStyle:"italic",lineHeight:1.55,color:"#0E1F18",margin:"0 0 12px",maxWidth:680}}>"{q.text}"</p>
-              <div style={{fontSize:12,color:"rgba(14,31,24,0.45)",letterSpacing:"0.04em"}}>— {q.author.toUpperCase()}</div>
-            </div>
-            <button onClick={()=>{if(navigator.share)navigator.share({text:'"'+q.text+'" — '+q.author+'\n\nStudlin'});else if(navigator.clipboard)navigator.clipboard.writeText('"'+q.text+'" — '+q.author);}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"11px 18px",background:"#0E1F18",border:"none",borderRadius:99,fontSize:13,fontWeight:600,color:"#F6F1E6",cursor:"pointer",fontFamily:T.font,flexShrink:0,boxShadow:"0 4px 14px rgba(0,0,0,0.18)"}}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-              Share Quote
-            </button>
-          </div>
-        );
-      })()}
-
-      {/* ROW 2: Today's plan + Jump back in + Ask Studlin */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:16}}>
-        {/* Today's plan */}
-        <div style={{background:T.card,borderRadius:22,padding:24,display:"flex",flexDirection:"column"}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8,flexWrap:"wrap"}}>
-            <span style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:T.text}}>Today's plan</span>
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.1em",padding:"4px 9px",borderRadius:99,background:T.card2,color:T.muted,fontWeight:600}}>{planDoneCount} / {plan.length} DONE</span>
-              <button onClick={()=>setActive("calendar")} style={{fontSize:12,color:T.muted,display:"inline-flex",alignItems:"center",gap:3,cursor:"pointer",background:"none",border:"none",fontFamily:T.font,fontWeight:500}}>Calendar <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
-            </div>
-          </div>
-          {plan.length>0&&<div style={{height:3,background:T.card2,borderRadius:99,marginBottom:14,overflow:"hidden"}}><div style={{height:"100%",width:Math.round(planDoneCount/Math.max(plan.length,1)*100)+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}} /></div>}
-          {plan.length===0
-            ?<div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 8px",textAlign:"center"}}>
-              <div style={{fontSize:13,color:T.muted,marginBottom:18,lineHeight:1.6}}>Nothing scheduled for today. Add events to your calendar and they appear here automatically.</div>
-              <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
-                <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"10px 20px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Add a task</button>
-                <button onClick={()=>{lsSet("pendingBrainDump",true);setActive("calendar");}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"10px 20px",background:"transparent",color:T.text,border:`1px solid ${T.border}`,borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Brain dump everything</button>
-              </div>
-            </div>
-            :plan.map((t)=>{
-              const c=scOf(t.subject);
-              return(
-                <div key={t.id} onClick={()=>{togglePlanDone(t.id);forcePlan(x=>x+1);}} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer",background:T.card2}}>
-                  <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${t.done?T.text:T.border}`,background:t.done?T.text:"transparent",flex:"none",display:"grid",placeItems:"center"}}>
-                    {t.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
-                  </div>
-                  <div style={{flex:1,minWidth:0}}>
-                    <span style={{fontSize:13.5,color:t.done?T.faint:T.text,textDecoration:t.done?"line-through":"none",fontWeight:500}}>{t.title}</span>
-                    <div style={{fontSize:11,color:T.muted,marginTop:1}}>{t.subject}{t.kind?" · "+t.kind:""}</div>
-                  </div>
-                  <span style={{fontFamily:T.mono,fontSize:10,color:T.faint}}>{fmtClock(t.time)}</span>
-                  {!t.done&&t.duration&&(t.kind==="study block"||t.kind==="deadline")&&(
-                    <button onClick={(e)=>{e.stopPropagation();setRescheduleTask(t);}} style={{flexShrink:0,padding:"3px 7px",borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Reschedule</button>
-                  )}
-                </div>
-              );
-            })}
-        </div>
-
-        {/* Checklist — plain to-dos with no inherent duration/time (e.g.
-            "send AP scores to college"). Deliberately kept out of the
-            calendar/Today's-plan entirely; this is the only place they live.
-            Restored here after briefly being removed — replaces "Jump back
-            in", which just duplicated what the sidebar nav already does. */}
-        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
-            <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <span style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:T.text}}>Checklist</span>
-              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:99,color:T.muted}}>{checklistItems.length} OPEN</span>
-            </div>
-          </div>
-          <div style={{display:"flex",gap:8,marginBottom:14}}>
-            <input value={checklistDraft} onChange={e=>setChecklistDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addChecklistItem();}}
-              placeholder="e.g. Send AP scores" style={{flex:1,minWidth:0,background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"9px 10px",color:T.text,fontSize:12.5,fontFamily:T.font,outline:"none"}} />
-            <button onClick={addChecklistItem} disabled={!checklistDraft.trim()} style={{padding:"9px 12px",background:T.lime,color:T.ink,border:"none",borderRadius:10,fontSize:12.5,fontWeight:600,cursor:checklistDraft.trim()?"pointer":"default",fontFamily:T.font,opacity:checklistDraft.trim()?1:0.45,flexShrink:0}}>Add</button>
-          </div>
-          {checklistItems.length===0
-            ? <div style={{fontSize:12.5,color:T.muted,padding:"6px 0 4px",textAlign:"center"}}>Nothing on your checklist.</div>
-            : checklistItems.map(item=>(
-              <div key={item.id} onClick={()=>toggleChecklistItem(item.id)} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"9px 12px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer"}}>
-                <div style={{width:18,height:18,borderRadius:"50%",border:`1.5px solid ${T.faint}`,background:"transparent",flex:"none",marginTop:1,display:"grid",placeItems:"center"}} />
-                <div style={{flex:1,minWidth:0,fontSize:12.5,color:T.text,fontWeight:500,lineHeight:1.4,overflowWrap:"break-word"}}>{item.title}</div>
-              </div>
-            ))}
-        </div>
-
-        {/* Ask Studlin */}
-        <div style={{background:T.ink,color:T.cream,borderRadius:22,padding:24,display:"flex",flexDirection:"column"}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
-            <span style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:T.cream}}>Ask Studlin</span>
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.12em",padding:"4px 9px",borderRadius:99,background:"rgba(246,241,230,0.10)",color:"rgba(246,241,230,0.6)",fontWeight:700,border:"1px solid rgba(246,241,230,0.12)"}}>AI TUTOR</span>
-              <button onClick={()=>setActive("aichat")} style={{fontSize:12,color:"rgba(246,241,230,0.5)",display:"inline-flex",alignItems:"center",gap:2,cursor:"pointer",background:"none",border:"none",fontFamily:T.font}}>Open <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
-            </div>
-          </div>
-          {(()=>{const nt=plan.find(t=>!t.done);const tc=nt?(nt.subject||nt.title):"your subjects";const sug=nt?["Explain "+tc+" concepts","Quiz me on "+tc,"Help me outline this"]:["Summarize my notes","Build a study schedule","Quiz me on any topic"];const ctx=nt?`You have "${nt.title}" up next — want a quick summary, practice quiz, or step-by-step explanation?`:`What are you studying today? I can quiz you, explain concepts, or help you plan your session.`;return(<><div style={{fontSize:13,color:"rgba(246,241,230,0.65)",marginBottom:14,lineHeight:1.6}}>{ctx}</div><div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>{sug.map(s=>(<button key={s} onClick={()=>setActive("aichat")} style={{fontSize:11.5,padding:"6px 11px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.12)",borderRadius:99,color:"rgba(246,241,230,0.8)",cursor:"pointer",fontFamily:T.font}}>{s}</button>))}</div></>);})()}
-          <div style={{display:"flex",alignItems:"center",gap:10,background:"rgba(246,241,230,0.05)",border:"1px solid rgba(246,241,230,0.10)",borderRadius:14,padding:"10px 12px",marginTop:"auto"}}>
-            <input placeholder="Ask anything · paste a problem" style={{flex:1,background:"none",border:"none",outline:"none",color:T.cream,fontSize:13,fontFamily:T.font,minWidth:0}}/>
-            <button onClick={()=>setActive("aichat")} style={{display:"grid",placeItems:"center",width:30,height:30,borderRadius:8,background:T.lime,color:T.ink,border:"none",cursor:"pointer",flex:"none"}}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="22 2 15 22 11 13 2 9"/></svg>
-            </button>
-          </div>
-        </div>
-
-      </div>
-
-      {/* ROW 3: Study streak — used to share this row with "Quick tools"
-          (removed: every one of those shortcuts already exists in the
-          sidebar nav, one click away). Full width now that it's on its own.
-          The day-by-day focus bar chart that used to sit here, and the
-          duplicate "Weekly Wrapped" summary card next to it, were both
-          removed too — see the wrappedOpen popup below for where that
-          content now lives instead of being repeated permanently on the
-          dashboard. */}
-      {!seriousMode&&(()=>{
-        var longest=0,cur=0;
-        heatmapCells.forEach((v)=>{if(v>0){cur++;if(cur>longest)longest=cur;}else{cur=0;}});
-        return(
-          <div style={{background:T.card,borderRadius:22,padding:"26px 28px",border:`1px solid ${T.border}`,display:"flex",flexDirection:"column"}}>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
-              <span style={{fontFamily:T.hand,fontSize:26,fontWeight:600,color:T.text}}>Study streak</span>
-              <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.12em",padding:"4px 10px",borderRadius:99,background:T.card2,color:T.muted,fontWeight:600}}>LAST 91 DAYS</span>
-            </div>
-            <div style={{marginBottom:16}}>
-              <div style={{display:"flex",alignItems:"baseline",gap:6}}>
-                <span style={{fontFamily:T.hand,fontSize:38,fontWeight:600,color:T.text}}>{realStreak}</span>
-                <span style={{fontSize:13,color:T.muted}}>day streak</span>
-              </div>
-              <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.10em",color:T.muted,marginTop:4}}>LONGEST: {longest}</div>
-            </div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(26,1fr)",gap:3}}>
-              {heatmapCells.map((lv,i)=>(
-                <div key={i} style={{aspectRatio:"1",borderRadius:3,background:cellColor(lv)}} />
-              ))}
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* ROW 5: Upcoming + Pick up where you left off */}
-      <div style={{display:"grid",gridTemplateColumns:"5fr 7fr",gap:16}}>
-        <div style={{background:T.card,borderRadius:22,padding:22,border:`1px solid ${T.border}`}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
-            <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <span style={{fontFamily:T.hand,fontSize:22,fontWeight:600,color:T.text}}>Upcoming</span>
-              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:99,color:T.muted}}>NEXT 14 DAYS</span>
-            </div>
-            <button onClick={()=>setActive("calendar")} style={{fontSize:12,color:T.muted,display:"inline-flex",alignItems:"center",gap:3,cursor:"pointer",background:"none",border:"none",fontFamily:T.font}}>Calendar <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
-          </div>
-          {upcomingEvents.length===0
-            ?<div style={{fontSize:13,color:T.muted,padding:"18px 0",textAlign:"center"}}>Nothing on the horizon. Add deadlines to your calendar.</div>
-            :upcomingEvents.map((ev,i)=>(
-              <div key={ev.id} onClick={()=>setActive("calendar")} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 0",borderBottom:i<upcomingEvents.length-1?`1px solid ${T.border}`:"none",cursor:"pointer"}}>
-                <div style={{width:44,height:44,borderRadius:10,background:ev.urgent?T.lime:T.card2,color:ev.urgent?T.ink:T.text,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                  <span style={{fontSize:15,fontWeight:800,lineHeight:1}}>{ev.d}</span>
-                  <span style={{fontSize:8.5,fontWeight:700,letterSpacing:"0.04em"}}>{ev.mo}</span>
-                </div>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:13,fontWeight:600,color:T.text}}>{ev.t}</div>
-                  <div style={{fontSize:11,color:T.muted,marginTop:1}}>{ev.sub}</div>
-                </div>
-                <span style={{fontSize:10.5,fontWeight:700,padding:"4px 9px",borderRadius:99,background:ev.urgent?"rgba(224,48,48,0.10)":T.card2,color:ev.urgent?"#E03030":T.muted,flexShrink:0}}>{ev.cd}</span>
-              </div>
-            ))}
-        </div>
-        <div style={{background:T.card,borderRadius:22,padding:22,border:`1px solid ${T.border}`}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
-            <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <span style={{fontFamily:T.hand,fontSize:22,fontWeight:600,color:T.text}}>Pick up where you left off</span>
-              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:99,color:T.muted}}>RECENT</span>
-            </div>
-          </div>
-          {pickUpItems.length===0
-            ?<div style={{fontSize:13,color:T.muted,padding:"18px 0",textAlign:"center"}}>Create a deck, note, or essay and it'll show up here.</div>
-            :<div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:10}}>
-              {pickUpItems.slice(0,4).map((it,i)=>{
-                const bgColors=["#B8E4C0","#FFD6A5","#B8D4FF","#E0C4FF"];
-                return (
-                  <div key={i} onClick={()=>{
-                    if(it.kind==="deck"){lsSet("openDeckId",it.id);setActive("flashcards");}
-                    else if(it.kind==="note"){lsSet("openNoteId",it.id);setActive("notes");}
-                  }} style={{background:bgColors[i%4],borderRadius:14,padding:14,cursor:"pointer"}}>
-                    <div style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.06em",color:"rgba(8,12,40,0.65)",marginBottom:8}}>{it.subj}</div>
-                    <div style={{fontSize:13,fontWeight:700,color:"#0D120F",marginBottom:10,lineHeight:1.3}}>{it.title}</div>
-                    <div style={{height:4,background:"rgba(8,12,40,0.15)",borderRadius:99,marginBottom:8,overflow:"hidden"}}><div style={{height:"100%",width:it.pct+"%",background:"#0D120F",borderRadius:99}}/></div>
-                    <div style={{fontSize:10.5,color:"rgba(8,12,40,0.6)",display:"flex",justifyContent:"space-between"}}><span>{it.a}</span><span>{it.b}</span></div>
-                  </div>
-                );
-              })}
-            </div>}
-        </div>
-      </div>
-
-      {/* ROW 4: GLOBAL LEADERBOARD — conditionally hidden (SHOW_GLOBAL_LEADERBOARD)
-          rather than deleted, per request to disable it "for now." Flip the
-          flag back to true to restore it; lbUsers/lbRankColor/lbRankBg and
-          LeaderboardModal are left fully intact. */}
-      {/* "This week, you..." — the second Weekly Wrapped duplicate, removed.
-          Same content (focus hours, streak) as the Sunday wrappedOpen popup
-          below; the popup is the one real weekly-summary surface now. */}
-
-      {SHOW_GLOBAL_LEADERBOARD && !seriousMode && <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18,gap:12,flexWrap:"wrap"}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <Hand>Global Leaderboard</Hand>
-            <Eye>RESETS WEEKLY</Eye>
-          </div>
-          <button onClick={()=>setLeaderboardOpen(true)} style={{fontSize:12,color:T.muted,display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",background:"none",border:"none"}}>View all <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
-        </div>
-        <div style={{display:"flex",flexDirection:"column",gap:0}}>
-          {lbUsers.map((u,i)=>(
-            <div key={u.r} style={{display:"flex",alignItems:"center",gap:14,padding:"13px 16px",borderRadius:12,background:u.you?T.lime+"0c":lbRankBg(u.r),marginBottom:4,border:`1px solid ${u.you?T.lime+"33":"transparent"}`}}>
-              <div style={{width:30,height:30,borderRadius:"50%",background:lbRankBg(u.r)||T.card2,border:`2px solid ${lbRankColor(u.r)}`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:T.mono,fontSize:12,fontWeight:700,color:lbRankColor(u.r),flexShrink:0}}>{u.r}</div>
-              <div style={{width:36,height:36,borderRadius:"50%",background:u.grad,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:13,color:T.ink,flexShrink:0}}>{u.n.slice(0,1)}</div>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:13.5,fontWeight:u.you?700:600,color:u.you?T.lime:T.text}}>{u.n}{u.you&&<span style={{marginLeft:8,fontFamily:T.mono,fontSize:10,letterSpacing:"0.08em",background:T.lime+"22",color:T.lime,padding:"2px 7px",borderRadius:4,fontWeight:700}}>YOU</span>}</div>
-                <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{u.tier} · {u.streak>0?u.streak+"-day streak":"No active streak"}</div>
-              </div>
-              <div style={{textAlign:"right",flexShrink:0}}>
-                <div style={{fontFamily:T.mono,fontSize:14,fontWeight:700,color:lbRankColor(u.r)||T.text}}>{u.minutes.toLocaleString()}</div>
-                <div style={{fontSize:10,color:T.faint,marginTop:2}}>min</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>}
-
-    </div>
-    {/* NOTE (corrected — see App-level "PRICING MODAL"/"PAYWALL" comments for
-        the actual root cause): being a sibling of the content div here is
-        NOT enough. [data-page] itself carries the transform-bearing
-        studlinRise entrance animation, so it's a containing block for any
-        position:fixed descendant *anywhere* inside it, including these two
-        modals, regardless of nesting depth. RescheduleModal/its toast were
-        moved out to the App level (true siblings of [data-page] itself) to
-        fix the reported "have to scroll up to see the reschedule confirm"
-        bug. LevelRoadmapModal/LeaderboardModal below still have the same
-        underlying issue — not fixed yet, flagged for a follow-up pass. */}
-    <LevelRoadmapModal open={levelRoadmapOpen} onClose={()=>setLevelRoadmapOpen(false)} currentMinutes={lvl.minutes} />
-    <LeaderboardModal open={leaderboardOpen} onClose={()=>setLeaderboardOpen(false)} currentMinutes={lvl.minutes} currentName={firstName} currentStreak={realStreak} />
-    {wrappedOpen&&!seriousMode&&(
-      <div onClick={dismissWrapped} style={{position:"fixed",inset:0,background:"rgba(8,12,10,0.72)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
-        <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:420,background:T.forest,color:T.cream,borderRadius:22,padding:28,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
-          <CardHead title="Weekly Wrapped" label={"WEEK "+weekNo()} light />
-          {/* Day-by-day breakdown — used to be its own permanent "This
-              week's focus" dashboard card; folded in here instead since
-              this is the one place a week-in-review actually belongs. */}
-          {(()=>{
-            const barData=weekDays7.map((d)=>{const key=dayKey(d);const mins=minsByDay[key]||0;const isToday=key===dayKey(new Date());const lab=d.toLocaleDateString("en-US",{weekday:"short"}).slice(0,1).toUpperCase();return {mins,isToday,lab};});
-            const maxMins=Math.max.apply(null,barData.map((d)=>d.mins).concat([1]));
-            return(
-              <div style={{display:"flex",alignItems:"flex-end",gap:6,height:52,marginTop:10,marginBottom:4}}>
-                {barData.map((d,i)=>{
-                  const h=d.mins>0?Math.max(4,Math.round(d.mins/maxMins*40)):0;
-                  return(
-                    <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
-                      <div style={{width:"100%",display:"flex",flexDirection:"column",justifyContent:"flex-end",height:40}}>
-                        {d.mins>0
-                          ?<div style={{width:"100%",height:h,background:d.isToday?T.lime:"rgba(246,241,230,0.25)",borderRadius:"3px 3px 0 0"}} />
-                          :<div style={{width:"100%",height:3,background:"rgba(246,241,230,0.10)",borderRadius:2}} />
-                        }
-                      </div>
-                      <span style={{fontSize:9,fontFamily:T.mono,color:d.isToday?T.lime:"rgba(246,241,230,0.4)",fontWeight:d.isToday?700:400}}>{d.lab}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            );
-          })()}
-          <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:14}}>
-            {[
-              {ln:"Focus hours",vn:fmtH(weeklyFocusMin)||"0m"},
-              {ln:"Cards mastered",vn:cardsMasteredTotal},
-              {ln:"Words written",vn:wordsWrittenTotal.toLocaleString()},
-            ].map((ins,i)=>(
-              <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:10,padding:"9px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <span style={{fontSize:11,color:"rgba(246,241,230,0.55)",fontFamily:T.mono,letterSpacing:"0.04em",textTransform:"uppercase"}}>{ins.ln}</span>
-                <span style={{fontFamily:T.hand,fontSize:20,fontWeight:600,color:T.lime}}>{ins.vn}</span>
-              </div>
-            ))}
-          </div>
-          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:12,marginBottom:20}}>
-            <span style={{fontSize:10.5,padding:"5px 10px",background:"rgba(246,241,230,0.08)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:T.cream,fontWeight:600}}>{realStreak}-day streak</span>
-            {topSubjectThisWeek&&<span style={{fontSize:10.5,padding:"5px 10px",background:"rgba(246,241,230,0.08)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:T.cream,fontWeight:600}}>{topSubjectThisWeek} focus</span>}
-          </div>
-          <button onClick={dismissWrapped} style={{width:"100%",padding:"11px 0",borderRadius:99,background:T.lime,color:T.ink,border:"none",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Done</button>
-        </div>
-      </div>
-    )}
-    </>
   );
 }
 
@@ -13707,11 +13218,14 @@ function App() {
     const pending=lsGet("pendingTour",null);
     if(pending){try{localStorage.removeItem("studlin-pendingTour");}catch(e){}return pending;}
     // First-ever load for this account has no stored tab yet — land on
-    // Calendar, not Dashboard, since Dashboard is empty (no streak, no
-    // decks, no history) for a brand-new user and gives them nothing to do.
-    // Every tab switch persists "studlin-active-tab" below, so this branch
-    // only ever fires once per account.
-    return localStorage.getItem("studlin-active-tab")||"calendar";
+    // Calendar, the app's home tab. Every tab switch persists
+    // "studlin-active-tab" below, so this branch only ever fires once per
+    // account. Also falls back to Calendar for any account whose stored
+    // tab is the now-removed "dashboard" — otherwise an existing user
+    // would silently land on a blank page since nothing renders for it
+    // anymore.
+    const stored=localStorage.getItem("studlin-active-tab");
+    return (stored&&stored!=="dashboard")?stored:"calendar";
   });
   const [theme,setThemeState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-theme"))||"light");
   const [accent,setAccentState]=useState(()=>{
@@ -13916,15 +13430,6 @@ function App() {
   window._setTimerTask=setTimerTask;
   const [creditsOpen,setCreditsOpen]=useState(false);
   const [pricingOpen,setPricingOpen]=useState(false);
-  // Dashboard's "Reschedule" confirm + its toast — lifted up from Dashboard
-  // itself (same fix pattern as PRICING MODAL/PAYWALL below): [data-page]'s
-  // own entrance animation makes it a containing block for any
-  // position:fixed descendant anywhere inside it, so a modal opened from
-  // Dashboard rendered relative to the scrolled [data-page] box instead of
-  // the real viewport. Rendering it as a true sibling of [data-page] here
-  // fixes that.
-  const [rescheduleTask,setRescheduleTask]=useState(null);
-  const [dashToast,setDashToast]=useState("");
   const [notifOpen,setNotifOpen]=useState(false);
   const [seriousMode,setSeriousMode]=useState(()=>lsGet("settings",{}).seriousMode||false);
   // Fresh accounts skip this forced first-run prompt permanently — they get
@@ -14319,20 +13824,23 @@ function App() {
     // fallback for tasks Tier 0 couldn't legally place.
     const movedIds=new Set(movedBatch.map(m=>m.id));
     // Checklist items are plain to-dos with no inherent time (see the
-    // Checklist card comment in Dashboard) — same exclusion isTier0Missed
+    // checklist section comment in CalendarTab) — same exclusion isTier0Missed
     // already applies above, so a rollover from yesterday never assigns
     // them a time slot the way a real study block/exam gets.
     const od=working.filter(ev=>ev.status==="pending"&&!ev.checklist&&ev.date<today&&!(ev.deadline&&ev.deadline<today)&&!movedIds.has(ev.id));
     if(od.length>0)setRolloverPending(od);
   },[]);
   const navSections=[
-    {label:"Workspace",items:[
-      {id:"dashboard",label:"Dashboard"},
+    {label:"Home",items:[
       {id:"calendar",label:"Calendar"},
+    ]},
+    {label:"Tools",items:[
       {id:"aichat",label:"Studlin AI"},
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
       {id:"friends",label:"Studlin Network",badge:String(unreadCount||"")},
+    ]},
+    {label:"Account",items:[
       {id:"feedback",label:"Feedback"},
       {id:"settings",label:"Settings"},
       {id:"profile",label:"Profile"},
@@ -14340,8 +13848,8 @@ function App() {
   ];
   const bottomItems=[];
   const pages={aichat:AiChat,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile,lectures:Lectures,feedback:FeedbackPage};
-  const labelOf={dashboard:"Dashboard",aichat:"Studlin AI",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve",lectures:"Lectures",feedback:"Feedback"};
-  const sectionOf={dashboard:"Workspace",aichat:"Workspace",writestudio:"Workspace",flashcards:"Workspace",notes:"Workspace",calendar:"Workspace",friends:"Workspace",lectures:"Workspace",feedback:"Workspace",solve:"Tools",settings:"Account",profile:"Account"};
+  const labelOf={aichat:"Studlin AI",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve",lectures:"Lectures",feedback:"Feedback"};
+  const sectionOf={aichat:"Tools",writestudio:"Tools",flashcards:"Tools",notes:"Tools",calendar:"Home",friends:"Tools",lectures:"Tools",feedback:"Account",solve:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
   if (!onboarded) return <InitWizard onComplete={()=>{setOnboarded(true);}} />;
@@ -14396,9 +13904,18 @@ function App() {
           const barColor=pct<50?T.lime:pct<80?"#F5A623":"#E05252";
           const daysLeft=(()=>{const n=new Date();const e=new Date(n.getFullYear(),n.getMonth()+1,1);return Math.ceil((e-n)/86400000);})();
           const email=firebase.auth().currentUser?.email||"";
+          // Persistent streak badge — the full stats picture moved to
+          // Profile once Dashboard was removed, but the streak's whole
+          // motivational pull comes from being seen every time the app
+          // opens (same instinct as Duolingo keeping its flame in the
+          // persistent header rather than burying it in a profile tab).
+          const streak=Math.max(1,getStreak());
           if(navCollapsed){return(
           <div style={{marginTop:"auto",borderTop:`1px solid ${sidebarBorder}`,paddingTop:10,display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
-            <div onClick={()=>setActive("profile")} title={getUserName()} style={{cursor:"pointer"}}><Av initials={getUserInitials()} color={T.lime} size={32} /></div>
+            <div onClick={()=>setActive("profile")} title={getUserName()} style={{cursor:"pointer",position:"relative"}}>
+              <Av initials={getUserInitials()} color={T.lime} size={32} />
+              {!seriousMode&&<div title={streak+"-day streak"} style={{position:"absolute",bottom:-4,right:-6,display:"flex",alignItems:"center",gap:2,background:T.amber,color:"#1a1200",borderRadius:8,padding:"1px 4px",fontSize:9,fontWeight:700}}>{streak}</div>}
+            </div>
             <div onClick={()=>setCreditsOpen(true)} title={cr+" credits remaining"} style={{cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
               <div style={{width:28,height:3,background:sidebarBorder,borderRadius:99,overflow:"hidden"}}><div style={{height:"100%",width:pct+"%",background:barColor,borderRadius:99,transition:"width 0.4s"}} /></div>
             </div>
@@ -14407,7 +13924,10 @@ function App() {
           <div style={{marginTop:"auto",borderTop:`1px solid ${sidebarBorder}`,paddingTop:10}}>
             {/* Profile row */}
             <div onClick={()=>setActive("profile")} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:9,cursor:"pointer",marginBottom:2,transition:"background 0.15s"}} onMouseEnter={e=>e.currentTarget.style.background=sidebarCardBg} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-              <Av initials={getUserInitials()} color={T.lime} size={32} />
+              <div style={{position:"relative",flexShrink:0}}>
+                <Av initials={getUserInitials()} color={T.lime} size={32} />
+                {!seriousMode&&<div title={streak+"-day streak"} style={{position:"absolute",bottom:-4,right:-6,display:"flex",alignItems:"center",gap:2,background:T.amber,color:"#1a1200",borderRadius:8,padding:"1px 4px",fontSize:9,fontWeight:700}}>{streak}</div>}
+              </div>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:12.5,fontWeight:600,color:sidebarText,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{getUserName()}</div>
                 <div style={{fontSize:10,color:sidebarMuted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{email}</div>
@@ -14478,29 +13998,15 @@ function App() {
             such modal's centering into being relative to this scrolled
             container instead of the real viewport. Clearing it once done
             keeps the entrance animation but stops that side effect. */}
-        <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
-          {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} />:
-           active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} />:
+        <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both"}}>
+          {active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} />:
            active==="calendar"?<CalendarTab onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} onScanSyllabus={openSyllabusScanOnNotes} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="lectures"?<Lectures setActive={setActive} setPricingOpen={setPricingOpen} />:
-           active==="profile"?<Profile setActive={setActive} />:
+           active==="profile"?<Profile setActive={setActive} seriousMode={seriousMode} />:
            ActivePage?<ActivePage />:null}
         </div>
       </div>
-
-      {/* DASHBOARD RESCHEDULE CONFIRM + TOAST — true sibling of [data-page],
-          see the state declaration above for why. */}
-      {rescheduleTask&&(
-        <RescheduleModal task={rescheduleTask} events={lsGet("events",[])} onClose={()=>setRescheduleTask(null)} commit={(next,evictedCount)=>{
-          lsSet("events",next);
-          setDashToast(evictedCount>0?`Task rescheduled — ${evictedCount} other${evictedCount!==1?"s":""} shifted to make room.`:"Task rescheduled.");
-          setTimeout(()=>setDashToast(""),2800);
-        }} />
-      )}
-      {dashToast&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:1001,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {dashToast}</div>
-      )}
 
       {/* PRICING MODAL */}
       <Modal open={pricingOpen} onClose={()=>setPricingOpen(false)} title="Studlin plans" sub="Start free. Upgrade when you're ready. Cancel anytime." width={820}>
