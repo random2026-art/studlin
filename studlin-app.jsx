@@ -1767,7 +1767,7 @@ function makeMonthlyUsage(storageKey){
 }
 function daysUntilReset(){const n=new Date();const e=new Date(n.getFullYear(),n.getMonth()+1,1);return Math.ceil((e-n)/86400000);}
 
-const SYLLABUS_SCAN_LIMIT=3;
+const SYLLABUS_SCAN_LIMIT=11;
 const getSyllabusScanUsage=makeMonthlyUsage("syllabusScans");
 function canScanSyllabus(){return getPlan()!=="Free"||getSyllabusScanUsage().count<SYLLABUS_SCAN_LIMIT;}
 function recordSyllabusScan(){const u=getSyllabusScanUsage();lsSet("syllabusScans",{month:u.month,count:u.count+1});}
