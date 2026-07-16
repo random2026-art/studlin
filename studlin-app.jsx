@@ -3567,7 +3567,7 @@ function Flashcards() {
   const [dName,setDName]=useState("");
   const [dSource,setDSource]=useState("manual");
   const [aiLoading,setAiLoading]=useState(false);
-  const [fileText,setFileText]=useState("");
+  const [fileTexts,setFileTexts]=useState([]); // [{name,text}] — one entry per uploaded file, so more than one can contribute to the same deck
   const fileRef=useRef(null);
   const [ytUrl,setYtUrl]=useState("");
   const [ytInfo,setYtInfo]=useState("");
@@ -3599,12 +3599,63 @@ function Flashcards() {
   const startRec=()=>{const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR)return;const r=new SR();r.continuous=true;r.interimResults=true;r.lang="en-US";r.onresult=(e)=>{let t="";for(let i=0;i<e.results.length;i++)t+=e.results[i][0].transcript;setRecText(t);};r.onend=()=>setRecOn(false);recRef.current=r;r.start();setRecOn(true);setRecSecs(0);setRecText("");};
   const stopRec=()=>{if(recRef.current)recRef.current.stop();setRecOn(false);};
 
-  const handleFile=async(e)=>{const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";const ext=file.name.split(".").pop().toLowerCase();if(ext==="pdf"){try{const pdfjsLib=await window._pdfjs;const buf=await file.arrayBuffer();const pdf=await pdfjsLib.getDocument({data:buf}).promise;let text="";for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();text+=tc.items.map(it=>it.str).join(" ")+"\n\n";}setFileText(text);if(!dName)setDName("Cards from "+file.name);}catch(err){setFileText("Could not read PDF.");}}else{const reader=new FileReader();reader.onload=()=>{setFileText(reader.result);if(!dName)setDName("Cards from "+file.name);};reader.readAsText(file);}};
+  // Extracts one file's text — pdf.js for PDF, mammoth.js for .docx (same
+  // CDN-script pattern as the syllabus scanner; .doc, the old binary
+  // format, isn't supported by mammoth either, so it gets an honest
+  // message instead of silently mis-parsed garbage), plain FileReader for
+  // genuinely-plain formats.
+  const extractFileText=async(file)=>{
+    const ext=file.name.split(".").pop().toLowerCase();
+    if(ext==="pdf"){
+      try{
+        const pdfjsLib=await window._pdfjs;
+        const buf=await file.arrayBuffer();
+        const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+        let text="";
+        for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();text+=tc.items.map(it=>it.str).join(" ")+"\n\n";}
+        return text;
+      }catch(err){return "Could not read PDF: "+err.message;}
+    }
+    if(ext==="docx"){
+      try{
+        if(!window.mammoth)throw new Error("Document reader still loading — try again in a moment.");
+        const buf=await file.arrayBuffer();
+        const result=await window.mammoth.extractRawText({arrayBuffer:buf});
+        return result.value;
+      }catch(err){return "Could not read this document: "+err.message;}
+    }
+    if(ext==="doc")return "This is an older .doc file — Studlin can only read .docx. Try re-saving it as .docx or PDF.";
+    return await new Promise(resolve=>{
+      const reader=new FileReader();
+      reader.onload=()=>resolve(reader.result);
+      reader.readAsText(file);
+    });
+  };
+  // Multi-file: each upload appends rather than replaces, so cards can be
+  // generated from several files (e.g. multiple lecture chapters) at once.
+  const handleFile=async(e)=>{
+    const files=Array.from(e.target.files||[]);
+    e.target.value="";
+    if(files.length===0)return;
+    if(!dName)setDName(files.length===1?"Cards from "+files[0].name:"Cards from "+files.length+" files");
+    for(const file of files){
+      const text=await extractFileText(file);
+      setFileTexts(prev=>[...prev,{name:file.name,text}]);
+    }
+  };
+  const removeFile=(name)=>setFileTexts(prev=>prev.filter(f=>f.name!==name));
 
   const aiGenCards=async(content,context,count=10)=>{
     setAiLoading(true);
     try{
-      const prompt="Create "+count+" flashcards from this "+context+". Format as a JSON array where each object has a \"q\" key (question) and \"a\" key (answer). Return only the JSON array, no other text. Material:\n\n"+content.slice(0,15000);
+      // "auto" reuses the same "AI decides quantity, no fixed number
+      // requested" shape already used by extractSyllabusDeadlines and
+      // parseBrainDump elsewhere in this file, rather than inventing a new
+      // pattern — the actual card count then comes from parsed.length below.
+      const countInstruction=count==="auto"
+        ?"Create as many flashcards as needed to cover the key concepts in this "+context+" — typically 5 to 30. Don't pad with filler or skip real content just to hit a number."
+        :"Create "+count+" flashcards from this "+context+".";
+      const prompt=countInstruction+" Format as a JSON array where each object has a \"q\" key (question) and \"a\" key (answer). Return only the JSON array, no other text. Material:\n\n"+content.slice(0,15000);
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
       const data=await res.json();
       var raw=(data.reply||"").replace(/```json?|```/g,"").trim();
@@ -3624,16 +3675,23 @@ function Flashcards() {
     let cards=[];
     if(dSource==="manual"){cards=[...draft];}
     else if(dSource==="file"){
-      if(!fileText){cards=[{q:"No file loaded",a:"Upload a PDF or text file first"}];}
-      else{cards=await aiGenCards(fileText,"document/notes",cardCount);}
+      if(fileTexts.length===0){cards=[{q:"No file loaded",a:"Upload a PDF, DOCX, or text file first"}];}
+      else{
+        const combined=fileTexts.map(f=>"--- "+f.name+" ---\n"+f.text).join("\n\n");
+        cards=await aiGenCards(combined,"document/notes",cardCount);
+      }
     }
     else if(dSource==="youtube"){
       const topic=(ytTopic||ytInfo||"").trim();
       if(!ytUrl.trim()&&!topic){cards=[{q:"No video provided",a:"Paste a YouTube link or type a topic"}];}
       else{
+        // The count phrase lives in aiGenCards' own prompt wrapper (which
+        // also handles "auto") — this context string just describes the
+        // material, not how many cards, so the two don't end up saying
+        // conflicting things when cardCount is "auto".
         const ctx=topic
-          ?"YouTube video: \""+topic+"\". Generate "+cardCount+" flashcards covering all key concepts, definitions, formulas, and important facts a student needs to know from this video."
-          :"YouTube video at: "+ytUrl+". Generate "+cardCount+" flashcards covering likely key concepts from this video.";
+          ?"YouTube video: \""+topic+"\". Covers key concepts, definitions, formulas, and important facts a student needs to know from this video."
+          :"YouTube video at: "+ytUrl+". Covers likely key concepts from this video.";
         cards=await aiGenCards(ctx,"YouTube video",cardCount);
       }
     }
@@ -3644,7 +3702,7 @@ function Flashcards() {
     if(cards.length===0){cards=[{q:"No cards were generated",a:"Try again with more content"}];}
     const nd={id:String(Date.now()),name:name,count:cards.length,done:0,color:T.lime,cards:cards,examEventId:null};
     const next=[nd,...deckList];setDeckList(next);lsSet("decks",next);
-    setNewOpen(false);setDName("");setDraft([]);setFileText("");setYtUrl("");setYtInfo("");setYtTopic("");setYtFetching(false);stopRec();setRecText("");setDSource("manual");setCardCount(10);
+    setNewOpen(false);setDName("");setDraft([]);setFileTexts([]);setYtUrl("");setYtInfo("");setYtTopic("");setYtFetching(false);stopRec();setRecText("");setDSource("manual");setCardCount(10);
     setStudyDeck(nd);setTab("study");setIdx(0);setFlipped(false);
   };
 
@@ -3894,10 +3952,10 @@ function Flashcards() {
           </div>
         </Field>
         {dSource!=="manual"&&(
-          <Field label="How many cards?">
+          <Field label="How many cards?" hint={cardCount==="auto"?"Studlin decides based on how much material there is.":undefined}>
             <div style={{display:"flex",gap:8}}>
-              {[5,10,15,20].map(n=>(
-                <button key={n} type="button" onClick={()=>setCardCount(n)} style={{flex:1,padding:"8px 0",borderRadius:8,border:"1px solid "+(cardCount===n?T.lime+"66":T.border),background:cardCount===n?T.lime+"14":T.card2,color:cardCount===n?T.lime:T.text,fontWeight:cardCount===n?700:400,fontSize:13,cursor:"pointer",fontFamily:T.font,transition:"all 0.15s"}}>{n}</button>
+              {[5,10,15,20,"auto"].map(n=>(
+                <button key={n} type="button" onClick={()=>setCardCount(n)} style={{flex:1,padding:"8px 0",borderRadius:8,border:"1px solid "+(cardCount===n?T.lime+"66":T.border),background:cardCount===n?T.lime+"14":T.card2,color:cardCount===n?T.lime:T.text,fontWeight:cardCount===n?700:400,fontSize:13,cursor:"pointer",fontFamily:T.font,transition:"all 0.15s"}}>{n==="auto"?"Auto":n}</button>
               ))}
             </div>
           </Field>
@@ -3911,12 +3969,23 @@ function Flashcards() {
           {draft.length>0&&<div style={{maxHeight:120,overflowY:"auto",display:"flex",flexDirection:"column",gap:4}}>{draft.map((c,i)=>(<div key={i} style={{display:"flex",gap:8,padding:"6px 10px",background:T.card2,borderRadius:6,fontSize:11,alignItems:"center"}}><span style={{color:T.text,flex:1}}>{c.q}</span><span style={{color:T.muted,flex:1}}>{c.a}</span><button onClick={()=>setDraft(d=>d.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:T.faint,cursor:"pointer"}}>{Icon.xmark}</button></div>))}</div>}
         </>)}
         {dSource==="file"&&(
-          <Field label="Upload a file" hint="AI reads the content and generates Q&A flashcards.">
-            <input type="file" ref={fileRef} onChange={handleFile} accept=".txt,.md,.csv,.pdf,.doc,.docx" style={{display:"none"}} />
+          <Field label="Upload files" hint="AI reads the content and generates Q&A flashcards. Add as many files as you need — e.g. several chapters or lecture sets.">
+            <input type="file" multiple ref={fileRef} onChange={handleFile} accept=".txt,.md,.csv,.pdf,.doc,.docx,.rtf" style={{display:"none"}} />
             <div onClick={()=>fileRef.current&&fileRef.current.click()} style={{border:"1px dashed "+T.borderHover,borderRadius:10,padding:22,textAlign:"center",background:T.card2,cursor:"pointer"}}>
               <div style={{color:T.muted,marginBottom:6,display:"flex",justifyContent:"center"}}>{Icon.file}</div>
-              <div style={{fontSize:13,color:T.text,fontWeight:500}}>{fileText?"File loaded ("+fileText.length+" chars)":"Click to browse"}</div>
+              <div style={{fontSize:13,color:T.text,fontWeight:500}}>{fileTexts.length>0?fileTexts.length+" file"+(fileTexts.length!==1?"s":"")+" loaded — click to add more":"Click to browse or drop files"}</div>
             </div>
+            {fileTexts.length>0&&(
+              <div style={{display:"flex",flexDirection:"column",gap:4,marginTop:8}}>
+                {fileTexts.map(f=>(
+                  <div key={f.name} style={{display:"flex",gap:8,padding:"6px 10px",background:T.card2,borderRadius:6,fontSize:11,alignItems:"center"}}>
+                    <span style={{color:T.text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</span>
+                    <span style={{color:T.muted,flexShrink:0}}>{f.text.length} chars</span>
+                    <button onClick={()=>removeFile(f.name)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",flexShrink:0}}>{Icon.xmark}</button>
+                  </div>
+                ))}
+              </div>
+            )}
           </Field>
         )}
         {dSource==="youtube"&&(
@@ -4344,6 +4413,22 @@ function Notes(){
     const ext=file.name.split(".").pop().toLowerCase();
     if(ext==="pdf"){
       try{const pdfjsLib=await window._pdfjs;const buf=await file.arrayBuffer();const pdf=await pdfjsLib.getDocument({data:buf}).promise;let text="";for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();text+=tc.items.map(it=>it.str).join(" ")+"\n\n";}setFileText(text);if(!newTitle)setNewTitle("Notes from "+file.name);}catch(err){setFileText("Could not read PDF: "+err.message);}
+    }else if(ext==="docx"){
+      // .docx is a binary ZIP/XML container — reading it as plain text (the
+      // old fallback below) produced silent mojibake garbage fed straight
+      // to the AI with no error. mammoth.js (loaded in Studlin Web App.html,
+      // same CDN-script pattern as pdf.js) actually parses it.
+      try{
+        if(!window.mammoth)throw new Error("Document reader still loading — try again in a moment.");
+        const buf=await file.arrayBuffer();
+        const result=await window.mammoth.extractRawText({arrayBuffer:buf});
+        setFileText(result.value);
+        if(!newTitle)setNewTitle("Notes from "+file.name);
+      }catch(err){setFileText("Could not read this document: "+err.message);}
+    }else if(ext==="doc"){
+      // Old binary Word format (not ZIP-based) — mammoth doesn't read this
+      // one either. Say so plainly instead of silently mis-parsing it.
+      setFileText("This is an older .doc file — Studlin can only read .docx. Try re-saving it as .docx or PDF, then upload again.");
     }else{const reader=new FileReader();reader.onload=()=>{setFileText(reader.result);if(!newTitle)setNewTitle("Notes from "+file.name);};reader.readAsText(file);}
   };
 
@@ -4376,9 +4461,10 @@ function Notes(){
         "\"date\" (YYYY-MM-DD, your best guess — never omit even if uncertain), "+
         "\"kind\" (either \"deadline\" for assignments/readings/papers or \"exam\" for quizzes, tests, midterms, and finals), "+
         "\"examWeight\" (ONLY when kind is \"exam\": \"quiz\" for a quiz or short in-class test worth relatively little, \"major\" for a midterm, final, or unit exam worth significant grade weight — omit entirely when kind is \"deadline\"), "+
-        "\"confidence\" (\"high\" if an explicit date was stated, \"low\" if you inferred/guessed it, e.g. from \"the Friday after spring break\"). "+
+        "\"confidence\" (\"high\" if an explicit date was stated, \"low\" if you inferred/guessed it, e.g. from \"the Friday after spring break\"), "+
+        "\"detail\" (optional — only include this key when the source text actually states something concrete and useful beyond the date itself, e.g. \"Covers chapters 4-6, bring a calculator\" for an exam or \"Submit as PDF, cite 3 sources\" for an assignment; leave the key out entirely rather than inventing generic filler when nothing specific is stated). "+
         "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
-        "{\"deadlines\":[{\"title\":\"Problem Set 3\",\"date\":\"2026-09-22\",\"kind\":\"deadline\",\"confidence\":\"high\"},{\"title\":\"Unit 2 Midterm\",\"date\":\"2026-10-03\",\"kind\":\"exam\",\"examWeight\":\"major\",\"confidence\":\"high\"}]}. "+
+        "{\"deadlines\":[{\"title\":\"Problem Set 3\",\"date\":\"2026-09-22\",\"kind\":\"deadline\",\"confidence\":\"high\"},{\"title\":\"Unit 2 Midterm\",\"date\":\"2026-10-03\",\"kind\":\"exam\",\"examWeight\":\"major\",\"confidence\":\"high\",\"detail\":\"Covers chapters 4-6, bring a calculator\"}]}. "+
         "If you find no dates at all, respond with {\"deadlines\":[]}.\n\n"+text.slice(0,30000);
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
       const data=await res.json();
@@ -4715,7 +4801,15 @@ function Notes(){
             No dates found. Add one manually below, or skip and save just the note.
           </div>
         )}
-        <div style={{display:"flex",flexDirection:"column",gap:10,maxHeight:400,overflowY:"auto"}}>
+        {syllabusReview&&syllabusReview.items.length>0&&(
+          <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>
+            {syllabusReview.items.length} item{syllabusReview.items.length!==1?"s":""} found
+          </div>
+        )}
+        {/* A long syllabus used to need two nested scrollbars (this list's
+            own fixed 400px box, inside the modal's own scroll) — one scroll
+            region, matching every other modal in the app, is enough. */}
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
           {syllabusReview&&syllabusReview.items.map((it,i)=>(
             <div key={it.id} style={{padding:"12px 14px",borderRadius:10,border:`1px solid ${T.border}`,background:it.include?T.card2:T.card,opacity:it.include?1:0.55}}>
               <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
@@ -4741,6 +4835,9 @@ function Notes(){
                       </label>
                     )}
                   </div>
+                  {it.detail&&(
+                    <div style={{fontSize:11.5,color:T.muted,marginTop:6,lineHeight:1.4}}>{it.detail}</div>
+                  )}
                   {it.kind==="exam"&&it.proposeSessions&&(()=>{
                     const dates=computeReviewDates(it.date,dayKey(),it.sessionCount||4);
                     return (
@@ -6128,7 +6225,7 @@ function commitSyllabusEvents(noteId,tag,items){
       time:it.kind==="exam"?"09:00":"23:59",
       subject:tag,
       kind:it.kind==="exam"?"exam":"deadline",
-      notes:"",
+      notes:it.detail||"",
       priority:5,
       difficulty:5,
       deadline:it.kind==="deadline"?it.date:null,
@@ -6329,16 +6426,17 @@ function ExploreClassesCard({school,classes,setActive}){
   );
 }
 
-function ChatBubble({m,myUid,onRespond,onSchedule}){
+function ChatBubble({m,myUid,onRespond,onSchedule,onCounter}){
   const pp=panelPalette();
   const mine=m.senderId===myUid;
   const align=mine?"flex-end":"flex-start";
   const bg=mine?T.lime+"1F":pp.card2;
   const border=mine?T.lime+"40":pp.border;
   // Local "just clicked" state — gives instant feedback on the exact button
-  // clicked, then the real commit (onSchedule, which writes to Firestore and
-  // collapses this whole block to its final "scheduled" layout) fires after
-  // a beat so the click doesn't feel like it vanished into an abrupt cut.
+  // clicked, then the real commit (onSchedule, which proposes the time —
+  // see scheduleGroupSession — and collapses this block to its "proposed"
+  // layout) fires after a beat so the click doesn't feel like it vanished
+  // into an abrupt cut.
   const [justChosen,setJustChosen]=useState(null);
   const [pickingMode,setPickingMode]=useState(null);
   if(m.kind==="calendar"){
@@ -6354,17 +6452,55 @@ function ChatBubble({m,myUid,onRespond,onSchedule}){
     // multi-slot refactor, which stored a single flat window as meta.
     const options=m.meta.options||[m.meta];
     const chosen=options[m.scheduledOption||0];
+    const responses=m.responses||{};
+    const memberUids=m.memberUids||[];
+    const acceptedCount=memberUids.filter(uid=>responses[uid]==="accepted").length;
+    const iAmProposer=m.proposedBy===myUid;
+    const myResponse=responses[myUid];
+    const needsMyResponse=m.status==="proposed"&&m.proposedBy&&m.proposedBy!==myUid&&!myResponse;
     return (
       <div style={{alignSelf:"center",width:"100%",padding:"14px 15px",background:T.purple+"1A",border:`1px solid ${T.purple}40`,borderRadius:12}}>
         <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:8,color:T.purple,fontSize:11,fontWeight:700}}>🤖 Studlin Match</div>
-        {m.status==="scheduled"?(
+        {/* "scheduled" is the old terminal status name, from before this
+            accept/decline flow existed — treated the same as "confirmed"
+            so chat history from before this change still renders sensibly
+            instead of a blank card. */}
+        {(m.status==="confirmed"||m.status==="scheduled")&&(
           <>
-            <div style={{fontSize:12.5,color:pp.text,lineHeight:1.55,marginBottom:8}}>Booked <strong>{chosen.duration}-minute</strong> session <strong>{chosen.dayLabel} at {chosen.timeLabel}</strong>.</div>
-            <div style={{fontSize:11.5,color:T.lime,fontWeight:600}}>✓ Scheduled, added to your calendar</div>
+            <div style={{fontSize:12.5,color:pp.text,lineHeight:1.55,marginBottom:8}}>Everyone's in for <strong>{chosen.duration}-minute</strong> session <strong>{chosen.dayLabel} at {chosen.timeLabel}</strong>.</div>
+            <div style={{fontSize:11.5,color:T.lime,fontWeight:600}}>✓ Confirmed, on your calendar</div>
           </>
-        ):(
+        )}
+        {m.status==="declined"&&(
           <>
-            <div style={{fontSize:12.5,color:pp.text,lineHeight:1.55,marginBottom:10}}>{options.length>1?`Found ${options.length} windows where everyone's free — pick one:`:<>Found an optimal <strong>{options[0].duration}-minute</strong> study window <strong>{options[0].dayLabel} at {options[0].timeLabel}</strong> where everyone is free!</>}</div>
+            <div style={{fontSize:12.5,color:pp.text,lineHeight:1.55,marginBottom:10}}>Proposed <strong>{chosen.dayLabel} at {chosen.timeLabel}</strong> — declined, no time found yet.</div>
+            <button onClick={()=>onCounter(m.id)} style={{padding:"7px 12px",borderRadius:7,background:T.lime,color:T.bg,border:"none",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Suggest another time</button>
+          </>
+        )}
+        {m.status==="proposed"&&(
+          <>
+            <div style={{fontSize:12.5,color:pp.text,lineHeight:1.55,marginBottom:10}}>
+              {iAmProposer?"You proposed ":"Proposed "}<strong>{chosen.dayLabel} at {chosen.timeLabel}</strong> ({chosen.duration}m)
+              {memberUids.length>0&&<span style={{color:pp.muted}}> · {acceptedCount}/{memberUids.length} accepted</span>}
+            </div>
+            {needsMyResponse?(
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>onRespond(m.id,"accepted")} style={{flex:1,padding:"7px 0",borderRadius:7,background:T.lime,color:T.bg,border:"none",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Accept</button>
+                  <button onClick={()=>onRespond(m.id,"declined")} style={{flex:1,padding:"7px 0",borderRadius:7,background:"transparent",color:pp.muted,border:`1px solid ${pp.border}`,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Decline</button>
+                </div>
+                <button onClick={()=>onCounter(m.id)} style={{width:"100%",padding:"7px 0",borderRadius:7,background:"transparent",color:pp.text,border:`1px solid ${pp.border}`,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Suggest another time</button>
+              </div>
+            ):(
+              <div style={{fontSize:11,color:myResponse==="declined"?pp.faint:T.lime,fontWeight:600}}>
+                {iAmProposer?"Waiting on the others…":myResponse==="accepted"?"✓ You accepted, waiting on the others…":myResponse==="declined"?"You declined":"Waiting on a response…"}
+              </div>
+            )}
+          </>
+        )}
+        {m.status==="unscheduled"&&(
+          <>
+            <div style={{fontSize:12.5,color:pp.text,lineHeight:1.55,marginBottom:10}}>{options.length>1?`Found ${options.length} windows that work for me — pick one to propose:`:<>Found an open <strong>{options[0].duration}-minute</strong> window <strong>{options[0].dayLabel} at {options[0].timeLabel}</strong> on my calendar!</>}</div>
             <div style={{display:"flex",flexDirection:"column",gap:8}}>
               {options.map((w,i)=>(
                 <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"9px 11px",borderRadius:8,background:w.isBest?T.lime+"14":pp.card2,border:`1px solid ${w.isBest?T.lime+"55":pp.border}`}}>
@@ -6374,7 +6510,7 @@ function ChatBubble({m,myUid,onRespond,onSchedule}){
                   </div>
                   {pickingMode===i?(
                     justChosen===i?(
-                      <div style={{flexShrink:0,padding:"7px 12px",borderRadius:7,background:T.lime,color:T.bg,fontSize:11.5,fontWeight:700,fontFamily:T.font}}>✓ Scheduled</div>
+                      <div style={{flexShrink:0,padding:"7px 12px",borderRadius:7,background:T.lime,color:T.bg,fontSize:11.5,fontWeight:700,fontFamily:T.font}}>✓ Proposed</div>
                     ):(
                     <div style={{display:"flex",gap:6,flexShrink:0}}>
                       <button onClick={()=>{
@@ -6393,7 +6529,7 @@ function ChatBubble({m,myUid,onRespond,onSchedule}){
                     <button onClick={()=>{
                       if(justChosen!==null)return;
                       setPickingMode(i);
-                    }} disabled={justChosen!==null} style={{flexShrink:0,padding:"7px 12px",borderRadius:7,background:justChosen===i?T.lime:(w.isBest?T.lime:pp.card2),color:justChosen===i?T.bg:(w.isBest?T.bg:pp.text),border:w.isBest||justChosen===i?"none":`1px solid ${pp.border}`,fontSize:11.5,fontWeight:700,cursor:justChosen!==null?"default":"pointer",fontFamily:T.font,opacity:justChosen!==null&&justChosen!==i?0.45:1,transition:"opacity 0.15s"}}>{justChosen===i?"✓ Scheduled":"Choose"}</button>
+                    }} disabled={justChosen!==null} style={{flexShrink:0,padding:"7px 12px",borderRadius:7,background:justChosen===i?T.lime:(w.isBest?T.lime:pp.card2),color:justChosen===i?T.bg:(w.isBest?T.bg:pp.text),border:w.isBest||justChosen===i?"none":`1px solid ${pp.border}`,fontSize:11.5,fontWeight:700,cursor:justChosen!==null?"default":"pointer",fontFamily:T.font,opacity:justChosen!==null&&justChosen!==i?0.45:1,transition:"opacity 0.15s"}}>{justChosen===i?"✓ Proposed":"Choose"}</button>
                   )}
                 </div>
               ))}
@@ -6445,6 +6581,10 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
   const [settingsOpen,setSettingsOpen]=useState(false);
   const [unfriendConfirmOpen,setUnfriendConfirmOpen]=useState(false);
   const [findWindowOpen,setFindWindowOpen]=useState(false);
+  // Set when "Suggest another time" is clicked on a declined proposal —
+  // the next submitFindWindow posts referencing this id instead of a
+  // brand-new standalone proposal.
+  const [counterSupersedes,setCounterSupersedes]=useState(null);
   const [fwTimeMode,setFwTimeMode]=useState("anytime");
   const [fwTimeFrom,setFwTimeFrom]=useState("15:00");
   const [fwTimeTo,setFwTimeTo]=useState("17:00");
@@ -6590,40 +6730,22 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
     setFindWindowOpen(false);setSyncRunning(true);
     const lookAheadDayRange=fwDayScope==="custom"?fwCustomDays:fwDayScope==="tomorrow"?1:fwDayScope==="3days"?3:7;
     const params={timeMode:fwTimeMode,timeFrom:fwTimeFrom,timeTo:fwTimeTo,lookAheadDayRange,durationInMinutes:fwDuration};
-    setTimeout(()=>{setSyncRunning(false);sendMessage({kind:"calendar",status:"unscheduled",meta:findSharedStudyWindow(params)});},2100);
+    const supersedes=counterSupersedes;
+    setCounterSupersedes(null);
+    setTimeout(()=>{setSyncRunning(false);sendMessage({kind:"calendar",status:"unscheduled",meta:findSharedStudyWindow(params),...(supersedes?{supersedes}:{})});},2100);
   };
-  // Injects the chosen window into the current user's own calendar. (Only
-  // this browser's calendar can actually be written to — there's no backend
-  // to push the event into other members' accounts too; each participant
-  // independently opens this chat and books their own copy.) optionIndex
-  // picks which suggested slot the user chose; msg.meta.options falls back
-  // to [msg.meta] for older messages sent before the multi-slot refactor.
-  // mode is "busy block" (just meeting up, no live session) or
-  // "study block" (real parallel Lock-In — creates a studySessions doc so
-  // hitting Begin on this task later goes live for everyone in it).
-  const scheduleGroupSession=async(id,optionIndex=0,mode="busy block")=>{
-    const msg=messages.find(x=>x.id===id);
-    if(!msg||!roomId)return;
-    const w=(msg.meta.options||[msg.meta])[optionIndex];
-    if(!w)return;
-    let studySessionId=null;
-    if(mode==="study block"&&myUid){
-      const memberUids=isGroup?target.group.memberUids:[myUid,target.user.uid].sort();
-      const memberNames=isGroup?(target.group.memberNames||{}):{[myUid]:getUserName()||"You",[target.user.uid]:target.user.n};
-      const now=new Date().toISOString();
-      const doc=await fsdb().collection('studySessions').add({
-        memberUids,createdBy:myUid,roomId,
-        title:(isGroup?target.group.name:peerName)+" study session",subject:peerName,
-        scheduledDate:w.date,scheduledTime:w.time,duration:w.duration,
-        status:"scheduled",startedBy:null,startedAt:null,endedAt:null,
-        participants:Object.fromEntries(memberUids.map(uid=>{
-          const name=memberNames[uid]||"Studlin User";
-          return [uid,{name,initials:name.split(" ").map(x=>x[0]).join(""),state:"invited",joinedAt:null,leftAt:null}];
-        })),
-        createdAt:now,updatedAt:now,
-      }).catch(()=>null);
-      studySessionId=doc&&doc.id;
-    }
+  // "Suggest another time" on a declined/proposed message — reopens the
+  // same find-window flow, scanning THIS user's own calendar (the only one
+  // Studlin can actually see), and marks the new proposal as replacing the
+  // old one.
+  const counterProposeTime=(supersededId)=>{setCounterSupersedes(supersededId);setFindWindowOpen(true);};
+  // Injects a chosen study-window slot into the CURRENT user's own
+  // calendar only. There's no backend to push an event into someone else's
+  // account — this is why acceptance has to be per-person: whoever accepts
+  // is the one whose own browser this runs in. Shared by both the
+  // proposer's immediate commit (scheduleGroupSession) and a responder's
+  // Accept (see respondToShare's calendar branch).
+  const confirmStudyTime=(w,mode,studySessionId)=>{
     addTaskWithRebalance({
       id:"netsync-"+Date.now(),date:w.date,time:w.time,duration:w.duration,
       title:mode==="study block"?peerName+" study session":"Meet up with "+peerName,
@@ -6631,7 +6753,53 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
       priority:5,difficulty:5,deadline:null,status:"pending",timeSpent:0,completedAt:null,
       ...(studySessionId?{studySessionId}:{}),
     });
-    fsdb().collection('chatRooms').doc(roomId).collection('messages').doc(id).update({status:"scheduled",scheduledOption:optionIndex,scheduledMode:mode}).catch(()=>{});
+  };
+  // Proposes a time — no longer finalizes it for everyone unilaterally.
+  // optionIndex picks which suggested slot the user chose; msg.meta.options
+  // falls back to [msg.meta] for older messages sent before the multi-slot
+  // refactor. mode is "busy block" (just meeting up) or "study block" (real
+  // parallel Lock-In — creates a studySessions doc so hitting Begin later
+  // goes live for everyone who accepted). The proposer's own acceptance is
+  // implicit (they just picked a time that works for them) — everyone else
+  // gets Accept/Decline/Suggest another time on the message itself (see
+  // respondToShare's calendar branch), and the proposal only reaches
+  // status:"confirmed" once every invited member has individually accepted.
+  const scheduleGroupSession=async(id,optionIndex=0,mode="busy block")=>{
+    const msg=messages.find(x=>x.id===id);
+    if(!msg||!roomId||!myUid)return;
+    const w=(msg.meta.options||[msg.meta])[optionIndex];
+    if(!w)return;
+    const memberUids=isGroup?target.group.memberUids:[myUid,target.user.uid].sort();
+    const memberNames=isGroup?(target.group.memberNames||{}):{[myUid]:getUserName()||"You",[target.user.uid]:target.user.n};
+    let studySessionId=null;
+    if(mode==="study block"){
+      const now=new Date().toISOString();
+      const doc=await fsdb().collection('studySessions').add({
+        memberUids,createdBy:myUid,roomId,
+        title:(isGroup?target.group.name:peerName)+" study session",subject:peerName,
+        scheduledDate:w.date,scheduledTime:w.time,duration:w.duration,
+        // "scheduled" (not "proposed") — this is the pre-existing live-
+        // session lifecycle (scheduled -> live, consumed by the liveSessions
+        // presence query and the Begin flow), a separate concern from the
+        // chat MESSAGE's own status/responses fields that track the
+        // accept/decline negotiation. Renaming this would silently break
+        // that query and presence indicators for a session nobody actually
+        // opted out of using yet.
+        status:"scheduled",startedBy:null,startedAt:null,endedAt:null,
+        participants:Object.fromEntries(memberUids.map(uid=>{
+          const name=memberNames[uid]||"Studlin User";
+          return [uid,{name,initials:name.split(" ").map(x=>x[0]).join(""),state:uid===myUid?"accepted":"invited",joinedAt:null,leftAt:null}];
+        })),
+        createdAt:now,updatedAt:now,
+      }).catch(()=>null);
+      studySessionId=doc&&doc.id;
+    }
+    confirmStudyTime(w,mode,studySessionId);
+    fsdb().collection('chatRooms').doc(roomId).collection('messages').doc(id).update({
+      status:"proposed",proposedBy:myUid,scheduledOption:optionIndex,scheduledMode:mode,
+      memberUids,studySessionId:studySessionId||null,
+      responses:{[myUid]:"accepted"},
+    }).catch(()=>{});
   };
   // Sharing a note/deck posts a pending card first — a lightweight one-click
   // confirmation before it actually goes out (mirrors the same verification
@@ -6656,6 +6824,31 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
   const respondToShare=(id,decision)=>{
     const msg=messages.find(x=>x.id===id);
     if(!msg||!roomId)return;
+    // Study-time proposals: decision here is "accepted"/"declined", not
+    // "approved"/"declined" like note/deck shares — handled entirely
+    // separately since acceptance means writing to MY OWN calendar (see
+    // confirmStudyTime), not copying something into a workspace, and the
+    // resulting message status depends on every invited member's response,
+    // not just mine.
+    if(msg.kind==="calendar"){
+      if(!myUid)return;
+      if(decision==="accepted"){
+        const w=(msg.meta.options||[msg.meta])[msg.scheduledOption||0];
+        if(w)confirmStudyTime(w,msg.scheduledMode||"busy block",msg.studySessionId);
+        if(msg.studySessionId){
+          fsdb().collection('studySessions').doc(msg.studySessionId).update({["participants."+myUid+".state"]:"accepted"}).catch(()=>{});
+        }
+      }
+      const memberUids=msg.memberUids||(isGroup?target.group.memberUids:[myUid,target.user.uid].sort());
+      const nextResponses={...(msg.responses||{}),[myUid]:decision};
+      const allAccepted=memberUids.length>0&&memberUids.every(uid=>nextResponses[uid]==="accepted");
+      const nextStatus=decision==="declined"?"declined":(allAccepted?"confirmed":"proposed");
+      fsdb().collection('chatRooms').doc(roomId).collection('messages').doc(id).update({
+        ["responses."+myUid]:decision,
+        status:nextStatus,
+      }).catch(()=>{});
+      return;
+    }
     if(decision==="approved"&&msg.senderId!==myUid){
       if(msg.kind==="note"){
         const notes=lsGet("notes",[]);
@@ -6733,7 +6926,7 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
 
           <div ref={scrollRef} style={{flex:1,overflowY:"auto",padding:"16px 18px",display:"flex",flexDirection:"column",gap:10}}>
             {messages.length===0&&<div style={{textAlign:"center",color:pp.faint,fontSize:12,marginTop:40}}>No messages yet. Say hi.</div>}
-            {messages.map(m=><ChatBubble key={m.id} m={m} myUid={myUid} onRespond={respondToShare} onSchedule={scheduleGroupSession} />)}
+            {messages.map(m=><ChatBubble key={m.id} m={m} myUid={myUid} onRespond={respondToShare} onSchedule={scheduleGroupSession} onCounter={counterProposeTime} />)}
           </div>
 
           {notePicker&&(
@@ -11579,6 +11772,19 @@ function Profile({setActive}={}) {
     setProfState(updated);
     setPrefSaved(true);
     setTimeout(()=>setPrefSaved(false),2200);
+
+    // Sync to the account's actual server record too, mirroring
+    // InitWizard's save — without this, a status/school change made here
+    // only ever persisted to this one browser and silently never followed
+    // the student to another device or a reinstalled PWA.
+    const u=firebase.auth().currentUser;
+    if(u){
+      fsdb().collection('users').doc(u.uid).set({
+        status,affiliation,school:affiliation,
+        updatedAt:new Date().toISOString(),
+      },{merge:true}).catch(reportError("profileSaveOnboarding"));
+      upsertProfile({status,school:affiliation});
+    }
   };
 
   const affiliationLabel = status==="highschool"?"School name":status==="college"?"University":"School / affiliation";

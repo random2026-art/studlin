@@ -97,8 +97,9 @@ describe("computePausePlan (Studlin Reschedule)", () => {
 
   test("never assigns a checklist item a clock time (regression: 'push everything back' used to schedule plain to-dos)", () => {
     const m = loadStudlinModule();
-    const checklistItem = realTask({ id: "checklist-1", date: "2026-07-15", time: null, duration: null, checklist: true });
-    const task = realTask({ id: "task-1", date: "2026-07-15" });
+    const today = m.dayKey(); // shift's window is ev.date>=today, so this must track the real clock, not a fixed past literal
+    const checklistItem = realTask({ id: "checklist-1", date: today, time: null, duration: null, checklist: true });
+    const task = realTask({ id: "task-1", date: today });
     m.localStorage.setItem("studlin-events", JSON.stringify([checklistItem, task]));
     const result = m.computePausePlan({ intent: "shift", days: 3 });
     const touchedIds = [...result.moved, ...result.couldntMove].map((x) => x.id);
