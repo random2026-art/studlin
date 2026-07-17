@@ -9188,7 +9188,11 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
       if(!slot||(slot.date===ev.date&&slot.time===ev.time))return ev;
       changed=true;
       movedTitles.push(ev.title);
-      return {...ev,date:slot.date,time:slot.time};
+      // Stamped the same way Tier 0 stamps its own moves — gives this the
+      // same per-item undo icon and lets the fully generic undoTier0Move
+      // reverse it. Previously the ~3.4s toast below was the only record
+      // this ever happened.
+      return {...ev,date:slot.date,time:slot.time,movedByStudlin:true,movedFrom:{date:ev.date,time:ev.time},movedAt:Date.now()};
     });
     if(changed){
       setEvents(next);lsSet("events",next);
@@ -11555,6 +11559,12 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
       lsSet("events",merged);
       const nextSubs=importedCals.map(s=>s.id===sub.id?{...s,lastSyncedAt:Date.now()}:s);
       setImportedCals(nextSubs);saveImportedCalendars(nextSubs);
+      // Neither this manual click nor the once-a-day silent auto-resync
+      // below used to surface anything on success, unlike both sibling
+      // actions (confirmImportCalendar, removeImportedCalendar) which do —
+      // short status wording, not an event count, since a resync's fetched
+      // count doesn't mean "N new/changed" the way it does on first import.
+      showToast(sub.label+" synced.");
     }catch(e){}
   };
   const removeImportedCalendar=(sub)=>{
@@ -13952,6 +13962,12 @@ function App() {
   // the student clicks "Roll over".
   const [rolloverPending,setRolloverPending]=useState([]);
   const [rolloverToast,setRolloverToast]=useState("");
+  // Same "dismissible banner, not a blocking modal" idiom as rolloverPending
+  // above, for pending tasks whose deadline has already passed — these used
+  // to get wiped from storage the moment the daily gate ran, with no toast,
+  // no undo, and no way to know it happened. Now nothing is deleted until
+  // the student explicitly picks "Clear them" on the banner below.
+  const [expiredPending,setExpiredPending]=useState([]);
   // Tier 0 — automatic reflow. Unlike Tier 1, this moves eligible missed
   // tasks with no click required; tier0Batch is only the after-the-fact
   // summary the student can see/undo, never a proposal awaiting approval.
@@ -14065,6 +14081,13 @@ function App() {
     setRolloverToast(rolloverPending.length+" overdue task"+(rolloverPending.length!==1?"s":"")+" moved to today.");
     setTimeout(()=>setRolloverToast(""),3200);
     setRolloverPending([]);
+  };
+  const clearExpiredPending=()=>{
+    if(expiredPending.length===0)return;
+    const all=lsGet("events",[]);
+    const ids=new Set(expiredPending.map(e=>e.id));
+    lsSet("events",all.filter(e=>!ids.has(e.id)));
+    setExpiredPending([]);
   };
   const [scheduleSettingsOpen,setScheduleSettingsOpen]=useState(false);
   const [navCollapsed,setNavCollapsed]=useState(()=>lsGet("navCollapsed",false));
@@ -14407,27 +14430,35 @@ function App() {
     lsSet("lastLoginDay",today);
     applyOverduePenalties();
     const evs=lsGet("events",[]);
-    const cleaned=evs.filter(ev=>!(ev.status==="pending"&&ev.deadline&&ev.deadline<today));
-    if(cleaned.length!==evs.length)lsSet("events",cleaned);
+    // Ask before permanently clearing a pending task whose deadline has
+    // already passed, instead of silently deleting it the moment this gate
+    // runs (it used to wipe these out with no toast, no undo, and no record
+    // it ever happened). isTier0Missed (deadline<todayKey check) and the
+    // rollover filter below already independently ignore an expired-deadline
+    // pending item on their own, so leaving it in `working` for now is
+    // safe — it just stays visible until the student decides via the
+    // banner rendered near rolloverPending's own.
+    const expired=evs.filter(ev=>ev.status==="pending"&&ev.deadline&&ev.deadline<today);
+    if(expired.length>0)setExpiredPending(expired);
     // Completion-reliability signal — logged regardless of tier0Enabled so
     // the data keeps accumulating even if Tier 0 itself is off. Gated to
     // ev.date===yesterday (not just date<today) so a task that stays stuck
     // across multiple days only logs one "missed" per occurrence, not once
     // per day it remains overdue.
     const yesterday=(()=>{const d=new Date(today+"T12:00:00");d.setDate(d.getDate()-1);return dayKey(d);})();
-    cleaned.filter(ev=>isTier0Missed(ev,today)&&ev.date===yesterday).forEach(ev=>logCompletionOutcome("missed",ev.time,difficultyTierOf(ev)));
+    evs.filter(ev=>isTier0Missed(ev,today)&&ev.date===yesterday).forEach(ev=>logCompletionOutcome("missed",ev.time,difficultyTierOf(ev)));
     // Tier 0 — the trigger is silent (no click needed to move an eligible
     // missed task), but the result never is: every move gets recorded into
     // movedBatch so the banner below and the per-task badge can always show
     // the student what changed and offer a one-tap undo.
-    let working=cleaned;
+    let working=evs;
     const movedBatch=[];
     if(lsGet("tier0Enabled",true)){
       const routines=getWeeklyRoutine();
       const prefs=getSchedulePreferences();
       const tomorrowKey=(()=>{const d=new Date(today+"T12:00:00");d.setDate(d.getDate()+1);return dayKey(d);})();
       const nowMins=(()=>{const n=new Date();return n.getHours()*60+n.getMinutes();})();
-      cleaned.filter(ev=>isTier0Missed(ev,today)).forEach(ev=>{
+      evs.filter(ev=>isTier0Missed(ev,today)).forEach(ev=>{
         // Snapshot before this placement — findTier0Slot's eviction path
         // (findSlotWithEviction) can silently relocate OTHER pending tasks
         // to make room for this one. Those get the same movedByStudlin
@@ -14499,7 +14530,7 @@ function App() {
     // forward in memory, and this needs to see that to avoid duplicating it.
     const habitEvents=materializeHabitsForDate(today,working);
     if(habitEvents.length)working=working.concat(habitEvents);
-    if(working!==cleaned)lsSet("events",working);
+    if(working!==evs)lsSet("events",working);
     if(movedBatch.length>0){
       const seen=getTier0SeenIds();
       const unseen=movedBatch.filter(m=>!seen.has(m.id));
@@ -14970,6 +15001,22 @@ function App() {
           <div style={{display:"flex",gap:8}}>
             <Btn onClick={applyRollover} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Roll over</Btn>
             <Btn variant="ghost" onClick={()=>setRolloverPending([])} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Dismiss</Btn>
+          </div>
+        </div>
+      )}
+      {expiredPending.length>0&&(
+        <div style={{position:"fixed",top:76,left:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+          <div style={{fontSize:13,color:T.white,marginBottom:10}}>
+            <strong style={{color:T.red}}>{expiredPending.length} task{expiredPending.length!==1?"s":""}</strong> missed {expiredPending.length!==1?"their":"its"} deadline without being finished.
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12,maxHeight:160,overflowY:"auto"}}>
+            {expiredPending.map(ev=>(
+              <div key={ev.id} style={{fontSize:12,padding:"6px 9px",background:T.card2,borderRadius:8,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</div>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <Btn variant="danger" onClick={clearExpiredPending} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Clear them</Btn>
+            <Btn variant="ghost" onClick={()=>setExpiredPending([])} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Keep them</Btn>
           </div>
         </div>
       )}
