@@ -90,7 +90,11 @@ async function registerCalendarWatch(accessToken, uid) {
     body: JSON.stringify({
       id: 'studlin-' + uid + '-' + Date.now().toString(36),
       type: 'web_hook',
-      address: 'https://studlin.com/api/me',
+      // The apex domain 308-redirects to www -- confirmed Google Calendar
+      // push delivery does not reliably follow redirects on webhook POSTs,
+      // so this must be the canonical non-redirecting host or Google's
+      // notifications silently never arrive.
+      address: 'https://www.studlin.com/api/me',
       token: uid,
     }),
   });
