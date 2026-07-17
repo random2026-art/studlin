@@ -8016,9 +8016,11 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
 }
 
 // ─── WEEKLY PLANNER ───────────────────────────────────────────────────────────
-// WK_PX_HR (pixels per hour) now lives inside WeeklyPlanner as a local const
-// driven by isAgendaCollapsed, so the grid gains height (not just width) when
-// the Today panel is hidden — see the component body below.
+// WK_PX_HR (pixels per hour) is a compact constant so ~6+ hours are visible
+// at once without scrolling, Google-Calendar-style, instead of the ~3 hours
+// the old taller rows allowed. It no longer grows when the Today agenda
+// panel collapses — the freed-up vertical room (see maxHeight below) now
+// reveals more hours instead of just stretching each row.
 
 // Lays out same-day events that overlap in time side-by-side instead of
 // fully stacking on top of each other at full column width — previously any
@@ -8061,10 +8063,9 @@ function layoutDayEvents(evs) {
 }
 
 function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, isAgendaCollapsed}) {
-  // Taller per-hour scale when the Today agenda panel is hidden, so the grid
-  // gains height (not just the width the freed-up column would otherwise
-  // just stretch into) and doesn't flatten out.
-  const WK_PX_HR = isAgendaCollapsed ? 92 : 76;
+  // Compact, fixed per-hour scale (held constant across the agenda-collapse
+  // toggle) so several hours are visible at a glance, like Google Calendar.
+  const WK_PX_HR = 48;
   const wkColRefs = useRef({});
   const weekScrollRef = useRef(null);
   const [wkDragId, setWkDragId] = useState(null);
