@@ -970,11 +970,11 @@ function computeOccupiedIntervals(events,routines,prefs,dateKey){
 // wrong. Tries the same time-of-day on the desired date first (that's what
 // "move it to tomorrow" naturally means), falls back to scanning that whole
 // day, then rolls forward a day at a time. Always returns something (falls
-// back to the originally desired slot after two weeks) rather than leaving
-// a fixed event unplaced.
+// back to the originally desired slot after three weeks) rather than
+// leaving a fixed event unplaced.
 function findFixedEventSlot(events,routines,prefs,desiredDate,desiredTime,duration){
   const desiredMins=timeToMinutes(desiredTime);
-  for(let dayOffset=0;dayOffset<14;dayOffset++){
+  for(let dayOffset=0;dayOffset<21;dayOffset++){
     const d=new Date(desiredDate+"T12:00:00");d.setDate(d.getDate()+dayOffset);
     const dk=dayKey(d);
     const occupied=computeOccupiedIntervals(events,routines,prefs,dk);
@@ -1050,7 +1050,7 @@ function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,
   const now=new Date();
   const todayKey=dayKey();
   const nowFloorMins=Math.ceil((now.getHours()*60+now.getMinutes()+15)/15)*15;
-  for(let dayOffset=0;dayOffset<14;dayOffset++){
+  for(let dayOffset=0;dayOffset<21;dayOffset++){
     const d=new Date(desiredDate+"T12:00:00");d.setDate(d.getDate()+dayOffset);
     const dk=dayKey(d);
     // Assignment-linked callers (scheduleAssignmentExtension) pass a deadline
@@ -1085,7 +1085,7 @@ function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,
       if(!occupied.some(o=>!(t+duration<=o.start||t>=o.end)))return {date:dk,time:minutesToTime(t)};
     }
   }
-  // Nothing open in two weeks (or the deadline forced an early break before
+  // Nothing open in three weeks (or the deadline forced an early break before
   // any day was even scanned, e.g. an item due "today" with today already
   // full) — better than silently dropping the task. But this raw fallback
   // must still never hand back a past time for today: a same-day deadline
@@ -8595,7 +8595,7 @@ function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, c
                 <div style={{display:"flex",gap:4,flexShrink:0,alignItems:"center"}}>
                   {!isDone&&ev.duration&&(ev.kind==="study block"||ev.kind==="deadline")&&<BtnSm onClick={()=>{if(window._setTimerTask)window._setTimerTask(ev);}} style={{flexShrink:0,boxShadow:`0 2px 10px -3px ${T.lime}88`}}>Begin</BtnSm>}
                   {!isDone&&(ev.kind==="exam"||ev.kind==="class"||ev.kind==="reminder")&&<button onClick={()=>openEdit(ev)} title="View details" style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Details</button>}
-                  {!isDone&&ev.duration&&(ev.kind==="study block"||ev.kind==="deadline")&&<button onClick={()=>openReschedule(ev)} title="Reschedule" style={{width:24,height:24,borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0,padding:0}}>{Icon.refresh}</button>}
+                  {!isDone&&(ev.kind==="reminder"||(ev.duration&&(ev.kind==="study block"||ev.kind==="deadline")))&&<button onClick={()=>openReschedule(ev)} title="Reschedule" style={{width:24,height:24,borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0,padding:0}}>{Icon.refresh}</button>}
                   {!isDone&&<button onClick={()=>markDone(ev.id)} title="Mark done" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",display:"flex"}}>{Icon.check}</button>}
                   {isDone&&<button onClick={()=>uncrossDone(ev.id)} title="Reopen" style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font,flexShrink:0,display:"flex",alignItems:"center",gap:4}}>{Icon.refresh} Reopen</button>}
                   <button onClick={()=>removeEvent(ev.id)} title="Delete" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,padding:2}}>×</button>
@@ -9154,7 +9154,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
     // No lower bound on date: a still-pending task dated in the past (never
     // marked done) that overlaps a routine block stays visibly stuck there
     // forever otherwise — e.g. still rendered mid-"SCHOOL HOURS" in the
-    // current week's grid the day after it was created. findOpenSlotFor
+    // current week's grid the day after it was created. findLegalSlotOrNull
     // searches forward from the task's own date, so it naturally lands on a
     // later opening the same day if one exists, or a future day otherwise —
     // never further in the past.
@@ -9163,7 +9163,12 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
     const movedTitles=[];
     const next=events.map(ev=>{
       if(ev.status==="done"||!ev.time)return ev;
-      if(ev.kind==="exam"||ev.kind==="class"||ev.kind==="busy block")return ev;
+      // Reuses Tier 0's own fixed-kind set (rather than a hand-rolled copy)
+      // so this silent, automatic reflow shares Tier 0's conservatism —
+      // this used to omit "reminder", meaning a point-in-time nudge could
+      // get silently relocated here even though Tier 0 would never touch
+      // one.
+      if(TIER0_FIXED_KINDS.has(ev.kind))return ev;
       if(ev.date>horizonEnd)return ev;
       const duration=ev.duration||30;
       const tMins=timeToMinutes(ev.time);
@@ -9174,8 +9179,13 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
         .map(o=>({start:timeToMinutes(o.time),end:timeToMinutes(o.time)+(o.duration||30)}));
       const conflict=occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end));
       if(!conflict)return ev;
-      const slot=findOpenSlotFor(events.filter(e=>e.id!==ev.id),nextRoutines,prefs,ev.date,ev.time,duration);
-      if(slot.date===ev.date&&slot.time===ev.time)return ev;
+      // findLegalSlotOrNull instead of plain findOpenSlotFor: this silent
+      // background reflow must never place a task somewhere new that's
+      // itself occupied — a null here means genuinely leave it put, not
+      // lean on findOpenSlotFor's own last-resort fallback happening to
+      // hand back this event's existing (already-conflicting) slot.
+      const slot=findLegalSlotOrNull(events.filter(e=>e.id!==ev.id),nextRoutines,prefs,ev.date,ev.time,duration);
+      if(!slot||(slot.date===ev.date&&slot.time===ev.time))return ev;
       changed=true;
       movedTitles.push(ev.title);
       return {...ev,date:slot.date,time:slot.time};
