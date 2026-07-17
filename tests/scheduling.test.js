@@ -550,10 +550,14 @@ describe("planBrainDumpTasks (Brain Dump placement)", () => {
     // dump ("find bugs, THEN paint the floor") got scheduled out of order,
     // since each item was independently slotted with no concept of sequence.
     const { planBrainDumpTasks } = loadStudlinModule();
-    // workEndTime widened so this doesn't flake depending on what real
-    // wall-clock time the suite happens to run at (see the identical note
-    // on the peak-hour-bucket test below).
-    const prefs = { ...DEFAULT_PREFS, workEndTime: "23:30" };
+    // workEndTime AND bedtime widened so this doesn't flake depending on
+    // what real wall-clock time the suite happens to run at --
+    // planBrainDumpTasks schedules "now"-anchored items against real time,
+    // not an injected clock, and bedtime (not workEndTime) is the actual
+    // binding cutoff for same-day placement. A chained pair must fit
+    // regardless of time of day (see the identical note on the
+    // peak-hour-bucket test below).
+    const prefs = { ...DEFAULT_PREFS, workEndTime: "23:59", bedtime: "23:59" };
     const items = [
       { kind: "study", title: "Find bugs", durationMin: 60, immediate: true, chained: false },
       { kind: "study", title: "Paint floor", durationMin: 30, chained: true },
@@ -571,11 +575,24 @@ describe("planBrainDumpTasks (Brain Dump placement)", () => {
     // The reliability/peak-hour engine is exactly what pushed "now" tasks
     // hours away in the original bug report -- chaining must override it.
     const { planBrainDumpTasks } = loadStudlinModule();
-    // workEndTime widened so this doesn't flake depending on what real
-    // wall-clock time the suite happens to run at (planBrainDumpTasks
-    // schedules "now"-anchored items against real time, not an injected
-    // clock) -- a chained pair must fit regardless of time of day.
-    const prefs = { ...DEFAULT_PREFS, peakHourBuckets: ["evening"], workEndTime: "23:30" };
+    // The declared peak bucket must actually differ from whatever bucket
+    // "now" falls into, or the test's own premise (peak bucket pulls away
+    // from chaining) doesn't hold -- planBrainDumpTasks schedules
+    // "now"-anchored items against real wall-clock time, not an injected
+    // clock, so a bucket hardcoded to "evening" flakes if the suite
+    // happens to run in the evening. Buckets mirror TIER0_HOUR_BUCKETS.
+    const currentHourBucket = (() => {
+      const mins = new Date().getHours() * 60 + new Date().getMinutes();
+      if (mins >= 6 * 60 && mins < 11 * 60) return "morning";
+      if (mins >= 11 * 60 && mins < 15 * 60) return "midday";
+      if (mins >= 15 * 60 && mins < 18 * 60) return "afternoon";
+      if (mins >= 18 * 60 && mins < 22 * 60) return "evening";
+      return null;
+    })();
+    const declaredBucket = currentHourBucket === "morning" ? "evening" : "morning";
+    // workEndTime widened so a chained pair always fits regardless of time
+    // of day too.
+    const prefs = { ...DEFAULT_PREFS, peakHourBuckets: [declaredBucket], workEndTime: "23:59", bedtime: "23:59" };
     const items = [
       { kind: "study", title: "First", durationMin: 60, immediate: false, chained: false },
       { kind: "study", title: "Second", durationMin: 30, chained: true },
