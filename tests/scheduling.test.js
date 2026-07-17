@@ -77,8 +77,9 @@ describe("computePausePlan (Studlin Reschedule)", () => {
 
   test("clear_week also excludes duration-less markers but includes real tasks", () => {
     const m = loadStudlinModule();
-    const marker = dueDateMarker({ date: "2026-07-16" });
-    const task = realTask({ id: "task-1", date: "2026-07-16" });
+    const today = m.dayKey(); // clear_week's window is relative to the real clock, not a fixed past literal
+    const marker = dueDateMarker({ date: today });
+    const task = realTask({ id: "task-1", date: today });
     m.localStorage.setItem("studlin-events", JSON.stringify([marker, task]));
     const result = m.computePausePlan({ intent: "clear_week" });
     const touchedIds = [...result.moved, ...result.couldntMove].map((x) => x.id);
@@ -642,5 +643,46 @@ describe("Lock-In timer checkpoint + recovery (regression: a real session was lo
     const cp = { taskId: "task-1", totalMins: 30, focusElapsedSecs: 90 * 60 };
     const resolved = resolveOrphanedCheckpoint(cp, [realTask({ duration: 30 })]);
     assert.equal(resolved.elapsedMins, 30);
+  });
+});
+
+describe("checkManualStudyTime (manually-picked shared-study time, regression: the propose-a-time flow used to only offer AI-suggested slots)", () => {
+  test("reports no conflicts on a genuinely empty day", () => {
+    const m = loadStudlinModule();
+    m.localStorage.setItem("studlin-events", JSON.stringify([]));
+    const result = m.checkManualStudyTime("2026-07-20", "14:00", 60);
+    assert.equal(result.conflicts.length, 0);
+    assert.equal(result.date, "2026-07-20");
+    assert.equal(result.time, "14:00");
+    assert.equal(result.duration, 60);
+  });
+
+  test("names a real overlapping event as a conflict, not just flags busy", () => {
+    const m = loadStudlinModule();
+    const lecture = realTask({ id: "ev-1", title: "Chem Lecture", date: "2026-07-20", time: "14:00", duration: 75 });
+    m.localStorage.setItem("studlin-events", JSON.stringify([lecture]));
+    // Proposed 2:30-3:30pm overlaps the 2:00-3:15pm lecture.
+    const result = m.checkManualStudyTime("2026-07-20", "14:30", 60);
+    assert.equal(result.conflicts.length, 1);
+    assert.equal(result.conflicts[0].title, "Chem Lecture");
+  });
+
+  test("a non-overlapping event on the same day is not reported as a conflict", () => {
+    const m = loadStudlinModule();
+    const lecture = realTask({ id: "ev-1", title: "Chem Lecture", date: "2026-07-20", time: "09:00", duration: 60 });
+    m.localStorage.setItem("studlin-events", JSON.stringify([lecture]));
+    const result = m.checkManualStudyTime("2026-07-20", "14:00", 60);
+    assert.equal(result.conflicts.length, 0);
+  });
+
+  test("a recurring routine occurrence on that weekday counts as a conflict too, not just literal events", () => {
+    const m = loadStudlinModule();
+    const dow = (new Date("2026-07-20T12:00:00").getDay() + 6) % 7; // app's Monday-first convention
+    const routine = { id: "routine-gym", title: "Gym", kind: "busy", days: [dow], startTime: "19:15", duration: 60, subject: "" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([routine]));
+    m.localStorage.setItem("studlin-events", JSON.stringify([]));
+    const result = m.checkManualStudyTime("2026-07-20", "19:30", 60);
+    assert.equal(result.conflicts.length, 1);
+    assert.equal(result.conflicts[0].title, "Gym");
   });
 });

@@ -6645,6 +6645,43 @@ function ChatBubble({m,myUid,onRespond,onSchedule,onCounter}){
   );
 }
 
+// What's already occupied on the signed-in student's own calendar for one
+// day -- real events plus expanded routine occurrences (excluding free
+// periods), each carrying a title so a conflict can be named, not just
+// flagged. Pulled out as its own function so findSharedStudyWindow and
+// checkManualStudyTime (below) share exactly one definition of "busy on
+// this day" instead of two that could quietly drift apart.
+function getDayOccupiedIntervals(dateKey){
+  const events=lsGet("events",[]);
+  const routines=getWeeklyRoutine();
+  return events.filter(e=>e.date===dateKey)
+    .map(e=>({s:timeToMinutes(e.time||"0:00"),e:timeToMinutes(e.time||"0:00")+(e.duration||60),title:e.title||"Untitled"}))
+    .concat(expandRoutineOccurrences(routines,dateKey,dateKey).filter(o=>o.kind!=="free period")
+      .map(o=>({s:timeToMinutes(o.time),e:timeToMinutes(o.time)+(o.duration||30),title:o.title||"Routine"})))
+    .sort((a,b)=>a.s-b.s);
+}
+// Checks one specific manually-picked date/time/duration against the
+// student's own calendar (same honest limit as findSharedStudyWindow --
+// there's no way to see the other person's calendar, only the proposer's)
+// and names whatever it collides with instead of just saying "busy."
+// Time labels match ChatDrawer's own fmtTimeLabel formatting exactly
+// ("2:00 PM", with a space) rather than depending on that closure-local
+// helper or the differently-formatted global fmtClock12 ("2:00PM").
+function checkManualStudyTime(date,time,duration){
+  const fmt=(t)=>{const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
+  const start=timeToMinutes(time);
+  const end=start+duration;
+  const occupied=getDayOccupiedIntervals(date);
+  const conflicts=occupied.filter(o=>!(end<=o.s||start>=o.e))
+    .map(o=>({title:o.title,timeLabel:fmt(minutesToTime(o.s))+"–"+fmt(minutesToTime(o.e))}));
+  const d=new Date(date+"T12:00:00");
+  const today=dayKey();
+  return {
+    date,time,duration,conflicts,
+    dayLabel:date===today?"today":d.toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"}),
+    timeLabel:fmt(time),
+  };
+}
 // ─── NETWORK: sliding chat drawer (DM + Group, w/ Quick Actions) ─────────────
 function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onUnfriend}){
   const isGroup=!!(target&&target.kind==="group");
@@ -6669,6 +6706,14 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
   const [fwCustomDays,setFwCustomDays]=useState(5);
   const [fwDuration,setFwDuration]=useState(90);
   const [fwDurationCustom,setFwDurationCustom]=useState(false);
+  // "Pick a time" mode — an alternative to auto-find inside the same
+  // modal, sharing Duration with it. fwManualDate defaults blank (not
+  // today) so the date field's own placeholder/native picker is what the
+  // student sees first, not a pre-filled guess.
+  const [fwMode,setFwMode]=useState("auto");
+  const [fwManualDate,setFwManualDate]=useState("");
+  const [fwManualTime,setFwManualTime]=useState("15:00");
+  const [fwManualCheck,setFwManualCheck]=useState(null); // result of checkManualStudyTime once submitted
   const scrollRef=useRef(null);
 
   // Live message thread — a DM room is created lazily (idempotent merge) the
@@ -6677,7 +6722,7 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
   // messages subcollection's security rules (which look up its memberUids)
   // resolve for reads/writes.
   useEffect(()=>{
-    setInput("");setQuickOpen(false);setNotePicker(false);setDeckPicker(false);setSyncRunning(false);setSettingsOpen(false);setFindWindowOpen(false);setUnfriendConfirmOpen(false);
+    setInput("");setQuickOpen(false);setNotePicker(false);setDeckPicker(false);setSyncRunning(false);setSettingsOpen(false);setFindWindowOpen(false);setUnfriendConfirmOpen(false);setFwMode("auto");setFwManualDate("");setFwManualCheck(null);
     if(!roomId||!myUid){setMessages([]);return;}
     let cancelled=false;
     let unsub=()=>{};
@@ -6752,20 +6797,15 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
     const prefEnd=params.timeMode==="custom"?timeToMinutes(params.timeTo):timeToMinutes("22:00");
     const scanDays=Math.max(1,params.lookAheadDayRange||1);
     const duration=params.durationInMinutes;
-    const events=lsGet("events",[]);
     const today=new Date();
     const EVENING_START=18*60;
-    const routines=getWeeklyRoutine();
-    const dayEvents=(dk)=>events.filter(e=>e.date===dk).map(e=>({s:timeToMinutes(e.time||"0:00"),e:timeToMinutes(e.time||"0:00")+(e.duration||60)}))
-      .concat(expandRoutineOccurrences(routines,dk,dk).filter(o=>o.kind!=="free period").map(o=>({s:timeToMinutes(o.time),e:timeToMinutes(o.time)+(o.duration||30)})))
-      .sort((a,b)=>a.s-b.s);
     const isFree=(occupied,start,end)=>!occupied.some(o=>!(end<=o.s||start>=o.e));
     const labelFor=(offset,d)=>offset===1?"tomorrow":d.toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"});
     const candidates=[];
     for(let offset=1;offset<=scanDays;offset++){
       const d=new Date(today);d.setDate(today.getDate()+offset);
       const dk=dayKey(d);
-      const occupied=dayEvents(dk);
+      const occupied=getDayOccupiedIntervals(dk);
       for(let start=prefStart;start+duration<=prefEnd;start+=30){
         const end=start+duration;
         if(!isFree(occupied,start,end))continue;
@@ -6810,6 +6850,28 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
     const supersedes=counterSupersedes;
     setCounterSupersedes(null);
     setTimeout(()=>{setSyncRunning(false);sendMessage({kind:"calendar",status:"unscheduled",meta:findSharedStudyWindow(params),...(supersedes?{supersedes}:{})});},2100);
+  };
+  // "Pick a time" mode's Continue button — checks first rather than
+  // posting straight away, same inline-validate-before-committing
+  // instinct as everywhere else in this app that touches a calendar.
+  // Clean (no conflicts) posts immediately, identical shape to a
+  // single-option auto-find result so ChatBubble/scheduleGroupSession
+  // need no changes at all to handle it.
+  const submitManualTimeCheck=()=>{
+    if(!fwManualDate||!fwManualTime)return;
+    const result=checkManualStudyTime(fwManualDate,fwManualTime,fwDuration);
+    if(result.conflicts.length===0){
+      postManualTime(result);
+    }else{
+      setFwManualCheck(result);
+    }
+  };
+  const postManualTime=(result)=>{
+    setFindWindowOpen(false);setFwManualCheck(null);
+    const supersedes=counterSupersedes;
+    setCounterSupersedes(null);
+    const {conflicts,...option}=result;
+    sendMessage({kind:"calendar",status:"unscheduled",meta:{options:[option]},...(supersedes?{supersedes}:{})});
   };
   // "Suggest another time" on a declined/proposed message — reopens the
   // same find-window flow, scanning THIS user's own calendar (the only one
@@ -7104,8 +7166,22 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
         </Modal>
       )}
 
-      <Modal open={findWindowOpen} onClose={()=>setFindWindowOpen(false)} title="Find Shared Study Window" sub="Studlin Match scans for mutual free time within these constraints." width={420}
-        footer={<><Btn variant="subtle" onClick={()=>setFindWindowOpen(false)}>Cancel</Btn><Btn onClick={submitFindWindow}>{Icon.cal} Find Window</Btn></>}>
+      <Modal open={findWindowOpen} onClose={()=>setFindWindowOpen(false)} title="Find Shared Study Window" sub={fwMode==="manual"?"Pick an exact time — Studlin checks it against your own calendar only, it can't see theirs.":"Studlin Match scans your own calendar for free time within these constraints."} width={420}
+        footer={fwMode==="manual"?(
+          fwManualCheck?(
+            <><Btn variant="subtle" onClick={()=>setFwManualCheck(null)}>Adjust time</Btn><Btn variant="danger" onClick={()=>postManualTime(fwManualCheck)}>Propose anyway</Btn></>
+          ):(
+            <><Btn variant="subtle" onClick={()=>setFindWindowOpen(false)}>Cancel</Btn><Btn onClick={submitManualTimeCheck} disabled={!fwManualDate||!fwManualTime}>{Icon.cal} Continue</Btn></>
+          )
+        ):(
+          <><Btn variant="subtle" onClick={()=>setFindWindowOpen(false)}>Cancel</Btn><Btn onClick={submitFindWindow}>{Icon.cal} Find Window</Btn></>
+        )}>
+        <div style={{display:"flex",gap:6,marginBottom:16}}>
+          {[{v:"auto",label:"Auto-find"},{v:"manual",label:"Pick a time"}].map(o=>(
+            <button key={o.v} onClick={()=>{setFwMode(o.v);setFwManualCheck(null);}} style={{flex:1,padding:"8px 10px",borderRadius:7,fontSize:12.5,cursor:"pointer",border:`1px solid ${fwMode===o.v?T.purple+"66":T.border}`,background:fwMode===o.v?T.purple+"14":"transparent",color:fwMode===o.v?T.purple:T.muted,fontFamily:T.font,fontWeight:fwMode===o.v?700:500}}>{o.label}</button>
+          ))}
+        </div>
+        {fwMode==="auto"?(<>
         <Field label="Preferred Time">
           <div style={{display:"flex",gap:6,marginBottom:fwTimeMode==="custom"?10:0}}>
             {[{v:"anytime",label:"Anytime"},{v:"custom",label:"Custom range"}].map(o=>(
@@ -7134,17 +7210,33 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
             </div>
           )}
         </Field>
+        </>):(<>
+        <Field label="Date">
+          <input type="date" min={dayKey()} value={fwManualDate} onChange={e=>{setFwManualDate(e.target.value);setFwManualCheck(null);}} style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.font,outline:"none",boxSizing:"border-box"}} />
+        </Field>
+        <Field label="Time">
+          <TimeInput value={fwManualTime} onChange={t=>{setFwManualTime(t);setFwManualCheck(null);}} />
+        </Field>
+        {fwManualCheck&&fwManualCheck.conflicts.length>0&&(
+          <div style={{padding:"10px 12px",borderRadius:9,background:T.red+"14",border:`1px solid ${T.red}44`,marginBottom:2}}>
+            <div style={{fontSize:12,color:T.red,fontWeight:600,marginBottom:4}}>This overlaps with your own calendar:</div>
+            {fwManualCheck.conflicts.map((c,i)=>(
+              <div key={i} style={{fontSize:12,color:T.text}}>{c.title} · {c.timeLabel}</div>
+            ))}
+          </div>
+        )}
+        </>)}
         <Field label="Duration">
           {fwDurationCustom?(
             <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <NumField min={15} step={15} fallback={15} value={fwDuration} onChange={setFwDuration} style={{width:70}} />
+              <NumField min={15} step={15} fallback={15} value={fwDuration} onChange={v=>{setFwDuration(v);setFwManualCheck(null);}} style={{width:70}} />
               <span style={{fontSize:12.5,color:T.muted}}>Minutes</span>
-              <button onClick={()=>{setFwDurationCustom(false);setFwDuration(90);}} style={{marginLeft:"auto",background:"none",border:"none",color:T.purple,fontSize:11.5,cursor:"pointer",fontFamily:T.font}}>‹ presets</button>
+              <button onClick={()=>{setFwDurationCustom(false);setFwDuration(90);setFwManualCheck(null);}} style={{marginLeft:"auto",background:"none",border:"none",color:T.purple,fontSize:11.5,cursor:"pointer",fontFamily:T.font}}>‹ presets</button>
             </div>
           ):(
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
               {[{v:60,label:"60 min"},{v:90,label:"90 min"},{v:120,label:"2 hours"}].map(o=>(
-                <button key={o.v} onClick={()=>setFwDuration(o.v)} style={{padding:"7px 13px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${fwDuration===o.v?T.purple+"66":T.border}`,background:fwDuration===o.v?T.purple+"14":"transparent",color:fwDuration===o.v?T.purple:T.muted,fontFamily:T.font,fontWeight:fwDuration===o.v?600:400}}>{o.label}</button>
+                <button key={o.v} onClick={()=>{setFwDuration(o.v);setFwManualCheck(null);}} style={{padding:"7px 13px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${fwDuration===o.v?T.purple+"66":T.border}`,background:fwDuration===o.v?T.purple+"14":"transparent",color:fwDuration===o.v?T.purple:T.muted,fontFamily:T.font,fontWeight:fwDuration===o.v?600:400}}>{o.label}</button>
               ))}
               <button onClick={()=>setFwDurationCustom(true)} style={{padding:"7px 13px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontFamily:T.font}}>Custom...</button>
             </div>

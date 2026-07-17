@@ -22,9 +22,16 @@ const esbuild = require("esbuild");
 function loadStudlinModule() {
   const filePath = path.join(__dirname, "..", "studlin-app.jsx");
   const raw = fs.readFileSync(filePath, "utf8");
-  const mountIdx = raw.indexOf("// Mount");
-  if (mountIdx === -1) throw new Error("Couldn't find the \"// Mount\" boundary -- has studlin-app.jsx been restructured?");
-  const withoutMount = raw.slice(0, mountIdx);
+  // Line-anchored exact match, not a plain substring search -- a prose
+  // comment elsewhere in the file ("// Mounted conditionally in
+  // Profile()...") starts with the same characters as this marker, and a
+  // naive indexOf() silently matched THAT one instead of the real
+  // boundary, truncating the module hundreds of lines early with no
+  // error (everything after it just came back `undefined` from
+  // globalThis, swallowed by the per-name try/catch below).
+  const mountMatch = raw.match(/^\/\/ Mount$/m);
+  if (!mountMatch) throw new Error("Couldn't find the \"// Mount\" boundary -- has studlin-app.jsx been restructured?");
+  const withoutMount = raw.slice(0, mountMatch.index);
 
   const { code } = esbuild.transformSync(withoutMount, { loader: "jsx", format: "cjs" });
   // Function declarations (function foo(){}) leak onto the vm context's
@@ -44,7 +51,8 @@ function loadStudlinModule() {
     "materializeHabitsForDate","findTier0Slot","findSlotWithEviction",
     "examAlreadyPassedToday","getSchoolTerm","saveSchoolTerm",
     "getTimerCheckpoint","checkpointTimerSession","clearTimerCheckpoint",
-    "resolveOrphanedCheckpoint","mergeImportedEvents","detectCalendarSourceType"];
+    "resolveOrphanedCheckpoint","mergeImportedEvents","detectCalendarSourceType",
+    "getDayOccupiedIntervals","checkManualStudyTime"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }
