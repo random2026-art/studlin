@@ -545,24 +545,22 @@ describe("planBrainDumpTasks (Brain Dump placement)", () => {
     }
   });
 
-  test("a chained item lands immediately after the previous item, not wherever's independently best", () => {
+  test("a chained item lands immediately after the previous item, not wherever's independently best", (t) => {
     // Regression test for the 2026-07-15 bug: a same-day "then"-sequenced
     // dump ("find bugs, THEN paint the floor") got scheduled out of order,
     // since each item was independently slotted with no concept of sequence.
+    // planBrainDumpTasks schedules "now"-anchored items against the real
+    // wall clock (no injected-clock param), so earlier attempts to just
+    // widen workEndTime/bedtime kept flaking as real "now" crept later
+    // into the evening across a long session -- freezing the clock to a
+    // fixed morning time is the actual fix, not a wider window.
+    t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-07-16T09:00:00") });
     const { planBrainDumpTasks } = loadStudlinModule();
-    // workEndTime AND bedtime widened so this doesn't flake depending on
-    // what real wall-clock time the suite happens to run at --
-    // planBrainDumpTasks schedules "now"-anchored items against real time,
-    // not an injected clock, and bedtime (not workEndTime) is the actual
-    // binding cutoff for same-day placement. A chained pair must fit
-    // regardless of time of day (see the identical note on the
-    // peak-hour-bucket test below).
-    const prefs = { ...DEFAULT_PREFS, workEndTime: "23:59", bedtime: "23:59" };
     const items = [
       { kind: "study", title: "Find bugs", durationMin: 60, immediate: true, chained: false },
       { kind: "study", title: "Paint floor", durationMin: 30, chained: true },
     ];
-    const tasks = planBrainDumpTasks(items, [], [], prefs);
+    const tasks = planBrainDumpTasks(items, [], [], DEFAULT_PREFS);
     const bugs = tasks.find((t) => t.title === "Find bugs");
     const paint = tasks.find((t) => t.title === "Paint floor");
     assert.ok(bugs && paint);
@@ -571,28 +569,15 @@ describe("planBrainDumpTasks (Brain Dump placement)", () => {
     assert.ok(gap >= 0 && gap <= MAX_CHAIN_GAP_MINS, `expected paint to start shortly after bugs ended, gap was ${gap}min`);
   });
 
-  test("a chained item stays chained even when a declared peak-hour bucket would otherwise pull it elsewhere", () => {
+  test("a chained item stays chained even when a declared peak-hour bucket would otherwise pull it elsewhere", (t) => {
     // The reliability/peak-hour engine is exactly what pushed "now" tasks
     // hours away in the original bug report -- chaining must override it.
+    // Clock frozen to a fixed morning time (see the identical note above)
+    // so declaring "evening" as the peak bucket reliably differs from
+    // "now" regardless of when the suite actually runs.
+    t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-07-16T09:00:00") });
     const { planBrainDumpTasks } = loadStudlinModule();
-    // The declared peak bucket must actually differ from whatever bucket
-    // "now" falls into, or the test's own premise (peak bucket pulls away
-    // from chaining) doesn't hold -- planBrainDumpTasks schedules
-    // "now"-anchored items against real wall-clock time, not an injected
-    // clock, so a bucket hardcoded to "evening" flakes if the suite
-    // happens to run in the evening. Buckets mirror TIER0_HOUR_BUCKETS.
-    const currentHourBucket = (() => {
-      const mins = new Date().getHours() * 60 + new Date().getMinutes();
-      if (mins >= 6 * 60 && mins < 11 * 60) return "morning";
-      if (mins >= 11 * 60 && mins < 15 * 60) return "midday";
-      if (mins >= 15 * 60 && mins < 18 * 60) return "afternoon";
-      if (mins >= 18 * 60 && mins < 22 * 60) return "evening";
-      return null;
-    })();
-    const declaredBucket = currentHourBucket === "morning" ? "evening" : "morning";
-    // workEndTime widened so a chained pair always fits regardless of time
-    // of day too.
-    const prefs = { ...DEFAULT_PREFS, peakHourBuckets: [declaredBucket], workEndTime: "23:59", bedtime: "23:59" };
+    const prefs = { ...DEFAULT_PREFS, peakHourBuckets: ["evening"] };
     const items = [
       { kind: "study", title: "First", durationMin: 60, immediate: false, chained: false },
       { kind: "study", title: "Second", durationMin: 30, chained: true },
