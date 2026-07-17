@@ -2120,20 +2120,54 @@ function rebalanceDay(dateKey,allEvents,routines,prefs){
 // have its actual due date moved by these commands — see isQualifying's
 // carve-out below).
 const PAUSE_QUALIFYING_KINDS=new Set(["study block","deadline","reminder"]);
+// A syllabus-scanned due-date marker is kind:"deadline" but duration:null (a
+// real assignment's own scheduled work block always has a real duration) —
+// without this carve-out, "push everything back"/"clear this week"/a class
+// skip would move the actual due date itself, which is a fact set by the
+// professor, not student time Studlin is free to reschedule. Reminders keep
+// duration:0 by design (a point-in-time nudge, not a block) and are
+// legitimately reschedulable, so this only excludes "deadline" specifically,
+// not the whole qualifying set. !ev.checklist mirrors isTier0Missed's own
+// exclusion — a checklist item is a plain to-do with no inherent time and
+// must never be assigned one, here just as much as during Tier 0's rollover.
+// Module scope (not a closure inside computePausePlan) since
+// computeClassSkipPlan needs it too.
+const isQualifying=(ev)=>ev.status==="pending"&&PAUSE_QUALIFYING_KINDS.has(ev.kind)&&!(ev.kind==="deadline"&&ev.duration==null)&&!ev.checklist;
+// Shared by the "skip_class" Tier-3 intent (skips every class-kind routine
+// matching a weekday) and a single-occurrence skip triggered directly from
+// the calendar UI (skips exactly one routineId) — both just need to hand in
+// the routine id(s) already decided to be skipped and the date, and get back
+// a computePausePlan-shaped preview so the same modal renders either one
+// with no changes.
+function computeClassSkipPlan(skippedIds,date){
+  const routinesAll=getWeeklyRoutine();
+  const label=skippedIds.length===0?"No class scheduled "+date:"Skip class, "+date;
+  if(skippedIds.length===0)return{label,moved:[],couldntMove:[],skipRoutine:null};
+  // Preview the freed slot without touching localStorage yet — pass a
+  // routines list with the skipped rule(s) filtered out, same idea as
+  // Tier 3's other intents computing entirely in-memory until Confirm. The
+  // actual persisted skip (which every other scheduler in the app also
+  // needs to see, not just this preview) only gets written in
+  // confirmPausePlan.
+  const routinesMinusSkipped=routinesAll.filter(r=>!skippedIds.includes(r.id));
+  const prefsNow=getSchedulePreferences();
+  const all=lsGet("events",[]);
+  const candidates=all.filter(ev=>isQualifying(ev)&&ev.date>date)
+    .sort((a,b)=>a.date===b.date?((a.time||"")<(b.time||"")?-1:1):(a.date<b.date?-1:1));
+  let working=all;
+  const moved=[];
+  for(const ev of candidates){
+    if(moved.length>=4)break;
+    const slot=findLegalSlotOrNull(working.filter(e=>e.id!==ev.id),routinesMinusSkipped,prefsNow,date,prefsNow.workStartTime,ev.duration||30,ev.deadline||null);
+    if(slot&&slot.date===date){
+      moved.push({id:ev.id,title:ev.title,oldDate:ev.date,oldTime:ev.time,newDate:slot.date,newTime:slot.time});
+      working=working.map(e=>e.id===ev.id?{...e,date:slot.date,time:slot.time}:e);
+    }
+  }
+  return{label,moved,couldntMove:[],skipRoutine:{date,routineIds:skippedIds}};
+}
 function computePausePlan(intent,forcedId){
   const today=dayKey();
-  // A syllabus-scanned due-date marker is kind:"deadline" but duration:null
-  // (a real assignment's own scheduled work block always has a real
-  // duration) — without this carve-out, "push everything back"/"clear
-  // this week" would move the actual due date itself, which is a fact set
-  // by the professor, not student time Studlin is free to reschedule.
-  // Reminders keep duration:0 by design (a point-in-time nudge, not a
-  // block) and are legitimately reschedulable, so this only excludes
-  // "deadline" specifically, not the whole qualifying set.
-  // !ev.checklist mirrors isTier0Missed's own exclusion — a checklist item
-  // is a plain to-do with no inherent time and must never be assigned one,
-  // here just as much as during Tier 0's rollover.
-  const isQualifying=(ev)=>ev.status==="pending"&&PAUSE_QUALIFYING_KINDS.has(ev.kind)&&!(ev.kind==="deadline"&&ev.duration==null)&&!ev.checklist;
   if(intent.intent==="move_event"||intent.intent==="retime_event"){
     const targetDate=intent.targetDate||today;
     let matched;
@@ -2206,32 +2240,8 @@ function computePausePlan(intent,forcedId){
   if(intent.intent==="skip_class"){
     const date=intent.date||today;
     const dow=(new Date(date+"T12:00:00").getDay()+6)%7;
-    const routinesAll=getWeeklyRoutine();
-    const skippedIds=routinesAll.filter(r=>r.kind==="class"&&r.days&&r.days.includes(dow)).map(r=>r.id);
-    const label=skippedIds.length===0?"No class scheduled "+date:"Skip class, "+date;
-    if(skippedIds.length===0)return{label,moved:[],couldntMove:[],skipRoutine:null};
-    // Preview the freed slot without touching localStorage yet — pass a
-    // routines list with the skipped rule(s) filtered out, same idea as
-    // Tier 3's other intents computing entirely in-memory until Confirm.
-    // The actual persisted skip (which every other scheduler in the app
-    // also needs to see, not just this preview) only gets written in
-    // confirmPausePlan.
-    const routinesMinusSkipped=routinesAll.filter(r=>!skippedIds.includes(r.id));
-    const prefsNow=getSchedulePreferences();
-    const all=lsGet("events",[]);
-    const candidates=all.filter(ev=>isQualifying(ev)&&ev.date>date)
-      .sort((a,b)=>a.date===b.date?((a.time||"")<(b.time||"")?-1:1):(a.date<b.date?-1:1));
-    let working=all;
-    const moved=[];
-    for(const ev of candidates){
-      if(moved.length>=4)break;
-      const slot=findLegalSlotOrNull(working.filter(e=>e.id!==ev.id),routinesMinusSkipped,prefsNow,date,prefsNow.workStartTime,ev.duration||30,ev.deadline||null);
-      if(slot&&slot.date===date){
-        moved.push({id:ev.id,title:ev.title,oldDate:ev.date,oldTime:ev.time,newDate:slot.date,newTime:slot.time});
-        working=working.map(e=>e.id===ev.id?{...e,date:slot.date,time:slot.time}:e);
-      }
-    }
-    return{label,moved,couldntMove:[],skipRoutine:{date,routineIds:skippedIds}};
+    const skippedIds=getWeeklyRoutine().filter(r=>r.kind==="class"&&r.days&&r.days.includes(dow)).map(r=>r.id);
+    return computeClassSkipPlan(skippedIds,date);
   }
   let label,inWindow,computeNewDate;
   if(intent.intent==="shift"){
@@ -8523,7 +8533,7 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
 // on demand instead. Collapses back to capped every time the selected day
 // changes, so switching days never leaves a stale "expanded" list behind.
 const AGENDA_DAY_CAP=5;
-function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, colorOf, openNew, openEdit, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, routines, openRoutineEdit, deleteRoutineItem, markDone, uncrossDone, removeEvent, setSelDay, setYm, dragId, setDragId, openReschedule, setEvents}) {
+function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, colorOf, openNew, openEdit, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, routines, openRoutineEdit, deleteRoutineItem, onSkipOneOccurrence, markDone, uncrossDone, removeEvent, setSelDay, setYm, dragId, setDragId, openReschedule, setEvents}) {
   const [showAllToday,setShowAllToday]=useState(false);
   useEffect(()=>{setShowAllToday(false);},[selDay]);
   const hiddenCount=Math.max(0,dayEvents.length-AGENDA_DAY_CAP);
@@ -8590,6 +8600,10 @@ function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, c
                   {isDone&&<button onClick={()=>uncrossDone(ev.id)} title="Reopen" style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font,flexShrink:0,display:"flex",alignItems:"center",gap:4}}>{Icon.refresh} Reopen</button>}
                   <button onClick={()=>removeEvent(ev.id)} title="Delete" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,padding:2}}>×</button>
                 </div>
+              )}
+              {isRoutine&&!editRoutineMode&&(
+                <button onClick={(e)=>{e.stopPropagation();onSkipOneOccurrence(ev);}} title="Skip this one — every other week stays"
+                  style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,padding:2,flexShrink:0}}>×</button>
               )}
               {isRoutine&&editRoutineMode&&hoveredRoutineId===ev.routineId&&(
                 <button onClick={(e)=>{e.stopPropagation();deleteRoutineItem(ev.routineId);setHoveredRoutineId(null);}} title="Delete this routine block (every week)"
@@ -9191,6 +9205,17 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
   // this rule created for them.
   const schoolWindow=(()=>{const r=routines.find(x=>x.id==="hs-school");if(!r)return null;return {start:timeToMinutes(r.startTime),end:timeToMinutes(r.startTime)+(r.duration||0)};})();
   const deleteRoutineItem=(routineId)=>persistRoutines(routines.filter(r=>r.id!==routineId));
+  // "Skip just this one" — unlike deleteRoutineItem (which removes the rule
+  // forever), this drops the student straight into the existing Studlin
+  // Reschedule preview for a single occurrence: nothing is written to
+  // routineSkips until they hit Confirm there (confirmPausePlan), so this is
+  // confirm-before-delete and "ask before filling the gap" for free, reusing
+  // the same modal skip_class already drives.
+  const skipOneOccurrence=(ev)=>{
+    setPauseError("");setPauseLastIntent(null);
+    setPausePreview(computeClassSkipPlan([ev.routineId],ev.date));
+    setPauseOpen(true);
+  };
   const [editRoutineMode,setEditRoutineMode]=useState(false);
   const [hoveredRoutineId,setHoveredRoutineId]=useState(null);
   const [routineEditItem,setRoutineEditItem]=useState(null); // the underlying rule being edited, or null
@@ -9728,7 +9753,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
       setPauseLastIntent(parsed);
       setPausePreview(computePausePlan(parsed));
     }catch(e){
-      setPauseError("Couldn't understand that. Try rephrasing, or use one of the quick actions below.");
+      setPauseError("That doesn't look like a schedule change Studlin can act on. Try phrasing it like “I'm sick, push things back 3 days,” or pick a quick action below.");
     }
     setPauseLoading(false);
   };
@@ -9826,7 +9851,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
         ))}
       </div>
       {calView==="monthly"&&(<CollapsibleAgendaLayout isAgendaCollapsed={isAgendaCollapsed} setIsAgendaCollapsed={setIsAgendaCollapsed}
-        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,markDone,uncrossDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask,setEvents}}>
+        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,onSkipOneOccurrence:skipOneOccurrence,markDone,uncrossDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask,setEvents}}>
         <Card style={{padding:16}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,padding:"4px 6px"}}>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
@@ -9880,7 +9905,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
         </Card>
       </CollapsibleAgendaLayout>)}
       {calView==="weekly"&&(<CollapsibleAgendaLayout isAgendaCollapsed={isAgendaCollapsed} setIsAgendaCollapsed={setIsAgendaCollapsed}
-        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,markDone,uncrossDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask,setEvents}}>
+        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,onSkipOneOccurrence:skipOneOccurrence,markDone,uncrossDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask,setEvents}}>
         <WeeklyPlanner events={events} setEvents={setEvents} moveEvent={moveEvent} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openNew={openNew} openEdit={openEdit}
           routines={routines} editRoutineMode={editRoutineMode} hoveredRoutineId={hoveredRoutineId} setHoveredRoutineId={setHoveredRoutineId}
           onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
@@ -10274,7 +10299,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
           pausePreview.disambiguate?"A few things match that name — pick the right one.":
           pausePreview.noMatch?"Try a different name, or reschedule it from the calendar instead.":
           (pausePreview.moved.length+" task"+(pausePreview.moved.length!==1?"s":"")+" affected")
-        ):"Tell Studlin what's going on. It'll reschedule around it."}
+        ):"Tell Studlin about a schedule change: being sick, missing a class, or moving one thing. It reschedules around it, it's not a chat box."}
         width={520}
         footer={pausePreview?(
           pausePreview.disambiguate||pausePreview.noMatch?
