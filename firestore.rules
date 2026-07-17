@@ -95,9 +95,17 @@ service cloud.firestore {
         allow create: if request.auth != null
           && request.auth.uid == request.resource.data.senderId
           && request.auth.uid in get(/databases/$(database)/documents/chatRooms/$(roomId)).data.memberUids;
+        // Fields beyond status/scheduledOption/scheduledMode were added when
+        // the propose/accept/decline negotiation flow shipped (see
+        // scheduleGroupSession/respondToShare's calendar branch in
+        // studlin-app.jsx), but this allowlist was never updated to match --
+        // every one of those writes touched proposedBy/memberUids/
+        // studySessionId/responses, none of which were allowed, so Firestore
+        // silently rejected the entire update (all-or-nothing per write) and
+        // the app's own empty .catch(()=>{}) masked it as success locally.
         allow update: if request.auth != null
           && request.auth.uid in get(/databases/$(database)/documents/chatRooms/$(roomId)).data.memberUids
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','scheduledOption','scheduledMode']);
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','scheduledOption','scheduledMode','proposedBy','memberUids','studySessionId','responses']);
         allow delete: if false;
       }
     }

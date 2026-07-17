@@ -6876,7 +6876,7 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
       status:"proposed",proposedBy:myUid,scheduledOption:optionIndex,scheduledMode:mode,
       memberUids,studySessionId:studySessionId||null,
       responses:{[myUid]:"accepted"},
-    }).catch(()=>{});
+    }).catch(reportError("scheduleGroupSession"));
   };
   // Sharing a note/deck posts a pending card first — a lightweight one-click
   // confirmation before it actually goes out (mirrors the same verification
@@ -6923,7 +6923,7 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
       fsdb().collection('chatRooms').doc(roomId).collection('messages').doc(id).update({
         ["responses."+myUid]:decision,
         status:nextStatus,
-      }).catch(()=>{});
+      }).catch(reportError("respondToShare-calendar"));
       return;
     }
     if(decision==="approved"&&msg.senderId!==myUid){
@@ -9685,14 +9685,6 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
   const isTaskKind=!isFixedKind&&!isReminderKind;
   const isChecklistMode=evKind==="deadline"&&asChecklist;
   const manualMode=isTaskKind&&!isChecklistMode&&taskMode==="manual";
-  // Switching modes clears whichever fields the other path owns, so a stale
-  // value left over from the previous mode can't accidentally satisfy a
-  // guard (e.g. aiArrange bailing because evDate still held an old value).
-  const selectTaskMode=(m)=>{
-    setTaskMode(m);
-    if(m==="ai"){setEvDate("");setEvTime("");}
-    if(m==="manual"){setEvAttackBlock(false);}
-  };
   return (
     <>
     {/* Main content — this is data-page's direct child, so it's the element
@@ -9714,7 +9706,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
               {[
                 {icon:Icon.sparkles,label:"Brain dump",sub:"Describe everything at once",onClick:()=>{setAddMenuOpen(false);resetForm();setBrainDumpOpen(true);}},
                 {icon:Icon.file,label:"Scan syllabus",sub:"Upload a doc, AI extracts dates",onClick:()=>{setAddMenuOpen(false);onScanSyllabus();}},
-                {icon:Icon.cal,label:"Quick add",sub:"One task, you pick the time",onClick:()=>{setAddMenuOpen(false);openNewManual(selDay);}},
+                {icon:Icon.cal,label:"Manual placement",sub:"One task, you pick the time",onClick:()=>{setAddMenuOpen(false);openNewManual(selDay);}},
                 {icon:Icon.zap,label:"AI schedule",sub:"One task, Studlin finds the time",onClick:()=>{setAddMenuOpen(false);openNewAI(selDay);}},
               ].map(item=>(
                 <div key={item.label} onClick={item.onClick} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 14px",cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
@@ -9848,7 +9840,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
           setTimeout(()=>setRescheduleToast(""),2800);
         }} />
       )}
-      <Modal open={newOpen} onClose={resetForm} title="New task" sub="Add details and let Studlin schedule it, or place it manually." width={580}
+      <Modal open={newOpen} onClose={resetForm} title="New task" sub={taskMode==="manual"?"Add details and pick exactly when.":"Add details and Studlin finds the time."} width={580}
         footer={
           isChecklistMode
             ? <><Btn variant="subtle" onClick={resetForm}>Cancel</Btn><Btn onClick={saveChecklistItem} disabled={!evTitle.trim()} style={{flex:1,justifyContent:"center",opacity:evTitle.trim()?1:0.45}}>Add to Checklist</Btn></>
@@ -9877,15 +9869,6 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
 
         {isChecklistMode&&(
           <Field label="Due date (optional)"><Input type="date" value={evDeadline} onChange={ev=>setEvDeadline(ev.target.value)} /></Field>
-        )}
-
-        {isTaskKind&&!isChecklistMode&&(
-          <Field label="Scheduling">
-            <div style={{display:"flex",gap:6,padding:3,background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,marginBottom:2}}>
-              <button type="button" onClick={()=>selectTaskMode("ai")} style={{flex:1,padding:"8px 10px",borderRadius:7,border:"none",background:taskMode==="ai"?T.lime:"transparent",color:taskMode==="ai"?T.ink:T.muted,fontSize:12.5,fontWeight:taskMode==="ai"?700:500,cursor:"pointer",fontFamily:T.font,transition:"all 0.15s"}}>AI Schedule Mode</button>
-              <button type="button" onClick={()=>selectTaskMode("manual")} style={{flex:1,padding:"8px 10px",borderRadius:7,border:"none",background:taskMode==="manual"?T.lime:"transparent",color:taskMode==="manual"?T.ink:T.muted,fontSize:12.5,fontWeight:taskMode==="manual"?700:500,cursor:"pointer",fontFamily:T.font,transition:"all 0.15s"}}>Manual Placement</button>
-            </div>
-          </Field>
         )}
 
         {!isTaskKind&&(
