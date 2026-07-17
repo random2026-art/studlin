@@ -2,6 +2,7 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { admin, db, auth } = require('./_lib/firebase-admin');
 const { setCors, verifyAuth } = require('./_lib/auth');
 const { withSentry } = require('./_lib/sentry');
+const { exchangeCodeForTokens, fetchGoogleCalendarEvents } = require('./_lib/google-calendar');
 
 // Source of truth for the Free plan's monthly AI chat allowance — this is
 // what actually creates the user doc on first load. Must match
@@ -66,6 +67,83 @@ async function handleSubscriptionAction(user, req, res) {
   } catch (err) {
     console.error('subscription action error:', err);
     return res.status(500).json({ error: 'Could not update subscription. Please try again.' });
+  }
+}
+
+// Exchanges the one-time authorization code the client got from Google's
+// popup consent screen for a long-lived refresh token, stores it (never
+// readable by any client -- see firestore.rules users/{userId}: allow
+// read: if false), then does one immediate sync so "Connect" still feels
+// instant, same as the old client-only implicit-token flow did. Everything
+// after this point (the daily cron, the on-load pull) reads the refresh
+// token this stores; nothing else ever requests a fresh one from Google.
+async function handleGoogleCalendarConnect(user, req, res) {
+  if (!db) return res.status(503).json({ error: 'Database unavailable.' });
+  const { code } = req.body || {};
+  if (!code) return res.status(400).json({ error: 'Missing authorization code.' });
+
+  try {
+    const tokens = await exchangeCodeForTokens(code);
+    if (!tokens.refresh_token) {
+      // Google only issues a refresh token on a fresh consent grant --
+      // initCodeClient is configured with prompt:'consent' client-side
+      // specifically to guarantee this, so getting here means something
+      // upstream of that changed; fail loudly rather than silently storing
+      // a connection that can never actually background-sync.
+      return res.status(502).json({ error: "Google didn't grant offline access. Try disconnecting and reconnecting." });
+    }
+    const events = await fetchGoogleCalendarEvents(tokens.access_token);
+    const now = new Date().toISOString();
+    await db.collection('users').doc(user.uid).set({
+      googleCalendarRefreshToken: tokens.refresh_token,
+      googleCalendarConnectedAt: now,
+      googleCalendarSyncedEvents: events,
+      googleCalendarLastSyncedAt: now,
+      googleCalendarLastSyncError: null,
+    }, { merge: true });
+    return res.status(200).json({ events, lastSyncedAt: now });
+  } catch (err) {
+    console.error('google calendar connect error:', err);
+    return res.status(500).json({ error: 'Could not connect Google Calendar. Please try again.' });
+  }
+}
+
+// Read-only -- returns whatever the daily cron (or the connect call above)
+// most recently fetched. Never calls Google itself, so this is cheap
+// enough to run on every app load without worrying about rate limits or
+// popup UX at all.
+async function handleGoogleCalendarPull(user, res) {
+  if (!db) return res.status(503).json({ error: 'Database unavailable.' });
+  try {
+    const doc = await db.collection('users').doc(user.uid).get();
+    const data = doc.exists ? doc.data() : {};
+    if (!data.googleCalendarRefreshToken) return res.status(200).json({ connected: false, events: [] });
+    return res.status(200).json({
+      connected: true,
+      events: data.googleCalendarSyncedEvents || [],
+      lastSyncedAt: data.googleCalendarLastSyncedAt || null,
+      lastSyncError: data.googleCalendarLastSyncError || null,
+    });
+  } catch (err) {
+    console.error('google calendar pull error:', err);
+    return res.status(500).json({ error: 'Could not load synced calendar.' });
+  }
+}
+
+async function handleGoogleCalendarDisconnect(user, res) {
+  if (!db) return res.status(503).json({ error: 'Database unavailable.' });
+  try {
+    await db.collection('users').doc(user.uid).update({
+      googleCalendarRefreshToken: admin.firestore.FieldValue.delete(),
+      googleCalendarConnectedAt: admin.firestore.FieldValue.delete(),
+      googleCalendarSyncedEvents: admin.firestore.FieldValue.delete(),
+      googleCalendarLastSyncedAt: admin.firestore.FieldValue.delete(),
+      googleCalendarLastSyncError: admin.firestore.FieldValue.delete(),
+    });
+    return res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error('google calendar disconnect error:', err);
+    return res.status(500).json({ error: 'Could not disconnect Google Calendar.' });
   }
 }
 
@@ -228,6 +306,9 @@ module.exports = withSentry(async (req, res) => {
   if (req.method === 'POST') {
     const { action } = req.body || {};
     if (action === 'delete-account') return handleDeleteAccount(user, res);
+    if (action === 'google-calendar-connect') return handleGoogleCalendarConnect(user, req, res);
+    if (action === 'google-calendar-pull') return handleGoogleCalendarPull(user, res);
+    if (action === 'google-calendar-disconnect') return handleGoogleCalendarDisconnect(user, res);
     return handleSubscriptionAction(user, req, res);
   }
 

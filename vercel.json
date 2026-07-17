@@ -20,8 +20,12 @@
     "api/send-verification.js": { "memory": 256, "maxDuration": 10 },
     "api/cal-proxy.js": { "memory": 256, "maxDuration": 10 },
     "api/export-users.js": { "memory": 256, "maxDuration": 30 },
-    "api/get-shared-chat.js": { "memory": 128, "maxDuration": 10 }
+    "api/get-shared-chat.js": { "memory": 128, "maxDuration": 10 },
+    "api/google-calendar-cron.js": { "memory": 256, "maxDuration": 60 }
   },
+  "crons": [
+    { "path": "/api/google-calendar-cron", "schedule": "0 8 * * *" }
+  ],
   "headers": [
     {
       "source": "/",

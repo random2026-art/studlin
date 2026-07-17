@@ -11400,6 +11400,11 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const [calAppleLinked,setCalAppleLinked]=useState(()=>lsGet("cal-apple",false));
   const [googleSyncing,setGoogleSyncing]=useState(false);
   const [googleLastSynced,setGoogleLastSynced]=useState(()=>lsGet("cal-google-last-synced",null));
+  // Surfaces api/me.js's googleCalendarLastSyncError (set by the daily
+  // background cron when a stored refresh token stops working, e.g. the
+  // student revoked access in their Google account) -- a reconnect banner
+  // instead of the connection just going silently stale forever.
+  const [googleSyncError,setGoogleSyncError]=useState(null);
   const [integrationToast,setIntegrationToast]=useState(null);
 
   const showToast=(msg,type="success")=>{
@@ -11407,74 +11412,76 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     setTimeout(()=>setIntegrationToast(null),3500);
   };
 
-  // Google's items are a mix of real timed appointments and all-day
-  // markers (item.start.date, no dateTime). Only the timed ones become a
-  // "busy block" -- a real, fixed, occupied slot the scheduler routes
-  // around -- since blindly doing that for an all-day entry (e.g. a
-  // "Spring Break" marker) would silently make Studlin think the whole
-  // day is unusable. All-day entries stay as informational "deadline"
-  // markers, same as before this fix.
-  const googleItemToEvent=(item)=>{
-    const timed=!!item.start.dateTime;
-    let duration=60;
-    if(timed&&item.end&&item.end.dateTime){
-      const mins=Math.round((new Date(item.end.dateTime)-new Date(item.start.dateTime))/60000);
-      if(mins>0)duration=mins;
-    }
-    return {
-      id:"gcal-"+item.id,
-      date:(item.start.dateTime||item.start.date).slice(0,10),
-      time:timed?item.start.dateTime.slice(11,16):"",
-      duration:timed?duration:null,
-      title:item.summary||"Untitled",
-      subject:"General",
-      kind:timed?"busy block":"deadline",
-    };
+  // Merges a batch of server-shaped gcal-* events (googleItemToEvent's
+  // shape, produced identically by the client's old direct-fetch path and
+  // by api/_lib/google-calendar.js server-side) into local storage --
+  // shared by the "just connected" response and the once-per-load
+  // background pull below, so both apply events the exact same way.
+  const applyGoogleEvents=(gcalEvents)=>{
+    const existing=lsGet("events",[]).filter(e=>!e.id.startsWith("gcal-"));
+    lsSet("events",[...existing,...gcalEvents]);
   };
 
-  const fetchAndApplyGoogleEvents=async(accessToken)=>{
-    setGoogleSyncing(true);
-    try{
-      const now=new Date().toISOString();
-      const res=await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=50&orderBy=startTime&singleEvents=true&timeMin=${encodeURIComponent(now)}`,{headers:{Authorization:`Bearer ${accessToken}`}});
-      const data=await res.json();
-      if(data.error) throw new Error(data.error.message);
-      const gcalEvents=(data.items||[]).map(googleItemToEvent);
-      const existing=lsGet("events",[]).filter(e=>!e.id.startsWith("gcal-"));
-      lsSet("events",[...existing,...gcalEvents]);
-      lsSet("cal-google",true);
-      const now2=Date.now();
-      lsSet("cal-google-last-synced",now2);
-      setGoogleLastSynced(now2);
-      setCalGoogleLinked(true);
-      showToast(`Google Calendar synced · ${gcalEvents.length} event${gcalEvents.length===1?"":"s"} imported`);
-    }catch(e){
-      showToast("Failed to fetch calendar events. Check permissions and try again.","error");
-    }finally{
-      setGoogleSyncing(false);
-    }
-  };
-
+  // Authorization Code flow (not the old implicit token flow) -- this is
+  // what lets the server get a refresh token it can use on its own, later,
+  // with nobody signed in, instead of every sync needing a fresh popup.
+  // access_type:'offline' + prompt:'consent' together guarantee Google
+  // actually issues that refresh token (it's otherwise only granted once,
+  // silently, the very first time a student ever consents).
   const requestGoogleSync=()=>{
     if(typeof google==="undefined"||!google.accounts||!google.accounts.oauth2){
       showToast("Google sign-in not ready. Try refreshing the page.","error");return;
     }
-    const tokenClient=google.accounts.oauth2.initTokenClient({
+    setGoogleSyncing(true);
+    const codeClient=google.accounts.oauth2.initCodeClient({
       client_id:"16831354472-e2vauavtunm3ot771cg7pgline10i9rk.apps.googleusercontent.com",
       scope:"https://www.googleapis.com/auth/calendar.events.readonly",
-      callback:(resp)=>{
-        if(resp.error){showToast("Google Calendar connection failed.","error");return;}
-        fetchAndApplyGoogleEvents(resp.access_token);
+      ux_mode:"popup",
+      access_type:"offline",
+      prompt:"consent",
+      callback:async(resp)=>{
+        if(resp.error){showToast("Google Calendar connection failed.","error");setGoogleSyncing(false);return;}
+        try{
+          const res=await authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"google-calendar-connect",code:resp.code})});
+          const data=await res.json();
+          if(!res.ok)throw new Error(data.error||"Sync failed");
+          applyGoogleEvents(data.events);
+          lsSet("cal-google",true);
+          lsSet("cal-google-last-synced",Date.now());
+          setGoogleLastSynced(Date.now());
+          setCalGoogleLinked(true);
+          setGoogleSyncError(null);
+          showToast(`Google Calendar synced · ${data.events.length} event${data.events.length===1?"":"s"} imported`);
+        }catch(e){
+          showToast("Failed to fetch calendar events. Check permissions and try again.","error");
+        }finally{
+          setGoogleSyncing(false);
+        }
       }
     });
-    tokenClient.requestAccessToken();
+    codeClient.requestCode();
   };
   const connectGoogle=requestGoogleSync;
-  // Re-auth is effectively instant once consent's already been granted
-  // (Google's implicit-token flow has no refresh token to reuse silently,
-  // so a fresh token request is the only way to pull new events -- but it
-  // doesn't re-prompt the user for consent a second time).
   const syncGoogleNow=requestGoogleSync;
+
+  // Once-per-load, if already connected: pull whatever the daily
+  // background cron (api/google-calendar-cron.js) most recently fetched --
+  // a plain Firestore read server-side, no Google popup, no click. This is
+  // the actual "automatic" part of the connection; requestGoogleSync above
+  // only ever runs from an explicit Connect/Sync-now click.
+  useEffect(()=>{
+    if(!calGoogleLinked)return;
+    (async()=>{
+      try{
+        const res=await authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"google-calendar-pull"})});
+        const data=await res.json();
+        if(!res.ok||!data.connected)return;
+        applyGoogleEvents(data.events);
+        if(data.lastSyncedAt){lsSet("cal-google-last-synced",new Date(data.lastSyncedAt).getTime());setGoogleLastSynced(new Date(data.lastSyncedAt).getTime());}
+        setGoogleSyncError(data.lastSyncError||null);
+      }catch(e){}
+    })();
+  },[]);
 
   const disconnectGoogle=()=>{
     const ev=lsGet("events",[]).filter(e=>!e.id.startsWith("gcal-"));
@@ -11483,7 +11490,9 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     lsSet("cal-google-last-synced",null);
     setGoogleLastSynced(null);
     setCalGoogleLinked(false);
+    setGoogleSyncError(null);
     showToast("Google Calendar disconnected.");
+    authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"google-calendar-disconnect"})}).catch(()=>{});
   };
 
   // Import a personal/work calendar via its .ics feed link -- see
@@ -11947,7 +11956,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             )}
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Calendar Integrations</div>
-              <div style={{fontSize:12,color:T.text,marginBottom:16,lineHeight:1.6}}>Pull your existing events into Studlin. Your data is never stored on our servers. Events are cached locally on this device only.</div>
+              <div style={{fontSize:12,color:T.text,marginBottom:16,lineHeight:1.6}}>Pull your existing events into Studlin. A pasted calendar link is never stored on our servers. Google Calendar syncs automatically in the background instead, which means your sync credential and a copy of your synced events are kept securely server-side — never readable by anyone but you.</div>
               <div style={{display:"flex",flexDirection:"column",gap:10}}>
                 <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${calGoogleLinked?T.teal+"44":T.border}`,transition:"border-color 0.2s"}}>
                   <div style={{width:40,height:40,borderRadius:10,background:"rgba(66,133,244,0.10)",border:"1px solid rgba(66,133,244,0.22)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
@@ -11955,13 +11964,13 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   </div>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:13,fontWeight:600,color:T.white}}>Google Calendar</div>
-                    <div style={{fontSize:11,color:calGoogleLinked?T.teal:(googleSyncing?T.amber:T.muted),marginTop:2}}>
-                      {googleSyncing?"Importing events from Google…":calGoogleLinked?"Connected · synced "+timeAgoLabel(googleLastSynced):"Read-only · imports your upcoming events, and blocks the time on your calendar"}
+                    <div style={{fontSize:11,color:googleSyncError?T.red:calGoogleLinked?T.teal:(googleSyncing?T.amber:T.muted),marginTop:2}}>
+                      {googleSyncing?"Importing events from Google…":googleSyncError?"Sync stopped working — reconnect below":calGoogleLinked?"Connected · syncs automatically · last synced "+timeAgoLabel(googleLastSynced):"Read-only · imports your upcoming events, and blocks the time on your calendar"}
                     </div>
                   </div>
-                  {calGoogleLinked&&<BtnSm variant="subtle" onClick={syncGoogleNow} disabled={googleSyncing} style={{flexShrink:0,opacity:googleSyncing?0.55:1}}>{Icon.refresh}</BtnSm>}
-                  <BtnSm variant={calGoogleLinked?"subtle":"lime"} onClick={calGoogleLinked?disconnectGoogle:connectGoogle} disabled={googleSyncing} style={{flexShrink:0,opacity:googleSyncing?0.55:1}}>
-                    {googleSyncing?"Syncing…":calGoogleLinked?"Disconnect":"Connect"}
+                  {calGoogleLinked&&!googleSyncError&&<BtnSm variant="subtle" onClick={syncGoogleNow} disabled={googleSyncing} style={{flexShrink:0,opacity:googleSyncing?0.55:1}}>{Icon.refresh}</BtnSm>}
+                  <BtnSm variant={calGoogleLinked&&!googleSyncError?"subtle":"lime"} onClick={googleSyncError?connectGoogle:(calGoogleLinked?disconnectGoogle:connectGoogle)} disabled={googleSyncing} style={{flexShrink:0,opacity:googleSyncing?0.55:1}}>
+                    {googleSyncing?"Syncing…":googleSyncError?"Reconnect":calGoogleLinked?"Disconnect":"Connect"}
                   </BtnSm>
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${importedCals.length>0?T.teal+"44":T.border}`,transition:"border-color 0.2s"}}>
