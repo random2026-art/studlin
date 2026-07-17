@@ -14124,6 +14124,17 @@ function App() {
   // above already solves, reusing its exact ref-mirror technique.
   const [liveInvite,setLiveInvite]=useState(null);
   const seenLiveRef=useRef(new Set());
+  // Regression: status:"live" gets set the moment a session's owner starts
+  // their timer (TaskTimerModal's startLockIn) but was never reset back
+  // when everyone left -- so a long-finished session stayed permanently
+  // "live" in Firestore, and since seenLiveRef only lives in memory (reset
+  // on every page load), every fresh visit rediscovered the same stale
+  // session and re-surfaced the invite, "Dismiss" only ever clearing it
+  // for that one page view. LIVE_INVITE_MAX_AGE_MS filters those out
+  // client-side regardless of whatever's already stuck in Firestore;
+  // resetting status on close (see TaskTimerModal's onClose below) stops
+  // new ones from getting stuck the same way.
+  const LIVE_INVITE_MAX_AGE_MS=3*60*60*1000;
   useEffect(()=>{
     if(!myUid)return;
     const unsub=fsdb().collection('studySessions')
@@ -14135,6 +14146,7 @@ function App() {
           if(s.startedBy===myUid)return; // I'm the one who started it
           if(timerTaskRef.current&&timerTaskRef.current.studySessionId===s.id)return; // already in it
           if(seenLiveRef.current.has(s.id))return; // already surfaced this one
+          if(!s.startedAt||Date.now()-s.startedAt>LIVE_INVITE_MAX_AGE_MS)return; // stale/stuck, not really live
           seenLiveRef.current.add(s.id);
           setLiveInvite(s);
         });
@@ -14690,10 +14702,22 @@ function App() {
 
       {timerTask&&<TaskTimerModal task={timerTask} resumeElapsedSecs={timerTask.__resumeElapsedSecs||0} onClose={()=>{
         if(timerTask.studySessionId&&myUid){
-          fsdb().collection('studySessions').doc(timerTask.studySessionId).update({
-            ['participants.'+myUid+'.state']:'left',
-            ['participants.'+myUid+'.leftAt']:Date.now(),
-            updatedAt:new Date().toISOString(),
+          const sessionRef=fsdb().collection('studySessions').doc(timerTask.studySessionId);
+          // Reset status off "live" once the last joined participant leaves,
+          // so the session stops permanently re-surfacing as a "join now"
+          // invite for everyone else on every future visit (see the
+          // liveInvite listener's comment above for the bug this caused).
+          sessionRef.get().then(snap=>{
+            const data=snap.data()||{};
+            const parts=data.participants||{};
+            const stillJoined=Object.entries(parts).some(([uid,p])=>uid!==myUid&&p&&p.state==='joined');
+            const update={
+              ['participants.'+myUid+'.state']:'left',
+              ['participants.'+myUid+'.leftAt']:Date.now(),
+              updatedAt:new Date().toISOString(),
+            };
+            if(!stillJoined&&data.status==='live'){update.status='ended';update.endedAt=Date.now();}
+            return sessionRef.update(update);
           }).catch(()=>{});
         }
         setTimerTask(null);
