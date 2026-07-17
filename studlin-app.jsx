@@ -4493,7 +4493,7 @@ function Notes(){
     }else if(ext==="docx"){
       // .docx is a binary ZIP/XML container — reading it as plain text (the
       // old fallback below) produced silent mojibake garbage fed straight
-      // to the AI with no error. mammoth.js (loaded in Studlin Web App.html,
+      // to the AI with no error. mammoth.js (loaded in studlin-web-app.html,
       // same CDN-script pattern as pdf.js) actually parses it.
       try{
         if(!window.mammoth)throw new Error("Document reader still loading — try again in a moment.");

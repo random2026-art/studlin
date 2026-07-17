@@ -1,12 +1,12 @@
 {
   "rewrites": [
-    { "source": "/app", "destination": "/Studlin Web App.html" },
-    { "source": "/app/(.*)", "destination": "/Studlin Web App.html" },
-    { "source": "/network", "destination": "/Studlin Web App.html" },
-    { "source": "/onboarding", "destination": "/Studlin Onboarding.html" },
-    { "source": "/signup", "destination": "/Studlin Onboarding.html" },
-    { "source": "/signin", "destination": "/Studlin Sign In.html" },
-    { "source": "/login", "destination": "/Studlin Sign In.html" },
+    { "source": "/app", "destination": "/studlin-web-app.html" },
+    { "source": "/app/(.*)", "destination": "/studlin-web-app.html" },
+    { "source": "/network", "destination": "/studlin-web-app.html" },
+    { "source": "/onboarding", "destination": "/studlin-onboarding.html" },
+    { "source": "/signup", "destination": "/studlin-onboarding.html" },
+    { "source": "/signin", "destination": "/studlin-sign-in.html" },
+    { "source": "/login", "destination": "/studlin-sign-in.html" },
     { "source": "/terms", "destination": "/terms.html" },
     { "source": "/privacy", "destination": "/privacy.html" }
   ],
