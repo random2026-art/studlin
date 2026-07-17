@@ -14,17 +14,16 @@
     "api/create-intent.js": { "memory": 256, "maxDuration": 10 },
     "api/search-videos.js": { "memory": 128, "maxDuration": 10 },
     "api/chat.js": { "memory": 256, "maxDuration": 30 },
-    "api/me.js": { "memory": 256, "maxDuration": 30 },
+    "api/me.js": { "memory": 256, "maxDuration": 60 },
     "api/stripe-webhook.js": { "memory": 256, "maxDuration": 15 },
     "api/notify.js": { "memory": 256, "maxDuration": 10 },
     "api/send-verification.js": { "memory": 256, "maxDuration": 10 },
     "api/cal-proxy.js": { "memory": 256, "maxDuration": 10 },
     "api/export-users.js": { "memory": 256, "maxDuration": 30 },
-    "api/get-shared-chat.js": { "memory": 128, "maxDuration": 10 },
-    "api/google-calendar-cron.js": { "memory": 256, "maxDuration": 60 }
+    "api/get-shared-chat.js": { "memory": 128, "maxDuration": 10 }
   },
   "crons": [
-    { "path": "/api/google-calendar-cron", "schedule": "0 8 * * *" }
+    { "path": "/api/me", "schedule": "0 8 * * *" }
   ],
   "headers": [
     {

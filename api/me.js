@@ -2,7 +2,7 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { admin, db, auth } = require('./_lib/firebase-admin');
 const { setCors, verifyAuth } = require('./_lib/auth');
 const { withSentry } = require('./_lib/sentry');
-const { exchangeCodeForTokens, fetchGoogleCalendarEvents } = require('./_lib/google-calendar');
+const { exchangeCodeForTokens, refreshAccessToken, fetchGoogleCalendarEvents } = require('./_lib/google-calendar');
 
 // Source of truth for the Free plan's monthly AI chat allowance — this is
 // what actually creates the user doc on first load. Must match
@@ -145,6 +145,44 @@ async function handleGoogleCalendarDisconnect(user, res) {
     console.error('google calendar disconnect error:', err);
     return res.status(500).json({ error: 'Could not disconnect Google Calendar.' });
   }
+}
+
+// Vercel Cron target for the daily background sync -- folded into this
+// file (rather than its own api/google-calendar-cron.js) to stay within
+// the Hobby plan's 12-Serverless-Function-per-deployment cap, the same
+// constraint api/notify.js already merged three functions to respect (see
+// its own comment). Runs with nobody signed in, so it can't use
+// verifyAuth/a Firebase ID token the way every other action here does --
+// authenticated instead by an exact match against CRON_SECRET, which
+// Vercel automatically sends as `Authorization: Bearer <CRON_SECRET>` on
+// a cron-invoked request. Checked before verifyAuth in the main handler
+// below, so this path never touches the normal per-user auth gate.
+async function handleGoogleCalendarCron(res) {
+  if (!db) return res.status(503).json({ error: 'Database unavailable.' });
+  const snap = await db.collection('users').where('googleCalendarRefreshToken', '!=', null).get();
+  let synced = 0;
+  let failed = 0;
+  for (const doc of snap.docs) {
+    const data = doc.data();
+    try {
+      const accessToken = await refreshAccessToken(data.googleCalendarRefreshToken);
+      const events = await fetchGoogleCalendarEvents(accessToken);
+      await doc.ref.update({
+        googleCalendarSyncedEvents: events,
+        googleCalendarLastSyncedAt: new Date().toISOString(),
+        googleCalendarLastSyncError: null,
+      });
+      synced += 1;
+    } catch (err) {
+      // One user's revoked/expired token (or a transient Google API
+      // error) must never stop the batch -- recorded against just that
+      // user (surfaced client-side as a "reconnect?" banner, see
+      // google-calendar-pull above) and move on to the next.
+      failed += 1;
+      await doc.ref.update({ googleCalendarLastSyncError: err.message || 'Sync failed' }).catch(() => {});
+    }
+  }
+  return res.status(200).json({ ok: true, synced, failed });
 }
 
 async function deleteQuery(query) {
@@ -299,6 +337,15 @@ module.exports = withSentry(async (req, res) => {
   setCors(req, res);
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (!['GET', 'POST'].includes(req.method)) return res.status(405).json({ error: 'Method not allowed' });
+
+  // Vercel Cron hitting this path -- checked before verifyAuth since there
+  // is no signed-in user for a batch job. An exact secret match (not just
+  // "any bearer token") so this can never be triggered by anything but
+  // Vercel's own scheduler.
+  const cronAuth = (req.headers.authorization || '').replace(/^Bearer /, '');
+  if (process.env.CRON_SECRET && cronAuth === process.env.CRON_SECRET) {
+    return handleGoogleCalendarCron(res);
+  }
 
   const user = await verifyAuth(req);
   if (!user) return res.status(401).json({ error: 'Sign in required.' });
