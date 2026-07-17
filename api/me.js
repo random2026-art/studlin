@@ -2,7 +2,7 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { admin, db, auth } = require('./_lib/firebase-admin');
 const { setCors, verifyAuth } = require('./_lib/auth');
 const { withSentry } = require('./_lib/sentry');
-const { exchangeCodeForTokens, refreshAccessToken, fetchGoogleCalendarEvents } = require('./_lib/google-calendar');
+const { exchangeCodeForTokens, refreshAccessToken, fetchGoogleCalendarEvents, registerCalendarWatch, stopCalendarWatch } = require('./_lib/google-calendar');
 
 // Source of truth for the Free plan's monthly AI chat allowance — this is
 // what actually creates the user doc on first load. Must match
@@ -101,6 +101,20 @@ async function handleGoogleCalendarConnect(user, req, res) {
       googleCalendarLastSyncedAt: now,
       googleCalendarLastSyncError: null,
     }, { merge: true });
+    // Best-effort, non-fatal: a failure here (e.g. a transient Google API
+    // error) shouldn't fail the whole connect -- the daily cron's own
+    // expiring-channel check (see handleGoogleCalendarCron) registers one
+    // for this user within a day either way if this doesn't land now.
+    try {
+      const watch = await registerCalendarWatch(tokens.access_token, user.uid);
+      await db.collection('users').doc(user.uid).update({
+        googleCalendarChannelId: watch.channelId,
+        googleCalendarChannelResourceId: watch.resourceId,
+        googleCalendarChannelExpiration: watch.expiration,
+      });
+    } catch (watchErr) {
+      console.warn('google calendar watch registration failed:', watchErr.message);
+    }
     return res.status(200).json({ events, lastSyncedAt: now });
   } catch (err) {
     console.error('google calendar connect error:', err);
@@ -133,12 +147,30 @@ async function handleGoogleCalendarPull(user, res) {
 async function handleGoogleCalendarDisconnect(user, res) {
   if (!db) return res.status(503).json({ error: 'Database unavailable.' });
   try {
-    await db.collection('users').doc(user.uid).update({
+    const ref = db.collection('users').doc(user.uid);
+    const doc = await ref.get();
+    const data = doc.exists ? doc.data() : {};
+    // Best-effort cleanup so Google stops trying to notify a channel
+    // nobody's listening for -- never fatal, the fields get deleted
+    // either way even if this fails (a stale token/channel just stops
+    // delivering on its own once Google can no longer reach it).
+    if (data.googleCalendarRefreshToken && data.googleCalendarChannelId) {
+      try {
+        const accessToken = await refreshAccessToken(data.googleCalendarRefreshToken);
+        await stopCalendarWatch(accessToken, data.googleCalendarChannelId, data.googleCalendarChannelResourceId);
+      } catch (stopErr) {
+        console.warn('google calendar watch stop failed:', stopErr.message);
+      }
+    }
+    await ref.update({
       googleCalendarRefreshToken: admin.firestore.FieldValue.delete(),
       googleCalendarConnectedAt: admin.firestore.FieldValue.delete(),
       googleCalendarSyncedEvents: admin.firestore.FieldValue.delete(),
       googleCalendarLastSyncedAt: admin.firestore.FieldValue.delete(),
       googleCalendarLastSyncError: admin.firestore.FieldValue.delete(),
+      googleCalendarChannelId: admin.firestore.FieldValue.delete(),
+      googleCalendarChannelResourceId: admin.firestore.FieldValue.delete(),
+      googleCalendarChannelExpiration: admin.firestore.FieldValue.delete(),
     });
     return res.status(200).json({ ok: true });
   } catch (err) {
@@ -146,6 +178,25 @@ async function handleGoogleCalendarDisconnect(user, res) {
     return res.status(500).json({ error: 'Could not disconnect Google Calendar.' });
   }
 }
+
+// Shared by the cron loop and the webhook handler below -- refreshes one
+// user's access token, fetches their calendar, and writes the synced
+// snapshot. Returns the access token on success so a caller that also
+// needs to touch the Calendar API right after (the cron's channel-renewal
+// check below) doesn't have to refresh a second time. Throws on failure;
+// callers are responsible for recording googleCalendarLastSyncError.
+async function syncOneUser(ref, data) {
+  const accessToken = await refreshAccessToken(data.googleCalendarRefreshToken);
+  const events = await fetchGoogleCalendarEvents(accessToken);
+  await ref.update({
+    googleCalendarSyncedEvents: events,
+    googleCalendarLastSyncedAt: new Date().toISOString(),
+    googleCalendarLastSyncError: null,
+  });
+  return accessToken;
+}
+
+const CHANNEL_RENEW_WITHIN_MS = 48 * 60 * 60 * 1000;
 
 // Vercel Cron target for the daily background sync -- folded into this
 // file (rather than its own api/google-calendar-cron.js) to stay within
@@ -165,14 +216,27 @@ async function handleGoogleCalendarCron(res) {
   for (const doc of snap.docs) {
     const data = doc.data();
     try {
-      const accessToken = await refreshAccessToken(data.googleCalendarRefreshToken);
-      const events = await fetchGoogleCalendarEvents(accessToken);
-      await doc.ref.update({
-        googleCalendarSyncedEvents: events,
-        googleCalendarLastSyncedAt: new Date().toISOString(),
-        googleCalendarLastSyncError: null,
-      });
+      const accessToken = await syncOneUser(doc.ref, data);
       synced += 1;
+      // Channels expire (Google caps them, commonly under two weeks) and
+      // can't be extended, only replaced -- this is the fallback renewal
+      // path even when the webhook below is working fine, and the only
+      // path at all if the connect-time registration ever silently
+      // failed. Reuses the access token syncOneUser already refreshed
+      // above instead of requesting a second one.
+      const expiresSoon = !data.googleCalendarChannelExpiration || (data.googleCalendarChannelExpiration - Date.now()) < CHANNEL_RENEW_WITHIN_MS;
+      if (expiresSoon) {
+        try {
+          const watch = await registerCalendarWatch(accessToken, doc.id);
+          await doc.ref.update({
+            googleCalendarChannelId: watch.channelId,
+            googleCalendarChannelResourceId: watch.resourceId,
+            googleCalendarChannelExpiration: watch.expiration,
+          });
+        } catch (watchErr) {
+          console.warn('google calendar watch renewal failed for', doc.id, ':', watchErr.message);
+        }
+      }
     } catch (err) {
       // One user's revoked/expired token (or a transient Google API
       // error) must never stop the batch -- recorded against just that
@@ -183,6 +247,34 @@ async function handleGoogleCalendarCron(res) {
     }
   }
   return res.status(200).json({ ok: true, synced, failed });
+}
+
+// Google's push notification -- carries no calendar data itself, just
+// "something changed, go look." Routed here from the very top of the
+// exported handler below (before verifyAuth: this request has no
+// Firebase user) via the X-Goog-Resource-State header. `token` is
+// whatever Studlin set at registration time (see registerCalendarWatch)
+// -- the uid, which is how an incoming ping gets matched to a user with
+// no separate lookup table.
+async function handleGoogleCalendarWebhook(uid, channelId, res) {
+  // Google expects a fast 2xx regardless of outcome and will retry on
+  // failure -- always 200, even when there's nothing to do, rather than
+  // surfacing an error it would just retry forever.
+  if (!db || !uid) return res.status(200).end();
+  try {
+    const ref = db.collection('users').doc(uid);
+    const doc = await ref.get();
+    const data = doc.exists ? doc.data() : {};
+    // A mismatched channel id means this is a stale notification from a
+    // channel that's since been replaced (e.g. by the cron's renewal
+    // above) -- ignore it rather than acting on stale identity.
+    if (data.googleCalendarRefreshToken && data.googleCalendarChannelId === channelId) {
+      await syncOneUser(ref, data);
+    }
+  } catch (err) {
+    console.warn('google calendar webhook sync failed:', err.message);
+  }
+  return res.status(200).end();
 }
 
 async function deleteQuery(query) {
@@ -337,6 +429,17 @@ module.exports = withSentry(async (req, res) => {
   setCors(req, res);
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (!['GET', 'POST'].includes(req.method)) return res.status(405).json({ error: 'Method not allowed' });
+
+  // A Google Calendar push notification -- checked before verifyAuth
+  // since this has no Firebase user either, just Google's own headers.
+  // "sync" is the one-time confirmation Google sends the moment a watch
+  // channel is first created (no calendar data changed, nothing to do);
+  // any other resource state means something actually changed.
+  const resourceState = req.headers['x-goog-resource-state'];
+  if (resourceState) {
+    if (resourceState === 'sync') return res.status(200).end();
+    return handleGoogleCalendarWebhook(req.headers['x-goog-channel-token'], req.headers['x-goog-channel-id'], res);
+  }
 
   // Vercel Cron hitting this path -- checked before verifyAuth since there
   // is no signed-in user for a batch job. An exact secret match (not just

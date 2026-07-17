@@ -73,4 +73,42 @@ async function fetchGoogleCalendarEvents(accessToken) {
   return (data.items || []).map(googleItemToEvent);
 }
 
-module.exports = { exchangeCodeForTokens, refreshAccessToken, fetchGoogleCalendarEvents, googleItemToEvent };
+// Registers a Google Calendar push-notification "watch" channel -- Google
+// will POST to `address` within seconds of any change on this calendar,
+// instead of Studlin having to wait for the next daily poll. `token` is
+// an opaque string Google echoes back on every notification unchanged;
+// passing the Firestore uid here is what lets an incoming ping be matched
+// to a user with no separate lookup table. The channel itself carries no
+// calendar data -- just "something changed, go look" -- and expires on
+// its own (Google's own cap, commonly under two weeks), so the caller is
+// responsible for re-registering before `expiration` passes; there is no
+// "renew," only "create a new one."
+async function registerCalendarWatch(accessToken, uid) {
+  const res = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events/watch', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id: 'studlin-' + uid + '-' + Date.now().toString(36),
+      type: 'web_hook',
+      address: 'https://studlin.com/api/me',
+      token: uid,
+    }),
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message || 'Watch registration failed');
+  return { channelId: data.id, resourceId: data.resourceId, expiration: parseInt(data.expiration, 10) };
+}
+
+// Best-effort -- called right before the refresh token itself is deleted
+// on disconnect, purely so Google stops trying to notify a channel nobody
+// is listening for anymore. Never fatal: a channel Google can no longer
+// reach for a deleted/expired token just stops delivering on its own.
+async function stopCalendarWatch(accessToken, channelId, resourceId) {
+  await fetch('https://www.googleapis.com/calendar/v3/channels/stop', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: channelId, resourceId }),
+  });
+}
+
+module.exports = { exchangeCodeForTokens, refreshAccessToken, fetchGoogleCalendarEvents, googleItemToEvent, registerCalendarWatch, stopCalendarWatch };
