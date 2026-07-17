@@ -6790,7 +6790,93 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
   );
 }
 
-// ─── DEFERRED WEEKLY ROUTINE WIZARD (Calendar tab, first-visit) ─────────────
+// --- DAY TIMELINE VIEW -------------------------------------------------------
+function DayTimelineView({dateKey, events, routines, colorOf, fmtTime, openNew, openEdit, markDone, openReschedule, setSelDay, setYm}) {
+  const [collapsed,setCollapsed]=useState(false);
+  const displayDate=(()=>{const p=dateKey.split("-");return new Date(+p[0],+p[1]-1,+p[2]);})();
+  const goDay=(offset)=>{const d=new Date(displayDate);d.setDate(d.getDate()+offset);const k=dayKey(d);setSelDay(k);setYm({y:d.getFullYear(),m:d.getMonth()});};
+  const visibleItems=events.filter(ev=>!ev.checklist&&ev.date===dateKey)
+    .concat(expandRoutineOccurrences(routines||[],dateKey,dateKey).filter(o=>o.kind!=="free period"))
+    .filter(ev=>ev.time&&ev.kind!=="free period"&&ev.routineId!=="hs-school")
+    .sort((a,b)=>timeToMinutes(a.time)-timeToMinutes(b.time));
+  const bounds=visibleItems.length?visibleItems.reduce((acc,ev)=>{const start=timeToMinutes(ev.time);const end=start+(ev.duration||30);return {start:Math.min(acc.start,start),end:Math.max(acc.end,end)};},{start:24*60,end:0}):null;
+  const startMin=bounds?Math.max(0,Math.floor((bounds.start-20)/30)*30):0;
+  const endMin=bounds?Math.min(24*60,Math.ceil((bounds.end+20)/30)*30):0;
+  const pxPerMin=collapsed?1.05:1.22;
+  const railH=Math.max(180,(endMin-startMin)*pxPerMin);
+  const timeLabel=(mins)=>fmtTime(minutesToTime(mins));
+  const dayTitle=displayDate.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});
+  const timelineInk=T.mode==="dark"?T.cream:T.ink;
+  const kindIcon=(ev)=>ev.kind==="exam"?Icon.award:ev.kind==="class"?Icon.file:ev.kind==="study block"?Icon.brain:ev.kind==="reminder"?Icon.clock:ev.kind==="busy block"?Icon.shield:Icon.cal;
+  const boundaryMins=Array.from(new Set(visibleItems.flatMap(ev=>[timeToMinutes(ev.time),timeToMinutes(ev.time)+(ev.duration||30)]))).sort((a,b)=>a-b);
+  const freeGaps=[];
+  for(let i=0;i<visibleItems.length-1;i++){const end=timeToMinutes(visibleItems[i].time)+(visibleItems[i].duration||30);const next=timeToMinutes(visibleItems[i+1].time);if(next-end>=20)freeGaps.push({start:end,end:next});}
+  return (
+    <Card style={{padding:0,overflow:"hidden"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,padding:"14px 16px",borderBottom:`1px solid ${T.border}`}}>
+        <div>
+          <div style={{fontSize:14,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>{dayTitle}</div>
+          <div style={{fontSize:11,color:T.muted,marginTop:2}}>{visibleItems.length?`${visibleItems.length} scheduled item${visibleItems.length===1?"":"s"}`:"Nothing scheduled"}</div>
+        </div>
+        <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
+          <BtnSm variant="ghost" onClick={()=>goDay(-1)}>Prev</BtnSm>
+          <BtnSm variant="ghost" onClick={()=>{const d=new Date();setSelDay(dayKey(d));setYm({y:d.getFullYear(),m:d.getMonth()});}}>Today</BtnSm>
+          <BtnSm variant="ghost" onClick={()=>goDay(1)}>Next</BtnSm>
+          <BtnSm variant={collapsed?"lime":"subtle"} onClick={()=>setCollapsed(v=>!v)}>{collapsed?"Expand details":"Collapse timeline"}</BtnSm>
+          <BtnSm onClick={()=>openNew(dateKey)}>+ Add</BtnSm>
+        </div>
+      </div>
+      {visibleItems.length===0?(
+        <div style={{padding:30,textAlign:"center",color:T.muted,fontSize:13}}>No tasks or events on this day.</div>
+      ):collapsed?(
+        <div onDoubleClick={()=>openNew(dateKey)} style={{position:"relative",padding:"24px 22px 28px 20px",background:T.card,cursor:"default"}}>
+          <div style={{position:"relative",height:railH}}>
+            <div style={{position:"absolute",left:0,top:0,bottom:0,width:86,borderRadius:22,overflow:"hidden",background:`linear-gradient(180deg, ${hexA(T.sky,0.55)}, ${hexA(T.butter,0.5)} 65%, ${hexA(T.peach,0.5)})`}}>
+              {Array.from({length:Math.floor((endMin-startMin)/15)+1},(_,i)=>{const mins=startMin+i*15;const y=(mins-startMin)*pxPerMin;const hour=mins%60===0;const half=mins%30===0;return <div key={mins} style={{position:"absolute",top:y,left:hour?50:half?62:70,width:hour?22:half?15:9,borderTop:hour?`2px solid ${T.ink}`:`2px ${half?"solid":"dotted"} ${hexA(T.ink,0.65)}`}} />;})}
+              {Array.from({length:Math.floor((endMin-startMin)/60)+2},(_,i)=>{const mins=Math.ceil(startMin/60)*60+i*60;if(mins<startMin||mins>endMin)return null;return <div key={"h"+mins} style={{position:"absolute",top:(mins-startMin)*pxPerMin-9,left:8,fontSize:13,fontWeight:600,color:T.ink}}>{timeLabel(mins).replace(":00","")}</div>;})}
+            </div>
+            <div style={{position:"absolute",left:86,right:0,top:0,bottom:0}}>
+              {boundaryMins.map(mins=>{const y=(mins-startMin)*pxPerMin;return (
+                <div key={mins} style={{position:"absolute",left:0,right:0,top:y,zIndex:5,pointerEvents:"none",display:"flex",alignItems:"center",gap:10}}>
+                  <div style={{height:3,background:timelineInk,flex:1,borderRadius:3,opacity:0.92}} />
+                  <div style={{minWidth:76,textAlign:"center",fontSize:18,fontWeight:800,color:timelineInk,lineHeight:1,background:T.card,padding:"0 8px",borderRadius:8}}>{timeLabel(mins).replace(" AM","").replace(" PM","")}</div>
+                  <div style={{height:3,background:timelineInk,flex:1,borderRadius:3,opacity:0.92}} />
+                </div>
+              );})}
+              {freeGaps.map((gap,i)=><div key={"gap"+i} style={{position:"absolute",left:18,top:(gap.start-startMin)*pxPerMin+10,fontSize:12,color:T.muted,fontWeight:600}}>Free time</div>)}
+              {visibleItems.map(ev=>{const start=timeToMinutes(ev.time);const dur=ev.duration||30;const color=daysOverdue(ev)>0?T.red:colorOf(ev.subject);const bg=color&&color.startsWith("#")?hexA(color,0.32):T.card2;return (
+                <div key={ev.id} onClick={()=>!ev.isRoutine&&openEdit(ev)} title={ev.isRoutine?"Repeats weekly":"Click to edit"}
+                  style={{position:"absolute",left:32,right:26,top:(start-startMin)*pxPerMin+8,height:Math.max(34,dur*pxPerMin-16),borderRadius:8,background:bg,border:`1px solid ${color&&color.startsWith("#")?hexA(color,0.55):T.border}`,boxShadow:`inset 0 0 20px ${hexA("#ffffff",0.08)}`,display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,padding:"0 18px 0 28px",overflow:"hidden",cursor:ev.isRoutine?"default":"pointer",zIndex:3}}>
+                  <div style={{position:"absolute",left:"50%",top:-26,width:150,height:54,transform:"translateX(-50%)",background:`radial-gradient(ellipse at center, ${T.card} 0%, ${T.card} 38%, transparent 72%)`,pointerEvents:"none"}} />
+                  <div style={{position:"absolute",left:"50%",bottom:-26,width:150,height:54,transform:"translateX(-50%)",background:`radial-gradient(ellipse at center, ${T.card} 0%, ${T.card} 38%, transparent 72%)`,pointerEvents:"none"}} />
+                  <div style={{position:"relative",zIndex:1,fontSize:13,fontWeight:700,color:T.ink,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ev.title}</div>
+                  <div style={{position:"relative",zIndex:1,color:T.ink,opacity:0.8}}>{kindIcon(ev)}</div>
+                </div>
+              );})}
+            </div>
+          </div>
+        </div>
+      ):(
+        <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr)",gap:8,padding:16}}>
+          {visibleItems.map(ev=>{const over=daysOverdue(ev);const color=over>0?T.red:colorOf(ev.subject);const isDone=ev.status==="done";return (
+            <div key={ev.id} onClick={()=>!ev.isRoutine&&openEdit(ev)} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 13px",borderRadius:10,border:`1px solid ${T.border}`,background:T.card2,cursor:ev.isRoutine?"default":"pointer",opacity:isDone?0.55:1}}>
+              <div style={{width:4,alignSelf:"stretch",borderRadius:3,background:color,flexShrink:0}} />
+              <div style={{width:34,height:34,borderRadius:9,display:"grid",placeItems:"center",background:color&&color.startsWith("#")?hexA(color,0.16):T.card,color}}>{kindIcon(ev)}</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:700,color:T.white,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",textDecoration:isDone?"line-through":"none"}}>{ev.title}</div>
+                <div style={{fontSize:11,color:T.muted,marginTop:2}}>{fmtTime(ev.time)}{ev.duration?" - "+fmtMinsDur(ev.duration):""}{ev.subject?" - "+ev.subject:""}</div>
+              </div>
+              {!ev.isRoutine&&ev.duration&&(ev.kind==="study block"||ev.kind==="deadline")&&<BtnSm variant="subtle" onClick={(e)=>{e.stopPropagation();openReschedule(ev);}}>Reschedule</BtnSm>}
+              {!ev.isRoutine&&ev.status!=="done"&&<button onClick={(e)=>{e.stopPropagation();markDone(ev.id);}} title="Mark done" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",display:"flex"}}>{Icon.check}</button>}
+            </div>
+          );})}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// --- DEFERRED WEEKLY ROUTINE WIZARD (Calendar tab, first-visit) -------------
 const ROUTINE_DOW=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const fmtTimeShort=(t)=>{if(!t)return "";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
 const wizardChipStyle=(sel)=>({padding:"7px 12px",borderRadius:8,fontSize:12,fontWeight:sel?600:400,cursor:"pointer",border:`1px solid ${sel?T.lime+"66":T.border}`,background:sel?T.lime+"14":"transparent",color:sel?T.lime:T.muted,fontFamily:T.font});
@@ -8211,10 +8297,14 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
         </div>
       )}
       <div style={{display:"flex",gap:6,marginBottom:20}}>
-        {["monthly","weekly"].map(v=>(
+        {["day","weekly","monthly"].map(v=>(
           <button key={v} onClick={()=>setCalView(v)} style={{padding:"6px 14px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",background:calView===v?T.lime+"14":"transparent",color:calView===v?T.lime:T.muted,border:`1px solid ${calView===v?T.lime+"44":T.border}`,fontFamily:T.font,transition:"all 0.15s",textTransform:"capitalize"}}>{v}</button>
         ))}
       </div>
+      {calView==="day"&&(
+        <DayTimelineView dateKey={selDay} events={events} routines={routines} colorOf={colorOf} fmtTime={fmtTime} openNew={openNew} openEdit={openEdit}
+          markDone={markDone} openReschedule={setRescheduleTask} setSelDay={setSelDay} setYm={setYm} />
+      )}
       {calView==="monthly"&&(<CollapsibleAgendaLayout isAgendaCollapsed={isAgendaCollapsed} setIsAgendaCollapsed={setIsAgendaCollapsed}
         agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,markDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask,setEvents}}>
         <Card style={{padding:16}}>
