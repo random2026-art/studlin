@@ -2694,7 +2694,19 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
   const togglePeakBucket=(id)=>setPeakBuckets(peakBuckets.includes(id)?peakBuckets.filter(b=>b!==id):[...peakBuckets,id]);
   const [saved,setSaved]=useState(false);
 
+  // An end time at or before start time leaves the scheduler with a
+  // zero-width or inverted window it can never actually place anything
+  // in — findOpenSlotFor/findFixedEventSlot don't error on that, they
+  // silently fall back to handing back whatever slot was asked for,
+  // unchecked. Catching it here, before it's ever saved, is simpler and
+  // safer than trying to make every downstream scheduling function defend
+  // against a schedule that was never valid to begin with.
+  const workHoursInvalid=timeToMinutes(workEnd)<=timeToMinutes(workStart);
+  const weekendHoursInvalid=weekendEnabled&&timeToMinutes(weekendEnd)<=timeToMinutes(weekendStart);
+  const canSave=!workHoursInvalid&&!weekendHoursInvalid;
+
   const handleSave=()=>{
+    if(!canSave)return;
     const newPrefs={
       ...prefs,
       workStartTime:workStart,
@@ -2733,7 +2745,9 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
               <TimeInput value={workEnd} onChange={setWorkEnd} style={{fontFamily:T.mono}} />
             </div>
           </div>
-          <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>Tasks will be scheduled within this window. Your study schedule respects these hours.</div>
+          {workHoursInvalid
+            ?<div style={{fontSize:11.5,color:T.red,marginTop:6}}>End time must be after start time.</div>
+            :<div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>Tasks will be scheduled within this window. Your study schedule respects these hours.</div>}
         </div>
 
         <div style={{marginBottom:22}}>
@@ -2755,7 +2769,9 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
               </div>
             </div>
           )}
-          <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>{weekendEnabled?"Weekends will use this window instead of your weekday hours.":"Off — weekends use the same hours as weekdays."}</div>
+          {weekendHoursInvalid
+            ?<div style={{fontSize:11.5,color:T.red,marginTop:6}}>End time must be after start time.</div>
+            :<div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>{weekendEnabled?"Weekends will use this window instead of your weekday hours.":"Off — weekends use the same hours as weekdays."}</div>}
         </div>
 
         <div style={{marginBottom:22}}>
@@ -2808,7 +2824,7 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
         
         <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
           <button onClick={onClose} style={{padding:"10px 18px",borderRadius:8,border:"1px solid "+T.border,background:"transparent",color:T.muted,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Cancel</button>
-          <button onClick={handleSave} style={{padding:"10px 18px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Save Preferences</button>
+          <button onClick={handleSave} disabled={!canSave} style={{padding:"10px 18px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,cursor:canSave?"pointer":"not-allowed",fontFamily:T.font,opacity:canSave?1:0.45}}>Save Preferences</button>
         </div>
       </div>
     </div>
@@ -8541,7 +8557,14 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
     setWizStep("window");
   };
 
+  // Same invalid-window guard as ScheduleSettingsPanel — this wizard is the
+  // other place workStartTime/workEndTime get persisted, so it needs the
+  // same protection against saving a start/end pair the scheduler can never
+  // actually place anything in.
+  const windowInvalid=timeToMinutes(workEnd)<=timeToMinutes(workStart);
+
   const finish=()=>{
+    if(windowInvalid)return;
     const routine=[...items];
     if(status==="highschool"){
       routine.push({id:"hs-school",title:"School",kind:"class",days:[0,1,2,3,4],startTime:schoolStart,duration:Math.max(15,timeToMinutes(schoolEnd)-timeToMinutes(schoolStart))});
@@ -8564,7 +8587,7 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
               {wizStep!=="status"&&<Btn variant="subtle" onClick={()=>setWizStep(wizStep==="window"?"build":"status")}>Back</Btn>}
               {wizStep==="status"&&<Btn onClick={()=>setWizStep("build")} disabled={!status} style={{opacity:status?1:0.45}}>Map Routine Now</Btn>}
               {wizStep==="build"&&<Btn onClick={goToWindowStep}>Continue</Btn>}
-              {wizStep==="window"&&<Btn onClick={finish}>Finish</Btn>}
+              {wizStep==="window"&&<Btn onClick={finish} disabled={windowInvalid} style={{opacity:windowInvalid?0.45:1}}>Finish</Btn>}
             </div>
           </div>
         }>
@@ -8577,9 +8600,12 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
         {wizStep==="build"&&status==="highschool"&&<WizardHsBuilder schoolStart={schoolStart} setSchoolStart={setSchoolStart} schoolEnd={schoolEnd} setSchoolEnd={setSchoolEnd} items={items.filter(i=>i.id!=="hs-school")} addItem={addItem} removeItem={removeItem} />}
         {wizStep==="build"&&status==="college"&&<WizardCollegeBuilder items={items} addItem={addItem} removeItem={removeItem} />}
         {wizStep==="window"&&(
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-            <Field label="Preferred study start"><TimeInput value={workStart} onChange={setWorkStart} lockedRanges={lockedRanges} /></Field>
-            <Field label="Preferred study end"><TimeInput value={workEnd} onChange={setWorkEnd} /></Field>
+          <div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <Field label="Preferred study start"><TimeInput value={workStart} onChange={setWorkStart} lockedRanges={lockedRanges} /></Field>
+              <Field label="Preferred study end"><TimeInput value={workEnd} onChange={setWorkEnd} /></Field>
+            </div>
+            {windowInvalid&&<div style={{fontSize:11.5,color:T.red,marginTop:8}}>End time must be after start time.</div>}
           </div>
         )}
       </Modal>
