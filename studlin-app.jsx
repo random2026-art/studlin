@@ -14918,6 +14918,7 @@ function App() {
       {id:"aichat",label:"Studlin AI"},
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
+      {id:"lectures",label:"Lectures"},
       {id:"friends",label:"Studlin Network",badge:String(unreadCount||"")},
     ]},
     {label:"Account",items:[
