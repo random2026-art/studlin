@@ -969,12 +969,20 @@ function computeOccupiedIntervals(events,routines,prefs,dateKey){
 // sit outside it and pulling gym into the 10am-6pm study window would be
 // wrong. Tries the same time-of-day on the desired date first (that's what
 // "move it to tomorrow" naturally means), falls back to scanning that whole
-// day, then rolls forward a day at a time. Always returns something (falls
-// back to the originally desired slot after three weeks) rather than
-// leaving a fixed event unplaced.
+// day, then rolls forward a day at a time.
+// Search horizon is deliberately generous (six months, not three weeks —
+// regression: a calendar packed solid for 21 straight days used to fall
+// through to the line below and hand back the ORIGINAL desired slot
+// unchecked, silently double-booking it; move_event's caller has no way to
+// know the difference and reports it as a successful move either way). Six
+// months of a real calendar being wall-to-wall booked with zero gaps
+// anywhere is not a realistic case, so this is a correctness fix, not just
+// kicking the can down the road — the loop below only returns early once
+// `fits` genuinely confirms the slot is free.
+const FIXED_EVENT_SEARCH_DAYS=180;
 function findFixedEventSlot(events,routines,prefs,desiredDate,desiredTime,duration){
   const desiredMins=timeToMinutes(desiredTime);
-  for(let dayOffset=0;dayOffset<21;dayOffset++){
+  for(let dayOffset=0;dayOffset<FIXED_EVENT_SEARCH_DAYS;dayOffset++){
     const d=new Date(desiredDate+"T12:00:00");d.setDate(d.getDate()+dayOffset);
     const dk=dayKey(d);
     const occupied=computeOccupiedIntervals(events,routines,prefs,dk);
@@ -984,6 +992,12 @@ function findFixedEventSlot(events,routines,prefs,desiredDate,desiredTime,durati
       if(fits(t))return{date:dk,time:minutesToTime(t)};
     }
   }
+  // Genuinely never happens outside a synthetic worst-case (every one of
+  // 180 straight days already 100% full) — kept as a last-resort return
+  // rather than null so this function's contract (always hands back a
+  // real {date,time}, never leaves a fixed event unplaced) stays intact
+  // for its one caller (computePausePlan's move_event), which has no
+  // couldntMove handling for this intent.
   return{date:desiredDate,time:desiredTime};
 }
 // Places one day's occurrence of a "habit" routine (recurring, but with no
@@ -1024,7 +1038,17 @@ function materializeHabitsForDate(dateKey,workingEvents){
   const habitRoutines=getWeeklyRoutine().filter(r=>r.kind==="habit");
   if(habitRoutines.length===0)return[];
   const dow=(new Date(dateKey+"T12:00:00").getDay()+6)%7;
-  const due=habitRoutines.filter(r=>r.days&&r.days.includes(dow));
+  // Dedup by routine id before anything else. Ids are meant to be unique,
+  // but a bad import/merge can leave two routine records sharing one id —
+  // the created event's own id is deterministically "habit-"+r.id+"-"+dateKey,
+  // so without this, two same-id routines both due today would each pass
+  // the alreadyDone check below (it's only checked against workingEvents,
+  // not against each other within this same pass) and materialize two
+  // events carrying the exact same id, silently colliding on any
+  // downstream id-keyed lookup, update, or React key.
+  const dueById=new Map();
+  habitRoutines.filter(r=>r.days&&r.days.includes(dow)).forEach(r=>{if(!dueById.has(r.id))dueById.set(r.id,r);});
+  const due=[...dueById.values()];
   if(due.length===0)return[];
   const alreadyDone=new Set(workingEvents.filter(e=>e.date===dateKey&&e.routineId).map(e=>e.routineId));
   const routinesNow=getWeeklyRoutine();
@@ -2670,7 +2694,19 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
   const togglePeakBucket=(id)=>setPeakBuckets(peakBuckets.includes(id)?peakBuckets.filter(b=>b!==id):[...peakBuckets,id]);
   const [saved,setSaved]=useState(false);
 
+  // An end time at or before start time leaves the scheduler with a
+  // zero-width or inverted window it can never actually place anything
+  // in — findOpenSlotFor/findFixedEventSlot don't error on that, they
+  // silently fall back to handing back whatever slot was asked for,
+  // unchecked. Catching it here, before it's ever saved, is simpler and
+  // safer than trying to make every downstream scheduling function defend
+  // against a schedule that was never valid to begin with.
+  const workHoursInvalid=timeToMinutes(workEnd)<=timeToMinutes(workStart);
+  const weekendHoursInvalid=weekendEnabled&&timeToMinutes(weekendEnd)<=timeToMinutes(weekendStart);
+  const canSave=!workHoursInvalid&&!weekendHoursInvalid;
+
   const handleSave=()=>{
+    if(!canSave)return;
     const newPrefs={
       ...prefs,
       workStartTime:workStart,
@@ -2709,7 +2745,9 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
               <TimeInput value={workEnd} onChange={setWorkEnd} style={{fontFamily:T.mono}} />
             </div>
           </div>
-          <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>Tasks will be scheduled within this window. Your study schedule respects these hours.</div>
+          {workHoursInvalid
+            ?<div style={{fontSize:11.5,color:T.red,marginTop:6}}>End time must be after start time.</div>
+            :<div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>Tasks will be scheduled within this window. Your study schedule respects these hours.</div>}
         </div>
 
         <div style={{marginBottom:22}}>
@@ -2731,7 +2769,9 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
               </div>
             </div>
           )}
-          <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>{weekendEnabled?"Weekends will use this window instead of your weekday hours.":"Off — weekends use the same hours as weekdays."}</div>
+          {weekendHoursInvalid
+            ?<div style={{fontSize:11.5,color:T.red,marginTop:6}}>End time must be after start time.</div>
+            :<div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>{weekendEnabled?"Weekends will use this window instead of your weekday hours.":"Off — weekends use the same hours as weekdays."}</div>}
         </div>
 
         <div style={{marginBottom:22}}>
@@ -2784,7 +2824,7 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
         
         <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
           <button onClick={onClose} style={{padding:"10px 18px",borderRadius:8,border:"1px solid "+T.border,background:"transparent",color:T.muted,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Cancel</button>
-          <button onClick={handleSave} style={{padding:"10px 18px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Save Preferences</button>
+          <button onClick={handleSave} disabled={!canSave} style={{padding:"10px 18px",borderRadius:8,border:"none",background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,cursor:canSave?"pointer":"not-allowed",fontFamily:T.font,opacity:canSave?1:0.45}}>Save Preferences</button>
         </div>
       </div>
     </div>
@@ -4221,7 +4261,7 @@ function Flashcards() {
 }
 
 // ─── NOTES ────────────────────────────────────────────────────────────────────
-function Notes(){
+function Notes({setActive=()=>{}}){
   const MicIcon=<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0,display:"block"}}><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg>;
 
   // Dynamic class sync from user subjects
@@ -4243,10 +4283,6 @@ function Notes(){
   const [yt,setYt]=useState("");
   const [ytInfo,setYtInfo]=useState("");
   const [ytLoading,setYtLoading]=useState(false);
-  const [rec,setRec]=useState(false);
-  const [recSecs,setRecSecs]=useState(0);
-  const [recText,setRecText]=useState("");
-  const recognitionRef=useRef(null);
   const [aiLoading,setAiLoading]=useState(false);
   const [fileText,setFileText]=useState("");
   const fileRef=useRef(null);
@@ -4319,9 +4355,6 @@ function Notes(){
   const [panelMsg,setPanelMsg]=useState("");
   const [quizOverlay,setQuizOverlay]=useState(null); // {questions,idx,picked,score,done}
   const [summaryOverlay,setSummaryOverlay]=useState(null); // array of bullet strings
-
-  useEffect(()=>{if(!rec)return;const id=setInterval(()=>setRecSecs(x=>x+1),1000);return()=>clearInterval(id);},[rec]);
-  const fmtRec=(x)=>String(Math.floor(x/60)).padStart(2,"0")+":"+String(x%60).padStart(2,"0");
 
   // Sync editor DOM whenever the selected note changes
   useEffect(()=>{
@@ -4531,22 +4564,18 @@ function Notes(){
 
   const noteScansLeft=Math.max(0,NOTE_SCAN_LIMIT-getNoteScanUsage().count);
   const noteScanBadge=getPlan()==="Free"?noteScansLeft+" scan"+(noteScansLeft===1?"":"s")+" left":null;
+  // "record" doesn't create a note directly (see continueToCanvas) — it
+  // hands title+class off to the Lecture Lab (the same screen the old
+  // standalone "Lectures" nav tab used to point at) and navigates there,
+  // so cost is null rather than noteScanBadge: nothing here spends a note
+  // scan, the Lecture Lab's own summary/flashcards generation isn't gated
+  // by that limit at all (see generateLectureDigest/generateFlashcardsFromText).
   const sources=[
     {id:"write",label:"Write",desc:"Type directly on the canvas",icon:Icon.pen,cost:null},
     {id:"file",label:"Scan a file",desc:"PDF, slides, or photos of the board",icon:Icon.file,cost:noteScanBadge},
-    {id:"record",label:"Record lecture",desc:"Live transcription + summary",icon:MicIcon,cost:noteScanBadge},
+    {id:"record",label:"Record lecture",desc:"Live transcript, summary, flashcards & quiz",icon:MicIcon,cost:null},
     {id:"youtube",label:"YouTube link",desc:"Transcribes and summarises a video",icon:Icon.link,cost:noteScanBadge},
   ];
-
-  const startRec=()=>{
-    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-    if(!SR){setRecText("Speech recognition not supported. Try Chrome.");return;}
-    const r=new SR();r.continuous=true;r.interimResults=true;r.lang="en-US";
-    r.onresult=(e)=>{let t="";for(let i=0;i<e.results.length;i++)t+=e.results[i][0].transcript;setRecText(t);};
-    r.onerror=()=>setRec(false);r.onend=()=>setRec(false);
-    recognitionRef.current=r;r.start();setRec(true);setRecSecs(0);setRecText("");
-  };
-  const stopRec=()=>{if(recognitionRef.current)recognitionRef.current.stop();setRec(false);};
 
   const handleFile=async(e)=>{
     const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
@@ -4619,6 +4648,19 @@ function Notes(){
   const continueToCanvas=async()=>{
     const tag=newTag==="Other"&&customTag.trim()?customTag.trim():newTag;
     let title=newTitle.trim();
+    // "Record lecture" doesn't create a note here — it hands the title and
+    // class off to the Lecture Lab (the screen the old standalone
+    // "Lectures" nav tab used to point at) via the same one-shot
+    // localStorage handoff pattern openSyllabusScan/openNoteId already use
+    // elsewhere in this file, then navigates there. Recording, live
+    // transcript, saved lectures, and the end-of-lecture summary/notes/
+    // flashcards/quiz all still live entirely in Lectures — untouched.
+    if(src==="record"){
+      lsSet("lectureLaunch",{title,subject:tag});
+      setNewOpen(false);setNewTitle("");setSrc("write");setSearch("");
+      setActive("lectures");
+      return;
+    }
     let body="<p><br></p>";
     let syllabusItems=null;
     // Any note built from a real source text rides the same AI note-scan
@@ -4645,17 +4687,6 @@ function Notes(){
         body="<p>"+fileText.trim().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/\n/g,"<br>")+"</p>";
         setUpgradeModal({feature:"AI note scans",detail:resetNote("AI note scans",NOTE_SCAN_LIMIT,"this file was saved as plain text, not AI-summarized")});
       }
-    }else if(src==="record"){
-      if(!title)title="Lecture notes – "+fmtRec(recSecs);
-      if(!recText.trim())body="<p>No audio captured.</p>";
-      else if(canScanNote()){
-        body=await aiSummarize(recText,"lecture transcription");
-        recordNoteScan();
-        await detectDates(recText);
-      }else{
-        body="<p>"+recText.trim().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/\n/g,"<br>")+"</p>";
-        setUpgradeModal({feature:"AI note scans",detail:resetNote("AI note scans",NOTE_SCAN_LIMIT,"the transcript was saved as plain text, not AI-summarized")});
-      }
     }else if(src==="youtube"){
       if(!title)title=ytInfo?"Notes: "+ytInfo:"Notes from video";
       const topic=ytInfo||yt.trim();
@@ -4672,7 +4703,7 @@ function Notes(){
     const newNote={id:String(Date.now()),title,body,tag,date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now()};
     const next=[newNote,...notes];
     setNotes(next);lsSet("notes",next);
-    setNewOpen(false);setNewTitle("");setYt("");setYtInfo("");setRec(false);setRecSecs(0);setRecText("");setSrc("write");setFileText("");setSearch("");setViaSyllabusScan(false);
+    setNewOpen(false);setNewTitle("");setYt("");setYtInfo("");setSrc("write");setFileText("");setSearch("");setViaSyllabusScan(false);
     setSel(0);
     setPopover(null);
     if(syllabusItems!==null){
@@ -4859,8 +4890,8 @@ function Notes(){
       </Modal>
 
       {/* ── NEW NOTE MODAL — metadata only, no body field ── */}
-      <Modal open={newOpen} onClose={()=>{setNewOpen(false);stopRec();setViaSyllabusScan(false);setSrc("write");}} title={viaSyllabusScan?"Scan your syllabus":"New note"} sub={viaSyllabusScan?"Which class is this for? Studlin reads the file and finds every date.":"Configure your note. You'll write on the canvas next."} width={560}
-        footer={<><Btn variant="subtle" onClick={()=>{setNewOpen(false);stopRec();setViaSyllabusScan(false);setSrc("write");}}>Cancel</Btn><Btn onClick={continueToCanvas} disabled={aiLoading||(viaSyllabusScan&&!fileText.trim())}>{aiLoading?"Processing…":viaSyllabusScan?"Scan & Continue →":"Continue to Canvas →"}</Btn></>}>
+      <Modal open={newOpen} onClose={()=>{setNewOpen(false);setViaSyllabusScan(false);setSrc("write");}} title={viaSyllabusScan?"Scan your syllabus":"New note"} sub={viaSyllabusScan?"Which class is this for? Studlin reads the file and finds every date.":"Configure your note. You'll write on the canvas next."} width={560}
+        footer={<><Btn variant="subtle" onClick={()=>{setNewOpen(false);setViaSyllabusScan(false);setSrc("write");}}>Cancel</Btn><Btn onClick={continueToCanvas} disabled={aiLoading||(viaSyllabusScan&&!fileText.trim())}>{aiLoading?"Processing…":viaSyllabusScan?"Scan & Continue →":src==="record"?"Go to Lecture Lab →":"Continue to Canvas →"}</Btn></>}>
         {!viaSyllabusScan&&(
           <Field label="Source">
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
@@ -4889,12 +4920,10 @@ function Notes(){
           </Field>
         )}
         {src==="record"&&(
-          <Field label="Lecture recording" hint="Records your microphone and transcribes live.">
-            <div style={{border:"1px solid "+(rec?T.red+"55":T.border),borderRadius:10,padding:22,textAlign:"center",background:rec?T.red+"0a":T.card2}}>
-              <button type="button" onClick={rec?stopRec:startRec} style={{width:54,height:54,borderRadius:"50%",border:"none",background:rec?T.red:T.lime,color:rec?"#fff":T.ink,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:10}}>{rec?<span style={{width:16,height:16,background:"#fff",borderRadius:3,display:"block"}} />:MicIcon}</button>
-              <div style={{fontSize:15,fontWeight:700,color:rec?T.red:T.white,fontVariantNumeric:"tabular-nums"}}>{fmtRec(recSecs)}</div>
-              <div style={{fontSize:11.5,color:T.muted,marginTop:3}}>{rec?"Recording… tap to stop":"Tap to start recording"}</div>
-              {recText&&<div style={{fontSize:12,color:T.text,marginTop:12,padding:"10px 12px",background:T.card,borderRadius:8,textAlign:"left",maxHeight:120,overflowY:"auto",lineHeight:1.5}}>{recText}</div>}
+          <Field label="Lecture Lab">
+            <div style={{display:"flex",alignItems:"center",gap:12,border:`1px solid ${T.border}`,borderRadius:10,padding:16,background:T.card2}}>
+              <div style={{width:38,height:38,borderRadius:10,background:T.lime+"18",border:`1px solid ${T.lime}33`,display:"grid",placeItems:"center",color:T.lime,flexShrink:0}}>{MicIcon}</div>
+              <div style={{fontSize:12.5,color:T.text,lineHeight:1.5}}>Recording happens on the next screen — it keeps going in the background while you see the live transcript. When you're done, get a summary, clean notes, flashcards, and a practice quiz in one tap.</div>
             </div>
           </Field>
         )}
@@ -8552,7 +8581,14 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
     setWizStep("window");
   };
 
+  // Same invalid-window guard as ScheduleSettingsPanel — this wizard is the
+  // other place workStartTime/workEndTime get persisted, so it needs the
+  // same protection against saving a start/end pair the scheduler can never
+  // actually place anything in.
+  const windowInvalid=timeToMinutes(workEnd)<=timeToMinutes(workStart);
+
   const finish=()=>{
+    if(windowInvalid)return;
     const routine=[...items];
     if(status==="highschool"){
       routine.push({id:"hs-school",title:"School",kind:"class",days:[0,1,2,3,4],startTime:schoolStart,duration:Math.max(15,timeToMinutes(schoolEnd)-timeToMinutes(schoolStart))});
@@ -8575,7 +8611,7 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
               {wizStep!=="status"&&<Btn variant="subtle" onClick={()=>setWizStep(wizStep==="window"?"build":"status")}>Back</Btn>}
               {wizStep==="status"&&<Btn onClick={()=>setWizStep("build")} disabled={!status} style={{opacity:status?1:0.45}}>Map Routine Now</Btn>}
               {wizStep==="build"&&<Btn onClick={goToWindowStep}>Continue</Btn>}
-              {wizStep==="window"&&<Btn onClick={finish}>Finish</Btn>}
+              {wizStep==="window"&&<Btn onClick={finish} disabled={windowInvalid} style={{opacity:windowInvalid?0.45:1}}>Finish</Btn>}
             </div>
           </div>
         }>
@@ -8588,9 +8624,12 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
         {wizStep==="build"&&status==="highschool"&&<WizardHsBuilder schoolStart={schoolStart} setSchoolStart={setSchoolStart} schoolEnd={schoolEnd} setSchoolEnd={setSchoolEnd} items={items.filter(i=>i.id!=="hs-school")} addItem={addItem} removeItem={removeItem} />}
         {wizStep==="build"&&status==="college"&&<WizardCollegeBuilder items={items} addItem={addItem} removeItem={removeItem} />}
         {wizStep==="window"&&(
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-            <Field label="Preferred study start"><TimeInput value={workStart} onChange={setWorkStart} lockedRanges={lockedRanges} /></Field>
-            <Field label="Preferred study end"><TimeInput value={workEnd} onChange={setWorkEnd} /></Field>
+          <div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <Field label="Preferred study start"><TimeInput value={workStart} onChange={setWorkStart} lockedRanges={lockedRanges} /></Field>
+              <Field label="Preferred study end"><TimeInput value={workEnd} onChange={setWorkEnd} /></Field>
+            </div>
+            {windowInvalid&&<div style={{fontSize:11.5,color:T.red,marginTop:8}}>End time must be after start time.</div>}
           </div>
         )}
       </Modal>
@@ -13347,9 +13386,20 @@ function FeedbackPage() {
 
 // ─── LECTURES ─────────────────────────────────────────────────────────────────
 function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
+  // One-shot handoff from Notes' "Record lecture" source (see
+  // continueToCanvas) — same idiom as openSyllabusScan/openNoteId
+  // elsewhere in this file. Read once on mount and cleared immediately so
+  // a later, unrelated visit to this screen never sees stale title/class.
+  const lectureLaunch=useState(()=>{
+    const l=lsGet("lectureLaunch",null);
+    if(l)try{localStorage.removeItem("studlin-lectureLaunch");}catch(e){}
+    return l;
+  })[0];
   const [recording,setRecording]=useState(false);
   const [transcript,setTranscript]=useState("");
   const [ytUrl,setYtUrl]=useState("");
+  const [ytLoading,setYtLoading]=useState(false);
+  const [ytError,setYtError]=useState("");
   const [bars,setBars]=useState(()=>Array(32).fill(3));
   const [saved,setSaved]=useState(()=>lsGet("lectures",[]));
   const [selectedLec,setSelectedLec]=useState(null);
@@ -13361,8 +13411,15 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
   const streamRef=useRef(null);
   // Which class this recording is for — required before recording starts
   // (not optional metadata added after the fact), since it's what lets End
-  // Lecture cross-reference upcoming exams later.
-  const [subject,setSubject]=useState("");
+  // Lecture cross-reference upcoming exams later. Pre-filled from Notes'
+  // handoff when arriving via "Record lecture", same as any other class
+  // pick — the student can still change it before hitting record.
+  const [subject,setSubject]=useState(lectureLaunch?.subject||"");
+  // The custom title typed in Notes, consumed (nulled out) the first time
+  // a lecture is actually saved below — subsequent recordings/imports in
+  // the same visit fall back to the normal auto-generated title rather
+  // than reusing a stale one.
+  const launchTitleRef=useRef(lectureLaunch?.title||null);
   const [processing,setProcessing]=useState(false);
   const [processingLabel,setProcessingLabel]=useState("");
   // Holds {subject,digest:{summary,notesBody,examFlags},cards,includeNotes,
@@ -13452,7 +13509,8 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
     lsSet("lecture-inprogress",null);
     setRecoveryOffer(null);
     if(transcript.trim()){
-      const lec={id:Date.now().toString(),title:(subject?subject+": ":"")+"Lecture "+new Date().toLocaleDateString("en",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}),transcript:transcript.trim(),created:Date.now(),subject};
+      const lec={id:Date.now().toString(),title:launchTitleRef.current||((subject?subject+": ":"")+"Lecture "+new Date().toLocaleDateString("en",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})),transcript:transcript.trim(),created:Date.now(),subject};
+      launchTitleRef.current=null;
       const list=[lec,...lsGet("lectures",[])].slice(0,20);
       lsSet("lectures",list);
       setSaved(list);
@@ -13527,7 +13585,33 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
   };
   const discardCheckpoint=()=>{lsSet("lecture-inprogress",null);setRecoveryOffer(null);};
 
-  const importYt=()=>{if(ytUrl.trim())setActive("notes");};
+  // Pulls the video's actual public caption track server-side (see
+  // api/cal-proxy.js's YouTube branch — no video/audio download, just the
+  // transcript text) and runs it through the exact same processing
+  // pipeline as a recorded lecture.
+  const importYt=async()=>{
+    const url=ytUrl.trim();
+    if(!url||ytLoading)return;
+    if(getSubjects().length>0&&!subject){setYtError("Pick a class first.");return;}
+    setYtLoading(true);setYtError("");
+    try{
+      const res=await authFetch("/api/cal-proxy?url="+encodeURIComponent(url));
+      const data=await res.json();
+      if(!res.ok||!data.ok){setYtError(data.error||"Couldn't read that video.");setYtLoading(false);return;}
+      const lec={id:Date.now().toString(),title:launchTitleRef.current||((subject?subject+": ":"")+(data.title||"YouTube import")),transcript:data.transcript,created:Date.now(),subject,source:"youtube"};
+      launchTitleRef.current=null;
+      const list=[lec,...lsGet("lectures",[])].slice(0,20);
+      lsSet("lectures",list);
+      setSaved(list);
+      setSelectedLec(lec);
+      setYtUrl("");
+      setYtLoading(false);
+      processTranscript(lec.transcript,lec.subject,"full");
+    }catch(e){
+      setYtError("Couldn't read that video. Try again.");
+      setYtLoading(false);
+    }
+  };
   const curTx=selectedLec?selectedLec.transcript:transcript;
   const curSubject=selectedLec?selectedLec.subject:subject;
   // A subject is only actually required to start recording if there are
@@ -13576,15 +13660,16 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
         <div style={{display:"flex",gap:8}}>
           <div style={{flex:1,display:"flex",alignItems:"center",gap:10,background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"9px 12px"}}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={T.muted} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-1.96C18.88 4 12 4 12 4s-6.88 0-8.6.46A2.78 2.78 0 0 0 1.46 6.42 29 29 0 0 0 1 12a29 29 0 0 0 .46 5.58A2.78 2.78 0 0 0 3.4 19.54C5.12 20 12 20 12 20s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-1.96A29 29 0 0 0 23 12a29 29 0 0 0-.46-5.58z"/><polygon points="9.75 15.02 15.5 12 9.75 8.98 9.75 15.02" fill={T.muted} stroke="none"/></svg>
-            <input value={ytUrl} onChange={e=>setYtUrl(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")importYt();}} placeholder="Paste a YouTube link" style={{flex:1,background:"none",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}}/>
+            <input value={ytUrl} onChange={e=>{setYtUrl(e.target.value);if(ytError)setYtError("");}} onKeyDown={e=>{if(e.key==="Enter")importYt();}} placeholder="Paste a YouTube link" style={{flex:1,background:"none",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}}/>
           </div>
-          <button onClick={importYt} style={{padding:"9px 16px",background:ytUrl.trim()?T.lime:T.card2,color:ytUrl.trim()?T.ink:T.muted,border:`1px solid ${ytUrl.trim()?T.lime:T.border}`,borderRadius:10,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font,transition:"all 0.18s"}}>Import</button>
+          <button onClick={importYt} disabled={!ytUrl.trim()||ytLoading} style={{padding:"9px 16px",background:(ytUrl.trim()&&!ytLoading)?T.lime:T.card2,color:(ytUrl.trim()&&!ytLoading)?T.ink:T.muted,border:`1px solid ${(ytUrl.trim()&&!ytLoading)?T.lime:T.border}`,borderRadius:10,fontSize:13,fontWeight:600,cursor:(!ytUrl.trim()||ytLoading)?"not-allowed":"pointer",fontFamily:T.font,transition:"all 0.18s"}}>{ytLoading?"Reading captions…":"Import"}</button>
           <label style={{padding:"9px 16px",background:T.card2,color:T.text,border:`1px solid ${T.border}`,borderRadius:10,fontSize:13,fontWeight:500,cursor:"pointer",fontFamily:T.font,display:"flex",alignItems:"center",gap:7}}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
             Upload file
             <input type="file" accept="audio/*,.pdf,.txt,.doc" style={{display:"none"}} onChange={e=>{const f=e.target.files&&e.target.files[0];if(f&&(f.type==="text/plain"||f.name.endsWith(".txt")))f.text().then(txt=>{setTranscript(txt);setSelectedLec(null);});e.target.value="";}}/>
           </label>
         </div>
+        {ytError&&<div style={{fontSize:12,color:T.red,marginTop:8}}>{ytError}</div>}
       </div>
 
       {/* Saved lectures */}
@@ -14918,7 +15003,6 @@ function App() {
       {id:"aichat",label:"Studlin AI"},
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
-      {id:"lectures",label:"Lectures"},
       {id:"friends",label:"Studlin Network",badge:String(unreadCount||"")},
     ]},
     {label:"Account",items:[
@@ -15083,6 +15167,7 @@ function App() {
           {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} />:
            active==="calendar"?<CalendarTab onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} onScanSyllabus={openSyllabusScanOnNotes} />:
+           active==="notes"?<Notes setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="lectures"?<Lectures setActive={setActive} setPricingOpen={setPricingOpen} />:
            active==="profile"?<Profile setActive={setActive} seriousMode={seriousMode} />:
