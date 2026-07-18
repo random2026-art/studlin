@@ -218,6 +218,10 @@ async function handleGoogleCalendarCron(res) {
   const snap = await db.collection('users').where('googleCalendarRefreshToken', '!=', null).get();
   let synced = 0;
   let failed = 0;
+  // debug: temporary, see the connect-response watchError comment -- lets
+  // me confirm a channel is actually registered per user without direct
+  // Firestore access. Remove alongside the rest of the diagnostic code.
+  const channels = [];
   for (const doc of snap.docs) {
     const data = doc.data();
     try {
@@ -242,6 +246,9 @@ async function handleGoogleCalendarCron(res) {
           console.warn('google calendar watch renewal failed for', doc.id, ':', watchErr.message);
         }
       }
+      const fresh = await doc.ref.get();
+      const freshData = fresh.data();
+      channels.push({ uid: doc.id, channelId: freshData.googleCalendarChannelId || null, expiration: freshData.googleCalendarChannelExpiration || null });
     } catch (err) {
       // One user's revoked/expired token (or a transient Google API
       // error) must never stop the batch -- recorded against just that
@@ -251,7 +258,7 @@ async function handleGoogleCalendarCron(res) {
       await doc.ref.update({ googleCalendarLastSyncError: err.message || 'Sync failed' }).catch(() => {});
     }
   }
-  return res.status(200).json({ ok: true, synced, failed });
+  return res.status(200).json({ ok: true, synced, failed, channels });
 }
 
 // Google's push notification -- carries no calendar data itself, just
