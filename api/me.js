@@ -248,7 +248,16 @@ async function handleGoogleCalendarCron(res) {
       }
       const fresh = await doc.ref.get();
       const freshData = fresh.data();
-      channels.push({ uid: doc.id, channelId: freshData.googleCalendarChannelId || null, expiration: freshData.googleCalendarChannelExpiration || null });
+      channels.push({
+        uid: doc.id,
+        channelId: freshData.googleCalendarChannelId || null,
+        expiration: freshData.googleCalendarChannelExpiration || null,
+        // debug: exactly what Google's API returned for calendars/primary
+        // just now, so a missing event can be confirmed as "Google never
+        // returned it" (wrong calendar / timing) vs "returned but Studlin
+        // dropped it."
+        events: (freshData.googleCalendarSyncedEvents || []).map(e => ({ title: e.title, date: e.date, time: e.time })),
+      });
     } catch (err) {
       // One user's revoked/expired token (or a transient Google API
       // error) must never stop the batch -- recorded against just that
