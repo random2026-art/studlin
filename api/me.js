@@ -105,6 +105,10 @@ async function handleGoogleCalendarConnect(user, req, res) {
     // error) shouldn't fail the whole connect -- the daily cron's own
     // expiring-channel check (see handleGoogleCalendarCron) registers one
     // for this user within a day either way if this doesn't land now.
+    // watchError is surfaced in the response (temporary -- diagnosing why
+    // push notifications aren't arriving in production) so a registration
+    // failure is visible instead of silently swallowed.
+    let watchError = null;
     try {
       const watch = await registerCalendarWatch(tokens.access_token, user.uid);
       await db.collection('users').doc(user.uid).update({
@@ -113,9 +117,10 @@ async function handleGoogleCalendarConnect(user, req, res) {
         googleCalendarChannelExpiration: watch.expiration,
       });
     } catch (watchErr) {
+      watchError = watchErr.message;
       console.warn('google calendar watch registration failed:', watchErr.message);
     }
-    return res.status(200).json({ events, lastSyncedAt: now });
+    return res.status(200).json({ events, lastSyncedAt: now, watchError });
   } catch (err) {
     console.error('google calendar connect error:', err);
     return res.status(500).json({ error: 'Could not connect Google Calendar. Please try again.' });

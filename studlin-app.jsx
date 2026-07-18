@@ -11451,7 +11451,11 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
           setGoogleLastSynced(Date.now());
           setCalGoogleLinked(true);
           setGoogleSyncError(null);
-          showToast(`Google Calendar synced · ${data.events.length} event${data.events.length===1?"":"s"} imported`);
+          // watchError is a temporary diagnostic surface (see api/me.js
+          // handleGoogleCalendarConnect) for why push notifications
+          // aren't arriving in production -- remove once confirmed
+          // working reliably.
+          showToast(`Google Calendar synced · ${data.events.length} event${data.events.length===1?"":"s"} imported`+(data.watchError?` · Push registration failed: ${data.watchError}`:""),data.watchError?"error":"success");
         }catch(e){
           showToast("Failed to fetch calendar events. Check permissions and try again.","error");
         }finally{
