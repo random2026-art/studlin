@@ -14436,6 +14436,30 @@ function App() {
   })();
   useEffect(()=>{ touchStreak(); },[]);
   useEffect(()=>{ try{localStorage.setItem("studlin-active-tab",active);}catch(e){} },[active]);
+  // Google Calendar's background sync (api/me.js google-calendar-pull)
+  // needs to actually reach the browser to feel automatic. This used to
+  // live only inside SettingsTab's own effect, which meant it silently
+  // never ran at all unless the student happened to visit Settings first
+  // -- server-side data could be fully up to date and still never show up
+  // in the Calendar tab for an entire session. Runs unconditionally here
+  // instead, on every app load, same as touchStreak just above -- both
+  // CalendarTab and SettingsTab mount fresh (reading localStorage at that
+  // moment) each time the student switches to them, so this just needs to
+  // win the race against a first click, which a single fast Firestore
+  // read comfortably does.
+  useEffect(()=>{
+    if(!lsGet("cal-google",false))return;
+    (async()=>{
+      try{
+        const res=await authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"google-calendar-pull"})});
+        const data=await res.json();
+        if(!res.ok||!data.connected)return;
+        const existing=lsGet("events",[]).filter(e=>!e.id.startsWith("gcal-"));
+        lsSet("events",[...existing,...data.events]);
+        if(data.lastSyncedAt)lsSet("cal-google-last-synced",new Date(data.lastSyncedAt).getTime());
+      }catch(e){}
+    })();
+  },[]);
   useEffect(()=>{
     const lastDay=lsGet("lastLoginDay","");
     const today=dayKey();
