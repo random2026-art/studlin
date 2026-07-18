@@ -2166,6 +2166,24 @@ function computeClassSkipPlan(skippedIds,date){
   }
   return{label,moved,couldntMove:[],skipRoutine:{date,routineIds:skippedIds}};
 }
+// Suggests up to 3 pending qualifying tasks that would fit into a
+// specific just-freed window (e.g. after deleting an event from the
+// Weekly grid's Backspace shortcut) — deliberately simpler than the
+// forward-scanning slot finders above: the window is already known and
+// already empty (nothing else could have moved into it yet), so this
+// only needs a straight duration-fits check and a soonest-deadline-first
+// sort, not a search. Pure/no side effects — the caller decides
+// whether/how to actually place one.
+function computeFillSuggestions(freedDate,freedTime,freedDuration){
+  const all=lsGet("events",[]);
+  return all.filter(ev=>isQualifying(ev)&&ev.date>=freedDate&&(ev.duration||30)<=freedDuration)
+    .sort((a,b)=>{
+      const da=a.deadline||"9999-99-99",db=b.deadline||"9999-99-99";
+      return da<db?-1:da>db?1:0;
+    })
+    .slice(0,3)
+    .map(ev=>({id:ev.id,title:ev.title,duration:ev.duration||30}));
+}
 function computePausePlan(intent,forcedId){
   const today=dayKey();
   if(intent.intent==="move_event"||intent.intent==="retime_event"){
@@ -8072,13 +8090,33 @@ function layoutDayEvents(evs) {
   return laidOut;
 }
 
-function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, isAgendaCollapsed}) {
+function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, isAgendaCollapsed, onDeleteEvent}) {
   // Compact, fixed per-hour scale (held constant across the agenda-collapse
   // toggle) so several hours are visible at a glance, like Google Calendar.
   const WK_PX_HR = 48;
   const wkColRefs = useRef({});
   const weekScrollRef = useRef(null);
   const [wkDragId, setWkDragId] = useState(null);
+  // Click a block to select it (Google-Calendar-style), Backspace/Delete
+  // to remove it. Guarded against firing while the student is typing
+  // anywhere else on the page (a title field, a note, etc.) — otherwise a
+  // plain Backspace keystroke elsewhere on the screen could silently
+  // delete whatever happened to still be selected in the grid behind it.
+  const [selectedEventId, setSelectedEventId] = useState(null);
+  useEffect(()=>{
+    if(!selectedEventId)return;
+    const handler=(e)=>{
+      if(e.key!=="Backspace"&&e.key!=="Delete")return;
+      const el=document.activeElement;
+      const typing=el&&(el.tagName==="INPUT"||el.tagName==="TEXTAREA"||el.isContentEditable);
+      if(typing)return;
+      const ev=events.find(x=>x.id===selectedEventId);
+      setSelectedEventId(null);
+      if(ev&&onDeleteEvent)onDeleteEvent(ev);
+    };
+    document.addEventListener("keydown",handler);
+    return ()=>document.removeEventListener("keydown",handler);
+  },[selectedEventId,events,onDeleteEvent]);
   useEffect(()=>{
     if(weekScrollRef.current){
       const hour = new Date().getHours();
@@ -8196,7 +8234,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
       <div ref={weekScrollRef} style={{display:"flex",overflowY:"auto",maxHeight:isAgendaCollapsed?"calc(100vh - 200px)":"calc(100vh - 260px)"}} onDragEnd={handleDragEnd}>
         <div style={{width:52,flexShrink:0,background:T.card,borderRight:`1px solid ${T.border}`,zIndex:2}}>
           {Array.from({length:24}, (_, h) => (
-            <div key={h} style={{height:WK_PX_HR,display:"flex",alignItems:"flex-start",justifyContent:"flex-end",paddingRight:8,paddingTop:3,borderTop:`1px solid ${T.border}44`,boxSizing:"border-box"}}>
+            <div key={h} style={{height:WK_PX_HR,display:"flex",alignItems:"flex-start",justifyContent:"flex-end",paddingRight:8,paddingTop:3,borderTop:`1px solid ${T.border}`,boxSizing:"border-box"}}>
               <span style={{fontSize:9,color:T.muted,whiteSpace:"nowrap"}}>{h===0?"12 AM":h<12?h+" AM":h===12?"12 PM":(h-12)+" PM"}</span>
             </div>
           ))}
@@ -8227,7 +8265,8 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
               <div key={colIdx} style={{position:"relative",borderLeft:`1px solid ${T.border}`,height:24*WK_PX_HR,boxSizing:"border-box"}}
                 ref={el => { wkColRefs.current[dk] = el; }}
                 onDragOver={e=>handleDragOver(e,dk)}
-                onDrop={e=>handleDrop(e,dk)}>
+                onDrop={e=>handleDrop(e,dk)}
+                onClick={()=>setSelectedEventId(null)}>
                 {/* School Hours background mask (High School accounts only,
                     Mon–Fri) — free periods "punch through" it via
                     subtractIntervals, so those windows show the normal clear
@@ -8238,10 +8277,10 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   </div>
                 ))}
                 {Array.from({length:24}, (_, h) => (
-                  <div key={h} style={{position:"absolute",top:h*WK_PX_HR,left:0,right:0,height:WK_PX_HR,borderTop:`1px solid ${T.border}44`,boxSizing:"border-box"}} />
+                  <div key={h} style={{position:"absolute",top:h*WK_PX_HR,left:0,right:0,height:WK_PX_HR,borderTop:`1px solid ${T.borderHover}`,boxSizing:"border-box"}} />
                 ))}
                 {Array.from({length:24}, (_, h) => (
-                  <div key={"hh"+h} style={{position:"absolute",top:h*WK_PX_HR+WK_PX_HR/2,left:0,right:0,borderTop:`1px dashed ${T.border}22`}} />
+                  <div key={"hh"+h} style={{position:"absolute",top:h*WK_PX_HR+WK_PX_HR/2,left:0,right:0,borderTop:`1px dashed ${T.border}`}} />
                 ))}
                 {isPastDeadline && (
                   <div style={{position:"absolute",inset:0,background:"rgba(217,128,107,0.07)",borderLeft:"2px solid rgba(217,128,107,0.35)",zIndex:5,pointerEvents:"none"}}>
@@ -8276,6 +8315,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                       : {background:color+"1E",borderLeft:`3px solid ${color}`,color};
                   const dimmedByRoutineMode = editRoutineMode && !isRoutine;
                   const highlightedByRoutineMode = editRoutineMode && isRoutine;
+                  const isSelected = !isRoutine && selectedEventId === ev.id;
                   const leftPct = (col / totalCols) * 100;
                   const widthPct = 100 / totalCols;
                   return (
@@ -8283,11 +8323,11 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                       draggable={!isRoutine}
                       onDragStart={()=>{ if(!isRoutine){setWkDragId(ev.id); setWkDragDeadline(ev.deadline||null);} }}
                       onDoubleClick={()=>{ if(!isRoutine)openEdit(ev); }}
-                      onClick={()=>{ if(isRoutine&&editRoutineMode&&onEditRoutine)onEditRoutine(ev.routineId); }}
+                      onClick={(e)=>{ if(isRoutine){ if(editRoutineMode&&onEditRoutine)onEditRoutine(ev.routineId); return; } e.stopPropagation(); setSelectedEventId(id=>id===ev.id?null:ev.id); }}
                       onMouseEnter={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(ev.routineId); }}
                       onMouseLeave={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(null); }}
-                      title={isRoutine?"Repeats weekly":"Double-click to edit · Drag to reschedule"}
-                      style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:5,padding:"2px 5px",cursor:isRoutine?(editRoutineMode?"pointer":"default"):"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isDone?0.4:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{})}}>
+                      title={isRoutine?"Repeats weekly":"Click to select (Backspace to delete) · Double-click to edit · Drag to reschedule"}
+                      style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:5,padding:"2px 5px",cursor:isRoutine?(editRoutineMode?"pointer":"default"):"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isDone?0.4:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{}),...(isSelected?{outline:`2px solid ${T.lime}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.lime}22`}:{})}}>
                       <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                       {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:1}}>{fmtTime(ev.time)}{dur ? " · "+dur+"m" : ""}</div>}
                       {ev.userPinned && !isRoutine && (
@@ -9099,6 +9139,45 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
   // attribute one reason to the whole toast, so those keep the plain "Task
   // added" toast instead and rely on the edit-modal banner per-task.
   const [placementToast,setPlacementToast]=useState("");
+  // Backspace-to-delete from the Weekly grid (see WeeklyPlanner) needs the
+  // same confirm-before-delete safety CLAUDE.md requires elsewhere,
+  // without slowing down the actual keystroke — an instant delete with a
+  // real, working Undo satisfies that the same way Gmail's "Message
+  // deleted, Undo" does. deleteUndoSnapshot holds the exact deleted
+  // object so Undo can re-insert it unchanged.
+  const [deleteUndoSnapshot,setDeleteUndoSnapshot]=useState(null);
+  const [deleteUndoToast,setDeleteUndoToast]=useState("");
+  // Offered only when the deleted block had a real, meaningful duration
+  // (see computeFillSuggestions) — deliberately not shown for every
+  // delete, just the ones where there's an actual gap worth doing
+  // something with.
+  const [fillPrompt,setFillPrompt]=useState(null); // {date,time,duration,suggestions}
+  const deleteEventWithUndo=(ev)=>{
+    removeEvent(ev.id);
+    setDeleteUndoSnapshot(ev);
+    setDeleteUndoToast(`Deleted "${ev.title}"`);
+    setTimeout(()=>{setDeleteUndoToast("");setDeleteUndoSnapshot(null);},5000);
+    if((ev.duration||0)>=15){
+      const suggestions=computeFillSuggestions(ev.date,ev.time,ev.duration);
+      if(suggestions.length>0)setFillPrompt({date:ev.date,time:ev.time,duration:ev.duration,suggestions});
+    }
+  };
+  const undoDelete=()=>{
+    if(!deleteUndoSnapshot)return;
+    const next=[...lsGet("events",[]),deleteUndoSnapshot];
+    setEvents(next);lsSet("events",next);
+    setDeleteUndoSnapshot(null);setDeleteUndoToast("");
+  };
+  const acceptFillSuggestion=(candidateId)=>{
+    if(!fillPrompt)return;
+    // Pinned like any other deliberate, explicit placement (mirrors
+    // moveEvent's own reasoning) so Tier 0 doesn't move it right back out
+    // the next day.
+    const next=lsGet("events",[]).map(e=>e.id===candidateId?{...e,date:fillPrompt.date,time:fillPrompt.time,userPinned:true}:e);
+    setEvents(next);lsSet("events",next);
+    setFillPrompt(null);
+  };
+  const dismissFillPrompt=()=>setFillPrompt(null);
   // Tier 3 — Global Emergency "Studlin Reschedule". pausePreview holds the
   // computed (not-yet-committed) plan: {label, moved:[...], couldntMove:[...]}.
   const [pauseOpen,setPauseOpen]=useState(false);
@@ -9311,6 +9390,10 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
   // manual/AI toggle stays visible so it's correctable, not a dead end.
   const openNewManual=(dateK)=>{openNew(dateK);setTaskMode("manual");};
   const openNewAI=(dateK)=>{openNew(dateK);setTaskMode("ai");};
+  // "Add something" on the fill-prompt banner (see deleteEventWithUndo) —
+  // same manual form, just pre-filled with the exact freed slot instead
+  // of a blank time, so the student doesn't have to re-enter it.
+  const openNewAtSlot=(dateK,time,duration)=>{openNewManual(dateK);setEvTime(time);setEvDuration(duration||60);setFillPrompt(null);};
   const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvDate("");setEvTime("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setAiLoading(false);setAsChecklist(false);};
   const onEvKindChange=(k)=>{setEvKind(k);if((k==="exam"||k==="class"||k==="reminder"||k==="busy block")&&!evDate)setEvDate(evPrefillDate);};
   const buildTask=(date,time,titleSuffix,splitInfo)=>{
@@ -9923,7 +10006,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
         <WeeklyPlanner events={events} setEvents={setEvents} moveEvent={moveEvent} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openNew={openNew} openEdit={openEdit}
           routines={routines} editRoutineMode={editRoutineMode} hoveredRoutineId={hoveredRoutineId} setHoveredRoutineId={setHoveredRoutineId}
           onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
-          selDay={selDay} setSelDay={setSelDay} isAgendaCollapsed={isAgendaCollapsed} />
+          selDay={selDay} setSelDay={setSelDay} isAgendaCollapsed={isAgendaCollapsed} onDeleteEvent={deleteEventWithUndo} />
       </CollapsibleAgendaLayout>)}
     </div>
       {calTourStep>=0&&(
@@ -9964,6 +10047,31 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
       )}
       {reconcileToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.amber,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {reconcileToast}</div>
+      )}
+      {deleteUndoToast&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.card,border:`1px solid ${T.border}`,color:T.white,fontSize:12.5,fontWeight:600,padding:"10px 16px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:12}}>
+          <span>{deleteUndoToast}</span>
+          <button onClick={undoDelete} style={{background:"none",border:"none",color:T.lime,fontSize:12.5,fontWeight:700,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",padding:0}}>Undo</button>
+        </div>
+      )}
+      {fillPrompt&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:360}}>
+          <div style={{fontSize:13,color:T.white,marginBottom:10}}>
+            Freed up {fmtMinsDur(fillPrompt.duration)} at {fmtTime(fillPrompt.time)}. Fill it with something?
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10,maxHeight:160,overflowY:"auto"}}>
+            {fillPrompt.suggestions.map(s=>(
+              <button key={s.id} onClick={()=>acceptFillSuggestion(s.id)} style={{display:"flex",justifyContent:"space-between",gap:10,fontSize:12,padding:"8px 10px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`,color:T.text,cursor:"pointer",fontFamily:T.font,textAlign:"left"}}>
+                <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.title}</span>
+                <span style={{color:T.muted,flexShrink:0}}>{s.duration}m</span>
+              </button>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <Btn variant="subtle" onClick={()=>openNewAtSlot(fillPrompt.date,fillPrompt.time,fillPrompt.duration)} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Add something</Btn>
+            <Btn variant="ghost" onClick={dismissFillPrompt} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Leave it</Btn>
+          </div>
+        </div>
       )}
       {rescheduleTask&&(
         <RescheduleModal task={rescheduleTask} events={events} onClose={()=>setRescheduleTask(null)} commit={(next,evictedCount)=>{
@@ -11451,11 +11559,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
           setGoogleLastSynced(Date.now());
           setCalGoogleLinked(true);
           setGoogleSyncError(null);
-          // watchError is a temporary diagnostic surface (see api/me.js
-          // handleGoogleCalendarConnect) for why push notifications
-          // aren't arriving in production -- remove once confirmed
-          // working reliably.
-          showToast(`Google Calendar synced · ${data.events.length} event${data.events.length===1?"":"s"} imported`+(data.watchError?` · Push registration failed: ${data.watchError}`:""),data.watchError?"error":"success");
+          showToast(`Google Calendar synced · ${data.events.length} event${data.events.length===1?"":"s"} imported`);
         }catch(e){
           showToast("Failed to fetch calendar events. Check permissions and try again.","error");
         }finally{

@@ -105,10 +105,6 @@ async function handleGoogleCalendarConnect(user, req, res) {
     // error) shouldn't fail the whole connect -- the daily cron's own
     // expiring-channel check (see handleGoogleCalendarCron) registers one
     // for this user within a day either way if this doesn't land now.
-    // watchError is surfaced in the response (temporary -- diagnosing why
-    // push notifications aren't arriving in production) so a registration
-    // failure is visible instead of silently swallowed.
-    let watchError = null;
     try {
       const watch = await registerCalendarWatch(tokens.access_token, user.uid);
       await db.collection('users').doc(user.uid).update({
@@ -117,10 +113,9 @@ async function handleGoogleCalendarConnect(user, req, res) {
         googleCalendarChannelExpiration: watch.expiration,
       });
     } catch (watchErr) {
-      watchError = watchErr.message;
       console.warn('google calendar watch registration failed:', watchErr.message);
     }
-    return res.status(200).json({ events, lastSyncedAt: now, watchError });
+    return res.status(200).json({ events, lastSyncedAt: now });
   } catch (err) {
     console.error('google calendar connect error:', err);
     return res.status(500).json({ error: 'Could not connect Google Calendar. Please try again.' });
@@ -218,10 +213,6 @@ async function handleGoogleCalendarCron(res) {
   const snap = await db.collection('users').where('googleCalendarRefreshToken', '!=', null).get();
   let synced = 0;
   let failed = 0;
-  // debug: temporary, see the connect-response watchError comment -- lets
-  // me confirm a channel is actually registered per user without direct
-  // Firestore access. Remove alongside the rest of the diagnostic code.
-  const channels = [];
   for (const doc of snap.docs) {
     const data = doc.data();
     try {
@@ -246,18 +237,6 @@ async function handleGoogleCalendarCron(res) {
           console.warn('google calendar watch renewal failed for', doc.id, ':', watchErr.message);
         }
       }
-      const fresh = await doc.ref.get();
-      const freshData = fresh.data();
-      channels.push({
-        uid: doc.id,
-        channelId: freshData.googleCalendarChannelId || null,
-        expiration: freshData.googleCalendarChannelExpiration || null,
-        // debug: exactly what Google's API returned for calendars/primary
-        // just now, so a missing event can be confirmed as "Google never
-        // returned it" (wrong calendar / timing) vs "returned but Studlin
-        // dropped it."
-        events: (freshData.googleCalendarSyncedEvents || []).map(e => ({ title: e.title, date: e.date, time: e.time })),
-      });
     } catch (err) {
       // One user's revoked/expired token (or a transient Google API
       // error) must never stop the batch -- recorded against just that
@@ -267,7 +246,7 @@ async function handleGoogleCalendarCron(res) {
       await doc.ref.update({ googleCalendarLastSyncError: err.message || 'Sync failed' }).catch(() => {});
     }
   }
-  return res.status(200).json({ ok: true, synced, failed, channels });
+  return res.status(200).json({ ok: true, synced, failed });
 }
 
 // Google's push notification -- carries no calendar data itself, just
