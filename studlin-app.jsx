@@ -969,12 +969,20 @@ function computeOccupiedIntervals(events,routines,prefs,dateKey){
 // sit outside it and pulling gym into the 10am-6pm study window would be
 // wrong. Tries the same time-of-day on the desired date first (that's what
 // "move it to tomorrow" naturally means), falls back to scanning that whole
-// day, then rolls forward a day at a time. Always returns something (falls
-// back to the originally desired slot after three weeks) rather than
-// leaving a fixed event unplaced.
+// day, then rolls forward a day at a time.
+// Search horizon is deliberately generous (six months, not three weeks —
+// regression: a calendar packed solid for 21 straight days used to fall
+// through to the line below and hand back the ORIGINAL desired slot
+// unchecked, silently double-booking it; move_event's caller has no way to
+// know the difference and reports it as a successful move either way). Six
+// months of a real calendar being wall-to-wall booked with zero gaps
+// anywhere is not a realistic case, so this is a correctness fix, not just
+// kicking the can down the road — the loop below only returns early once
+// `fits` genuinely confirms the slot is free.
+const FIXED_EVENT_SEARCH_DAYS=180;
 function findFixedEventSlot(events,routines,prefs,desiredDate,desiredTime,duration){
   const desiredMins=timeToMinutes(desiredTime);
-  for(let dayOffset=0;dayOffset<21;dayOffset++){
+  for(let dayOffset=0;dayOffset<FIXED_EVENT_SEARCH_DAYS;dayOffset++){
     const d=new Date(desiredDate+"T12:00:00");d.setDate(d.getDate()+dayOffset);
     const dk=dayKey(d);
     const occupied=computeOccupiedIntervals(events,routines,prefs,dk);
@@ -984,6 +992,12 @@ function findFixedEventSlot(events,routines,prefs,desiredDate,desiredTime,durati
       if(fits(t))return{date:dk,time:minutesToTime(t)};
     }
   }
+  // Genuinely never happens outside a synthetic worst-case (every one of
+  // 180 straight days already 100% full) — kept as a last-resort return
+  // rather than null so this function's contract (always hands back a
+  // real {date,time}, never leaves a fixed event unplaced) stays intact
+  // for its one caller (computePausePlan's move_event), which has no
+  // couldntMove handling for this intent.
   return{date:desiredDate,time:desiredTime};
 }
 // Places one day's occurrence of a "habit" routine (recurring, but with no
@@ -1024,7 +1038,17 @@ function materializeHabitsForDate(dateKey,workingEvents){
   const habitRoutines=getWeeklyRoutine().filter(r=>r.kind==="habit");
   if(habitRoutines.length===0)return[];
   const dow=(new Date(dateKey+"T12:00:00").getDay()+6)%7;
-  const due=habitRoutines.filter(r=>r.days&&r.days.includes(dow));
+  // Dedup by routine id before anything else. Ids are meant to be unique,
+  // but a bad import/merge can leave two routine records sharing one id —
+  // the created event's own id is deterministically "habit-"+r.id+"-"+dateKey,
+  // so without this, two same-id routines both due today would each pass
+  // the alreadyDone check below (it's only checked against workingEvents,
+  // not against each other within this same pass) and materialize two
+  // events carrying the exact same id, silently colliding on any
+  // downstream id-keyed lookup, update, or React key.
+  const dueById=new Map();
+  habitRoutines.filter(r=>r.days&&r.days.includes(dow)).forEach(r=>{if(!dueById.has(r.id))dueById.set(r.id,r);});
+  const due=[...dueById.values()];
   if(due.length===0)return[];
   const alreadyDone=new Set(workingEvents.filter(e=>e.date===dateKey&&e.routineId).map(e=>e.routineId));
   const routinesNow=getWeeklyRoutine();

@@ -275,6 +275,15 @@ describe("materializeHabitsForDate (flexible daily habits)", () => {
     assert.equal(created.length, 0, "a fully booked day should skip the habit, not throw or double-book");
   });
 
+  test("two routine records sharing the same id (data corruption / import collision) never materialize two events with the same id (regression: used to silently produce duplicate-id events)", () => {
+    const m = loadStudlinModule();
+    const h1 = { id: "h1", title: "Gym", kind: "habit", days: [dow], duration: 30, subject: "" };
+    const h2 = { id: "h1", title: "Gym Duplicate", kind: "habit", days: [dow], duration: 30, subject: "" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([h1, h2]));
+    const created = m.materializeHabitsForDate("2026-07-20", []);
+    assert.equal(created.length, 1, "only one event should be materialized for one shared routine id");
+  });
+
   test("skips a habit not scheduled for that weekday", () => {
     const m = loadStudlinModule();
     const otherDow = (dow + 1) % 7;
@@ -354,6 +363,34 @@ describe("school term awareness (class routines suppressed outside term dates)",
     // affecting them via some other path.
     const habitCreated = m.materializeHabitsForDate("2026-07-20", []);
     assert.equal(habitCreated.length, 1, "a habit should still materialize during summer break");
+  });
+});
+
+describe("findFixedEventSlot (regression: silently double-booked a fixed event when the short search horizon ran out)", () => {
+  test("still lands on a genuinely free day when the desired day, and many days after it, are fully booked", () => {
+    const m = loadStudlinModule();
+    // Pack 30 straight days solid (well past the old 21-day search horizon)
+    // with all-day busy blocks so the old code's fallback -- "give up and
+    // hand back the original desired slot" -- would land on day 1, which
+    // this test proves is still occupied.
+    const packed = [];
+    let cursor = new Date("2026-07-20T12:00:00");
+    for (let i = 0; i < 30; i++) {
+      const dk = m.dayKey(cursor);
+      packed.push({ id: "pack-" + i, date: dk, time: "00:00", duration: 24 * 60, kind: "busy block", status: "pending" });
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    const slot = m.findFixedEventSlot(packed, [], DEFAULT_PREFS, "2026-07-20", "19:00", 60);
+    const sameDayBlock = packed.find((e) => e.date === slot.date);
+    assert.ok(!sameDayBlock, `findFixedEventSlot returned a slot on ${slot.date}, which is one of the 30 fully-booked days -- it silently double-booked the moved event instead of searching past the packed range`);
+  });
+
+  test("a single fully-booked day still rolls forward to the very next (empty) day, unchanged behavior", () => {
+    const m = loadStudlinModule();
+    const packed = [{ id: "wall-to-wall", date: "2026-07-20", time: "00:00", duration: 24 * 60, kind: "busy block", status: "pending" }];
+    const slot = m.findFixedEventSlot(packed, [], DEFAULT_PREFS, "2026-07-20", "19:00", 60);
+    assert.equal(slot.date, "2026-07-21");
+    assert.equal(slot.time, "19:00");
   });
 });
 
