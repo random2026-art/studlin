@@ -3694,6 +3694,59 @@ function Essays() {
   );
 }
 
+// Prompt+parse core of AI flashcard generation — shared by Flashcards' own
+// Create Deck flow (its "record" source already turns a lecture
+// transcript into cards this exact way) and the Lectures tab's End
+// Lecture flow, so the two don't drift into two different prompts for the
+// same job. No UI-state side effects (no loading flag) — callers own
+// that themselves, since they need it wrapped around more than just this
+// one call in some cases (e.g. Lectures also calls generateLectureDigest
+// in the same "processing" window).
+async function generateFlashcardsFromText(content,context,count=10){
+  try{
+    // "auto" reuses the same "AI decides quantity, no fixed number
+    // requested" shape already used by extractSyllabusDeadlines and
+    // parseBrainDump elsewhere in this file, rather than inventing a new
+    // pattern — the actual card count then comes from parsed.length below.
+    const countInstruction=count==="auto"
+      ?"Create as many flashcards as needed to cover the key concepts in this "+context+" — typically 5 to 30. Don't pad with filler or skip real content just to hit a number."
+      :"Create "+count+" flashcards from this "+context+".";
+    const prompt=countInstruction+" Format as a JSON array where each object has a \"q\" key (question) and \"a\" key (answer). Return only the JSON array, no other text. Material:\n\n"+content.slice(0,15000);
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+    const data=await res.json();
+    let raw=(data.reply||"").replace(/```json?|```/g,"").trim();
+    const jsonStart=raw.indexOf("[");const jsonEnd=raw.lastIndexOf("]");
+    if(jsonStart>=0&&jsonEnd>jsonStart){raw=raw.slice(jsonStart,jsonEnd+1);}
+    try{const parsed=JSON.parse(raw);return Array.isArray(parsed)?parsed:[];}
+    catch(pe){
+      const cards=[];const qMatches=raw.match(/"q"\s*:\s*"([^"]+)"/g)||[];const aMatches=raw.match(/"a"\s*:\s*"([^"]+)"/g)||[];
+      for(let i=0;i<Math.min(qMatches.length,aMatches.length);i++){cards.push({q:qMatches[i].replace(/"q"\s*:\s*"/,"").replace(/"$/,""),a:aMatches[i].replace(/"a"\s*:\s*"/,"").replace(/"$/,"")});}
+      return cards;
+    }
+  }catch(e){return [{q:"Error generating cards",a:e.message||"Try again"}];}
+}
+// One /api/chat call for the Lectures tab's End Lecture flow — asks for a
+// summary, notes-ready body text, and a short list of "this might come up
+// on the test" call-outs in one pass, rather than three separate paid
+// calls for one lecture. Flashcards are deliberately NOT part of this
+// call — generateFlashcardsFromText already has its own proven prompt for
+// that, no reason to duplicate it inside a bigger, harder-to-parse
+// combined prompt.
+async function generateLectureDigest(transcript,subject){
+  const prompt="You're helping a student turn a raw lecture transcript into study material. The class is "+(subject||"unspecified")+". Read the transcript and return ONLY this JSON, no other text: "+
+    "{\"summary\":\"a clear, well-organized summary of the lecture, a few short paragraphs\",\"notesBody\":\"the same material formatted as skimmable study notes with line breaks between points, no markdown headers\",\"examFlags\":[\"up to 5 short phrases naming specific concepts the professor emphasized or repeated that are likely to come up on a test, empty array if nothing stood out\"]}"+
+    "\n\nTranscript:\n\n"+transcript.slice(0,15000);
+  try{
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+    const data=await res.json();
+    let raw=(data.reply||"").replace(/```json?|```/g,"").trim();
+    const jsonStart=raw.indexOf("{");const jsonEnd=raw.lastIndexOf("}");
+    if(jsonStart>=0&&jsonEnd>jsonStart){raw=raw.slice(jsonStart,jsonEnd+1);}
+    const parsed=JSON.parse(raw);
+    return {summary:parsed.summary||"",notesBody:parsed.notesBody||"",examFlags:Array.isArray(parsed.examFlags)?parsed.examFlags:[]};
+  }catch(e){return {summary:"Couldn't generate a summary. Try again.",notesBody:"",examFlags:[]};}
+}
+
 // ─── FLASHCARDS ───────────────────────────────────────────────────────────────
 function Flashcards() {
   const MicIcon=<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0,display:"block"}}><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg>;
@@ -3790,27 +3843,9 @@ function Flashcards() {
 
   const aiGenCards=async(content,context,count=10)=>{
     setAiLoading(true);
-    try{
-      // "auto" reuses the same "AI decides quantity, no fixed number
-      // requested" shape already used by extractSyllabusDeadlines and
-      // parseBrainDump elsewhere in this file, rather than inventing a new
-      // pattern — the actual card count then comes from parsed.length below.
-      const countInstruction=count==="auto"
-        ?"Create as many flashcards as needed to cover the key concepts in this "+context+" — typically 5 to 30. Don't pad with filler or skip real content just to hit a number."
-        :"Create "+count+" flashcards from this "+context+".";
-      const prompt=countInstruction+" Format as a JSON array where each object has a \"q\" key (question) and \"a\" key (answer). Return only the JSON array, no other text. Material:\n\n"+content.slice(0,15000);
-      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
-      const data=await res.json();
-      var raw=(data.reply||"").replace(/```json?|```/g,"").trim();
-      var jsonStart=raw.indexOf("[");var jsonEnd=raw.lastIndexOf("]");
-      if(jsonStart>=0&&jsonEnd>jsonStart){raw=raw.slice(jsonStart,jsonEnd+1);}
-      try{var parsed=JSON.parse(raw);setAiLoading(false);return Array.isArray(parsed)?parsed:[];}
-      catch(pe){
-        var cards=[];var qMatches=raw.match(/"q"\s*:\s*"([^"]+)"/g)||[];var aMatches=raw.match(/"a"\s*:\s*"([^"]+)"/g)||[];
-        for(var i=0;i<Math.min(qMatches.length,aMatches.length);i++){cards.push({q:qMatches[i].replace(/"q"\s*:\s*"/,"").replace(/"$/,""),a:aMatches[i].replace(/"a"\s*:\s*"/,"").replace(/"$/,"")});}
-        setAiLoading(false);return cards;
-      }
-    }catch(e){setAiLoading(false);return [{q:"Error generating cards",a:e.message||"Try again"}];}
+    const cards=await generateFlashcardsFromText(content,context,count);
+    setAiLoading(false);
+    return cards;
   };
 
   const createDeck=async()=>{
@@ -4226,7 +4261,7 @@ function Flashcards() {
 }
 
 // ─── NOTES ────────────────────────────────────────────────────────────────────
-function Notes(){
+function Notes({setActive=()=>{}}){
   const MicIcon=<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0,display:"block"}}><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg>;
 
   // Dynamic class sync from user subjects
@@ -4248,10 +4283,6 @@ function Notes(){
   const [yt,setYt]=useState("");
   const [ytInfo,setYtInfo]=useState("");
   const [ytLoading,setYtLoading]=useState(false);
-  const [rec,setRec]=useState(false);
-  const [recSecs,setRecSecs]=useState(0);
-  const [recText,setRecText]=useState("");
-  const recognitionRef=useRef(null);
   const [aiLoading,setAiLoading]=useState(false);
   const [fileText,setFileText]=useState("");
   const fileRef=useRef(null);
@@ -4324,9 +4355,6 @@ function Notes(){
   const [panelMsg,setPanelMsg]=useState("");
   const [quizOverlay,setQuizOverlay]=useState(null); // {questions,idx,picked,score,done}
   const [summaryOverlay,setSummaryOverlay]=useState(null); // array of bullet strings
-
-  useEffect(()=>{if(!rec)return;const id=setInterval(()=>setRecSecs(x=>x+1),1000);return()=>clearInterval(id);},[rec]);
-  const fmtRec=(x)=>String(Math.floor(x/60)).padStart(2,"0")+":"+String(x%60).padStart(2,"0");
 
   // Sync editor DOM whenever the selected note changes
   useEffect(()=>{
@@ -4536,22 +4564,18 @@ function Notes(){
 
   const noteScansLeft=Math.max(0,NOTE_SCAN_LIMIT-getNoteScanUsage().count);
   const noteScanBadge=getPlan()==="Free"?noteScansLeft+" scan"+(noteScansLeft===1?"":"s")+" left":null;
+  // "record" doesn't create a note directly (see continueToCanvas) — it
+  // hands title+class off to the Lecture Lab (the same screen the old
+  // standalone "Lectures" nav tab used to point at) and navigates there,
+  // so cost is null rather than noteScanBadge: nothing here spends a note
+  // scan, the Lecture Lab's own summary/flashcards generation isn't gated
+  // by that limit at all (see generateLectureDigest/generateFlashcardsFromText).
   const sources=[
     {id:"write",label:"Write",desc:"Type directly on the canvas",icon:Icon.pen,cost:null},
     {id:"file",label:"Scan a file",desc:"PDF, slides, or photos of the board",icon:Icon.file,cost:noteScanBadge},
-    {id:"record",label:"Record lecture",desc:"Live transcription + summary",icon:MicIcon,cost:noteScanBadge},
+    {id:"record",label:"Record lecture",desc:"Live transcript, summary, flashcards & quiz",icon:MicIcon,cost:null},
     {id:"youtube",label:"YouTube link",desc:"Transcribes and summarises a video",icon:Icon.link,cost:noteScanBadge},
   ];
-
-  const startRec=()=>{
-    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-    if(!SR){setRecText("Speech recognition not supported. Try Chrome.");return;}
-    const r=new SR();r.continuous=true;r.interimResults=true;r.lang="en-US";
-    r.onresult=(e)=>{let t="";for(let i=0;i<e.results.length;i++)t+=e.results[i][0].transcript;setRecText(t);};
-    r.onerror=()=>setRec(false);r.onend=()=>setRec(false);
-    recognitionRef.current=r;r.start();setRec(true);setRecSecs(0);setRecText("");
-  };
-  const stopRec=()=>{if(recognitionRef.current)recognitionRef.current.stop();setRec(false);};
 
   const handleFile=async(e)=>{
     const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
@@ -4624,6 +4648,19 @@ function Notes(){
   const continueToCanvas=async()=>{
     const tag=newTag==="Other"&&customTag.trim()?customTag.trim():newTag;
     let title=newTitle.trim();
+    // "Record lecture" doesn't create a note here — it hands the title and
+    // class off to the Lecture Lab (the screen the old standalone
+    // "Lectures" nav tab used to point at) via the same one-shot
+    // localStorage handoff pattern openSyllabusScan/openNoteId already use
+    // elsewhere in this file, then navigates there. Recording, live
+    // transcript, saved lectures, and the end-of-lecture summary/notes/
+    // flashcards/quiz all still live entirely in Lectures — untouched.
+    if(src==="record"){
+      lsSet("lectureLaunch",{title,subject:tag});
+      setNewOpen(false);setNewTitle("");setSrc("write");setSearch("");
+      setActive("lectures");
+      return;
+    }
     let body="<p><br></p>";
     let syllabusItems=null;
     // Any note built from a real source text rides the same AI note-scan
@@ -4650,17 +4687,6 @@ function Notes(){
         body="<p>"+fileText.trim().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/\n/g,"<br>")+"</p>";
         setUpgradeModal({feature:"AI note scans",detail:resetNote("AI note scans",NOTE_SCAN_LIMIT,"this file was saved as plain text, not AI-summarized")});
       }
-    }else if(src==="record"){
-      if(!title)title="Lecture notes – "+fmtRec(recSecs);
-      if(!recText.trim())body="<p>No audio captured.</p>";
-      else if(canScanNote()){
-        body=await aiSummarize(recText,"lecture transcription");
-        recordNoteScan();
-        await detectDates(recText);
-      }else{
-        body="<p>"+recText.trim().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/\n/g,"<br>")+"</p>";
-        setUpgradeModal({feature:"AI note scans",detail:resetNote("AI note scans",NOTE_SCAN_LIMIT,"the transcript was saved as plain text, not AI-summarized")});
-      }
     }else if(src==="youtube"){
       if(!title)title=ytInfo?"Notes: "+ytInfo:"Notes from video";
       const topic=ytInfo||yt.trim();
@@ -4677,7 +4703,7 @@ function Notes(){
     const newNote={id:String(Date.now()),title,body,tag,date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now()};
     const next=[newNote,...notes];
     setNotes(next);lsSet("notes",next);
-    setNewOpen(false);setNewTitle("");setYt("");setYtInfo("");setRec(false);setRecSecs(0);setRecText("");setSrc("write");setFileText("");setSearch("");setViaSyllabusScan(false);
+    setNewOpen(false);setNewTitle("");setYt("");setYtInfo("");setSrc("write");setFileText("");setSearch("");setViaSyllabusScan(false);
     setSel(0);
     setPopover(null);
     if(syllabusItems!==null){
@@ -4864,8 +4890,8 @@ function Notes(){
       </Modal>
 
       {/* ── NEW NOTE MODAL — metadata only, no body field ── */}
-      <Modal open={newOpen} onClose={()=>{setNewOpen(false);stopRec();setViaSyllabusScan(false);setSrc("write");}} title={viaSyllabusScan?"Scan your syllabus":"New note"} sub={viaSyllabusScan?"Which class is this for? Studlin reads the file and finds every date.":"Configure your note. You'll write on the canvas next."} width={560}
-        footer={<><Btn variant="subtle" onClick={()=>{setNewOpen(false);stopRec();setViaSyllabusScan(false);setSrc("write");}}>Cancel</Btn><Btn onClick={continueToCanvas} disabled={aiLoading||(viaSyllabusScan&&!fileText.trim())}>{aiLoading?"Processing…":viaSyllabusScan?"Scan & Continue →":"Continue to Canvas →"}</Btn></>}>
+      <Modal open={newOpen} onClose={()=>{setNewOpen(false);setViaSyllabusScan(false);setSrc("write");}} title={viaSyllabusScan?"Scan your syllabus":"New note"} sub={viaSyllabusScan?"Which class is this for? Studlin reads the file and finds every date.":"Configure your note. You'll write on the canvas next."} width={560}
+        footer={<><Btn variant="subtle" onClick={()=>{setNewOpen(false);setViaSyllabusScan(false);setSrc("write");}}>Cancel</Btn><Btn onClick={continueToCanvas} disabled={aiLoading||(viaSyllabusScan&&!fileText.trim())}>{aiLoading?"Processing…":viaSyllabusScan?"Scan & Continue →":src==="record"?"Go to Lecture Lab →":"Continue to Canvas →"}</Btn></>}>
         {!viaSyllabusScan&&(
           <Field label="Source">
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
@@ -4894,12 +4920,10 @@ function Notes(){
           </Field>
         )}
         {src==="record"&&(
-          <Field label="Lecture recording" hint="Records your microphone and transcribes live.">
-            <div style={{border:"1px solid "+(rec?T.red+"55":T.border),borderRadius:10,padding:22,textAlign:"center",background:rec?T.red+"0a":T.card2}}>
-              <button type="button" onClick={rec?stopRec:startRec} style={{width:54,height:54,borderRadius:"50%",border:"none",background:rec?T.red:T.lime,color:rec?"#fff":T.ink,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:10}}>{rec?<span style={{width:16,height:16,background:"#fff",borderRadius:3,display:"block"}} />:MicIcon}</button>
-              <div style={{fontSize:15,fontWeight:700,color:rec?T.red:T.white,fontVariantNumeric:"tabular-nums"}}>{fmtRec(recSecs)}</div>
-              <div style={{fontSize:11.5,color:T.muted,marginTop:3}}>{rec?"Recording… tap to stop":"Tap to start recording"}</div>
-              {recText&&<div style={{fontSize:12,color:T.text,marginTop:12,padding:"10px 12px",background:T.card,borderRadius:8,textAlign:"left",maxHeight:120,overflowY:"auto",lineHeight:1.5}}>{recText}</div>}
+          <Field label="Lecture Lab">
+            <div style={{display:"flex",alignItems:"center",gap:12,border:`1px solid ${T.border}`,borderRadius:10,padding:16,background:T.card2}}>
+              <div style={{width:38,height:38,borderRadius:10,background:T.lime+"18",border:`1px solid ${T.lime}33`,display:"grid",placeItems:"center",color:T.lime,flexShrink:0}}>{MicIcon}</div>
+              <div style={{fontSize:12.5,color:T.text,lineHeight:1.5}}>Recording happens on the next screen — it keeps going in the background while you see the live transcript. When you're done, get a summary, clean notes, flashcards, and a practice quiz in one tap.</div>
             </div>
           </Field>
         )}
@@ -13362,9 +13386,20 @@ function FeedbackPage() {
 
 // ─── LECTURES ─────────────────────────────────────────────────────────────────
 function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
+  // One-shot handoff from Notes' "Record lecture" source (see
+  // continueToCanvas) — same idiom as openSyllabusScan/openNoteId
+  // elsewhere in this file. Read once on mount and cleared immediately so
+  // a later, unrelated visit to this screen never sees stale title/class.
+  const lectureLaunch=useState(()=>{
+    const l=lsGet("lectureLaunch",null);
+    if(l)try{localStorage.removeItem("studlin-lectureLaunch");}catch(e){}
+    return l;
+  })[0];
   const [recording,setRecording]=useState(false);
   const [transcript,setTranscript]=useState("");
   const [ytUrl,setYtUrl]=useState("");
+  const [ytLoading,setYtLoading]=useState(false);
+  const [ytError,setYtError]=useState("");
   const [bars,setBars]=useState(()=>Array(32).fill(3));
   const [saved,setSaved]=useState(()=>lsGet("lectures",[]));
   const [selectedLec,setSelectedLec]=useState(null);
@@ -13374,6 +13409,35 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
   const analyserRef=useRef(null);
   const audioCtxRef=useRef(null);
   const streamRef=useRef(null);
+  // Which class this recording is for — required before recording starts
+  // (not optional metadata added after the fact), since it's what lets End
+  // Lecture cross-reference upcoming exams later. Pre-filled from Notes'
+  // handoff when arriving via "Record lecture", same as any other class
+  // pick — the student can still change it before hitting record.
+  const [subject,setSubject]=useState(lectureLaunch?.subject||"");
+  // The custom title typed in Notes, consumed (nulled out) the first time
+  // a lecture is actually saved below — subsequent recordings/imports in
+  // the same visit fall back to the normal auto-generated title rather
+  // than reusing a stale one.
+  const launchTitleRef=useRef(lectureLaunch?.title||null);
+  const [processing,setProcessing]=useState(false);
+  const [processingLabel,setProcessingLabel]=useState("");
+  // Holds {subject,digest:{summary,notesBody,examFlags},cards,includeNotes,
+  // includeCards} between "done processing" and the student confirming
+  // what to actually keep — nothing gets written to Notes/Flashcards until
+  // confirmReview runs.
+  const [reviewData,setReviewData]=useState(null);
+  const [studySessionOffer,setStudySessionOffer]=useState(null);
+  // A 50-90 minute session lives only in React state until stopRecording
+  // saves it — a crashed tab loses everything with nothing to recover.
+  // lastCheckpointRef throttles a lightweight save to localStorage
+  // (piggybacked on the recognizer's own onresult, not a separate timer,
+  // since that already fires every time there's new text worth saving);
+  // recoveryOffer is whatever's left over from a session that never got a
+  // clean stopRecording (checked once, on mount).
+  const lastCheckpointRef=useRef(0);
+  const sessionStartRef=useRef(0);
+  const [recoveryOffer,setRecoveryOffer]=useState(()=>lsGet("lecture-inprogress",null));
 
   const stopAll=()=>{
     if(recRef.current){try{recRef.current.stop();}catch(e){}recRef.current=null;}
@@ -13397,6 +13461,10 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
   };
 
   const startRecording=async()=>{
+    // Only actually required if the student has classes configured to
+    // pick from at all — otherwise the picker never renders and this
+    // would block recording forever with no way to satisfy it.
+    if(getSubjects().length>0&&!subject)return;
     try{
       const stream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
       streamRef.current=stream;
@@ -13411,6 +13479,8 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
       recRef.current=mr;
       mr.start();
       setRecording(true);
+      lastCheckpointRef.current=0;
+      sessionStartRef.current=Date.now();
       animRef.current=requestAnimationFrame(drawBars);
       const SR=window.webkitSpeechRecognition||window.SpeechRecognition;
       if(SR){
@@ -13420,7 +13490,13 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
         r.onresult=(ev)=>{
           let txt="";
           for(let i=0;i<ev.results.length;i++)txt+=ev.results[i][0].transcript+" ";
-          setTranscript(txt.trim());
+          const trimmed=txt.trim();
+          setTranscript(trimmed);
+          const now=Date.now();
+          if(now-lastCheckpointRef.current>20000){
+            lastCheckpointRef.current=now;
+            lsSet("lecture-inprogress",{transcript:trimmed,subject,startedAt:sessionStartRef.current});
+          }
         };
         r.onerror=()=>{};
         r.start();
@@ -13430,18 +13506,119 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
   };
 
   const stopRecording=()=>{
+    lsSet("lecture-inprogress",null);
+    setRecoveryOffer(null);
     if(transcript.trim()){
-      const lec={id:Date.now().toString(),title:"Lecture "+new Date().toLocaleDateString("en",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}),transcript:transcript.trim(),created:Date.now()};
+      const lec={id:Date.now().toString(),title:launchTitleRef.current||((subject?subject+": ":"")+"Lecture "+new Date().toLocaleDateString("en",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})),transcript:transcript.trim(),created:Date.now(),subject};
+      launchTitleRef.current=null;
       const list=[lec,...lsGet("lectures",[])].slice(0,20);
       lsSet("lectures",list);
       setSaved(list);
       setSelectedLec(lec);
+      processTranscript(lec.transcript,lec.subject,"full");
     }
     stopAll();
   };
 
-  const importYt=()=>{if(ytUrl.trim())setActive("notes");};
+  // Shared by End Lecture (scope "full") and the output cards on a
+  // previously-saved lecture (scope "summary" or "flashcards" — so
+  // re-processing an old recording doesn't pay for or wait on the half
+  // the student didn't ask for). Runs both calls in parallel rather than
+  // one after the other, since they're independent.
+  const processTranscript=async(text,forSubject,scope)=>{
+    setProcessing(true);
+    setProcessingLabel(scope==="flashcards"?"Making flashcards…":scope==="summary"?"Summarizing…":"Summarizing and making flashcards…");
+    const [digest,cards]=await Promise.all([
+      scope!=="flashcards"?generateLectureDigest(text,forSubject):Promise.resolve({summary:"",notesBody:"",examFlags:[]}),
+      scope!=="summary"?generateFlashcardsFromText("Lecture transcript:\n\n"+text,"lecture transcription","auto"):Promise.resolve([]),
+    ]);
+    setProcessing(false);
+    setReviewData({subject:forSubject,digest,cards,includeNotes:scope!=="flashcards"&&!!digest.notesBody,includeCards:scope!=="summary"&&cards.length>0});
+  };
+
+  // Nothing lands in Notes/Flashcards until this runs — reviewData is
+  // just a preview up to this point, same discipline as Brain Dump and
+  // the syllabus scanner's own review-then-commit screens.
+  const confirmReview=()=>{
+    const r=reviewData;
+    if(!r)return;
+    const dateStr=new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"});
+    if(r.includeNotes&&r.digest.notesBody){
+      const newNote={id:String(Date.now()),title:(r.subject?r.subject+" notes, ":"Lecture notes, ")+dateStr,body:r.digest.notesBody,tag:r.subject||"Lecture",date:dateStr,createdAt:Date.now()};
+      lsSet("notes",[newNote,...lsGet("notes",[])]);
+    }
+    let newDeckId=null;
+    if(r.includeCards&&r.cards.length>0){
+      const nd={id:String(Date.now()+1),name:(r.subject||"Lecture")+" flashcards",count:r.cards.length,done:0,color:T.lime,cards:r.cards,examEventId:null};
+      lsSet("decks",[nd,...lsGet("decks",[])]);
+      newDeckId=nd.id;
+    }
+    setReviewData(null);
+    if(!r.subject)return;
+    const today=dayKey();
+    const horizon=dayKey(new Date(Date.now()+14*86400000));
+    const upcoming=lsGet("events",[]).filter(ev=>ev.kind==="exam"&&ev.subject===r.subject&&ev.date>=today&&ev.date<=horizon).sort((a,b)=>a.date<b.date?-1:1);
+    if(upcoming.length>0)setStudySessionOffer({subject:r.subject,examDate:upcoming[0].date,deckId:newDeckId});
+  };
+
+  const scheduleStudySession=()=>{
+    if(!studySessionOffer)return;
+    const prefs=getSchedulePreferences();
+    const routines=getWeeklyRoutine();
+    const all=lsGet("events",[]);
+    const slot=findLegalSlotOrNull(all,routines,prefs,dayKey(),prefs.workStartTime,45,studySessionOffer.examDate)
+      ||findOpenSlotFor(all,routines,prefs,dayKey(),prefs.workStartTime,45,studySessionOffer.examDate);
+    const task={id:String(Date.now()),title:"Study: "+studySessionOffer.subject,date:slot.date,time:slot.time,subject:studySessionOffer.subject,kind:"study block",notes:"",priority:5,difficulty:5,deadline:studySessionOffer.examDate,duration:45,status:"pending",timeSpent:0,completedAt:null,deckId:studySessionOffer.deckId||null};
+    lsSet("events",[...all,task]);
+    setStudySessionOffer(null);
+  };
+
+  const restoreCheckpoint=()=>{
+    if(!recoveryOffer)return;
+    const lec={id:Date.now().toString(),title:(recoveryOffer.subject?recoveryOffer.subject+": ":"")+"Recovered lecture",transcript:recoveryOffer.transcript,created:recoveryOffer.startedAt||Date.now(),subject:recoveryOffer.subject||""};
+    const list=[lec,...lsGet("lectures",[])].slice(0,20);
+    lsSet("lectures",list);
+    setSaved(list);
+    setSelectedLec(lec);
+    lsSet("lecture-inprogress",null);
+    setRecoveryOffer(null);
+  };
+  const discardCheckpoint=()=>{lsSet("lecture-inprogress",null);setRecoveryOffer(null);};
+
+  // Pulls the video's actual public caption track server-side (see
+  // api/cal-proxy.js's YouTube branch — no video/audio download, just the
+  // transcript text) and runs it through the exact same processing
+  // pipeline as a recorded lecture.
+  const importYt=async()=>{
+    const url=ytUrl.trim();
+    if(!url||ytLoading)return;
+    if(getSubjects().length>0&&!subject){setYtError("Pick a class first.");return;}
+    setYtLoading(true);setYtError("");
+    try{
+      const res=await authFetch("/api/cal-proxy?url="+encodeURIComponent(url));
+      const data=await res.json();
+      if(!res.ok||!data.ok){setYtError(data.error||"Couldn't read that video.");setYtLoading(false);return;}
+      const lec={id:Date.now().toString(),title:launchTitleRef.current||((subject?subject+": ":"")+(data.title||"YouTube import")),transcript:data.transcript,created:Date.now(),subject,source:"youtube"};
+      launchTitleRef.current=null;
+      const list=[lec,...lsGet("lectures",[])].slice(0,20);
+      lsSet("lectures",list);
+      setSaved(list);
+      setSelectedLec(lec);
+      setYtUrl("");
+      setYtLoading(false);
+      processTranscript(lec.transcript,lec.subject,"full");
+    }catch(e){
+      setYtError("Couldn't read that video. Try again.");
+      setYtLoading(false);
+    }
+  };
   const curTx=selectedLec?selectedLec.transcript:transcript;
+  const curSubject=selectedLec?selectedLec.subject:subject;
+  // A subject is only actually required to start recording if there are
+  // classes configured to choose from — see startRecording's matching
+  // check for why.
+  const subjectRequired=getSubjects().length>0;
+  const canRecord=!subjectRequired||!!subject;
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16,paddingBottom:40}}>
@@ -13452,8 +13629,18 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
 
       {/* Record / import card */}
       <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:"24px 26px"}}>
+        {!recording&&subjectRequired&&(
+          <div style={{marginBottom:16}}>
+            <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>{subject?"Class":"Which class is this for?"}</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+              {getSubjects().map(s=>(
+                <button key={s.id} onClick={()=>setSubject(s.label)} style={{padding:"6px 12px",borderRadius:99,fontSize:12,fontWeight:600,cursor:"pointer",border:`1px solid ${subject===s.label?s.color:T.border}`,background:subject===s.label?s.color+"1E":"transparent",color:subject===s.label?s.color:T.muted,fontFamily:T.font}}>{s.label}</button>
+              ))}
+            </div>
+          </div>
+        )}
         <div style={{display:"flex",alignItems:"center",gap:18,marginBottom:18}}>
-          <button onClick={recording?stopRecording:startRecording} style={{width:60,height:60,borderRadius:"50%",background:recording?T.red:T.lime,border:"none",cursor:"pointer",display:"grid",placeItems:"center",flexShrink:0,transition:"all 0.2s ease",boxShadow:recording?`0 0 0 10px ${T.red}22,0 8px 24px -8px ${T.red}60`:`0 8px 24px -8px ${T.lime}70`}}>
+          <button onClick={recording?stopRecording:startRecording} disabled={!recording&&!canRecord} title={!recording&&!canRecord?"Pick a class first":""} style={{width:60,height:60,borderRadius:"50%",background:recording?T.red:(canRecord?T.lime:T.faint),border:"none",cursor:(!recording&&!canRecord)?"not-allowed":"pointer",display:"grid",placeItems:"center",flexShrink:0,transition:"all 0.2s ease",opacity:(!recording&&!canRecord)?0.6:1,boxShadow:recording?`0 0 0 10px ${T.red}22,0 8px 24px -8px ${T.red}60`:`0 8px 24px -8px ${T.lime}70`}}>
             {recording
               ?<svg width="20" height="20" viewBox="0 0 24 24" fill={T.ink}><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
               :<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={T.ink} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" fill={T.ink} stroke="none"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
@@ -13461,7 +13648,7 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
           </button>
           <div style={{minWidth:0}}>
             <div style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:3}}>{recording?"Recording — tap to stop":"Record a lecture"}</div>
-            <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.12em",color:T.muted}}>Audio is saved exactly as spoken</div>
+            <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.12em",color:T.muted}}>{recording?"Keep this tab open, use your laptop for anything else":"Audio is saved exactly as spoken"}</div>
           </div>
           <div style={{flex:1,display:"flex",alignItems:"flex-end",gap:2,height:36,overflow:"hidden",paddingLeft:8}}>
             {bars.map((h,i)=>(
@@ -13473,15 +13660,16 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
         <div style={{display:"flex",gap:8}}>
           <div style={{flex:1,display:"flex",alignItems:"center",gap:10,background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"9px 12px"}}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={T.muted} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-1.96C18.88 4 12 4 12 4s-6.88 0-8.6.46A2.78 2.78 0 0 0 1.46 6.42 29 29 0 0 0 1 12a29 29 0 0 0 .46 5.58A2.78 2.78 0 0 0 3.4 19.54C5.12 20 12 20 12 20s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-1.96A29 29 0 0 0 23 12a29 29 0 0 0-.46-5.58z"/><polygon points="9.75 15.02 15.5 12 9.75 8.98 9.75 15.02" fill={T.muted} stroke="none"/></svg>
-            <input value={ytUrl} onChange={e=>setYtUrl(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")importYt();}} placeholder="Paste a YouTube link" style={{flex:1,background:"none",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}}/>
+            <input value={ytUrl} onChange={e=>{setYtUrl(e.target.value);if(ytError)setYtError("");}} onKeyDown={e=>{if(e.key==="Enter")importYt();}} placeholder="Paste a YouTube link" style={{flex:1,background:"none",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}}/>
           </div>
-          <button onClick={importYt} style={{padding:"9px 16px",background:ytUrl.trim()?T.lime:T.card2,color:ytUrl.trim()?T.ink:T.muted,border:`1px solid ${ytUrl.trim()?T.lime:T.border}`,borderRadius:10,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font,transition:"all 0.18s"}}>Import</button>
+          <button onClick={importYt} disabled={!ytUrl.trim()||ytLoading} style={{padding:"9px 16px",background:(ytUrl.trim()&&!ytLoading)?T.lime:T.card2,color:(ytUrl.trim()&&!ytLoading)?T.ink:T.muted,border:`1px solid ${(ytUrl.trim()&&!ytLoading)?T.lime:T.border}`,borderRadius:10,fontSize:13,fontWeight:600,cursor:(!ytUrl.trim()||ytLoading)?"not-allowed":"pointer",fontFamily:T.font,transition:"all 0.18s"}}>{ytLoading?"Reading captions…":"Import"}</button>
           <label style={{padding:"9px 16px",background:T.card2,color:T.text,border:`1px solid ${T.border}`,borderRadius:10,fontSize:13,fontWeight:500,cursor:"pointer",fontFamily:T.font,display:"flex",alignItems:"center",gap:7}}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
             Upload file
             <input type="file" accept="audio/*,.pdf,.txt,.doc" style={{display:"none"}} onChange={e=>{const f=e.target.files&&e.target.files[0];if(f&&(f.type==="text/plain"||f.name.endsWith(".txt")))f.text().then(txt=>{setTranscript(txt);setSelectedLec(null);});e.target.value="";}}/>
           </label>
         </div>
+        {ytError&&<div style={{fontSize:12,color:T.red,marginTop:8}}>{ytError}</div>}
       </div>
 
       {/* Saved lectures */}
@@ -13523,14 +13711,17 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
         }
       </div>
 
-      {/* Output action cards */}
+      {/* Output action cards — re-run processing on whichever transcript is
+          currently showing (a live one just stopped, or an old saved one),
+          scoped to just the section clicked so re-processing a saved
+          lecture doesn't pay for or wait on the half nobody asked for. */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14}}>
         {[
-          {title:"Flashcards",desc:"Turn key concepts into a spaced-rep deck",icon:Icon.layers,action:()=>setActive("flashcards"),badge:null,color:T.teal},
+          {title:"Flashcards",desc:"Turn key concepts into a spaced-rep deck",icon:Icon.layers,action:()=>curTx&&processTranscript(curTx,curSubject,"flashcards"),badge:null,color:T.teal},
           {title:"Practice quiz",desc:"Generate MCQs and short-answer questions",icon:Icon.zap,action:()=>setPricingOpen(true),badge:"PRO",color:T.purple},
-          {title:"Summary",desc:"Get a concise outline of the full lecture",icon:Icon.file,action:()=>setActive("aichat"),badge:null,color:T.amber},
+          {title:"Summary",desc:"Get a concise outline of the full lecture",icon:Icon.file,action:()=>curTx&&processTranscript(curTx,curSubject,"summary"),badge:null,color:T.amber},
         ].map((it,i)=>(
-          <div key={i} onClick={()=>it.action()} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:18,padding:20,cursor:"pointer",position:"relative"}}>
+          <div key={i} onClick={()=>it.action()} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:18,padding:20,cursor:curTx||it.badge?"pointer":"default",position:"relative",opacity:(!curTx&&!it.badge)?0.5:1}}>
             {it.badge&&<span style={{position:"absolute",top:14,right:14,fontFamily:T.mono,fontSize:9,letterSpacing:"0.08em",padding:"3px 8px",borderRadius:99,background:T.purple+"22",color:T.purple,border:`1px solid ${T.purple}44`,fontWeight:700}}>{it.badge}</span>}
             <div style={{width:36,height:36,borderRadius:10,background:it.color+"18",border:`1px solid ${it.color}33`,display:"grid",placeItems:"center",color:it.color,marginBottom:12}}>{it.icon}</div>
             <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>{it.title}</div>
@@ -13538,6 +13729,71 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
           </div>
         ))}
       </div>
+
+      {recoveryOffer&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",maxWidth:380}}>
+          <div style={{fontSize:13,color:T.white,marginBottom:10}}>Found a recording that didn't finish saving{recoveryOffer.subject?" ("+recoveryOffer.subject+")":""}. Save what was captured?</div>
+          <div style={{display:"flex",gap:8}}>
+            <Btn onClick={restoreCheckpoint} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Save it</Btn>
+            <Btn variant="ghost" onClick={discardCheckpoint} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Discard</Btn>
+          </div>
+        </div>
+      )}
+
+      {processing&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.card,border:`1px solid ${T.border}`,color:T.white,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:10}}>
+          <span style={{width:14,height:14,borderRadius:"50%",border:`2px solid ${T.border}`,borderTopColor:T.lime,display:"inline-block",animation:"studlinSpin 0.7s linear infinite"}}/>
+          {processingLabel}
+        </div>
+      )}
+
+      {reviewData&&(
+        <Modal open={true} onClose={()=>setReviewData(null)} title="Review your lecture" sub={reviewData.subject||""} width={560}
+          footer={<><Btn variant="subtle" onClick={()=>setReviewData(null)}>Cancel</Btn><Btn onClick={confirmReview} disabled={!reviewData.includeNotes&&!reviewData.includeCards}>Add to Studlin</Btn></>}>
+          {reviewData.digest.summary&&(
+            <div style={{marginBottom:18}}>
+              <label style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,cursor:"pointer"}}>
+                <input type="checkbox" checked={reviewData.includeNotes} onChange={e=>setReviewData(r=>({...r,includeNotes:e.target.checked}))} />
+                <span style={{fontSize:12.5,fontWeight:600,color:T.text}}>Add as a note</span>
+              </label>
+              <div style={{fontSize:13,color:T.text,lineHeight:1.6,background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:12,maxHeight:160,overflowY:"auto",whiteSpace:"pre-wrap"}}>{reviewData.digest.summary}</div>
+            </div>
+          )}
+          {reviewData.digest.examFlags.length>0&&(
+            <div style={{marginBottom:18}}>
+              <div style={{fontSize:11,fontWeight:700,color:T.amber,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:6}}>Might be on the test</div>
+              <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                {reviewData.digest.examFlags.map((f,i)=>(<div key={i} style={{fontSize:12.5,color:T.text,padding:"6px 10px",background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:8}}>{f}</div>))}
+              </div>
+            </div>
+          )}
+          {reviewData.cards.length>0&&(
+            <div>
+              <label style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,cursor:"pointer"}}>
+                <input type="checkbox" checked={reviewData.includeCards} onChange={e=>setReviewData(r=>({...r,includeCards:e.target.checked}))} />
+                <span style={{fontSize:12.5,fontWeight:600,color:T.text}}>Add {reviewData.cards.length} cards to Flashcards</span>
+              </label>
+              <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:160,overflowY:"auto"}}>
+                {reviewData.cards.slice(0,3).map((c,i)=>(<div key={i} style={{fontSize:12,padding:"7px 10px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.q}</div>))}
+                {reviewData.cards.length>3&&<div style={{fontSize:11,color:T.muted,padding:"2px 2px"}}>+{reviewData.cards.length-3} more</div>}
+              </div>
+            </div>
+          )}
+          {!reviewData.digest.summary&&reviewData.cards.length===0&&(
+            <div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"20px 0"}}>Couldn't generate anything useful from this transcript. Try a longer recording.</div>
+          )}
+        </Modal>
+      )}
+
+      {studySessionOffer&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",maxWidth:380}}>
+          <div style={{fontSize:13,color:T.white,marginBottom:10}}>{studySessionOffer.subject} exam on {studySessionOffer.examDate}. Schedule a study session with this?</div>
+          <div style={{display:"flex",gap:8}}>
+            <Btn onClick={scheduleStudySession} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Schedule it</Btn>
+            <Btn variant="ghost" onClick={()=>setStudySessionOffer(null)} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>No thanks</Btn>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -14911,6 +15167,7 @@ function App() {
           {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} />:
            active==="calendar"?<CalendarTab onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} onScanSyllabus={openSyllabusScanOnNotes} />:
+           active==="notes"?<Notes setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="lectures"?<Lectures setActive={setActive} setPricingOpen={setPricingOpen} />:
            active==="profile"?<Profile setActive={setActive} seriousMode={seriousMode} />:
