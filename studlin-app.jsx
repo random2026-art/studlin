@@ -1345,6 +1345,46 @@ function getBucketReliability(bucket,tier){
   if(all.length<TIER0_MIN_BUCKET_SAMPLE)return null;
   return all.filter(e=>e.outcome==="done").length/all.length;
 }
+// A recent-streak detector, separate from getBucketReliability's all-time
+// aggregate — a student sliding lately deserves a nudge before enough bad
+// history piles up to drag the long-run rate down on its own. Suppressed
+// per-bucket for STRUGGLING_BUCKET_COOLDOWN_MS after a "Not now" so this
+// never nags daily about the same bucket.
+const STRUGGLING_BUCKET_RECENT_WINDOW=5;
+const STRUGGLING_BUCKET_MIN_RECENT_MISSES=4; // out of the window above
+const STRUGGLING_BUCKET_COOLDOWN_MS=14*86400000;
+function detectStrugglingBucket(prefs){
+  const log=lsGet("completionLog",[]);
+  const dismissed=lsGet("strugglingBucketDismissed",{});
+  const now=Date.now();
+  const winStart=timeToMinutes(prefs.workStartTime);
+  const winEnd=timeToMinutes(prefs.workEndTime);
+  let struggling=null;
+  for(const b of TIER0_HOUR_BUCKETS){
+    if(dismissed[b.id]&&now-dismissed[b.id]<STRUGGLING_BUCKET_COOLDOWN_MS)continue;
+    const recent=log.filter(e=>e.bucket===b.id).sort((a,c)=>c.t-a.t).slice(0,STRUGGLING_BUCKET_RECENT_WINDOW);
+    if(recent.length<STRUGGLING_BUCKET_RECENT_WINDOW)continue;
+    const missed=recent.filter(e=>e.outcome==="missed").length;
+    if(missed>=STRUGGLING_BUCKET_MIN_RECENT_MISSES){struggling=b;break;}
+  }
+  if(!struggling)return null;
+  // Best reachable alternative: overlaps the student's actual work window
+  // (same reachability constraint the peak-hour fix respects — no point
+  // suggesting a bucket that can't be placed in either), highest known
+  // reliability first, neutral 0.5 for buckets with no data yet.
+  const candidates=TIER0_HOUR_BUCKETS.filter(b=>b.id!==struggling.id&&b.startMin<winEnd&&b.endMin>winStart);
+  if(candidates.length===0)return null;
+  candidates.sort((a,c)=>{
+    const ra=getBucketReliability(a.id),rc=getBucketReliability(c.id);
+    return (rc===null?0.5:rc)-(ra===null?0.5:ra);
+  });
+  return {strugglingBucket:struggling.id,suggestedBucket:candidates[0].id,recentMissedCount:STRUGGLING_BUCKET_MIN_RECENT_MISSES,recentWindow:STRUGGLING_BUCKET_RECENT_WINDOW};
+}
+function dismissStrugglingBucket(bucketId){
+  const dismissed=lsGet("strugglingBucketDismissed",{});
+  dismissed[bucketId]=Date.now();
+  lsSet("strugglingBucketDismissed",dismissed);
+}
 // Finds where Studlin should silently move a missed task. Adds no new
 // scanning logic on top of findSlotWithEviction/findLegalSlotOrNull — every
 // candidate it considers is already deadline-safe and non-overlapping by
@@ -2166,6 +2206,82 @@ function rebalanceDay(dateKey,allEvents,routines,prefs){
   });
 
   return rest.concat(reassigned);
+}
+
+// "Balance my week" — manually triggered only, never automatic. Everything
+// else that moves more than one task at once in this file (Tier 0, Studlin
+// Reschedule) either acts on a single already-missed/already-targeted task
+// or is explicitly requested for one specific day; silently redistributing
+// several already-committed tasks across a whole week in the background
+// would be the highest blast-radius thing this app does. Pure data in/out,
+// same review-then-commit discipline as commitSyllabusEvents/confirmReview
+// — nothing is written until the student picks specific moves and applies
+// them from the review screen.
+const WEEK_BALANCE_DAYS=7;
+// A day only counts as "heavy" if it's meaningfully above the week's own
+// average flexible-task load — avoids proposing a token 15-minute shuffle
+// between two days that are already close to even.
+const WEEK_BALANCE_HEAVY_THRESHOLD_MINS=45;
+function computeWeekBalancePlan(events,routines,prefs,startDateKey){
+  const days=[];
+  for(let i=0;i<WEEK_BALANCE_DAYS;i++){
+    const d=new Date(startDateKey+"T12:00:00");d.setDate(d.getDate()+i);
+    days.push(dayKey(d));
+  }
+  const isFixed=e=>TIER0_FIXED_KINDS.has(e.kind);
+  // Same flexible-task definition rebalanceDay uses (isFlexPending above),
+  // plus userPinned excluded the same way — a student who explicitly
+  // pinned a task gets to keep it exactly where they put it, even here.
+  const isFlex=e=>!isFixed(e)&&!e.checklist&&e.status==="pending"&&e.time&&e.duration&&!e.userPinned;
+  const minutesFor=(dk,pool)=>pool.filter(e=>e.date===dk&&isFlex(e)).reduce((sum,e)=>sum+(e.duration||0),0);
+
+  const before={};
+  days.forEach(dk=>{before[dk]=minutesFor(dk,events);});
+  const avg=days.reduce((sum,dk)=>sum+before[dk],0)/days.length;
+
+  // Heaviest day first, so the worst day gets first crack at shedding load.
+  const heavyDays=days.filter(dk=>before[dk]-avg>=WEEK_BALANCE_HEAVY_THRESHOLD_MINS).sort((a,b)=>before[b]-before[a]);
+
+  let working=events.slice();
+  const moves=[];
+  heavyDays.forEach(heavyDk=>{
+    // Recompute fresh — an earlier heavy day's move may have already
+    // loaded this one up as a target, or already brought it back to average.
+    while(minutesFor(heavyDk,working)-avg>=WEEK_BALANCE_HEAVY_THRESHOLD_MINS){
+      // Same "safely movable" criteria findSlotWithEviction already trusts
+      // for same-day eviction: real study blocks only, no imminent deadline
+      // (more than a week out, or none at all) — never an exam, a fixed
+      // commitment, or a task genuinely due soon.
+      const candidates=working.filter(e=>e.date===heavyDk&&isFlex(e)&&e.kind==="study block"&&(!e.deadline||daysUntilDeadline(e)>7))
+        .sort((a,b)=>(b.duration||0)-(a.duration||0));
+      if(candidates.length===0)break; // this day is heavy but nothing on it is safely movable
+      const task=candidates[0];
+      // Target the currently-lightest OTHER day in the window, recomputed
+      // fresh for each task so a big task doesn't all land on the same
+      // just-lightened day.
+      const targets=days.filter(dk=>dk!==heavyDk).map(dk=>({dk,mins:minutesFor(dk,working)})).sort((a,b)=>a.mins-b.mins);
+      let moved=false;
+      for(const t of targets){
+        // findLegalSlotOrNull only — the hard-wall-safe version. A move
+        // that can't land on a genuinely free, non-overlapping, still-
+        // before-its-own-deadline slot is not included in the plan at all,
+        // never forced through findOpenSlotFor's unsafe fallback.
+        const slot=findLegalSlotOrNull(working.filter(e=>e.id!==task.id),routines,prefs,t.dk,prefs.workStartTime,task.duration,task.deadline||null);
+        if(!slot)continue;
+        working=working.map(e=>e.id===task.id?{...e,date:slot.date,time:slot.time}:e);
+        moves.push({id:task.id,title:task.title,duration:task.duration,fromDate:task.date,fromTime:task.time,toDate:slot.date,toTime:slot.time});
+        moved=true;
+        break;
+      }
+      // No legal day anywhere in the window for this specific task — drop
+      // just this one candidate and stop trying this heavy day rather than
+      // looping on the same unmovable task forever.
+      if(!moved)break;
+    }
+  });
+
+  const perDay=days.map(dk=>({date:dk,minutesBefore:before[dk],minutesAfter:minutesFor(dk,working)}));
+  return {moves,perDay};
 }
 
 // Studlin Reschedule's actual planning engine ("push everything back N
@@ -8554,6 +8670,13 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
   const [items,setItems]=useState([]);
   const [workStart,setWorkStart]=useState("10:00");
   const [workEnd,setWorkEnd]=useState("18:00");
+  // This step is the one titled "Preferred Focus Windows" — the name
+  // promises peak-hour preference, not just a work-hours range, so it
+  // needs the same picker ScheduleSettingsPanel uses. Also the one other
+  // place (besides InitWizard, onboarding-only) a student can declare or
+  // fix this later via "Manage Routine".
+  const [peakBuckets,setPeakBuckets]=useState([]);
+  const togglePeakBucket=(id)=>setPeakBuckets(prev=>prev.includes(id)?prev.filter(b=>b!==id):[...prev,id]);
 
   useEffect(()=>{
     if(!open)return;
@@ -8569,6 +8692,7 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
     const prefs=getSchedulePreferences();
     setWorkStart(prefs.workStartTime||"10:00");
     setWorkEnd(prefs.workEndTime||"18:00");
+    setPeakBuckets(prefs.peakHourBuckets||[]);
   },[open]);
 
   const addItem=(item)=>setItems(prev=>[...prev,{id:String(Date.now()+Math.random()*1000),...item}]);
@@ -8594,7 +8718,7 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
     if(status==="highschool"){
       routine.push({id:"hs-school",title:"School",kind:"class",days:[0,1,2,3,4],startTime:schoolStart,duration:Math.max(15,timeToMinutes(schoolEnd)-timeToMinutes(schoolStart))});
     }
-    onFinish(routine,{workStartTime:workStart,workEndTime:workEnd});
+    onFinish(routine,{workStartTime:workStart,workEndTime:workEnd,peakHourBuckets:peakBuckets});
   };
 
   const lockedRanges=status==="highschool"?[{start:timeToMinutes(schoolStart),end:timeToMinutes(schoolEnd)}]:[];
@@ -8631,6 +8755,20 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
               <Field label="Preferred study end"><TimeInput value={workEnd} onChange={setWorkEnd} /></Field>
             </div>
             {windowInvalid&&<div style={{fontSize:11.5,color:T.red,marginTop:8}}>End time must be after start time.</div>}
+            <div style={{marginTop:20}}>
+              <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>
+                Peak Focus Hours <span style={{textTransform:"none",fontWeight:400,color:T.faint}}>(optional)</span>
+              </label>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {TIER0_HOUR_BUCKETS.map(b=>(
+                  <button key={b.id} type="button" onClick={()=>togglePeakBucket(b.id)} style={peakChipStyle(peakBuckets.includes(b.id))}>
+                    {PEAK_BUCKET_LABELS[b.id]}
+                    <span style={{opacity:0.7,marginLeft:4}}>{fmtClock12(minutesToTime(b.startMin))}–{fmtClock12(minutesToTime(b.endMin))}</span>
+                  </button>
+                ))}
+              </div>
+              <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>When are you actually sharpest? Studlin prefers these times for rescheduling missed work. Leave blank and it'll learn from your habits over time.</div>
+            </div>
           </div>
         )}
       </Modal>
@@ -9190,6 +9328,13 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
   // users unsure which one they were supposed to fill in.
   const [taskMode,setTaskMode]=useState("ai");
   const [evDuration,setEvDuration]=useState(60);
+  // Tracks whether the student has actually touched the Duration field on
+  // THIS open of the form — suggestDurationFor already existed as a
+  // dismissible "use this" suggestion the student had to notice and click;
+  // pre-filling it by default (see the effect below) is the same data,
+  // just applied automatically instead of requiring a click. Never
+  // overwrites a value the student picked themselves.
+  const [evDurationTouched,setEvDurationTouched]=useState(false);
   const [evSaveToRoutine,setEvSaveToRoutine]=useState(false);
   const [evSplitEnabled,setEvSplitEnabled]=useState(false);
   const [evSplitCount,setEvSplitCount]=useState(2);
@@ -9250,6 +9395,28 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
     setFillPrompt(null);
   };
   const dismissFillPrompt=()=>setFillPrompt(null);
+  // "Balance my week" — manually triggered only (see computeWeekBalancePlan),
+  // same preview-then-commit discipline as Studlin Reschedule just below:
+  // nothing is written until the student confirms.
+  const [weekBalanceOpen,setWeekBalanceOpen]=useState(false);
+  const [weekBalancePlan,setWeekBalancePlan]=useState(null);
+  const [weekBalanceToast,setWeekBalanceToast]=useState("");
+  const openWeekBalance=()=>{
+    const all=lsGet("events",[]);
+    const plan=computeWeekBalancePlan(all,routines,getSchedulePreferences(),dayKey());
+    setWeekBalancePlan(plan);
+    setWeekBalanceOpen(true);
+  };
+  const confirmWeekBalance=()=>{
+    if(!weekBalancePlan||weekBalancePlan.moves.length===0){setWeekBalanceOpen(false);return;}
+    const all=lsGet("events",[]);
+    const moveMap=new Map(weekBalancePlan.moves.map(m=>[m.id,m]));
+    const next=all.map(ev=>moveMap.has(ev.id)?{...ev,date:moveMap.get(ev.id).toDate,time:moveMap.get(ev.id).toTime}:ev);
+    setEvents(next);lsSet("events",next);
+    setWeekBalanceOpen(false);setWeekBalancePlan(null);
+    setWeekBalanceToast(weekBalancePlan.moves.length+" task"+(weekBalancePlan.moves.length!==1?"s":"")+" rebalanced across your week");
+    setTimeout(()=>setWeekBalanceToast(""),3200);
+  };
   // Tier 3 — Global Emergency "Studlin Reschedule". pausePreview holds the
   // computed (not-yet-committed) plan: {label, moved:[...], couldntMove:[...]}.
   const [pauseOpen,setPauseOpen]=useState(false);
@@ -9456,7 +9623,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
   // "let AI schedule this". The clicked day is remembered so fixed-time kinds
   // (exam/class/reminder), which always need a real date, can still default
   // to it once the user picks one of those types.
-  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("");setEvSubject("None");setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setNewOpen(true);};
+  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("");setEvSubject("None");setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setNewOpen(true);};
   // Same form as openNew, just arriving with the scheduling mode already
   // decided by which "Add task" menu option was tapped -- the in-modal
   // manual/AI toggle stays visible so it's correctable, not a dead end.
@@ -9465,8 +9632,18 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
   // "Add something" on the fill-prompt banner (see deleteEventWithUndo) —
   // same manual form, just pre-filled with the exact freed slot instead
   // of a blank time, so the student doesn't have to re-enter it.
-  const openNewAtSlot=(dateK,time,duration)=>{openNewManual(dateK);setEvTime(time);setEvDuration(duration||60);setFillPrompt(null);};
-  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvDate("");setEvTime("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setAiLoading(false);setAsChecklist(false);};
+  const openNewAtSlot=(dateK,time,duration)=>{openNewManual(dateK);setEvTime(time);setEvDuration(duration||60);setEvDurationTouched(true);setFillPrompt(null);};
+  // Pre-fills Duration from history the moment a real subject is picked,
+  // instead of leaving the suggestion as a dismissible badge the student
+  // has to notice and click (suggestDurationFor itself is unchanged —
+  // same median-of-completed-tasks data, just applied by default). Never
+  // overwrites a value the student actually touched.
+  useEffect(()=>{
+    if(!newOpen||evDurationTouched)return;
+    const suggested=suggestDurationFor(evSubject,evKind);
+    if(suggested)setEvDuration(suggested);
+  },[evSubject,evKind,newOpen]);
+  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvDate("");setEvTime("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setAiLoading(false);setAsChecklist(false);};
   const onEvKindChange=(k)=>{setEvKind(k);if((k==="exam"||k==="class"||k==="reminder"||k==="busy block")&&!evDate)setEvDate(evPrefillDate);};
   const buildTask=(date,time,titleSuffix,splitInfo)=>{
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
@@ -9984,6 +10161,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
     <div>
       <PH title="Studlin Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}>
         <span ref={rescheduleBtnRef} style={{display:"inline-flex"}}><Btn variant="ghost" onClick={()=>{setPauseOpen(true);setPauseError("");setPausePreview(null);}}><span style={{color:T.red}}>Studlin Reschedule</span></Btn></span>
+        <Btn variant="ghost" onClick={openWeekBalance}>Balance my week</Btn>
         <Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>setRoutineCenterOpen(true)}>Routine</Btn>
         <div style={{position:"relative"}} ref={addTaskBtnRef}>
           <Btn onClick={()=>setAddMenuOpen(o=>!o)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn>
@@ -10219,9 +10397,9 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
 
         {isTaskKind&&!isChecklistMode&&!evAttackBlock&&(
           <Field label="Duration (minutes)" hint="How long you plan to spend">
-            <NumField min={5} max={480} fallback={5} value={evDuration} onChange={setEvDuration} />
+            <NumField min={5} max={480} fallback={5} value={evDuration} onChange={v=>{setEvDuration(v);setEvDurationTouched(true);}} />
             {(()=>{const s=suggestDurationFor(evSubject,evKind);return s&&s!==evDuration&&(
-              <div style={{fontSize:11.5,color:T.muted,marginTop:6}}>Similar tasks usually take you ~{s}m — <button type="button" onClick={()=>setEvDuration(s)} style={{background:"none",border:"none",color:T.lime,cursor:"pointer",fontSize:11.5,fontFamily:T.font,padding:0,textDecoration:"underline"}}>use this</button></div>
+              <div style={{fontSize:11.5,color:T.muted,marginTop:6}}>Similar tasks usually take you ~{s}m — <button type="button" onClick={()=>{setEvDuration(s);setEvDurationTouched(true);}} style={{background:"none",border:"none",color:T.lime,cursor:"pointer",fontSize:11.5,fontFamily:T.font,padding:0,textDecoration:"underline"}}>use this</button></div>
             );})()}
           </Field>
         )}
@@ -10551,6 +10729,37 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
           )}
         </>)}
       </Modal>
+      <Modal open={weekBalanceOpen} onClose={()=>{setWeekBalanceOpen(false);setWeekBalancePlan(null);}}
+        title="Balance my week"
+        sub={weekBalancePlan?(weekBalancePlan.moves.length>0?weekBalancePlan.moves.length+" task"+(weekBalancePlan.moves.length!==1?"s":"")+" would move to spread the load out":"Your week's already pretty even — nothing to move."):"Looks at the next 7 days and moves flexible study blocks off your heaviest days onto lighter ones."}
+        width={520}
+        footer={weekBalancePlan&&weekBalancePlan.moves.length>0?(
+          <><Btn variant="subtle" onClick={()=>{setWeekBalanceOpen(false);setWeekBalancePlan(null);}}>Cancel</Btn><Btn onClick={confirmWeekBalance}>Apply {weekBalancePlan.moves.length} change{weekBalancePlan.moves.length!==1?"s":""}</Btn></>
+        ):(
+          <Btn variant="subtle" onClick={()=>{setWeekBalanceOpen(false);setWeekBalancePlan(null);}}>Close</Btn>
+        )}>
+        {weekBalancePlan&&weekBalancePlan.moves.length>0&&(<>
+          <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:16}}>
+            {weekBalancePlan.perDay.filter(d=>d.minutesBefore!==d.minutesAfter).map(d=>(
+              <div key={d.date} style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:12,padding:"6px 10px",background:T.card2,borderRadius:8}}>
+                <span style={{color:T.text}}>{d.date}</span>
+                <span style={{color:T.muted,fontFamily:T.mono}}>{d.minutesBefore}m → <strong style={{color:T.lime}}>{d.minutesAfter}m</strong></span>
+              </div>
+            ))}
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:7,maxHeight:220,overflowY:"auto"}}>
+            {weekBalancePlan.moves.map(m=>(
+              <div key={m.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`}}>
+                <div style={{flex:1,fontSize:13,color:T.text,fontWeight:500}}>{m.title}</div>
+                <div style={{fontSize:11,color:T.muted,flexShrink:0}}>{m.fromDate} {fmtTime(m.fromTime)} → <strong style={{color:T.lime}}>{m.toDate} {fmtTime(m.toTime)}</strong></div>
+              </div>
+            ))}
+          </div>
+        </>)}
+      </Modal>
+      {weekBalanceToast&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {weekBalanceToast}</div>
+      )}
       <RoutineWizardModal open={routineWizardOpen&&!subjOnboardOpen} initialStatus={getProfile().status} existingRoutines={routines} onFinish={finishRoutineWizard} onSkip={skipRoutineWizard} />
       <RoutineControlCenterModal open={routineCenterOpen} onClose={()=>setRoutineCenterOpen(false)} routines={routines} fmtTime={fmtTime}
         onEditRoutine={openRoutineEdit} onDeleteRoutine={deleteRoutineItem}
@@ -14347,6 +14556,11 @@ function App() {
   // the student clicks "Roll over".
   const [rolloverPending,setRolloverPending]=useState([]);
   const [rolloverToast,setRolloverToast]=useState("");
+  // Same dismissible-banner idiom as rolloverPending above — a RECENT run
+  // of misses in one hour bucket (see detectStrugglingBucket), not just
+  // the all-time reliability aggregate, surfaced once a day via the same
+  // gate. {strugglingBucket,suggestedBucket,...} or null.
+  const [strugglingBucketOffer,setStrugglingBucketOffer]=useState(null);
   // Same "dismissible banner, not a blocking modal" idiom as rolloverPending
   // above, for pending tasks whose deadline has already passed — these used
   // to get wiped from storage the moment the daily gate ran, with no toast,
@@ -14473,6 +14687,22 @@ function App() {
     const ids=new Set(expiredPending.map(e=>e.id));
     lsSet("events",all.filter(e=>!ids.has(e.id)));
     setExpiredPending([]);
+  };
+  // Explicit student action only — never silently rewrites peakHourBuckets
+  // on its own. Drops the struggling bucket from the declared list (if it
+  // was even declared) and adds the suggested one, same shape Settings'
+  // own picker already writes.
+  const acceptStrugglingBucketOffer=()=>{
+    if(!strugglingBucketOffer)return;
+    const prefs=getSchedulePreferences();
+    const next=(prefs.peakHourBuckets||[]).filter(b=>b!==strugglingBucketOffer.strugglingBucket);
+    if(!next.includes(strugglingBucketOffer.suggestedBucket))next.push(strugglingBucketOffer.suggestedBucket);
+    setSchedulePreferences({...prefs,peakHourBuckets:next});
+    setStrugglingBucketOffer(null);
+  };
+  const declineStrugglingBucketOffer=()=>{
+    if(strugglingBucketOffer)dismissStrugglingBucket(strugglingBucketOffer.strugglingBucket);
+    setStrugglingBucketOffer(null);
   };
   const [scheduleSettingsOpen,setScheduleSettingsOpen]=useState(false);
   const [navCollapsed,setNavCollapsed]=useState(()=>lsGet("navCollapsed",false));
@@ -14856,6 +15086,12 @@ function App() {
     // per day it remains overdue.
     const yesterday=(()=>{const d=new Date(today+"T12:00:00");d.setDate(d.getDate()-1);return dayKey(d);})();
     evs.filter(ev=>isTier0Missed(ev,today)&&ev.date===yesterday).forEach(ev=>logCompletionOutcome("missed",ev.time,difficultyTierOf(ev)));
+    // Proactive nudge — a RECENT run of misses in one bucket, checked right
+    // after the log write above so today's data (if any landed here) is
+    // already included. Independent of tier0Enabled below: this is about
+    // the student's own declared preference, not whether Tier 0 itself is on.
+    const strugglingBucket=detectStrugglingBucket(getSchedulePreferences());
+    if(strugglingBucket)setStrugglingBucketOffer(strugglingBucket);
     // Tier 0 — the trigger is silent (no click needed to move an eligible
     // missed task), but the result never is: every move gets recorded into
     // movedBatch so the banner below and the per-task badge can always show
@@ -15411,6 +15647,17 @@ function App() {
           <div style={{display:"flex",gap:8}}>
             <Btn onClick={applyRollover} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Roll over</Btn>
             <Btn variant="ghost" onClick={()=>setRolloverPending([])} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Dismiss</Btn>
+          </div>
+        </div>
+      )}
+      {strugglingBucketOffer&&(
+        <div style={{position:"fixed",bottom:20,left:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+          <div style={{fontSize:13,color:T.white,marginBottom:10,lineHeight:1.5}}>
+            Your <strong style={{color:T.amber}}>{PEAK_BUCKET_LABELS[strugglingBucketOffer.strugglingBucket].toLowerCase()}</strong> tasks haven't been sticking — {strugglingBucketOffer.recentMissedCount} of your last {strugglingBucketOffer.recentWindow} were missed. Default new tasks to <strong style={{color:T.lime}}>{PEAK_BUCKET_LABELS[strugglingBucketOffer.suggestedBucket].toLowerCase()}</strong> instead?
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <Btn onClick={acceptStrugglingBucketOffer} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Switch to {PEAK_BUCKET_LABELS[strugglingBucketOffer.suggestedBucket]}</Btn>
+            <Btn variant="ghost" onClick={declineStrugglingBucketOffer} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Not now</Btn>
           </div>
         </div>
       )}
