@@ -135,6 +135,27 @@ service cloud.firestore {
       allow delete: if request.auth != null && request.auth.uid == resource.data.createdBy;
     }
 
+    // Opt-in shared free/busy for "Find Shared Study Window" (Studlin
+    // Match) — busy TIME intervals only (see computeBusyWindowsPayload in
+    // studlin-app.jsx), never event titles/kinds/subjects. Doc id is the
+    // owner's own uid. sharedWithUids is a denormalized snapshot of the
+    // owner's current accepted friends, refreshed on every publish
+    // (publishBusyWindows) — rules can't cheaply join against the
+    // `friendships` collection (no deterministic doc id for a pair), so
+    // this mirrors chatRooms/studySessions' own memberUids trust boundary
+    // instead. A friend removed since the last publish keeps read access
+    // until the next publish/toggle-off — same staleness window
+    // chatRooms/studySessions already accept for their own membership
+    // arrays, not a new gap introduced here.
+    match /busyWindows/{uid} {
+      allow read: if request.auth != null
+        && (request.auth.uid == uid || request.auth.uid in resource.data.sharedWithUids);
+      allow write: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.data.ownerUid == uid;
+      allow delete: if request.auth != null && request.auth.uid == uid;
+    }
+
     // Username reservations — a doc ID existing at all means that handle is
     // taken. Client claims one atomically in a transaction alongside the
     // profiles/{uid}.username write (see onboarding.jsx finishOnboarding()).

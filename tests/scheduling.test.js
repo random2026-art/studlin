@@ -416,6 +416,125 @@ describe("findSlotWithEviction", () => {
       assert.ok(e.movedFrom && e.movedFrom.date && e.movedFrom.time, "an evicted task must carry movedFrom so the badge and undoTier0Move work for it too");
     });
   });
+
+  test("still evicts and lands on the target day when the only free gap sits BEFORE the requested time (regression: dayHasRoomFor scanned the whole day while findOpenSlotFor's day-0 scan never looks before desiredTime, so eviction skipped itself thinking there was already room)", () => {
+    const m = loadStudlinModule();
+    // Tomorrow, not today -- findOpenSlotFor floors today's own scan to the
+    // real current clock time, which would make a fixed "10:00" desiredTime
+    // flaky depending on what time this test happens to run. daysOut from
+    // real "today" is still 1 (<=3), so the eviction path still engages.
+    const target = m.dayKey(new Date(Date.now() + 86400000));
+    // Free 09:00-10:00 (before desiredTime), then wall-to-wall evictable
+    // filler from 10:00 through the 18:00 work end -- nothing at or after
+    // 10:00 is open at all.
+    const packed = [];
+    let t = 10 * 60;
+    let idx = 0;
+    while (t + 30 <= 18 * 60) {
+      packed.push({ id: "pack-" + idx, title: "Filler " + idx, date: target, time: `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`, kind: "study block", duration: 30, status: "pending", deadline: null });
+      t += 30; idx++;
+    }
+    const result = m.findSlotWithEviction(packed, [], DEFAULT_PREFS, target, "10:00", 30, target);
+    assert.ok(result.placement, "an imminent task should still be placeable on the target day by evicting filler at/after the requested time");
+    assert.equal(result.placement.date, target, "the fix should let eviction engage and keep this on the desired (imminent) day instead of silently rolling to a later day");
+  });
+
+  test("never leaves a relocated evicted task double-booked when its own relocation search is fully exhausted (regression: the evicted-task relocation call used raw findOpenSlotFor, which falls back to an unvalidated, possibly-conflicting slot instead of null)", () => {
+    const m = loadStudlinModule();
+    const target = m.dayKey(new Date(Date.now() + 86400000)); // see note above -- avoid today's now-floor
+    // Pack the target day with evictable filler (forces eviction to engage
+    // for the imminent primary task) ...
+    const packed = [];
+    let t = 9 * 60;
+    let idx = 0;
+    while (t + 30 <= 18 * 60) {
+      packed.push({ id: "pack-" + idx, title: "Filler " + idx, date: target, time: `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`, kind: "study block", duration: 30, status: "pending", deadline: null });
+      t += 30; idx++;
+    }
+    // ...and pack every day for the next 25 days solid with an unmovable
+    // 24hr block, so relocating an evicted filler task (which searches
+    // starting the day after the target) can never find room anywhere
+    // within findOpenSlotFor's own 21-day horizon.
+    let cursor = new Date(target + "T12:00:00");
+    for (let i = 1; i <= 25; i++) {
+      cursor.setDate(cursor.getDate() + 1);
+      const dk = m.dayKey(cursor);
+      packed.push({ id: "wall-" + i, date: dk, time: "00:00", duration: 24 * 60, kind: "busy block", status: "pending" });
+    }
+    const result = m.findSlotWithEviction(packed, [], DEFAULT_PREFS, target, "09:00", 30, target);
+    // Whatever the function decides (placing today by evicting, or giving
+    // up entirely), it must never leave two events on the same date
+    // overlapping in the returned events array -- that's the actual
+    // double-booking this regression guards against.
+    const minsOf = (timeStr) => { const [h, mm] = timeStr.split(":").map(Number); return h * 60 + mm; };
+    const byDate = new Map();
+    result.events.forEach((e) => {
+      if (!e.time) return;
+      if (!byDate.has(e.date)) byDate.set(e.date, []);
+      byDate.get(e.date).push({ id: e.id, start: minsOf(e.time), end: minsOf(e.time) + (e.duration || 30) });
+    });
+    byDate.forEach((intervals, dk) => {
+      for (let i = 0; i < intervals.length; i++) {
+        for (let j = i + 1; j < intervals.length; j++) {
+          const a = intervals[i], b = intervals[j];
+          const overlap = a.start < b.end && b.start < a.end;
+          assert.ok(!overlap, `events ${a.id} and ${b.id} overlap on ${dk} -- an evicted task was silently double-booked instead of the eviction attempt being abandoned`);
+        }
+      }
+    });
+    // The returned placement itself (if any) must also not overlap
+    // anything in the returned events array.
+    if (result.placement) {
+      const dayIntervals = byDate.get(result.placement.date) || [];
+      const pStart = minsOf(result.placement.time);
+      const pEnd = pStart + 30;
+      dayIntervals.forEach((iv) => {
+        const overlap = pStart < iv.end && iv.start < pEnd;
+        assert.ok(!overlap, `placement at ${result.placement.date} ${result.placement.time} overlaps event ${iv.id}`);
+      });
+    }
+  });
+});
+
+describe("undoTier0Move (regression: restored a task to its original slot with no re-check, silently overlapping anything that had since landed there)", () => {
+  test("restores a moved task cleanly when the original slot is still free", () => {
+    const m = loadStudlinModule();
+    const moved = realTask({ id: "t1", date: "2026-07-21", time: "14:00", movedByStudlin: true, movedFrom: { date: "2026-07-20", time: "10:00" }, movedAt: 123 });
+    m.localStorage.setItem("studlin-events", JSON.stringify([moved]));
+    const result = m.undoTier0Move("t1");
+    assert.equal(result.blocked, false);
+    const restored = result.events.find((e) => e.id === "t1");
+    assert.equal(restored.date, "2026-07-20");
+    assert.equal(restored.time, "10:00");
+    assert.equal(restored.movedByStudlin, undefined, "marker fields should be stripped once restored");
+  });
+
+  test("refuses to restore (and leaves the task where it currently is) when something else now occupies the original slot", () => {
+    const m = loadStudlinModule();
+    const moved = realTask({ id: "t1", date: "2026-07-21", time: "14:00", movedByStudlin: true, movedFrom: { date: "2026-07-20", time: "10:00" }, movedAt: 123 });
+    // Something else has since landed exactly on the original slot.
+    const interloper = realTask({ id: "t2", date: "2026-07-20", time: "10:00" });
+    m.localStorage.setItem("studlin-events", JSON.stringify([moved, interloper]));
+    const result = m.undoTier0Move("t1");
+    assert.equal(result.blocked, true, "undo must refuse rather than silently overlap the interloper");
+    const stillMoved = result.events.find((e) => e.id === "t1");
+    assert.equal(stillMoved.date, "2026-07-21", "the task should stay exactly where it currently is, not get corrupted mid-undo");
+    assert.equal(stillMoved.time, "14:00");
+    assert.equal(stillMoved.movedByStudlin, true, "since the restore didn't happen, the moved marker should still be present");
+  });
+
+  test("no-ops harmlessly for a task that was never moved by Studlin", () => {
+    const m = loadStudlinModule();
+    const plain = realTask({ id: "t1" });
+    m.localStorage.setItem("studlin-events", JSON.stringify([plain]));
+    const result = m.undoTier0Move("t1");
+    assert.equal(result.blocked, false);
+    // JSON round-trip on both sides -- the sandboxed module runs in a
+    // separate vm realm, so its returned plain object has a different
+    // Object prototype than one built in this test file; deepStrictEqual
+    // would fail on that alone even with identical own-property values.
+    assert.equal(JSON.stringify(result.events.find((e) => e.id === "t1")), JSON.stringify(plain));
+  });
 });
 
 describe("examAlreadyPassedToday / exam-day-itself reflow (regression: review sessions scheduled after the exam already happened)", () => {
@@ -543,6 +662,22 @@ describe("findOpenSlotFor / findLegalSlotOrNull", () => {
     const slot = findLegalSlotOrNull([], [], DEFAULT_PREFS, "2026-07-18", "10:00", 30, "2026-07-25");
     assert.notEqual(slot, null);
     assert.ok(slot.date <= "2026-07-25");
+  });
+
+  test("findLegalSlotOrNull refuses findOpenSlotFor's raw out-of-window fallback (regression: a deadline forcing an early break, before any day was scanned, let a before-work-hours time slip through as 'legal')", () => {
+    const { findOpenSlotFor, findLegalSlotOrNull } = loadStudlinModule();
+    // deadlineKey is already before desiredDate, so findOpenSlotFor's loop
+    // breaks on its very first iteration (dk > deadlineKey) without ever
+    // scanning a real day -- exactly the documented "before any day was
+    // even scanned" fallback trigger. desiredTime (06:00) sits before
+    // DEFAULT_PREFS.workStartTime (09:00).
+    const rawFallback = findOpenSlotFor([], [], DEFAULT_PREFS, "2026-08-01", "06:00", 30, "2026-07-01");
+    // Prove the fallback really is the bad, unclamped slot this test guards
+    // against -- if findOpenSlotFor's own behavior ever changes, this test
+    // should fail loudly here rather than silently stop testing anything.
+    assert.equal(rawFallback.time, "06:00", "findOpenSlotFor's raw fallback should hand back the unclamped desired time verbatim");
+    const legal = findLegalSlotOrNull([], [], DEFAULT_PREFS, "2026-08-01", "06:00", 30, "2026-07-01");
+    assert.equal(legal, null, "findLegalSlotOrNull must reject a fallback slot that falls outside the student's work-hour window");
   });
 });
 
@@ -862,6 +997,295 @@ describe("detectStrugglingBucket (proactive miss-pattern nudge)", () => {
     const m = loadStudlinModule();
     seedLog(m, "morning", 5, 0);
     assert.equal(m.detectStrugglingBucket(DEFAULT_PREFS), null);
+  });
+});
+
+describe("detectPeakHourInsight (all-time gap between declared peak and actual reliability)", () => {
+  function seedLog(m, bucket, doneCount, missedCount) {
+    const log = JSON.parse(m.localStorage.getItem("studlin-completionLog") || "[]");
+    for (let i = 0; i < missedCount; i++) log.push({ bucket, outcome: "missed", t: Date.now() - i * 3600000 });
+    for (let i = 0; i < doneCount; i++) log.push({ bucket, outcome: "done", t: Date.now() - (missedCount + i) * 3600000 });
+    m.localStorage.setItem("studlin-completionLog", JSON.stringify(log));
+  }
+
+  test("returns null when nothing is declared -- nothing to correct", () => {
+    const m = loadStudlinModule();
+    seedLog(m, "morning", 1, 7);
+    seedLog(m, "afternoon", 7, 1);
+    assert.equal(m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: [] }), null);
+  });
+
+  test("returns null when the declared bucket has no data yet -- not a fair baseline", () => {
+    const m = loadStudlinModule();
+    seedLog(m, "afternoon", 8, 0); // only the non-declared bucket has data
+    assert.equal(m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: ["morning"] }), null);
+  });
+
+  test("returns null when the gap is real but below the meaningful-difference margin", () => {
+    const m = loadStudlinModule();
+    seedLog(m, "morning", 6, 2); // 75%
+    seedLog(m, "afternoon", 7, 1); // 87.5% -- only a 12.5pt gap, under the 15pt bar
+    assert.equal(m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: ["morning"] }), null);
+  });
+
+  test("suggests switching when a non-declared bucket meaningfully beats the declared one", () => {
+    const m = loadStudlinModule();
+    seedLog(m, "morning", 3, 5); // 37.5%
+    seedLog(m, "afternoon", 7, 1); // 87.5%
+    const result = m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: ["morning"] });
+    assert.ok(result, "a 50pt gap should surface a suggestion");
+    assert.equal(result.currentBucket, "morning");
+    assert.equal(result.suggestedBucket, "afternoon");
+    assert.equal(Math.round(result.currentPct * 100), 38);
+    assert.equal(Math.round(result.suggestedPct * 100), 88);
+  });
+
+  test("never suggests a bucket outside the student's actual work hours, even with a huge gap", () => {
+    const m = loadStudlinModule();
+    seedLog(m, "morning", 0, 8); // 0%
+    seedLog(m, "evening", 8, 0); // 100%, but 18:00-22:00 barely overlaps the default 09:00-18:00 window
+    const result = m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: ["morning"] });
+    assert.equal(result, null, "evening isn't reachable under the default work window, so there's nothing legal to suggest");
+  });
+
+  test("dismissPeakHourInsight suppresses re-suggesting the same bucket right after", () => {
+    const m = loadStudlinModule();
+    seedLog(m, "morning", 3, 5);
+    seedLog(m, "afternoon", 7, 1);
+    const prefs = { ...DEFAULT_PREFS, peakHourBuckets: ["morning"] };
+    const first = m.detectPeakHourInsight(prefs);
+    assert.ok(first, "should suggest before dismissal");
+    m.dismissPeakHourInsight(first.suggestedBucket);
+    assert.equal(m.detectPeakHourInsight(prefs), null, "should stay quiet right after a 'Not now'");
+  });
+});
+
+describe("getBucketReliability + applyCheckInRating (session-quality signal, regression: a 'shaky' self-rated completion used to count identically to a great one)", () => {
+  test("a rated 'shaky' completion counts as partial credit, not full credit like an unrated or 'solid' one", () => {
+    const m = loadStudlinModule();
+    const log = [];
+    // 8 samples, 4 rated 'shaky', 4 unrated -- all outcome 'done'.
+    for (let i = 0; i < 4; i++) log.push({ bucket: "morning", outcome: "done", t: Date.now() - i * 1000, rating: "shaky" });
+    for (let i = 4; i < 8; i++) log.push({ bucket: "morning", outcome: "done", t: Date.now() - i * 1000 });
+    m.localStorage.setItem("studlin-completionLog", JSON.stringify(log));
+    // 4 unrated (1.0 each) + 4 shaky (0.5 each) = 6/8 = 0.75, not 1.0.
+    assert.equal(m.getBucketReliability("morning", undefined), 0.75);
+  });
+
+  test("all-unrated or all-'solid' data scores exactly as before (no regression for existing/historical entries)", () => {
+    const m = loadStudlinModule();
+    const log = [];
+    for (let i = 0; i < 6; i++) log.push({ bucket: "morning", outcome: "done", t: Date.now() - i * 1000 });
+    for (let i = 0; i < 2; i++) log.push({ bucket: "morning", outcome: "missed", t: Date.now() - i * 1000 });
+    m.localStorage.setItem("studlin-completionLog", JSON.stringify(log));
+    assert.equal(m.getBucketReliability("morning", undefined), 0.75); // 6/8, unchanged formula
+  });
+
+  test("applyCheckInRating upgrades this session's own log row instead of appending a new one (regression: would have double-counted the same completion)", () => {
+    const m = loadStudlinModule();
+    m.localStorage.setItem("studlin-completionLog", JSON.stringify([
+      { bucket: "morning", outcome: "done", t: 1000, taskId: "t1" },
+    ]));
+    m.applyCheckInRating("t1", "shaky");
+    const log = JSON.parse(m.localStorage.getItem("studlin-completionLog"));
+    assert.equal(log.length, 1, "must upgrade the existing row, not append a second one");
+    assert.equal(log[0].rating, "shaky");
+  });
+
+  test("applyCheckInRating targets the most recent matching row when a task was completed more than once (uncrossed and redone)", () => {
+    const m = loadStudlinModule();
+    m.localStorage.setItem("studlin-completionLog", JSON.stringify([
+      { bucket: "morning", outcome: "done", t: 1000, taskId: "t1" },
+      { bucket: "afternoon", outcome: "done", t: 2000, taskId: "t1" },
+    ]));
+    m.applyCheckInRating("t1", "shaky");
+    const log = JSON.parse(m.localStorage.getItem("studlin-completionLog"));
+    assert.equal(log[0].rating, undefined, "the older row for this task must be left alone");
+    assert.equal(log[1].rating, "shaky", "the most recent row for this task should get the rating");
+  });
+
+  test("applyCheckInRating no-ops harmlessly when no matching row exists", () => {
+    const m = loadStudlinModule();
+    m.localStorage.setItem("studlin-completionLog", JSON.stringify([{ bucket: "morning", outcome: "done", t: 1000, taskId: "other-task" }]));
+    m.applyCheckInRating("nonexistent", "shaky");
+    const log = JSON.parse(m.localStorage.getItem("studlin-completionLog"));
+    assert.equal(log.length, 1);
+    assert.equal(log[0].rating, undefined);
+  });
+});
+
+describe("computeExamReadiness (fuses days-to-exam + linked review-session completion + confidence trend into one signal)", () => {
+  const TODAY = "2026-07-20";
+  function exam(overrides) {
+    return { id: "exam-1", title: "Chem Midterm", date: "2026-07-27", kind: "exam", confidenceLog: [], ...overrides };
+  }
+  function session(overrides) {
+    return { id: "s1", kind: "study block", dueEventId: "exam-1", status: "pending", date: "2026-07-21", ...overrides };
+  }
+
+  test("returns null for a non-exam event", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.computeExamReadiness(session({ kind: "study block" }), [], TODAY), null);
+  });
+
+  test("returns null once the exam date has already passed -- readiness is a before-the-exam question", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.computeExamReadiness(exam({ date: "2026-07-19" }), [], TODAY), null);
+  });
+
+  test("'no-data' when nothing is linked to this exam yet", () => {
+    const m = loadStudlinModule();
+    const result = m.computeExamReadiness(exam(), [], TODAY);
+    assert.equal(result.state, "no-data");
+  });
+
+  test("'behind' when a linked review session is overdue and still pending", () => {
+    const m = loadStudlinModule();
+    const events = [session({ id: "s1", date: "2026-07-18", status: "pending" })]; // before TODAY, never done
+    const result = m.computeExamReadiness(exam(), events, TODAY);
+    assert.equal(result.state, "behind");
+  });
+
+  test("'at-risk' when the most recent confidence rating is 'shaky' and the exam is close", () => {
+    const m = loadStudlinModule();
+    const events = [session({ id: "s1", date: "2026-07-19", status: "done" })]; // done, not overdue-missed
+    const result = m.computeExamReadiness(exam({ date: "2026-07-22", confidenceLog: ["solid", "shaky"] }), events, TODAY);
+    assert.equal(result.state, "at-risk");
+  });
+
+  test("'behind' when completion is under 50% with the exam approaching, even with no bad confidence signal", () => {
+    const m = loadStudlinModule();
+    const events = [
+      session({ id: "s1", date: "2026-07-19", status: "done" }), // 1/3 done, none overdue (today is 07-20)
+      session({ id: "s2", date: "2026-07-21", status: "pending" }),
+      session({ id: "s3", date: "2026-07-22", status: "pending" }),
+    ];
+    const result = m.computeExamReadiness(exam({ date: "2026-07-23" }), events, TODAY);
+    assert.equal(result.state, "behind");
+  });
+
+  test("'on-track' when most (>=80%) linked sessions are done", () => {
+    const m = loadStudlinModule();
+    const events = [
+      session({ id: "s1", date: "2026-07-15", status: "done" }),
+      session({ id: "s2", date: "2026-07-17", status: "done" }),
+      session({ id: "s3", date: "2026-07-19", status: "done" }),
+      session({ id: "s4", date: "2026-07-21", status: "pending" }),
+    ];
+    const result = m.computeExamReadiness(exam(), events, TODAY);
+    assert.equal(result.state, "on-track");
+    assert.equal(result.sessionsDone, 3);
+    assert.equal(result.sessionsTotal, 4);
+  });
+
+  test("on-track sentence mentions feeling solid when the most recent rating is 'solid'", () => {
+    const m = loadStudlinModule();
+    const events = [session({ id: "s1", date: "2026-07-15", status: "done" })];
+    const result = m.computeExamReadiness(exam({ confidenceLog: ["solid"] }), events, TODAY);
+    assert.equal(result.state, "on-track");
+    assert.ok(result.sentence.toLowerCase().includes("solid"));
+  });
+
+  test("folds the most recent practice-quiz score into the sentence without changing the state", () => {
+    const m = loadStudlinModule();
+    // Same 'behind' fixture as above -- a single quiz score must not
+    // override a pattern already established by completion/confidence.
+    const events = [session({ id: "s1", date: "2026-07-18", status: "pending" })];
+    const withoutQuiz = m.computeExamReadiness(exam(), events, TODAY);
+    const withQuiz = m.computeExamReadiness(exam({ quizScores: [{ score: 2, total: 10, at: 1 }] }), events, TODAY);
+    assert.equal(withoutQuiz.state, "behind");
+    assert.equal(withQuiz.state, "behind", "one quiz score should never override the completion/confidence-driven state");
+    assert.ok(withQuiz.sentence.includes("2/10"));
+    assert.equal(withQuiz.quizScore.score, 2);
+  });
+
+  test("nudges toward taking a practice quiz when the exam is close and none has been taken", () => {
+    const m = loadStudlinModule();
+    const events = [session({ id: "s1", date: "2026-07-15", status: "done" })];
+    const result = m.computeExamReadiness(exam({ date: "2026-07-22" }), events, TODAY); // 2 days out
+    assert.ok(result.sentence.toLowerCase().includes("no practice quiz"));
+  });
+
+  test("does not nudge about a missing practice quiz when the exam is still far off", () => {
+    const m = loadStudlinModule();
+    const events = [session({ id: "s1", date: "2026-07-15", status: "done" })];
+    const result = m.computeExamReadiness(exam(), events, TODAY); // default date is 7 days out
+    assert.ok(!result.sentence.toLowerCase().includes("no practice quiz"));
+  });
+});
+
+describe("canGenQuiz / recordQuizGen (free-tier practice-quiz limit)", () => {
+  test("Free plan can generate up to QUIZ_GEN_LIMIT quizzes this month, then is blocked", () => {
+    const m = loadStudlinModule();
+    m.setPlanLS("Free");
+    for (let i = 0; i < m.QUIZ_GEN_LIMIT; i++) {
+      assert.equal(m.canGenQuiz(), true, `should allow generation #${i + 1}`);
+      m.recordQuizGen();
+    }
+    assert.equal(m.canGenQuiz(), false, "should block once the monthly limit is reached");
+  });
+
+  test("Pro/Max plans are never limited", () => {
+    const m = loadStudlinModule();
+    m.setPlanLS("Pro");
+    for (let i = 0; i < m.QUIZ_GEN_LIMIT + 5; i++) {
+      assert.equal(m.canGenQuiz(), true);
+      m.recordQuizGen();
+    }
+  });
+});
+
+describe("weekPrepLoad weekend capacity (regression: disabled weekend counted as 0 capacity here but full weekday hours in the real scheduler, so this warning could contradict what the scheduler would actually do)", () => {
+  test("a disabled weekend still counts as real capacity, matching getWorkWindowMinsFor", () => {
+    const m = loadStudlinModule();
+    const MONDAY = "2026-09-07"; // Mon-Fri 2026-09-07..11, Sat/Sun 09-12/13
+    const examEvent = { id: "exam-x", date: "2026-09-20" };
+    // Old bug: weekday-only capacity = 5 * 540min = 2700min -> 1900/2700 = 0.704 (pressured).
+    // Fixed: weekend counts as full 540min/day too = 7*540 = 3780min -> 1900/3780 = 0.503 (not pressured).
+    const events = ["2026-09-07", "2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11"].map((dk, i) => ({
+      id: "load-" + i, date: dk, time: "09:00", kind: "study block", duration: 380, status: "pending",
+    }));
+    const result = m.weekPrepLoad(MONDAY, examEvent, events, DEFAULT_PREFS);
+    assert.equal(result.isPressured, false, "with weekend hours correctly counted as real capacity, this load should read as comfortably under the pressure threshold");
+  });
+});
+
+describe("shouldShowWeekBalanceNudge / dismissWeekBalanceNudge (proactive 'Balance my week' banner cooldown)", () => {
+  test("shows by default with no prior dismissal", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.shouldShowWeekBalanceNudge(), true);
+  });
+
+  test("stays quiet right after a dismissal", () => {
+    const m = loadStudlinModule();
+    m.dismissWeekBalanceNudge();
+    assert.equal(m.shouldShowWeekBalanceNudge(), false);
+  });
+});
+
+describe("computeBusyWindowsPayload (privacy-scoped shared free/busy for Studlin Match)", () => {
+  test("only ever emits busy time intervals, never titles/kinds/subjects (the whole privacy promise of the feature)", () => {
+    const m = loadStudlinModule();
+    const events = [realTask({ id: "t1", date: "2026-07-21", time: "14:00", title: "Secret therapy appointment", subject: "Personal" })];
+    const payload = m.computeBusyWindowsPayload(events, [], DEFAULT_PREFS, "2026-07-20");
+    const entry = payload.find((iv) => iv.date === "2026-07-21");
+    assert.ok(entry, "the busy interval should exist");
+    const keys = Object.keys(entry).sort();
+    assert.deepEqual(keys, ["date", "e", "s"], "must never carry title/subject/kind or any other identifying field");
+  });
+
+  test("covers exactly BUSY_WINDOW_DAYS_AHEAD days starting today, matching what findSharedStudyWindow can actually search", () => {
+    const m = loadStudlinModule();
+    const farOut = m.dayKey(new Date(Date.parse("2026-07-20") + (m.BUSY_WINDOW_DAYS_AHEAD + 2) * 86400000));
+    const events = [realTask({ id: "t1", date: farOut, time: "14:00" })];
+    const payload = m.computeBusyWindowsPayload(events, [], DEFAULT_PREFS, "2026-07-20");
+    assert.equal(payload.find((iv) => iv.date === farOut), undefined, "a task past the published window shouldn't appear in the payload");
+  });
+
+  test("produces no intervals at all on a genuinely empty calendar", () => {
+    const m = loadStudlinModule();
+    const payload = m.computeBusyWindowsPayload([], [], DEFAULT_PREFS, "2026-07-20");
+    assert.equal(payload.length, 0);
   });
 });
 

@@ -52,7 +52,12 @@ function loadStudlinModule() {
     "examAlreadyPassedToday","getSchoolTerm","saveSchoolTerm",
     "getTimerCheckpoint","checkpointTimerSession","clearTimerCheckpoint",
     "resolveOrphanedCheckpoint","mergeImportedEvents","detectCalendarSourceType",
-    "getDayOccupiedIntervals","checkManualStudyTime"];
+    "getDayOccupiedIntervals","checkManualStudyTime","dayHasRoomFor","undoTier0Move",
+    "getWorkWindowMinsFor","detectPeakHourInsight","dismissPeakHourInsight",
+    "logCompletionOutcome","getBucketReliability","setSchedulePreferences",
+    "applyCheckInRating","computeExamReadiness","canGenQuiz","recordQuizGen",
+    "getQuizGenUsage","QUIZ_GEN_LIMIT","setPlanLS","shouldShowWeekBalanceNudge",
+    "dismissWeekBalanceNudge","computeBusyWindowsPayload","BUSY_WINDOW_DAYS_AHEAD"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }
