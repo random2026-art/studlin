@@ -963,6 +963,23 @@ function computeOccupiedIntervals(events,routines,prefs,dateKey){
     .concat(expandRoutineOccurrences(routines,dateKey,dateKey).filter(o=>o.kind!=="free period"))
     .map(e=>({start:timeToMinutes(e.time)-(TIER0_FIXED_KINDS.has(e.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
 }
+// Privacy-scoped payload for the opt-in shared free/busy feature (Studlin
+// Match, see findSharedStudyWindow in ChatDrawer) — busy TIME intervals
+// only, never titles/kinds/subjects, so an opted-in friend's "Find Shared
+// Study Window" search can see when this student is free without ever
+// seeing what they're doing. Reuses computeOccupiedIntervals (same
+// interval math findOpenSlotFor and every other scheduling path already
+// trusts) rather than re-deriving busy time from scratch.
+const BUSY_WINDOW_DAYS_AHEAD=21;
+function computeBusyWindowsPayload(events,routines,prefs,todayKey){
+  const intervals=[];
+  for(let i=0;i<BUSY_WINDOW_DAYS_AHEAD;i++){
+    const d=new Date(todayKey+"T12:00:00");d.setDate(d.getDate()+i);
+    const dk=dayKey(d);
+    computeOccupiedIntervals(events,routines,prefs,dk).forEach(o=>intervals.push({date:dk,s:o.start,e:o.end}));
+  }
+  return intervals;
+}
 // Relocates a FIXED personal event (gym, practice, an appointment) to a new
 // day — deliberately NOT bounded by the student's work/study-hours window
 // the way findOpenSlotFor is, since evening commitments like this routinely
@@ -1127,19 +1144,35 @@ function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,
 function findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey){
   const slot=findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey);
   if(deadlineKey&&slot.date>deadlineKey)return null;
+  // findOpenSlotFor's last-resort fallback can hand back the raw desired
+  // time verbatim when its forward scan finds nothing — that's fine for
+  // most callers, but a Hard Wall must never accept a slot outside the
+  // student's actual work hours just because nothing happens to conflict
+  // with it that early/late. Today specifically gets the same catch-up
+  // buffer allowance findOpenSlotFor's own scan already uses (L~1100),
+  // so a legitimately-found catch-up slot doesn't get rejected here as
+  // if it were the raw fallback.
+  const{start:winStart,end:winEnd}=getWorkWindowMinsFor(prefs,slot.date);
+  const effectiveEnd=slot.date===dayKey()?winEnd+CATCHUP_BUFFER_MINS:winEnd;
+  const tMins=timeToMinutes(slot.time);
+  if(tMins<winStart||tMins+duration>effectiveEnd)return null;
   const occupied=events.filter(e=>e.date===slot.date&&e.time)
     .concat(expandRoutineOccurrences(routines,slot.date,slot.date).filter(o=>o.kind!=="free period"))
     .map(e=>({start:timeToMinutes(e.time)-(TIER0_FIXED_KINDS.has(e.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
-  const tMins=timeToMinutes(slot.time);
   const conflict=occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end));
   return conflict?null:slot;
 }
 // Same-day-only room check — unlike findOpenSlotFor this never scans
 // forward into later days, used by findSlotWithEviction to decide whether
-// a specific day needs eviction at all.
-function dayHasRoomFor(events,routines,prefs,dateKey,duration){
+// a specific day needs eviction at all. desiredTime narrows the scan start
+// to match findOpenSlotFor's own day-0 floor (max(prefStart,desiredTime))
+// — without this, a gap sitting earlier than desiredTime could make this
+// say "yes, room" while findOpenSlotFor's actual placement scan (which
+// never looks before desiredTime on the target day) can't find that same
+// gap, silently rolling to a worse day or worse.
+function dayHasRoomFor(events,routines,prefs,dateKey,duration,desiredTime){
   const dayWindow=getWorkWindowMinsFor(prefs,dateKey);
-  const prefStartMins=dayWindow.start;
+  const prefStartMins=desiredTime?Math.max(dayWindow.start,timeToMinutes(desiredTime)):dayWindow.start;
   const prefEndMins=dayWindow.end;
   const occupied=events.filter(e=>e.date===dateKey&&e.time)
     .concat(expandRoutineOccurrences(routines,dateKey,dateKey).filter(o=>o.kind!=="free period"))
@@ -1173,7 +1206,7 @@ function findSlotWithEviction(events,routines,prefs,desiredDate,desiredTime,dura
   const daysOut=deadlineKey?Math.ceil((new Date(deadlineKey+"T12:00:00")-new Date(dayKey()+"T12:00:00"))/86400000):null;
   const isImminent=daysOut!==null&&daysOut<=3;
 
-  if(!isImminent||dayHasRoomFor(events,routines,prefs,desiredDate,duration)){
+  if(!isImminent||dayHasRoomFor(events,routines,prefs,desiredDate,duration,desiredTime)){
     return {events,placement:findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey)};
   }
 
@@ -1190,10 +1223,10 @@ function findSlotWithEviction(events,routines,prefs,desiredDate,desiredTime,dura
   for(const cand of candidates){
     working=working.filter(e=>e.id!==cand.id);
     evictedIds.add(cand.id);
-    if(dayHasRoomFor(working,routines,prefs,desiredDate,duration))break;
+    if(dayHasRoomFor(working,routines,prefs,desiredDate,duration,desiredTime))break;
   }
 
-  if(!dayHasRoomFor(working,routines,prefs,desiredDate,duration)){
+  if(!dayHasRoomFor(working,routines,prefs,desiredDate,duration,desiredTime)){
     // Evicting every eligible candidate still isn't enough room on this
     // specific day — give the search one more genuine chance on a later
     // (still-legal, pre-deadline) day rather than giving up immediately;
@@ -1203,18 +1236,28 @@ function findSlotWithEviction(events,routines,prefs,desiredDate,desiredTime,dura
 
   const nextDay=(()=>{const d=new Date(desiredDate+"T12:00:00");d.setDate(d.getDate()+1);return dayKey(d);})();
   let pool=working.slice();
-  events.forEach(ev=>{
-    if(!evictedIds.has(ev.id))return;
-    const newSlot=findOpenSlotFor(pool,routines,prefs,nextDay,prefs.workStartTime,ev.duration||30,ev.deadline||null);
+  // A plain for-loop (not forEach) so a failed re-placement can bail out of
+  // the whole eviction attempt immediately, rather than silently continuing
+  // to build a pool that already has one task with nowhere legal to go.
+  for(const ev of events.filter(e=>evictedIds.has(e.id))){
+    const newSlot=findLegalSlotOrNull(pool,routines,prefs,nextDay,prefs.workStartTime,ev.duration||30,ev.deadline||null);
+    if(!newSlot){
+      // Couldn't legally re-home this evicted task anywhere — never commit
+      // a partial eviction that leaves it with no legal slot. Abandon the
+      // whole attempt and fall back to the plain (non-eviction) search on
+      // the original, untouched events, same as the "still isn't enough
+      // room" fallback above.
+      return {events,placement:findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey)};
+    }
     // An eviction is just as much "Studlin moved this" as the primary
     // placement below — stamped the same way so the per-task badge and
     // undoTier0Move (both keyed generically off movedByStudlin/movedFrom)
     // work for it too. Without this, an evicted task moved silently with
     // no visibility and no way to undo it.
     pool=pool.concat([{...ev,date:newSlot.date,time:newSlot.time,movedByStudlin:true,movedFrom:{date:ev.date,time:ev.time},movedAt:Date.now()}]);
-  });
+  }
 
-  const placement=findOpenSlotFor(working,routines,prefs,desiredDate,desiredTime,duration,deadlineKey);
+  const placement=findLegalSlotOrNull(working,routines,prefs,desiredDate,desiredTime,duration,deadlineKey);
   return {events:pool,placement};
 }
 // Tier 0 — automatic reflow. A task counts as "missed" once its date has
@@ -1316,34 +1359,68 @@ function difficultyTierOf(task){
 // array logSession writes (scan-on-demand, no running aggregate). Silently
 // no-ops for time-less events (checklist items) since they have no bucket.
 // `tier` (from difficultyTierOf) is optional so old entries stay untiered
-// rather than being misclassified.
-function logCompletionOutcome(outcome,timeStr,tier){
+// rather than being misclassified. `taskId` is optional too, stamped when
+// the caller has one, so a later "how'd that go?" check-in answer (see
+// applyCheckInRating) can find this exact entry and upgrade it instead of
+// appending a second, double-counted row for the same completion.
+function logCompletionOutcome(outcome,timeStr,tier,taskId){
   const bucket=hourBucket(timeStr);
   if(!bucket)return;
   const log=lsGet("completionLog",[]);
   const entry={bucket,outcome,t:Date.now()};
   if(tier)entry.tier=tier;
+  if(taskId)entry.taskId=taskId;
   log.push(entry);
   lsSet("completionLog",log);
 }
-// Fraction of tasks placed in `bucket` that actually got done vs. missed.
-// Returns null below TIER0_MIN_BUCKET_SAMPLE — an honest "not enough data
-// yet" signal callers must treat as neutral, never fabricated confidence.
-// Optional `tier` prefers a difficulty-specific rate once that combo alone
-// has enough samples; otherwise falls back to the bucket-wide aggregate
-// (which includes both tiered and legacy untiered rows) exactly as before —
-// old entries with no `tier` key never match `e.tier===tier`, so they can
-// only ever contribute to the fallback, never get miscounted into a tier.
+// Called once a student answers the post-session "How'd that go?" check-in
+// (see submitExamCheckIn) — finds the specific completionLog row this
+// session already wrote and stamps a `rating` onto it, rather than
+// appending a new entry (which would double-count the same completion
+// toward getBucketReliability's denominator). Searches from the end since
+// the row was just written moments earlier. No-ops harmlessly if the row
+// can't be found (e.g. really old/imported data) — the check-in's outer
+// confidenceLog/pacing effects still apply either way.
+function applyCheckInRating(taskId,rating){
+  if(!taskId)return;
+  const log=lsGet("completionLog",[]);
+  for(let i=log.length-1;i>=0;i--){
+    if(log[i].taskId===taskId&&log[i].outcome==="done"&&!log[i].rating){
+      log[i]={...log[i],rating};
+      lsSet("completionLog",log);
+      return;
+    }
+  }
+}
+// Fraction of tasks placed in `bucket` that actually got done vs. missed —
+// a weighted average, not a plain count, so a "shaky" self-rated completion
+// (see applyCheckInRating) counts as partial credit rather than the same
+// full credit as a completion the student never rated, or rated "solid".
+// Unrated/"solid" done entries and all pre-existing historical data keep
+// scoring exactly as before (1.0) — this only sharpens the signal going
+// forward, it never reinterprets old data. Returns null below
+// TIER0_MIN_BUCKET_SAMPLE — an honest "not enough data yet" signal callers
+// must treat as neutral, never fabricated confidence. Optional `tier`
+// prefers a difficulty-specific rate once that combo alone has enough
+// samples; otherwise falls back to the bucket-wide aggregate (which
+// includes both tiered and legacy untiered rows) exactly as before — old
+// entries with no `tier` key never match `e.tier===tier`, so they can only
+// ever contribute to the fallback, never get miscounted into a tier.
 const TIER0_MIN_BUCKET_SAMPLE=8;
+const SHAKY_COMPLETION_CREDIT=0.5;
+function completionCredit(e){
+  if(e.outcome!=="done")return 0;
+  return e.rating==="shaky"?SHAKY_COMPLETION_CREDIT:1;
+}
 function getBucketReliability(bucket,tier){
   if(!bucket)return null;
   const all=lsGet("completionLog",[]).filter(e=>e.bucket===bucket);
   if(tier){
     const tiered=all.filter(e=>e.tier===tier);
-    if(tiered.length>=TIER0_MIN_BUCKET_SAMPLE)return tiered.filter(e=>e.outcome==="done").length/tiered.length;
+    if(tiered.length>=TIER0_MIN_BUCKET_SAMPLE)return tiered.reduce((s,e)=>s+completionCredit(e),0)/tiered.length;
   }
   if(all.length<TIER0_MIN_BUCKET_SAMPLE)return null;
-  return all.filter(e=>e.outcome==="done").length/all.length;
+  return all.reduce((s,e)=>s+completionCredit(e),0)/all.length;
 }
 // A recent-streak detector, separate from getBucketReliability's all-time
 // aggregate — a student sliding lately deserves a nudge before enough bad
@@ -1384,6 +1461,44 @@ function dismissStrugglingBucket(bucketId){
   const dismissed=lsGet("strugglingBucketDismissed",{});
   dismissed[bucketId]=Date.now();
   lsSet("strugglingBucketDismissed",dismissed);
+}
+// Surfaces it when the student's own real completion history disagrees
+// with what they declared as their peak-focus bucket at onboarding —
+// distinct from detectStrugglingBucket above, which reacts to a RECENT run
+// of misses in any one bucket regardless of whether it's declared.  This
+// one only fires when there's a genuine, well-sampled (>=TIER0_MIN_BUCKET_
+// SAMPLE) all-time gap between what's declared and what the data actually
+// shows, so "Studlin learned your best hours" (the onboarding/marketing
+// claim) becomes something that can actually happen, not just a per-
+// placement reason shown once and forgotten.
+const PEAK_INSIGHT_MARGIN=0.15; // meaningfully better, not just noise
+const PEAK_INSIGHT_COOLDOWN_MS=14*86400000;
+function detectPeakHourInsight(prefs){
+  const declared=prefs.peakHourBuckets||[];
+  if(declared.length===0)return null; // nothing declared yet to correct
+  const dismissed=lsGet("peakInsightDismissed",{});
+  const now=Date.now();
+  const winStart=timeToMinutes(prefs.workStartTime);
+  const winEnd=timeToMinutes(prefs.workEndTime);
+  // Only compare against declared buckets that already have enough real
+  // data to be a fair baseline — a declared bucket with no data yet isn't
+  // "beaten," it's just unmeasured.
+  const declaredRates=declared.map(id=>({id,rate:getBucketReliability(id)})).filter(d=>d.rate!==null);
+  if(declaredRates.length===0)return null;
+  const weakestDeclared=declaredRates.reduce((min,d)=>d.rate<min.rate?d:min,declaredRates[0]);
+  const candidates=TIER0_HOUR_BUCKETS
+    .filter(b=>!declared.includes(b.id)&&b.startMin<winEnd&&b.endMin>winStart)
+    .map(b=>({id:b.id,rate:getBucketReliability(b.id)}))
+    .filter(c=>c.rate!==null&&!(dismissed[c.id]&&now-dismissed[c.id]<PEAK_INSIGHT_COOLDOWN_MS))
+    .filter(c=>c.rate-weakestDeclared.rate>=PEAK_INSIGHT_MARGIN)
+    .sort((a,c)=>c.rate-a.rate);
+  if(candidates.length===0)return null;
+  return {currentBucket:weakestDeclared.id,currentPct:weakestDeclared.rate,suggestedBucket:candidates[0].id,suggestedPct:candidates[0].rate};
+}
+function dismissPeakHourInsight(bucketId){
+  const dismissed=lsGet("peakInsightDismissed",{});
+  dismissed[bucketId]=Date.now();
+  lsSet("peakInsightDismissed",dismissed);
 }
 // Finds where Studlin should silently move a missed task. Adds no new
 // scanning logic on top of findSlotWithEviction/findLegalSlotOrNull — every
@@ -1520,20 +1635,31 @@ function findReliableSlotFor(events,routines,prefs,desiredDate,desiredTime,durat
   return {date:win.date,time:win.time,reason};
 }
 // Restores a Tier0-moved task to its pre-move {date,time} and strips the
-// marker fields. Doesn't re-run collision detection — this is an explicit,
-// deliberate "put it back" action, and the original slot was always legal
-// by construction (it's exactly where the task legitimately was before
-// Tier 0 touched it).
+// marker fields. The original slot was always legal at move time, but not
+// necessarily still free now — another Tier 0 move, a manual add, or an
+// evicted task could have landed there since. Re-checks for a real
+// conflict (events + routine occurrences, same interval shape
+// findLegalSlotOrNull uses) before restoring; a one-tap "put it back" must
+// never silently create an overlap. Returns {events,blocked} — blocked
+// means nothing changed and the caller should say why, not just go quiet.
 function undoTier0Move(taskId){
   const events=lsGet("events",[]);
+  const moved=events.find(e=>e.id===taskId);
+  if(!moved||!moved.movedByStudlin||!moved.movedFrom)return {events,blocked:false};
+  const {date,time}=moved.movedFrom;
+  const durationMins=moved.duration||30;
+  const tMins=timeToMinutes(time);
+  const occupied=events.filter(e=>e.id!==taskId&&e.date===date&&e.time)
+    .concat(expandRoutineOccurrences(getWeeklyRoutine(),date,date).filter(o=>o.kind!=="free period"))
+    .map(e=>({start:timeToMinutes(e.time)-(TIER0_FIXED_KINDS.has(e.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
+  if(occupied.some(o=>!(tMins+durationMins<=o.start||tMins>=o.end)))return {events,blocked:true};
   const next=events.map(e=>{
-    if(e.id!==taskId||!e.movedByStudlin||!e.movedFrom)return e;
-    const {date,time}=e.movedFrom;
+    if(e.id!==taskId)return e;
     const {movedByStudlin,movedFrom,movedAt,...rest}=e;
     return {...rest,date,time};
   });
   lsSet("events",next);
-  return next;
+  return {events:next,blocked:false};
 }
 function fmtClock12(t){if(!t)return"";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+ap;}
 function fmtMovedFrom(mf){if(!mf)return"";const dk=mf.date===dayKey()?"today":mf.date;return dk+" "+fmtClock12(mf.time);}
@@ -1724,6 +1850,69 @@ async function fetchUserProfile(){try{const res=await authFetch("/api/me");if(!r
 // the public directory (`profiles`) and the `friendships` relationship graph,
 // per firestore.rules.
 const fsdb=()=>firebase.firestore();
+// Every accepted-friend uid, both directions -- mirrors the two-query
+// pattern FriendsChat already uses for its own friends list (friendships
+// docs have no deterministic id, so there's no single query that covers
+// both "I sent" and "they sent").
+async function getAcceptedFriendUids(myUid){
+  const [a,b]=await Promise.all([
+    fsdb().collection('friendships').where('senderId','==',myUid).where('status','==','accepted').get(),
+    fsdb().collection('friendships').where('receiverId','==',myUid).where('status','==','accepted').get(),
+  ]);
+  const uids=new Set();
+  a.docs.forEach(d=>uids.add(d.data().receiverId));
+  b.docs.forEach(d=>uids.add(d.data().senderId));
+  return [...uids];
+}
+// Publishes this student's own busy-time-only intervals (see
+// computeBusyWindowsPayload) so an opted-in friend's "Find Shared Study
+// Window" search can see real availability instead of guessing — never
+// event titles, never anyone but current accepted friends (sharedWithUids
+// is exactly what firestore.rules checks on read). Silently no-ops if the
+// opt-in setting is off, so any call site can call this unconditionally
+// without checking the setting itself first. Recomputes the friend list
+// fresh on every call rather than trusting a stale cache, since a friend
+// removed since the last publish must stop being able to read this.
+async function publishBusyWindows(){
+  if(!lsGet("settings",{}).shareAvailability)return;
+  const myUid=firebase.auth().currentUser?.uid;
+  if(!myUid)return;
+  try{
+    const sharedWithUids=await getAcceptedFriendUids(myUid);
+    const intervals=computeBusyWindowsPayload(lsGet("events",[]),getWeeklyRoutine(),getSchedulePreferences(),dayKey());
+    await fsdb().collection('busyWindows').doc(myUid).set({ownerUid:myUid,sharedWithUids,intervals,updatedAt:new Date().toISOString()});
+  }catch(e){}
+}
+// Withdraws consent immediately (toggling the setting off) rather than
+// leaving a stale, no-longer-authorized copy of this student's busy times
+// sitting in Firestore until it happens to get overwritten.
+async function unpublishBusyWindows(){
+  const myUid=firebase.auth().currentUser?.uid;
+  if(!myUid)return;
+  try{await fsdb().collection('busyWindows').doc(myUid).delete();}catch(e){}
+}
+// Reads whichever of `otherUids` have opted in AND currently share with
+// this signed-in user. A permission-denied read (not shared with us) or a
+// missing doc (never opted in) both resolve to "no extra data for this
+// person" — findSharedStudyWindow degrades to its old own-calendar-only
+// behavior for that participant, never surfaces an error over a feature
+// that was always optional. Returns a Map date -> [{s,e}], merged across
+// every contributing participant.
+async function fetchFriendsBusyIntervals(otherUids){
+  const byDate=new Map();
+  await Promise.all(otherUids.map(async(uid)=>{
+    try{
+      const doc=await fsdb().collection('busyWindows').doc(uid).get();
+      if(!doc.exists)return;
+      const data=doc.data();
+      (data.intervals||[]).forEach(iv=>{
+        if(!byDate.has(iv.date))byDate.set(iv.date,[]);
+        byDate.get(iv.date).push({s:iv.s,e:iv.e});
+      });
+    }catch(e){/* not shared with us, or offline -- degrade gracefully */}
+  }));
+  return byDate;
+}
 const slugUsername=(name)=>(name||"").toLowerCase().replace(/[^a-z0-9]/g,"").slice(0,24)||"student";
 // Creates/refreshes this user's public directory entry so they're searchable
 // and their name/school stay current. Safe to call anytime a signed-in user
@@ -2282,6 +2471,22 @@ function computeWeekBalancePlan(events,routines,prefs,startDateKey){
 
   const perDay=days.map(dk=>({date:dk,minutesBefore:before[dk],minutesAfter:minutesFor(dk,working)}));
   return {moves,perDay};
+}
+// Proactive nudge toward the (already-real, preview-then-confirm) "Balance
+// my week" flow above — that flow was manual-trigger-only, so a student
+// had to remember it exists. Single cooldown timestamp (not per-bucket
+// like detectStrugglingBucket/detectPeakHourInsight) since there's only
+// one week to balance, not several independent buckets. Shorter cooldown
+// than those two (3 days, not 14) since "is this week heavy" is a
+// week-scoped question that goes stale fast — a dismissal shouldn't
+// silence it deep into a different, genuinely-overloaded week.
+const WEEK_BALANCE_NUDGE_COOLDOWN_MS=3*86400000;
+function shouldShowWeekBalanceNudge(){
+  const dismissedAt=lsGet("weekBalanceNudgeDismissedAt",0);
+  return Date.now()-dismissedAt>=WEEK_BALANCE_NUDGE_COOLDOWN_MS;
+}
+function dismissWeekBalanceNudge(){
+  lsSet("weekBalanceNudgeDismissedAt",Date.now());
 }
 
 // Studlin Reschedule's actual planning engine ("push everything back N
@@ -3914,6 +4119,38 @@ async function generateLectureDigest(transcript,subject){
     return {summary:parsed.summary||"",notesBody:parsed.notesBody||"",examFlags:Array.isArray(parsed.examFlags)?parsed.examFlags:[]};
   }catch(e){return {summary:"Couldn't generate a summary. Try again.",notesBody:"",examFlags:[]};}
 }
+// Same one-call, JSON-only pattern as generateLectureDigest, for the
+// Lectures tab's "Practice quiz" card — previously a "PRO" badge stub
+// whose action was just setPricingOpen(true), never actually generating
+// anything. Multiple-choice only (no short-answer): four options per
+// question keeps both generation and grading deterministic — an LLM
+// judging a free-text answer would need its own separate call and could
+// disagree with itself between attempts, which is a worse experience than
+// promising less but being consistent about it.
+async function generateQuizFromText(text,subject,count){
+  const n=Math.max(3,Math.min(12,count||8));
+  const prompt="You're building a "+n+"-question multiple-choice practice quiz for a student studying "+(subject||"this material")+". Read the source material and return ONLY this JSON, no other text: "+
+    "{\"questions\":[{\"q\":\"the question text\",\"choices\":[\"four answer options, exactly 4, in any order\"],\"answerIndex\":0}]}. "+
+    "answerIndex is the 0-based index into choices of the single correct answer. Base every question directly on the material below — never invent facts not present in it.\n\nMaterial:\n\n"+text.slice(0,15000);
+  try{
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+    const data=await res.json();
+    let raw=(data.reply||"").replace(/```json?|```/g,"").trim();
+    const jsonStart=raw.indexOf("{");const jsonEnd=raw.lastIndexOf("}");
+    if(jsonStart>=0&&jsonEnd>jsonStart){raw=raw.slice(jsonStart,jsonEnd+1);}
+    const parsed=JSON.parse(raw);
+    const questions=(Array.isArray(parsed.questions)?parsed.questions:[])
+      .filter(q=>q&&typeof q.q==="string"&&Array.isArray(q.choices)&&q.choices.length===4&&Number.isInteger(q.answerIndex)&&q.answerIndex>=0&&q.answerIndex<4);
+    return questions;
+  }catch(e){return [];}
+}
+// Free-tier cap on AI quiz generation — same shape as FLASHCARD_GEN_LIMIT,
+// a separate pool since a quiz is a materially more expensive generation
+// (more output tokens) than a flashcard deck.
+const QUIZ_GEN_LIMIT=3;
+const getQuizGenUsage=makeMonthlyUsage("quizGens");
+function canGenQuiz(){return getPlan()!=="Free"||getQuizGenUsage().count<QUIZ_GEN_LIMIT;}
+function recordQuizGen(){const u=getQuizGenUsage();lsSet("quizGens",{month:u.month,count:u.count+1});}
 
 // ─── FLASHCARDS ───────────────────────────────────────────────────────────────
 function Flashcards() {
@@ -4087,7 +4324,7 @@ function Flashcards() {
     const count=4;
     const sessions=buildReviewSessions(exam.date,exam.subject,count);
     if(sessions.length===0)return;
-    setReviewSchedulePreview({deckId:deck.id,deckName:deck.name,examTitle:exam.title,examDate:exam.date,examSubject:exam.subject,count,sessions});
+    setReviewSchedulePreview({deckId:deck.id,deckName:deck.name,examEventId:exam.id,examTitle:exam.title,examDate:exam.date,examSubject:exam.subject,count,sessions});
   };
   const changeReviewCount=(count)=>{
     setReviewSchedulePreview(r=>r?{...r,count,sessions:buildReviewSessions(r.examDate,r.examSubject,count)}:r);
@@ -4103,6 +4340,15 @@ function Flashcards() {
       deadline:reviewSchedulePreview.examDate,duration:s.duration,
       status:"pending",timeSpent:0,completedAt:null,deckId:reviewSchedulePreview.deckId,
       placementReason:s.placementReason||null,
+      // Same linkage buildExamSessionEvents' extraFields already gives the
+      // syllabus/Brain-Dump review path — without this, a deck-linked
+      // review session was invisible to weekPrepLoad/evaluateExamPrep
+      // Adjustment/the exam-readiness signal, and the "How'd that go?"
+      // check-in (see submitExamCheckIn) silently skipped its exam-pacing
+      // half for every deck-linked exam, the far more common way students
+      // actually link flashcards to an exam.
+      ...(reviewSchedulePreview.examEventId?{dueEventId:reviewSchedulePreview.examEventId}:{}),
+      isExamPrepSession:true,
     }));
     lsSet("events",events.concat(newEvents));
     setReviewSchedulePreview(null);
@@ -6266,13 +6512,15 @@ function weekPrepLoad(dateKey,examEvent,events,prefs){
   const monday=new Date(d);monday.setDate(d.getDate()-dow);
   const weekDates=Array.from({length:7},(_,i)=>{const x=new Date(monday);x.setDate(monday.getDate()+i);return dayKey(x);});
   const weekSet=new Set(weekDates);
-  const minsOf=(t)=>{const p=(t||"0:0").split(":").map(Number);return p[0]*60+p[1];};
+  // Delegates to getWorkWindowMinsFor — the same function the actual
+  // scheduler uses — instead of re-deriving weekend/work-hour logic here.
+  // Regression: this used to treat a disabled weekend as 0 capacity while
+  // getWorkWindowMinsFor treats it as full weekday hours, so this "your
+  // week is busy" warning could contradict what the scheduler would
+  // actually do.
   const capacityPerDay=(dk)=>{
-    const isWeekend=((new Date(dk+"T12:00:00").getDay()+6)%7)>=5;
-    if(isWeekend&&!prefs.weekendEnabled)return 0;
-    const start=isWeekend?prefs.weekendStartTime:prefs.workStartTime;
-    const end=isWeekend?prefs.weekendEndTime:prefs.workEndTime;
-    return Math.max(0,minsOf(end)-minsOf(start));
+    const{start,end}=getWorkWindowMinsFor(prefs,dk);
+    return Math.max(0,end-start);
   };
   const totalCapacity=weekDates.reduce((sum,dk)=>sum+capacityPerDay(dk),0);
   const loadEvents=events.filter(e=>weekSet.has(e.date)&&e.status==="pending"&&e.duration&&e.kind==="study block"&&e.dueEventId!==examEvent.id);
@@ -6360,6 +6608,66 @@ function evaluateExamPrepAdjustment(examEvent,events,prefs){
   }
   return {type:"pull-closer",examId:examEvent.id,sessionId:next.id,
     reason:"You said this one didn't click. Want us to move your next session on "+examEvent.title+" closer instead of waiting?"};
+}
+
+// Fuses days-until-exam + dueEventId-linked review-session completion +
+// the most recent confidenceLog rating into a single "am I actually going
+// to be ready?" state, instead of leaving a student to piece it together
+// from three signals living in three different places. Pure and read-only
+// — never schedules or changes anything, just reports. Returns null for an
+// exam that's already passed (readiness is a before-the-exam question) or
+// for a non-exam event.
+const EXAM_READINESS_LOW_COMPLETION=0.5;
+const EXAM_READINESS_HIGH_COMPLETION=0.8;
+const EXAM_READINESS_SOON_DAYS=3;
+function computeExamReadiness(examEvent,events,todayKey){
+  if(!examEvent||examEvent.kind!=="exam")return null;
+  const today=todayKey||dayKey();
+  const daysUntil=Math.round((new Date(examEvent.date+"T12:00:00")-new Date(today+"T12:00:00"))/86400000);
+  if(daysUntil<0)return null;
+  // Same linkage weekPrepLoad/evaluateExamPrepAdjustment already trust —
+  // every review session (however it was created: syllabus scan, Brain
+  // Dump, or a deck linked in Flashcards) carries dueEventId back to this
+  // exam.
+  const sessions=events.filter(e=>e.dueEventId===examEvent.id);
+  const total=sessions.length;
+  if(total===0){
+    return {state:"no-data",daysUntil,sessionsTotal:0,sessionsDone:0,
+      sentence:"No review sessions linked yet — link a flashcard deck or let Studlin schedule some."};
+  }
+  const done=sessions.filter(e=>e.status==="done").length;
+  const overdueMissed=sessions.filter(e=>e.status==="pending"&&e.date<today).length;
+  const completionRate=done/total;
+  const log=examEvent.confidenceLog||[];
+  const lastRating=log[log.length-1]||null;
+  const dayWord=daysUntil+" day"+(daysUntil!==1?"s":"");
+  let base;
+  if(overdueMissed>0){
+    base={state:"behind",
+      sentence:"You've missed "+overdueMissed+" review session"+(overdueMissed!==1?"s":"")+" for this, and the exam is in "+dayWord+". Worth catching up."};
+  }else if(lastRating==="shaky"&&daysUntil<=EXAM_READINESS_SOON_DAYS){
+    base={state:"at-risk",
+      sentence:"Your last session on this didn't click, and the exam is in "+dayWord+". Worth extra review."};
+  }else if(completionRate<EXAM_READINESS_LOW_COMPLETION&&daysUntil<=EXAM_READINESS_SOON_DAYS+2){
+    base={state:"behind",
+      sentence:"Only "+done+" of "+total+" review sessions done with "+dayWord+" left."};
+  }else if(completionRate>=EXAM_READINESS_HIGH_COMPLETION){
+    base={state:"on-track",
+      sentence:(lastRating==="solid"?"On track and feeling solid — ":"On track — ")+done+"/"+total+" review sessions done."};
+  }else{
+    base={state:"on-track",sentence:done+"/"+total+" review sessions done, "+dayWord+" to go."};
+  }
+  // Fold in the most recent practice-quiz score, if any (see
+  // generateQuizFromText/submitQuiz) — an extra concrete signal on top of
+  // completion/confidence, never something that changes the state on its
+  // own (a single quiz score is too thin a sample to override a pattern
+  // built from multiple sessions). Close to the exam with sessions in
+  // progress but no quiz taken yet, nudge toward taking one.
+  const quizScore=(examEvent.quizScores&&examEvent.quizScores.length)?examEvent.quizScores[examEvent.quizScores.length-1]:null;
+  let sentence=base.sentence;
+  if(quizScore)sentence+=" Last practice quiz: "+quizScore.score+"/"+quizScore.total+".";
+  else if(daysUntil<=EXAM_READINESS_SOON_DAYS)sentence+=" No practice quiz taken yet.";
+  return {state:base.state,daysUntil,sessionsTotal:total,sessionsDone:done,quizScore,sentence};
 }
 
 // Shared by commitSyllabusEvents (exam items) and commitBrainDump (exam
@@ -6990,18 +7298,20 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
 
   const sendText=()=>{if(!input.trim())return;sendMessage({kind:"text",text:input.trim()});setInput("");};
   const fmtTimeLabel=(t)=>{const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
-  // There's no real shared-schedule backend behind these friends — this
-  // client can't see the other person's calendar, only the sender's own
-  // (localStorage `events`, never synced to Firestore). So the "match" still
-  // can't confirm mutual availability, but it's no longer arbitrary either:
-  // it genuinely scans for a slot in the chosen window/day-range that's free
-  // on the sender's own calendar, same overlap check the real "Group Sync"
-  // free-slot finder in CalendarTab uses (runGroupSync).
+  // Used to have no real shared-schedule backend behind these friends —
+  // this client could only see the sender's own calendar
+  // (localStorage `events`, never synced to Firestore), so the "match"
+  // couldn't confirm mutual availability, only guess and let the other
+  // side accept/decline/counter afterward. Now checks each OTHER
+  // participant's opted-in busy-time-only Firestore doc too (see
+  // publishBusyWindows/fetchFriendsBusyIntervals) — a participant who
+  // hasn't opted in just contributes nothing extra, same as before, so
+  // this degrades gracefully rather than requiring universal opt-in.
   // Returns {options: [...]}, ranked best-first and capped at 3 distinct
   // days. Scoring favors daytime slots (before 6pm, "saves evening free
   // time") that fill a gap between two existing events ("dead time") over
   // slots that just carve into an otherwise wide-open evening block.
-  const findSharedStudyWindow=(params)=>{
+  const findSharedStudyWindow=async(params)=>{
     const prefStart=params.timeMode==="custom"?timeToMinutes(params.timeFrom):timeToMinutes("08:00");
     const prefEnd=params.timeMode==="custom"?timeToMinutes(params.timeTo):timeToMinutes("22:00");
     const scanDays=Math.max(1,params.lookAheadDayRange||1);
@@ -7010,11 +7320,13 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
     const EVENING_START=18*60;
     const isFree=(occupied,start,end)=>!occupied.some(o=>!(end<=o.s||start>=o.e));
     const labelFor=(offset,d)=>offset===1?"tomorrow":d.toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"});
+    const otherUids=(isGroup?target.group.memberUids:[target.user.uid]).filter(u=>u!==myUid);
+    const friendsBusy=await fetchFriendsBusyIntervals(otherUids);
     const candidates=[];
     for(let offset=1;offset<=scanDays;offset++){
       const d=new Date(today);d.setDate(today.getDate()+offset);
       const dk=dayKey(d);
-      const occupied=getDayOccupiedIntervals(dk);
+      const occupied=getDayOccupiedIntervals(dk).concat(friendsBusy.get(dk)||[]);
       for(let start=prefStart;start+duration<=prefEnd;start+=30){
         const end=start+duration;
         if(!isFree(occupied,start,end))continue;
@@ -7058,7 +7370,11 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
     const params={timeMode:fwTimeMode,timeFrom:fwTimeFrom,timeTo:fwTimeTo,lookAheadDayRange,durationInMinutes:fwDuration};
     const supersedes=counterSupersedes;
     setCounterSupersedes(null);
-    setTimeout(()=>{setSyncRunning(false);sendMessage({kind:"calendar",status:"unscheduled",meta:findSharedStudyWindow(params),...(supersedes?{supersedes}:{})});},2100);
+    // Opportunistic self-refresh — keeps this student's own published busy
+    // times reasonably current without needing to hook every single
+    // event-mutation path in the app; a no-op if the opt-in setting is off.
+    publishBusyWindows();
+    setTimeout(async()=>{const meta=await findSharedStudyWindow(params);setSyncRunning(false);sendMessage({kind:"calendar",status:"unscheduled",meta,...(supersedes?{supersedes}:{})});},2100);
   };
   // "Pick a time" mode's Continue button — checks first rather than
   // posting straight away, same inline-validate-before-committing
@@ -8516,7 +8832,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                         </div>
                       )}
                       {ev.movedByStudlin && !isRoutine && (
-                        <div onClick={(e)=>{e.stopPropagation();setEvents(undoTier0Move(ev.id));}}
+                        <div onClick={(e)=>{e.stopPropagation();setEvents(undoTier0Move(ev.id).events);}}
                           title={"Studlin moved this from "+fmtMovedFrom(ev.movedFrom)+". Click to undo."}
                           style={{position:"absolute",top:2,left:2,width:13,height:13,borderRadius:"50%",background:"rgba(0,0,0,0.28)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",zIndex:1}}>
                           <span style={{fontSize:8,lineHeight:1}}>↻</span>
@@ -8783,7 +9099,7 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
 // on demand instead. Collapses back to capped every time the selected day
 // changes, so switching days never leaves a stale "expanded" list behind.
 const AGENDA_DAY_CAP=5;
-function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, colorOf, openNew, openEdit, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, routines, openRoutineEdit, deleteRoutineItem, onSkipOneOccurrence, markDone, uncrossDone, removeEvent, setSelDay, setYm, dragId, setDragId, openReschedule, setEvents}) {
+function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, colorOf, openNew, openEdit, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, routines, openRoutineEdit, deleteRoutineItem, onSkipOneOccurrence, markDone, uncrossDone, removeEvent, setSelDay, setYm, dragId, setDragId, openReschedule, setEvents, allEvents}) {
   const [showAllToday,setShowAllToday]=useState(false);
   useEffect(()=>{setShowAllToday(false);},[selDay]);
   const hiddenCount=Math.max(0,dayEvents.length-AGENDA_DAY_CAP);
@@ -8820,6 +9136,12 @@ function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, c
             const badgeBg=isStudy?"rgba(14,31,24,0.14)":isExam?color+"22":T.card2;
             const dimmedByRoutineMode=editRoutineMode&&!isRoutine;
             const highlightedByRoutineMode=editRoutineMode&&isRoutine;
+            // "Am I actually going to be ready?" — only for exams, and only
+            // once there's something to report (a fresh exam with nothing
+            // linked yet stays quiet rather than showing an empty/alarming
+            // pill for something the student hasn't started organizing).
+            const readiness=isExam&&allEvents?computeExamReadiness(ev,allEvents):null;
+            const readinessColor=readiness&&(readiness.state==="on-track"?T.lime:readiness.state==="behind"?T.amber:readiness.state==="at-risk"?T.red:null);
             return(
             <div key={ev.id} draggable={!isRoutine} onDragStart={()=>{if(!isRoutine)setDragId(ev.id);}}
               onMouseEnter={()=>isRoutine&&setHoveredRoutineId(ev.routineId)} onMouseLeave={()=>isRoutine&&setHoveredRoutineId(null)}
@@ -8830,8 +9152,9 @@ function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, c
                 <div style={{display:"flex",alignItems:"center",gap:6,minWidth:0}}>
                   {ev.priority&&<span style={{width:7,height:7,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority||3],flexShrink:0}} />}
                   {isExam&&<span style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:9.5,fontWeight:800,letterSpacing:"0.04em",color,background:color+"1E",border:`1px solid ${color}55`,borderRadius:5,padding:"1px 6px",flexShrink:0}}><span style={{width:4,height:4,borderRadius:"50%",background:color,flexShrink:0}} />EXAM</span>}
+                  {readinessColor&&<span title={readiness.sentence} style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.02em",color:readinessColor,background:readinessColor+"1E",border:`1px solid ${readinessColor}55`,borderRadius:5,padding:"1px 6px",flexShrink:0}}>{readiness.state==="on-track"?"ON TRACK":readiness.state==="behind"?"BEHIND":"AT RISK"}</span>}
                   {isRoutine&&<span style={{fontSize:9,fontWeight:800,letterSpacing:"0.04em",color,background:color+"14",border:`1px solid ${color}44`,borderRadius:5,padding:"1px 6px",flexShrink:0}}>WEEKLY</span>}
-                  {ev.movedByStudlin&&<span onClick={(e)=>{e.stopPropagation();setEvents(undoTier0Move(ev.id));}} title={"Studlin moved this from "+fmtMovedFrom(ev.movedFrom)+". Click to undo."} style={{fontSize:10,flexShrink:0,cursor:"pointer"}}>↻</span>}
+                  {ev.movedByStudlin&&<span onClick={(e)=>{e.stopPropagation();setEvents(undoTier0Move(ev.id).events);}} title={"Studlin moved this from "+fmtMovedFrom(ev.movedFrom)+". Click to undo."} style={{fontSize:10,flexShrink:0,cursor:"pointer"}}>↻</span>}
                   <span style={{fontSize:12.5,fontWeight:600,color:titleColor,lineHeight:1.35,textDecoration:isDone?"line-through":"none",minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",display:"block"}} title={ev.title}>{ev.title}</span>
                 </div>
                 <div style={{fontSize:11,color:subColor,marginTop:2,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
@@ -9407,6 +9730,22 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
     setWeekBalancePlan(plan);
     setWeekBalanceOpen(true);
   };
+  // Proactive version of the button above — checked once per Calendar
+  // visit (not on every render/keystroke) rather than a real daily gate,
+  // since this component only exists while the tab is open; the 3-day
+  // dismiss cooldown (see dismissWeekBalanceNudge) keeps it from re-firing
+  // on every single visit regardless. Reuses computeWeekBalancePlan itself
+  // rather than a separate threshold check, so the nudge and the actual
+  // "Balance my week" modal can never disagree about whether there's
+  // anything to balance.
+  const [weekBalanceNudge,setWeekBalanceNudge]=useState(false);
+  useEffect(()=>{
+    if(!shouldShowWeekBalanceNudge())return;
+    const plan=computeWeekBalancePlan(lsGet("events",[]),routines,getSchedulePreferences(),dayKey());
+    if(plan.moves.length>0)setWeekBalanceNudge(true);
+  },[]);
+  const declineWeekBalanceNudge=()=>{dismissWeekBalanceNudge();setWeekBalanceNudge(false);};
+  const acceptWeekBalanceNudge=()=>{setWeekBalanceNudge(false);openWeekBalance();};
   const confirmWeekBalance=()=>{
     if(!weekBalancePlan||weekBalancePlan.moves.length===0){setWeekBalanceOpen(false);return;}
     const all=lsGet("events",[]);
@@ -10198,7 +10537,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
         ))}
       </div>
       {calView==="monthly"&&(<CollapsibleAgendaLayout isAgendaCollapsed={isAgendaCollapsed} setIsAgendaCollapsed={setIsAgendaCollapsed}
-        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,onSkipOneOccurrence:skipOneOccurrence,markDone,uncrossDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask,setEvents}}>
+        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,onSkipOneOccurrence:skipOneOccurrence,markDone,uncrossDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask,setEvents,allEvents:events}}>
         <Card style={{padding:16}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,padding:"4px 6px"}}>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
@@ -10252,7 +10591,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
         </Card>
       </CollapsibleAgendaLayout>)}
       {calView==="weekly"&&(<CollapsibleAgendaLayout isAgendaCollapsed={isAgendaCollapsed} setIsAgendaCollapsed={setIsAgendaCollapsed}
-        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,onSkipOneOccurrence:skipOneOccurrence,markDone,uncrossDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask,setEvents}}>
+        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,onSkipOneOccurrence:skipOneOccurrence,markDone,uncrossDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask,setEvents,allEvents:events}}>
         <WeeklyPlanner events={events} setEvents={setEvents} moveEvent={moveEvent} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openNew={openNew} openEdit={openEdit}
           routines={routines} editRoutineMode={editRoutineMode} hoveredRoutineId={hoveredRoutineId} setHoveredRoutineId={setHoveredRoutineId}
           onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
@@ -10604,7 +10943,12 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:T.muted}}>
             <span>↻ Studlin moved this from {fmtMovedFrom(editEv.movedFrom)}.</span>
             <button type="button" onClick={()=>{
-              setEvents(undoTier0Move(editEv.id));
+              const result=undoTier0Move(editEv.id);
+              setEvents(result.events);
+              if(result.blocked){
+                setPlacementToast("Can't undo — something else is already using that time.");
+                setTimeout(()=>setPlacementToast(""),3200);
+              }
               closeEdit();
             }} style={{background:"none",border:"none",color:T.lime,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Undo</button>
           </div>
@@ -10759,6 +11103,15 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
       </Modal>
       {weekBalanceToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {weekBalanceToast}</div>
+      )}
+      {weekBalanceNudge&&(
+        <div style={{position:"fixed",bottom:20,left:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+          <div style={{fontSize:13,color:T.white,marginBottom:10,lineHeight:1.5}}>Your week's a bit lopsided — some days are carrying a lot more than others. Want Studlin to spread it out?</div>
+          <div style={{display:"flex",gap:8}}>
+            <Btn onClick={acceptWeekBalanceNudge} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Review</Btn>
+            <Btn variant="ghost" onClick={declineWeekBalanceNudge} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Not now</Btn>
+          </div>
+        </div>
       )}
       <RoutineWizardModal open={routineWizardOpen&&!subjOnboardOpen} initialStatus={getProfile().status} existingRoutines={routines} onFinish={finishRoutineWizard} onSkip={skipRoutineWizard} />
       <RoutineControlCenterModal open={routineCenterOpen} onClose={()=>setRoutineCenterOpen(false)} routines={routines} fmtTime={fmtTime}
@@ -11600,7 +11953,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const [prepScheduleMode,setPrepScheduleMode]=useState(()=>getPrepScheduleMode());
   const [canvasTipOpen,setCanvasTipOpen]=useState(false);
   const [canvasSeeding,setCanvasSeeding]=useState(false);
-  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,sr:true,auto:true,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true},...lsGet("settings",{})}));
+  const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,sr:true,auto:true,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false},...lsGet("settings",{})}));
   const tog=k=>setToggles(t=>{const n={...t,[k]:!t[k]};lsSet("settings",n);return n;});
   const [sysPushStatus,setSysPushStatus]=useState(()=>{
     if(typeof Notification==="undefined")return "unsupported";
@@ -12247,6 +12600,15 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Row label="Share Weekly Wrapped" sub="Allow sharing your stats card on social." k="share" />
               <Row label="Show Online Status" sub="When off, your presence dot is hidden from friends and you'll appear offline in the Studlin Network." k="onlineStatus" />
               <Row label="Incognito Mode" sub="Completely masks your live study status. You'll appear offline everywhere and won't receive Join Lock-In requests." k="incognito" />
+              <Row label="Share my free/busy time" sub="Lets accepted friends' 'Find Shared Study Window' searches see your busy times too — never event titles or subjects, and only current friends. Off by default." k="shareAvailability" right={
+                <div onClick={()=>{
+                  const next=!toggles.shareAvailability;
+                  tog("shareAvailability");
+                  if(next)publishBusyWindows();else unpublishBusyWindows();
+                }} style={{width:38,height:20,borderRadius:10,background:toggles.shareAvailability?T.lime:T.card2,border:`1px solid ${toggles.shareAvailability?T.lime:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
+                  <div style={{width:14,height:14,borderRadius:"50%",background:toggles.shareAvailability?T.bg:"#fff",position:"absolute",top:2,left:toggles.shareAvailability?21:2,transition:"left 0.2s"}} />
+                </div>
+              } />
             </Card>
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Data &amp; AI</div>
@@ -13635,6 +13997,16 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
   // confirmReview runs.
   const [reviewData,setReviewData]=useState(null);
   const [studySessionOffer,setStudySessionOffer]=useState(null);
+  // Practice quiz — quizGenLoading covers the AI call; quizData holds
+  // {subject,questions,linkedExamId,linkedExamTitle} once generated (null
+  // otherwise, and null also closes the modal); quizAnswers is one
+  // selected choice index per question (null = unanswered yet);
+  // quizResult holds {score,total} only after Submit, so the same modal
+  // renders the question set before submission and the score after.
+  const [quizGenLoading,setQuizGenLoading]=useState(false);
+  const [quizData,setQuizData]=useState(null);
+  const [quizAnswers,setQuizAnswers]=useState([]);
+  const [quizResult,setQuizResult]=useState(null);
   // A 50-90 minute session lives only in React state until stopRecording
   // saves it — a crashed tab loses everything with nothing to recover.
   // lastCheckpointRef throttles a lightweight save to localStorage
@@ -13780,6 +14152,43 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
     setStudySessionOffer(null);
   };
 
+  const startQuiz=async(text,forSubject)=>{
+    if(!text)return;
+    if(!canGenQuiz()){setPricingOpen(true);return;}
+    setQuizGenLoading(true);
+    const questions=await generateQuizFromText(text,forSubject,8);
+    setQuizGenLoading(false);
+    if(questions.length===0)return; // silent no-op on failure, same as the other two cards' no built-in error toast
+    recordQuizGen();
+    // Same subject-match, 14-day-horizon lookup confirmReview already uses
+    // to offer scheduling a study session — reused here so a quiz score
+    // can attach itself to the right upcoming exam without asking the
+    // student to pick one by hand.
+    const today=dayKey();
+    const horizon=dayKey(new Date(Date.now()+14*86400000));
+    const linkedExam=forSubject?lsGet("events",[]).filter(ev=>ev.kind==="exam"&&ev.subject===forSubject&&ev.date>=today&&ev.date<=horizon).sort((a,b)=>a.date<b.date?-1:1)[0]:null;
+    setQuizData({subject:forSubject,questions,linkedExamId:linkedExam?linkedExam.id:null,linkedExamTitle:linkedExam?linkedExam.title:null});
+    setQuizAnswers(Array(questions.length).fill(null));
+    setQuizResult(null);
+  };
+  const pickQuizAnswer=(qi,choiceIdx)=>{
+    setQuizAnswers(a=>a.map((v,i)=>i===qi?choiceIdx:v));
+  };
+  const submitQuiz=()=>{
+    if(!quizData)return;
+    const total=quizData.questions.length;
+    const score=quizData.questions.reduce((s,q,i)=>s+(quizAnswers[i]===q.answerIndex?1:0),0);
+    setQuizResult({score,total});
+    if(quizData.linkedExamId){
+      const events=lsGet("events",[]);
+      const next=events.map(e=>e.id===quizData.linkedExamId
+        ?{...e,quizScores:[...(e.quizScores||[]),{score,total,at:Date.now()}]}
+        :e);
+      lsSet("events",next);
+    }
+  };
+  const closeQuiz=()=>{setQuizData(null);setQuizAnswers([]);setQuizResult(null);};
+
   const restoreCheckpoint=()=>{
     if(!recoveryOffer)return;
     const lec={id:Date.now().toString(),title:(recoveryOffer.subject?recoveryOffer.subject+": ":"")+"Recovered lecture",transcript:recoveryOffer.transcript,created:recoveryOffer.startedAt||Date.now(),subject:recoveryOffer.subject||""};
@@ -13892,7 +14301,7 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14}}>
         {[
           {title:"Flashcards",desc:"Turn key concepts into a spaced-rep deck",icon:Icon.layers,action:()=>curTx&&processTranscript(curTx,curSubject,"flashcards"),badge:null,color:T.teal},
-          {title:"Practice quiz",desc:"Generate MCQs and short-answer questions",icon:Icon.zap,action:()=>setPricingOpen(true),badge:"PRO",color:T.purple},
+          {title:"Practice quiz",desc:"Generate a multiple-choice quiz from this lecture",icon:Icon.zap,action:()=>curTx&&startQuiz(curTx,curSubject),badge:null,color:T.purple},
           {title:"Summary",desc:"Get a concise outline of the full lecture",icon:Icon.file,action:()=>curTx&&processTranscript(curTx,curSubject,"summary"),badge:null,color:T.amber},
         ].map((it,i)=>(
           <div key={i} onClick={()=>it.action()} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:18,padding:20,cursor:curTx||it.badge?"pointer":"default",position:"relative",opacity:(!curTx&&!it.badge)?0.5:1}}>
@@ -13918,6 +14327,12 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.card,border:`1px solid ${T.border}`,color:T.white,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:10}}>
           <span style={{width:14,height:14,borderRadius:"50%",border:`2px solid ${T.border}`,borderTopColor:T.lime,display:"inline-block",animation:"studlinSpin 0.7s linear infinite"}}/>
           {processingLabel}
+        </div>
+      )}
+      {quizGenLoading&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.card,border:`1px solid ${T.border}`,color:T.white,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:10}}>
+          <span style={{width:14,height:14,borderRadius:"50%",border:`2px solid ${T.border}`,borderTopColor:T.lime,display:"inline-block",animation:"studlinSpin 0.7s linear infinite"}}/>
+          Building your quiz…
         </div>
       )}
 
@@ -13968,6 +14383,41 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
           </div>
         </div>
       )}
+      <Modal open={!!quizData} onClose={closeQuiz} title={quizResult?"Quiz results":"Practice quiz"} sub={quizData?.subject||""} width={560}
+        footer={quizData&&!quizResult
+          ? <Btn onClick={submitQuiz} disabled={quizAnswers.some(a=>a===null)} style={{width:"100%",justifyContent:"center"}}>Submit ({quizAnswers.filter(a=>a!==null).length}/{quizData.questions.length} answered)</Btn>
+          : <Btn onClick={closeQuiz} style={{width:"100%",justifyContent:"center"}}>Done</Btn>}>
+        {quizData&&!quizResult&&(
+          <div style={{display:"flex",flexDirection:"column",gap:18}}>
+            {quizData.questions.map((q,qi)=>(
+              <div key={qi}>
+                <div style={{fontSize:13,fontWeight:600,color:T.white,marginBottom:8}}>{qi+1}. {q.q}</div>
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  {q.choices.map((c,ci)=>{
+                    const selected=quizAnswers[qi]===ci;
+                    return (
+                      <button key={ci} type="button" onClick={()=>pickQuizAnswer(qi,ci)}
+                        style={{textAlign:"left",padding:"9px 12px",borderRadius:8,border:`1px solid ${selected?T.lime:T.border}`,background:selected?T.lime+"14":T.card2,color:selected?T.lime:T.text,cursor:"pointer",fontFamily:T.font,fontSize:12.5}}>
+                        {c}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {quizResult&&(
+          <div style={{textAlign:"center",padding:"12px 0"}}>
+            <div style={{fontSize:32,fontWeight:800,color:T.lime,marginBottom:6}}>{quizResult.score}/{quizResult.total}</div>
+            <div style={{fontSize:12.5,color:T.muted,lineHeight:1.6}}>
+              {quizData?.linkedExamTitle
+                ? "Saved to your readiness check-in for \""+quizData.linkedExamTitle+"\"."
+                : "No upcoming "+(quizData?.subject||"matching")+" exam found in the next 2 weeks, so this score wasn't attached to anything."}
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
@@ -14561,6 +15011,10 @@ function App() {
   // the all-time reliability aggregate, surfaced once a day via the same
   // gate. {strugglingBucket,suggestedBucket,...} or null.
   const [strugglingBucketOffer,setStrugglingBucketOffer]=useState(null);
+  // Same idiom again, this time for detectPeakHourInsight — an all-time,
+  // well-sampled gap between the declared peak bucket and a better-
+  // performing one, not a recent miss streak. {currentBucket,suggestedBucket,...} or null.
+  const [peakInsightOffer,setPeakInsightOffer]=useState(null);
   // Same "dismissible banner, not a blocking modal" idiom as rolloverPending
   // above, for pending tasks whose deadline has already passed — these used
   // to get wiped from storage the moment the daily gate ran, with no toast,
@@ -14608,19 +15062,32 @@ function App() {
     lsSet("events",events.map(e=>ids.has(e.id)?{...e,prepPending:false}:e));
     setPrepPromptBatch([]);
   };
-  // Adaptive confidence check-in — one tap after a spaced exam-prep session
-  // completes (see onComplete below). examCheckIn holds the just-finished
-  // session while the student answers; examPrepSuggestion holds whatever
-  // evaluateExamPrepAdjustment proposes off the back of that answer, if
-  // anything. Both are plain suggestions — nothing here ever changes the
-  // calendar without a separate accept.
+  // Adaptive confidence check-in — one tap after any flexible study block
+  // (not just a spaced exam-prep session anymore) completes via the
+  // Lock-In Timer (see onComplete below). examCheckIn holds the
+  // just-finished task while the student answers; examPrepSuggestion holds
+  // whatever evaluateExamPrepAdjustment proposes off the back of that
+  // answer, if anything (exam-prep sessions only). Both are plain
+  // suggestions — nothing here ever changes the calendar without a
+  // separate accept. Name kept as-is (examCheckIn/examPrepSuggestion) even
+  // though it's broader now, since it's threaded through several places
+  // below and every one of them is still exam-prep-shaped except the one
+  // new branch called out inline.
   const [examCheckIn,setExamCheckIn]=useState(null);
   const [examPrepSuggestion,setExamPrepSuggestion]=useState(null);
   const submitExamCheckIn=(rating)=>{
     if(!examCheckIn)return;
+    // Always upgrades this session's own completionLog row with the
+    // rating (see applyCheckInRating) so the scheduling-reliability signal
+    // reflects how it actually went, not just that it got marked done —
+    // this part applies to every flexible study block, exam-linked or not.
+    applyCheckInRating(examCheckIn.id,rating);
     const events=lsGet("events",[]);
-    const examEvent=events.find(e=>e.id===examCheckIn.dueEventId);
+    const examEvent=examCheckIn.dueEventId?events.find(e=>e.id===examCheckIn.dueEventId):null;
     setExamCheckIn(null);
+    // Everything below here is exam-prep-specific pacing (shorten/drop/
+    // pull-closer remaining sessions) — a plain (non-exam-linked) study
+    // block has nothing to pace, so it stops here.
     if(!examEvent)return;
     const updatedExam={...examEvent,confidenceLog:[...(examEvent.confidenceLog||[]),rating]};
     const nextEvents=events.map(e=>e.id===examEvent.id?updatedExam:e);
@@ -14703,6 +15170,19 @@ function App() {
   const declineStrugglingBucketOffer=()=>{
     if(strugglingBucketOffer)dismissStrugglingBucket(strugglingBucketOffer.strugglingBucket);
     setStrugglingBucketOffer(null);
+  };
+  // Same explicit-action-only contract as acceptStrugglingBucketOffer above.
+  const acceptPeakHourInsight=()=>{
+    if(!peakInsightOffer)return;
+    const prefs=getSchedulePreferences();
+    const next=(prefs.peakHourBuckets||[]).filter(b=>b!==peakInsightOffer.currentBucket);
+    if(!next.includes(peakInsightOffer.suggestedBucket))next.push(peakInsightOffer.suggestedBucket);
+    setSchedulePreferences({...prefs,peakHourBuckets:next});
+    setPeakInsightOffer(null);
+  };
+  const declinePeakHourInsight=()=>{
+    if(peakInsightOffer)dismissPeakHourInsight(peakInsightOffer.suggestedBucket);
+    setPeakInsightOffer(null);
   };
   const [scheduleSettingsOpen,setScheduleSettingsOpen]=useState(false);
   const [navCollapsed,setNavCollapsed]=useState(()=>lsGet("navCollapsed",false));
@@ -15092,6 +15572,12 @@ function App() {
     // the student's own declared preference, not whether Tier 0 itself is on.
     const strugglingBucket=detectStrugglingBucket(getSchedulePreferences());
     if(strugglingBucket)setStrugglingBucketOffer(strugglingBucket);
+    // Same once-a-day gate, for the complementary all-time signal. Both
+    // banners share the same fixed bottom-left corner, so only surface
+    // this one on a day the struggling-bucket nudge isn't already using
+    // it — one nudge at a time, not a stack fighting for the same spot.
+    const peakInsight=strugglingBucket?null:detectPeakHourInsight(getSchedulePreferences());
+    if(peakInsight)setPeakInsightOffer(peakInsight);
     // Tier 0 — the trigger is silent (no click needed to move an eligible
     // missed task), but the result never is: every move gets recorded into
     // movedBatch so the banner below and the per-task badge can always show
@@ -15532,13 +16018,18 @@ function App() {
         // same real minutes can't be farmed for XP twice.
         const alreadyClaimed=!!(lsGet("events",[]).find(ev=>ev.id===timerTask.id)||{}).timeSpent;
         if(!alreadyClaimed)logSession(mins,"Task: "+timerTask.title);
-        if(timerTask.time)logCompletionOutcome("done",timerTask.time,difficultyTierOf(timerTask));
+        if(timerTask.time)logCompletionOutcome("done",timerTask.time,difficultyTierOf(timerTask),timerTask.id);
         const next=lsGet("events",[]).map(ev=>ev.id===timerTask.id?{...ev,status:"done",timeSpent:mins,completedAt:Date.now()}:ev);
         lsSet("events",next);
-        // A spaced exam-prep session (not an Attack Block probe, which has
-        // its own separate check-in) gets one extra one-tap prompt once the
-        // XP screen above is dismissed — see examCheckIn below.
-        if(timerTask.isExamPrepSession&&timerTask.dueEventId)setExamCheckIn(timerTask);
+        // Any flexible study block finished through the Lock-In Timer gets
+        // one extra one-tap prompt once the XP screen above is dismissed —
+        // not just exam-prep sessions anymore (an Attack Block probe still
+        // has its own separate check-in and isn't kind:"study block" so
+        // this doesn't double up with it). The deliberate, already-modal
+        // Timer flow is where this fits without adding friction; a plain
+        // checkbox-click completion (markDone) deliberately does NOT get
+        // this prompt — see submitExamCheckIn below.
+        if(timerTask.kind==="study block")setExamCheckIn(timerTask);
         // Modal stays open to show the XP/leaderboard reward summary — it
         // closes itself (setTimerTask(null) via onClose) once dismissed.
       }} />}
@@ -15567,7 +16058,12 @@ function App() {
                 <span style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.title}</span>
                 <span style={{color:T.muted,flexShrink:0,fontFamily:T.mono,fontSize:11}}>→ {m.to.date===dayKey()?"Today":m.to.date} {fmtRolloverClock(m.to.time)}</span>
                 <button onClick={()=>{
-                  undoTier0Move(m.id);
+                  const result=undoTier0Move(m.id);
+                  if(result.blocked){
+                    setRolloverToast("Can't undo \""+m.title+"\" — something else is already using that time.");
+                    setTimeout(()=>setRolloverToast(""),3200);
+                    return;
+                  }
                   markTier0BannerSeen([m.id]);
                   setTier0Batch(b=>b.filter(x=>x.id!==m.id));
                 }} style={{background:"none",border:"none",color:T.lime,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",flexShrink:0,padding:0}}>Undo</button>
@@ -15658,6 +16154,17 @@ function App() {
           <div style={{display:"flex",gap:8}}>
             <Btn onClick={acceptStrugglingBucketOffer} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Switch to {PEAK_BUCKET_LABELS[strugglingBucketOffer.suggestedBucket]}</Btn>
             <Btn variant="ghost" onClick={declineStrugglingBucketOffer} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Not now</Btn>
+          </div>
+        </div>
+      )}
+      {peakInsightOffer&&(
+        <div style={{position:"fixed",bottom:20,left:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+          <div style={{fontSize:13,color:T.white,marginBottom:10,lineHeight:1.5}}>
+            Looks like you actually finish more <strong style={{color:T.lime}}>{PEAK_BUCKET_LABELS[peakInsightOffer.suggestedBucket].toLowerCase()}</strong> tasks ({Math.round(peakInsightOffer.suggestedPct*100)}%) than <strong style={{color:T.amber}}>{PEAK_BUCKET_LABELS[peakInsightOffer.currentBucket].toLowerCase()}</strong> ones ({Math.round(peakInsightOffer.currentPct*100)}%) — update your peak hours?
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <Btn onClick={acceptPeakHourInsight} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Switch to {PEAK_BUCKET_LABELS[peakInsightOffer.suggestedBucket]}</Btn>
+            <Btn variant="ghost" onClick={declinePeakHourInsight} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Not now</Btn>
           </div>
         </div>
       )}
