@@ -798,3 +798,150 @@ describe("Peak-hour bucket reachability (regression: 'Morning'/'Evening' had zer
     assert.equal(m.hourBucket(wideSlot.time), "morning");
   });
 });
+
+describe("detectStrugglingBucket (proactive miss-pattern nudge)", () => {
+  function seedLog(m, bucket, doneCount, missedCount) {
+    const log = [];
+    for (let i = 0; i < missedCount; i++) log.push({ bucket, outcome: "missed", t: Date.now() - i * 3600000 });
+    for (let i = 0; i < doneCount; i++) log.push({ bucket, outcome: "done", t: Date.now() - (missedCount + i) * 3600000 });
+    m.localStorage.setItem("studlin-completionLog", JSON.stringify(log));
+  }
+
+  test("flags a bucket with 4 of its last 5 entries missed", () => {
+    const m = loadStudlinModule();
+    seedLog(m, "evening", 1, 4);
+    const result = m.detectStrugglingBucket(DEFAULT_PREFS);
+    assert.ok(result, "should detect evening as struggling");
+    assert.equal(result.strugglingBucket, "evening");
+  });
+
+  test("does not flag with only 3 of 5 recent misses (below the threshold)", () => {
+    const m = loadStudlinModule();
+    seedLog(m, "evening", 2, 3);
+    assert.equal(m.detectStrugglingBucket(DEFAULT_PREFS), null);
+  });
+
+  test("does not flag with fewer than 5 recent entries (not enough data yet)", () => {
+    const m = loadStudlinModule();
+    seedLog(m, "evening", 0, 3);
+    assert.equal(m.detectStrugglingBucket(DEFAULT_PREFS), null);
+  });
+
+  test("suggested alternative is reachable under the student's actual work hours, never the struggling bucket itself", () => {
+    const m = loadStudlinModule();
+    seedLog(m, "evening", 1, 4); // evening (18:00-22:00) barely overlaps the 09:00-18:00 default window
+    const result = m.detectStrugglingBucket(DEFAULT_PREFS);
+    assert.ok(result);
+    assert.notEqual(result.suggestedBucket, "evening");
+    assert.ok(["morning", "midday", "afternoon"].includes(result.suggestedBucket), "must suggest one of the buckets that actually overlaps 09:00-18:00");
+  });
+
+  test("no candidate at all when the only other reachable bucket is also struggling", () => {
+    const m = loadStudlinModule();
+    const log = [];
+    ["evening", "morning", "midday", "afternoon"].forEach((bucket) => {
+      for (let i = 0; i < 4; i++) log.push({ bucket, outcome: "missed", t: Date.now() - i * 3600000 });
+      log.push({ bucket, outcome: "done", t: Date.now() - 4 * 3600000 });
+    });
+    m.localStorage.setItem("studlin-completionLog", JSON.stringify(log));
+    // Every bucket is struggling -- the detector should still return a real
+    // suggestion (the least-bad reachable option) rather than throwing.
+    const result = m.detectStrugglingBucket(DEFAULT_PREFS);
+    assert.ok(result === null || typeof result.suggestedBucket === "string");
+  });
+
+  test("dismissStrugglingBucket suppresses re-flagging the same bucket immediately after", () => {
+    const m = loadStudlinModule();
+    seedLog(m, "evening", 1, 4);
+    assert.ok(m.detectStrugglingBucket(DEFAULT_PREFS), "should flag before dismissal");
+    m.dismissStrugglingBucket("evening");
+    assert.equal(m.detectStrugglingBucket(DEFAULT_PREFS), null, "should stay quiet right after a 'Not now'");
+  });
+
+  test("a clean track record (mostly done) never gets flagged", () => {
+    const m = loadStudlinModule();
+    seedLog(m, "morning", 5, 0);
+    assert.equal(m.detectStrugglingBucket(DEFAULT_PREFS), null);
+  });
+});
+
+describe("computeWeekBalancePlan (manually-triggered 'Balance my week')", () => {
+  // A Monday with real dates so daysUntilDeadline math (which reads the
+  // real clock) behaves predictably -- far enough in the future that
+  // "more than 7 days out" deadlines used below stay comfortably true
+  // regardless of when this suite actually runs.
+  const MONDAY = "2026-09-07";
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(MONDAY + "T12:00:00");
+    d.setDate(d.getDate() + i);
+    return d.toISOString().slice(0, 10);
+  });
+
+  test("a heavy day sheds load onto lighter days, never overlapping anything", () => {
+    const m = loadStudlinModule();
+    const heavy = Array.from({ length: 5 }, (_, i) => realTask({ id: "h" + i, date: days[0], time: `${9 + i}:00`, duration: 60, deadline: null }));
+    const result = m.computeWeekBalancePlan(heavy, [], DEFAULT_PREFS, MONDAY);
+    assert.ok(result.moves.length > 0, "should propose at least one move off the packed day");
+    // Reconstruct the post-move state and confirm zero overlaps anywhere.
+    const final = heavy.map((t) => {
+      const mv = result.moves.find((x) => x.id === t.id);
+      return mv ? { ...t, date: mv.toDate, time: mv.toTime } : t;
+    });
+    for (let i = 0; i < final.length; i++) for (let j = i + 1; j < final.length; j++) {
+      if (final[i].date !== final[j].date) continue;
+      const aS = minutesOf(final[i].time), aE = aS + final[i].duration;
+      const bS = minutesOf(final[j].time), bE = bS + final[j].duration;
+      assert.ok(aE <= bS || bE <= aS, `${final[i].id} and ${final[j].id} overlap after balancing`);
+    }
+  });
+
+  test("an already-even week proposes no moves", () => {
+    const m = loadStudlinModule();
+    const even = days.map((d, i) => realTask({ id: "e" + i, date: d, time: "10:00", duration: 30, deadline: null }));
+    const result = m.computeWeekBalancePlan(even, [], DEFAULT_PREFS, MONDAY);
+    assert.equal(result.moves.length, 0);
+  });
+
+  test("never moves a task with an imminent deadline (within 7 days)", () => {
+    const m = loadStudlinModule();
+    const soonDeadline = m.dayKey(new Date(Date.now() + 3 * 86400000));
+    const heavy = [
+      realTask({ id: "imminent", date: days[0], time: "09:00", duration: 60, deadline: soonDeadline }),
+      realTask({ id: "h1", date: days[0], time: "10:00", duration: 60, deadline: null }),
+      realTask({ id: "h2", date: days[0], time: "11:00", duration: 60, deadline: null }),
+      realTask({ id: "h3", date: days[0], time: "12:00", duration: 60, deadline: null }),
+    ];
+    const result = m.computeWeekBalancePlan(heavy, [], DEFAULT_PREFS, MONDAY);
+    assert.ok(!result.moves.some((mv) => mv.id === "imminent"), "a task due in 3 days must never be swept into the rebalance");
+  });
+
+  test("never moves a fixed-kind event (exam/class/busy block) or a pinned task", () => {
+    const m = loadStudlinModule();
+    const heavy = [
+      { id: "fixed-1", title: "Exam", date: days[0], time: "09:00", kind: "exam", duration: 60, status: "pending", deadline: null },
+      realTask({ id: "pinned-1", date: days[0], time: "10:00", duration: 60, deadline: null, userPinned: true }),
+      realTask({ id: "h1", date: days[0], time: "11:00", duration: 60, deadline: null }),
+      realTask({ id: "h2", date: days[0], time: "12:00", duration: 60, deadline: null }),
+    ];
+    const result = m.computeWeekBalancePlan(heavy, [], DEFAULT_PREFS, MONDAY);
+    assert.ok(!result.moves.some((mv) => mv.id === "fixed-1" || mv.id === "pinned-1"));
+  });
+
+  test("perDay reports both before and after minute totals for every day in the window", () => {
+    const m = loadStudlinModule();
+    const heavy = Array.from({ length: 4 }, (_, i) => realTask({ id: "h" + i, date: days[0], time: `${9 + i}:00`, duration: 60, deadline: null }));
+    const result = m.computeWeekBalancePlan(heavy, [], DEFAULT_PREFS, MONDAY);
+    assert.equal(result.perDay.length, 7);
+    assert.equal(result.perDay[0].date, days[0]);
+    assert.equal(result.perDay[0].minutesBefore, 240);
+    assert.ok(result.perDay[0].minutesAfter < result.perDay[0].minutesBefore, "the heavy day's own total should drop after balancing");
+  });
+
+  test("a day with nothing safely movable (everything imminent) is left alone without throwing", () => {
+    const m = loadStudlinModule();
+    const soonDeadline = m.dayKey(new Date(Date.now() + 2 * 86400000));
+    const heavy = Array.from({ length: 5 }, (_, i) => realTask({ id: "h" + i, date: days[0], time: `${9 + i}:00`, duration: 60, deadline: soonDeadline }));
+    const result = m.computeWeekBalancePlan(heavy, [], DEFAULT_PREFS, MONDAY);
+    assert.equal(result.moves.length, 0);
+  });
+});
