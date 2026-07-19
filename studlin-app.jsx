@@ -3763,10 +3763,6 @@ function Flashcards() {
   const [aiLoading,setAiLoading]=useState(false);
   const [fileTexts,setFileTexts]=useState([]); // [{name,text}] — one entry per uploaded file, so more than one can contribute to the same deck
   const fileRef=useRef(null);
-  const [ytUrl,setYtUrl]=useState("");
-  const [ytInfo,setYtInfo]=useState("");
-  const [ytTopic,setYtTopic]=useState("");
-  const [ytFetching,setYtFetching]=useState(false);
   const [cardCount,setCardCount]=useState(10);
   const [recOn,setRecOn]=useState(false);
   const [recSecs,setRecSecs]=useState(0);
@@ -3859,20 +3855,6 @@ function Flashcards() {
         cards=await aiGenCards(combined,"document/notes",cardCount);
       }
     }
-    else if(dSource==="youtube"){
-      const topic=(ytTopic||ytInfo||"").trim();
-      if(!ytUrl.trim()&&!topic){cards=[{q:"No video provided",a:"Paste a YouTube link or type a topic"}];}
-      else{
-        // The count phrase lives in aiGenCards' own prompt wrapper (which
-        // also handles "auto") — this context string just describes the
-        // material, not how many cards, so the two don't end up saying
-        // conflicting things when cardCount is "auto".
-        const ctx=topic
-          ?"YouTube video: \""+topic+"\". Covers key concepts, definitions, formulas, and important facts a student needs to know from this video."
-          :"YouTube video at: "+ytUrl+". Covers likely key concepts from this video.";
-        cards=await aiGenCards(ctx,"YouTube video",cardCount);
-      }
-    }
     else if(dSource==="record"){
       if(!recText){cards=[{q:"No audio recorded",a:"Record a lecture first"}];}
       else{cards=await aiGenCards("Lecture transcription:\n\n"+recText,"lecture transcription",cardCount);}
@@ -3880,7 +3862,7 @@ function Flashcards() {
     if(cards.length===0){cards=[{q:"No cards were generated",a:"Try again with more content"}];}
     const nd={id:String(Date.now()),name:name,count:cards.length,done:0,color:T.lime,cards:cards,examEventId:null};
     const next=[nd,...deckList];setDeckList(next);lsSet("decks",next);
-    setNewOpen(false);setDName("");setDraft([]);setFileTexts([]);setYtUrl("");setYtInfo("");setYtTopic("");setYtFetching(false);stopRec();setRecText("");setDSource("manual");setCardCount(10);
+    setNewOpen(false);setDName("");setDraft([]);setFileTexts([]);stopRec();setRecText("");setDSource("manual");setCardCount(10);
     setStudyDeck(nd);setTab("study");setIdx(0);setFlipped(false);
   };
 
@@ -4116,12 +4098,12 @@ function Flashcards() {
         </div>
         <BtnSm variant="subtle" onClick={addEditCard} style={{marginTop:10}}>{Icon.plus} Add card</BtnSm>
       </Modal>
-      <Modal open={newOpen} onClose={()=>{setNewOpen(false);stopRec();}} title="Create a flashcard deck" sub="Build manually, from a file, YouTube video, or recorded lecture." width={580}
-        footer={<><Btn variant="subtle" onClick={()=>{setNewOpen(false);stopRec();}}>Cancel</Btn><Btn onClick={createDeck} disabled={aiLoading||ytFetching}>{aiLoading?"Generating cards...":ytFetching?"Detecting video...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.layers,"Create deck")}</Btn></>}>
+      <Modal open={newOpen} onClose={()=>{setNewOpen(false);stopRec();}} title="Create a flashcard deck" sub="Build manually, from a file, or recorded lecture." width={580}
+        footer={<><Btn variant="subtle" onClick={()=>{setNewOpen(false);stopRec();}}>Cancel</Btn><Btn onClick={createDeck} disabled={aiLoading}>{aiLoading?"Generating cards...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.layers,"Create deck")}</Btn></>}>
         <Field label="Deck name"><Input placeholder="e.g. Bio chapter 4 cards" value={dName} onChange={e=>setDName(e.target.value)} autoFocus /></Field>
         <Field label="Source">
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            {[{id:"manual",label:"Build manually",desc:"Type Q&A cards yourself",icon:Icon.pen},{id:"file",label:"From file",desc:"AI generates cards from your PDF or notes",icon:Icon.file},{id:"youtube",label:"From YouTube",desc:"AI generates cards from a video topic",icon:Icon.link},{id:"record",label:"From lecture",desc:"AI generates cards from recorded audio",icon:MicIcon}].map(o=>(
+            {[{id:"manual",label:"Build manually",desc:"Type Q&A cards yourself",icon:Icon.pen},{id:"file",label:"From file",desc:"AI generates cards from your PDF or notes",icon:Icon.file},{id:"record",label:"From lecture",desc:"AI generates cards from recorded audio",icon:MicIcon}].map(o=>(
               <button key={o.id} type="button" onClick={()=>setDSource(o.id)} style={{padding:12,borderRadius:10,border:"1px solid "+(dSource===o.id?T.lime+"66":T.border),background:dSource===o.id?T.lime+"10":T.card2,color:T.text,cursor:"pointer",textAlign:"left",fontFamily:T.font}}>
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}><span style={{color:dSource===o.id?T.lime:T.muted,display:"flex"}}>{o.icon}</span><span style={{fontSize:12.5,fontWeight:600}}>{o.label}</span></div>
                 <div style={{fontSize:11,color:T.muted}}>{o.desc}</div>
@@ -4165,17 +4147,6 @@ function Flashcards() {
               </div>
             )}
           </Field>
-        )}
-        {dSource==="youtube"&&(
-          <>
-          <Field label="YouTube link" hint="Paste a link — Studlin detects the title automatically.">
-            <Input placeholder="https://youtube.com/watch?v=..." value={ytUrl} onChange={ev=>{setYtUrl(ev.target.value);var v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtFetching(true);setYtInfo("");authFetch("/api/search-videos",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(function(r){return r.json();}).then(function(d){if(d.title){var t=d.title+(d.author?" by "+d.author:"");setYtInfo(t);setYtTopic(t);if(!dName)setDName(d.title+" cards");}setYtFetching(false);}).catch(function(){setYtFetching(false);});}}} />
-            {ytFetching&&<div style={{fontSize:11,color:T.lime,marginTop:6}}>Detecting video...</div>}
-          </Field>
-          <Field label="Topic / subject" hint="Auto-filled from the video — edit or type manually if detection fails.">
-            <Input placeholder="e.g. AP Physics 1: Newton's Laws" value={ytTopic} onChange={e=>setYtTopic(e.target.value)} />
-          </Field>
-          </>
         )}
         {dSource==="record"&&(
           <Field label="Record lecture" hint="Speak or play audio — AI generates flashcards from what it hears.">
@@ -4280,9 +4251,6 @@ function Notes({setActive=()=>{}}){
   const [newTitle,setNewTitle]=useState("");
   const [newTag,setNewTag]=useState(()=>tagOptions[0]?.value||"Biology");
   const [customTag,setCustomTag]=useState("");
-  const [yt,setYt]=useState("");
-  const [ytInfo,setYtInfo]=useState("");
-  const [ytLoading,setYtLoading]=useState(false);
   const [aiLoading,setAiLoading]=useState(false);
   const [fileText,setFileText]=useState("");
   const fileRef=useRef(null);
@@ -4535,7 +4503,7 @@ function Notes({setActive=()=>{}}){
   };
 
   // Manual trigger for "Write" notes, which skip the automatic detection
-  // that file/record/youtube sources get for free alongside their existing
+  // that the file source gets for free alongside its existing
   // AI summarize call (see continueToCanvas) — this is its own AI call, so
   // it spends its own deadline-scan credit, same limit as the old dedicated
   // Syllabus source used.
@@ -4574,7 +4542,6 @@ function Notes({setActive=()=>{}}){
     {id:"write",label:"Write",desc:"Type directly on the canvas",icon:Icon.pen,cost:null},
     {id:"file",label:"Scan a file",desc:"PDF, slides, or photos of the board",icon:Icon.file,cost:noteScanBadge},
     {id:"record",label:"Record lecture",desc:"Live transcript, summary, flashcards & quiz",icon:MicIcon,cost:null},
-    {id:"youtube",label:"YouTube link",desc:"Transcribes and summarises a video",icon:Icon.link,cost:noteScanBadge},
   ];
 
   const handleFile=async(e)=>{
@@ -4618,7 +4585,7 @@ function Notes({setActive=()=>{}}){
   // system prompt risks truncating a list that long, and standard costs the
   // same 1 credit). Same "AI attempt, then deterministic fallback" shape
   // aiArrange uses for AI Schedule Mode — never dead-ends. Runs automatically
-  // as part of the note-scan sources (file/record/youtube already spend an
+  // as part of the file note-scan source (it already spends an
   // AI note-scan credit on the same content, so this rides along for free);
   // "Write" notes get it via the manual "Scan for dates" toolbar button.
   const extractSyllabusDeadlines=async(text)=>{
@@ -4687,23 +4654,11 @@ function Notes({setActive=()=>{}}){
         body="<p>"+fileText.trim().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/\n/g,"<br>")+"</p>";
         setUpgradeModal({feature:"AI note scans",detail:resetNote("AI note scans",NOTE_SCAN_LIMIT,"this file was saved as plain text, not AI-summarized")});
       }
-    }else if(src==="youtube"){
-      if(!title)title=ytInfo?"Notes: "+ytInfo:"Notes from video";
-      const topic=ytInfo||yt.trim();
-      if(!topic)body="<p>Paste a YouTube link.</p>";
-      else if(canScanNote()){
-        body=await aiSummarize("Create comprehensive study notes on a YouTube video titled: \""+topic+"\". Include headings, definitions, bullet points, summary.","YouTube study notes");
-        recordNoteScan();
-        await detectDates(body.replace(/<[^>]+>/g," "));
-      }else{
-        body="<p>Video: "+topic+"</p>";
-        setUpgradeModal({feature:"AI note scans",detail:resetNote("AI note scans",NOTE_SCAN_LIMIT,"the link was saved, but AI notes need Pro")});
-      }
     }
     const newNote={id:String(Date.now()),title,body,tag,date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now()};
     const next=[newNote,...notes];
     setNotes(next);lsSet("notes",next);
-    setNewOpen(false);setNewTitle("");setYt("");setYtInfo("");setSrc("write");setFileText("");setSearch("");setViaSyllabusScan(false);
+    setNewOpen(false);setNewTitle("");setSrc("write");setFileText("");setSearch("");setViaSyllabusScan(false);
     setSel(0);
     setPopover(null);
     if(syllabusItems!==null){
@@ -4855,7 +4810,7 @@ function Notes({setActive=()=>{}}){
 
   return (
     <div>
-      <PH title="Notes" sub="Write, scan, record, or import" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New note")}</Btn>} />
+      <PH title="Notes" sub="Write, scan, or record" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New note")}</Btn>} />
 
       {/* ── SEND NOTE MODAL ── */}
       <Modal open={sendNoteOpen} onClose={()=>{if(sendNoteStatus==="sending")return;setSendNoteOpen(false);setSendNoteTarget("");setSendNoteStatus("");setSendNoteError("");}} title="Send note to a friend" sub="Deliver this note directly to any email address." width={440}
@@ -4925,12 +4880,6 @@ function Notes({setActive=()=>{}}){
               <div style={{width:38,height:38,borderRadius:10,background:T.lime+"18",border:`1px solid ${T.lime}33`,display:"grid",placeItems:"center",color:T.lime,flexShrink:0}}>{MicIcon}</div>
               <div style={{fontSize:12.5,color:T.text,lineHeight:1.5}}>Recording happens on the next screen — it keeps going in the background while you see the live transcript. When you're done, get a summary, clean notes, flashcards, and a practice quiz in one tap.</div>
             </div>
-          </Field>
-        )}
-        {src==="youtube"&&(
-          <Field label="YouTube link" hint={ytInfo?"Found: "+ytInfo:"Paste any YouTube video link. Studlin will detect the topic and generate notes."}>
-            <Input placeholder="https://youtube.com/watch?v=..." value={yt} onChange={ev=>{setYt(ev.target.value);const v=ev.target.value.trim();if(v&&(v.includes("youtube.com")||v.includes("youtu.be"))){setYtLoading(true);authFetch("/api/search-videos",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:v})}).then(r=>r.json()).then(d=>{if(d.title){setYtInfo(d.title+(d.author?" by "+d.author:""));if(!newTitle)setNewTitle(d.title);}setYtLoading(false);}).catch(()=>setYtLoading(false));}}} />
-            {ytLoading&&<div style={{fontSize:11,color:T.lime,marginTop:4}}>Detecting video…</div>}
           </Field>
         )}
       </Modal>
@@ -13397,9 +13346,6 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
   })[0];
   const [recording,setRecording]=useState(false);
   const [transcript,setTranscript]=useState("");
-  const [ytUrl,setYtUrl]=useState("");
-  const [ytLoading,setYtLoading]=useState(false);
-  const [ytError,setYtError]=useState("");
   const [bars,setBars]=useState(()=>Array(32).fill(3));
   const [saved,setSaved]=useState(()=>lsGet("lectures",[]));
   const [selectedLec,setSelectedLec]=useState(null);
@@ -13585,33 +13531,6 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
   };
   const discardCheckpoint=()=>{lsSet("lecture-inprogress",null);setRecoveryOffer(null);};
 
-  // Pulls the video's actual public caption track server-side (see
-  // api/cal-proxy.js's YouTube branch — no video/audio download, just the
-  // transcript text) and runs it through the exact same processing
-  // pipeline as a recorded lecture.
-  const importYt=async()=>{
-    const url=ytUrl.trim();
-    if(!url||ytLoading)return;
-    if(getSubjects().length>0&&!subject){setYtError("Pick a class first.");return;}
-    setYtLoading(true);setYtError("");
-    try{
-      const res=await authFetch("/api/cal-proxy?url="+encodeURIComponent(url));
-      const data=await res.json();
-      if(!res.ok||!data.ok){setYtError(data.error||"Couldn't read that video.");setYtLoading(false);return;}
-      const lec={id:Date.now().toString(),title:launchTitleRef.current||((subject?subject+": ":"")+(data.title||"YouTube import")),transcript:data.transcript,created:Date.now(),subject,source:"youtube"};
-      launchTitleRef.current=null;
-      const list=[lec,...lsGet("lectures",[])].slice(0,20);
-      lsSet("lectures",list);
-      setSaved(list);
-      setSelectedLec(lec);
-      setYtUrl("");
-      setYtLoading(false);
-      processTranscript(lec.transcript,lec.subject,"full");
-    }catch(e){
-      setYtError("Couldn't read that video. Try again.");
-      setYtLoading(false);
-    }
-  };
   const curTx=selectedLec?selectedLec.transcript:transcript;
   const curSubject=selectedLec?selectedLec.subject:subject;
   // A subject is only actually required to start recording if there are
@@ -13658,18 +13577,12 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
         </div>
 
         <div style={{display:"flex",gap:8}}>
-          <div style={{flex:1,display:"flex",alignItems:"center",gap:10,background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"9px 12px"}}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={T.muted} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-1.96C18.88 4 12 4 12 4s-6.88 0-8.6.46A2.78 2.78 0 0 0 1.46 6.42 29 29 0 0 0 1 12a29 29 0 0 0 .46 5.58A2.78 2.78 0 0 0 3.4 19.54C5.12 20 12 20 12 20s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-1.96A29 29 0 0 0 23 12a29 29 0 0 0-.46-5.58z"/><polygon points="9.75 15.02 15.5 12 9.75 8.98 9.75 15.02" fill={T.muted} stroke="none"/></svg>
-            <input value={ytUrl} onChange={e=>{setYtUrl(e.target.value);if(ytError)setYtError("");}} onKeyDown={e=>{if(e.key==="Enter")importYt();}} placeholder="Paste a YouTube link" style={{flex:1,background:"none",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}}/>
-          </div>
-          <button onClick={importYt} disabled={!ytUrl.trim()||ytLoading} style={{padding:"9px 16px",background:(ytUrl.trim()&&!ytLoading)?T.lime:T.card2,color:(ytUrl.trim()&&!ytLoading)?T.ink:T.muted,border:`1px solid ${(ytUrl.trim()&&!ytLoading)?T.lime:T.border}`,borderRadius:10,fontSize:13,fontWeight:600,cursor:(!ytUrl.trim()||ytLoading)?"not-allowed":"pointer",fontFamily:T.font,transition:"all 0.18s"}}>{ytLoading?"Reading captions…":"Import"}</button>
-          <label style={{padding:"9px 16px",background:T.card2,color:T.text,border:`1px solid ${T.border}`,borderRadius:10,fontSize:13,fontWeight:500,cursor:"pointer",fontFamily:T.font,display:"flex",alignItems:"center",gap:7}}>
+          <label style={{flex:1,padding:"9px 16px",background:T.card2,color:T.text,border:`1px solid ${T.border}`,borderRadius:10,fontSize:13,fontWeight:500,cursor:"pointer",fontFamily:T.font,display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
             Upload file
             <input type="file" accept="audio/*,.pdf,.txt,.doc" style={{display:"none"}} onChange={e=>{const f=e.target.files&&e.target.files[0];if(f&&(f.type==="text/plain"||f.name.endsWith(".txt")))f.text().then(txt=>{setTranscript(txt);setSelectedLec(null);});e.target.value="";}}/>
           </label>
         </div>
-        {ytError&&<div style={{fontSize:12,color:T.red,marginTop:8}}>{ytError}</div>}
       </div>
 
       {/* Saved lectures */}
@@ -13705,7 +13618,7 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
           ?<p style={{fontSize:14,lineHeight:1.8,color:T.text,margin:0,whiteSpace:"pre-wrap",maxHeight:280,overflowY:"auto"}}>{curTx}</p>
           :<div style={{padding:"36px 20px",textAlign:"center"}}>
             <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke={T.faint} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{margin:"0 auto 10px",display:"block"}}><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-            <div style={{fontSize:13.5,color:T.muted}}>Hit record, paste a link, or drop a file.</div>
+            <div style={{fontSize:13.5,color:T.muted}}>Hit record, or drop a file.</div>
             <div style={{fontSize:12,color:T.faint,marginTop:4}}>Your transcript appears here in real time.</div>
           </div>
         }
