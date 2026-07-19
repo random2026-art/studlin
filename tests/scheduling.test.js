@@ -718,17 +718,21 @@ describe("planBrainDumpTasks (Brain Dump placement)", () => {
     }
   });
 
-  test("a chained item lands immediately after the previous item, not wherever's independently best", (t) => {
+  test("a chained item lands immediately after the previous item, not wherever's independently best", () => {
     // Regression test for the 2026-07-15 bug: a same-day "then"-sequenced
     // dump ("find bugs, THEN paint the floor") got scheduled out of order,
     // since each item was independently slotted with no concept of sequence.
     // planBrainDumpTasks schedules "now"-anchored items against the real
-    // wall clock (no injected-clock param), so earlier attempts to just
-    // widen workEndTime/bedtime kept flaking as real "now" crept later
-    // into the evening across a long session -- freezing the clock to a
-    // fixed morning time is the actual fix, not a wider window.
-    t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-07-16T09:00:00") });
-    const { planBrainDumpTasks } = loadStudlinModule();
+    // wall clock, so this needs a genuinely frozen clock, not just a wider
+    // window -- t.mock.timers.enable({apis:["Date"]}) looked like it did
+    // that but never actually reached the sandboxed module (it only
+    // patches the outer Node process's Date; loadStudlinModule runs in its
+    // own vm realm with its own separate, real Date), so this test spent
+    // a while silently running against the real clock and only failed the
+    // moment real "now" happened to cross a day boundary mid-run. Passing
+    // {now} into loadStudlinModule (see harness.js's makeFrozenDateClass)
+    // actually reaches the sandbox.
+    const { planBrainDumpTasks } = loadStudlinModule({ now: "2026-07-16T09:00:00" });
     const items = [
       { kind: "study", title: "Find bugs", durationMin: 60, immediate: true, chained: false },
       { kind: "study", title: "Paint floor", durationMin: 30, chained: true },
@@ -742,14 +746,14 @@ describe("planBrainDumpTasks (Brain Dump placement)", () => {
     assert.ok(gap >= 0 && gap <= MAX_CHAIN_GAP_MINS, `expected paint to start shortly after bugs ended, gap was ${gap}min`);
   });
 
-  test("a chained item stays chained even when a declared peak-hour bucket would otherwise pull it elsewhere", (t) => {
+  test("a chained item stays chained even when a declared peak-hour bucket would otherwise pull it elsewhere", () => {
     // The reliability/peak-hour engine is exactly what pushed "now" tasks
     // hours away in the original bug report -- chaining must override it.
-    // Clock frozen to a fixed morning time (see the identical note above)
-    // so declaring "evening" as the peak bucket reliably differs from
-    // "now" regardless of when the suite actually runs.
-    t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-07-16T09:00:00") });
-    const { planBrainDumpTasks } = loadStudlinModule();
+    // Clock frozen via loadStudlinModule's {now} option (see the identical
+    // note on the test above -- t.mock.timers never actually reached the
+    // sandboxed module) so declaring "evening" as the peak bucket reliably
+    // differs from "now" regardless of when the suite actually runs.
+    const { planBrainDumpTasks } = loadStudlinModule({ now: "2026-07-16T09:00:00" });
     const prefs = { ...DEFAULT_PREFS, peakHourBuckets: ["evening"] };
     const items = [
       { kind: "study", title: "First", durationMin: 60, immediate: false, chained: false },

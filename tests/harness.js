@@ -19,7 +19,35 @@ const path = require("path");
 const vm = require("vm");
 const esbuild = require("esbuild");
 
-function loadStudlinModule() {
+// A no-arg-freezing Date subclass for tests that need a deterministic
+// "now" -- t.mock.timers.enable({apis:["Date"]}) does NOT reach here: it
+// only patches the outer Node process's global Date, but loadStudlinModule
+// runs the app in its own vm.createContext realm, which gets its own,
+// separate, real (unmocked) Date built in. Verified empirically that
+// pre-setting sandbox.Date before vm.createContext DOES take effect (the
+// vm respects an already-present property instead of overwriting it with
+// its own intrinsic) -- that's what makes this actually work, unlike the
+// mock.timers approach two tests were relying on (silently a no-op,
+// invisible until real wall-clock time happened to cross a day boundary
+// mid-test-run and the "frozen" tests started failing for real).
+// new Date(explicitArgs) still passes straight through to the real Date
+// constructor -- only the no-arg "what time is it right now" case is
+// frozen, so date-math against an explicit literal (very common
+// throughout the scheduling engine, e.g. new Date(dateKey+"T12:00:00"))
+// is completely unaffected.
+function makeFrozenDateClass(nowISOString) {
+  const fixedMs = new Date(nowISOString).getTime();
+  return class extends Date {
+    constructor(...args) {
+      if (args.length === 0) super(fixedMs);
+      else super(...args);
+    }
+    static now() { return fixedMs; }
+  };
+}
+
+function loadStudlinModule(options) {
+  const now = options && options.now;
   const filePath = path.join(__dirname, "..", "studlin-app.jsx");
   const raw = fs.readFileSync(filePath, "utf8");
   // Line-anchored exact match, not a plain substring search -- a prose
@@ -76,6 +104,10 @@ function loadStudlinModule() {
   const sandbox = {
     console,
     localStorage,
+    // Only set when a test explicitly asks for a frozen clock (see
+    // makeFrozenDateClass above) -- omitted otherwise so every other test
+    // keeps getting the vm context's own real, live Date as before.
+    ...(now ? { Date: makeFrozenDateClass(now) } : {}),
     // ErrorBoundary's "extends React.Component" only needs the class to
     // exist at definition time -- nothing here ever instantiates it.
     React: { Component: class {}, useState: () => [undefined, () => {}], useEffect: () => {}, useRef: () => ({ current: undefined }), createElement: () => null },
