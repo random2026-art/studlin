@@ -1278,6 +1278,29 @@ function hourBucket(timeStr){
   const b=TIER0_HOUR_BUCKETS.find(b=>mins>=b.startMin&&mins<b.endMin);
   return b?b.id:null;
 }
+// Bucket anchors for the reliability/peak-hour scoring below (findTier0Slot,
+// findReliableSlotFor). A bucket's raw startMin (e.g. "morning" at 6:00) is
+// only a usable anchor when the student's work window actually starts that
+// early — regression: against the app's own default 9:00-18:00 window, the
+// raw startMin for "morning" (6:00) and "evening" (18:00, which plus any
+// real duration always exceeds an 18:00 window end) never survived the
+// in-window filter at all, so a student who declared "Morning" or
+// "Evening" as their peak focus time got silently zero behavior change no
+// matter what — the two buckets someone is most likely to have a real,
+// strong opinion about. Clamping each bucket's anchor to the later of its
+// own start and the window's low bound keeps the anchor inside BOTH the
+// bucket's own range and the work window whenever they genuinely overlap
+// (hourBucket() only cares the anchor time falls within [startMin,endMin),
+// not that it equals startMin exactly) — a bucket with zero overlap (e.g.
+// "evening" against a window that ends exactly at 18:00) still correctly
+// yields no anchor; that's a real constraint of the student's own configured
+// hours, not something this can manufacture, and Settings now says so
+// directly instead of silently pretending the preference took effect.
+function bucketAnchorMinsInWindow(lowBoundMins){
+  return TIER0_HOUR_BUCKETS
+    .map(b=>Math.max(b.startMin,lowBoundMins))
+    .filter((clamped,i)=>clamped<TIER0_HOUR_BUCKETS[i].endMin);
+}
 // Two-tier split only — day-of-week/subject dimensions deliberately not
 // added, sample sizes don't support 3 new dimensions on an already-thin
 // signal. Uses normalizeTaskVal (below) rather than a raw difficulty>=3
@@ -1374,7 +1397,7 @@ function findTier0Slot(task,events,routines,prefs,todayKey){
     const d=(()=>{const x=new Date(todayKey+"T12:00:00");x.setDate(x.getDate()+i);return dayKey(x);})();
     if(deadlineKey&&d>deadlineKey)break;
     const{start:winStart,end:winEnd}=getWorkWindowMinsFor(prefs,d);
-    const anchorTimes=Array.from(new Set([desiredTime,...TIER0_HOUR_BUCKETS.map(b=>minutesToTime(b.startMin))]))
+    const anchorTimes=Array.from(new Set([desiredTime,...bucketAnchorMinsInWindow(winStart).map(minutesToTime)]))
       .filter(t=>{const m=timeToMinutes(t);return m>=winStart&&m<winEnd;});
     anchorTimes.forEach(anchor=>{
       const {events:relocated,placement}=findSlotWithEviction(events,routines,prefs,d,anchor,dur,deadlineKey);
@@ -1427,7 +1450,7 @@ function findReliableSlotFor(events,routines,prefs,desiredDate,desiredTime,durat
   }
   const desiredMins=timeToMinutes(baseline.time);
   const occupied=computeOccupiedIntervals(events,routines,prefs,baseline.date);
-  const anchorTimes=Array.from(new Set([baseline.time,...TIER0_HOUR_BUCKETS.map(b=>minutesToTime(b.startMin))]))
+  const anchorTimes=Array.from(new Set([baseline.time,...bucketAnchorMinsInWindow(floorMins).map(minutesToTime)]))
     .filter(t=>{const m=timeToMinutes(t);return m>=floorMins&&m+duration<=winEnd;});
   const candidates=[];
   anchorTimes.forEach(t=>{
@@ -1975,6 +1998,13 @@ function getSchedulePreferences(){
     workStartTime:"10:00",
     workEndTime:"18:00",
     bedtime:"23:00",
+    // The real, UI-wired difficulty preference (Settings, the onboarding
+    // wizard) — "easyFirst"/"balanced"/"hardFirst", read by scoreTask.
+    // taskDifficultyPreference below is a separate, older key ("FIRST"/
+    // "LAST"/"NONE") that nothing in the UI writes anymore; kept only so
+    // legacy stored prefs objects don't lose the field, not read by any
+    // live scoring path.
+    difficultyPreference:"balanced",
     taskDifficultyPreference:"NONE",
     bufferMarginStrategy:"15_MIN",
     // Optional separate Sat/Sun hours — off by default, so every existing
@@ -2042,8 +2072,14 @@ function scoreTask(task,prefs,streak){
     else urgency=Math.max(0.3,0.6-(h-72)/240);
   }
 
-  const pref=(prefs&&prefs.taskDifficultyPreference)||"NONE";
-  const diffWeight=pref==="FIRST"?d:pref==="LAST"?1-d:0.5;
+  // regression: this used to read prefs.taskDifficultyPreference ("FIRST"/
+  // "LAST"/"NONE"), a key nothing in the UI ever writes -- Settings and the
+  // onboarding wizard both save the student's Easy/Hard First choice as
+  // prefs.difficultyPreference ("easyFirst"/"hardFirst"/"balanced"). The two
+  // keys were never reconciled, so this weight silently sat at the neutral
+  // 0.5 default for every account regardless of what was actually picked.
+  const pref=(prefs&&prefs.difficultyPreference)||"balanced";
+  const diffWeight=pref==="hardFirst"?d:pref==="easyFirst"?1-d:0.5;
 
   const streakBoost=(streak||0)>=3?1.0:0.0;
 
@@ -2705,6 +2741,17 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
   const weekendHoursInvalid=weekendEnabled&&timeToMinutes(weekendEnd)<=timeToMinutes(weekendStart);
   const canSave=!workHoursInvalid&&!weekendHoursInvalid;
 
+  // A declared peak bucket only ever actually influences placement (see
+  // findTier0Slot/findReliableSlotFor) when it overlaps the student's own
+  // work-hours window at all — "Morning" (6-11am) or "Evening" (6-10pm)
+  // against this app's own default 9am-6pm window has zero overlap, so
+  // picking either did nothing and said nothing about why. Purely
+  // informational (never blocks Save) — the student may genuinely want to
+  // declare a preference now and widen their hours to match later.
+  const unreachablePeakBuckets=!workHoursInvalid?TIER0_HOUR_BUCKETS.filter(b=>
+    peakBuckets.includes(b.id)&&!(b.startMin<timeToMinutes(workEnd)&&b.endMin>timeToMinutes(workStart))
+  ):[];
+
   const handleSave=()=>{
     if(!canSave)return;
     const newPrefs={
@@ -2815,6 +2862,11 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
             ))}
           </div>
           <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>Studlin prefers these times when rescheduling missed tasks. Pick 1-2 for the strongest effect. Leave blank and Studlin will learn your best hours from your habits over time.</div>
+          {unreachablePeakBuckets.length>0&&(
+            <div style={{fontSize:11.5,color:T.amber,marginTop:8,lineHeight:1.4}}>
+              {unreachablePeakBuckets.map(b=>PEAK_BUCKET_LABELS[b.id]).join(" and ")} {unreachablePeakBuckets.length>1?"don't":"doesn't"} overlap your Work Hours ({fmtClock12(workStart)}–{fmtClock12(workEnd)}) at all, so Studlin can't actually place anything there yet — widen your Work Hours above to cover it.
+            </div>
+          )}
         </div>
 
         {saved&&<div style={{background:T.lime+"20",border:"1px solid "+T.lime+"44",borderRadius:8,padding:12,fontSize:12,color:T.lime,marginBottom:16,display:"flex",alignItems:"center",gap:8}}>
