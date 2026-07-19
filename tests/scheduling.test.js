@@ -723,3 +723,78 @@ describe("checkManualStudyTime (manually-picked shared-study time, regression: t
     assert.equal(result.conflicts[0].title, "Gym");
   });
 });
+
+describe("scoreTask difficulty preference (regression: read a dead prefs key, so Settings' Hard First / Easy First did nothing)", () => {
+  const easyTask = { priority: 500, difficulty: 100, deadline: null };
+  const hardTask = { priority: 500, difficulty: 900, deadline: null };
+
+  test("'hardFirst' (the real Settings value) scores a hard task above an otherwise-identical easy one", () => {
+    const { scoreTask } = loadStudlinModule();
+    const prefs = { ...DEFAULT_PREFS, difficultyPreference: "hardFirst" };
+    assert.ok(scoreTask(hardTask, prefs, 0) > scoreTask(easyTask, prefs, 0));
+  });
+
+  test("'easyFirst' scores an easy task above an otherwise-identical hard one", () => {
+    const { scoreTask } = loadStudlinModule();
+    const prefs = { ...DEFAULT_PREFS, difficultyPreference: "easyFirst" };
+    assert.ok(scoreTask(easyTask, prefs, 0) > scoreTask(hardTask, prefs, 0));
+  });
+
+  test("'balanced' (and no preference at all) stays neutral — same score regardless of difficulty", () => {
+    const { scoreTask } = loadStudlinModule();
+    const balanced = scoreTask(easyTask, { ...DEFAULT_PREFS, difficultyPreference: "balanced" }, 0) === scoreTask(hardTask, { ...DEFAULT_PREFS, difficultyPreference: "balanced" }, 0);
+    const unset = scoreTask(easyTask, DEFAULT_PREFS, 0) === scoreTask(hardTask, DEFAULT_PREFS, 0);
+    assert.ok(balanced && unset);
+  });
+
+  test("end-to-end: rebalanceDay actually reorders two same-priority, same-time tasks by declared difficulty", () => {
+    const m = loadStudlinModule();
+    const prefs = { ...DEFAULT_PREFS, difficultyPreference: "hardFirst" };
+    const easy = realTask({ id: "easy-1", time: "10:00", priority: 500, difficulty: 100 });
+    const hard = realTask({ id: "hard-1", time: "10:00", priority: 500, difficulty: 900 });
+    const result = m.rebalanceDay("2026-07-20", [easy, hard], [], prefs);
+    const easyAfter = result.find((e) => e.id === "easy-1");
+    const hardAfter = result.find((e) => e.id === "hard-1");
+    assert.ok(hardAfter.time < easyAfter.time, "the hard task should win the earlier slot under an explicit Hard First preference");
+  });
+});
+
+describe("Peak-hour bucket reachability (regression: 'Morning'/'Evening' had zero overlap with the app's own default 9am-6pm window, so declaring either did nothing)", () => {
+  test("declaring 'morning' as peak actually routes a fresh task there under the default work window", () => {
+    const m = loadStudlinModule();
+    const prefs = { ...DEFAULT_PREFS, peakHourBuckets: ["morning"] };
+    const slot = m.findReliableSlotFor([], [], prefs, "2026-07-20", "16:00", 30, null, 500);
+    assert.equal(m.hourBucket(slot.time), "morning");
+  });
+
+  test("a declared peak with real inferred data elsewhere still wins on a fresh task (peak is a floor, not just a fallback)", () => {
+    const m = loadStudlinModule();
+    const log = [];
+    for (let i = 0; i < 9; i++) log.push({ bucket: "evening", outcome: "done", t: Date.now() - i * 86400000 });
+    log.push({ bucket: "evening", outcome: "missed", t: Date.now() });
+    m.localStorage.setItem("studlin-completionLog", JSON.stringify(log));
+    const prefs = { ...DEFAULT_PREFS, peakHourBuckets: ["morning"] };
+    const slot = m.findReliableSlotFor([], [], prefs, "2026-07-20", "16:00", 30, null, 500);
+    assert.equal(m.hourBucket(slot.time), "morning", "declared morning should still win even though evening has strong real completion data, since evening is unreachable under the default window anyway");
+  });
+
+  test("Tier 0 reflow (missed task) also reaches a declared morning peak, not just fresh placement", () => {
+    const m = loadStudlinModule();
+    const prefs = { ...DEFAULT_PREFS, peakHourBuckets: ["morning"] };
+    const today = m.dayKey();
+    const missed = { id: "t1", title: "Missed", date: "2026-07-01", time: "16:00", kind: "study block", duration: 30, status: "pending", deadline: null, priority: 500, difficulty: 500 };
+    const result = m.findTier0Slot(missed, [missed], [], prefs, today);
+    assert.ok(result, "should find a placement");
+    assert.equal(m.hourBucket(result.placement.time), "morning");
+  });
+
+  test("a widened work window (7am start) makes 'morning' reachable where the default 9am start did not", () => {
+    const m = loadStudlinModule();
+    const narrowPrefs = { ...DEFAULT_PREFS, peakHourBuckets: ["morning"] }; // default 09:00 start
+    const widePrefs = { ...DEFAULT_PREFS, workStartTime: "07:00", peakHourBuckets: ["morning"] };
+    const narrowSlot = m.findReliableSlotFor([], [], narrowPrefs, "2026-07-20", "16:00", 30, null, 500);
+    const wideSlot = m.findReliableSlotFor([], [], widePrefs, "2026-07-20", "16:00", 30, null, 500);
+    assert.equal(m.hourBucket(narrowSlot.time), "morning", "even the default 9am start now clamps into the morning bucket");
+    assert.equal(m.hourBucket(wideSlot.time), "morning");
+  });
+});
