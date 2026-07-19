@@ -8586,6 +8586,21 @@ function layoutDayEvents(evs) {
   });
   return laidOut;
 }
+// A block needs a minimum rendered height to stay clickable/legible even
+// when its real duration is very short (a 10-min task at 48px/hr is only
+// 8px tall) -- but nothing bounded that floor against whatever's stacked
+// right after it in the same sub-column, so two short, legitimately
+// back-to-back blocks (non-overlapping per layoutDayEvents' own real-time
+// check) could still render with visually overlapping boxes purely
+// because the floor drew past where the next one starts. gapToNextMins is
+// the real time gap to the next same-column item's start, or null/
+// undefined when there isn't one (last block in its column) -- in that
+// case the floor applies with nothing to cap it against, same as before.
+function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
+  const floored = Math.max(22, durationMins * (pxPerHr / 60));
+  if (gapToNextMins == null) return floored;
+  return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
+}
 
 function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, isAgendaCollapsed, onDeleteEvent}) {
   // Compact, fixed per-hour scale (held constant across the agenda-collapse
@@ -8787,12 +8802,18 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                     <div style={{borderTop:"2px solid #E5484D"}} />
                   </div>
                 )}
-                {layoutDayEvents(visibleEvs).map(({ev, col, totalCols}) => {
+                {(() => { const dayLaidOut = layoutDayEvents(visibleEvs); return dayLaidOut.map(({ev, col, totalCols, start}) => {
                   const timeParts = ev.time.split(":").map(Number);
                   const hh = timeParts[0]; const mm = timeParts[1];
                   const topPx = (hh * 60 + mm) * (WK_PX_HR / 60);
                   const dur = ev.duration || 30;
-                  const heightPx = Math.max(22, dur * (WK_PX_HR / 60));
+                  // See computeEventBlockHeightPx -- the 22px minimum-visibility
+                  // floor for a short block used to be able to visually bleed
+                  // into whatever's stacked right after it in the same
+                  // sub-column, even when layoutDayEvents already correctly
+                  // treated them as non-overlapping in real time.
+                  const nextInCol = dayLaidOut.filter(o => o.col === col && o.start > start).sort((a, b) => a.start - b.start)[0];
+                  const heightPx = computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, WK_PX_HR);
                   const isDone = ev.status === "done";
                   const over = daysOverdue(ev);
                   const color = over > 0 ? T.red : colorOf(ev.subject);
@@ -8844,7 +8865,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                       )}
                     </div>
                   );
-                })}
+                }); })()}
                 {ghostEl}
               </div>
             );

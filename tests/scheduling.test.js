@@ -1293,6 +1293,61 @@ describe("computeBusyWindowsPayload (privacy-scoped shared free/busy for Studlin
   });
 });
 
+describe("layoutDayEvents (Weekly grid same-day column layout)", () => {
+  test("two genuinely back-to-back items (no real time gap) land in the same column, not split side-by-side", () => {
+    const m = loadStudlinModule();
+    const a = realTask({ id: "a", time: "10:00", duration: 30 });
+    const b = realTask({ id: "b", time: "10:30", duration: 30 });
+    const laidOut = m.layoutDayEvents([a, b]);
+    const la = laidOut.find((x) => x.ev.id === "a");
+    const lb = laidOut.find((x) => x.ev.id === "b");
+    assert.equal(la.totalCols, 1);
+    assert.equal(lb.totalCols, 1);
+  });
+
+  test("two genuinely overlapping items split into separate columns", () => {
+    const m = loadStudlinModule();
+    const a = realTask({ id: "a", time: "10:00", duration: 30 });
+    const b = realTask({ id: "b", time: "10:15", duration: 30 });
+    const laidOut = m.layoutDayEvents([a, b]);
+    const la = laidOut.find((x) => x.ev.id === "a");
+    const lb = laidOut.find((x) => x.ev.id === "b");
+    assert.equal(la.totalCols, 2);
+    assert.notEqual(la.col, lb.col);
+  });
+});
+
+describe("computeEventBlockHeightPx (Weekly grid block height, regression: a short block's minimum-visibility floor could visually overlap the next block stacked right after it)", () => {
+  const PX_PER_HR = 48;
+
+  test("with no next-item constraint, a short block still gets the minimum-visibility floor", () => {
+    const m = loadStudlinModule();
+    // 10 minutes at 48px/hr is 8px, well under the 22px floor.
+    assert.equal(m.computeEventBlockHeightPx(10, null, PX_PER_HR), 22);
+  });
+
+  test("a duration long enough to already exceed the floor is left untouched when there's room", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.computeEventBlockHeightPx(60, 90, PX_PER_HR), 48); // 60min = 48px, well under the 90min gap
+  });
+
+  test("the exact regression from the screenshot: a 10-min block 15 minutes before the next item no longer bleeds into it", () => {
+    const m = loadStudlinModule();
+    // Real bug: "Work on Studlin" 7:15pm/10m, "Look at college transfer
+    // option" 7:30pm/20m -- a 15-minute real gap. Old code always used the
+    // 22px floor (924px-946px), overlapping the next block's 936px top.
+    const heightPx = m.computeEventBlockHeightPx(10, 15, PX_PER_HR);
+    assert.equal(heightPx, 12, "should be capped to the real 15-minute gap (12px), not the 22px floor");
+    assert.ok(heightPx <= 15 * (PX_PER_HR / 60), "rendered height must never exceed the real gap to the next block");
+  });
+
+  test("never collapses to zero or negative height even with almost no gap", () => {
+    const m = loadStudlinModule();
+    const heightPx = m.computeEventBlockHeightPx(10, 1, PX_PER_HR);
+    assert.ok(heightPx >= 4, "should still render a thin sliver, not disappear entirely");
+  });
+});
+
 describe("computeWeekBalancePlan (manually-triggered 'Balance my week')", () => {
   // A Monday with real dates so daysUntilDeadline math (which reads the
   // real clock) behaves predictably -- far enough in the future that
