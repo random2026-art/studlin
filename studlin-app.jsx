@@ -13322,7 +13322,7 @@ function Profile({setActive,seriousMode=false}={}) {
         const stats=[
           ["Total study time",fmtH(ps.totalMin)||"0m",T.lime],
           ["Focus sessions",String(ps.focusSessions),T.teal],
-          ["Cards mastered",String(cardsMastered),T.blue],
+          ["Cards reviewed",String(cardsMastered),T.blue],
           ["Day streak",String(streak),T.amber],
           ["Level",lvl.title,T.red],
           ["Rank","#"+yourRank,T.purple,()=>setLeaderboardOpen(true)],
@@ -13592,21 +13592,25 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   };
   // Real weekly wrapped stats
   const weeklyFocusMin=realStats.weekMin;
-  // Real cards mastered + words written totals
+  // "Reviewed" not "mastered" -- this counts every card marked correct in
+  // a study session (deck.done), not any real spaced-repetition mastery
+  // or retention signal, which this app doesn't track. The old label
+  // overclaimed what's actually being measured.
   const cardsMasteredTotal=rawDecks.reduce((a,d)=>a+(d.done||0),0);
-  const stripHtml=(html)=>(html||"").replace(/<[^>]*>/g," ");
-  const rawEssays=lsGet("essays",[]);
-  const wordsWrittenTotal=rawEssays.reduce((a,e)=>{
-    if(typeof e.words==="number")return a+e.words;
-    const txt=stripHtml(e.content).trim();
-    return a+(txt?txt.split(/\s+/).length:0);
-  },0);
   // Real session activity for the last 7 days
   const allSessions=lsGet("sessions",[]);
   const weekDays7=(()=>{const arr=[];const now=new Date();const dow=(now.getDay()+6)%7;const mon=new Date(now);mon.setDate(now.getDate()-dow);for(let i=0;i<7;i++){const d=new Date(mon);d.setDate(mon.getDate()+i);arr.push(d);}return arr;})();
+  // Shared by the Wrapped stat below and the top-subject computation right
+  // after it. Replaces the old "Words written" stat, which only counted
+  // words from the essay-writing tool specifically -- anyone who'd never
+  // touched that one feature saw "0" every single week. Tasks completed is
+  // universal, and it's the actual plan-vs-execution story the rest of the
+  // app is built around, not a narrow single-feature usage count.
+  const doneThisWeek=allEvents.filter(ev=>ev.status==="done"&&ev.date>=dayKey(weekDays7[0]));
+  const tasksCompletedTotal=doneThisWeek.length;
   // Top subject this week — from completed plan tasks' subject field
   const subjCounts={};
-  allEvents.filter(ev=>ev.status==="done"&&ev.date>=dayKey(weekDays7[0])).forEach(ev=>{subjCounts[ev.subject]=(subjCounts[ev.subject]||0)+1;});
+  doneThisWeek.forEach(ev=>{subjCounts[ev.subject]=(subjCounts[ev.subject]||0)+1;});
   const topSubjectEntry=Object.entries(subjCounts).sort((a,b)=>b[1]-a[1])[0];
   const topSubjectThisWeek=topSubjectEntry?topSubjectEntry[0]:null;
   // Real 91-day streak heatmap from login days + session minutes
@@ -14029,18 +14033,29 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               </div>
             );
           })()}
-          <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:14}}>
-            {[
-              {ln:"Focus hours",vn:fmtH(weeklyFocusMin)||"0m"},
-              {ln:"Cards mastered",vn:cardsMasteredTotal},
-              {ln:"Words written",vn:wordsWrittenTotal.toLocaleString()},
-            ].map((ins,i)=>(
-              <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:10,padding:"9px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <span style={{fontSize:11,color:"rgba(246,241,230,0.55)",fontFamily:T.mono,letterSpacing:"0.04em",textTransform:"uppercase"}}>{ins.ln}</span>
-                <span style={{fontFamily:T.hand,fontSize:20,fontWeight:600,color:T.lime}}>{ins.vn}</span>
-              </div>
-            ))}
-          </div>
+          {/* A brand-new account with nothing tracked yet used to just show
+              three flat zeros here, which reads as broken/deflating for a
+              recap that's supposed to feel like a celebration. One
+              encouraging line instead, in the same spot the real stats
+              would occupy once there's something to show. */}
+          {weeklyFocusMin===0&&cardsMasteredTotal===0&&tasksCompletedTotal===0?(
+            <div style={{background:"rgba(246,241,230,0.05)",borderRadius:10,padding:"16px 14px",textAlign:"center",marginTop:14}}>
+              <div style={{fontSize:12.5,color:"rgba(246,241,230,0.75)",lineHeight:1.5}}>Nothing tracked yet this week. Add a task and next week's recap will actually mean something.</div>
+            </div>
+          ):(
+            <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:14}}>
+              {[
+                {ln:"Focus hours",vn:fmtH(weeklyFocusMin)||"0m"},
+                {ln:"Cards reviewed",vn:cardsMasteredTotal},
+                {ln:"Tasks completed",vn:tasksCompletedTotal},
+              ].map((ins,i)=>(
+                <div key={i} style={{background:"rgba(246,241,230,0.05)",borderRadius:10,padding:"9px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span style={{fontSize:11,color:"rgba(246,241,230,0.55)",fontFamily:T.mono,letterSpacing:"0.04em",textTransform:"uppercase"}}>{ins.ln}</span>
+                  <span style={{fontFamily:T.hand,fontSize:20,fontWeight:600,color:T.lime}}>{ins.vn}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:12,marginBottom:20}}>
             <span style={{fontSize:10.5,padding:"5px 10px",background:"rgba(246,241,230,0.08)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:T.cream,fontWeight:600}}>{realStreak}-day streak</span>
             {topSubjectThisWeek&&<span style={{fontSize:10.5,padding:"5px 10px",background:"rgba(246,241,230,0.08)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:T.cream,fontWeight:600}}>{topSubjectThisWeek} focus</span>}
