@@ -1269,6 +1269,18 @@ function findSlotWithEviction(events,routines,prefs,desiredDate,desiredTime,dura
 // rollover detection itself) do exact-equality checks on status that a new
 // enum value would silently break; status stays "pending"|"done".
 const TIER0_FIXED_KINDS=new Set(["exam","class","busy block","reminder"]);
+// A task can be started through the Lock-In Timer -- and therefore can
+// meaningfully be "still in progress" or "missed" -- only if it's a
+// flexible, duration-bearing study item. Fixed real-world commitments
+// (gym, class, an appointment -- TIER0_FIXED_KINDS) have no Begin flow at
+// all, so treating them the same way as a study block was always going to
+// misfire: there's no way to ever satisfy "are you still doing this?" for
+// something with no in-app start signal short of manually checking a box,
+// which nobody does mid-workout. One shared check so the Begin button and
+// the missed-task notification can never drift out of sync on this again.
+function isTimerEligible(ev){
+  return !!(ev&&!ev.checklist&&ev.duration&&(ev.kind==="study block"||ev.kind==="deadline"));
+}
 // Leading buffer subtracted from a FIXED-kind block's start when computing
 // occupied ranges — the mirror of computeBreathingRoom's trailing buffer,
 // but fixed (not proportional) and only ever applied before
@@ -9257,7 +9269,7 @@ function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, c
               </div>
               {!isRoutine&&(
                 <div style={{display:"flex",gap:4,flexShrink:0,alignItems:"center"}}>
-                  {!isDone&&ev.duration&&(ev.kind==="study block"||ev.kind==="deadline")&&<BtnSm onClick={()=>{if(window._setTimerTask)window._setTimerTask(ev);}} style={{flexShrink:0,boxShadow:`0 2px 10px -3px ${T.lime}88`}}>Begin</BtnSm>}
+                  {!isDone&&isTimerEligible(ev)&&<BtnSm onClick={()=>{if(window._setTimerTask)window._setTimerTask(ev);}} style={{flexShrink:0,boxShadow:`0 2px 10px -3px ${T.lime}88`}}>Begin</BtnSm>}
                   {!isDone&&(ev.kind==="exam"||ev.kind==="class"||ev.kind==="reminder")&&<button onClick={()=>openEdit(ev)} title="View details" style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Details</button>}
                   {!isDone&&(ev.kind==="reminder"||(ev.duration&&(ev.kind==="study block"||ev.kind==="deadline")))&&<button onClick={()=>openReschedule(ev)} title="Reschedule" style={{width:24,height:24,borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0,padding:0}}>{Icon.refresh}</button>}
                   {!isDone&&<button onClick={()=>markDone(ev.id)} title="Mark done" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",display:"flex"}}>{Icon.check}</button>}
@@ -11048,7 +11060,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
                   const over = daysOverdue(ev);
                   const color = over > 0 ? T.red : colorOf(ev.subject);
                   const isExam = ev.kind === "exam";
-                  const canBegin = !isDone && ev.duration && (ev.kind === "study block" || ev.kind === "deadline");
+                  const canBegin = !isDone && isTimerEligible(ev);
                   return (
                     <div key={ev.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",background:T.card2,borderRadius:10,border:`1px solid ${T.border}`,opacity:isDone?0.55:1}}>
                       {!ev.checklist && ev.time && (
@@ -15057,9 +15069,15 @@ function App() {
         // instead of just silently aging in place. Same 1-minute trailing
         // window as the lead-time reminders, so it fires once right as it
         // crosses the threshold, not for every already-stale task on load.
+        // Regression: this used to fire for every timed event regardless of
+        // kind, including fixed real-world commitments (Gym, a class) that
+        // have no Begin/Lock-In flow at all -- "still doing this?" guaranteed
+        // misfires for those, since there's no in-app way to ever answer
+        // "yes" short of manually checking the box mid-workout. Scoped to
+        // the same Timer-eligible kinds the Begin button itself uses.
         const missedKey=ev.id+"-missed";
         const minsSinceStart=-minsUntil;
-        if(!notifiedRef.current.has(missedKey)&&minsSinceStart>=MISSED_NUDGE_MIN&&minsSinceStart<MISSED_NUDGE_MIN+1){
+        if(isTimerEligible(ev)&&!notifiedRef.current.has(missedKey)&&minsSinceStart>=MISSED_NUDGE_MIN&&minsSinceStart<MISSED_NUDGE_MIN+1){
           notifiedRef.current.add(missedKey);
           try{
             const n=new Notification("Studlin",{body:"Still doing \""+ev.title+"\"? It was due to start "+MISSED_NUDGE_MIN+" min ago — tap to reschedule."});

@@ -1348,6 +1348,40 @@ describe("computeEventBlockHeightPx (Weekly grid block height, regression: a sho
   });
 });
 
+describe("isTimerEligible (regression: the missed-task nudge fired for fixed commitments like Gym that have no Begin/Lock-In flow at all, so it could never be satisfied)", () => {
+  test("a real study block with a duration is eligible", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isTimerEligible(realTask({ kind: "study block", duration: 30 })), true);
+  });
+
+  test("a duration-bearing deadline (a real assignment block) is eligible", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isTimerEligible(dueDateMarker({ duration: 45 })), true);
+  });
+
+  test("a fixed commitment (busy block, e.g. Gym) is never eligible -- this is the actual regression", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isTimerEligible(realTask({ title: "Gym", kind: "busy block", duration: 60 })), false);
+  });
+
+  test("class, exam, and reminder kinds are never eligible", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isTimerEligible(realTask({ kind: "class", duration: 50 })), false);
+    assert.equal(m.isTimerEligible(realTask({ kind: "exam", duration: 60 })), false);
+    assert.equal(m.isTimerEligible(realTask({ kind: "reminder", duration: 5 })), false);
+  });
+
+  test("a duration-less due-date marker (a syllabus-scanned fact, not an appointment) is never eligible", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isTimerEligible(dueDateMarker({ duration: null })), false);
+  });
+
+  test("a checklist item is never eligible even if it somehow carries a duration", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isTimerEligible(realTask({ checklist: true, duration: 30 })), false);
+  });
+});
+
 describe("computeWeekBalancePlan (manually-triggered 'Balance my week')", () => {
   // A Monday with real dates so daysUntilDeadline math (which reads the
   // real clock) behaves predictably -- far enough in the future that
