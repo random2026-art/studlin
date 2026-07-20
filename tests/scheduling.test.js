@@ -938,6 +938,73 @@ describe("Peak-hour bucket reachability (regression: 'Morning'/'Evening' had zer
   });
 });
 
+describe("findTier0Slot reasoning + exam-prep interval tolerance", () => {
+  test("a winning candidate landing in a declared peak bucket carries a 'peak' reason", () => {
+    const m = loadStudlinModule();
+    const prefs = { ...DEFAULT_PREFS, peakHourBuckets: ["morning"] };
+    const today = m.dayKey();
+    const missed = { id: "t1", title: "Missed", date: "2026-07-01", time: "16:00", kind: "study block", duration: 30, status: "pending", deadline: null, priority: 500, difficulty: 500 };
+    const result = m.findTier0Slot(missed, [missed], [], prefs, today);
+    assert.ok(result.reason, "should carry a reason since it landed in a declared peak bucket");
+    assert.equal(result.reason.type, "peak");
+    assert.equal(result.reason.bucket, "morning");
+  });
+
+  test("exam-prep session: a reflow candidate more than the tolerance from the original date is rejected -- declines to move rather than collapsing the spacing", () => {
+    const m = loadStudlinModule();
+    const examPrepTask = {
+      id: "t1", title: "Review 2 of 4", date: "2026-07-15", time: "16:00", kind: "study block",
+      duration: 30, status: "pending", deadline: null, priority: 500, difficulty: 500,
+      isExamPrepSession: true, dueEventId: "exam-1",
+    };
+    // today is 5 days after the task's own original date -- every
+    // reachable candidate day (today..+3) is well outside +/-1 day.
+    const result = m.findTier0Slot(examPrepTask, [examPrepTask], [], DEFAULT_PREFS, "2026-07-20");
+    assert.equal(result, null, "should decline to reflow rather than collapse the spacing to the neighboring session");
+  });
+
+  test("exam-prep session: a reflow candidate within the tolerance window is accepted", () => {
+    const m = loadStudlinModule();
+    const examPrepTask = {
+      id: "t1", title: "Review 2 of 4", date: "2026-07-15", time: "16:00", kind: "study block",
+      duration: 30, status: "pending", deadline: null, priority: 500, difficulty: 500,
+      isExamPrepSession: true, dueEventId: "exam-1",
+    };
+    // today is exactly 1 day after the original date -- right at the
+    // default TIER0_EXAM_PREP_TOLERANCE_DAYS boundary.
+    const result = m.findTier0Slot(examPrepTask, [examPrepTask], [], DEFAULT_PREFS, "2026-07-16");
+    assert.ok(result, "should still find a legal placement within tolerance");
+    const gap = Math.round((new Date(result.placement.date + "T12:00:00") - new Date(examPrepTask.date + "T12:00:00")) / 86400000);
+    assert.ok(Math.abs(gap) <= m.TIER0_EXAM_PREP_TOLERANCE_DAYS);
+  });
+
+  test("the same far-from-original scenario succeeds for a PLAIN study block -- the tolerance is exam-prep-specific, not a general Tier 0 rule", () => {
+    const m = loadStudlinModule();
+    const plainTask = {
+      id: "t1", title: "Regular homework", date: "2026-07-15", time: "16:00", kind: "study block",
+      duration: 30, status: "pending", deadline: null, priority: 500, difficulty: 500,
+    };
+    const result = m.findTier0Slot(plainTask, [plainTask], [], DEFAULT_PREFS, "2026-07-20");
+    assert.ok(result, "a non-exam-prep task should reflow normally across the full candidate window");
+  });
+});
+
+describe("fmtMovedReasonSuffix (surfaces Tier 0's own placement reasoning on the moved-block tooltip)", () => {
+  test("returns a leading-space-prefixed sentence when the event carries a movedReason", () => {
+    const m = loadStudlinModule();
+    const ev = { time: "18:00", movedReason: { type: "peak", bucket: "evening", tier: "hard" } };
+    const suffix = m.fmtMovedReasonSuffix(ev);
+    assert.ok(suffix.startsWith(" "), "must be directly appendable after a sentence ending in a period");
+    assert.ok(suffix.includes("peak"));
+  });
+
+  test("returns an empty string when there's no movedReason", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.fmtMovedReasonSuffix({ time: "18:00" }), "");
+    assert.equal(m.fmtMovedReasonSuffix(null), "");
+  });
+});
+
 describe("detectStrugglingBucket (proactive miss-pattern nudge)", () => {
   function seedLog(m, bucket, doneCount, missedCount) {
     const log = [];

@@ -1583,22 +1583,48 @@ const TIER0_SCORE_WEIGHTS={reliability:100,continuity:40,dayPreference:15,evicti
 // bucket with genuinely excellent *inferred* reliability isn't dragged down
 // by a merely-declared preference — declared status is a floor, not a cap.
 const TIER0_PEAK_BUCKET_SCORE=0.9;
+// An exam-prep session's spacing benefit lives in the interval structure
+// (gap to the neighboring session and to the exam), not the exact
+// timestamp — sliding one by a day or two is harmless, but collapsing
+// that gap is massed practice wearing a reflow costume, even though
+// visually it's still "just one block moved." Starting tolerance, per
+// spec: ±1 day from the task's own original date, tune from there.
+const TIER0_EXAM_PREP_TOLERANCE_DAYS=1;
 function findTier0Slot(task,events,routines,prefs,todayKey){
   const dur=task.duration||30;
   const deadlineKey=task.deadline||null;
   const desiredTime=task.time||prefs.workStartTime;
   const desiredMins=timeToMinutes(desiredTime);
   const tier=difficultyTierOf(task);
+  const isExamPrep=!!(task.isExamPrepSession&&task.dueEventId);
+  // No daily-digest ask-mode exists yet to escalate a tolerance violation
+  // to (tracked separately) — for now, a candidate outside the window is
+  // simply never legal for Tier 0, full stop. That degrades gracefully:
+  // the task stays pending and untouched, and the existing missed-task
+  // notification (gated on isTimerEligible, which every exam-prep session
+  // satisfies) is what actually asks the student, same as any other
+  // missed study block Tier 0 can't legally place.
+  const withinExamPrepTolerance=(dateKey)=>{
+    if(!isExamPrep)return true;
+    const gap=Math.round((new Date(dateKey+"T12:00:00")-new Date(task.date+"T12:00:00"))/86400000);
+    return Math.abs(gap)<=TIER0_EXAM_PREP_TOLERANCE_DAYS;
+  };
   const candidates=[];
   for(let i=0;i<TIER0_CANDIDATE_DAYS;i++){
     const d=(()=>{const x=new Date(todayKey+"T12:00:00");x.setDate(x.getDate()+i);return dayKey(x);})();
     if(deadlineKey&&d>deadlineKey)break;
+    if(!withinExamPrepTolerance(d))continue;
     const{start:winStart,end:winEnd}=getWorkWindowMinsFor(prefs,d);
     const anchorTimes=Array.from(new Set([desiredTime,...bucketAnchorMinsInWindow(winStart).map(minutesToTime)]))
       .filter(t=>{const m=timeToMinutes(t);return m>=winStart&&m<winEnd;});
     anchorTimes.forEach(anchor=>{
       const {events:relocated,placement}=findSlotWithEviction(events,routines,prefs,d,anchor,dur,deadlineKey);
       if(!placement)return;
+      // findSlotWithEviction can roll a placement past the anchor day `d`
+      // if it's full (findOpenSlotFor's own 21-day scan) -- the day-level
+      // check above is a cheap early-exit, this is the real guard against
+      // the ACTUAL resulting date, not just the one attempted.
+      if(!withinExamPrepTolerance(placement.date))return;
       const bucket=hourBucket(placement.time);
       const reliability=getBucketReliability(bucket,tier);
       const inferredScore=reliability===null?0.5:reliability;
@@ -1617,12 +1643,19 @@ function findTier0Slot(task,events,routines,prefs,todayKey){
         -TIER0_SCORE_WEIGHTS.continuity*(continuityMins/1440)
         -TIER0_SCORE_WEIGHTS.dayPreference*i
         -TIER0_SCORE_WEIGHTS.eviction*evictedCount;
-      candidates.push({events:relocated,placement,score});
+      // Same reason shape fmtPlacementReason already renders elsewhere
+      // ("Scheduled for 6:00PM — you finish 87% of hard evening tasks") —
+      // computed here on every candidate already, previously discarded
+      // rather than carried through to the winner. Only claimed when it's
+      // backed by a real signal (declared peak, or an actual inferred
+      // rate), never fabricated for a candidate that just happened to win.
+      const reason=isDeclaredPeak?{type:"peak",bucket,tier}:(reliability!==null?{type:"reliability",bucket,pct:reliability,tier}:null);
+      candidates.push({events:relocated,placement,score,reason});
     });
   }
   if(candidates.length===0)return null;
   candidates.sort((a,b)=>b.score-a.score);
-  return {events:candidates[0].events,placement:candidates[0].placement};
+  return {events:candidates[0].events,placement:candidates[0].placement,reason:candidates[0].reason};
 }
 // New-task placement with same-day reliability-aware time-of-day scoring —
 // the fresh-task counterpart to findTier0Slot's missed-task reflow. Never
@@ -1718,6 +1751,17 @@ function fmtPlacementReason(reason,timeStr){
     return "Scheduled for "+fmtClock12(timeStr)+" — you finish "+Math.round(reason.pct*100)+"% of"+diffWord+" "+label+" tasks.";
   }
   return "";
+}
+// A Tier 0 move's reasoning was already computed by findTier0Slot's own
+// scoring on every candidate it considered — previously discarded rather
+// than surfaced, so "Studlin moved this" was visible but "why" never was.
+// Same fmtPlacementReason copy every other placement-reason UI already
+// uses, prefixed with a leading space so callers can append it directly
+// after "...moved this from X." with nothing else to concatenate.
+function fmtMovedReasonSuffix(ev){
+  if(!ev||!ev.movedReason)return"";
+  const text=fmtPlacementReason(ev.movedReason,ev.time);
+  return text?" "+text:"";
 }
 // Places a student-reported "I need more time" extension for an assignment
 // into the next open gap(s) before its deadline. Splits anything over 90min
@@ -8966,7 +9010,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                       )}
                       {ev.movedByStudlin && !isRoutine && (
                         <div onClick={(e)=>{e.stopPropagation();setEvents(undoTier0Move(ev.id).events);}}
-                          title={"Studlin moved this from "+fmtMovedFrom(ev.movedFrom)+". Click to undo."}
+                          title={"Studlin moved this from "+fmtMovedFrom(ev.movedFrom)+"."+fmtMovedReasonSuffix(ev)+" Click to undo."}
                           style={{position:"absolute",top:2,left:2,width:13,height:13,borderRadius:"50%",background:"rgba(0,0,0,0.28)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",zIndex:1}}>
                           <span style={{fontSize:8,lineHeight:1}}>↻</span>
                         </div>
@@ -9287,7 +9331,7 @@ function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, c
                   {isExam&&<span style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:9.5,fontWeight:800,letterSpacing:"0.04em",color,background:color+"1E",border:`1px solid ${color}55`,borderRadius:5,padding:"1px 6px",flexShrink:0}}><span style={{width:4,height:4,borderRadius:"50%",background:color,flexShrink:0}} />EXAM</span>}
                   {readinessColor&&<span title={readiness.sentence} style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.02em",color:readinessColor,background:readinessColor+"1E",border:`1px solid ${readinessColor}55`,borderRadius:5,padding:"1px 6px",flexShrink:0}}>{readiness.state==="on-track"?"ON TRACK":readiness.state==="behind"?"BEHIND":"AT RISK"}</span>}
                   {isRoutine&&<span style={{fontSize:9,fontWeight:800,letterSpacing:"0.04em",color,background:color+"14",border:`1px solid ${color}44`,borderRadius:5,padding:"1px 6px",flexShrink:0}}>WEEKLY</span>}
-                  {ev.movedByStudlin&&<span onClick={(e)=>{e.stopPropagation();setEvents(undoTier0Move(ev.id).events);}} title={"Studlin moved this from "+fmtMovedFrom(ev.movedFrom)+". Click to undo."} style={{fontSize:10,flexShrink:0,cursor:"pointer"}}>↻</span>}
+                  {ev.movedByStudlin&&<span onClick={(e)=>{e.stopPropagation();setEvents(undoTier0Move(ev.id).events);}} title={"Studlin moved this from "+fmtMovedFrom(ev.movedFrom)+"."+fmtMovedReasonSuffix(ev)+" Click to undo."} style={{fontSize:10,flexShrink:0,cursor:"pointer"}}>↻</span>}
                   <span style={{fontSize:12.5,fontWeight:600,color:titleColor,lineHeight:1.35,textDecoration:isDone?"line-through":"none",minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",display:"block"}} title={ev.title}>{ev.title}</span>
                 </div>
                 <div style={{fontSize:11,color:subColor,marginTop:2,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
@@ -10723,7 +10767,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
                       return <div key={j} style={{fontSize:9,fontWeight:600,color:tagColor,background:tagColor+(isExam?"22":"16"),border:isRoutine&&editRoutineMode?`1px solid ${T.lime}`:isExam?`1px solid ${tagColor}`:"none",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%",display:"flex",alignItems:"center",gap:3,opacity:dimmedByRoutineMode?0.3:1}}>
                         {ev.priority&&ev.priority>=4&&<span style={{width:5,height:5,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority],flexShrink:0}} />}
                         {ev.userPinned&&<span style={{flexShrink:0,fontSize:7}} title="Pinned, won't be auto-rescheduled">📌</span>}
-                        {ev.movedByStudlin&&<span style={{flexShrink:0,fontSize:7}} title={"Studlin moved this from "+fmtMovedFrom(ev.movedFrom)}>↻</span>}
+                        {ev.movedByStudlin&&<span style={{flexShrink:0,fontSize:7}} title={"Studlin moved this from "+fmtMovedFrom(ev.movedFrom)+"."+fmtMovedReasonSuffix(ev)}>↻</span>}
                         {ev.title}
                       </div>;
                     })}
@@ -11156,8 +11200,8 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
           </div>
         )}
         {editEv&&editEv.movedByStudlin&&(
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:T.muted}}>
-            <span>↻ Studlin moved this from {fmtMovedFrom(editEv.movedFrom)}.</span>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:T.muted}}>
+            <span>↻ Studlin moved this from {fmtMovedFrom(editEv.movedFrom)}.{fmtMovedReasonSuffix(editEv)}</span>
             <button type="button" onClick={()=>{
               const result=undoTier0Move(editEv.id);
               setEvents(result.events);
@@ -15901,9 +15945,9 @@ function App() {
         if(!result)return;
         working=result.events.map(e=>e.id===ev.id?{
           ...e,date:result.placement.date,time:result.placement.time,
-          movedByStudlin:true,movedFrom:{date:ev.date,time:ev.time},movedAt:Date.now(),
+          movedByStudlin:true,movedFrom:{date:ev.date,time:ev.time},movedAt:Date.now(),movedReason:result.reason||null,
         }:e);
-        movedBatch.push({id:ev.id,title:ev.title,from:{date:ev.date,time:ev.time},to:result.placement});
+        movedBatch.push({id:ev.id,title:ev.title,from:{date:ev.date,time:ev.time},to:result.placement,reason:result.reason||null});
         working.forEach(e=>{
           if(e.id===ev.id||!e.movedByStudlin)return;
           const prior=beforeSnapshot.get(e.id);
