@@ -1964,6 +1964,42 @@ async function proposeOutline(title,detail,subject){
     return null;
   }catch(e){return null;}
 }
+// Vision-based sibling to Notes' own extractSyllabusDeadlines -- reads a
+// screenshot (a Canvas weekly view, a photographed syllabus page) instead
+// of pasted text, but returns the exact same {deadlines:[...]} shape so it
+// feeds the identical SyllabusReview staging drawer with zero UI changes
+// beyond however the image got captured in the first place.
+// Explicitly told never to invent a URL: a screenshot is pixels, not
+// markup -- an assignment's real submission link isn't recoverable from
+// what's visually on screen, only the label text is, and a fabricated
+// link would be worse than not offering one at all.
+// Returns {items, error} rather than a bare array so the caller can tell
+// "genuinely found nothing in the image" apart from "the call itself
+// failed" and show a real message instead of a silent empty state either way.
+async function extractSyllabusDeadlinesFromImage(base64Data,mediaType){
+  try{
+    const prompt="This image is a screenshot of a class schedule, syllabus, or Canvas weekly view. Read it carefully and extract every deadline, due date, exam date, and assignment date visible in it. "+
+      "Today's date is "+dayKey()+". If a date has no year, infer the most likely upcoming year given today's date. "+
+      "For each item return: \"title\" (short, e.g. \"Problem Set 3\" or \"Midterm Exam\"), "+
+      "\"date\" (YYYY-MM-DD, your best guess — never omit even if uncertain), "+
+      "\"kind\" (either \"deadline\" for assignments/readings/papers or \"exam\" for quizzes, tests, midterms, and finals), "+
+      "\"examWeight\" (ONLY when kind is \"exam\": \"quiz\" for a quiz or short in-class test worth relatively little, \"major\" for a midterm, final, or unit exam worth significant grade weight — omit entirely when kind is \"deadline\"), "+
+      "\"confidence\" (\"high\" if the date is clearly legible, \"low\" if it's blurry, cut off, or you had to infer it), "+
+      "\"detail\" (optional — only include when the image actually shows something concrete beyond the date itself; leave the key out rather than inventing filler when nothing specific is visible). "+
+      "\"estimatedHours\" (ONLY when kind is \"deadline\": your best-guess total hours a typical student would need for the whole thing, based on the title — a short reading response or problem set is usually 1-3 hours, an essay or lab report is usually 4-8 hours, a term paper or major project is usually 12-25 hours; omit entirely when kind is \"exam\"). "+
+      "Never invent a URL or link — a screenshot's visible text has no way to reveal what an actual link points to, so don't fabricate one even if a title looks clickable. "+
+      "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
+      "{\"deadlines\":[{\"title\":\"Problem Set 3\",\"date\":\"2026-09-22\",\"kind\":\"deadline\",\"confidence\":\"high\",\"estimatedHours\":2}]}. "+
+      "If you find no dates at all in the image, respond with {\"deadlines\":[]}.";
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt,image:{mediaType,data:base64Data}}],model:"standard"})});
+    const data=await res.json();
+    if(!res.ok)return{items:[],error:data.error||"Couldn't read that image. Try again."};
+    const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
+    const parsed=JSON.parse(raw);
+    if(parsed&&Array.isArray(parsed.deadlines))return{items:parsed.deadlines,error:null};
+    return{items:[],error:null};
+  }catch(e){return{items:[],error:"Couldn't read that image. Try again."};}
+}
 // Starts a new chain: places the first probe session via findReliableSlotFor.
 // No separate "parent" record — this session IS the task, linked to its
 // eventual follow-ups only by attackChainId, same idiom as split-session
@@ -2584,6 +2620,16 @@ const SYLLABUS_SCAN_LIMIT=11;
 const getSyllabusScanUsage=makeMonthlyUsage("syllabusScans");
 function canScanSyllabus(){return getPlan()!=="Free"||getSyllabusScanUsage().count<SYLLABUS_SCAN_LIMIT;}
 function recordSyllabusScan(){const u=getSyllabusScanUsage();lsSet("syllabusScans",{month:u.month,count:u.count+1});}
+
+// A screenshot import (Canvas weekly view, a photographed syllabus page)
+// costs meaningfully more than a text-only syllabus scan -- image tokens,
+// same reason api/chat.js prices an image-bearing request higher than a
+// plain-text one. Its own pool, separate from SYLLABUS_SCAN_LIMIT, rather
+// than quietly borrowing from that budget.
+const SCREENSHOT_SCAN_LIMIT=3;
+const getScreenshotScanUsage=makeMonthlyUsage("screenshotScans");
+function canScanScreenshot(){return getPlan()!=="Free"||getScreenshotScanUsage().count<SCREENSHOT_SCAN_LIMIT;}
+function recordScreenshotScan(){const u=getScreenshotScanUsage();lsSet("screenshotScans",{month:u.month,count:u.count+1});}
 
 // AI note scans — "Scan a file", "Record lecture" and "YouTube link" all
 // turn raw material into AI-summarized notes, so they share one pool
@@ -5145,6 +5191,16 @@ function Notes({setActive=()=>{}}){
   const [customTag,setCustomTag]=useState("");
   const [aiLoading,setAiLoading]=useState(false);
   const [fileText,setFileText]=useState("");
+  // A screenshot/photo upload (Canvas weekly view, a photographed
+  // syllabus page) goes through vision extraction instead of the text
+  // pipeline -- mutually exclusive with fileText, set by handleFile
+  // detecting an image extension instead of a document one.
+  const [fileImage,setFileImage]=useState(null); // {mediaType,base64}
+  // A dedicated error slot rather than repurposing fileText for it -- an
+  // oversized-image (or similar) error message landing in fileText would
+  // otherwise be indistinguishable from real content, and Continue could
+  // go on to "summarize" the error message itself as if it were the file.
+  const [fileUploadError,setFileUploadError]=useState("");
   const fileRef=useRef(null);
   const [syllabusReview,setSyllabusReview]=useState(null); // {noteId, items:[{id,title,date,kind,confidence,include}]}
   const [syllabusToast,setSyllabusToast]=useState(""); // success confirmation only — limit-hit now opens upgradeModal below
@@ -5436,9 +5492,29 @@ function Notes({setActive=()=>{}}){
     {id:"record",label:"Record lecture",desc:"Live transcript, summary, flashcards & quiz",icon:MicIcon,cost:null},
   ];
 
+  const IMAGE_EXT_MEDIA_TYPES={png:"image/png",jpg:"image/jpeg",jpeg:"image/jpeg",webp:"image/webp",gif:"image/gif"};
+  // Matches api/chat.js's own MAX_IMAGE_BASE64_CHARS (3.5MB of base64) --
+  // checked here too, on the raw file, so an oversized screenshot fails
+  // immediately with a real message instead of a round trip that ends in
+  // Vercel's own generic platform error.
+  const MAX_IMAGE_FILE_BYTES=2.5*1024*1024;
   const handleFile=async(e)=>{
     const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
     const ext=file.name.split(".").pop().toLowerCase();
+    if(IMAGE_EXT_MEDIA_TYPES[ext]){
+      setFileImage(null);
+      if(file.size>MAX_IMAGE_FILE_BYTES){
+        setFileUploadError("This image is too large ("+Math.round(file.size/1024/1024*10)/10+"MB). Try a smaller screenshot or crop it down to just the schedule.");
+        return;
+      }
+      setFileUploadError("");setFileText("");
+      const dataUrl=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsDataURL(file);});
+      const base64=(dataUrl.split(",")[1])||"";
+      setFileImage({mediaType:IMAGE_EXT_MEDIA_TYPES[ext],base64});
+      if(!newTitle)setNewTitle("Schedule from "+file.name);
+      return;
+    }
+    setFileImage(null);setFileUploadError("");
     if(ext==="pdf"){
       try{const pdfjsLib=await window._pdfjs;const buf=await file.arrayBuffer();const pdf=await pdfjsLib.getDocument({data:buf}).promise;let text="";for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();text+=tc.items.map(it=>it.str).join(" ")+"\n\n";}setFileText(text);if(!newTitle)setNewTitle("Notes from "+file.name);}catch(err){setFileText("Could not read PDF: "+err.message);}
     }else if(ext==="docx"){
@@ -5562,7 +5638,29 @@ function Notes({setActive=()=>{}}){
       if(!title)title="Untitled note";
     }else if(src==="file"){
       if(!title)title=viaSyllabusScan?tag+" Syllabus":"Scanned notes";
-      if(!fileText.trim())body="<p>No file content.</p>";
+      if(fileImage){
+        // A screenshot has nothing to "summarize" -- it's a picture, not
+        // prose -- so this skips aiSummarize entirely and goes straight to
+        // vision-based deadline extraction, gated by its own pricier usage
+        // pool (SCREENSHOT_SCAN_LIMIT), separate from AI note scans.
+        if(!canScanScreenshot()){
+          body="<p>Screenshot uploaded, but this month's free screenshot imports are used up.</p>";
+          setUpgradeModal({feature:"screenshot imports",detail:resetNote("screenshot imports",SCREENSHOT_SCAN_LIMIT)});
+        }else{
+          setAiLoading(true);
+          const result=await extractSyllabusDeadlinesFromImage(fileImage.base64,fileImage.mediaType);
+          setAiLoading(false);
+          recordScreenshotScan();
+          if(result.error){
+            body="<p>"+result.error+"</p>";
+          }else if(result.items.length>0){
+            syllabusItems=result.items;
+            body="<p>Imported from a screenshot.</p>";
+          }else{
+            body="<p>No dates found in that screenshot. Try a clearer image, or paste the text instead.</p>";
+          }
+        }
+      }else if(!fileText.trim()){body="<p>No file content.</p>";}
       else if(canScanNote()){
         body=await aiSummarize(fileText,"document/file");
         recordNoteScan();
@@ -5575,7 +5673,7 @@ function Notes({setActive=()=>{}}){
     const newNote={id:String(Date.now()),title,body,tag,date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now()};
     const next=[newNote,...notes];
     setNotes(next);lsSet("notes",next);
-    setNewOpen(false);setNewTitle("");setSrc("write");setFileText("");setSearch("");setViaSyllabusScan(false);
+    setNewOpen(false);setNewTitle("");setSrc("write");setFileText("");setFileImage(null);setFileUploadError("");setSearch("");setViaSyllabusScan(false);
     setSel(0);
     setPopover(null);
     if(syllabusItems!==null){
@@ -5766,7 +5864,7 @@ function Notes({setActive=()=>{}}){
 
       {/* ── NEW NOTE MODAL — metadata only, no body field ── */}
       <Modal open={newOpen} onClose={()=>{setNewOpen(false);setViaSyllabusScan(false);setSrc("write");}} title={viaSyllabusScan?"Scan your syllabus":"New note"} sub={viaSyllabusScan?"Which class is this for? Studlin reads the file and finds every date.":"Configure your note. You'll write on the canvas next."} width={560}
-        footer={<><Btn variant="subtle" onClick={()=>{setNewOpen(false);setViaSyllabusScan(false);setSrc("write");}}>Cancel</Btn><Btn onClick={continueToCanvas} disabled={aiLoading||(viaSyllabusScan&&!fileText.trim())}>{aiLoading?"Processing…":viaSyllabusScan?"Scan & Continue →":src==="record"?"Go to Lecture Lab →":"Continue to Canvas →"}</Btn></>}>
+        footer={<><Btn variant="subtle" onClick={()=>{setNewOpen(false);setViaSyllabusScan(false);setSrc("write");}}>Cancel</Btn><Btn onClick={continueToCanvas} disabled={aiLoading||!!fileUploadError||(viaSyllabusScan&&!fileText.trim()&&!fileImage)}>{aiLoading?"Processing…":viaSyllabusScan?"Scan & Continue →":src==="record"?"Go to Lecture Lab →":"Continue to Canvas →"}</Btn></>}>
         {!viaSyllabusScan&&(
           <Field label="Source">
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
@@ -5785,12 +5883,12 @@ function Notes({setActive=()=>{}}){
         {newTag==="Other"&&<Field label="Custom class"><Input placeholder="e.g. Physics, SAT prep..." value={customTag} onChange={ev=>setCustomTag(ev.target.value)} /></Field>}
         {/* No body textarea for "write" — canvas is the editor */}
         {src==="file"&&(
-          <Field label="Upload" hint="AI reads your file and builds structured notes.">
-            <input type="file" ref={fileRef} onChange={handleFile} accept=".txt,.md,.csv,.pdf,.doc,.docx,.rtf" style={{display:"none"}} />
-            <div onClick={()=>fileRef.current&&fileRef.current.click()} style={{border:"1px dashed "+T.borderHover,borderRadius:10,padding:26,textAlign:"center",background:T.card2,cursor:"pointer"}}>
-              <div style={{color:T.muted,marginBottom:6,display:"flex",justifyContent:"center"}}>{Icon.file}</div>
-              <div style={{fontSize:13,color:T.text,fontWeight:500}}>{fileText?"File loaded — "+fileText.length+" chars":"Click to browse or drop a file"}</div>
-              <div style={{fontSize:11,color:T.muted,marginTop:4}}>PDF, TXT, MD, CSV, DOCX</div>
+          <Field label="Upload" hint={viaSyllabusScan?"AI reads your file (or a screenshot of your Canvas/syllabus page) and finds every date.":"AI reads your file and builds structured notes."}>
+            <input type="file" ref={fileRef} onChange={handleFile} accept=".txt,.md,.csv,.pdf,.doc,.docx,.rtf,.png,.jpg,.jpeg,.webp,.gif" style={{display:"none"}} />
+            <div onClick={()=>fileRef.current&&fileRef.current.click()} style={{border:"1px dashed "+(fileUploadError?T.red:T.borderHover),borderRadius:10,padding:26,textAlign:"center",background:T.card2,cursor:"pointer"}}>
+              <div style={{color:fileUploadError?T.red:T.muted,marginBottom:6,display:"flex",justifyContent:"center"}}>{Icon.file}</div>
+              <div style={{fontSize:13,color:fileUploadError?T.red:T.text,fontWeight:500}}>{fileUploadError||(fileImage?"Screenshot loaded":fileText?"File loaded — "+fileText.length+" chars":"Click to browse or drop a file")}</div>
+              <div style={{fontSize:11,color:T.muted,marginTop:4}}>{viaSyllabusScan?"PDF, TXT, DOCX, or a screenshot (PNG/JPG)":"PDF, TXT, MD, CSV, DOCX"}</div>
             </div>
           </Field>
         )}

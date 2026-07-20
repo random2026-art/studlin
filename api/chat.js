@@ -185,6 +185,13 @@ const FLASH_PROMPT = `You are Studlin Flash, a quick-answer study assistant. Giv
 const EXTRACTION_PROMPT = `You extract structured data from student input. Follow the user's formatting instructions exactly and completely. Respond with ONLY the requested output — no greeting, no explanation, no markdown code fences, no commentary before or after.`;
 
 const CREDIT_COST = { standard: 1, flash: 1 };
+// A request carrying an image (the Canvas/syllabus screenshot importer)
+// costs meaningfully more real tokens than a text-only call -- a full-
+// resolution screenshot alone can run past a thousand image tokens before
+// the model reads a single word back, on top of the response itself. Flat
+// 1-credit pricing for that would badly under-charge relative to every
+// other AI feature in this app.
+const IMAGE_CREDIT_COST = 4;
 const DEFAULT_CREDITS = 120; // Free plan limit — must match api/me.js, the actual account-creation default
 const RATE_LIMIT_PER_MIN = 20;
 
@@ -205,7 +212,34 @@ module.exports = withSentry(async (req, res) => {
       return res.status(400).json({ error: 'Messages are required.' });
     }
 
-    const cost = CREDIT_COST[model] || 1;
+    // Basic shape/size guard on any attached image before it ever reaches
+    // the credit transaction or the upstream call -- a malformed or
+    // oversized payload should fail fast and cheap, not burn a credit
+    // first and find out from Anthropic's own error response.
+    // Vercel's Node.js serverless functions have a hard 4.5MB request body
+    // ceiling that nothing in this repo's vercel.json raises (it isn't
+    // configurable for this runtime) -- a bigger base64 payload than this
+    // never reaches this code at all, it gets a platform-level 413 first.
+    // Sized with headroom under that real ceiling, not Anthropic's own
+    // (much larger) per-image limit, since Vercel's is the actual
+    // bottleneck here.
+    const MAX_IMAGE_BASE64_CHARS = 3.5 * 1024 * 1024;
+    const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+    for (const m of messages) {
+      if (!m.image) continue;
+      if (!m.image.data || !m.image.mediaType) {
+        return res.status(400).json({ error: 'Image is missing required fields.' });
+      }
+      if (!ALLOWED_IMAGE_TYPES.has(m.image.mediaType)) {
+        return res.status(400).json({ error: 'Unsupported image type. Use PNG, JPEG, WEBP, or GIF.' });
+      }
+      if (m.image.data.length > MAX_IMAGE_BASE64_CHARS) {
+        return res.status(400).json({ error: 'Image is too large. Try a smaller screenshot or crop it down.' });
+      }
+    }
+
+    const hasImage = messages.some(m => !!m.image);
+    const cost = hasImage ? IMAGE_CREDIT_COST : (CREDIT_COST[model] || 1);
 
     // Credit tracking is best-effort: if Firestore is unreachable or the
     // `users` collection/document isn't there yet, don't let that break the
@@ -284,9 +318,19 @@ module.exports = withSentry(async (req, res) => {
       systemPrompt = systemPrompt + '\n\n' + directives.join(' ');
     }
 
+    // Plain string content for every existing text-only caller (chat,
+    // syllabus text extraction, flashcard/quiz gen, ...) -- completely
+    // unchanged. Only a message carrying an image switches to Anthropic's
+    // multi-part content block array, image first so the model reads it
+    // before the accompanying instruction text.
     const claudeMessages = messages.map(m => ({
       role: m.r === 'ai' ? 'assistant' : 'user',
-      content: m.t,
+      content: m.image
+        ? [
+            { type: 'image', source: { type: 'base64', media_type: m.image.mediaType, data: m.image.data } },
+            { type: 'text', text: m.t || '' },
+          ]
+        : m.t,
     }));
 
     // A hung/slow upstream call would otherwise let Vercel's own platform
