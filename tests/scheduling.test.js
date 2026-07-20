@@ -1590,6 +1590,81 @@ describe("isPhaseDecompositionCandidate (gates whether a project is 'large' enou
   });
 });
 
+describe("commitSyllabusEvents phase wiring (only phase 0 ever gets a real chain)", () => {
+  const phasedItem = (overrides) => ({
+    title: "Term Paper", date: "2026-07-22", kind: "deadline", confidence: "high",
+    estimatedHours: 20, include: true, attackBlock: true,
+    phases: ["Research & sources", "Outline", "Draft", "Revise & cite"], ...overrides,
+  });
+
+  test("the marker event stores the full phase plan, phase 0 active and the rest pending", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const result = m.commitSyllabusEvents("note-1", "History", [phasedItem()]);
+    const marker = result.find(e => e.kind === "deadline");
+    assert.equal(marker.phases.length, 4);
+    assert.equal(marker.phases[0].name, "Research & sources");
+    assert.equal(marker.phases[0].status, "active");
+    assert.ok(marker.phases.slice(1).every(p => p.status === "pending"));
+  });
+
+  test("when actionable now, exactly one Attack Block chain is created, for phase 0 only", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const result = m.commitSyllabusEvents("note-1", "History", [phasedItem()]);
+    const chainEvents = result.filter(e => e.isAttackBlock);
+    assert.equal(chainEvents.length, 1);
+    assert.equal(chainEvents[0].projectPhaseIndex, 0);
+    assert.equal(chainEvents[0].phaseName, "Research & sources");
+    assert.equal(chainEvents[0].projectTitle, "Term Paper");
+    assert.equal(chainEvents[0].title, "Term Paper: Research & sources");
+    assert.equal(chainEvents[0].dueEventId, "syl-note-1-0");
+  });
+
+  test("a far-off deadline stays prepPending with its phase plan intact, but schedules no chain yet", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const result = m.commitSyllabusEvents("note-1", "History", [phasedItem({ date: "2026-09-28" })]);
+    assert.equal(result.filter(e => e.isAttackBlock).length, 0);
+    const marker = result.find(e => e.kind === "deadline");
+    assert.equal(marker.prepPending, true);
+    assert.equal(marker.phases.length, 4);
+  });
+
+  test("no phases proposed (empty array) behaves exactly like the original flat Attack Block flow", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const result = m.commitSyllabusEvents("note-1", "History", [phasedItem({ phases: [] })]);
+    const marker = result.find(e => e.kind === "deadline");
+    assert.equal(Object.prototype.hasOwnProperty.call(marker, "phases"), false);
+    const chain = result.find(e => e.isAttackBlock);
+    assert.equal(chain.title, "Term Paper");
+    assert.equal(Object.prototype.hasOwnProperty.call(chain, "projectPhaseIndex"), false);
+  });
+
+  test("an item with no phases field at all (never offered/accepted) is unaffected", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const result = m.commitSyllabusEvents("note-1", "History", [phasedItem({ phases: undefined })]);
+    const chain = result.find(e => e.isAttackBlock);
+    assert.equal(chain.title, "Term Paper");
+    assert.equal(Object.prototype.hasOwnProperty.call(chain, "projectPhaseIndex"), false);
+  });
+});
+
+describe("startPhaseAwareAttackChain (shared phase-0 tagging used by every scheduling entry point)", () => {
+  test("with no phases, behaves identically to startAttackBlockChain", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const task = m.startPhaseAwareAttackChain({ title: "Reading Response", deadline: "2026-07-25", priority: 500, difficulty: 500 }, null, [], [], DEFAULT_PREFS, "2026-07-20", "16:00");
+    assert.equal(task.title, "Reading Response");
+    assert.equal(Object.prototype.hasOwnProperty.call(task, "projectPhaseIndex"), false);
+  });
+
+  test("with phases, tags the task with phase 0 and prefixes the title", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const task = m.startPhaseAwareAttackChain({ title: "Term Paper", deadline: "2026-09-28", priority: 500, difficulty: 500 }, ["Research", "Outline", "Draft"], [], [], DEFAULT_PREFS, "2026-07-20", "16:00");
+    assert.equal(task.title, "Term Paper: Research");
+    assert.equal(task.projectPhaseIndex, 0);
+    assert.equal(task.phaseName, "Research");
+    assert.equal(task.projectTitle, "Term Paper");
+  });
+});
+
 describe("detectAttackBlockOverruns (needs-attention: pending chain work no longer fits its own runway)", () => {
   const chainEvent = (overrides) => ({
     id: "ev-" + Math.random(), isAttackBlock: true, attackChainId: "chain-1", title: "Big Paper",

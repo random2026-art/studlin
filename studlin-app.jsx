@@ -1907,6 +1907,21 @@ function startAttackBlockChain(fields,events,routines,prefs,desiredDate,desiredT
     ...(fields.dueEventId?{dueEventId:fields.dueEventId}:{}),
   };
 }
+// Wraps startAttackBlockChain with phase awareness — shared by every place
+// a deadline item's first prep session gets scheduled (commitSyllabusEvents'
+// immediate path, the daily sweep's "auto" mode, and the "ask" mode accept
+// handler all call this instead of startAttackBlockChain directly), so the
+// phase-tagging logic exists exactly once. When `phases` is a non-empty
+// array, the resulting chain represents phase 0 only — its title becomes
+// "<project title>: <phase name>" so the calendar shows which slice of the
+// project this session actually is, and projectPhaseIndex/phaseName/
+// projectTitle ride along on the returned task for the phase-advance logic
+// (see advanceProjectPhase) to find once this session is marked truly done.
+function startPhaseAwareAttackChain(fields,phases,events,routines,prefs,desiredDate,desiredTime){
+  const hasPhases=Array.isArray(phases)&&phases.length>0;
+  const task=startAttackBlockChain(hasPhases?{...fields,title:fields.title+": "+phases[0]}:fields,events,routines,prefs,desiredDate,desiredTime);
+  return hasPhases?{...task,projectPhaseIndex:0,phaseName:phases[0],projectTitle:fields.title}:task;
+}
 // How many days out each follow-up chunk should target, given N chunks and
 // a runway of days until the finish-by buffer. A square-root ease: early
 // chunks land close together near today (when a deadline weeks out doesn't
@@ -5294,6 +5309,19 @@ function Notes({setActive=()=>{}}){
     }catch(e){return regexScanDeadlines(text);}
   };
 
+  // Fires the phase-name proposal (see proposeProjectPhases) for one review
+  // item and writes the result back onto it. phases:[] (not null) after a
+  // resolved call specifically means "AI looked and found nothing concrete
+  // to ground phases in" — the review UI shows a different message for
+  // that than for "hasn't been asked yet" (phases still undefined).
+  const suggestPhasesFor=async(itemId)=>{
+    setSyllabusReview(r=>r&&({...r,items:r.items.map(x=>x.id===itemId?{...x,phasesLoading:true}:x)}));
+    const it=(syllabusReview?.items||[]).find(x=>x.id===itemId);
+    if(!it)return;
+    const names=await proposeProjectPhases(it.title,it.detail||"",syllabusReview.tag);
+    setSyllabusReview(r=>r&&({...r,items:r.items.map(x=>x.id===itemId?{...x,phasesLoading:false,phases:names||[]}:x)}));
+  };
+
   // "Continue to Canvas" — creates note and enters canvas immediately
   const continueToCanvas=async()=>{
     const tag=newTag==="Other"&&customTag.trim()?customTag.trim():newTag;
@@ -5638,6 +5666,29 @@ function Notes({setActive=()=>{}}){
                   </div>
                   {it.detail&&(
                     <div style={{fontSize:11.5,color:T.muted,marginTop:6,lineHeight:1.4}}>{it.detail}</div>
+                  )}
+                  {it.kind==="deadline"&&it.attackBlock&&isPhaseDecompositionCandidate(it.estimatedHours,it.date,dayKey())&&(
+                    <div style={{marginTop:8}}>
+                      {it.phases===undefined?(
+                        <button type="button" disabled={!!it.phasesLoading} onClick={()=>suggestPhasesFor(it.id)} style={{background:"none",border:`1px dashed ${T.borderHover}`,borderRadius:6,color:T.muted,fontSize:11,fontFamily:T.font,cursor:it.phasesLoading?"default":"pointer",padding:"5px 10px",opacity:it.phasesLoading?0.6:1}}>
+                          {it.phasesLoading?"Thinking through phases…":"This looks big. Break it into phases?"}
+                        </button>
+                      ):it.phases.length===0?(
+                        <div style={{fontSize:11,color:T.muted}}>Not enough detail here to break into phases. Add detail above, or leave it as one Attack Block.</div>
+                      ):(
+                        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                          <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Phases: only the first gets scheduled now</div>
+                          {it.phases.map((ph,pi)=>(
+                            <div key={pi} style={{display:"flex",alignItems:"center",gap:6}}>
+                              <span style={{fontSize:10,color:T.faint,width:14,flexShrink:0,fontFamily:T.mono}}>{pi+1}</span>
+                              <Input value={ph} onChange={ev=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,phases:x.phases.map((p,ppi)=>ppi===pi?ev.target.value:p)}:x)}))} style={{flex:1,fontSize:12,padding:"5px 8px"}} />
+                              <button type="button" onClick={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,phases:x.phases.filter((_,ppi)=>ppi!==pi)}:x)}))} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,lineHeight:1,padding:2,flexShrink:0}}>×</button>
+                            </div>
+                          ))}
+                          <button type="button" onClick={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,phases:[...x.phases,""]}:x)}))} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add phase</button>
+                        </div>
+                      )}
+                    </div>
                   )}
                   {it.kind==="exam"&&it.proposeSessions&&(()=>{
                     const dates=computeReviewDates(it.date,dayKey(),it.sessionCount||4);
@@ -7138,6 +7189,11 @@ function commitSyllabusEvents(noteId,tag,items){
       // sweep can compare against this exact same computation later without
       // needing to re-derive it — see the sweep in App().
       ...(wantsAttack?{estimatedHours:it.estimatedHours||ATTACK_BLOCK_DEFAULT_ESTIMATE_HOURS,attackStartDate:gate?gate.startDate:null}:{}),
+      // Only ever a plan of NAMES — see proposeProjectPhases. Stored
+      // regardless of isActionableNow (same as estimatedHours/
+      // attackStartDate above) so a deferred prepPending item doesn't lose
+      // its phase plan by the time it actually becomes actionable.
+      ...(wantsAttack&&it.phases&&it.phases.length>0?{phases:it.phases.map((name,pi)=>({name,status:pi===0?"active":"pending"}))}:{}),
       // examWeight ("quiz" vs "major") and confidenceLog together drive the
       // adaptive check-in after each linked study session completes — see
       // evaluateExamPrepAdjustment. Only meaningful for kind:"exam".
@@ -7162,7 +7218,7 @@ function commitSyllabusEvents(noteId,tag,items){
     if(it.kind!=="deadline"||!it.attackBlock)return;
     const gate=gates[i];
     if(!gate||today<gate.startDate)return;
-    const task=startAttackBlockChain({title:it.title,deadline:it.date,priority:5,difficulty:5,noteId,dueEventId:markerEvents[i].id},working,routines,prefs,dayKey(),prefs.workStartTime);
+    const task=startPhaseAwareAttackChain({title:it.title,deadline:it.date,priority:5,difficulty:5,noteId,dueEventId:markerEvents[i].id},it.phases,working,routines,prefs,dayKey(),prefs.workStartTime);
     attackEvents.push(task);working=working.concat([task]);
   });
   // Opted-in exam items get real spaced study sessions counting down to
@@ -15614,7 +15670,7 @@ function App() {
     const events=lsGet("events",[]);
     const routines=getWeeklyRoutine();
     const prefs=getSchedulePreferences();
-    const task=startAttackBlockChain({title:item.title,deadline:item.date,priority:item.priority,difficulty:item.difficulty,noteId:item.noteId,dueEventId:item.id},events,routines,prefs,dayKey(),prefs.workStartTime);
+    const task=startPhaseAwareAttackChain({title:item.title,deadline:item.date,priority:item.priority,difficulty:item.difficulty,noteId:item.noteId,dueEventId:item.id},item.phases,events,routines,prefs,dayKey(),prefs.workStartTime);
     const next=events.map(e=>e.id===item.id?{...e,prepPending:false}:e).concat([task]);
     lsSet("events",next);
     setPrepPromptBatch(b=>b.filter(x=>x.id!==item.id));
@@ -16255,14 +16311,14 @@ function App() {
           const prefs2=getSchedulePreferences();
           const scheduledTitles=[];
           nowActionable.forEach(ev=>{
-            const task=startAttackBlockChain({title:ev.title,deadline:ev.date,priority:ev.priority,difficulty:ev.difficulty,noteId:ev.noteId,dueEventId:ev.id},working,routines2,prefs2,today,prefs2.workStartTime);
+            const task=startPhaseAwareAttackChain({title:ev.title,deadline:ev.date,priority:ev.priority,difficulty:ev.difficulty,noteId:ev.noteId,dueEventId:ev.id},ev.phases?ev.phases.map(p=>p.name):null,working,routines2,prefs2,today,prefs2.workStartTime);
             working=working.map(e=>e.id===ev.id?{...e,prepPending:false}:e).concat([task]);
             scheduledTitles.push(ev.title);
           });
           setPrepAutoToast("Studlin scheduled prep time for "+scheduledTitles.length+" assignment"+(scheduledTitles.length!==1?"s":"")+" due soon");
           setTimeout(()=>setPrepAutoToast(""),4200);
         }else{
-          setPrepPromptBatch(nowActionable.map(ev=>({id:ev.id,title:ev.title,date:ev.date,noteId:ev.noteId,priority:ev.priority,difficulty:ev.difficulty})));
+          setPrepPromptBatch(nowActionable.map(ev=>({id:ev.id,title:ev.title,date:ev.date,noteId:ev.noteId,priority:ev.priority,difficulty:ev.difficulty,phases:ev.phases?ev.phases.map(p=>p.name):null})));
         }
       }
     }

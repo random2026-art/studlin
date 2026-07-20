@@ -93,7 +93,8 @@ function loadStudlinModule(options) {
     "computeAttackBlockRampOffsets","ATTACK_BLOCK_RAMP_EXPONENT","detectAttackBlockOverruns",
     "getAttackOverrunDismissals","isAttackOverrunDismissedToday","dismissAttackOverrunToday",
     "computeWeekBalancePlan","scheduleAttackBlockFollowUp","logSession","getTotalMinutesFocused",
-    "startAttackBlockChain","isPhaseDecompositionCandidate","PHASE_DECOMPOSITION_MIN_WEEKS"];
+    "startAttackBlockChain","isPhaseDecompositionCandidate","PHASE_DECOMPOSITION_MIN_WEEKS",
+    "startPhaseAwareAttackChain","commitSyllabusEvents"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }
