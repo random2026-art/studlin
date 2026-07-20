@@ -1557,6 +1557,39 @@ describe("computeAttackBlockRampOffsets (Attack Block follow-up pacing: back-wei
   });
 });
 
+describe("isPhaseDecompositionCandidate (gates whether a project is 'large' enough to offer phase breakdown)", () => {
+  test("a genuinely large project (big estimate, far-off deadline) is a candidate", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isPhaseDecompositionCandidate(20, "2026-09-28", "2026-07-20"), true);
+  });
+
+  test("a small item (short estimate) is never a candidate, regardless of how far off the deadline is", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isPhaseDecompositionCandidate(2, "2026-09-28", "2026-07-20"), false);
+  });
+
+  test("eligibility reflects the work's inherent size, not squeezed runway -- a big estimate crammed into a few days is still a candidate", () => {
+    const m = loadStudlinModule();
+    // Same 20-hour estimate as the "genuinely large" case above, just with
+    // almost no runway left -- still fundamentally a multi-phase-shaped
+    // project; the runway squeeze itself is the needs-attention card's job
+    // to catch, not this gate's.
+    assert.equal(m.isPhaseDecompositionCandidate(20, "2026-07-25", "2026-07-20"), true);
+  });
+
+  test("missing an estimate or a deadline is never a candidate -- nothing to compute against", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isPhaseDecompositionCandidate(null, "2026-09-28", "2026-07-20"), false);
+    assert.equal(m.isPhaseDecompositionCandidate(20, null, "2026-07-20"), false);
+  });
+
+  test("eligibility and the start-date gate never disagree, since both read the same weeksNeeded", () => {
+    const m = loadStudlinModule();
+    const gate = m.computeAttackBlockStartDate("2026-10-15", 20 * 60, "2026-07-20");
+    assert.equal(m.isPhaseDecompositionCandidate(20, "2026-10-15", "2026-07-20"), gate.weeksNeeded >= m.PHASE_DECOMPOSITION_MIN_WEEKS);
+  });
+});
+
 describe("detectAttackBlockOverruns (needs-attention: pending chain work no longer fits its own runway)", () => {
   const chainEvent = (overrides) => ({
     id: "ev-" + Math.random(), isAttackBlock: true, attackChainId: "chain-1", title: "Big Paper",

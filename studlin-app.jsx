@@ -1839,6 +1839,50 @@ function computeAttackBlockStartDate(deadlineKey,estimatedTotalMins,todayKey){
     compressed,
   };
 }
+// A "large project" candidate for phase decomposition — reuses the exact
+// same weeksNeeded math the start-date gate itself already computes, so
+// eligibility and the gate can never disagree about what counts as
+// multi-week. Short items (weeksNeeded below the threshold) never see
+// phase UI at all — no point splitting a single-sitting assignment into
+// "phases."
+const PHASE_DECOMPOSITION_MIN_WEEKS=2;
+function isPhaseDecompositionCandidate(estimatedHours,deadlineKey,todayKey){
+  const gate=computeAttackBlockStartDate(deadlineKey,(estimatedHours||0)*60,todayKey);
+  return !!gate&&gate.weeksNeeded>=PHASE_DECOMPOSITION_MIN_WEEKS;
+}
+// AI phase-NAME proposal for a genuinely large project (gated by
+// isPhaseDecompositionCandidate above) — deliberately narrow: only ever
+// asks for an ordered list of names, never durations or dates. A duration
+// estimate for a phase nobody's started yet is fake precision, the exact
+// reason Attack Block itself probes-then-extrapolates instead of asking a
+// student to guess up front; each phase gets its own real probe/self-
+// report loop only once it's actually reached (see the per-phase Attack
+// Block chain this feeds — attackChainId per phase, all sharing one
+// dueEventId back to this project's due-date marker, and a phases:[{name,
+// status}] array stored on that marker itself).
+// Grounded in the real syllabus `detail` text, not just the title — if
+// there's nothing concrete to work with, resolves to null so the item
+// falls back to the ordinary flat Attack Block flow instead of a generic,
+// disconnected "outline/draft/revise" template guessed from the title alone.
+async function proposeProjectPhases(title,detail,subject){
+  try{
+    const prompt="A student has a large, multi-week project: \""+title+"\""+(subject?" for "+subject:"")+". "+
+      (detail?"Here's what's known about it: "+detail+". ":"No further detail is available beyond the title. ")+
+      "Break this into an ordered list of realistic phases (e.g. research, outline, draft, revise — but named specifically for THIS project, not a generic template). "+
+      "Only propose phases if the detail above actually gives you something concrete to ground them in — if all you have is a bare title with no real information about what the project involves, don't guess: respond with {\"phases\":[]} instead of inventing a generic breakdown. "+
+      "3-5 phases is typical, never more than 6. Respond with ONLY valid JSON, no markdown fences, no commentary: "+
+      "{\"phases\":[\"Research & sources\",\"Outline\",\"Draft\",\"Revise & cite\"]}";
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+    const data=await res.json();
+    const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
+    const parsed=JSON.parse(raw);
+    if(parsed&&Array.isArray(parsed.phases)&&parsed.phases.length>0){
+      const names=parsed.phases.filter(p=>typeof p==="string"&&p.trim()).slice(0,6).map(p=>p.trim());
+      return names.length>0?names:null;
+    }
+    return null;
+  }catch(e){return null;}
+}
 // Starts a new chain: places the first probe session via findReliableSlotFor.
 // No separate "parent" record — this session IS the task, linked to its
 // eventual follow-ups only by attackChainId, same idiom as split-session
