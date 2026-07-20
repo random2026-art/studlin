@@ -86,7 +86,8 @@ function loadStudlinModule(options) {
     "applyCheckInRating","computeExamReadiness","canGenQuiz","recordQuizGen",
     "getQuizGenUsage","QUIZ_GEN_LIMIT","setPlanLS","shouldShowWeekBalanceNudge",
     "dismissWeekBalanceNudge","computeBusyWindowsPayload","BUSY_WINDOW_DAYS_AHEAD",
-    "layoutDayEvents","computeEventBlockHeightPx","isTimerEligible"];
+    "layoutDayEvents","computeEventBlockHeightPx","isTimerEligible",
+    "logSuggestionDecision","examPrepIntervalPosition"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }

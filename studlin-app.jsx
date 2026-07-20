@@ -1512,6 +1512,36 @@ function dismissPeakHourInsight(bucketId){
   dismissed[bucketId]=Date.now();
   lsSet("peakInsightDismissed",dismissed);
 }
+// Append-only log of every accept/dismiss/edit decision a student makes on
+// a Studlin-generated suggestion (peak-hour insight, struggling bucket,
+// week balance, exam-prep pacing, and eventually Tier 0's own ask-mode) --
+// deliberately just a log, not a training pipeline: there's no stage-two
+// model consuming this yet, so building anything heavier than "append a
+// row" here would be speculative infrastructure for a consumer that
+// doesn't exist. `context` must carry whatever was actually shown/relevant
+// at decision time (not just the action) -- accept/dismiss with no context
+// is unlabelable later, and context is the part that can't be
+// reconstructed after the fact.
+function logSuggestionDecision(kind,action,context){
+  const log=lsGet("suggestionLog",[]);
+  log.push({kind,action,context:context||{},t:Date.now()});
+  lsSet("suggestionLog",log);
+}
+// Where a session sits in its exam's own spaced-review curve -- e.g.
+// "session 2 of 4, 6 days out" -- the context an exam-prep suggestion's
+// logged decision needs to later check whether accepting/dismissing a
+// pacing change correlates with worse review completion. Pure: takes the
+// exam and the full events array rather than reading storage itself, so
+// it's callable from wherever a decision is being logged without assuming
+// what's already in scope there.
+function examPrepIntervalPosition(examEvent,sessionId,events,todayKey){
+  if(!examEvent)return null;
+  const sessions=events.filter(e=>e.dueEventId===examEvent.id&&e.isExamPrepSession).sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
+  const idx=sessions.findIndex(e=>e.id===sessionId);
+  const today=todayKey||dayKey();
+  const daysToExam=Math.round((new Date(examEvent.date+"T12:00:00")-new Date(today+"T12:00:00"))/86400000);
+  return {sessionPosition:idx>=0?(idx+1)+" of "+sessions.length:null,daysToExam};
+}
 // Finds where Studlin should silently move a missed task. Adds no new
 // scanning logic on top of findSlotWithEviction/findLegalSlotOrNull — every
 // candidate it considers is already deadline-safe and non-overlapping by
@@ -9847,10 +9877,11 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
     const plan=computeWeekBalancePlan(lsGet("events",[]),routines,getSchedulePreferences(),dayKey());
     if(plan.moves.length>0)setWeekBalanceNudge(true);
   },[]);
-  const declineWeekBalanceNudge=()=>{dismissWeekBalanceNudge();setWeekBalanceNudge(false);};
-  const acceptWeekBalanceNudge=()=>{setWeekBalanceNudge(false);openWeekBalance();};
+  const declineWeekBalanceNudge=()=>{logSuggestionDecision("weekBalanceNudge","dismissed",{});dismissWeekBalanceNudge();setWeekBalanceNudge(false);};
+  const acceptWeekBalanceNudge=()=>{logSuggestionDecision("weekBalanceNudge","accepted",{});setWeekBalanceNudge(false);openWeekBalance();};
   const confirmWeekBalance=()=>{
     if(!weekBalancePlan||weekBalancePlan.moves.length===0){setWeekBalanceOpen(false);return;}
+    logSuggestionDecision("weekBalancePlan","accepted",{moveCount:weekBalancePlan.moves.length});
     const all=lsGet("events",[]);
     const moveMap=new Map(weekBalancePlan.moves.map(m=>[m.id,m]));
     const next=all.map(ev=>moveMap.has(ev.id)?{...ev,date:moveMap.get(ev.id).toDate,time:moveMap.get(ev.id).toTime}:ev);
@@ -11263,7 +11294,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
         sub={weekBalancePlan?(weekBalancePlan.moves.length>0?weekBalancePlan.moves.length+" task"+(weekBalancePlan.moves.length!==1?"s":"")+" would move to spread the load out":"Your week's already pretty even — nothing to move."):"Looks at the next 7 days and moves flexible study blocks off your heaviest days onto lighter ones."}
         width={520}
         footer={weekBalancePlan&&weekBalancePlan.moves.length>0?(
-          <><Btn variant="subtle" onClick={()=>{setWeekBalanceOpen(false);setWeekBalancePlan(null);}}>Cancel</Btn><Btn onClick={confirmWeekBalance}>Apply {weekBalancePlan.moves.length} change{weekBalancePlan.moves.length!==1?"s":""}</Btn></>
+          <><Btn variant="subtle" onClick={()=>{logSuggestionDecision("weekBalancePlan","dismissed",{moveCount:weekBalancePlan.moves.length});setWeekBalanceOpen(false);setWeekBalancePlan(null);}}>Cancel</Btn><Btn onClick={confirmWeekBalance}>Apply {weekBalancePlan.moves.length} change{weekBalancePlan.moves.length!==1?"s":""}</Btn></>
         ):(
           <Btn variant="subtle" onClick={()=>{setWeekBalanceOpen(false);setWeekBalancePlan(null);}}>Close</Btn>
         )}>
@@ -15306,11 +15337,26 @@ function App() {
     const suggestion=evaluateExamPrepAdjustment(updatedExam,nextEvents,getSchedulePreferences());
     if(suggestion)setExamPrepSuggestion(suggestion);
   };
-  const dismissExamPrepSuggestion=()=>setExamPrepSuggestion(null);
+  // Shared by accept/dismiss below -- interval position (session N of M,
+  // days-to-exam) is the field the interval-tolerance constraint on Tier 0
+  // will eventually need to check whether reflows correlate with worse
+  // review completion, so it's captured on every exam-prep decision now,
+  // not just the ones that end up mattering.
+  const buildExamPrepLogContext=(s,events)=>{
+    const examEvent=events.find(e=>e.id===s.examId);
+    const sid=s.sessionId||(s.sessionIds&&s.sessionIds[0]);
+    const interval=(examEvent&&sid)?examPrepIntervalPosition(examEvent,sid,events):{};
+    return {type:s.type,examId:s.examId,blockKind:"study block",...interval};
+  };
+  const dismissExamPrepSuggestion=()=>{
+    if(examPrepSuggestion)logSuggestionDecision("examPrepAdjustment","dismissed",buildExamPrepLogContext(examPrepSuggestion,lsGet("events",[])));
+    setExamPrepSuggestion(null);
+  };
   const acceptExamPrepSuggestion=()=>{
     if(!examPrepSuggestion)return;
     const s=examPrepSuggestion;
     const events=lsGet("events",[]);
+    logSuggestionDecision("examPrepAdjustment","accepted",buildExamPrepLogContext(s,events));
     if(s.type==="shorten"){
       lsSet("events",events.map(e=>e.id===s.sessionId?{...e,duration:s.newDuration}:e));
     }else if(s.type==="drop-remaining"){
@@ -15372,6 +15418,7 @@ function App() {
   // own picker already writes.
   const acceptStrugglingBucketOffer=()=>{
     if(!strugglingBucketOffer)return;
+    logSuggestionDecision("strugglingBucket","accepted",strugglingBucketOffer);
     const prefs=getSchedulePreferences();
     const next=(prefs.peakHourBuckets||[]).filter(b=>b!==strugglingBucketOffer.strugglingBucket);
     if(!next.includes(strugglingBucketOffer.suggestedBucket))next.push(strugglingBucketOffer.suggestedBucket);
@@ -15379,12 +15426,16 @@ function App() {
     setStrugglingBucketOffer(null);
   };
   const declineStrugglingBucketOffer=()=>{
-    if(strugglingBucketOffer)dismissStrugglingBucket(strugglingBucketOffer.strugglingBucket);
+    if(strugglingBucketOffer){
+      logSuggestionDecision("strugglingBucket","dismissed",strugglingBucketOffer);
+      dismissStrugglingBucket(strugglingBucketOffer.strugglingBucket);
+    }
     setStrugglingBucketOffer(null);
   };
   // Same explicit-action-only contract as acceptStrugglingBucketOffer above.
   const acceptPeakHourInsight=()=>{
     if(!peakInsightOffer)return;
+    logSuggestionDecision("peakHourInsight","accepted",peakInsightOffer);
     const prefs=getSchedulePreferences();
     const next=(prefs.peakHourBuckets||[]).filter(b=>b!==peakInsightOffer.currentBucket);
     if(!next.includes(peakInsightOffer.suggestedBucket))next.push(peakInsightOffer.suggestedBucket);
@@ -15392,7 +15443,10 @@ function App() {
     setPeakInsightOffer(null);
   };
   const declinePeakHourInsight=()=>{
-    if(peakInsightOffer)dismissPeakHourInsight(peakInsightOffer.suggestedBucket);
+    if(peakInsightOffer){
+      logSuggestionDecision("peakHourInsight","dismissed",peakInsightOffer);
+      dismissPeakHourInsight(peakInsightOffer.suggestedBucket);
+    }
     setPeakInsightOffer(null);
   };
   const [scheduleSettingsOpen,setScheduleSettingsOpen]=useState(false);

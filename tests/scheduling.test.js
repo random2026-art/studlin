@@ -1382,6 +1382,86 @@ describe("isTimerEligible (regression: the missed-task nudge fired for fixed com
   });
 });
 
+describe("logSuggestionDecision (append-only decision log for every accept/dismiss on a Studlin suggestion)", () => {
+  test("appends one row with kind, action, context, and a timestamp", () => {
+    const m = loadStudlinModule();
+    m.logSuggestionDecision("peakHourInsight", "accepted", { currentBucket: "morning", suggestedBucket: "evening" });
+    const log = JSON.parse(m.localStorage.getItem("studlin-suggestionLog"));
+    assert.equal(log.length, 1);
+    assert.equal(log[0].kind, "peakHourInsight");
+    assert.equal(log[0].action, "accepted");
+    assert.equal(log[0].context.currentBucket, "morning");
+    assert.ok(typeof log[0].t === "number");
+  });
+
+  test("multiple decisions accumulate rather than overwrite", () => {
+    const m = loadStudlinModule();
+    m.logSuggestionDecision("weekBalanceNudge", "accepted", {});
+    m.logSuggestionDecision("weekBalancePlan", "dismissed", { moveCount: 3 });
+    const log = JSON.parse(m.localStorage.getItem("studlin-suggestionLog"));
+    assert.equal(log.length, 2);
+    assert.equal(log[1].context.moveCount, 3);
+  });
+
+  test("defaults to an empty context object when none is passed", () => {
+    const m = loadStudlinModule();
+    m.logSuggestionDecision("strugglingBucket", "dismissed");
+    const log = JSON.parse(m.localStorage.getItem("studlin-suggestionLog"));
+    assert.deepEqual(log[0].context, {});
+  });
+});
+
+describe("examPrepIntervalPosition (session N of M + days-to-exam, for logging exam-prep pacing decisions)", () => {
+  const TODAY = "2026-07-20";
+  function exam(overrides) {
+    return { id: "exam-1", title: "Chem Midterm", date: "2026-07-27", kind: "exam", ...overrides };
+  }
+  function session(overrides) {
+    return { id: "s1", kind: "study block", dueEventId: "exam-1", isExamPrepSession: true, date: "2026-07-21", ...overrides };
+  }
+
+  test("returns null when there's no exam event", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.examPrepIntervalPosition(null, "s1", [], TODAY), null);
+  });
+
+  test("finds the session's 1-based position among the exam's own sessions, sorted by date", () => {
+    const m = loadStudlinModule();
+    const events = [
+      session({ id: "s1", date: "2026-07-21" }),
+      session({ id: "s2", date: "2026-07-23" }),
+      session({ id: "s3", date: "2026-07-25" }),
+    ];
+    const result = m.examPrepIntervalPosition(exam(), "s2", events, TODAY);
+    assert.equal(result.sessionPosition, "2 of 3");
+  });
+
+  test("computes days-to-exam from the real exam date, not the session date", () => {
+    const m = loadStudlinModule();
+    const events = [session({ id: "s1", date: "2026-07-21" })];
+    const result = m.examPrepIntervalPosition(exam({ date: "2026-07-27" }), "s1", events, TODAY);
+    assert.equal(result.daysToExam, 7);
+  });
+
+  test("sessionPosition is null when the given sessionId isn't among this exam's own sessions", () => {
+    const m = loadStudlinModule();
+    const events = [session({ id: "s1" })];
+    const result = m.examPrepIntervalPosition(exam(), "not-a-real-session", events, TODAY);
+    assert.equal(result.sessionPosition, null);
+  });
+
+  test("only counts isExamPrepSession sessions linked to this exact exam, not other events sharing the same dueEventId shape", () => {
+    const m = loadStudlinModule();
+    const events = [
+      session({ id: "s1", date: "2026-07-21" }),
+      session({ id: "s2", date: "2026-07-22", dueEventId: "other-exam" }), // different exam
+      { id: "s3", kind: "study block", dueEventId: "exam-1", isExamPrepSession: false, date: "2026-07-23" }, // not a real prep session
+    ];
+    const result = m.examPrepIntervalPosition(exam(), "s1", events, TODAY);
+    assert.equal(result.sessionPosition, "1 of 1");
+  });
+});
+
 describe("computeWeekBalancePlan (manually-triggered 'Balance my week')", () => {
   // A Monday with real dates so daysUntilDeadline math (which reads the
   // real clock) behaves predictably -- far enough in the future that
