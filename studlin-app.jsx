@@ -2421,6 +2421,22 @@ function suggestDurationFor(subject,kind){
 // exams. Not a pure function -- reads live events/routines/prefs, same as
 // every other scheduling helper in this file -- but deterministic given
 // the same stored state, same as those.
+// Shared by Flashcards' exam-link picker and Studlin Prep's exam hub list
+// -- both need "every exam still ahead of today, soonest first."
+function upcomingExams(){
+  return lsGet("events",[]).filter(e=>e.kind==="exam"&&e.date>=dayKey()).sort((a,b)=>a.date.localeCompare(b.date));
+}
+// Storage-only half of linking a deck to an exam -- callers that keep
+// their own local mirror of "decks" in React state (Flashcards) are
+// responsible for updating that mirror with the returned array after
+// calling this, the same convention every other scheduling helper in this
+// file already follows (read/write localStorage directly, never assume a
+// caller's component state).
+function linkDeckToExamStorage(deckId,examEventId){
+  const next=lsGet("decks",[]).map(d=>d.id===deckId?{...d,examEventId}:d);
+  lsSet("decks",next);
+  return next;
+}
 function buildSpacedSessionPreviews(examDate,subject,count,duration){
   const dates=computeReviewDates(examDate,dayKey(),count);
   const d=duration||suggestDurationFor(subject,"study block")||25;
@@ -3591,7 +3607,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
 }
 
 // ─── NAV ICONS MAP ────────────────────────────────────────────────────────────
-const navIcon = {dashboard:Icon.grid,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.users,lectures:Icon.mic,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,feedback:Icon.heart,settings:Icon.settings,profile:Icon.user};
+const navIcon = {dashboard:Icon.grid,prep:Icon.brain,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.users,lectures:Icon.mic,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,feedback:Icon.heart,settings:Icon.settings,profile:Icon.user};
 
 // ─── AI CHAT (removed -- see Phase 2 of the Magic-Calendar plan; Studlin AI
 // is no longer a standalone chat surface, AI now shows up embedded in the
@@ -4129,6 +4145,396 @@ const getQuizGenUsage=makeMonthlyUsage("quizGens");
 function canGenQuiz(){return getPlan()!=="Free"||getQuizGenUsage().count<QUIZ_GEN_LIMIT;}
 function recordQuizGen(){const u=getQuizGenUsage();lsSet("quizGens",{month:u.month,count:u.count+1});}
 
+// ─── STUDLIN PREP ─────────────────────────────────────────────────────────────
+// The exam-centric replacement for browsing Notes/Flashcards separately --
+// material gets attached to an exam ONCE and turns into both a flashcard
+// deck and a practice exam from the same upload, both auto-scheduled
+// toward test day. Deliberately reuses every engine already proven
+// elsewhere (generateFlashcardsFromText/generateQuizFromText,
+// linkDeckToExamStorage, buildSpacedSessionPreviews, computeExamReadiness)
+// instead of inventing a parallel system.
+function StudlinPrep(){
+  const [tab,setTab]=useState("exams"); // exams | flashcards | practiceExams
+  const [selectedExamId,setSelectedExamId]=useState(null);
+  const [,forceTick]=useState(0);
+  const refresh=()=>forceTick(x=>x+1);
+  const [upgradeModal,setUpgradeModal]=useState(null); // {feature,detail}
+  // colorOf is component-local everywhere it exists in this file (Notes,
+  // CalendarTab, Flashcards each define their own) -- not a module-level
+  // helper, so Prep needs its own too, same lookup Notes already uses.
+  const userSubjects=getSubjects();
+  const colorOf=(tg)=>{const s=userSubjects.find(x=>x.label===tg);return s?s.color:T.lime;};
+
+  const exams=upcomingExams();
+  const allDecks=lsGet("decks",[]);
+  const allPracticeExams=lsGet("practiceExams",[]);
+  const selectedExam=selectedExamId?lsGet("events",[]).find(e=>e.id===selectedExamId):null;
+
+  // ── Material upload -- one text pool per open hub, shared by both the
+  // flashcard and practice-exam generators, so nothing gets uploaded twice. ──
+  const [fileTexts,setFileTexts]=useState([]); // [{name,text}]
+  const [genLoading,setGenLoading]=useState(null); // null | "cards" | "quiz"
+  const [genMsg,setGenMsg]=useState("");
+  const materialText=fileTexts.map(f=>f.text).join("\n\n");
+  const fileInputRef=useRef(null);
+
+  const extractPrepFileText=async(file)=>{
+    const ext=file.name.split(".").pop().toLowerCase();
+    if(ext==="pdf"){
+      try{
+        const pdfjsLib=await window._pdfjs;
+        const buf=await file.arrayBuffer();
+        const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+        let text="";
+        for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();text+=tc.items.map(it=>it.str).join(" ")+"\n\n";}
+        return text;
+      }catch(err){return "Could not read PDF: "+err.message;}
+    }
+    if(ext==="docx"){
+      try{
+        if(!window.mammoth)throw new Error("Document reader still loading — try again in a moment.");
+        const buf=await file.arrayBuffer();
+        const result=await window.mammoth.extractRawText({arrayBuffer:buf});
+        return result.value;
+      }catch(err){return "Could not read this document: "+err.message;}
+    }
+    if(ext==="doc")return "This is an older .doc file — Studlin can only read .docx. Try re-saving it as .docx or PDF.";
+    return await new Promise(resolve=>{
+      const reader=new FileReader();
+      reader.onload=()=>resolve(reader.result);
+      reader.readAsText(file);
+    });
+  };
+  const handlePrepFile=async(e)=>{
+    const files=Array.from(e.target.files||[]);
+    e.target.value="";
+    for(const file of files){
+      const text=await extractPrepFileText(file);
+      setFileTexts(prev=>[...prev,{name:file.name,text}]);
+    }
+  };
+  const removePrepFile=(name)=>setFileTexts(prev=>prev.filter(f=>f.name!==name));
+
+  const genDeckForExam=async()=>{
+    if(!materialText.trim()||!selectedExam)return;
+    if(!canGenFlashcards()){
+      setUpgradeModal({feature:"AI flashcard generations",detail:"You've used all "+FLASHCARD_GEN_LIMIT+" free flashcard generations this month. They reset in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+", or upgrade for unlimited right now."});
+      return;
+    }
+    setGenLoading("cards");setGenMsg("");
+    const cards=await generateFlashcardsFromText(materialText,selectedExam.subject||"this exam",10);
+    setGenLoading(null);
+    if(cards.length===0){setGenMsg("Couldn't generate cards. Try again.");return;}
+    recordFlashcardGen();
+    const nd={id:String(Date.now()+Math.random()*1000),name:selectedExam.title,count:cards.length,done:0,color:colorOf(selectedExam.subject),cards,examEventId:selectedExam.id};
+    lsSet("decks",[nd,...lsGet("decks",[])]);
+    setGenMsg("✓ Flashcards ready for "+selectedExam.title);
+    refresh();
+  };
+  const genPracticeExamForExam=async()=>{
+    if(!materialText.trim()||!selectedExam)return;
+    if(!canGenQuiz()){
+      setUpgradeModal({feature:"AI practice exams",detail:"You've used all "+QUIZ_GEN_LIMIT+" free practice exams this month. They reset in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+", or upgrade for unlimited right now."});
+      return;
+    }
+    setGenLoading("quiz");setGenMsg("");
+    const questions=await generateQuizFromText(materialText,selectedExam.subject||"this exam",8);
+    setGenLoading(null);
+    if(questions.length===0){setGenMsg("Couldn't generate a practice exam. Try again.");return;}
+    recordQuizGen();
+    createPracticeExam(selectedExam.title,selectedExam.subject,selectedExam.id,questions);
+    setGenMsg("✓ Practice exam ready for "+selectedExam.title);
+    refresh();
+  };
+
+  // ── Scheduling — reuses buildSpacedSessionPreviews (shared with
+  // Flashcards' own review-schedule flow) for both deck reviews and
+  // practice-exam blocks, so the two can never place sessions differently
+  // for the same conceptual job. Preview-then-confirm, same discipline as
+  // every other scheduling surface in this app -- nothing commits silently. ──
+  const [schedulePreview,setSchedulePreview]=useState(null); // {kind:"deck"|"quiz", refId, title, examId, examDate, subject, count, sessions}
+  const openScheduleDeckReviews=(deck)=>{
+    if(!selectedExam)return;
+    const count=4;
+    const sessions=buildSpacedSessionPreviews(selectedExam.date,selectedExam.subject,count);
+    if(sessions.length===0)return;
+    setSchedulePreview({kind:"deck",refId:deck.id,title:deck.name,examId:selectedExam.id,examDate:selectedExam.date,subject:selectedExam.subject,count,sessions});
+  };
+  const openSchedulePracticeExam=(pe)=>{
+    if(!selectedExam)return;
+    const sessions=buildSpacedSessionPreviews(selectedExam.date,selectedExam.subject,1,60);
+    if(sessions.length===0)return;
+    setSchedulePreview({kind:"quiz",refId:pe.id,title:pe.name,examId:selectedExam.id,examDate:selectedExam.date,subject:selectedExam.subject,count:1,sessions});
+  };
+  const commitSchedulePreview=()=>{
+    if(!schedulePreview)return;
+    const events=lsGet("events",[]);
+    const isDeck=schedulePreview.kind==="deck";
+    const newEvents=schedulePreview.sessions.map((s,i)=>({
+      id:(isDeck?"deckrev-":"practiceexam-")+schedulePreview.refId+"-"+Date.now()+"-"+i,
+      title:(isDeck?"Review: ":"Practice Exam: ")+schedulePreview.title,
+      date:s.date,time:s.time,subject:"",kind:"study block",notes:"",
+      priority:5,difficulty:5,deadline:schedulePreview.examDate,duration:s.duration,
+      status:"pending",timeSpent:0,completedAt:null,
+      ...(isDeck?{deckId:schedulePreview.refId}:{practiceExamId:schedulePreview.refId}),
+      placementReason:s.placementReason||null,
+      dueEventId:schedulePreview.examId,
+      isExamPrepSession:true,
+    }));
+    lsSet("events",events.concat(newEvents));
+    setSchedulePreview(null);
+  };
+
+  // ── Taking a practice exam -- direct execution, right inside Prep, no
+  // navigating away. On finishing: records the attempt, writes quizScores
+  // onto the linked exam so it feeds computeExamReadiness exactly like a
+  // quiz taken from Lectures/Notes, and -- the actual weak-spot follow-up
+  // -- schedules one real review block naming whatever topics were missed,
+  // linked to the deck if one already exists for this exam. ──
+  const [takingQuiz,setTakingQuiz]=useState(null); // {pe, idx, picked, answers, done}
+  const startPracticeExam=(pe)=>setTakingQuiz({pe,idx:0,picked:null,answers:Array(pe.questions.length).fill(null),done:false});
+  const finishPracticeExam=()=>{
+    const {pe,answers}=takingQuiz;
+    const score=pe.questions.reduce((s,q,i)=>s+(answers[i]===q.answerIndex?1:0),0);
+    const total=pe.questions.length;
+    const wrongTopics=wrongTopicsFor(pe.questions,answers);
+    recordPracticeExamAttempt(pe.id,score,total,wrongTopics);
+    if(pe.examEventId){
+      const events=lsGet("events",[]);
+      const next=events.map(ev=>ev.id===pe.examEventId
+        ?{...ev,quizScores:[...(ev.quizScores||[]),{score,total,at:Date.now()}]}
+        :ev);
+      lsSet("events",next);
+      if(wrongTopics.length>0){
+        const exam=next.find(ev=>ev.id===pe.examEventId);
+        const linkedDeck=allDecks.find(d=>d.examEventId===pe.examEventId);
+        if(exam){
+          const slot=findReliableSlotFor(next,getWeeklyRoutine(),getSchedulePreferences(),dayKey(),getSchedulePreferences().workStartTime,25,exam.date,5);
+          const followUp={
+            id:"weakspot-"+pe.id+"-"+Date.now(),
+            title:"Review weak spots: "+wrongTopics.slice(0,3).join(", "),
+            date:slot.date,time:slot.time,subject:"",kind:"study block",notes:"",
+            priority:6,difficulty:5,deadline:exam.date,duration:25,
+            status:"pending",timeSpent:0,completedAt:null,
+            ...(linkedDeck?{deckId:linkedDeck.id}:{}),
+            placementReason:slot.reason||null,dueEventId:pe.examEventId,isExamPrepSession:true,
+          };
+          lsSet("events",next.concat([followUp]));
+        }
+      }
+    }
+    setTakingQuiz(t=>({...t,done:true,score,total,wrongTopics}));
+    refresh();
+  };
+
+  return(
+    <div>
+      <PH title="Studlin Prep" sub="Attach material once. Get flashcards and a practice exam, scheduled to test day." action={
+        <div style={{display:"flex",gap:6}}>
+          {["exams","flashcards","practiceExams"].map(v=>(
+            <button key={v} onClick={()=>{setTab(v);setSelectedExamId(null);}} style={{padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",background:tab===v?T.lime+"14":"transparent",color:tab===v?T.lime:T.muted,border:`1px solid ${tab===v?T.lime+"44":T.border}`,fontFamily:T.font}}>{v==="exams"?"By Exam":v==="flashcards"?"All Flashcards":"All Practice Exams"}</button>
+          ))}
+        </div>
+      } />
+
+      {tab==="exams"&&!selectedExam&&(
+        exams.length===0
+          ?<Card style={{padding:"32px 20px",textAlign:"center"}}>
+            <div style={{fontSize:13,color:T.muted,marginBottom:14}}>No upcoming exams yet — add one from your calendar to start building material for it.</div>
+          </Card>
+          :<div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {exams.map(ex=>{
+              const readiness=computeExamReadiness(ex,lsGet("events",[]),dayKey());
+              const deck=allDecks.find(d=>d.examEventId===ex.id);
+              const pes=allPracticeExams.filter(p=>p.examEventId===ex.id);
+              const stateColor=readiness?.state==="behind"||readiness?.state==="at-risk"?T.red:readiness?.state==="on-track"?T.lime:T.muted;
+              return(
+                <div key={ex.id} onClick={()=>{setSelectedExamId(ex.id);setFileTexts([]);setGenMsg("");}} style={{padding:"14px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,cursor:"pointer",display:"flex",alignItems:"center",gap:14}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:14,fontWeight:700,color:T.white}}>{ex.title}</div>
+                    <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{ex.subject} · {ex.date}{deck?" · deck linked":""}{pes.length>0?" · "+pes.length+" practice exam"+(pes.length!==1?"s":""):""}</div>
+                  </div>
+                  {readiness&&<span style={{fontSize:10.5,fontWeight:700,color:stateColor,background:stateColor+"14",border:`1px solid ${stateColor}44`,borderRadius:99,padding:"4px 10px",flexShrink:0}}>{readiness.state.toUpperCase().replace("-"," ")}</span>}
+                </div>
+              );
+            })}
+          </div>
+      )}
+
+      {tab==="exams"&&selectedExam&&(()=>{
+        const readiness=computeExamReadiness(selectedExam,lsGet("events",[]),dayKey());
+        const deck=allDecks.find(d=>d.examEventId===selectedExam.id);
+        const pes=allPracticeExams.filter(p=>p.examEventId===selectedExam.id);
+        return(
+          <div>
+            <button onClick={()=>setSelectedExamId(null)} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:14,display:"flex",alignItems:"center",gap:4}}>← All exams</button>
+            <Card style={{padding:20,marginBottom:16}}>
+              <div style={{fontSize:18,fontWeight:700,color:T.white,marginBottom:4}}>{selectedExam.title}</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:12}}>{selectedExam.subject} · {selectedExam.date}</div>
+              {readiness&&<div style={{fontSize:12.5,color:T.text,lineHeight:1.5,background:T.card2,borderRadius:8,padding:"10px 12px"}}>{readiness.sentence}</div>}
+            </Card>
+
+            <Card style={{padding:20,marginBottom:16}}>
+              <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Material</div>
+              <input type="file" ref={fileInputRef} onChange={handlePrepFile} accept=".txt,.md,.pdf,.docx" style={{display:"none"}} multiple />
+              <div onClick={()=>fileInputRef.current&&fileInputRef.current.click()} style={{border:`1px dashed ${T.borderHover}`,borderRadius:10,padding:18,textAlign:"center",background:T.card2,cursor:"pointer",marginBottom:fileTexts.length>0?10:14}}>
+                <div style={{fontSize:12.5,color:T.text,fontWeight:500}}>Click to upload — PDF, DOCX, or TXT</div>
+                <div style={{fontSize:10.5,color:T.muted,marginTop:3}}>Upload once, generate flashcards and a practice exam from the same material</div>
+              </div>
+              {fileTexts.length>0&&(
+                <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:14}}>
+                  {fileTexts.map(f=>(
+                    <div key={f.name} style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card2,borderRadius:8}}>
+                      <span style={{color:T.text}}>{f.name}</span>
+                      <button onClick={()=>removePrepFile(f.name)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1}}>×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                <BtnSm onClick={genDeckForExam} disabled={!materialText.trim()||genLoading!==null}>{genLoading==="cards"?"Generating…":"Generate Flashcards"}</BtnSm>
+                <BtnSm variant="subtle" onClick={genPracticeExamForExam} disabled={!materialText.trim()||genLoading!==null}>{genLoading==="quiz"?"Generating…":"Generate Practice Exam"}</BtnSm>
+                {genMsg&&<span style={{fontSize:11.5,color:genMsg.startsWith("✓")?T.teal:T.red,alignSelf:"center"}}>{genMsg}</span>}
+              </div>
+            </Card>
+
+            <Card style={{padding:20,marginBottom:16}}>
+              <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Flashcards</div>
+              {!deck?<div style={{fontSize:12,color:T.muted}}>No deck yet — generate one from material above.</div>:(
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+                  <div style={{fontSize:12.5,color:T.text}}>{deck.name} · {deck.count} cards</div>
+                  <BtnSm variant="subtle" onClick={()=>openScheduleDeckReviews(deck)}>Schedule Review Sessions</BtnSm>
+                </div>
+              )}
+            </Card>
+
+            <Card style={{padding:20}}>
+              <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Practice Exams</div>
+              {pes.length===0?<div style={{fontSize:12,color:T.muted}}>No practice exams yet — generate one from material above.</div>:(
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {pes.map(pe=>{
+                    const lastAttempt=pe.attempts&&pe.attempts.length>0?pe.attempts[pe.attempts.length-1]:null;
+                    return(
+                      <div key={pe.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"9px 12px",background:T.card2,borderRadius:8}}>
+                        <div>
+                          <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>{pe.name}</div>
+                          <div style={{fontSize:11,color:T.muted,marginTop:2}}>{pe.questions.length} questions{lastAttempt?" · last score "+lastAttempt.score+"/"+lastAttempt.total:" · not taken yet"}</div>
+                        </div>
+                        <div style={{display:"flex",gap:6,flexShrink:0}}>
+                          <BtnSm variant="subtle" onClick={()=>openSchedulePracticeExam(pe)}>Schedule</BtnSm>
+                          <BtnSm onClick={()=>startPracticeExam(pe)}>Take</BtnSm>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
+          </div>
+        );
+      })()}
+
+      {tab==="flashcards"&&(
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {allDecks.length===0
+            ?<Card style={{padding:"32px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted}}>No flashcard decks yet.</div></Card>
+            :allDecks.map(d=>(
+              <div key={d.id} style={{padding:"12px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,display:"flex",alignItems:"center",gap:14}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13.5,fontWeight:600,color:T.white}}>{d.name}</div>
+                  <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{d.count} cards{d.examEventId?" · linked to an exam":""}</div>
+                </div>
+              </div>
+            ))}
+        </div>
+      )}
+
+      {tab==="practiceExams"&&(
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {allPracticeExams.length===0
+            ?<Card style={{padding:"32px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted}}>No practice exams yet.</div></Card>
+            :allPracticeExams.map(pe=>{
+              const lastAttempt=pe.attempts&&pe.attempts.length>0?pe.attempts[pe.attempts.length-1]:null;
+              return(
+                <div key={pe.id} style={{padding:"12px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,display:"flex",alignItems:"center",gap:14}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13.5,fontWeight:600,color:T.white}}>{pe.name}</div>
+                    <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{pe.questions.length} questions{lastAttempt?" · last score "+lastAttempt.score+"/"+lastAttempt.total:" · not taken yet"}</div>
+                  </div>
+                  <BtnSm onClick={()=>startPracticeExam(pe)}>Take</BtnSm>
+                </div>
+              );
+            })}
+        </div>
+      )}
+
+      {/* ── Schedule preview -- confirm-first, same discipline as Balance My Week ── */}
+      <Modal open={!!schedulePreview} onClose={()=>setSchedulePreview(null)}
+        title={schedulePreview?.kind==="deck"?"Schedule review sessions":"Schedule practice exam"}
+        sub={schedulePreview?schedulePreview.sessions.length+" session"+(schedulePreview.sessions.length!==1?"s":"")+" counting down to "+schedulePreview.examDate:""}
+        width={460}
+        footer={<><Btn variant="subtle" onClick={()=>setSchedulePreview(null)}>Cancel</Btn><Btn onClick={commitSchedulePreview}>Schedule</Btn></>}>
+        {schedulePreview&&(
+          <div style={{display:"flex",flexDirection:"column",gap:7}}>
+            {schedulePreview.sessions.map((s,i)=>(
+              <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card2,borderRadius:8}}>
+                <span style={{color:T.text}}>{s.date}</span>
+                <span style={{color:T.muted,fontFamily:T.mono}}>{s.time} · {s.duration}m</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
+
+      {/* ── Direct execution: take a practice exam right here ── */}
+      <Modal open={!!takingQuiz} onClose={()=>setTakingQuiz(null)} title={takingQuiz?.pe?.name||"Practice Exam"} width={520}>
+        {takingQuiz&&!takingQuiz.done&&(()=>{
+          const q=takingQuiz.pe.questions[takingQuiz.idx];
+          const picked=takingQuiz.picked;
+          return(
+            <div>
+              <div style={{fontSize:11,color:T.muted,marginBottom:8}}>Question {takingQuiz.idx+1} of {takingQuiz.pe.questions.length}</div>
+              <div style={{fontSize:14,fontWeight:600,color:T.white,marginBottom:14,lineHeight:1.5}}>{q.q}</div>
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {q.choices.map((opt,i)=>{
+                  const show=picked!==null;
+                  const isCorrect=i===q.answerIndex;
+                  let border=T.border,bg=T.card2,color=T.text;
+                  if(show&&isCorrect){border=T.teal;bg=T.teal+"18";color=T.teal;}
+                  else if(show&&picked===i&&!isCorrect){border=T.red;bg=T.red+"14";color=T.red;}
+                  return(
+                    <button key={i} disabled={picked!==null} onClick={()=>setTakingQuiz(tq=>({...tq,picked:i,answers:tq.answers.map((a,ai)=>ai===tq.idx?i:a)}))} style={{textAlign:"left",padding:"10px 14px",borderRadius:8,border:`1px solid ${border}`,background:bg,color,cursor:picked!==null?"default":"pointer",fontFamily:T.font,fontSize:13}}>{opt}</button>
+                  );
+                })}
+              </div>
+              {picked!==null&&(
+                <div style={{marginTop:16,display:"flex",justifyContent:"flex-end"}}>
+                  <Btn onClick={()=>{
+                    const isLast=takingQuiz.idx>=takingQuiz.pe.questions.length-1;
+                    if(isLast)finishPracticeExam();
+                    else setTakingQuiz(tq=>({...tq,idx:tq.idx+1,picked:null}));
+                  }}>{takingQuiz.idx>=takingQuiz.pe.questions.length-1?"See results":"Next question →"}</Btn>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+        {takingQuiz&&takingQuiz.done&&(
+          <div style={{textAlign:"center",padding:"20px 0"}}>
+            <div style={{fontSize:32,fontWeight:800,color:T.lime,marginBottom:6}}>{takingQuiz.score}/{takingQuiz.total}</div>
+            {takingQuiz.wrongTopics&&takingQuiz.wrongTopics.length>0
+              ?<div style={{fontSize:12.5,color:T.muted,marginBottom:16}}>Studlin scheduled a review block for: {takingQuiz.wrongTopics.join(", ")}</div>
+              :<div style={{fontSize:13,color:T.muted,marginBottom:16}}>Clean sweep, nice work.</div>}
+            <Btn variant="subtle" onClick={()=>setTakingQuiz(null)}>Close</Btn>
+          </div>
+        )}
+      </Modal>
+
+      <UpgradeModal open={!!upgradeModal} feature={upgradeModal?upgradeModal.feature:""} detail={upgradeModal?upgradeModal.detail:""} onClose={()=>setUpgradeModal(null)} onUpgraded={()=>setUpgradeModal(null)} />
+    </div>
+  );
+}
+
 // ─── FLASHCARDS ───────────────────────────────────────────────────────────────
 function Flashcards() {
   const MicIcon=<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0,display:"block"}}><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg>;
@@ -4274,10 +4680,9 @@ function Flashcards() {
   // path in the app already trusts.
   const [linkExamDeckId,setLinkExamDeckId]=useState(null);
   const [reviewSchedulePreview,setReviewSchedulePreview]=useState(null); // {deckId,deckName,examTitle,examDate,examSubject,count,sessions:[{date,time,duration,include}]}
-  const upcomingExams=()=>lsGet("events",[]).filter(e=>e.kind==="exam"&&e.date>=dayKey()).sort((a,b)=>a.date.localeCompare(b.date));
   const linkDeckToExam=(deckId,examEventId)=>{
-    const next=deckList.map(d=>d.id===deckId?{...d,examEventId}:d);
-    setDeckList(next);lsSet("decks",next);setLinkExamDeckId(null);
+    const next=linkDeckToExamStorage(deckId,examEventId);
+    setDeckList(next);setLinkExamDeckId(null);
   };
   // Thin wrapper -- the actual math is buildSpacedSessionPreviews (shared
   // with Studlin Prep's practice-exam scheduling), kept here unchanged so
@@ -16064,6 +16469,7 @@ function App() {
       {id:"calendar",label:"Calendar"},
     ]},
     {label:"Tools",items:[
+      {id:"prep",label:"Studlin Prep"},
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
       {id:"friends",label:"Studlin Network",badge:String(unreadCount||"")},
@@ -16075,9 +16481,9 @@ function App() {
     ]},
   ];
   const bottomItems=[];
-  const pages={writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile,lectures:Lectures,feedback:FeedbackPage};
-  const labelOf={dashboard:"Dashboard",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve",lectures:"Lectures",feedback:"Feedback"};
-  const sectionOf={dashboard:"Home",writestudio:"Tools",flashcards:"Tools",notes:"Tools",calendar:"Home",friends:"Tools",lectures:"Tools",feedback:"Account",solve:"Tools",settings:"Account",profile:"Account"};
+  const pages={prep:StudlinPrep,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile,lectures:Lectures,feedback:FeedbackPage};
+  const labelOf={dashboard:"Dashboard",prep:"Studlin Prep",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve",lectures:"Lectures",feedback:"Feedback"};
+  const sectionOf={dashboard:"Home",prep:"Tools",writestudio:"Tools",flashcards:"Tools",notes:"Tools",calendar:"Home",friends:"Tools",lectures:"Tools",feedback:"Account",solve:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
   if (!onboarded) return <InitWizard onComplete={()=>{setOnboarded(true);}} />;
