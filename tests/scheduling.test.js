@@ -1487,6 +1487,94 @@ describe("computeDayViewScale (Day view's smart viewport: fit the whole day, scr
   });
 });
 
+describe("Studlin Prep data layer (practice exams: persisted/retakeable question sets, unlike the old throwaway quiz overlays)", () => {
+  test("createPracticeExam persists a new set linked to an exam", () => {
+    const m = loadStudlinModule();
+    const pe = m.createPracticeExam("Ch. 4-6 Quiz", "Chemistry", "exam-1", [
+      { q: "q1", choices: ["a", "b", "c", "d"], answerIndex: 0, topic: "Bonding" },
+    ]);
+    assert.equal(pe.examEventId, "exam-1");
+    assert.equal(pe.attempts.length, 0);
+    const all = JSON.parse(m.localStorage.getItem("studlin-practiceExams"));
+    assert.equal(all.length, 1);
+    assert.equal(all[0].id, pe.id);
+  });
+
+  test("multiple practice exams accumulate rather than overwrite", () => {
+    const m = loadStudlinModule();
+    m.createPracticeExam("Quiz A", "Chemistry", "exam-1", []);
+    m.createPracticeExam("Quiz B", "Chemistry", "exam-1", []);
+    const all = JSON.parse(m.localStorage.getItem("studlin-practiceExams"));
+    assert.equal(all.length, 2);
+  });
+
+  test("recordPracticeExamAttempt appends an attempt without touching the question set", () => {
+    const m = loadStudlinModule();
+    const pe = m.createPracticeExam("Ch. 4-6 Quiz", "Chemistry", "exam-1", [
+      { q: "q1", choices: ["a", "b", "c", "d"], answerIndex: 0, topic: "Bonding" },
+    ]);
+    const updated = m.recordPracticeExamAttempt(pe.id, 7, 10, ["Bonding"]);
+    assert.equal(updated.attempts.length, 1);
+    assert.equal(updated.attempts[0].score, 7);
+    assert.equal(updated.questions.length, 1, "retaking should never mutate the underlying question set");
+  });
+
+  test("a second attempt on the same set accumulates attempt history, doesn't replace it", () => {
+    const m = loadStudlinModule();
+    const pe = m.createPracticeExam("Ch. 4-6 Quiz", "Chemistry", "exam-1", []);
+    m.recordPracticeExamAttempt(pe.id, 5, 10, []);
+    const updated = m.recordPracticeExamAttempt(pe.id, 8, 10, []);
+    assert.equal(updated.attempts.length, 2);
+  });
+
+  test("wrongTopicsFor returns only the topics of missed questions", () => {
+    const m = loadStudlinModule();
+    const questions = [
+      { q: "q1", answerIndex: 0, topic: "Bonding" },
+      { q: "q2", answerIndex: 1, topic: "Thermo" },
+      { q: "q3", answerIndex: 2, topic: "Kinetics" },
+    ];
+    // Missed q1 (answered 1, wanted 0) and q3 (answered 0, wanted 2); got q2 right.
+    const result = m.wrongTopicsFor(questions, [1, 1, 0]);
+    assert.equal(JSON.stringify(result), JSON.stringify(["Bonding", "Kinetics"]));
+  });
+
+  test("wrongTopicsFor deduplicates repeated topics, first-missed order preserved", () => {
+    const m = loadStudlinModule();
+    const questions = [
+      { q: "q1", answerIndex: 0, topic: "Bonding" },
+      { q: "q2", answerIndex: 0, topic: "Thermo" },
+      { q: "q3", answerIndex: 0, topic: "Bonding" },
+    ];
+    const result = m.wrongTopicsFor(questions, [1, 1, 1]);
+    assert.equal(JSON.stringify(result), JSON.stringify(["Bonding", "Thermo"]));
+  });
+
+  test("wrongTopicsFor returns an empty list for a perfect score", () => {
+    const m = loadStudlinModule();
+    const questions = [{ q: "q1", answerIndex: 0, topic: "Bonding" }];
+    assert.equal(JSON.stringify(m.wrongTopicsFor(questions, [0])), "[]");
+  });
+});
+
+describe("buildSpacedSessionPreviews (shared by deck reviews and practice-exam scheduling)", () => {
+  test("returns one preview per requested session, sorted ascending toward the exam date", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const sessions = m.buildSpacedSessionPreviews("2026-08-15", "Chemistry", 4);
+    assert.equal(sessions.length, 4);
+    for (let i = 1; i < sessions.length; i++) {
+      assert.ok(sessions[i].date >= sessions[i - 1].date);
+    }
+    assert.ok(sessions[sessions.length - 1].date < "2026-08-15", "last session should still land before the exam itself");
+  });
+
+  test("an explicit duration overrides the suggestDurationFor/default fallback", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const sessions = m.buildSpacedSessionPreviews("2026-08-15", "Chemistry", 2, 45);
+    assert.ok(sessions.every(s => s.duration === 45));
+  });
+});
+
 describe("isTimerEligible (regression: the missed-task nudge fired for fixed commitments like Gym that have no Begin/Lock-In flow at all, so it could never be satisfied)", () => {
   test("a real study block with a duration is eligible", () => {
     const m = loadStudlinModule();

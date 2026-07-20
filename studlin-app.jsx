@@ -2412,6 +2412,28 @@ function suggestDurationFor(subject,kind){
   const median=sorted.length%2?sorted[mid]:Math.round((sorted[mid-1]+sorted[mid])/2);
   return Math.max(5,Math.round(median/5)*5);
 }
+// Shared by deck review scheduling (Flashcards) and practice-exam
+// scheduling (Studlin Prep) -- both are "N spaced sessions counting down
+// to an exam date," and this is the one place that math lives so the two
+// can never drift into different placement behavior for conceptually the
+// same job. Pulled out of Flashcards' own buildReviewSessions (which now
+// just forwards here) rather than writing a second copy for practice
+// exams. Not a pure function -- reads live events/routines/prefs, same as
+// every other scheduling helper in this file -- but deterministic given
+// the same stored state, same as those.
+function buildSpacedSessionPreviews(examDate,subject,count,duration){
+  const dates=computeReviewDates(examDate,dayKey(),count);
+  const d=duration||suggestDurationFor(subject,"study block")||25;
+  const events=lsGet("events",[]);
+  const routines=getWeeklyRoutine();
+  const prefs=getSchedulePreferences();
+  let working=events;
+  return dates.map(date=>{
+    const slot=findReliableSlotFor(working,routines,prefs,date,prefs.workStartTime,d,examDate,5);
+    working=working.concat([{date:slot.date,time:slot.time,duration:d}]);
+    return {date:slot.date,time:slot.time,duration:d,include:true,placementReason:slot.reason||null};
+  });
+}
 function sessionStats(){
   const s=lsGet("sessions",[]);
   const weekAgo=Date.now()-6*86400000;
@@ -4045,7 +4067,7 @@ async function generateLectureDigest(transcript,subject){
 async function generateQuizFromText(text,subject,count){
   const n=Math.max(3,Math.min(12,count||8));
   const prompt="You're building a "+n+"-question multiple-choice practice quiz for a student studying "+(subject||"this material")+". Read the source material and return ONLY this JSON, no other text: "+
-    "{\"questions\":[{\"q\":\"the question text\",\"choices\":[\"four answer options, exactly 4, in any order\"],\"answerIndex\":0}]}. "+
+    "{\"questions\":[{\"q\":\"the question text\",\"choices\":[\"four answer options, exactly 4, in any order\"],\"answerIndex\":0,\"topic\":\"a short 2-4 word topic label for what this question tests, e.g. 'cell membrane transport'\"}]}. "+
     "answerIndex is the 0-based index into choices of the single correct answer. Base every question directly on the material below — never invent facts not present in it.\n\nMaterial:\n\n"+text.slice(0,15000);
   try{
     const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
@@ -4055,9 +4077,49 @@ async function generateQuizFromText(text,subject,count){
     if(jsonStart>=0&&jsonEnd>jsonStart){raw=raw.slice(jsonStart,jsonEnd+1);}
     const parsed=JSON.parse(raw);
     const questions=(Array.isArray(parsed.questions)?parsed.questions:[])
-      .filter(q=>q&&typeof q.q==="string"&&Array.isArray(q.choices)&&q.choices.length===4&&Number.isInteger(q.answerIndex)&&q.answerIndex>=0&&q.answerIndex<4);
+      .filter(q=>q&&typeof q.q==="string"&&Array.isArray(q.choices)&&q.choices.length===4&&Number.isInteger(q.answerIndex)&&q.answerIndex>=0&&q.answerIndex<4)
+      // topic is optional/backward-compatible -- every existing consumer
+      // (Lectures, Notes) reads only q/choices/answerIndex and already
+      // ignores extra fields, so this never breaks them. Falls back to
+      // "General" rather than undefined so weak-spot grouping always has
+      // something to group by.
+      .map(q=>({...q,topic:(typeof q.topic==="string"&&q.topic.trim())?q.topic.trim():"General"}));
     return questions;
   }catch(e){return [];}
+}
+// A practice exam is a persisted, retakeable question SET generated from
+// material linked to a specific exam -- unlike quizOverlay/quizData
+// (Lectures/Notes' one-shot, throwaway quiz UI state, discarded once the
+// student closes the results screen), this is a real object a student can
+// revisit and retake, matching how a deck already works. Own storage key
+// ("practiceExams"), same shape convention as "decks".
+function createPracticeExam(name,subject,examEventId,questions){
+  const pe={id:String(Date.now()+Math.random()*1000),name,subject:subject||"",examEventId:examEventId||null,questions,attempts:[]};
+  const all=lsGet("practiceExams",[]);
+  lsSet("practiceExams",[pe,...all]);
+  return pe;
+}
+function recordPracticeExamAttempt(practiceExamId,score,total,wrongTopics){
+  const all=lsGet("practiceExams",[]);
+  const next=all.map(pe=>pe.id===practiceExamId?{...pe,attempts:[...(pe.attempts||[]),{score,total,at:Date.now(),wrongTopics:wrongTopics||[]}]}:pe);
+  lsSet("practiceExams",next);
+  return next.find(pe=>pe.id===practiceExamId)||null;
+}
+// The wrong-answer topics from a single attempt -- the input to the
+// weak-spot follow-up scheduling (a practice exam's own questions carry a
+// topic label per question, see generateQuizFromText above). Deduplicated,
+// order-preserving (first-missed-first), since a follow-up block naming
+// the same topic three times over would just look like a bug.
+function wrongTopicsFor(questions,answers){
+  const seen=new Set();
+  const topics=[];
+  questions.forEach((q,i)=>{
+    if(answers[i]===q.answerIndex)return;
+    const t=q.topic||"General";
+    if(seen.has(t))return;
+    seen.add(t);topics.push(t);
+  });
+  return topics;
 }
 // Free-tier cap on AI quiz generation — same shape as FLASHCARD_GEN_LIMIT,
 // a separate pool since a quiz is a materially more expensive generation
@@ -4217,22 +4279,11 @@ function Flashcards() {
     const next=deckList.map(d=>d.id===deckId?{...d,examEventId}:d);
     setDeckList(next);lsSet("decks",next);setLinkExamDeckId(null);
   };
-  // Shared by the initial open and by the count stepper re-rolling the
-  // preview — one place computing "N sessions counting down to examDate",
-  // so changing the count never drifts from how it was first built.
-  const buildReviewSessions=(examDate,subject,count)=>{
-    const dates=computeReviewDates(examDate,dayKey(),count);
-    const duration=suggestDurationFor(subject,"study block")||25;
-    const events=lsGet("events",[]);
-    const routines=getWeeklyRoutine();
-    const prefs=getSchedulePreferences();
-    let working=events;
-    return dates.map(date=>{
-      const slot=findReliableSlotFor(working,routines,prefs,date,prefs.workStartTime,duration,examDate,5);
-      working=working.concat([{date:slot.date,time:slot.time,duration}]);
-      return {date:slot.date,time:slot.time,duration,include:true,placementReason:slot.reason||null};
-    });
-  };
+  // Thin wrapper -- the actual math is buildSpacedSessionPreviews (shared
+  // with Studlin Prep's practice-exam scheduling), kept here unchanged so
+  // every existing call site below keeps working with zero signature
+  // changes.
+  const buildReviewSessions=(examDate,subject,count)=>buildSpacedSessionPreviews(examDate,subject,count);
   const openReviewSchedule=(deck)=>{
     const exam=lsGet("events",[]).find(e=>e.id===deck.examEventId);
     if(!exam)return;

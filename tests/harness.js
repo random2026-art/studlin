@@ -95,7 +95,8 @@ function loadStudlinModule(options) {
     "computeWeekBalancePlan","scheduleAttackBlockFollowUp","logSession","getTotalMinutesFocused",
     "startAttackBlockChain","isPhaseDecompositionCandidate","PHASE_DECOMPOSITION_MIN_WEEKS",
     "startPhaseAwareAttackChain","commitSyllabusEvents","advanceProjectPhase",
-    "computeDayViewScale","DAY_VIEW_MIN_PX_HR","DAY_VIEW_MAX_PX_HR"];
+    "computeDayViewScale","DAY_VIEW_MIN_PX_HR","DAY_VIEW_MAX_PX_HR",
+    "buildSpacedSessionPreviews","createPracticeExam","recordPracticeExamAttempt","wrongTopicsFor"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }
