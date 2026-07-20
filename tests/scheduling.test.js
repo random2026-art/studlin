@@ -1575,6 +1575,37 @@ describe("buildSpacedSessionPreviews (shared by deck reviews and practice-exam s
   });
 });
 
+describe("reoptimizeAttackChain (Dashboard Master List's 're-optimize' action)", () => {
+  test("removes pending sessions and reschedules the same total minutes fresh", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const events = [
+      { id: "a", attackChainId: "c1", title: "Term Paper", deadline: "2026-09-28", priority: 5, difficulty: 5, status: "done", duration: 90, timeSpent: 90 },
+      { id: "b", attackChainId: "c1", title: "Term Paper", deadline: "2026-09-28", priority: 5, difficulty: 5, status: "pending", duration: 90, date: "2026-07-25", time: "10:00" },
+      { id: "c", attackChainId: "c1", title: "Term Paper", deadline: "2026-09-28", priority: 5, difficulty: 5, status: "pending", duration: 60, date: "2026-07-26", time: "10:00" },
+    ];
+    m.localStorage.setItem("studlin-events", JSON.stringify(events));
+    const result = m.reoptimizeAttackChain("c1");
+    assert.equal(result, true);
+    const after = JSON.parse(m.localStorage.getItem("studlin-events"));
+    assert.equal(after.find(e => e.id === "a").status, "done", "already-done sessions must never be touched");
+    const pending = after.filter(e => e.attackChainId === "c1" && e.status === "pending");
+    assert.equal(pending.reduce((s, e) => s + e.duration, 0), 150, "total pending minutes should be preserved across the reschedule");
+    assert.ok(!pending.some(e => e.id === "b" || e.id === "c"), "old pending sessions should be replaced, not left in place alongside new ones");
+  });
+
+  test("a chain with nothing pending (fully done) is a no-op, returns false", () => {
+    const m = loadStudlinModule();
+    m.localStorage.setItem("studlin-events", JSON.stringify([{ id: "a", attackChainId: "c1", status: "done", duration: 90 }]));
+    assert.equal(m.reoptimizeAttackChain("c1"), false);
+  });
+
+  test("a chain id that matches nothing is also a no-op, not a crash", () => {
+    const m = loadStudlinModule();
+    m.localStorage.setItem("studlin-events", JSON.stringify([{ id: "a", attackChainId: "c1", status: "pending", duration: 90 }]));
+    assert.equal(m.reoptimizeAttackChain("ghost-chain"), false);
+  });
+});
+
 describe("isTimerEligible (regression: the missed-task nudge fired for fixed commitments like Gym that have no Begin/Lock-In flow at all, so it could never be satisfied)", () => {
   test("a real study block with a duration is eligible", () => {
     const m = loadStudlinModule();

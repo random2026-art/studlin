@@ -2058,6 +2058,24 @@ function scheduleAttackBlockFollowUp(task,nextMins){
   });
   lsSet("events",events.concat(newEvents));
 }
+// "Re-optimize" (Dashboard's Assignments master list) -- a chain's
+// remaining pending minutes get pulled off the calendar and rescheduled
+// fresh via scheduleAttackBlockFollowUp, the same real placement engine
+// every other follow-up round already uses. Never touches sessions already
+// marked done (their real logged time stays exactly where it happened),
+// and is a genuine no-op (returns false) when there's nothing pending to
+// move, rather than silently doing nothing with no signal why.
+function reoptimizeAttackChain(chainId){
+  const events=lsGet("events",[]);
+  const chainPending=events.filter(e=>e.attackChainId===chainId&&e.status==="pending");
+  if(chainPending.length===0)return false;
+  const totalMins=chainPending.reduce((s,e)=>s+(e.duration||0),0);
+  const template=chainPending[0];
+  const withoutPending=events.filter(e=>!(e.attackChainId===chainId&&e.status==="pending"));
+  lsSet("events",withoutPending);
+  scheduleAttackBlockFollowUp(template,totalMins);
+  return true;
+}
 // Needs-attention detection — a standalone signal, deliberately separate
 // from the ask-mode prep digest above (that's about assignments not yet
 // STARTED; this is about ones already IN PROGRESS whose real pace turned
@@ -4155,7 +4173,15 @@ function recordQuizGen(){const u=getQuizGenUsage();lsSet("quizGens",{month:u.mon
 // instead of inventing a parallel system.
 function StudlinPrep(){
   const [tab,setTab]=useState("exams"); // exams | flashcards | practiceExams
-  const [selectedExamId,setSelectedExamId]=useState(null);
+  // One-shot deep-link handoff -- same pattern openSyllabusScanOnNotes/
+  // openNoteId already use elsewhere: a caller (Dashboard's Exams master
+  // list) sets this before navigating here, consumed once on mount then
+  // cleared, so it doesn't keep re-selecting on every later visit.
+  const [selectedExamId,setSelectedExamId]=useState(()=>{
+    const pending=lsGet("openPrepExamId",null);
+    if(pending)lsSet("openPrepExamId",null);
+    return pending;
+  });
   const [,forceTick]=useState(0);
   const refresh=()=>forceTick(x=>x+1);
   const [upgradeModal,setUpgradeModal]=useState(null); // {feature,detail}
@@ -14162,6 +14188,21 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
         id:ev.id,
       };
     });
+  // ── Master Lists (Assignments / Projects / Exams) — reuses exactly the
+  // data shapes already established this session: plain deadline markers
+  // vs. phased projects are already distinguished by whether `phases`
+  // exists, exams already have computeExamReadiness/linked decks &
+  // practice exams from Studlin Prep. Nothing new is computed here that
+  // doesn't already exist somewhere else in the app. ──
+  const [masterTab,setMasterTab]=useState("assignments"); // assignments | projects | exams
+  const [expandedMasterId,setExpandedMasterId]=useState(null);
+  const masterAssignments=allEvents.filter(ev=>ev.kind==="deadline"&&!ev.checklist&&!ev.phases&&ev.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
+  const masterProjects=allEvents.filter(ev=>ev.kind==="deadline"&&ev.phases&&ev.phases.length>0&&ev.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
+  const masterExams=allEvents.filter(ev=>ev.kind==="exam"&&ev.date>=today).sort((a,b)=>a.date.localeCompare(b.date));
+  const masterDecks=lsGet("decks",[]);
+  const masterPracticeExams=lsGet("practiceExams",[]);
+  const jumpToPrepExam=(examId)=>{lsSet("openPrepExamId",examId);setActive("prep");};
+
   // Checklist to-dos — no duration, no calendar slot, just a checkbox. Kept
   // in the same `events` localStorage array as everything else (same
   // id/status shape markDone-style toggles already expect), just flagged
@@ -14323,6 +14364,117 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
       {overrunToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {overrunToast}</div>
       )}
+
+      {/* Master Lists — Assignments / Projects / Exams, one inspection hub
+          instead of three separate places to check on what's actually
+          scheduled vs. still just a due date. */}
+      <div style={{background:T.card,borderRadius:22,padding:22,border:`1px solid ${T.border}`}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8,flexWrap:"wrap"}}>
+          <span style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:T.text}}>Master Lists</span>
+          <div style={{display:"flex",gap:6}}>
+            {["assignments","projects","exams"].map(v=>(
+              <button key={v} onClick={()=>{setMasterTab(v);setExpandedMasterId(null);}} style={{padding:"6px 12px",borderRadius:7,fontSize:11.5,fontWeight:600,cursor:"pointer",background:masterTab===v?T.lime+"14":"transparent",color:masterTab===v?T.lime:T.muted,border:`1px solid ${masterTab===v?T.lime+"44":T.border}`,fontFamily:T.font,textTransform:"capitalize"}}>{v}</button>
+            ))}
+          </div>
+        </div>
+
+        {masterTab==="assignments"&&(
+          masterAssignments.length===0
+            ?<div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"18px 0"}}>Nothing due yet.</div>
+            :<div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {masterAssignments.map(a=>{
+                const chainId=(allEvents.find(e=>e.dueEventId===a.id&&e.attackChainId)||{}).attackChainId||null;
+                const sessions=chainId?allEvents.filter(e=>e.attackChainId===chainId):[];
+                const pending=sessions.filter(e=>e.status==="pending");
+                const isExpanded=expandedMasterId===a.id;
+                return(
+                  <div key={a.id}>
+                    <div onClick={()=>setExpandedMasterId(isExpanded?null:a.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:isExpanded?T.card2:"transparent"}}>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:600,color:T.text}}>{a.title}</div>
+                        <div style={{fontSize:11,color:T.muted,marginTop:1}}>{a.subject}{a.date?" · "+a.date:""}</div>
+                      </div>
+                      {sessions.length>0&&<span style={{fontSize:10.5,color:T.muted,flexShrink:0}}>{pending.length} block{pending.length!==1?"s":""} scheduled</span>}
+                    </div>
+                    {isExpanded&&(
+                      <div style={{padding:"10px 12px 4px 20px",display:"flex",flexDirection:"column",gap:8}}>
+                        {pending.length===0
+                          ?<div style={{fontSize:11.5,color:T.muted}}>No Attack Block sessions scheduled for this yet.</div>
+                          :pending.map(s=>(
+                            <div key={s.id} style={{display:"flex",alignItems:"center",gap:10,fontSize:11.5}}>
+                              <span style={{color:T.text,flex:1}}>{s.date} {fmtClock(s.time)}</span>
+                              <NumField min={5} max={480} fallback={s.duration||25} value={s.duration||25} onChange={v=>{const next=lsGet("events",[]).map(e=>e.id===s.id?{...e,duration:v}:e);lsSet("events",next);forcePlan(x=>x+1);}} style={{width:56}} />
+                              <span style={{color:T.faint}}>min</span>
+                            </div>
+                          ))}
+                        {chainId&&pending.length>0&&<BtnSm variant="subtle" onClick={()=>{reoptimizeAttackChain(chainId);forcePlan(x=>x+1);}}>Re-optimize</BtnSm>}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+        )}
+
+        {masterTab==="projects"&&(
+          masterProjects.length===0
+            ?<div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"18px 0"}}>No multi-phase projects yet.</div>
+            :<div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {masterProjects.map(p=>{
+                const isExpanded=expandedMasterId===p.id;
+                const doneCount=p.phases.filter(ph=>ph.status==="done").length;
+                return(
+                  <div key={p.id}>
+                    <div onClick={()=>setExpandedMasterId(isExpanded?null:p.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:isExpanded?T.card2:"transparent"}}>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:600,color:T.text}}>{p.title}</div>
+                        <div style={{fontSize:11,color:T.muted,marginTop:1}}>{p.subject}{p.date?" · due "+p.date:""}</div>
+                      </div>
+                      <span style={{fontSize:10.5,color:T.muted,flexShrink:0}}>{doneCount}/{p.phases.length} phases</span>
+                    </div>
+                    {isExpanded&&(
+                      <div style={{padding:"10px 12px 4px 20px",display:"flex",flexDirection:"column",gap:7}}>
+                        {p.phases.map((ph,pi)=>{
+                          const hasScheduled=allEvents.some(e=>e.dueEventId===p.id&&e.projectPhaseIndex===pi&&e.status==="pending");
+                          const stColor=ph.status==="done"?T.lime:ph.status==="active"?T.amber:T.faint;
+                          return(
+                            <div key={pi} style={{display:"flex",alignItems:"center",gap:8,fontSize:11.5}}>
+                              <span style={{color:T.text,flex:1}}>{pi+1}. {ph.name}</span>
+                              <span style={{fontSize:9.5,fontWeight:700,color:stColor,textTransform:"uppercase"}}>{ph.status}</span>
+                              {ph.status!=="done"&&<span style={{fontSize:10,color:hasScheduled?T.teal:T.muted}}>{hasScheduled?"scheduled":"unscheduled"}</span>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+        )}
+
+        {masterTab==="exams"&&(
+          masterExams.length===0
+            ?<div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"18px 0"}}>No upcoming exams yet.</div>
+            :<div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {masterExams.map(ex=>{
+                const readiness=computeExamReadiness(ex,allEvents,today);
+                const deck=masterDecks.find(d=>d.examEventId===ex.id);
+                const pes=masterPracticeExams.filter(p=>p.examEventId===ex.id);
+                const stateColor=readiness?.state==="behind"||readiness?.state==="at-risk"?T.red:readiness?.state==="on-track"?T.lime:T.muted;
+                return(
+                  <div key={ex.id} onClick={()=>jumpToPrepExam(ex.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer"}}>
+                    <div style={{minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:600,color:T.text}}>{ex.title}</div>
+                      <div style={{fontSize:11,color:T.muted,marginTop:1}}>{ex.subject} · {ex.date} · {deck?deck.count+" cards":"no deck"}{pes.length>0?" · "+pes.length+" practice exam"+(pes.length!==1?"s":""):""}</div>
+                    </div>
+                    {readiness&&<span style={{fontSize:10,fontWeight:700,color:stateColor,background:stateColor+"14",border:`1px solid ${stateColor}44`,borderRadius:99,padding:"3px 9px",flexShrink:0}}>{readiness.state.toUpperCase().replace("-"," ")}</span>}
+                  </div>
+                );
+              })}
+            </div>
+        )}
+      </div>
 
       {/* ROW 2: Today's plan + Checklist (Ask Studlin/aichat card removed
           along with the standalone Studlin AI tab -- see Phase 2 of the
