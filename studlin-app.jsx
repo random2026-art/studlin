@@ -16470,8 +16470,6 @@ function App() {
     ]},
     {label:"Tools",items:[
       {id:"prep",label:"Studlin Prep"},
-      {id:"flashcards",label:"Flashcards"},
-      {id:"notes",label:"Notes"},
       {id:"friends",label:"Studlin Network",badge:String(unreadCount||"")},
     ]},
     {label:"Account",items:[
