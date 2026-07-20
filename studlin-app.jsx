@@ -1922,6 +1922,43 @@ function startPhaseAwareAttackChain(fields,phases,events,routines,prefs,desiredD
   const task=startAttackBlockChain(hasPhases?{...fields,title:fields.title+": "+phases[0]}:fields,events,routines,prefs,desiredDate,desiredTime);
   return hasPhases?{...task,projectPhaseIndex:0,phaseName:phases[0],projectTitle:fields.title}:task;
 }
+// Called when a phased Attack Block session is marked genuinely finished
+// (TaskTimerModal's "Yes, I'm finished" -> onAttackBlockFinish), never on
+// an extended/follow-up session — extending just means "still on this same
+// phase." A no-op (returns the same `events` reference) for anything that
+// isn't part of a phased project: an ordinary Attack Block chain has no
+// projectPhaseIndex, and completedTask.dueEventId not resolving to a
+// marker with a real phases array covers a manually-deleted or malformed
+// due-date event without throwing.
+// No gate delay for the next phase, unlike the very first phase — the
+// project is already underway, there's no "is this too early to start"
+// question left to ask, so its probe gets scheduled starting today exactly
+// the way the first phase's would have once its own gate opened.
+function advanceProjectPhase(completedTask,events,routines,prefs,todayKey){
+  if(!completedTask||completedTask.projectPhaseIndex===undefined||!completedTask.dueEventId)return events;
+  const marker=events.find(e=>e.id===completedTask.dueEventId);
+  if(!marker||!Array.isArray(marker.phases))return events;
+  const curIdx=completedTask.projectPhaseIndex;
+  if(!marker.phases[curIdx])return events;
+  const nextIdx=curIdx+1;
+  const hasNext=nextIdx<marker.phases.length;
+  const updatedPhases=marker.phases.map((p,pi)=>{
+    if(pi===curIdx)return {...p,status:"done"};
+    if(pi===nextIdx&&hasNext)return {...p,status:"active"};
+    return p;
+  });
+  const updatedMarker={...marker,phases:updatedPhases};
+  let working=events.map(e=>e.id===marker.id?updatedMarker:e);
+  if(hasNext){
+    const nextTask=startAttackBlockChain({
+      title:marker.title+": "+marker.phases[nextIdx].name,
+      deadline:marker.deadline,priority:marker.priority,difficulty:marker.difficulty,
+      noteId:marker.noteId,dueEventId:marker.id,
+    },working,routines,prefs,todayKey||dayKey(),prefs.workStartTime);
+    working=working.concat([{...nextTask,projectPhaseIndex:nextIdx,phaseName:marker.phases[nextIdx].name,projectTitle:marker.title}]);
+  }
+  return working;
+}
 // How many days out each follow-up chunk should target, given N chunks and
 // a runway of days until the finish-by buffer. A square-root ease: early
 // chunks land close together near today (when a deadline weeks out doesn't
@@ -8149,7 +8186,7 @@ function computeCoopFromParticipants(participants,myUid){
 }
 // ─── CALENDAR ─────────────────────────────────────────────────────────────────
 // ─── TASK TIMER MODAL ────────────────────────────────────────────────────────
-function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignmentExtend,onAttackBlockExtend,onLockInError,resumeElapsedSecs=0}){
+function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignmentExtend,onAttackBlockExtend,onAttackBlockFinish,onLockInError,resumeElapsedSecs=0}){
   // Snapshot of live leaderboard profiles, fetched once on mount — used for
   // the before/after rank comparison in the completion screen. A snapshot
   // is fine here (rather than re-fetching mid-session): competitors' XP
@@ -8727,6 +8764,12 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
 
   if(phase==="attackCheckIn"){
     const onFinishAttackBlock=()=>{
+      // Distinct from onComplete (which fires for every session, extended
+      // or finished alike) -- this is specifically "this phase/chain is
+      // genuinely done," the one signal advanceProjectPhase needs to know
+      // whether to start the next phase. A no-op for ordinary (non-phased)
+      // Attack Blocks; App() checks projectPhaseIndex before doing anything.
+      if(onAttackBlockFinish)onAttackBlockFinish();
       completeSession(pendingMinsRef.current);
     };
     const onScheduleFollowUp=()=>{
@@ -16686,6 +16729,11 @@ function App() {
         }}
         onAttackBlockExtend={(totalMinsSoFar,pct,nextMins)=>{
           scheduleAttackBlockFollowUp(timerTask,nextMins);
+        }}
+        onAttackBlockFinish={()=>{
+          const events=lsGet("events",[]);
+          const next=advanceProjectPhase(timerTask,events,getWeeklyRoutine(),getSchedulePreferences(),dayKey());
+          if(next!==events)lsSet("events",next);
         }}
         onLockInError={(msg)=>{setLockInErrorToast(msg);setTimeout(()=>setLockInErrorToast(""),4500);}}
         onComplete={(mins)=>{

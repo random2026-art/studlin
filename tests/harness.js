@@ -94,7 +94,7 @@ function loadStudlinModule(options) {
     "getAttackOverrunDismissals","isAttackOverrunDismissedToday","dismissAttackOverrunToday",
     "computeWeekBalancePlan","scheduleAttackBlockFollowUp","logSession","getTotalMinutesFocused",
     "startAttackBlockChain","isPhaseDecompositionCandidate","PHASE_DECOMPOSITION_MIN_WEEKS",
-    "startPhaseAwareAttackChain","commitSyllabusEvents"];
+    "startPhaseAwareAttackChain","commitSyllabusEvents","advanceProjectPhase"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }

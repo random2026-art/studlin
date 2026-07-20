@@ -1665,6 +1665,69 @@ describe("startPhaseAwareAttackChain (shared phase-0 tagging used by every sched
   });
 });
 
+describe("advanceProjectPhase (phase advancement on 'Yes, I'm finished', not on an extended session)", () => {
+  const marker = (phases) => ({
+    id: "due-1", title: "Term Paper", deadline: "2026-09-28", priority: 5, difficulty: 5, noteId: "note-1", phases,
+  });
+  const completedTask = (overrides) => ({ id: "t1", dueEventId: "due-1", projectPhaseIndex: 0, isAttackBlock: true, ...overrides });
+
+  test("marks the just-finished phase done and starts the next phase's own chain immediately", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const events = [
+      marker([{ name: "Research", status: "active" }, { name: "Outline", status: "pending" }, { name: "Draft", status: "pending" }]),
+      completedTask(),
+    ];
+    const result = m.advanceProjectPhase(completedTask(), events, [], DEFAULT_PREFS, "2026-07-20");
+    const updatedMarker = result.find(e => e.id === "due-1");
+    assert.equal(updatedMarker.phases[0].status, "done");
+    assert.equal(updatedMarker.phases[1].status, "active");
+    assert.equal(updatedMarker.phases[2].status, "pending");
+    const nextChain = result.find(e => e.isAttackBlock && e.id !== "t1");
+    assert.ok(nextChain, "should have scheduled a new chain for the next phase");
+    assert.equal(nextChain.title, "Term Paper: Outline");
+    assert.equal(nextChain.projectPhaseIndex, 1);
+    assert.equal(nextChain.phaseName, "Outline");
+    assert.equal(nextChain.dueEventId, "due-1");
+  });
+
+  test("no gate delay for the next phase -- it's scheduled starting today, not backward-scheduled again", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const events = [
+      marker([{ name: "Research", status: "active" }, { name: "Outline", status: "pending" }]),
+      completedTask(),
+    ];
+    const result = m.advanceProjectPhase(completedTask(), events, [], DEFAULT_PREFS, "2026-07-20");
+    const nextChain = result.find(e => e.isAttackBlock && e.id !== "t1");
+    assert.equal(nextChain.date, "2026-07-20");
+  });
+
+  test("finishing the last phase just marks it done -- no new chain, nothing left to advance to", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const events = [
+      marker([{ name: "Research", status: "done" }, { name: "Outline", status: "active" }]),
+      completedTask({ projectPhaseIndex: 1 }),
+    ];
+    const result = m.advanceProjectPhase(completedTask({ projectPhaseIndex: 1 }), events, [], DEFAULT_PREFS, "2026-07-20");
+    assert.equal(result.filter(e => e.isAttackBlock).length, 1, "no new chain should be added");
+    const updatedMarker = result.find(e => e.id === "due-1");
+    assert.equal(updatedMarker.phases[1].status, "done");
+  });
+
+  test("a non-phased Attack Block task (no projectPhaseIndex) is a complete no-op", () => {
+    const m = loadStudlinModule();
+    const events = [{ id: "t2", isAttackBlock: true, attackChainId: "chain-x" }];
+    const result = m.advanceProjectPhase(events[0], events, [], DEFAULT_PREFS, "2026-07-20");
+    assert.equal(result, events, "should return the exact same array reference when there's nothing to advance");
+  });
+
+  test("a dueEventId that doesn't resolve to any marker (deleted/malformed) is also a no-op, not a crash", () => {
+    const m = loadStudlinModule();
+    const events = [completedTask({ dueEventId: "ghost-event" })];
+    const result = m.advanceProjectPhase(completedTask({ dueEventId: "ghost-event" }), events, [], DEFAULT_PREFS, "2026-07-20");
+    assert.equal(result, events);
+  });
+});
+
 describe("detectAttackBlockOverruns (needs-attention: pending chain work no longer fits its own runway)", () => {
   const chainEvent = (overrides) => ({
     id: "ev-" + Math.random(), isAttackBlock: true, attackChainId: "chain-1", title: "Big Paper",
