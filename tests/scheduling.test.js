@@ -1497,6 +1497,55 @@ describe("computeAttackBlockStartDate (Attack Block gate: backward-schedule the 
   });
 });
 
+describe("computeAttackBlockRampOffsets (Attack Block follow-up pacing: back-weighted ramp, not pack-from-today)", () => {
+  test("a single chunk always targets today (offset 0) -- nothing to ramp with only one session", () => {
+    const m = loadStudlinModule();
+    assert.equal(JSON.stringify(m.computeAttackBlockRampOffsets(1, 30)), "[0]");
+    assert.equal(JSON.stringify(m.computeAttackBlockRampOffsets(1, null)), "[0]");
+  });
+
+  test("no runway (no deadline) falls back to tight day-by-day packing", () => {
+    const m = loadStudlinModule();
+    assert.equal(JSON.stringify(m.computeAttackBlockRampOffsets(4, null)), "[0,1,2,3]");
+  });
+
+  test("a runway too tight to give every chunk its own day falls back to tight packing", () => {
+    const m = loadStudlinModule();
+    assert.equal(JSON.stringify(m.computeAttackBlockRampOffsets(5, 3)), "[0,1,2,3,4]");
+    assert.equal(JSON.stringify(m.computeAttackBlockRampOffsets(5, 5)), "[0,1,2,3,4]");
+  });
+
+  test("with real runway, offsets start at 0 and end at the last available day", () => {
+    const m = loadStudlinModule();
+    const offsets = m.computeAttackBlockRampOffsets(5, 30);
+    assert.equal(offsets[0], 0);
+    assert.equal(offsets[offsets.length - 1], 29);
+  });
+
+  test("offsets are strictly increasing -- no two chunks ever collapse onto the same day", () => {
+    const m = loadStudlinModule();
+    const offsets = m.computeAttackBlockRampOffsets(6, 20);
+    for (let i = 1; i < offsets.length; i++) {
+      assert.ok(offsets[i] > offsets[i - 1], `offset ${i} (${offsets[i]}) should exceed offset ${i - 1} (${offsets[i - 1]})`);
+    }
+  });
+
+  test("gaps shrink toward the deadline -- the back-weighted ramp, not even spacing", () => {
+    const m = loadStudlinModule();
+    const offsets = m.computeAttackBlockRampOffsets(5, 30);
+    const gaps = [];
+    for (let i = 1; i < offsets.length; i++) gaps.push(offsets[i] - offsets[i - 1]);
+    // Each later gap should be no bigger than the one before it, and the
+    // first gap (today -> next chunk) should clearly be the widest --
+    // that's the whole point: early chunks are spread apart, late chunks
+    // tighten up as the deadline actually starts to feel close.
+    for (let i = 1; i < gaps.length; i++) {
+      assert.ok(gaps[i] <= gaps[i - 1], `gap ${i} (${gaps[i]}) should not exceed gap ${i - 1} (${gaps[i - 1]})`);
+    }
+    assert.ok(gaps[0] > gaps[gaps.length - 1], "first gap should be wider than the last gap");
+  });
+});
+
 describe("logSuggestionDecision (append-only decision log for every accept/dismiss on a Studlin suggestion)", () => {
   test("appends one row with kind, action, context, and a timestamp", () => {
     const m = loadStudlinModule();

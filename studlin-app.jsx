@@ -1863,6 +1863,45 @@ function startAttackBlockChain(fields,events,routines,prefs,desiredDate,desiredT
     ...(fields.dueEventId?{dueEventId:fields.dueEventId}:{}),
   };
 }
+// How many days out each follow-up chunk should target, given N chunks and
+// a runway of days until the finish-by buffer. A square-root ease: early
+// chunks land close together near today (when a deadline weeks out doesn't
+// feel urgent yet -- exactly when motivation to get ahead is weakest), and
+// later chunks compress toward the deadline as the natural push to finish
+// intensifies -- back-weighted, not evenly spaced and not front-crammed.
+// Falls back to tight day-by-day packing (today, today+1, ...) when there's
+// no deadline to ramp toward, or the runway doesn't even have room for one
+// chunk per day -- spreading thin chunks over a fat runway helps; spreading
+// fat chunks over a thin one just delays necessary work for no reason.
+const ATTACK_BLOCK_RAMP_EXPONENT=0.5;
+function computeAttackBlockRampOffsets(chunkCount,runwayDays){
+  if(chunkCount<=1)return [0];
+  // <= not < -- at exactly one day per chunk there's no room left to ramp
+  // (the sqrt curve's rounding can even collide and overflow past the
+  // runway when it's this tight), so tight packing is correct here too,
+  // not just when the runway is strictly shorter than the chunk count.
+  if(!runwayDays||runwayDays<=chunkCount)return Array.from({length:chunkCount},(_,i)=>i);
+  const offsets=Array.from({length:chunkCount},(_,i)=>{
+    const t=i/(chunkCount-1);
+    return Math.round(Math.pow(t,ATTACK_BLOCK_RAMP_EXPONENT)*(runwayDays-1));
+  });
+  for(let i=1;i<offsets.length;i++){
+    if(offsets[i]<=offsets[i-1])offsets[i]=offsets[i-1]+1;
+  }
+  // The forward pass above can push a rounding collision past the runway
+  // on a tight-but-not-tight-enough-to-fall-back runway (e.g. 5 chunks
+  // over 6 days) -- pull everything back inside bounds from the end while
+  // keeping it strictly increasing. Always possible here: the fallback
+  // above already guarantees chunkCount < runwayDays, i.e. room for at
+  // least one integer day per chunk.
+  if(offsets[offsets.length-1]>runwayDays-1){
+    offsets[offsets.length-1]=runwayDays-1;
+    for(let i=offsets.length-2;i>=0;i--){
+      if(offsets[i]>=offsets[i+1])offsets[i]=offsets[i+1]-1;
+    }
+  }
+  return offsets;
+}
 // Schedules the next session in an existing chain once the student's
 // self-reported % (via TaskTimerModal's attackCheckIn phase) has produced a
 // recommended nextMins. Sibling to scheduleAssignmentExtension, not an
@@ -1878,10 +1917,25 @@ function scheduleAttackBlockFollowUp(task,nextMins){
   const chunks=[];
   let remaining=Math.max(5,nextMins);
   while(remaining>0){const c=Math.min(CHUNK,remaining);chunks.push(c);remaining-=c;}
-  let cursorDate=dayKey(),cursorTime=prefs.workStartTime;
+  const today=dayKey();
+  let runwayDays=null;
+  if(task.deadline){
+    const finishByD=new Date(task.deadline+"T12:00:00");finishByD.setDate(finishByD.getDate()-ATTACK_BLOCK_FINISH_BUFFER_DAYS);
+    const days=Math.ceil((finishByD-new Date(today+"T12:00:00"))/86400000);
+    if(days>0)runwayDays=days;
+  }
+  const dayOffsets=computeAttackBlockRampOffsets(chunks.length,runwayDays);
+  let cursorDate=today;
   const newEvents=[];
   chunks.forEach((m,i)=>{
-    const slot=findReliableSlotFor(events.concat(newEvents),routines,prefs,cursorDate,cursorTime,m,task.deadline||null,task.difficulty);
+    const target=new Date(today+"T12:00:00");target.setDate(target.getDate()+dayOffsets[i]);
+    const targetKey=dayKey(target);
+    // The ramp offset is a target, never a demotion -- a later chunk can
+    // never be scheduled before an earlier one just because its own ramp
+    // slot came out earlier than where the previous chunk actually landed
+    // (e.g. that day was full and findReliableSlotFor bumped it forward).
+    const searchFrom=targetKey>cursorDate?targetKey:cursorDate;
+    const slot=findReliableSlotFor(events.concat(newEvents),routines,prefs,searchFrom,prefs.workStartTime,m,task.deadline||null,task.difficulty);
     newEvents.push({
       id:String(Date.now()+i)+"-ab-"+i,
       title:task.title,date:slot.date,time:slot.time,
@@ -1897,7 +1951,7 @@ function scheduleAttackBlockFollowUp(task,nextMins){
       ...(task.dueEventId?{dueEventId:task.dueEventId}:{}),
     });
     const d=new Date(slot.date+"T12:00:00");d.setDate(d.getDate()+1);
-    cursorDate=dayKey(d);cursorTime=prefs.workStartTime;
+    cursorDate=dayKey(d);
   });
   lsSet("events",events.concat(newEvents));
 }
