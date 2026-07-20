@@ -899,15 +899,26 @@ describe("scoreTask difficulty preference (regression: read a dead prefs key, so
 });
 
 describe("Peak-hour bucket reachability (regression: 'Morning'/'Evening' had zero overlap with the app's own default 9am-6pm window, so declaring either did nothing)", () => {
+  // Frozen to 8am on the target day (well inside the 6-11am "morning"
+  // bucket) -- these tests place same-day slots, and findOpenSlotFor's
+  // "now floor" won't schedule in the past. Left on the real wall clock,
+  // this flaked for real whenever the suite happened to run late enough in
+  // the morning that under half an hour of the bucket remained (e.g. a run
+  // starting at 10:32am leaves only 10:32-11:00 -- not enough room for a
+  // 30-min block, so it silently fell through to the desired 16:00
+  // "afternoon" slot instead and the assertion failed on the actual time
+  // of day the tests happened to run, not on real scheduler behavior).
+  const NOW = "2026-07-20T08:00:00";
+
   test("declaring 'morning' as peak actually routes a fresh task there under the default work window", () => {
-    const m = loadStudlinModule();
+    const m = loadStudlinModule({ now: NOW });
     const prefs = { ...DEFAULT_PREFS, peakHourBuckets: ["morning"] };
     const slot = m.findReliableSlotFor([], [], prefs, "2026-07-20", "16:00", 30, null, 500);
     assert.equal(m.hourBucket(slot.time), "morning");
   });
 
   test("a declared peak with real inferred data elsewhere still wins on a fresh task (peak is a floor, not just a fallback)", () => {
-    const m = loadStudlinModule();
+    const m = loadStudlinModule({ now: NOW });
     const log = [];
     for (let i = 0; i < 9; i++) log.push({ bucket: "evening", outcome: "done", t: Date.now() - i * 86400000 });
     log.push({ bucket: "evening", outcome: "missed", t: Date.now() });
@@ -918,7 +929,7 @@ describe("Peak-hour bucket reachability (regression: 'Morning'/'Evening' had zer
   });
 
   test("Tier 0 reflow (missed task) also reaches a declared morning peak, not just fresh placement", () => {
-    const m = loadStudlinModule();
+    const m = loadStudlinModule({ now: NOW });
     const prefs = { ...DEFAULT_PREFS, peakHourBuckets: ["morning"] };
     const today = m.dayKey();
     const missed = { id: "t1", title: "Missed", date: "2026-07-01", time: "16:00", kind: "study block", duration: 30, status: "pending", deadline: null, priority: 500, difficulty: 500 };
@@ -928,7 +939,7 @@ describe("Peak-hour bucket reachability (regression: 'Morning'/'Evening' had zer
   });
 
   test("a widened work window (7am start) makes 'morning' reachable where the default 9am start did not", () => {
-    const m = loadStudlinModule();
+    const m = loadStudlinModule({ now: NOW });
     const narrowPrefs = { ...DEFAULT_PREFS, peakHourBuckets: ["morning"] }; // default 09:00 start
     const widePrefs = { ...DEFAULT_PREFS, workStartTime: "07:00", peakHourBuckets: ["morning"] };
     const narrowSlot = m.findReliableSlotFor([], [], narrowPrefs, "2026-07-20", "16:00", 30, null, 500);
@@ -1618,6 +1629,68 @@ describe("Attack Block overrun dismissal (dismiss-until-tomorrow, not a multi-da
     const m = loadStudlinModule();
     m.dismissAttackOverrunToday("chain-1");
     assert.equal(m.isAttackOverrunDismissedToday("chain-2"), false);
+  });
+});
+
+describe("Attack Block self-report grants zero XP (by construction, not by convention)", () => {
+  // XP/leaderboard minutes come from exactly one place: getTotalMinutesFocused
+  // summing the "sessions" store, which only logSession(mins, mode) ever
+  // writes to -- and that signature has no slot for a percentage at all, only
+  // a plain minutes number. The self-report step (the "how far along are
+  // you?" slider) only ever feeds scheduleAttackBlockFollowUp, which places
+  // new pending events -- it has no path to "sessions" whatsoever.
+  const followUpTask = (overrides) => ({
+    id: "t1", title: "Term Paper", subject: "History", notes: "",
+    priority: 500, difficulty: 500, deadline: "2026-09-01",
+    attackChainId: "chain-xyz", attackIndex: 1, dueEventId: "due-1", ...overrides,
+  });
+
+  test("scheduling a follow-up from a self-report never touches the sessions store", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    m.scheduleAttackBlockFollowUp(followUpTask(), 200);
+    assert.equal(m.localStorage.getItem("studlin-sessions"), null);
+    assert.equal(m.getTotalMinutesFocused(), 0);
+  });
+
+  test("total focused minutes (the XP source) is unchanged no matter how large the self-reported remainder is", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const before = m.getTotalMinutesFocused();
+    // A student self-reporting "5% done" produces a huge extrapolated
+    // nextMins -- still shouldn't grant a single minute of XP on its own.
+    m.scheduleAttackBlockFollowUp(followUpTask(), 480);
+    assert.equal(m.getTotalMinutesFocused(), before);
+  });
+
+  test("scheduling a follow-up does create real pending events -- it's not a no-op, it just isn't an XP source", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    m.scheduleAttackBlockFollowUp(followUpTask(), 200);
+    const events = JSON.parse(m.localStorage.getItem("studlin-events"));
+    assert.ok(events.length > 0, "should have scheduled at least one follow-up chunk");
+    assert.ok(events.every(e => e.status === "pending"), "newly scheduled chunks start pending, not completed/credited");
+  });
+
+  test("starting a fresh Attack Block chain (also self-report-adjacent) likewise never touches sessions", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    m.startAttackBlockChain({ title: "New Project", deadline: "2026-09-01", priority: 500, difficulty: 500 }, [], [], DEFAULT_PREFS, "2026-07-20", "16:00");
+    assert.equal(m.localStorage.getItem("studlin-sessions"), null);
+    assert.equal(m.getTotalMinutesFocused(), 0);
+  });
+
+  test("logSession's own signature has no percentage/self-report parameter -- only ever a plain minutes number", () => {
+    const m = loadStudlinModule();
+    // logSession fires an unawaited upsertProfile() call that reaches
+    // firebase.auth().currentUser -- stubbed here purely so that fire-
+    // and-forget call resolves to "no signed-in user" instead of throwing
+    // on the undefined firebase global this sandbox otherwise leaves in
+    // place; nothing about the actual assertions below depends on it.
+    m.firebase = { auth: () => ({ currentUser: null }) };
+    m.logSession(25, "Task: Term Paper");
+    const sessions = JSON.parse(m.localStorage.getItem("studlin-sessions"));
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0].m, 25);
+    assert.equal(Object.prototype.hasOwnProperty.call(sessions[0], "pct"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(sessions[0], "percent"), false);
+    assert.equal(m.getTotalMinutesFocused(), 25);
   });
 });
 

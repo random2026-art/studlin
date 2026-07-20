@@ -92,7 +92,8 @@ function loadStudlinModule(options) {
     "ATTACK_BLOCK_GATE_PADDING","ATTACK_BLOCK_FINISH_BUFFER_DAYS","ATTACK_BLOCK_SUSTAINABLE_WEEKLY_MINS",
     "computeAttackBlockRampOffsets","ATTACK_BLOCK_RAMP_EXPONENT","detectAttackBlockOverruns",
     "getAttackOverrunDismissals","isAttackOverrunDismissedToday","dismissAttackOverrunToday",
-    "computeWeekBalancePlan"];
+    "computeWeekBalancePlan","scheduleAttackBlockFollowUp","logSession","getTotalMinutesFocused",
+    "startAttackBlockChain"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }
