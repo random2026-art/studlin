@@ -1606,6 +1606,52 @@ describe("reoptimizeAttackChain (Dashboard Master List's 're-optimize' action)",
   });
 });
 
+describe("computeOutlineRemainingMins (outline-scoped extrapolation -- checked items are the primary signal)", () => {
+  test("no outline (or an empty one) returns null, so callers fall back to the original whole-task percent mechanic", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.computeOutlineRemainingMins(null, 30, 50), null);
+    assert.equal(m.computeOutlineRemainingMins(undefined, 30, 50), null);
+    assert.equal(m.computeOutlineRemainingMins([], 30, 50), null);
+  });
+
+  test("more checked-off items means less estimated remaining time for the same elapsed minutes", () => {
+    const m = loadStudlinModule();
+    const fewDone = [{ done: true }, { done: false }, { done: false }, { done: false }];
+    const moreDone = [{ done: true }, { done: true }, { done: true }, { done: false }];
+    const a = m.computeOutlineRemainingMins(fewDone, 60, 50);
+    const b = m.computeOutlineRemainingMins(moreDone, 60, 50);
+    assert.ok(b < a, "having 3 of 4 items checked off should extrapolate less remaining work than having 1 of 4");
+  });
+
+  test("a higher current-item percent (same checked count) also lowers the remaining estimate", () => {
+    const m = loadStudlinModule();
+    const outline = [{ done: true }, { done: false }, { done: false }];
+    const low = m.computeOutlineRemainingMins(outline, 60, 10);
+    const high = m.computeOutlineRemainingMins(outline, 60, 90);
+    assert.ok(high < low);
+  });
+
+  test("everything checked off still returns the minimum floor, not zero -- a small wrap-up block, same floor the original mechanic already used", () => {
+    const m = loadStudlinModule();
+    const outline = [{ done: true }, { done: true }];
+    assert.equal(m.computeOutlineRemainingMins(outline, 40, 50), 10);
+  });
+
+  test("result is always clamped within [10,90], same bounds as the original whole-task mechanic", () => {
+    const m = loadStudlinModule();
+    const barelyStarted = [{ done: false }, { done: false }, { done: false }, { done: false }, { done: false }];
+    const result = m.computeOutlineRemainingMins(barelyStarted, 45, 2);
+    assert.ok(result >= 10 && result <= 90);
+  });
+
+  test("rounds to the nearest 5 minutes", () => {
+    const m = loadStudlinModule();
+    const outline = [{ done: true }, { done: false }, { done: false }];
+    const result = m.computeOutlineRemainingMins(outline, 47, 33);
+    assert.equal(result % 5, 0);
+  });
+});
+
 describe("isTimerEligible (regression: the missed-task nudge fired for fixed commitments like Gym that have no Begin/Lock-In flow at all, so it could never be satisfied)", () => {
   test("a real study block with a duration is eligible", () => {
     const m = loadStudlinModule();

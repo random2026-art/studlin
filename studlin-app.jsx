@@ -1799,6 +1799,32 @@ function scheduleAssignmentExtension(task,deadlineKey,totalMins){
 // them self-report how far along they got, and extrapolate the rest.
 const ATTACK_BLOCK_DEFAULT_PROBE_MINS=30;
 const ATTACK_BLOCK_PADDING=1.2; // pacing is rarely linear — pad the extrapolation
+// Outline-scoped extrapolation (Friction & Control Pass): when a project has
+// an outline, checked-off items are the PRIMARY progress signal, not a
+// whole-project percent guess -- the self-reported percent only refines
+// where the very next (first unchecked) item currently stands. Returns null
+// when there's no outline to reason about, so every existing caller falls
+// back to the original whole-task percent mechanic unchanged -- this is
+// strictly additive, never a behavior change for a project with no outline.
+function computeOutlineRemainingMins(outline,totalMinsSoFar,currentItemPct){
+  if(!Array.isArray(outline)||outline.length===0)return null;
+  const doneCount=outline.filter(o=>o.done).length;
+  const pct=Math.max(1,Math.min(99,currentItemPct||0))/100;
+  const hasCurrentItem=doneCount<outline.length;
+  // Floors at a small epsilon rather than doneCount+fraction so a fresh
+  // start (0 items done, barely into item 1) can't divide by near-zero and
+  // produce an absurd multi-hour estimate off one data point.
+  const effectiveDone=Math.max(0.05,doneCount+(hasCurrentItem?pct:0));
+  const avgPerItem=totalMinsSoFar/effectiveDone;
+  const remainingItems=Math.max(0,outline.length-effectiveDone);
+  const raw=avgPerItem*remainingItems*ATTACK_BLOCK_PADDING;
+  return Math.max(10,Math.min(90,Math.round(raw/5)*5));
+}
+// One-tap skip on the post-session popup (Friction & Control Pass rule 5:
+// "skip assumes conservative default progress and never re-prompts for
+// that session") -- nothing gets newly checked off, the current item is
+// assumed half-done rather than asking again.
+const ATTACK_BLOCK_SKIP_ASSUMED_PCT=50;
 // Backward-scheduling for a long-horizon project's LATEST RESPONSIBLE start
 // date, replacing a fixed day-count threshold with one that actually
 // accounts for how much work the thing needs. Padded heavier (1.5x) than
@@ -1879,6 +1905,33 @@ async function proposeProjectPhases(title,detail,subject){
     if(parsed&&Array.isArray(parsed.phases)&&parsed.phases.length>0){
       const names=parsed.phases.filter(p=>typeof p==="string"&&p.trim()).slice(0,6).map(p=>p.trim());
       return names.length>0?names:null;
+    }
+    return null;
+  }catch(e){return null;}
+}
+// Finer-grained than proposeProjectPhases -- a phase is "Draft," an outline
+// item is "Write the introduction paragraph." Same "ground it in real
+// detail or return nothing" discipline, plus one extra instruction phases
+// didn't need: if the source text already states its own breakdown (a
+// professor's numbered/bulleted assignment steps), extract THAT directly
+// rather than inventing a fresh one -- a real syllabus breakdown is a
+// better outline than anything AI-drafted from scratch.
+async function proposeOutline(title,detail,subject){
+  try{
+    const prompt="A student is working on: \""+title+"\""+(subject?" for "+subject:"")+". "+
+      (detail?"Here's what's known about it: "+detail+". ":"No further detail is available beyond the title. ")+
+      "Break this into a concrete, ordered checklist of specific steps a student would actually check off while doing the work (e.g. \"Read chapters 4-6\", \"Draft the introduction\", \"Cite sources in APA format\" -- not vague phases). "+
+      "If the detail above already states its own numbered or bulleted breakdown of steps, use THOSE steps directly rather than inventing your own. "+
+      "Only propose a checklist if the detail above actually gives you something concrete to ground it in — if all you have is a bare title with no real information, don't guess: respond with {\"outline\":[]}. "+
+      "5-12 items is typical, never more than 15. Respond with ONLY valid JSON, no markdown fences, no commentary: "+
+      "{\"outline\":[\"Read chapters 4-6\",\"Draft the introduction\",\"Write body paragraphs\",\"Cite sources\",\"Proofread\"]}";
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+    const data=await res.json();
+    const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
+    const parsed=JSON.parse(raw);
+    if(parsed&&Array.isArray(parsed.outline)&&parsed.outline.length>0){
+      const items=parsed.outline.filter(o=>typeof o==="string"&&o.trim()).slice(0,15).map(o=>o.trim());
+      return items.length>0?items:null;
     }
     return null;
   }catch(e){return null;}
