@@ -9068,6 +9068,37 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   if (gapToNextMins == null) return floored;
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
+// Day view's "smart viewport": unlike WeeklyPlanner's fixed 48px/hr (built
+// for glancing across 7 days at once), a single day should try to show its
+// entire schedule with no scrolling at all -- so the scale is computed from
+// how much vertical space is actually available, not fixed. Falls back to
+// the work-hours window when there are no timed events yet (nothing to
+// scale to) rather than defaulting to the full 24h day, which would render
+// mostly empty gridlines. Clamped both directions: too small and blocks
+// stop being legible/clickable; too large and a short day (2-3 events)
+// would render each one absurdly tall for no reason.
+const DAY_VIEW_MIN_PX_HR=22;
+const DAY_VIEW_MAX_PX_HR=90;
+function computeDayViewScale(events,workWindow,viewportHeightPx){
+  const timed=(events||[]).filter(e=>e.time);
+  const starts=timed.map(e=>{const p=e.time.split(":").map(Number);return p[0]*60+p[1];});
+  const ends=timed.map((e,i)=>starts[i]+(e.duration||30));
+  let spanStart=workWindow?workWindow.start:9*60;
+  let spanEnd=workWindow?workWindow.end:18*60;
+  if(starts.length>0){
+    spanStart=Math.min(spanStart,Math.min(...starts));
+    spanEnd=Math.max(spanEnd,Math.max(...ends));
+  }
+  spanStart=Math.max(0,spanStart-30);
+  spanEnd=Math.min(1440,spanEnd+30);
+  const spanHrs=Math.max(1,(spanEnd-spanStart)/60);
+  const fitPxPerHr=(viewportHeightPx||600)/spanHrs;
+  const pxPerHr=Math.max(DAY_VIEW_MIN_PX_HR,Math.min(DAY_VIEW_MAX_PX_HR,fitPxPerHr));
+  // Where to scroll to on open -- 30 minutes before the first real task, so
+  // it lands right at the top instead of exactly flush with the edge.
+  const scrollToMin=starts.length>0?Math.max(spanStart,Math.min(...starts)-30):spanStart;
+  return {spanStart,spanEnd,pxPerHr,scrollToMin};
+}
 
 function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, isAgendaCollapsed, onDeleteEvent}) {
   // Compact, fixed per-hour scale (held constant across the agenda-collapse
@@ -9577,6 +9608,90 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
         )}
       </Modal>
     </>
+  );
+}
+
+// Day view — a single-column schedule that tries to show the whole day
+// with no scrolling at all (computeDayViewScale picks the scale from the
+// actual measured container height), and lands scrolled to just before the
+// first real task when it can't quite fit. Deliberately simpler than
+// WeeklyPlanner: no drag-to-reschedule, no routine-editing mode -- those
+// are 7-day-grid concerns that don't apply to a single day, and adding
+// them here would just be unused surface area copied from a component this
+// isn't. Click toggles done (fastest single interaction for "the thing
+// right in front of you"); double-click still opens the full edit modal.
+function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, markDone, uncrossDone, prefs}) {
+  const containerRef=useRef(null);
+  const scrollRef=useRef(null);
+  const [viewportH,setViewportH]=useState(560);
+  useEffect(()=>{
+    const measure=()=>{if(containerRef.current)setViewportH(containerRef.current.clientHeight);};
+    measure();
+    window.addEventListener("resize",measure);
+    return ()=>window.removeEventListener("resize",measure);
+  },[]);
+  const visibleEvs=(dayEvents||[]).filter(ev=>ev.kind!=="free period"&&ev.time);
+  const workWindow=getWorkWindowMinsFor(prefs,selDay);
+  const {spanStart,spanEnd,pxPerHr,scrollToMin}=computeDayViewScale(visibleEvs,workWindow,viewportH);
+  useEffect(()=>{
+    if(scrollRef.current)scrollRef.current.scrollTop=(scrollToMin-spanStart)*(pxPerHr/60);
+  },[selDay,scrollToMin,spanStart,pxPerHr]);
+  const totalHeightPx=(spanEnd-spanStart)*(pxPerHr/60);
+  const hourStart=Math.floor(spanStart/60), hourEnd=Math.ceil(spanEnd/60);
+  const nowMins=(()=>{const n=new Date();return n.getHours()*60+n.getMinutes();})();
+  const isToday=selDay===todayK;
+  const dayLaidOut=layoutDayEvents(visibleEvs);
+  const fmtHourLabel=(mins)=>{const h=Math.floor(mins/60)%24;const ap=h>=12?"PM":"AM";const h12=h%12||12;return h12+ap;};
+  return (
+    <Card style={{padding:16}}>
+      <div ref={containerRef} style={{height:"calc(100vh - 320px)",minHeight:360}}>
+        <div ref={scrollRef} style={{height:"100%",overflowY:"auto",position:"relative"}}>
+          <div style={{position:"relative",height:totalHeightPx,marginLeft:54}}>
+            {Array.from({length:Math.max(1,hourEnd-hourStart)},(_,i)=>hourStart+i).map(h=>(
+              <div key={h} style={{position:"absolute",top:(h*60-spanStart)*(pxPerHr/60),left:0,right:0,borderTop:`1px solid ${T.borderHover}`,boxSizing:"border-box"}}>
+                <span style={{position:"absolute",left:-54,top:-7,width:46,textAlign:"right",fontSize:10,color:T.faint,fontFamily:T.mono}}>{fmtHourLabel(h*60)}</span>
+              </div>
+            ))}
+            {isToday&&nowMins>=spanStart&&nowMins<=spanEnd&&(
+              <div style={{position:"absolute",top:(nowMins-spanStart)*(pxPerHr/60),left:0,right:0,zIndex:6,pointerEvents:"none"}}>
+                <div style={{position:"absolute",left:-4,top:-4,width:8,height:8,borderRadius:"50%",background:"#E5484D"}} />
+                <div style={{borderTop:"2px solid #E5484D"}} />
+              </div>
+            )}
+            {dayLaidOut.length===0&&(
+              <div style={{position:"absolute",top:16,left:8,right:8,textAlign:"center",color:T.muted,fontSize:13}}>Nothing scheduled yet today.</div>
+            )}
+            {dayLaidOut.map(({ev,col,totalCols,start})=>{
+              const topPx=(start-spanStart)*(pxPerHr/60);
+              const dur=ev.duration||30;
+              const nextInCol=dayLaidOut.filter(o=>o.col===col&&o.start>start).sort((a,b)=>a.start-b.start)[0];
+              const heightPx=computeEventBlockHeightPx(dur,nextInCol?nextInCol.start-start:null,pxPerHr);
+              const isDone=ev.status==="done";
+              const over=daysOverdue(ev);
+              const color=over>0?T.red:colorOf(ev.subject);
+              const isStudy=ev.kind==="study block";
+              const isExam=ev.kind==="exam";
+              const kindStyle=isStudy
+                ?{background:color,borderLeft:"none",color:T.ink}
+                :isExam
+                  ?{background:T.ink,border:`2px solid ${color}`,borderLeft:`2px solid ${color}`,boxShadow:`0 0 10px -1px ${color}, inset 0 0 10px ${color}22`,color:T.cream}
+                  :{background:color+"1E",borderLeft:`3px solid ${color}`,color};
+              const leftPct=(col/totalCols)*100;
+              const widthPct=100/totalCols;
+              return (
+                <div key={ev.id} onDoubleClick={()=>openEdit(ev)}
+                  onClick={()=>{isDone?uncrossDone(ev.id):markDone(ev.id);}}
+                  title="Click to toggle done, double-click to edit"
+                  style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:6,padding:"4px 8px",cursor:"pointer",overflow:"hidden",zIndex:3,opacity:isDone?0.4:1,boxSizing:"border-box",...kindStyle}}>
+                  <div style={{fontSize:11.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:isDone?"line-through":"none"}}>{isExam?"EXAM · ":""}{ev.title}</div>
+                  {heightPx>34&&<div style={{fontSize:9.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:2}}>{fmtTime(ev.time)}{dur?" · "+dur+"m":""}</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </Card>
   );
 }
 
@@ -11031,7 +11146,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
         </div>
       )}
       <div style={{display:"flex",gap:6,marginBottom:20}}>
-        {["monthly","weekly"].map(v=>(
+        {["monthly","weekly","daily"].map(v=>(
           <button key={v} onClick={()=>setCalView(v)} style={{padding:"6px 14px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",background:calView===v?T.lime+"14":"transparent",color:calView===v?T.lime:T.muted,border:`1px solid ${calView===v?T.lime+"44":T.border}`,fontFamily:T.font,transition:"all 0.15s",textTransform:"capitalize"}}>{v}</button>
         ))}
       </div>
@@ -11097,6 +11212,10 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
           routines={routines} editRoutineMode={editRoutineMode} hoveredRoutineId={hoveredRoutineId} setHoveredRoutineId={setHoveredRoutineId}
           onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
           selDay={selDay} setSelDay={setSelDay} isAgendaCollapsed={isAgendaCollapsed} onDeleteEvent={deleteEventWithUndo} />
+      </CollapsibleAgendaLayout>)}
+      {calView==="daily"&&(<CollapsibleAgendaLayout isAgendaCollapsed={isAgendaCollapsed} setIsAgendaCollapsed={setIsAgendaCollapsed}
+        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,onSkipOneOccurrence:skipOneOccurrence,markDone,uncrossDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask,setEvents,allEvents:events}}>
+        <DayPlanner dayEvents={dayEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} />
       </CollapsibleAgendaLayout>)}
     </div>
       {calTourStep>=0&&(

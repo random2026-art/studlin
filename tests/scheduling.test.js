@@ -1426,6 +1426,67 @@ describe("computeEventBlockHeightPx (Weekly grid block height, regression: a sho
   });
 });
 
+describe("computeDayViewScale (Day view's smart viewport: fit the whole day, scroll to the first task)", () => {
+  const WORK_WINDOW = { start: 9 * 60, end: 18 * 60 };
+
+  test("no events falls back to the plain work-hours window", () => {
+    const m = loadStudlinModule();
+    const r = m.computeDayViewScale([], WORK_WINDOW, 700);
+    assert.equal(r.spanStart, WORK_WINDOW.start - 30);
+    assert.equal(r.spanEnd, WORK_WINDOW.end + 30);
+  });
+
+  test("an event earlier than the work window widens the span to include it", () => {
+    const m = loadStudlinModule();
+    const r = m.computeDayViewScale([{ time: "06:00", duration: 30 }], WORK_WINDOW, 700);
+    assert.equal(r.spanStart, 6 * 60 - 30);
+  });
+
+  test("an event later than the work window widens the span to include it", () => {
+    const m = loadStudlinModule();
+    const r = m.computeDayViewScale([{ time: "22:00", duration: 60 }], WORK_WINDOW, 700);
+    assert.equal(r.spanEnd, 23 * 60 + 30);
+  });
+
+  test("pxPerHr is computed to fit the whole span in the given viewport height", () => {
+    const m = loadStudlinModule();
+    const r = m.computeDayViewScale([], WORK_WINDOW, 700);
+    const spanHrs = (r.spanEnd - r.spanStart) / 60;
+    assert.equal(Math.round(r.pxPerHr * spanHrs), 700);
+  });
+
+  test("pxPerHr never drops below the legibility floor even for a very short viewport", () => {
+    const m = loadStudlinModule();
+    const r = m.computeDayViewScale([{ time: "10:00", duration: 30 }], WORK_WINDOW, 50);
+    assert.equal(r.pxPerHr, m.DAY_VIEW_MIN_PX_HR);
+  });
+
+  test("pxPerHr never exceeds the max even for a very tall viewport with a short day", () => {
+    const m = loadStudlinModule();
+    const r = m.computeDayViewScale([], WORK_WINDOW, 5000);
+    assert.equal(r.pxPerHr, m.DAY_VIEW_MAX_PX_HR);
+  });
+
+  test("scrollToMin lands 30 minutes before the first real task, not at the very edge of the span", () => {
+    const m = loadStudlinModule();
+    const r = m.computeDayViewScale([{ time: "10:00", duration: 30 }, { time: "14:00", duration: 60 }], WORK_WINDOW, 700);
+    assert.equal(r.scrollToMin, 10 * 60 - 30);
+  });
+
+  test("with no events, scrollToMin is just the span start -- nothing to scroll ahead to", () => {
+    const m = loadStudlinModule();
+    const r = m.computeDayViewScale([], WORK_WINDOW, 700);
+    assert.equal(r.scrollToMin, r.spanStart);
+  });
+
+  test("events with no time (checklist-style) are ignored for span/scroll purposes", () => {
+    const m = loadStudlinModule();
+    const r = m.computeDayViewScale([{ time: "", duration: 30 }, { duration: 30 }], WORK_WINDOW, 700);
+    assert.equal(r.spanStart, WORK_WINDOW.start - 30);
+    assert.equal(r.scrollToMin, r.spanStart);
+  });
+});
+
 describe("isTimerEligible (regression: the missed-task nudge fired for fixed commitments like Gym that have no Begin/Lock-In flow at all, so it could never be satisfied)", () => {
   test("a real study block with a duration is eligible", () => {
     const m = loadStudlinModule();
