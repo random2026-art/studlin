@@ -1182,6 +1182,34 @@ function dayHasRoomFor(events,routines,prefs,dateKey,duration,desiredTime){
   }
   return false;
 }
+// One-tap block actions (Friction & Control Pass rule 3): "Later today"
+// and "Not today" -- system picks the new slot, no time picker, no
+// confirm dialog. Both are thin wrappers around findLegalSlotOrNull/
+// dayHasRoomFor, the same hard-wall placement primitives every other
+// scheduling path in this file already trusts, not a parallel system.
+//
+// "Later today" never rolls into tomorrow just because today looks full --
+// that would silently do what "Not today" is for instead. dayHasRoomFor
+// (the same same-day-only check eviction already uses) gates it first;
+// null tells the caller to offer "Not today" instead, not to fall back
+// silently.
+function findLaterTodaySlot(task,events,routines,prefs,todayKey,nowMins){
+  const others=events.filter(e=>e.id!==task.id);
+  const desiredTime=minutesToTime(Math.max(0,nowMins)+5);
+  if(!dayHasRoomFor(others,routines,prefs,todayKey,task.duration||30,desiredTime))return null;
+  const slot=findLegalSlotOrNull(others,routines,prefs,todayKey,desiredTime,task.duration||30,task.deadline||null);
+  return(slot&&slot.date===todayKey)?slot:null;
+}
+// "Not today" redistributes into the rest of the week, starting tomorrow
+// -- the system picks the day, never lands back on today (the entire
+// point of the action), and still respects the task's own deadline via
+// findLegalSlotOrNull's hard wall.
+function findNotTodaySlot(task,events,routines,prefs,todayKey){
+  const d=new Date(todayKey+"T12:00:00");d.setDate(d.getDate()+1);
+  const tomorrowKey=dayKey(d);
+  const others=events.filter(e=>e.id!==task.id);
+  return findLegalSlotOrNull(others,routines,prefs,tomorrowKey,prefs.workStartTime,task.duration||30,task.deadline||null);
+}
 // Intelligent task swapping — when a task with an imminent deadline (due
 // within 3 days) needs to land on a day that's already full, evict that
 // day's long-term-project micro-sessions (pending study blocks whose own
@@ -11784,6 +11812,25 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
         </div>
       </Modal>
       {(() => {
+        // One-tap block actions (Friction & Control Pass rule 3) -- system
+        // picks the slot, no time picker, no confirm dialog. Only offered
+        // for flexible, movable kinds (same TIER0_FIXED_KINDS exclusion
+        // Tier 0's own missed-task sweep already uses) -- moving a real
+        // exam or class "later today" isn't a thing a one-tap action
+        // should pretend to do.
+        const moveTaskLaterToday=(ev)=>{
+          const nowMins=(()=>{const n=new Date();return n.getHours()*60+n.getMinutes();})();
+          const slot=findLaterTodaySlot(ev,events,routines,getSchedulePreferences(),dayKey(),nowMins);
+          if(!slot){setPlacementToast("No room left today for this.");setTimeout(()=>setPlacementToast(""),3200);return;}
+          const next=events.map(e=>e.id===ev.id?{...e,date:slot.date,time:slot.time}:e);
+          setEvents(next);lsSet("events",next);
+        };
+        const moveTaskNotToday=(ev)=>{
+          const slot=findNotTodaySlot(ev,events,routines,getSchedulePreferences(),dayKey());
+          if(!slot){setPlacementToast("Couldn't find room this week without missing its deadline.");setTimeout(()=>setPlacementToast(""),3200);return;}
+          const next=events.map(e=>e.id===ev.id?{...e,date:slot.date,time:slot.time}:e);
+          setEvents(next);lsSet("events",next);
+        };
         const detailEvs = dayDetailKey
           ? (byDay[dayDetailKey] || []).filter(ev => ev.kind !== "free period")
             .slice()
@@ -11820,6 +11867,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
                   const color = over > 0 ? T.red : colorOf(ev.subject);
                   const isExam = ev.kind === "exam";
                   const canBegin = !isDone && isTimerEligible(ev);
+                  const canReslot = !isDone && !ev.checklist && ev.time && ev.duration && !TIER0_FIXED_KINDS.has(ev.kind);
                   return (
                     <div key={ev.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",background:T.card2,borderRadius:10,border:`1px solid ${T.border}`,opacity:isDone?0.55:1}}>
                       {!ev.checklist && ev.time && (
@@ -11840,6 +11888,10 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
                       </div>
                       <div style={{display:"flex",gap:4,flexShrink:0}}>
                         {canBegin && <BtnSm onClick={() => { setDayDetailKey(null); if (window._setTimerTask) window._setTimerTask(ev); }}>Begin</BtnSm>}
+                        {canReslot && <button type="button" onClick={() => moveTaskLaterToday(ev)} title="Studlin picks a later time today"
+                          style={{background:"none",border:`1px solid ${T.border}`,borderRadius:6,color:T.muted,cursor:"pointer",fontSize:11,padding:"5px 8px",fontFamily:T.font}}>Later</button>}
+                        {canReslot && <button type="button" onClick={() => moveTaskNotToday(ev)} title="Studlin redistributes it into the rest of the week"
+                          style={{background:"none",border:`1px solid ${T.border}`,borderRadius:6,color:T.muted,cursor:"pointer",fontSize:11,padding:"5px 8px",fontFamily:T.font}}>Not today</button>}
                         <button type="button" onClick={() => { setDayDetailKey(null); openEdit(ev); }} title="Edit"
                           style={{background:"none",border:`1px solid ${T.border}`,borderRadius:6,color:T.muted,cursor:"pointer",fontSize:11,padding:"5px 8px",fontFamily:T.font}}>Edit</button>
                         <button type="button" onClick={() => deleteEventWithUndo(ev)} title="Delete"

@@ -1652,6 +1652,51 @@ describe("computeOutlineRemainingMins (outline-scoped extrapolation -- checked i
   });
 });
 
+describe("One-tap block actions: findLaterTodaySlot / findNotTodaySlot (Friction & Control Pass rule 3)", () => {
+  const PREFS = { workStartTime: "09:00", workEndTime: "18:00" };
+  const task = (overrides) => ({ id: "t1", title: "Study", date: "2026-07-20", time: "16:00", duration: 30, deadline: null, ...overrides });
+
+  test("findLaterTodaySlot finds a legal slot later the same day", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T10:00:00" });
+    const t = task();
+    const slot = m.findLaterTodaySlot(t, [t], [], PREFS, "2026-07-20", 10 * 60);
+    assert.ok(slot, "should find a slot");
+    assert.equal(slot.date, "2026-07-20", "must stay on the same day -- that's the whole point of 'later today'");
+  });
+
+  test("findLaterTodaySlot returns null (not tomorrow) when today genuinely has no room left", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T17:50:00" });
+    const t = task();
+    const slot = m.findLaterTodaySlot(t, [t], [], PREFS, "2026-07-20", 17 * 60 + 50);
+    assert.equal(slot, null, "must never silently roll into tomorrow -- that's what 'Not today' is for, not a fallback here");
+  });
+
+  test("findNotTodaySlot places the task on a future day, never today", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T10:00:00" });
+    const t = task();
+    const slot = m.findNotTodaySlot(t, [t], [], PREFS, "2026-07-20");
+    assert.ok(slot, "should find a slot");
+    assert.ok(slot.date > "2026-07-20", "must never land back on today");
+  });
+
+  test("findNotTodaySlot respects the task's own deadline -- returns null rather than blow past it", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T10:00:00" });
+    const t = task({ deadline: "2026-07-20" });
+    const slot = m.findNotTodaySlot(t, [t], [], PREFS, "2026-07-20");
+    assert.equal(slot, null, "moving to tomorrow would blow a deadline that's today -- must refuse, not silently violate it");
+  });
+
+  test("both actions exclude the task's own current event from the conflict check (rescheduling itself shouldn't collide with itself)", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T10:00:00" });
+    const t = task();
+    // Only event in the list is the task itself -- if it weren't excluded
+    // from the occupied-slot check, it would collide with its own current
+    // slot and findLaterTodaySlot/findNotTodaySlot would come back null.
+    assert.ok(m.findLaterTodaySlot(t, [t], [], PREFS, "2026-07-20", 10 * 60) !== null);
+    assert.ok(m.findNotTodaySlot(t, [t], [], PREFS, "2026-07-20") !== null);
+  });
+});
+
 describe("isTimerEligible (regression: the missed-task nudge fired for fixed commitments like Gym that have no Begin/Lock-In flow at all, so it could never be satisfied)", () => {
   test("a real study block with a duration is eligible", () => {
     const m = loadStudlinModule();
