@@ -5090,14 +5090,7 @@ function Notes({setActive=()=>{}}){
     }
     setPanelLoading("cards");setPanelMsg("");
     try{
-      const prompt="Create 10 flashcards from these study notes. Format them as a JSON array where each card has a \"q\" key for the question and an \"a\" key for the answer. Return only the JSON array, no markdown fences.\n\n"+text.slice(0,15000);
-      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
-      const data=await res.json();
-      let raw=(data.reply||"").replace(/```json?|```/g,"").trim();
-      const s=raw.indexOf("["),e=raw.lastIndexOf("]");
-      if(s>=0&&e>s)raw=raw.slice(s,e+1);
-      let cards=[];
-      try{const parsed=JSON.parse(raw);cards=Array.isArray(parsed)?parsed:[];}catch(pe){cards=[];}
+      const cards=await generateFlashcardsFromText(text,"note",10);
       if(cards.length===0){setPanelMsg("Couldn't generate cards. Try again.");setPanelLoading(null);return;}
       const nd={id:String(Date.now()),name:activeNote.title,count:cards.length,done:0,color:colorOf(activeNote.tag),cards};
       const decks=lsGet("decks",[]);
@@ -5108,21 +5101,31 @@ function Notes({setActive=()=>{}}){
     setPanelLoading(null);
   };
 
+  // Reuses the shared generateQuizFromText/quizScores engine (previously
+  // this had its own separate, ungated, un-linked prompt with a different
+  // JSON schema -- a quiz taken from a note now counts toward exam
+  // readiness exactly like one taken from a Lectures transcript, and
+  // actually spends the same free-tier quiz-gen credit Lectures does).
   const genQuizFromNote=async()=>{
     const text=getNotePlainText();
     if(!text){setPanelMsg("This note is empty — write something first.");return;}
+    if(!canGenQuiz()){
+      setUpgradeModal({feature:"AI practice quizzes",detail:resetNote("AI practice quizzes",QUIZ_GEN_LIMIT)});
+      return;
+    }
     setPanelLoading("quiz");setPanelMsg("");
     try{
-      const prompt="Create a 5-question multiple-choice practice quiz from these study notes. Format as a JSON array where each item has \"question\" (string), \"options\" (array of exactly 4 strings), and \"correct\" (0-based index of the right option). Return only the JSON array, no markdown fences.\n\n"+text.slice(0,15000);
-      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
-      const data=await res.json();
-      let raw=(data.reply||"").replace(/```json?|```/g,"").trim();
-      const s=raw.indexOf("["),e=raw.lastIndexOf("]");
-      if(s>=0&&e>s)raw=raw.slice(s,e+1);
-      let qs=[];
-      try{const parsed=JSON.parse(raw);qs=Array.isArray(parsed)?parsed.filter(q=>q&&q.question&&Array.isArray(q.options)&&q.options.length>=2):[];}catch(pe){qs=[];}
-      if(qs.length===0){setPanelMsg("Couldn't generate a quiz. Try again.");setPanelLoading(null);return;}
-      setQuizOverlay({questions:qs,idx:0,picked:null,score:0,done:false});
+      const subj=activeNote?.tag;
+      const questions=await generateQuizFromText(text,subj,8);
+      if(questions.length===0){setPanelMsg("Couldn't generate a quiz. Try again.");setPanelLoading(null);return;}
+      recordQuizGen();
+      // Same subject-match, 14-day-horizon lookup Lectures' startQuiz uses
+      // to auto-attach a quiz score to the right upcoming exam without
+      // asking the student to pick one by hand.
+      const today=dayKey();
+      const horizon=dayKey(new Date(Date.now()+14*86400000));
+      const linkedExam=subj?lsGet("events",[]).filter(ev=>ev.kind==="exam"&&ev.subject===subj&&ev.date>=today&&ev.date<=horizon).sort((a,b)=>a.date<b.date?-1:1)[0]:null;
+      setQuizOverlay({questions,idx:0,picked:null,score:0,done:false,linkedExamId:linkedExam?linkedExam.id:null});
     }catch(e){setPanelMsg("Something went wrong. Try again.");}
     setPanelLoading(null);
   };
@@ -5388,16 +5391,16 @@ function Notes({setActive=()=>{}}){
           return (
             <div>
               <div style={{fontSize:11,color:T.muted,marginBottom:8}}>Question {quizOverlay.idx+1} of {quizOverlay.questions.length}</div>
-              <div style={{fontSize:14,fontWeight:600,color:T.white,marginBottom:14,lineHeight:1.5}}>{q.question}</div>
+              <div style={{fontSize:14,fontWeight:600,color:T.white,marginBottom:14,lineHeight:1.5}}>{q.q}</div>
               <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                {q.options.map((opt,i)=>{
-                  const isCorrect=i===q.correct;
+                {q.choices.map((opt,i)=>{
+                  const isCorrect=i===q.answerIndex;
                   const show=picked!==null;
                   let border=T.border,bg=T.card2,color=T.text;
                   if(show&&isCorrect){border=T.teal;bg=T.teal+"18";color=T.teal;}
                   else if(show&&picked===i&&!isCorrect){border=T.red;bg=T.red+"14";color=T.red;}
                   return (
-                    <button key={i} disabled={picked!==null} onClick={()=>setQuizOverlay(qo=>({...qo,picked:i,score:qo.score+(i===q.correct?1:0)}))} style={{textAlign:"left",padding:"10px 14px",borderRadius:8,border:`1px solid ${border}`,background:bg,color,cursor:picked!==null?"default":"pointer",fontFamily:T.font,fontSize:13}}>{opt}</button>
+                    <button key={i} disabled={picked!==null} onClick={()=>setQuizOverlay(qo=>({...qo,picked:i,score:qo.score+(i===q.answerIndex?1:0)}))} style={{textAlign:"left",padding:"10px 14px",borderRadius:8,border:`1px solid ${border}`,background:bg,color,cursor:picked!==null?"default":"pointer",fontFamily:T.font,fontSize:13}}>{opt}</button>
                   );
                 })}
               </div>
@@ -5405,8 +5408,21 @@ function Notes({setActive=()=>{}}){
                 <div style={{marginTop:16,display:"flex",justifyContent:"flex-end"}}>
                   <Btn onClick={()=>{
                     const isLast=quizOverlay.idx>=quizOverlay.questions.length-1;
-                    if(isLast)setQuizOverlay(qo=>({...qo,done:true}));
-                    else setQuizOverlay(qo=>({...qo,idx:qo.idx+1,picked:null}));
+                    if(isLast){
+                      setQuizOverlay(qo=>({...qo,done:true}));
+                      // Same quizScores write Lectures' submitQuiz does, so
+                      // this quiz counts toward exam readiness the same way
+                      // regardless of where it was taken from.
+                      if(quizOverlay.linkedExamId){
+                        const all=lsGet("events",[]);
+                        const next=all.map(ev=>ev.id===quizOverlay.linkedExamId
+                          ?{...ev,quizScores:[...(ev.quizScores||[]),{score:quizOverlay.score,total:quizOverlay.questions.length,at:Date.now()}]}
+                          :ev);
+                        lsSet("events",next);
+                      }
+                    }else{
+                      setQuizOverlay(qo=>({...qo,idx:qo.idx+1,picked:null}));
+                    }
                   }}>{quizOverlay.idx>=quizOverlay.questions.length-1?"See results":"Next question →"}</Btn>
                 </div>
               )}
@@ -5578,7 +5594,7 @@ function Notes({setActive=()=>{}}){
                 <div style={{display:"flex",alignItems:"center",gap:8,padding:"12px 20px",borderTop:`1px solid ${T.border}`,background:T.card2,flexWrap:"wrap"}}>
                   <span style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.faint,marginRight:2}}>Turn into</span>
                   <BtnSm variant="subtle" onClick={genFlashcardsFromNote} disabled={panelLoading!==null}>{panelLoading==="cards"?"Generating…":<>{Icon.layers} Create Flashcards{getPlan()==="Free"&&" ("+Math.max(0,FLASHCARD_GEN_LIMIT-getFlashcardGenUsage().count)+" left)"}</>}</BtnSm>
-                  <BtnSm variant="subtle" onClick={genQuizFromNote} disabled={panelLoading!==null}>{panelLoading==="quiz"?"Generating…":<>{Icon.check} Create Practice Quiz</>}</BtnSm>
+                  <BtnSm variant="subtle" onClick={genQuizFromNote} disabled={panelLoading!==null}>{panelLoading==="quiz"?"Generating…":<>{Icon.check} Create Practice Quiz{getPlan()==="Free"&&" ("+Math.max(0,QUIZ_GEN_LIMIT-getQuizGenUsage().count)+" left)"}</>}</BtnSm>
                   <BtnSm variant="subtle" onClick={genSummaryFromNote} disabled={panelLoading!==null}>{panelLoading==="summary"?"Generating…":<>{Icon.file} Generate Summary</>}</BtnSm>
                   {panelMsg&&<span style={{fontSize:11,color:panelMsg.startsWith("✓")?T.teal:T.red,marginLeft:4}}>{panelMsg}</span>}
                 </div>
