@@ -10680,8 +10680,8 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
                   <div style={{display:"flex",justifyContent:"flex-start"}}>
                     <span style={{width:22,height:22,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:isToday?700:500,background:isToday?T.lime:"transparent",color:isToday?T.ink:c.out?T.faint:T.text}}>{c.d}</span>
                   </div>
-                  <button type="button" onClick={(e)=>{e.stopPropagation();openNew(c.key);}} title="Add a task on this day"
-                    style={{position:"absolute",top:4,right:4,width:16,height:16,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.muted,fontSize:11,lineHeight:1,cursor:"pointer",display:"grid",placeItems:"center",padding:0}}>+</button>
+                  {isSel && <button type="button" onClick={(e)=>{e.stopPropagation();openNew(c.key);}} title="Add a task on this day"
+                    style={{position:"absolute",top:4,right:4,width:16,height:16,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.muted,fontSize:11,lineHeight:1,cursor:"pointer",display:"grid",placeItems:"center",padding:0}}>+</button>}
                   <div style={{display:"flex",flexDirection:"column",gap:2,marginTop:3,minWidth:0}}>
                     {evs.slice(0,2).map((ev,j)=>{
                       const over=daysOverdue(ev);
@@ -11042,7 +11042,18 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
             .sort((a, b) => (a.time || "99:99").localeCompare(b.time || "99:99"))
           : [];
         const detailDate = dayDetailKey ? new Date(dayDetailKey + "T12:00:00") : null;
-        return (
+        // Portaled straight to <body> -- [data-page] (this modal's ancestor,
+        // since it renders from inside CalendarTab) carries transform-style:
+        // preserve-3d, which per spec makes it a permanent containing block
+        // for position:fixed descendants, not just a wrapper. Left in place,
+        // this modal's "centered" coordinates would resolve relative to
+        // [data-page]'s own (padded, sidebar-adjacent) box instead of the
+        // real viewport, landing it visibly off-center. Same fix already
+        // used for TourStep's callout, just via portal instead of hoisting
+        // the state up to App() -- this modal's actions (openEdit, markDone,
+        // deleteEventWithUndo...) are all CalendarTab-local closures, so
+        // portaling here keeps them working with zero refactor.
+        return ReactDOM.createPortal((
           <Modal open={!!dayDetailKey} onClose={() => setDayDetailKey(null)}
             title={detailDate ? detailDate.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }) : ""}
             sub={detailEvs.length === 0 ? "Nothing scheduled." : detailEvs.length + " item" + (detailEvs.length !== 1 ? "s" : "")}
@@ -11092,7 +11103,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
               </div>
             )}
           </Modal>
-        );
+        ), document.body);
       })()}
       <Modal open={editOpen} onClose={closeEdit} title="Edit task" sub="Update this task's details." width={580}
         footer={<><Btn variant="subtle" onClick={closeEdit}>Cancel</Btn><Btn onClick={saveEdit} disabled={!editTitle.trim()} style={{opacity:editTitle.trim()?1:0.45}}>Save changes</Btn></>}>
