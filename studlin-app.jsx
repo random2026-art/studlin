@@ -5732,12 +5732,31 @@ const isRoomUnread=(room,myUid)=>{
 };
 const isOnlineStatusOn=()=>lsGet("settings",{}).onlineStatus!==false;
 const isIncognitoOn=()=>lsGet("settings",{}).incognito===true;
+// A fresh AudioContext created with no user gesture anywhere in the call
+// stack (this fires off a Firestore onSnapshot listener, purely async)
+// starts life "suspended" under browser autoplay policy and never actually
+// makes sound — unlike TaskTimerModal's own chime (which has a real
+// button click, "Lock in", to unlock its context with), a chat message
+// arriving has no equivalent gesture at all. One shared context instead,
+// created and resumed on the first real interaction anywhere in the app
+// (click/keydown/touch) so it's already running by the time any chime
+// actually needs to play.
+let sharedAudioCtx=null;
+function getSharedAudioCtx(){
+  if(!sharedAudioCtx)sharedAudioCtx=new(window.AudioContext||window.webkitAudioContext)();
+  if(sharedAudioCtx.state==="suspended")sharedAudioCtx.resume().catch(()=>{});
+  return sharedAudioCtx;
+}
+if(typeof window!=="undefined"){
+  const unlockSharedAudio=()=>{getSharedAudioCtx();};
+  ["click","keydown","touchstart"].forEach(evt=>window.addEventListener(evt,unlockSharedAudio,{once:true}));
+}
 // Short two-tone chat chime — same raw Web Audio oscillator technique as
 // TaskTimerModal's playBeep, but a distinct, lighter tone so a new message
 // never sounds like the Pomodoro alarm.
 const playChatChime=()=>{
   try{
-    const ctx=new(window.AudioContext||window.webkitAudioContext)();
+    const ctx=getSharedAudioCtx();
     const osc=ctx.createOscillator();const gain=ctx.createGain();
     osc.connect(gain);gain.connect(ctx.destination);
     osc.frequency.setValueAtTime(660,ctx.currentTime);
@@ -7828,6 +7847,20 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
   // finished/not-finished check — completeSession only actually runs once
   // they answer, so the value has to survive that detour.
   const pendingMinsRef=useRef(0);
+  // A fresh AudioContext created outside a genuine user gesture (this
+  // chime fires from a timer tick when a focus block ends, never from a
+  // direct click) starts life "suspended" under modern autoplay policy and
+  // never actually produces sound -- the old playBeep created a brand new
+  // one on every single call, so it was silently suspended every time,
+  // regardless of the soundOn toggle. One persistent context instead,
+  // unlocked by startLockIn's own click (a real gesture) and resumed
+  // defensively before every use.
+  const audioCtxRef=useRef(null);
+  const getAudioCtx=()=>{
+    if(!audioCtxRef.current)audioCtxRef.current=new(window.AudioContext||window.webkitAudioContext)();
+    if(audioCtxRef.current.state==="suspended")audioCtxRef.current.resume().catch(()=>{});
+    return audioCtxRef.current;
+  };
 
   const initBreakMins=computeBreathingRoom(totalMins);
   const initBreakPos=Math.max(1,Math.floor((totalMins-initBreakMins)/2));
@@ -7841,7 +7874,12 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
   const [phase,setPhase]=useState("quote");
   const [secs,setSecs]=useState(0);
   const [running,setRunning]=useState(false);
-  const [soundOn,setSoundOn]=useState(true);
+  // Was always true regardless of Settings' "Focus sound alerts" toggle --
+  // that toggle existed in Settings but nothing ever actually read it, so
+  // turning it off there did nothing. Now it sets the real default; the
+  // in-modal mute button (see soundOn below) still lets a student override
+  // per-session either direction.
+  const [soundOn,setSoundOn]=useState(()=>lsGet("settings",{}).sound!==false);
   // True the instant a focus block ends and the modal is waiting on the
   // student to act (start break / skip break / finish) — the chime alone is
   // easy to miss, so this keeps it repeating until one of those three
@@ -7928,7 +7966,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
   // pleasant enough that finishing a focus block doesn't feel like an alarm
   // going off.
   const playBeep=()=>{try{
-    const ctx=new(window.AudioContext||window.webkitAudioContext)();
+    const ctx=getAudioCtx();
     [523.25,659.25,783.99].forEach((freq,i)=>{
       const t=ctx.currentTime+i*0.15;
       const osc=ctx.createOscillator();
@@ -8083,6 +8121,12 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
   },[phase,completion]);
 
   const startLockIn=()=>{
+    // Unlocks the AudioContext right here, inside a direct button click --
+    // the one moment in this whole flow that's a genuine user gesture.
+    // Every later chime (session end, break end) fires from a timer tick,
+    // which browsers won't let a *freshly created* context play from; a
+    // context that's already running by then plays fine.
+    getAudioCtx();
     // Resuming a checkpointed session (see resolveOrphanedCheckpoint) seeds
     // the elapsed tracker with what was already genuinely spent, and skips
     // straight to focus2 with only the remaining time left on the clock —
@@ -8133,6 +8177,32 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
     if(task.isAttackBlock){pendingMinsRef.current=mins;setPhase("attackCheckIn");return;}
     completeSession(mins);
   };
+  // Lets the App-level "still working on X" guard (see window._setTimerTask)
+  // trigger this exact same finish-early path from outside this component,
+  // instead of reimplementing the mins-verification/completion logic a
+  // second time. Reassigned every render (not just on mount) since
+  // finishEarly itself is a fresh closure each render and reads live
+  // `phase` state -- a stale mount-time reference would see whichever
+  // phase was active the moment this modal first opened, forever.
+  window._finishTimerEarly=finishEarly;
+  // Unconditional null-out on unmount, not an identity check against the
+  // mount-time finishEarly closure -- the line above reassigns the bridge
+  // to a fresh closure every render, so by unmount time it never matches
+  // whatever this one-time effect captured at mount. Safe to clear
+  // unconditionally: the app's single timerTask state means only one
+  // TaskTimerModal is ever mounted at a time, so there's no other
+  // instance's bridge this could accidentally clear out from under it.
+  useEffect(()=>{
+    return()=>{ window._finishTimerEarly=null; };
+  },[]);
+  // Closes the AudioContext on unmount -- browsers cap how many can exist
+  // concurrently (Chrome silently refuses new ones past ~a handful), and
+  // this modal mounts fresh every single Lock-In session, so never
+  // releasing one would eventually break the chime again after enough
+  // sessions in one tab.
+  useEffect(()=>{
+    return()=>{ if(audioCtxRef.current){audioCtxRef.current.close().catch(()=>{});audioCtxRef.current=null;} };
+  },[]);
 
   const updateBreakPos=(e)=>{
     const bar=barRef.current;if(!bar)return;
@@ -9799,6 +9869,16 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
   const [isAgendaCollapsed,setIsAgendaCollapsed]=useState(false);
   const [editOpen,setEditOpen]=useState(false);
   const [editEv,setEditEv]=useState(null);
+  // Monthly grid double-click used to just open "add a task" -- the same
+  // gesture most calendar apps use to expand into a full day view, and the
+  // one thing double-clicking a day couldn't do here was show you
+  // everything on it (the day cell itself truncates to 2 items + "N more",
+  // and single-click only surfaces the day in the sidebar agenda). Now
+  // double-click opens this instead; adding a task for a specific day
+  // moved to the small "+" on the cell itself (see the grid below) and the
+  // "+ Add task" button in this modal's own footer, so that capability
+  // isn't lost, just relocated.
+  const [dayDetailKey,setDayDetailKey]=useState(null);
   // Cancel-all for prep sessions Studlin generated off a due-date fact (an
   // Attack Block chain or exam study sessions) — every such session carries
   // dueEventId back to the marker/exam event it came from, so one query
@@ -10582,12 +10662,14 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
               const isToday=c.key===todayK;
               const isSel=c.key===selDay;
               return (
-                <div key={i} onClick={()=>{setSelDay(c.key);}} onDoubleClick={()=>openNew(c.key)}
+                <div key={i} onClick={()=>{setSelDay(c.key);}} onDoubleClick={()=>setDayDetailKey(c.key)}
                   onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(dragId){moveEvent(dragId,c.key);setDragId(null);}}}
-                  style={{minHeight:64,minWidth:0,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.card2:"transparent",border:"1px solid "+(isSel?T.lime+"55":"transparent"),transition:"all 0.12s",opacity:c.out?0.35:1}}>
+                  style={{position:"relative",minHeight:64,minWidth:0,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.card2:"transparent",border:"1px solid "+(isSel?T.lime+"55":"transparent"),transition:"all 0.12s",opacity:c.out?0.35:1}}>
                   <div style={{display:"flex",justifyContent:"flex-start"}}>
                     <span style={{width:22,height:22,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:isToday?700:500,background:isToday?T.lime:"transparent",color:isToday?T.ink:c.out?T.faint:T.text}}>{c.d}</span>
                   </div>
+                  <button type="button" onClick={(e)=>{e.stopPropagation();openNew(c.key);}} title="Add a task on this day"
+                    style={{position:"absolute",top:4,right:4,width:16,height:16,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.muted,fontSize:11,lineHeight:1,cursor:"pointer",display:"grid",placeItems:"center",padding:0}}>+</button>
                   <div style={{display:"flex",flexDirection:"column",gap:2,marginTop:3,minWidth:0}}>
                     {evs.slice(0,2).map((ev,j)=>{
                       const over=daysOverdue(ev);
@@ -10608,7 +10690,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
               );
             })}
           </div>
-          <div style={{fontSize:10.5,color:T.faint,marginTop:10,paddingLeft:6}}>Click a day to see its schedule · double-click to add a task · drag tasks between days</div>
+          <div style={{fontSize:10.5,color:T.faint,marginTop:10,paddingLeft:6}}>Click a day to see its schedule · double-click for the full day view · + to add a task · drag tasks between days</div>
         </Card>
       </CollapsibleAgendaLayout>)}
       {calView==="weekly"&&(<CollapsibleAgendaLayout isAgendaCollapsed={isAgendaCollapsed} setIsAgendaCollapsed={setIsAgendaCollapsed}
@@ -10941,6 +11023,65 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
           ))}
         </div>
       </Modal>
+      {(() => {
+        const detailEvs = dayDetailKey
+          ? (byDay[dayDetailKey] || []).filter(ev => ev.kind !== "free period")
+            .slice()
+            .sort((a, b) => (a.time || "99:99").localeCompare(b.time || "99:99"))
+          : [];
+        const detailDate = dayDetailKey ? new Date(dayDetailKey + "T12:00:00") : null;
+        return (
+          <Modal open={!!dayDetailKey} onClose={() => setDayDetailKey(null)}
+            title={detailDate ? detailDate.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }) : ""}
+            sub={detailEvs.length === 0 ? "Nothing scheduled." : detailEvs.length + " item" + (detailEvs.length !== 1 ? "s" : "")}
+            width={520}
+            footer={<>
+              <Btn variant="subtle" onClick={() => setDayDetailKey(null)}>Close</Btn>
+              <Btn onClick={() => { const dk = dayDetailKey; setDayDetailKey(null); openNew(dk); }}>+ Add task</Btn>
+            </>}>
+            {detailEvs.length === 0 ? (
+              <div style={{textAlign:"center",padding:"24px 12px",color:T.muted,fontSize:13}}>Nothing here yet — add the first thing.</div>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:420,overflowY:"auto"}}>
+                {detailEvs.map(ev => {
+                  const isDone = ev.status === "done";
+                  const over = daysOverdue(ev);
+                  const color = over > 0 ? T.red : colorOf(ev.subject);
+                  const isExam = ev.kind === "exam";
+                  const canBegin = !isDone && ev.duration && (ev.kind === "study block" || ev.kind === "deadline");
+                  return (
+                    <div key={ev.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",background:T.card2,borderRadius:10,border:`1px solid ${T.border}`,opacity:isDone?0.55:1}}>
+                      {!ev.checklist && ev.time && (
+                        <input type="checkbox" checked={isDone} onChange={() => isDone ? uncrossDone(ev.id) : markDone(ev.id)}
+                          style={{width:16,height:16,flexShrink:0,cursor:"pointer",accentColor:T.lime}} />
+                      )}
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{display:"flex",alignItems:"center",gap:6,minWidth:0}}>
+                          {isExam && <span style={{fontSize:9,fontWeight:800,letterSpacing:"0.04em",color,background:color+"1E",border:`1px solid ${color}55`,borderRadius:5,padding:"1px 6px",flexShrink:0}}>EXAM</span>}
+                          <span style={{fontSize:13,fontWeight:600,color:T.text,textDecoration:isDone?"line-through":"none",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</span>
+                        </div>
+                        <div style={{fontSize:11,color:T.muted,marginTop:2}}>
+                          {ev.subject && <span style={{color}}>{ev.subject}</span>}
+                          {ev.subject && ev.time ? " · " : ""}
+                          {ev.time ? fmtTime(ev.time) : ""}
+                          {ev.duration ? " · " + ev.duration + "m" : ""}
+                        </div>
+                      </div>
+                      <div style={{display:"flex",gap:4,flexShrink:0}}>
+                        {canBegin && <BtnSm onClick={() => { setDayDetailKey(null); if (window._setTimerTask) window._setTimerTask(ev); }}>Begin</BtnSm>}
+                        <button type="button" onClick={() => { setDayDetailKey(null); openEdit(ev); }} title="Edit"
+                          style={{background:"none",border:`1px solid ${T.border}`,borderRadius:6,color:T.muted,cursor:"pointer",fontSize:11,padding:"5px 8px",fontFamily:T.font}}>Edit</button>
+                        <button type="button" onClick={() => deleteEventWithUndo(ev)} title="Delete"
+                          style={{background:"none",border:`1px solid ${T.border}`,borderRadius:6,color:T.muted,cursor:"pointer",fontSize:11,padding:"5px 8px",fontFamily:T.font}}>×</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Modal>
+        );
+      })()}
       <Modal open={editOpen} onClose={closeEdit} title="Edit task" sub="Update this task's details." width={580}
         footer={<><Btn variant="subtle" onClick={closeEdit}>Cancel</Btn><Btn onClick={saveEdit} disabled={!editTitle.trim()} style={{opacity:editTitle.trim()?1:0.45}}>Save changes</Btn></>}>
         <Field label="Title"><Input value={editTitle} onChange={e=>setEditTitle(e.target.value)} autoFocus /></Field>
@@ -14892,6 +15033,11 @@ function App() {
       const MISSED_NUDGE_MIN=15; // minutes late before a "still doing this?" nudge
       events.forEach(ev=>{
         if(!ev.time||ev.date!==todayK||ev.checklist||ev.status==="done")return;
+        // Already actively locked in on this exact task (started early, or
+        // right on time) -- neither "starts in N minutes" nor "still doing
+        // this?" makes sense to nag about something the student is
+        // demonstrably already doing. Other tasks' reminders are unaffected.
+        if(timerTask&&timerTask.id===ev.id)return;
         const startMs=new Date(ev.date+"T"+ev.time).getTime();
         const minsUntil=(startMs-now)/60000;
         LEAD_TIMES.forEach(lead=>{
@@ -14925,7 +15071,7 @@ function App() {
     check();
     const id=setInterval(check,30000);
     return ()=>clearInterval(id);
-  },[]);
+  },[timerTask]);
   const [onboarded,setOnboarded]=useState(()=>!!lsGet("onboarded",false));
   // A desktop push notification's deep link (see api/notify.js sendPush and
   // service-worker.js) lands here as /network?dm=<uid> or /network?group=
@@ -15235,7 +15381,30 @@ function App() {
     const id=setInterval(check,60000);
     return()=>clearInterval(id);
   },[timerTask]);
-  window._setTimerTask=setTimerTask;
+  // Guarded entry point every "Begin" button in the app calls through the
+  // window._setTimerTask bridge (several components that trigger a timer
+  // don't have direct access to this component's own state). Used to
+  // silently swap timerTask for whatever was just clicked, abandoning
+  // whatever session was already running with zero warning -- now asks
+  // first when a DIFFERENT task is already active. Reassigned every
+  // render like before, since it closes over the current timerTask value.
+  const [pendingBeginTask,setPendingBeginTask]=useState(null);
+  window._setTimerTask=(ev)=>{
+    if(timerTask&&timerTask.id!==ev.id){setPendingBeginTask(ev);return;}
+    setTimerTask(ev);
+  };
+  const cancelPendingBegin=()=>setPendingBeginTask(null);
+  const switchToPendingBeginAnyway=()=>{const next=pendingBeginTask;setPendingBeginTask(null);setTimerTask(next);};
+  // Finishes the CURRENTLY active task through its own real finish-early
+  // path (mins-verification, XP, reward screen -- see finishTimerEarly's
+  // bridge in TaskTimerModal) rather than just discarding it. Deliberately
+  // doesn't auto-open the new task's timer right after: the reward screen
+  // needs room to actually show, and stacking a second Begin on top of it
+  // would step on that. The student can hit Begin again once it's dismissed.
+  const finishCurrentThenDismiss=()=>{
+    if(window._finishTimerEarly)window._finishTimerEarly();
+    setPendingBeginTask(null);
+  };
   const [creditsOpen,setCreditsOpen]=useState(false);
   const [pricingOpen,setPricingOpen]=useState(false);
   // Dashboard's "Reschedule" confirm + its toast — lifted up from Dashboard
@@ -15995,6 +16164,15 @@ function App() {
         )}
       </Modal>
 
+      <Modal open={!!pendingBeginTask} onClose={cancelPendingBegin} title="Still working on something else"
+        sub={timerTask?"You're mid-session on \""+timerTask.title+"\". Starting \""+(pendingBeginTask?pendingBeginTask.title:"")+"\" would abandon it.":""}
+        width={420}
+        footer={<Btn variant="subtle" onClick={cancelPendingBegin} style={{width:"100%",justifyContent:"center"}}>Keep working on {timerTask?"\""+timerTask.title+"\"":"it"}</Btn>}>
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          <Btn onClick={finishCurrentThenDismiss} style={{width:"100%",justifyContent:"center"}}>Finish "{timerTask?timerTask.title:""}" early</Btn>
+          <Btn variant="ghost" onClick={switchToPendingBeginAnyway} style={{width:"100%",justifyContent:"center"}}>Switch to "{pendingBeginTask?pendingBeginTask.title:""}" anyway</Btn>
+        </div>
+      </Modal>
       {timerTask&&<TaskTimerModal task={timerTask} resumeElapsedSecs={timerTask.__resumeElapsedSecs||0} onClose={()=>{
         if(timerTask.studySessionId&&myUid){
           const sessionRef=fsdb().collection('studySessions').doc(timerTask.studySessionId);
