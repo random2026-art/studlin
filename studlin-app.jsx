@@ -11539,6 +11539,37 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
             </div>
           );
         })()}
+        {editEv&&editEv.phases&&editEv.phases.length>0&&(()=>{
+          // Direct-write pattern, same as the Unpin/Undo buttons above --
+          // phase edits take effect immediately, not gated behind "Save
+          // changes" (which only governs the title/date/duration form
+          // fields below). Only a not-yet-started ("pending") phase can be
+          // removed: the active phase already has a real scheduled chain,
+          // and a done one already happened -- removing either would orphan
+          // real calendar events instead of just editing a future plan.
+          const writePhases=(nextPhases)=>{
+            const next=events.map(x=>x.id===editEv.id?{...x,phases:nextPhases}:x);
+            setEvents(next);lsSet("events",next);
+            setEditEv(prev=>prev?{...prev,phases:nextPhases}:prev);
+          };
+          return (
+            <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+              <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Phases</div>
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {editEv.phases.map((ph,pi)=>(
+                  <div key={pi} style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontSize:9,fontWeight:700,color:ph.status==="done"?T.lime:ph.status==="active"?T.amber:T.faint,width:44,flexShrink:0,textTransform:"uppercase"}}>{ph.status}</span>
+                    <Input value={ph.name} onChange={e=>writePhases(editEv.phases.map((p,ppi)=>ppi===pi?{...p,name:e.target.value}:p))} style={{flex:1,fontSize:12,padding:"5px 8px"}} />
+                    {ph.status==="pending"&&(
+                      <button type="button" onClick={()=>writePhases(editEv.phases.filter((_,ppi)=>ppi!==pi))} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,lineHeight:1,padding:2,flexShrink:0}}>×</button>
+                    )}
+                  </div>
+                ))}
+                <button type="button" onClick={()=>writePhases([...editEv.phases,{name:"",status:"pending"}])} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add phase</button>
+              </div>
+            </div>
+          );
+        })()}
         {editDeadlineErr&&<div style={{fontSize:12,color:T.red,marginTop:-8,marginBottom:14}}>{editDeadlineErr}</div>}
         {editKind!=="reminder"&&(
           <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={5} value={editDuration} onChange={setEditDuration} /></Field>
