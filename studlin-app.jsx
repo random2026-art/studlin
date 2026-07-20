@@ -1955,6 +1955,50 @@ function scheduleAttackBlockFollowUp(task,nextMins){
   });
   lsSet("events",events.concat(newEvents));
 }
+// Needs-attention detection — a standalone signal, deliberately separate
+// from the ask-mode prep digest above (that's about assignments not yet
+// STARTED; this is about ones already IN PROGRESS whose real pace turned
+// out slower than the original estimate). Sums each chain's currently
+// pending (not yet done) scheduled minutes and compares that against what
+// can still realistically fit before its deadline at the same sustainable
+// pace the start-date gate itself backward-schedules from
+// (ATTACK_BLOCK_SUSTAINABLE_WEEKLY_MINS) — if the pending work no longer
+// fits, cramming isn't the honest answer, restructuring the week is.
+function detectAttackBlockOverruns(events,todayKey){
+  const today=todayKey||dayKey();
+  const chains={};
+  events.forEach(ev=>{
+    if(!ev.isAttackBlock||!ev.attackChainId)return;
+    if(!chains[ev.attackChainId])chains[ev.attackChainId]={title:ev.title,deadline:ev.deadline||null,pendingMins:0};
+    if(ev.deadline)chains[ev.attackChainId].deadline=ev.deadline;
+    if(ev.status!=="done")chains[ev.attackChainId].pendingMins+=(ev.duration||0);
+  });
+  const overruns=[];
+  Object.keys(chains).forEach(chainId=>{
+    const c=chains[chainId];
+    if(c.pendingMins<=0||!c.deadline)return;
+    const finishByD=new Date(c.deadline+"T12:00:00");finishByD.setDate(finishByD.getDate()-ATTACK_BLOCK_FINISH_BUFFER_DAYS);
+    const runwayDays=Math.ceil((finishByD-new Date(today+"T12:00:00"))/86400000);
+    const capacityMins=Math.max(0,runwayDays)*(ATTACK_BLOCK_SUSTAINABLE_WEEKLY_MINS/7);
+    if(c.pendingMins>capacityMins){
+      overruns.push({chainId,title:c.title,deadline:c.deadline,pendingMins:c.pendingMins,capacityMins:Math.round(capacityMins),runwayDays});
+    }
+  });
+  return overruns;
+}
+// Dismiss-until-tomorrow, not a multi-day cooldown like the other
+// suggestion nudges — this is a live deadline-risk signal, not a "settings
+// might be slightly off" one, so silencing it for days would work against
+// the whole point of surfacing it. Reappears on its own the next day if
+// the underlying chain is (still) genuinely over capacity; keyed per-chain
+// so dismissing one overrun doesn't hide a different, unrelated one.
+function getAttackOverrunDismissals(){return lsGet("attackOverrunDismissals",{});}
+function isAttackOverrunDismissedToday(chainId){return getAttackOverrunDismissals()[chainId]===dayKey();}
+function dismissAttackOverrunToday(chainId){
+  const d=getAttackOverrunDismissals();
+  d[chainId]=dayKey();
+  lsSet("attackOverrunDismissals",d);
+}
 // Dev-only demo seeder for the (mocked, Coming Soon) Canvas connector —
 // creates one course + a few assignments in Firestore, then generates each
 // assignment's first "Attack Block" via the same gap-finder real Canvas sync
@@ -13782,6 +13826,41 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
     lsSet("events",[...all,item]);
     setChecklistDraft("");forcePlan(x=>x+1);
   };
+  // Needs-attention card — an Attack Block project whose self-reported
+  // pace has fallen behind what can still fit before its deadline. Own
+  // local modal/state rather than reusing CalendarTab's "Balance my week"
+  // instance (that state lives inside a different component) — both call
+  // the exact same computeWeekBalancePlan engine underneath, so the two
+  // never disagree about what's actually movable, they just each own their
+  // own preview-then-confirm UI.
+  const attackOverrun=detectAttackBlockOverruns(allEvents,today).filter(o=>!isAttackOverrunDismissedToday(o.chainId))[0]||null;
+  const [overrunModalOpen,setOverrunModalOpen]=useState(false);
+  const [overrunPlan,setOverrunPlan]=useState(null);
+  const [overrunToast,setOverrunToast]=useState("");
+  const openOverrunRestructure=()=>{
+    if(!attackOverrun)return;
+    logSuggestionDecision("attackOverrun","accepted",{chainId:attackOverrun.chainId,pendingMins:attackOverrun.pendingMins,capacityMins:attackOverrun.capacityMins,runwayDays:attackOverrun.runwayDays});
+    setOverrunPlan(computeWeekBalancePlan(lsGet("events",[]),getWeeklyRoutine(),getSchedulePreferences(),dayKey()));
+    setOverrunModalOpen(true);
+  };
+  const dismissOverrun=()=>{
+    if(!attackOverrun)return;
+    logSuggestionDecision("attackOverrun","dismissed",{chainId:attackOverrun.chainId,pendingMins:attackOverrun.pendingMins,capacityMins:attackOverrun.capacityMins});
+    dismissAttackOverrunToday(attackOverrun.chainId);
+    forcePlan(x=>x+1);
+  };
+  const confirmOverrunRestructure=()=>{
+    if(!overrunPlan||overrunPlan.moves.length===0){setOverrunModalOpen(false);setOverrunPlan(null);return;}
+    logSuggestionDecision("attackOverrunRestructure","accepted",{moveCount:overrunPlan.moves.length});
+    const all=lsGet("events",[]);
+    const moveMap=new Map(overrunPlan.moves.map(m=>[m.id,m]));
+    const next=all.map(ev=>moveMap.has(ev.id)?{...ev,date:moveMap.get(ev.id).toDate,time:moveMap.get(ev.id).toTime}:ev);
+    lsSet("events",next);
+    setOverrunModalOpen(false);setOverrunPlan(null);
+    forcePlan(x=>x+1);
+    setOverrunToast(overrunPlan.moves.length+" task"+(overrunPlan.moves.length!==1?"s":"")+" rebalanced across your week");
+    setTimeout(()=>setOverrunToast(""),3200);
+  };
   // Real weekly wrapped stats
   const weeklyFocusMin=realStats.weekMin;
   // "Reviewed" not "mastered" -- this counts every card marked correct in
@@ -13928,6 +14007,48 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
         </div>
       </div>
       )} {/* end seriousMode ternary */}
+
+      {/* Needs-attention — Attack Block project running behind its runway */}
+      {attackOverrun&&(
+        <div style={{background:T.card,border:`1px solid ${T.red}55`,borderRadius:20,padding:"20px 24px",display:"flex",alignItems:"flex-start",gap:16}}>
+          <div style={{flexShrink:0,width:38,height:38,borderRadius:12,background:T.red+"1A",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={T.red} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Falling behind on "{attackOverrun.title}"</div>
+            <div style={{fontSize:13,color:T.text,lineHeight:1.5,marginBottom:14}}>
+              At a sustainable pace there's only about <strong style={{color:T.white}}>{(attackOverrun.capacityMins/60).toFixed(1)}h</strong> of runway left before it needs to be done, but the plan still has <strong style={{color:T.red}}>{(attackOverrun.pendingMins/60).toFixed(1)}h</strong> scheduled. Worth restructuring the week around it now, before it's a last-minute scramble.
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <Btn onClick={openOverrunRestructure} style={{padding:"7px 14px",fontSize:12}}>Restructure my week</Btn>
+              <Btn variant="ghost" onClick={dismissOverrun} style={{padding:"7px 14px",fontSize:12}}>I'll handle it</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+      <Modal open={overrunModalOpen} onClose={()=>{setOverrunModalOpen(false);setOverrunPlan(null);}}
+        title="Restructure my week"
+        sub={overrunPlan?(overrunPlan.moves.length>0?overrunPlan.moves.length+" task"+(overrunPlan.moves.length!==1?"s":"")+" would move to make room":"Nothing safely movable right now. Try adjusting the plan by hand."):""}
+        width={520}
+        footer={overrunPlan&&overrunPlan.moves.length>0?(
+          <><Btn variant="subtle" onClick={()=>{setOverrunModalOpen(false);setOverrunPlan(null);}}>Cancel</Btn><Btn onClick={confirmOverrunRestructure}>Apply {overrunPlan.moves.length} change{overrunPlan.moves.length!==1?"s":""}</Btn></>
+        ):(
+          <Btn variant="subtle" onClick={()=>{setOverrunModalOpen(false);setOverrunPlan(null);}}>Close</Btn>
+        )}>
+        {overrunPlan&&overrunPlan.moves.length>0&&(
+          <div style={{display:"flex",flexDirection:"column",gap:7,maxHeight:280,overflowY:"auto"}}>
+            {overrunPlan.moves.map(m=>(
+              <div key={m.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`}}>
+                <div style={{flex:1,fontSize:13,color:T.text,fontWeight:500}}>{m.title}</div>
+                <div style={{fontSize:11,color:T.muted,flexShrink:0}}>{m.fromDate} {fmtClock(m.fromTime)} → <strong style={{color:T.lime}}>{m.toDate} {fmtClock(m.toTime)}</strong></div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
+      {overrunToast&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {overrunToast}</div>
+      )}
 
       {/* Quote of the Day */}
       {!seriousMode&&(()=>{

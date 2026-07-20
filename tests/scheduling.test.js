@@ -1546,6 +1546,81 @@ describe("computeAttackBlockRampOffsets (Attack Block follow-up pacing: back-wei
   });
 });
 
+describe("detectAttackBlockOverruns (needs-attention: pending chain work no longer fits its own runway)", () => {
+  const chainEvent = (overrides) => ({
+    id: "ev-" + Math.random(), isAttackBlock: true, attackChainId: "chain-1", title: "Big Paper",
+    deadline: "2026-09-01", status: "pending", duration: 90, ...overrides,
+  });
+
+  test("a chain with plenty of runway left is not an overrun", () => {
+    const m = loadStudlinModule();
+    const events = [chainEvent({ duration: 400 })];
+    // Deadline over a month out -- 400 pending minutes fits easily.
+    assert.equal(JSON.stringify(m.detectAttackBlockOverruns(events, "2026-07-20")), "[]");
+  });
+
+  test("a chain whose pending work exceeds what the remaining runway can sustainably hold is an overrun", () => {
+    const m = loadStudlinModule();
+    const events = [chainEvent({ duration: 400, deadline: "2026-09-01" })];
+    // Right at the finish-by buffer -- essentially zero runway left for 400 pending minutes.
+    const result = m.detectAttackBlockOverruns(events, "2026-08-28");
+    assert.equal(result.length, 1);
+    assert.equal(result[0].chainId, "chain-1");
+    assert.equal(result[0].pendingMins, 400);
+  });
+
+  test("done sessions don't count toward pending minutes, only what's still scheduled", () => {
+    const m = loadStudlinModule();
+    const events = [
+      chainEvent({ duration: 90, status: "done" }),
+      chainEvent({ duration: 90, status: "done" }),
+    ];
+    assert.equal(JSON.stringify(m.detectAttackBlockOverruns(events, "2026-08-31")), "[]");
+  });
+
+  test("a chain with no deadline is never flagged -- nothing to be overrun against", () => {
+    const m = loadStudlinModule();
+    const events = [chainEvent({ duration: 400, deadline: null })];
+    assert.equal(JSON.stringify(m.detectAttackBlockOverruns(events, "2026-08-31")), "[]");
+  });
+
+  test("non-Attack-Block events are ignored entirely", () => {
+    const m = loadStudlinModule();
+    const events = [{ id: "x", title: "Regular task", deadline: "2026-09-01", status: "pending", duration: 400 }];
+    assert.equal(JSON.stringify(m.detectAttackBlockOverruns(events, "2026-08-31")), "[]");
+  });
+
+  test("two separate chains are reported independently", () => {
+    const m = loadStudlinModule();
+    const events = [
+      chainEvent({ attackChainId: "chain-a", title: "Paper A", deadline: "2026-08-30", duration: 500 }),
+      chainEvent({ attackChainId: "chain-b", title: "Paper B", deadline: "2026-12-01", duration: 90 }),
+    ];
+    const result = m.detectAttackBlockOverruns(events, "2026-08-28");
+    assert.equal(result.length, 1);
+    assert.equal(result[0].chainId, "chain-a");
+  });
+});
+
+describe("Attack Block overrun dismissal (dismiss-until-tomorrow, not a multi-day cooldown)", () => {
+  test("a chain is not dismissed until it's been explicitly dismissed", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isAttackOverrunDismissedToday("chain-1"), false);
+  });
+
+  test("dismissing a chain suppresses it for today", () => {
+    const m = loadStudlinModule();
+    m.dismissAttackOverrunToday("chain-1");
+    assert.equal(m.isAttackOverrunDismissedToday("chain-1"), true);
+  });
+
+  test("dismissing one chain doesn't suppress a different chain", () => {
+    const m = loadStudlinModule();
+    m.dismissAttackOverrunToday("chain-1");
+    assert.equal(m.isAttackOverrunDismissedToday("chain-2"), false);
+  });
+});
+
 describe("logSuggestionDecision (append-only decision log for every accept/dismiss on a Studlin suggestion)", () => {
   test("appends one row with kind, action, context, and a timestamp", () => {
     const m = loadStudlinModule();
