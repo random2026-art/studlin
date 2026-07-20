@@ -13918,7 +13918,6 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   const realStats=sessionStats();
   const realStreak=Math.max(1,getStreak());
   const lvl=levelInfo();
-  const wk=weekStreak();
   // Live top profiles from Firestore, ranked by real XP — fetched once per
   // mount; "you" is always merged in fresh on every render below so your own
   // row never lags behind what you just earned.
@@ -13933,14 +13932,11 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   const [leaderboardOpen,setLeaderboardOpen]=useState(false);
   const plan=todaysPlan();
   const planDoneCount=plan.filter(t=>t.done).length;
-  const planLeft=Math.max(0,plan.length-planDoneCount);
   const subjColor={Chemistry:T.red,"English IV":T.purple,Biology:T.teal,Calculus:T.blue,Spanish:T.amber,History:T.muted};
   const scOf=(s)=>subjColor[s]||T.lime;
   const fmtClock=(t)=>{if(!t)return"";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+ap;};
   const prof=getProfile();
   const firstName=(prof.name||"there").split(" ")[0];
-  const hr=new Date().getHours();
-  const greet=hr<12?"Good morning":hr<18?"Good afternoon":"Good evening";
   // Real deck data from localStorage
   const rawDecks=lsGet("decks",[]);
   const realDecks=rawDecks.slice(0,6).map(d=>({
@@ -14090,7 +14086,6 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
       {more&&<button style={{fontSize:12,color:light?"rgba(246,241,230,0.6)":T.muted,display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",background:"none",border:"none"}}>{more} <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>}
     </div>
   );
-  const isLight=T.mode==="light";
   // Weekly Wrapped is no longer a permanent dashboard card — it now surfaces
   // once as a full-screen popup during the Sunday/Monday evening window
   // (>=6pm), gated by a per-week localStorage flag so it doesn't reappear
@@ -14107,87 +14102,6 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   return (
     <>
     <div style={{display:"flex",flexDirection:"column",gap:16,paddingBottom:40}}>
-
-      {/* GREETING STRIP — full 3-col in normal mode, single card in Serious Mode */}
-      {seriousMode ? (
-        <div style={{background:`linear-gradient(135deg, ${T.forest} 0%, #1B4536 100%)`,color:T.cream,borderRadius:22,padding:"28px 34px",position:"relative",overflow:"hidden"}}>
-          <div style={{position:"absolute",right:-40,top:-40,width:240,height:240,background:"radial-gradient(circle,rgba(200,255,90,0.18),transparent 70%)",pointerEvents:"none"}} />
-          <div style={{position:"relative"}}>
-            <div style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.45)",marginBottom:6}}>{todayLabel()} · Week {weekNo()} · <span style={{color:T.purple,letterSpacing:"0.12em"}}>SERIOUS MODE</span></div>
-            <div style={{fontFamily:T.hand,fontSize:50,lineHeight:0.95,fontWeight:600,color:T.cream,margin:"0 0 10px"}}>{greet}, <span style={{color:T.lime}}>{firstName}.</span></div>
-            <p style={{fontSize:13.5,color:"rgba(246,241,230,0.7)",margin:"0 0 18px",lineHeight:1.5,maxWidth:560}}>{planLeft>0?<>You have <strong style={{color:T.cream}}>{planLeft} task{planLeft===1?"":"s"} left</strong> today. No distractions. Just get it done.</>:plan.length>0?<>All <strong style={{color:T.cream}}>{plan.length} tasks complete</strong> today. Outstanding focus.</>:<>Nothing scheduled yet. Add tasks to your calendar to get started.</>}</p>
-            <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-              <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"10px 18px",background:T.lime,color:T.ink,borderRadius:99,fontSize:13,fontWeight:600,border:"none",cursor:"pointer",fontFamily:T.font}}>Open calendar</button>
-            </div>
-          </div>
-        </div>
-      ) : (
-      <div style={{display:"grid",gridTemplateColumns:"1.5fr 1fr 1fr",gap:16}}>
-        {/* Greeting */}
-        <div style={{background:`linear-gradient(135deg, ${T.forest} 0%, #1B4536 100%)`,color:T.cream,borderRadius:22,padding:"26px 30px",position:"relative",overflow:"hidden"}}>
-          <div style={{position:"absolute",right:-40,top:-40,width:240,height:240,background:"radial-gradient(circle,rgba(200,255,90,0.18),transparent 70%)",pointerEvents:"none"}} />
-          <div style={{position:"relative"}}>
-            <div style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)",marginBottom:6}}>{todayLabel()} · Week {weekNo()}</div>
-            <div style={{fontFamily:T.hand,fontSize:54,lineHeight:0.95,fontWeight:600,color:T.cream,margin:"0 0 4px",animation:"studlinRise 0.5s ease-out"}}>{greet}, <span style={{color:T.lime}}>{firstName}.</span></div>
-            <p style={{fontSize:13.5,color:"rgba(246,241,230,0.7)",margin:"8px 0 16px",lineHeight:1.5,maxWidth:380}}>{planLeft>0?<>You've got <strong style={{color:T.cream}}>{planLeft} task{planLeft===1?"":"s"} left</strong> on today's plan. Let's lock in.</>:plan.length>0?<>All <strong style={{color:T.cream}}>{plan.length} tasks done</strong> today. Outstanding work.</>:<>Nothing scheduled yet. Add a few tasks and let's lock in.</>}</p>
-            <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-              <button onClick={()=>setActive("aichat")} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",background:T.lime,color:T.ink,borderRadius:99,fontSize:13,fontWeight:600,border:"none",cursor:"pointer",fontFamily:T.font}}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 3c-4.97 0-9 3.185-9 7.115 0 2.557 1.522 4.82 3.889 6.115L6 21l4.339-2.308C11.536 18.888 12.746 19 14 19c4.97 0 9-3.185 9-7.115S16.97 3 12 3z"/></svg>
-                Ask Studlin AI
-              </button>
-              <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"9px 16px",color:T.cream,border:"1px solid rgba(246,241,230,0.18)",background:"transparent",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>View today's plan</button>
-            </div>
-          </div>
-        </div>
-
-        {/* Streak — medium green card matching design */}
-        <div onClick={()=>setActive("profile")} style={{background:isLight?"#5B8C2A":"#78BC2A",borderRadius:22,padding:22,cursor:"pointer",display:"flex",flexDirection:"column",position:"relative",overflow:"hidden"}}>
-          <div style={{position:"absolute",right:-20,top:-20,width:120,height:120,background:"radial-gradient(circle,rgba(174,206,94,0.15),transparent 70%)",pointerEvents:"none"}} />
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative"}}>
-            <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(246,241,230,0.55)",fontWeight:600}}>Day Streak</span>
-            <svg width="22" height="22" viewBox="0 0 24 24" stroke="none">
-              <defs><linearGradient id="streakFlameGrad2" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#FFB347"/><stop offset="100%" stopColor="#FF6B00"/></linearGradient></defs>
-              <path fill="url(#streakFlameGrad2)" d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/>
-            </svg>
-          </div>
-          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.cream,margin:"10px 0 2px",position:"relative"}}>{realStreak}<span style={{fontSize:20,color:"rgba(246,241,230,0.55)",marginLeft:6}}>days</span></div>
-            <div style={{fontSize:12,color:"rgba(246,241,230,0.65)",marginBottom:4}}>Today{wk.find(d=>d.today)?.on?" · active":" · keep going!"}</div>
-            <div style={{display:"flex",gap:5,marginTop:"auto"}}>
-              {wk.map((d,i)=>{
-                const isToday=d.today, on=d.on;
-                return(
-                  <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
-                    <div style={{width:"100%",height:28,borderRadius:7,background:isToday?"rgba(174,206,94,0.25)":on?"rgba(246,241,230,0.12)":"rgba(246,241,230,0.05)",color:on?"#FF8C38":"rgba(246,241,230,0.25)",opacity:d.future?0.4:1,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:isToday?`0 0 0 1.5px ${T.lime}`:"none"}}>
-                      {on||isToday
-                        ?<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
-                        :<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="4"/></svg>
-                      }
-                    </div>
-                    <span style={{fontSize:9,fontFamily:T.mono,fontWeight:isToday?700:400,color:isToday?T.lime:"rgba(246,241,230,0.35)"}}>{d.lab}</span>
-                  </div>
-                );
-              })}
-            </div>
-        </div>
-
-        {/* Focus & Rank */}
-        <div onClick={()=>setLevelRoadmapOpen(true)} style={{background:T.card,borderRadius:22,padding:22,cursor:"pointer",display:"flex",flexDirection:"column"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <span style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,fontWeight:600}}>Focus &amp; Rank</span>
-            <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.10em",background:T.lime+"33",padding:"3px 9px",borderRadius:99,color:T.limeDk,border:`1px solid ${T.lime}55`,fontWeight:700}}>{lvl.title.toUpperCase()}</span>
-          </div>
-          <div style={{fontFamily:T.hand,fontSize:60,lineHeight:0.85,fontWeight:600,color:T.text,margin:"10px 0 2px"}}>{lvl.minutes.toLocaleString()}<span style={{fontSize:18,color:T.muted,marginLeft:6,fontFamily:T.font,fontWeight:400}}>min</span></div>
-          <div style={{fontSize:12,color:T.muted,marginBottom:4}}>{lvl.nextTier?`${(lvl.nextTier.minMinutes-lvl.minutes).toLocaleString()} min to ${lvl.nextTier.title}`:"Maximum rank achieved"}</div>
-          <div style={{height:6,background:T.card2,borderRadius:99,overflow:"hidden",marginTop:"auto"}}>
-            <div style={{height:"100%",width:lvl.tierPct+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}}/>
-          </div>
-          <div style={{fontSize:11,color:T.muted,marginTop:8,display:"flex",alignItems:"center",gap:4}}>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
-            View career roadmap
-          </div>
-        </div>
-      </div>
-      )} {/* end seriousMode ternary */}
 
       {/* Needs-attention — Attack Block project running behind its runway */}
       {attackOverrun&&(
@@ -14230,52 +14144,6 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
       {overrunToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {overrunToast}</div>
       )}
-
-      {/* Quote of the Day */}
-      {!seriousMode&&(()=>{
-        const QUOTES=[
-          {text:"Your future self will thank you for the work you put in today.",author:"Anonymous"},
-          {text:"The secret of getting ahead is getting started.",author:"Mark Twain"},
-          {text:"You don't have to be great to start, but you have to start to be great.",author:"Zig Ziglar"},
-          {text:"Education is not the filling of a pail, but the lighting of a fire.",author:"W.B. Yeats"},
-          {text:"Success is the sum of small efforts repeated day in and day out.",author:"Robert Collier"},
-          {text:"The expert in anything was once a beginner.",author:"Helen Hayes"},
-          {text:"Push yourself, because no one else is going to do it for you.",author:"Anonymous"},
-          {text:"Don't watch the clock; do what it does. Keep going.",author:"Sam Levenson"},
-          {text:"Believe you can and you're halfway there.",author:"Theodore Roosevelt"},
-          {text:"It always seems impossible until it's done.",author:"Nelson Mandela"},
-          {text:"Hard work beats talent when talent doesn't work hard.",author:"Tim Notke"},
-          {text:"The more that you read, the more things you will know.",author:"Dr. Seuss"},
-          {text:"An investment in knowledge pays the best interest.",author:"Benjamin Franklin"},
-          {text:"Learning is not attained by chance — it must be sought with ardor.",author:"Abigail Adams"},
-        ];
-        const todayStr=new Date().toISOString().slice(0,10);
-        const stored=lsGet("quote-of-day",null);
-        let qIdx;
-        if(stored&&stored.date===todayStr){
-          qIdx=stored.idx;
-        }else{
-          const prev=stored?stored.idx:-1;
-          let next=Math.floor(Math.random()*QUOTES.length);
-          if(next===prev)next=(next+1)%QUOTES.length;
-          qIdx=next;
-          lsSet("quote-of-day",{date:todayStr,idx:qIdx});
-        }
-        const q=QUOTES[qIdx];
-        return(
-          <div style={{background:"#F5EE90",borderRadius:22,padding:"28px 32px",position:"relative",overflow:"hidden",display:"flex",alignItems:"flex-start",gap:24}}>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:"rgba(14,31,24,0.4)",marginBottom:10,fontWeight:600}}>Quote of the day</div>
-              <p style={{fontFamily:"Georgia,serif",fontSize:18,fontStyle:"italic",lineHeight:1.55,color:"#0E1F18",margin:"0 0 12px",maxWidth:680}}>"{q.text}"</p>
-              <div style={{fontSize:12,color:"rgba(14,31,24,0.45)",letterSpacing:"0.04em"}}>— {q.author.toUpperCase()}</div>
-            </div>
-            <button onClick={()=>{if(navigator.share)navigator.share({text:'"'+q.text+'" — '+q.author+'\n\nStudlin'});else if(navigator.clipboard)navigator.clipboard.writeText('"'+q.text+'" — '+q.author);}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"11px 18px",background:"#0E1F18",border:"none",borderRadius:99,fontSize:13,fontWeight:600,color:"#F6F1E6",cursor:"pointer",fontFamily:T.font,flexShrink:0,boxShadow:"0 4px 14px rgba(0,0,0,0.18)"}}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-              Share Quote
-            </button>
-          </div>
-        );
-      })()}
 
       {/* ROW 2: Today's plan + Jump back in + Ask Studlin */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:16}}>
@@ -16550,11 +16418,19 @@ function App() {
           <div style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,flexShrink:0}}>
             {sectionOf[active]} · <span style={{color:T.text,fontWeight:600}}>{labelOf[active]}</span>
           </div>
-          <div style={{flex:1,maxWidth:480,marginLeft:"auto",display:"flex",alignItems:"center",gap:10,padding:"9px 14px",background:T.card,border:`1px solid ${T.border}`,borderRadius:99}}>
-            <span style={{color:T.muted,display:"flex"}}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
-            <input placeholder="Search notes, flashcards, essays, or ask AI…" style={{flex:1,background:"none",border:"none",outline:"none",color:T.text,fontSize:13,fontFamily:T.font}} />
-            <span style={{fontFamily:T.mono,fontSize:10,background:T.bg,color:T.muted,padding:"2px 7px",borderRadius:5,border:`1px solid ${T.border}`}}>⌘ K</span>
-          </div>
+          {/* Streak — moved here from the Dashboard greeting strip, which is
+              gone entirely now (full ranking/focus-stat detail lives in
+              Profile). marginLeft:auto replaces the old search bar's job of
+              pushing everything after it to the right. */}
+          {(()=>{
+            const navStreak=Math.max(1,getStreak());
+            return(
+              <div title={navStreak+"-day streak"} style={{marginLeft:"auto",display:"inline-flex",alignItems:"center",gap:6,padding:"7px 13px",background:T.card,border:`1px solid ${T.border}`,borderRadius:99,fontSize:13,fontWeight:700,color:T.amber,flexShrink:0}}>
+                <svg width="14" height="14" viewBox="0 0 24 24" stroke="none"><path fill="currentColor" d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
+                {navStreak}
+              </div>
+            );
+          })()}
           {/* See Pricing button */}
           <button onClick={()=>setPricingOpen(true)} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"8px 16px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:13,fontWeight:700,cursor:"pointer",flexShrink:0,fontFamily:T.font,letterSpacing:"-0.005em",boxShadow:`0 4px 14px -4px ${T.lime}80`}}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
