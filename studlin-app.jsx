@@ -3569,426 +3569,14 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
 }
 
 // ─── NAV ICONS MAP ────────────────────────────────────────────────────────────
-const navIcon = {dashboard:Icon.grid,aichat:Icon.sparkles,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.users,lectures:Icon.mic,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,feedback:Icon.heart,settings:Icon.settings,profile:Icon.user};
+const navIcon = {dashboard:Icon.grid,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.users,lectures:Icon.mic,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,feedback:Icon.heart,settings:Icon.settings,profile:Icon.user};
 
-// ─── AI CHAT ──────────────────────────────────────────────────────────────────
-function AiChat() {
-  const MODELS=[
-    {id:"standard",name:"Studlin",desc:"Smart, thorough answers for any study task",cost:"1 credit"},
-    {id:"flash",name:"Studlin Flash",desc:"Fastest answers for quick questions",cost:"1 credit"},
-  ];
-  const [model,setModel]=useState(()=>{const saved=lsGet("chatModel","standard");return(saved==="standard"||saved==="flash")?saved:"standard";});
-  const [modelOpen,setModelOpen]=useState(false);
-  const curModel=MODELS.find(m=>m.id===model)||MODELS[0];
-  const [input,setInput]=useState("");
-  const [loading,setLoading]=useState(false);
-  const [thinkStep,setThinkStep]=useState("");
-  const [credits,setCredits]=useState(getCredits);
-  const [msgs,setMsgs]=useState([]);
-  const chatRef=useRef(null);
-  const inputRef=useRef(null);
-  const scrollToBottom=()=>{if(chatRef.current)chatRef.current.scrollTop=chatRef.current.scrollHeight;};
-  useEffect(scrollToBottom,[msgs,thinkStep]);
-  const hasMessages=msgs.length>0;
-
-  const [chatId,setChatId]=useState(()=>"chat-"+Date.now());
-  const [historyOpen,setHistoryOpen]=useState(false);
-  const [chatHistory,setChatHistory]=useState(()=>lsGet("ai-chats",[]));
-
-  useEffect(()=>{
-    if(msgs.length===0)return;
-    const title=msgs.find(m=>m.r==="user")?.t?.replace(/\n/g," ").slice(0,60)||"Conversation";
-    const chats=lsGet("ai-chats",[]);
-    const idx=chats.findIndex(c=>c.id===chatId);
-    const entry={id:chatId,title,updatedAt:Date.now(),msgs};
-    const updated=idx>=0?chats.map((c,i)=>i===idx?entry:c):[entry,...chats];
-    const trimmed=updated.slice(0,30);
-    lsSet("ai-chats",trimmed);
-    setChatHistory(trimmed);
-  },[msgs]);
-
-  const newChat=()=>{setChatId("chat-"+Date.now());setMsgs([]);setInput("");setAttachedFile(null);};
-  const loadChat=(chat)=>{setChatId(chat.id);setMsgs(chat.msgs);setHistoryOpen(false);};
-  const deleteChat=(id,e)=>{e.stopPropagation();const updated=chatHistory.filter(c=>c.id!==id);lsSet("ai-chats",updated);setChatHistory(updated);if(id===chatId)newChat();};
-  const relTime=(ts)=>{const d=Date.now()-ts,m=Math.floor(d/60000);if(m<1)return"Just now";if(m<60)return m+"m ago";const h=Math.floor(m/60);if(h<24)return h+"h ago";const dy=Math.floor(h/24);if(dy===1)return"Yesterday";if(dy<7)return dy+"d ago";return new Date(ts).toLocaleDateString("en-US",{month:"short",day:"numeric"});};
-
-  const [shareOpen,setShareOpen]=useState(false);
-  const [shareMode,setShareMode]=useState("private");
-  const [shareLink,setShareLink]=useState("");
-  const [shareCopied,setShareCopied]=useState(false);
-  const [shareError,setShareError]=useState("");
-  const openShare=()=>{setShareOpen(true);setShareMode("private");setShareLink("");setShareCopied(false);setShareError("");};
-  const createShareLink=()=>{
-    if(shareMode==="private"){setShareOpen(false);return;}
-    setShareError("");
-    try{
-      const firstUser=msgs.find(function(m){return m.r==="user";});
-      const title=firstUser&&firstUser.t?String(firstUser.t).replace(/\n/g," ").slice(0,80):"Shared conversation";
-      const safeMsgs=msgs.map(function(m){return{r:m.r,t:m.t||""};});
-      const payload=JSON.stringify({msgs:safeMsgs,title,v:1});
-      const encoded=btoa(unescape(encodeURIComponent(payload)));
-      const link=window.location.origin+"/app?share="+encodeURIComponent(encoded);
-      setShareLink(link);
-      try{navigator.clipboard.writeText(link);}catch(e){}
-      setShareCopied(true);
-      setTimeout(function(){setShareCopied(false);},3000);
-    }catch(e){
-      setShareError("Could not create link — try with a shorter conversation.");
-    }
-  };
-  const copyShareLink=()=>{
-    try{navigator.clipboard.writeText(shareLink);}catch(e){}
-    setShareCopied(true);setTimeout(()=>setShareCopied(false),2000);
-  };
-
-  const chatBg=T.bg;
-  const chatPanel=T.mode==="dark"?"#0B0C10":T.surface;
-  const historyPanel=(
-    <div style={{width:220,flexShrink:0,borderRight:`1px solid ${T.mode==="dark"?"rgba(255,255,255,0.05)":T.border}`,display:"flex",flexDirection:"column",background:chatPanel,overflow:"hidden"}}>
-      <div style={{padding:"14px 12px 8px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:`1px solid ${T.border}`,flexShrink:0}}>
-        <span style={{fontSize:10,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:T.muted}}>Chat history</span>
-        <button onClick={newChat} style={{display:"inline-flex",alignItems:"center",gap:5,padding:"5px 9px",borderRadius:7,border:`1px solid ${T.border}`,background:"transparent",color:T.lime,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          New
-        </button>
-      </div>
-      <div style={{flex:1,overflowY:"auto",padding:"6px 8px"}}>
-        {chatHistory.length===0&&(
-          <div style={{padding:"32px 12px",textAlign:"center",color:T.faint,fontSize:12,lineHeight:1.5}}>No past chats yet.</div>
-        )}
-        {chatHistory.map(chat=>(
-          <div key={chat.id} onClick={()=>loadChat(chat)} style={{display:"flex",alignItems:"flex-start",gap:6,padding:"9px 10px",borderRadius:8,cursor:"pointer",background:chat.id===chatId?T.lime+"12":"transparent",border:`1px solid ${chat.id===chatId?T.lime+"33":"transparent"}`,marginBottom:2,group:true,position:"relative"}}>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:12,fontWeight:chat.id===chatId?600:500,color:chat.id===chatId?T.white:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",lineHeight:1.35}}>{chat.title}</div>
-              <div style={{fontSize:10,color:T.faint,marginTop:2}}>{relTime(chat.updatedAt)}</div>
-            </div>
-            <button onClick={(e)=>deleteChat(chat.id,e)} style={{width:18,height:18,borderRadius:4,border:"none",background:"transparent",color:T.faint,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:1,padding:0,opacity:0.6}} title="Delete">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            </button>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-
-  const historyToggle=(
-    <button onClick={()=>setHistoryOpen(o=>!o)} title={historyOpen?"Close history":"Chat history"} style={{display:"grid",placeItems:"center",width:32,height:32,borderRadius:8,border:`1px solid ${historyOpen?T.lime+"44":T.border}`,background:historyOpen?T.lime+"10":"transparent",color:historyOpen?T.lime:T.muted,cursor:"pointer",flexShrink:0}}>
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-    </button>
-  );
-
-  const userName=(getUserName()||"there").split(" ")[0];
-
-  const [recording,setRecording]=useState(false);
-  const [micError,setMicError]=useState("");
-  const recognitionRef=useRef(null);
-  const toggleVoice=async()=>{
-    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-    if(!SR){setMicError("Speech recognition isn't supported in this browser. Try Chrome or Edge.");return;}
-    if(recording){recognitionRef.current?.stop();return;}
-    setMicError("");
-    try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});stream.getTracks().forEach(t=>t.stop());}catch(e){setMicError("Microphone access denied. Please allow mic access and try again.");return;}
-    const rec=new SR();
-    rec.continuous=true;rec.interimResults=true;rec.lang="en-US";
-    recognitionRef.current=rec;
-    rec.onstart=()=>setRecording(true);
-    rec.onresult=(e)=>{let t="";for(let i=0;i<e.results.length;i++)t+=e.results[i][0].transcript;setInput(t);};
-    rec.onend=()=>setRecording(false);
-    rec.onerror=(e)=>{setRecording(false);if(e.error!=="aborted")setMicError("Mic error: "+e.error);};
-    rec.start();
-  };
-
-  const [attachedFile,setAttachedFile]=useState(null);
-  const [fileLoading,setFileLoading]=useState(false);
-  const fileRef=useRef(null);
-  const handleFile=async(e)=>{
-    const file=e.target.files?.[0];if(!file)return;
-    e.target.value="";
-    const maxSize=10*1024*1024;
-    if(file.size>maxSize){setMicError("File too large. Max 10MB.");return;}
-    const ext=file.name.split(".").pop().toLowerCase();
-    const binaryTypes=["doc","docx","ppt","pptx","xls","xlsx","zip","rar","exe","dmg","png","jpg","jpeg","gif","mp3","mp4","mov"];
-    if(binaryTypes.includes(ext)){setMicError("That file type isn't supported yet. Try .txt, .md, .csv, .pdf, or code files.");return;}
-    setMicError("");
-    if(ext==="pdf"){
-      setFileLoading(true);
-      try{
-        const pdfjsLib=await window._pdfjs;
-        const buf=await file.arrayBuffer();
-        const pdf=await pdfjsLib.getDocument({data:buf}).promise;
-        let text="";
-        for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();text+=tc.items.map(it=>it.str).join(" ")+"\n\n";}
-        if(!text.trim()){setMicError("Couldn't extract text from this PDF. It might be scanned/image-based.");setFileLoading(false);return;}
-        setAttachedFile({name:file.name,text});
-      }catch(err){setMicError("Failed to read PDF: "+err.message);}
-      setFileLoading(false);
-    }else{
-      const reader=new FileReader();
-      reader.onload=()=>{setAttachedFile({name:file.name,text:reader.result});};
-      reader.onerror=()=>{setMicError("Couldn't read that file.");};
-      reader.readAsText(file);
-    }
-  };
-
-  const thinkSteps=["Reading your question","Searching for the best approach","Preparing your answer"];
-  const send=async(txt)=>{
-    let t=(txt||input).trim();
-    if(!t&&!attachedFile)return;if(loading)return;
-    const cost=CREDIT_COST[model]||1;
-    if(credits<cost){setMsgs(m=>[...m,{r:"ai",t:"⚠ Not enough credits. You need "+cost+" credit"+(cost>1?"s":"")+" for "+curModel.name+". Buy more or switch to a lighter model."}]);return;}
-    let fileCtx=null;
-    if(attachedFile){
-      fileCtx=attachedFile;
-      setAttachedFile(null);
-    }
-    const displayText=t||(fileCtx?"Uploaded "+fileCtx.name:"");
-    const aiText=fileCtx?("[Uploaded file: "+fileCtx.name+"]\n\n"+fileCtx.text.slice(0,50000)+(t?"\n\n"+t:"\n\nSummarize the key points and help me understand this file.")):t;
-    const newMsgs=[...msgs,{r:"user",t:displayText,file:fileCtx?fileCtx.name:null,_ai:aiText}];
-    setMsgs(newMsgs);
-    setInput("");
-    setLoading(true);
-    setThinkStep(thinkSteps[0]);
-    let stepIdx=0;
-    const stepTimer=setInterval(()=>{stepIdx++;if(stepIdx<thinkSteps.length)setThinkStep(thinkSteps[stepIdx]);},1200);
-    try{
-      const apiMsgs=newMsgs.map(m=>({r:m.r,t:m._ai||m.t}));
-      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:apiMsgs,model,...getAiPrefs()})});
-      let data;
-      try{data=await res.json();}
-      catch(parseErr){throw new Error("Studlin AI is having trouble responding right now. Please try again.");}
-      clearInterval(stepTimer);
-      setThinkStep("");
-      if(data.error){setMsgs(m=>[...m,{r:"ai",t:"⚠ "+data.error}]);}
-      else{
-        if(typeof data.credits==="number"){setCredits(data.credits);setCreditsLS(data.credits);}
-        const label=fileCtx?"Analyzed file and prepared response":"Analyzed your question and prepared response";
-        setMsgs(m=>[...m,{r:"ai",t:data.reply,thinkLabel:label}]);
-      }
-    }catch(e){clearInterval(stepTimer);setThinkStep("");setMsgs(m=>[...m,{r:"ai",t:"⚠ "+e.message}]);}
-    setLoading(false);
-  };
-
-  const quickActions=[
-    {label:"Explain a concept",icon:Icon.star,prompt:"Explain this concept to me simply: "},
-    {label:"Solve a problem",icon:Icon.zap,prompt:"Help me solve this step by step: "},
-    {label:"Summarise notes",icon:Icon.file,prompt:"Summarise these notes for me: "},
-    {label:"Quiz me",icon:Icon.layers,prompt:"Create a quick quiz to test my knowledge on: "},
-  ];
-
-  const modelSelector=(
-    <div style={{position:"relative",display:"inline-flex"}}>
-      <button onClick={()=>setModelOpen(o=>!o)} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,border:"none",background:"transparent",color:T.muted,fontSize:12.5,fontWeight:500,cursor:"pointer",fontFamily:T.font,transition:"color 0.15s"}}>
-        {curModel.name}
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-      </button>
-      {modelOpen&&(<>
-        <div onClick={()=>setModelOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
-        <div style={{position:"absolute",bottom:"100%",left:0,marginBottom:6,width:288,background:T.card,border:`1px solid ${T.border}`,borderRadius:12,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",padding:6}}>
-          <div style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:T.muted,padding:"6px 10px 4px"}}>Choose a model</div>
-          {MODELS.map(m=>(
-            <div key={m.id} onClick={()=>{setModel(m.id);lsSet("chatModel",m.id);setModelOpen(false);}} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 12px",borderRadius:8,cursor:"pointer",background:m.id===model?T.lime+"12":"transparent"}}>
-              <span style={{width:16,height:16,marginTop:1,flexShrink:0,display:"flex",color:m.id===model?T.lime:T.faint}}>{m.id===model?Icon.check:Icon.dot}</span>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:12.5,fontWeight:600,color:m.id===model?T.lime:T.text}}>{m.name}</div>
-                <div style={{fontSize:11,color:T.muted,marginTop:1,lineHeight:1.35}}>{m.desc}</div>
-              </div>
-              <span style={{fontFamily:T.mono,fontSize:9.5,color:T.faint,flexShrink:0,marginTop:2}}>{m.cost}</span>
-            </div>
-          ))}
-        </div>
-      </>)}
-    </div>
-  );
-
-  const inputBar=(compact)=>(
-    <div style={{width:"100%",maxWidth:compact?undefined:680,margin:compact?undefined:"0 auto"}}>
-      {attachedFile&&(
-        <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:T.lime+"15",border:`1px solid ${T.lime}33`,borderRadius:7,marginBottom:6}}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-          <span style={{fontSize:12,color:T.lime,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{attachedFile.name}</span>
-          <button onClick={()=>setAttachedFile(null)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:14,lineHeight:1,padding:0}}>×</button>
-        </div>
-      )}
-      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,overflow:"hidden",boxShadow:compact?"none":"0 8px 32px -8px rgba(0,0,0,0.2)"}}>
-        <div style={{display:"flex",alignItems:"center",padding:"4px 8px 4px 16px",gap:4}}>
-          <input ref={inputRef} style={{flex:1,background:"transparent",border:"none",padding:"14px 0",color:T.text,fontSize:14.5,fontFamily:T.font,outline:"none"}} placeholder={recording?"Listening — tap mic to stop...":loading?"Thinking...":"How can I help you today?"} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}} disabled={loading} />
-          <Btn onClick={()=>send()} style={{padding:"8px 12px",borderRadius:10,opacity:loading||(!input.trim()&&!attachedFile)?0.4:1}} disabled={loading||(!input.trim()&&!attachedFile)}>{Icon.send}</Btn>
-        </div>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 8px 6px 8px",gap:8}}>
-          <div style={{display:"flex",alignItems:"center",gap:2}}>
-            <input type="file" ref={fileRef} onChange={handleFile} accept=".txt,.md,.csv,.json,.py,.js,.jsx,.ts,.tsx,.html,.css,.pdf,.doc,.docx,.rtf,.xml,.yaml,.yml,.log,.tex,.bib" style={{display:"none"}} />
-            <button onClick={()=>fileRef.current?.click()} disabled={fileLoading} style={{display:"grid",placeItems:"center",width:32,height:32,borderRadius:8,border:"none",background:"transparent",color:fileLoading?T.lime:T.muted,cursor:"pointer",opacity:fileLoading?0.6:1,transition:"color 0.15s"}} title={fileLoading?"Reading file...":"Attach a file"}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            </button>
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:4}}>
-            {modelSelector}
-            <button onClick={toggleVoice} style={{display:"grid",placeItems:"center",width:32,height:32,borderRadius:8,border:"none",background:recording?"rgba(248,113,113,0.15)":"transparent",color:recording?"#f87171":T.muted,cursor:"pointer",transition:"color 0.15s",animation:recording?"studlinPulse 1.2s infinite":"none"}} title={recording?"Stop recording":"Voice input"}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-            </button>
-          </div>
-        </div>
-      </div>
-      {micError&&<div style={{fontSize:11,color:"#f87171",marginTop:8,textAlign:"center",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><span>⚠ {micError}</span><button onClick={()=>setMicError("")} style={{background:"none",border:"none",color:"#f87171",cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline",padding:0}}>dismiss</button></div>}
-    </div>
-  );
-
-  if(!hasMessages){
-    return(
-      <div style={{display:"flex",height:"calc(100vh - 80px)",overflow:"hidden",background:chatBg}}>
-        {historyOpen&&historyPanel}
-        <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"calc(100vh - 120px)",padding:"0 24px",position:"relative"}}>
-        <div style={{position:"absolute",top:12,left:12}}>{historyToggle}</div>
-        {(()=>{const hr=new Date().getHours();const period=hr<5?"late-night":hr<12?"morning":hr<18?"afternoon":hr<22?"evening":"late-night";const fName=(userName||"there").split(" ")[0];return(
-        <div style={{display:"flex",alignItems:"center",gap:16,marginBottom:34,animation:"studlinRise 0.5s ease-out"}}>
-          <img src="studlin-icon.png" alt="Studlin" style={{width:52,height:52,borderRadius:15,flexShrink:0,boxShadow:"0 6px 20px -8px rgba(0,0,0,0.4)",objectFit:"cover"}} onError={e=>{e.target.style.display="none";}} />
-          <h1 style={{fontFamily:T.hand,fontSize:"clamp(32px,4.8vw,52px)",fontWeight:700,color:T.white,letterSpacing:"-0.02em",margin:0,lineHeight:1.02}}>It's {period}, {fName}.</h1>
-        </div>
-        );})()}
-        <div style={{width:"100%",maxWidth:720}}>{inputBar(false)}</div>
-        <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"center",marginTop:22,maxWidth:660,animation:"studlinFade 0.6s ease-out 0.1s both"}}>
-          {quickActions.map(a=>(
-            <button key={a.label} onClick={()=>{setInput(a.prompt);setTimeout(()=>inputRef.current?.focus(),50);}} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"10px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font,transition:"all 0.15s"}}>
-              <span style={{display:"inline-flex",color:T.lime}}>{a.icon}</span>
-              {a.label}
-            </button>
-          ))}
-        </div>
-        <div style={{fontSize:11,color:T.faint,marginTop:22}}><span style={{color:T.muted}}>{curModel.name}</span> · {credits} credits remaining</div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <>
-    <div style={{display:"flex",height:"calc(100vh - 80px)",overflow:"hidden",background:chatBg}}>
-      {historyOpen&&historyPanel}
-      <div style={{flex:1,display:"flex",flexDirection:"column",minWidth:0}}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 0 16px",flexShrink:0}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          {historyToggle}
-          <button onClick={newChat} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.card,color:T.muted,fontSize:12,fontWeight:500,cursor:"pointer",fontFamily:T.font}}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            New chat
-          </button>
-        </div>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <button onClick={openShare} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 14px",borderRadius:8,border:`1px solid ${T.border}`,background:T.card,color:T.text,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-            Share
-          </button>
-          <div style={{fontSize:11,color:T.muted}}><span style={{color:credits<(CREDIT_COST[model]||1)?T.red||"#f87171":T.lime,fontWeight:600}}>{credits}</span> credits · {curModel.name}</div>
-        </div>
-      </div>
-
-      <div ref={chatRef} style={{flex:1,overflowY:"auto",paddingBottom:16}}>
-        <div style={{maxWidth:720,margin:"0 auto"}}>
-          {msgs.map((m,i)=>(
-            <div key={i} style={{display:"flex",gap:12,alignItems:"flex-start",marginBottom:20,flexDirection:m.r==="user"?"row-reverse":"row"}}>
-              {m.r==="ai"
-                ?<div style={{width:28,height:28,borderRadius:7,background:T.lime,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:T.ink||T.bg,fontSize:13,flexShrink:0,marginTop:2,fontFamily:T.font}}>S</div>
-                :<div style={{width:28,height:28,borderRadius:"50%",background:T.lime+"22",border:`1px solid ${T.lime}44`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,flexShrink:0,marginTop:2}}>{Icon.user}</div>
-              }
-              <div style={{maxWidth:"80%",fontSize:14,lineHeight:1.7,color:T.text,whiteSpace:"pre-wrap"}}>
-                {m.thinkLabel&&(
-                  <div style={{fontSize:12,color:T.muted,marginBottom:6,display:"flex",alignItems:"center",gap:6}}>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={T.muted} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                    {m.thinkLabel}
-                  </div>
-                )}
-                {m.file&&(
-                  <div style={{display:"inline-block",width:148,borderRadius:10,overflow:"hidden",border:`1px solid ${T.border}`,background:T.card,marginBottom:m.t&&m.t!=="Uploaded "+m.file?10:0,boxShadow:"0 2px 8px rgba(0,0,0,0.08)"}}>
-                    <div style={{height:88,background:T.card2,display:"flex",alignItems:"center",justifyContent:"center",borderBottom:`1px solid ${T.border}`}}>
-                      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke={T.muted} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-                    </div>
-                    <div style={{padding:"8px 10px"}}>
-                      <div style={{fontSize:11.5,fontWeight:500,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",lineHeight:1.3}}>{m.file.replace(/\.[^.]+$/,"")}</div>
-                      <div style={{marginTop:4}}><span style={{fontSize:9,fontWeight:700,letterSpacing:"0.08em",color:T.muted,background:T.muted+"22",padding:"2px 6px",borderRadius:3,textTransform:"uppercase"}}>{m.file.split(".").pop()}</span></div>
-                    </div>
-                  </div>
-                )}
-                {m.file&&m.t==="Uploaded "+m.file?null:m.t}
-              </div>
-            </div>
-          ))}
-          {loading&&(
-            <div style={{display:"flex",gap:12,alignItems:"flex-start",marginBottom:20}}>
-              <div style={{width:28,height:28,borderRadius:7,background:T.lime,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:T.ink||T.bg,fontSize:13,flexShrink:0,marginTop:2,fontFamily:T.font}}>S</div>
-              <div style={{padding:"2px 0"}}>
-                {thinkStep&&(
-                  <div style={{fontSize:12.5,color:T.muted,marginBottom:4,display:"flex",alignItems:"center",gap:7,animation:"studlinFade 0.3s ease-out"}}>
-                    <span style={{width:14,height:14,borderRadius:"50%",border:`2px solid ${T.lime}`,borderTopColor:"transparent",animation:"studlinSpin 0.7s linear infinite",display:"inline-block",flexShrink:0}} />
-                    {thinkStep}
-                  </div>
-                )}
-                {!thinkStep&&(
-                  <div style={{display:"flex",gap:4,alignItems:"center",padding:"4px 0"}}><span style={{width:6,height:6,borderRadius:"50%",background:T.muted,animation:"studlinPulse 1.2s infinite"}}/><span style={{width:6,height:6,borderRadius:"50%",background:T.muted,animation:"studlinPulse 1.2s 0.2s infinite"}}/><span style={{width:6,height:6,borderRadius:"50%",background:T.muted,animation:"studlinPulse 1.2s 0.4s infinite"}}/></div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div style={{flexShrink:0,padding:"12px 0 8px",borderTop:`1px solid ${T.border}`}}>
-        <div style={{maxWidth:720,margin:"0 auto"}}>
-          {inputBar(true)}
-        </div>
-      </div>
-      </div>
-    </div>
-
-    {/* Share modal */}
-    {shareOpen&&(
-      <div onClick={()=>setShareOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:9000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-        <div onClick={e=>e.stopPropagation()} style={{background:T.surface,borderRadius:18,padding:"28px 28px 24px",width:460,maxWidth:"100%",position:"relative",border:`1px solid rgba(255,255,255,0.08)`,boxShadow:"0 32px 64px -16px rgba(0,0,0,0.55)"}}>
-          <button onClick={()=>setShareOpen(false)} style={{position:"absolute",top:16,right:16,width:30,height:30,borderRadius:8,border:`1px solid rgba(255,255,255,0.12)`,background:"rgba(255,255,255,0.06)",color:T.cream,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-          <div style={{fontSize:18,fontWeight:700,color:T.cream,marginBottom:4,fontFamily:T.font}}>Share chat</div>
-          <div style={{fontSize:13,color:"rgba(246,241,230,0.5)",marginBottom:20,fontFamily:T.font}}>Only messages up to this point will be shared.</div>
-          <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
-            {[
-              {key:"private",Icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>,label:"Keep private",sub:"Only you have access"},
-              {key:"public",Icon:<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>,label:"Create public link",sub:"Anyone with the link can view"},
-            ].map(opt=>(
-              <div key={opt.key} onClick={()=>{setShareMode(opt.key);setShareLink("");}} style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,border:`1px solid ${shareMode===opt.key?"rgba(255,255,255,0.18)":"rgba(255,255,255,0.07)"}`,background:shareMode===opt.key?"rgba(255,255,255,0.06)":"transparent",cursor:"pointer",transition:"all 0.15s"}}>
-                <span style={{color:"rgba(246,241,230,0.6)",flexShrink:0}}>{opt.Icon}</span>
-                <div style={{flex:1}}>
-                  <div style={{fontSize:14,fontWeight:600,color:T.cream,fontFamily:T.font}}>{opt.label}</div>
-                  <div style={{fontSize:12,color:"rgba(246,241,230,0.45)",marginTop:1,fontFamily:T.font}}>{opt.sub}</div>
-                </div>
-                {shareMode===opt.key&&<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
-              </div>
-            ))}
-          </div>
-          {shareLink&&(
-            <div onClick={copyShareLink} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",borderRadius:8,background:"rgba(255,255,255,0.05)",border:`1px solid ${shareCopied?T.lime+"44":"rgba(255,255,255,0.08)"}`,marginBottom:12,cursor:"pointer",transition:"border-color 0.2s"}}>
-              <span style={{flex:1,fontSize:12,color:"rgba(246,241,230,0.55)",fontFamily:T.mono,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{shareLink}</span>
-              <span style={{flexShrink:0,fontSize:11.5,fontWeight:600,color:shareCopied?T.lime:"rgba(246,241,230,0.5)",fontFamily:T.font}}>{shareCopied?"Copied!":"Copy"}</span>
-            </div>
-          )}
-          {shareError&&(
-            <div style={{fontSize:12.5,color:"#ff6b6b",background:"rgba(255,107,107,0.12)",border:"1px solid rgba(255,107,107,0.25)",borderRadius:8,padding:"10px 14px",marginBottom:12,fontFamily:T.font}}>{shareError}</div>
-          )}
-          {shareLink?(
-            <button onClick={copyShareLink} style={{width:"100%",padding:"12px 0",borderRadius:10,background:shareCopied?T.lime:"rgba(174,206,94,0.85)",color:"#0E1F18",border:"none",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:T.font,transition:"background 0.2s",display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
-              {shareCopied
-                ?<><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Link copied</>
-                :"Copy link"}
-            </button>
-          ):(
-            <button onClick={createShareLink} style={{width:"100%",padding:"12px 0",borderRadius:10,background:T.cream,color:"#0E1F18",border:"none",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:T.font,transition:"background 0.2s"}}>
-              {shareMode==="private"?"Done":"Create share link"}
-            </button>
-          )}
-        </div>
-      </div>
-    )}
-    </>
-  );
-}
+// ─── AI CHAT (removed -- see Phase 2 of the Magic-Calendar plan; Studlin AI
+// is no longer a standalone chat surface, AI now shows up embedded in the
+// calendar/scheduling flow instead of as a general-purpose chatbot tab).
+// SharedChatView below is untouched and still resolves old shared-chat
+// links from before this removal -- it reads the share payload directly
+// and never depended on AiChat's own component state. ─────────────────────
 
 // ─── ESSAYS ───────────────────────────────────────────────────────────────────
 const ESSAY_TEMPLATES={
@@ -14264,8 +13852,10 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {overrunToast}</div>
       )}
 
-      {/* ROW 2: Today's plan + Jump back in + Ask Studlin */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:16}}>
+      {/* ROW 2: Today's plan + Checklist (Ask Studlin/aichat card removed
+          along with the standalone Studlin AI tab -- see Phase 2 of the
+          Magic-Calendar plan). */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
         {/* Today's plan */}
         <div style={{background:T.card,borderRadius:22,padding:24,display:"flex",flexDirection:"column"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8,flexWrap:"wrap"}}>
@@ -14329,24 +13919,6 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                 <div style={{flex:1,minWidth:0,fontSize:12.5,color:T.text,fontWeight:500,lineHeight:1.4,overflowWrap:"break-word"}}>{item.title}</div>
               </div>
             ))}
-        </div>
-
-        {/* Ask Studlin */}
-        <div style={{background:T.ink,color:T.cream,borderRadius:22,padding:24,display:"flex",flexDirection:"column"}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
-            <span style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:T.cream}}>Ask Studlin</span>
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <span style={{fontFamily:T.mono,fontSize:9,letterSpacing:"0.12em",padding:"4px 9px",borderRadius:99,background:"rgba(246,241,230,0.10)",color:"rgba(246,241,230,0.6)",fontWeight:700,border:"1px solid rgba(246,241,230,0.12)"}}>AI TUTOR</span>
-              <button onClick={()=>setActive("aichat")} style={{fontSize:12,color:"rgba(246,241,230,0.5)",display:"inline-flex",alignItems:"center",gap:2,cursor:"pointer",background:"none",border:"none",fontFamily:T.font}}>Open <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
-            </div>
-          </div>
-          {(()=>{const nt=plan.find(t=>!t.done);const tc=nt?(nt.subject||nt.title):"your subjects";const sug=nt?["Explain "+tc+" concepts","Quiz me on "+tc,"Help me outline this"]:["Summarize my notes","Build a study schedule","Quiz me on any topic"];const ctx=nt?`You have "${nt.title}" up next — want a quick summary, practice quiz, or step-by-step explanation?`:`What are you studying today? I can quiz you, explain concepts, or help you plan your session.`;return(<><div style={{fontSize:13,color:"rgba(246,241,230,0.65)",marginBottom:14,lineHeight:1.6}}>{ctx}</div><div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>{sug.map(s=>(<button key={s} onClick={()=>setActive("aichat")} style={{fontSize:11.5,padding:"6px 11px",background:"rgba(246,241,230,0.06)",border:"1px solid rgba(246,241,230,0.12)",borderRadius:99,color:"rgba(246,241,230,0.8)",cursor:"pointer",fontFamily:T.font}}>{s}</button>))}</div></>);})()}
-          <div style={{display:"flex",alignItems:"center",gap:10,background:"rgba(246,241,230,0.05)",border:"1px solid rgba(246,241,230,0.10)",borderRadius:14,padding:"10px 12px",marginTop:"auto"}}>
-            <input placeholder="Ask anything · paste a problem" style={{flex:1,background:"none",border:"none",outline:"none",color:T.cream,fontSize:13,fontFamily:T.font,minWidth:0}}/>
-            <button onClick={()=>setActive("aichat")} style={{display:"grid",placeItems:"center",width:30,height:30,borderRadius:8,background:T.lime,color:T.ink,border:"none",cursor:"pointer",flex:"none"}}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="22 2 15 22 11 13 2 9"/></svg>
-            </button>
-          </div>
         </div>
 
       </div>
@@ -15427,7 +14999,7 @@ function SharedChatView({shareId}){
           <div style={{width:28,height:28,background:lime,borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,color:"#0E1F18",fontSize:14}}>S</div>
           <span style={{fontSize:15,fontWeight:700,color:text,letterSpacing:"-0.02em"}}>Studlin</span>
         </div>
-        <a href="/app" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 16px",borderRadius:99,background:lime,color:"#0E1F18",fontSize:13,fontWeight:700,textDecoration:"none"}}>Try Studlin AI</a>
+        <a href="/app" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 16px",borderRadius:99,background:lime,color:"#0E1F18",fontSize:13,fontWeight:700,textDecoration:"none"}}>Try Studlin</a>
       </div>
       <div style={{maxWidth:720,margin:"0 auto",padding:"32px 24px 80px"}}>
         <div style={{fontSize:13,color:muted,marginBottom:28,fontWeight:500}}>Shared conversation</div>
@@ -16425,7 +15997,6 @@ function App() {
       {id:"calendar",label:"Calendar"},
     ]},
     {label:"Tools",items:[
-      {id:"aichat",label:"Studlin AI"},
       {id:"flashcards",label:"Flashcards"},
       {id:"notes",label:"Notes"},
       {id:"friends",label:"Studlin Network",badge:String(unreadCount||"")},
@@ -16437,9 +16008,9 @@ function App() {
     ]},
   ];
   const bottomItems=[];
-  const pages={aichat:AiChat,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile,lectures:Lectures,feedback:FeedbackPage};
-  const labelOf={dashboard:"Dashboard",aichat:"Studlin AI",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve",lectures:"Lectures",feedback:"Feedback"};
-  const sectionOf={dashboard:"Home",aichat:"Tools",writestudio:"Tools",flashcards:"Tools",notes:"Tools",calendar:"Home",friends:"Tools",lectures:"Tools",feedback:"Account",solve:"Tools",settings:"Account",profile:"Account"};
+  const pages={writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile,lectures:Lectures,feedback:FeedbackPage};
+  const labelOf={dashboard:"Dashboard",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve",lectures:"Lectures",feedback:"Feedback"};
+  const sectionOf={dashboard:"Home",writestudio:"Tools",flashcards:"Tools",notes:"Tools",calendar:"Home",friends:"Tools",lectures:"Tools",feedback:"Account",solve:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
   if (!onboarded) return <InitWizard onComplete={()=>{setOnboarded(true);}} />;
