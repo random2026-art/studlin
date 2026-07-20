@@ -5488,6 +5488,17 @@ function Notes({setActive=()=>{}}){
     const names=await proposeProjectPhases(it.title,it.detail||"",syllabusReview.tag);
     setSyllabusReview(r=>r&&({...r,items:r.items.map(x=>x.id===itemId?{...x,phasesLoading:false,phases:names||[]}:x)}));
   };
+  // Same shape as suggestPhasesFor, for the finer-grained checklist
+  // (Friction & Control Pass) -- independent of phases, not nested inside
+  // them: v1 keeps outline as one flat checklist per Attack Block item
+  // rather than solving per-phase outline scoping in the same pass.
+  const suggestOutlineFor=async(itemId)=>{
+    setSyllabusReview(r=>r&&({...r,items:r.items.map(x=>x.id===itemId?{...x,outlineLoading:true}:x)}));
+    const it=(syllabusReview?.items||[]).find(x=>x.id===itemId);
+    if(!it)return;
+    const items=await proposeOutline(it.title,it.detail||"",syllabusReview.tag);
+    setSyllabusReview(r=>r&&({...r,items:r.items.map(x=>x.id===itemId?{...x,outlineLoading:false,outline:items||[]}:x)}));
+  };
 
   // "Continue to Canvas" — creates note and enters canvas immediately
   const continueToCanvas=async()=>{
@@ -5856,6 +5867,29 @@ function Notes({setActive=()=>{}}){
                             </div>
                           ))}
                           <button type="button" onClick={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,phases:[...x.phases,""]}:x)}))} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add phase</button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {it.kind==="deadline"&&it.attackBlock&&isPhaseDecompositionCandidate(it.estimatedHours,it.date,dayKey())&&(
+                    <div style={{marginTop:8}}>
+                      {it.outline===undefined?(
+                        <button type="button" disabled={!!it.outlineLoading} onClick={()=>suggestOutlineFor(it.id)} style={{background:"none",border:`1px dashed ${T.borderHover}`,borderRadius:6,color:T.muted,fontSize:11,fontFamily:T.font,cursor:it.outlineLoading?"default":"pointer",padding:"5px 10px",opacity:it.outlineLoading?0.6:1}}>
+                          {it.outlineLoading?"Drafting a checklist…":"Add a step-by-step checklist?"}
+                        </button>
+                      ):it.outline.length===0?(
+                        <div style={{fontSize:11,color:T.muted}}>Not enough detail here for a checklist. Add detail above, or skip it.</div>
+                      ):(
+                        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                          <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Checklist</div>
+                          {it.outline.map((step,si)=>(
+                            <div key={si} style={{display:"flex",alignItems:"center",gap:6}}>
+                              <span style={{fontSize:10,color:T.faint,width:14,flexShrink:0,fontFamily:T.mono}}>{si+1}</span>
+                              <Input value={step} onChange={ev=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,outline:x.outline.map((s,ssi)=>ssi===si?ev.target.value:s)}:x)}))} style={{flex:1,fontSize:12,padding:"5px 8px"}} />
+                              <button type="button" onClick={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,outline:x.outline.filter((_,ssi)=>ssi!==si)}:x)}))} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,lineHeight:1,padding:2,flexShrink:0}}>×</button>
+                            </div>
+                          ))}
+                          <button type="button" onClick={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,outline:[...x.outline,""]}:x)}))} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add step</button>
                         </div>
                       )}
                     </div>
@@ -7377,6 +7411,11 @@ function commitSyllabusEvents(noteId,tag,items){
       // attackStartDate above) so a deferred prepPending item doesn't lose
       // its phase plan by the time it actually becomes actionable.
       ...(wantsAttack&&it.phases&&it.phases.length>0?{phases:it.phases.map((name,pi)=>({name,status:pi===0?"active":"pending"}))}:{}),
+      // A flat checklist (Friction & Control Pass) -- independent of
+      // phases, not nested inside them (v1 scope decision, see
+      // suggestOutlineFor). Converted from the review UI's plain string
+      // list into {text,done} once confirmed; every item starts unchecked.
+      ...(wantsAttack&&it.outline&&it.outline.length>0?{outline:it.outline.map(text=>({text,done:false}))}:{}),
       // examWeight ("quiz" vs "major") and confidenceLog together drive the
       // adaptive check-in after each linked study session completes — see
       // evaluateExamPrepAdjustment. Only meaningful for kind:"exam".
@@ -8490,6 +8529,31 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
     const padded=raw*ATTACK_BLOCK_PADDING;
     return Math.max(10,Math.min(90,Math.round(padded/5)*5));
   })();
+  // ── Outline-aware check-in (Friction & Control Pass) — only active when
+  // the linked due-date marker actually has an outline; every non-outline
+  // Attack Block falls straight through to the original abPct/abRecMins
+  // whole-task slider above, completely unchanged. abItemPct is a
+  // separate percent from abPct on purpose — it means something different
+  // (progress into the CURRENT outline item, not the whole remaining
+  // project) and reusing one slider value for both would silently carry a
+  // stale value across the two modes. ──
+  const [abItemPct,setAbItemPct]=useState(50);
+  const [,forceOutlineTick]=useState(0);
+  const abMarker=(phase==="attackCheckIn"&&task.dueEventId)?lsGet("events",[]).find(e=>e.id===task.dueEventId):null;
+  const abOutline=(abMarker&&Array.isArray(abMarker.outline)&&abMarker.outline.length>0)?abMarker.outline:null;
+  const abCurrentItem=abOutline?abOutline.find(o=>!o.done):null;
+  const toggleAbOutlineItem=(idx)=>{
+    if(!abMarker)return;
+    const events=lsGet("events",[]);
+    const next=events.map(e=>e.id===abMarker.id?{...e,outline:e.outline.map((o,oi)=>oi===idx?{...o,done:!o.done}:o)}:e);
+    lsSet("events",next);
+    forceOutlineTick(x=>x+1);
+  };
+  // Falls back to the whole-task abRecMins whenever there's no outline
+  // (computeOutlineRemainingMins returns null in that case) — this is the
+  // one line where the two mechanics actually meet.
+  const abOutlineRecMins=abOutline?computeOutlineRemainingMins(abOutline,abTotalMins,abItemPct):null;
+  const abEffectiveRecMins=abOutlineRecMins!=null?abOutlineRecMins:abRecMins;
 
   // A soft three-note ascending chime (C5-E5-G5) rather than a single sharp
   // sweep — noticeable enough that a session-end never gets missed, but
@@ -8919,7 +8983,22 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
       completeSession(pendingMinsRef.current);
     };
     const onScheduleFollowUp=()=>{
-      if(onAttackBlockExtend)onAttackBlockExtend(abTotalMins,abPct,abRecMins);
+      // abOutline?null:abPct -- the whole-task percent is meaningless once
+      // an outline exists (checked items are the real signal instead), so
+      // callers logging this decision shouldn't see a stale percent that
+      // was never actually asked about.
+      if(onAttackBlockExtend)onAttackBlockExtend(abTotalMins,abOutline?null:abPct,abEffectiveRecMins);
+      completeSession(pendingMinsRef.current);
+    };
+    // One-tap skip (Friction & Control Pass rule 5) -- assumes conservative
+    // default progress (nothing newly checked, current item half-done)
+    // instead of re-prompting. Still schedules a real follow-up so the
+    // project keeps moving; it just does so without asking again right now.
+    const onSkipCheckIn=()=>{
+      const conservativeMins=abOutline
+        ?computeOutlineRemainingMins(abOutline,abTotalMins,ATTACK_BLOCK_SKIP_ASSUMED_PCT)
+        :Math.max(10,Math.min(90,Math.round((abTotalMins*(100-ATTACK_BLOCK_SKIP_ASSUMED_PCT)/ATTACK_BLOCK_SKIP_ASSUMED_PCT*ATTACK_BLOCK_PADDING)/5)*5));
+      if(onAttackBlockExtend)onAttackBlockExtend(abTotalMins,null,conservativeMins||abEffectiveRecMins);
       completeSession(pendingMinsRef.current);
     };
     return(
@@ -8932,9 +9011,34 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
               <Btn onClick={onFinishAttackBlock} style={{width:"100%",justifyContent:"center"}}>Yes, I'm finished</Btn>
               <Btn variant="subtle" onClick={()=>setAbStep("slider")} style={{width:"100%",justifyContent:"center"}}>Not yet</Btn>
             </div>
+            <button type="button" onClick={onSkipCheckIn} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",marginTop:16,textDecoration:"underline"}}>Skip for now</button>
           </>)}
 
-          {abStep==="slider"&&(<>
+          {abStep==="slider"&&abOutline&&(<>
+            <div style={{fontSize:17,fontWeight:700,color:T.white,marginBottom:8}}>{abCurrentItem?"How far into \""+abCurrentItem.text+"\"?":"Almost there"}</div>
+            <div style={{fontSize:13,color:T.text,marginBottom:24,lineHeight:1.6}}>{abCurrentItem?"Drag to estimate progress on just this step.":"Every step is checked off. Anything left to wrap up?"}</div>
+            {abCurrentItem&&(<>
+              <input type="range" min={5} max={95} step={1} value={abItemPct}
+                onChange={e=>setAbItemPct(parseInt(e.target.value,10))}
+                style={{width:"100%",marginBottom:8}} />
+              <div style={{fontSize:13,fontWeight:600,color:T.lime,marginBottom:20}}>{abItemPct}% into this step</div>
+            </>)}
+            <div style={{textAlign:"left",display:"flex",flexDirection:"column",gap:8,marginBottom:20,maxHeight:180,overflowY:"auto"}}>
+              {abOutline.map((o,oi)=>(
+                <label key={oi} style={{display:"flex",alignItems:"center",gap:8,fontSize:12.5,color:o.done?T.faint:T.text,cursor:"pointer",textDecoration:o.done?"line-through":"none"}}>
+                  <input type="checkbox" checked={o.done} onChange={()=>toggleAbOutlineItem(oi)} style={{accentColor:T.lime,cursor:"pointer"}} />
+                  {o.text}
+                </label>
+              ))}
+            </div>
+            <div style={{fontSize:13,color:T.text,marginBottom:24}}>Studlin will schedule <strong>+{abEffectiveRecMins}m</strong> to finish it up.</div>
+            <div style={{display:"flex",gap:10}}>
+              <Btn variant="subtle" onClick={()=>setAbStep("choice")} style={{flex:1,justifyContent:"center"}}>Back</Btn>
+              <Btn onClick={onScheduleFollowUp} style={{flex:1,justifyContent:"center"}}>Schedule +{abEffectiveRecMins}m</Btn>
+            </div>
+          </>)}
+
+          {abStep==="slider"&&!abOutline&&(<>
             <div style={{fontSize:17,fontWeight:700,color:T.white,marginBottom:8}}>How far along are you?</div>
             <div style={{fontSize:13,color:T.text,marginBottom:24,lineHeight:1.6}}>Drag to estimate how much of "{task.title}" is done overall.</div>
             <input type="range" min={5} max={95} step={1} value={abPct}
