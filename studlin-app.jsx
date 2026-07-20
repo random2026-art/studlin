@@ -2045,6 +2045,13 @@ function scheduleAttackBlockFollowUp(task,nextMins){
       // not just the chain's first session (see the cancel-all action on
       // the due-date event's edit modal).
       ...(task.dueEventId?{dueEventId:task.dueEventId}:{}),
+      // Same carry-forward for phase tagging -- without this, a phase that
+      // needed a follow-up session (not finished on the first probe alone)
+      // would silently break advanceProjectPhase the moment "Yes, I'm
+      // finished" fires on THIS chunk instead of the original probe: no
+      // projectPhaseIndex on the completed task means no next phase ever
+      // gets scheduled.
+      ...(task.projectPhaseIndex!==undefined?{projectPhaseIndex:task.projectPhaseIndex,phaseName:task.phaseName,projectTitle:task.projectTitle}:{}),
     });
     const d=new Date(slot.date+"T12:00:00");d.setDate(d.getDate()+1);
     cursorDate=dayKey(d);

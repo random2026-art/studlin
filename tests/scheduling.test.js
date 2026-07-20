@@ -1803,6 +1803,59 @@ describe("Attack Block overrun dismissal (dismiss-until-tomorrow, not a multi-da
   });
 });
 
+describe("Phase-aware follow-ups and overrun detection (cross-system consistency for multi-phase projects)", () => {
+  test("scheduleAttackBlockFollowUp carries phase tags forward onto every new chunk, not just the probe", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const task = {
+      id: "t1", title: "Term Paper: Outline", attackChainId: "chain-1", attackIndex: 1, deadline: "2026-09-28",
+      priority: 5, difficulty: 5, dueEventId: "due-1", projectPhaseIndex: 1, phaseName: "Outline", projectTitle: "Term Paper",
+    };
+    m.scheduleAttackBlockFollowUp(task, 60);
+    const events = JSON.parse(m.localStorage.getItem("studlin-events"));
+    assert.equal(events.length, 1);
+    assert.equal(events[0].projectPhaseIndex, 1);
+    assert.equal(events[0].phaseName, "Outline");
+    assert.equal(events[0].projectTitle, "Term Paper");
+    assert.equal(events[0].dueEventId, "due-1");
+  });
+
+  test("an ordinary (non-phased) follow-up still carries no phase tags -- the carry-forward is conditional, not always-on", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const task = { id: "t1", title: "Reading Response", attackChainId: "chain-1", attackIndex: 1, deadline: "2026-07-25", priority: 5, difficulty: 5 };
+    m.scheduleAttackBlockFollowUp(task, 60);
+    const events = JSON.parse(m.localStorage.getItem("studlin-events"));
+    assert.equal(Object.prototype.hasOwnProperty.call(events[0], "projectPhaseIndex"), false);
+  });
+
+  test("each phase gets its own attackChainId, so the overrun detector naturally scopes to whichever phase is currently active", () => {
+    const m = loadStudlinModule();
+    const events = [
+      // Phase 0, already fully done -- shouldn't contribute any pending minutes.
+      { id: "p0", isAttackBlock: true, attackChainId: "chain-phase0", title: "Term Paper: Research", deadline: "2026-09-01", status: "done", duration: 300, projectPhaseIndex: 0, dueEventId: "due-1" },
+      // Phase 1, currently active with real pending work.
+      { id: "p1", isAttackBlock: true, attackChainId: "chain-phase1", title: "Term Paper: Draft", deadline: "2026-09-01", status: "pending", duration: 500, projectPhaseIndex: 1, dueEventId: "due-1" },
+    ];
+    const overruns = m.detectAttackBlockOverruns(events, "2026-08-25");
+    assert.equal(overruns.length, 1, "only the active phase's chain should be flagged, not the already-finished one");
+    assert.equal(overruns[0].chainId, "chain-phase1");
+    assert.equal(overruns[0].pendingMins, 500);
+  });
+
+  test("overrun capacity is computed against the real shared project deadline, so a phase that runs long correctly shrinks what's left for the next one", () => {
+    const m = loadStudlinModule();
+    // Same project deadline for both phases (as advanceProjectPhase always
+    // passes marker.deadline through) -- phase 2 starting late in the
+    // runway should see a small capacity, not a fresh full allowance.
+    const latePhase = [
+      { id: "p2", isAttackBlock: true, attackChainId: "chain-phase2", title: "Term Paper: Revise", deadline: "2026-09-01", status: "pending", duration: 400, projectPhaseIndex: 2, dueEventId: "due-1" },
+    ];
+    const earlyResult = m.detectAttackBlockOverruns(latePhase, "2026-07-01");
+    const lateResult = m.detectAttackBlockOverruns(latePhase, "2026-08-28");
+    assert.equal(earlyResult.length, 0, "plenty of runway left in July -- not an overrun yet");
+    assert.equal(lateResult.length, 1, "almost no runway left by late August -- now it is");
+  });
+});
+
 describe("Attack Block self-report grants zero XP (by construction, not by convention)", () => {
   // XP/leaderboard minutes come from exactly one place: getTotalMinutesFocused
   // summing the "sessions" store, which only logSession(mins, mode) ever
