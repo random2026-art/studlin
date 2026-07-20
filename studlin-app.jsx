@@ -5139,8 +5139,9 @@ function Notes({setActive=()=>{}}){
         "\"examWeight\" (ONLY when kind is \"exam\": \"quiz\" for a quiz or short in-class test worth relatively little, \"major\" for a midterm, final, or unit exam worth significant grade weight — omit entirely when kind is \"deadline\"), "+
         "\"confidence\" (\"high\" if an explicit date was stated, \"low\" if you inferred/guessed it, e.g. from \"the Friday after spring break\"), "+
         "\"detail\" (optional — only include this key when the source text actually states something concrete and useful beyond the date itself, e.g. \"Covers chapters 4-6, bring a calculator\" for an exam or \"Submit as PDF, cite 3 sources\" for an assignment; leave the key out entirely rather than inventing generic filler when nothing specific is stated). "+
+        "\"estimatedHours\" (ONLY when kind is \"deadline\": your best-guess total hours a typical student would need for the whole thing, based on the title and any detail given — a short reading response or problem set is usually 1-3 hours, an essay or lab report is usually 4-8 hours, a term paper or major project is usually 12-25 hours; omit entirely when kind is \"exam\"). "+
         "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
-        "{\"deadlines\":[{\"title\":\"Problem Set 3\",\"date\":\"2026-09-22\",\"kind\":\"deadline\",\"confidence\":\"high\"},{\"title\":\"Unit 2 Midterm\",\"date\":\"2026-10-03\",\"kind\":\"exam\",\"examWeight\":\"major\",\"confidence\":\"high\",\"detail\":\"Covers chapters 4-6, bring a calculator\"}]}. "+
+        "{\"deadlines\":[{\"title\":\"Problem Set 3\",\"date\":\"2026-09-22\",\"kind\":\"deadline\",\"confidence\":\"high\",\"estimatedHours\":2},{\"title\":\"Unit 2 Midterm\",\"date\":\"2026-10-03\",\"kind\":\"exam\",\"examWeight\":\"major\",\"confidence\":\"high\",\"detail\":\"Covers chapters 4-6, bring a calculator\"}]}. "+
         "If you find no dates at all, respond with {\"deadlines\":[]}.\n\n"+text.slice(0,30000);
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
       const data=await res.json();
@@ -6623,7 +6624,20 @@ function injectClassEvents(selectedClasses){
 // actually time. Exams don't need this gate — computeReviewOffsets already
 // self-limits to "sessions near the exam," never proposing anything for the
 // too-far-out portion of the timeline, so there's nothing stale to defer.
-const ASSIGNMENT_ATTACK_ACTIONABLE_DAYS=7;
+//
+// "Actionable" used to mean a flat 7 days before the deadline, regardless
+// of whether the thing needed 2 hours or 20 — a short reading response and
+// a term paper got the exact same window. Now it's computed per-item via
+// computeAttackBlockStartDate, backward from the deadline using the
+// syllabus AI's own estimatedHours guess (falling back to a moderate
+// default when it didn't supply one, e.g. the regex-only fallback scanner
+// never can) — a big project's window opens weeks earlier than a small
+// assignment's does, which is the entire point of the gate.
+const ATTACK_BLOCK_DEFAULT_ESTIMATE_HOURS=3;
+function attackBlockActionableDate(estimatedHours,deadlineKey,todayKey){
+  const mins=(estimatedHours&&estimatedHours>0?estimatedHours:ATTACK_BLOCK_DEFAULT_ESTIMATE_HOURS)*60;
+  return computeAttackBlockStartDate(deadlineKey,mins,todayKey);
+}
 // "ask" (default) — the daily sweep surfaces a visible accept/decline
 // banner once a prepPending assignment crosses into its actionable window.
 // "auto" — schedules it automatically once it's close enough, still
@@ -6953,10 +6967,14 @@ function planBrainDumpTasks(items,events,routines,prefs){
 function commitSyllabusEvents(noteId,tag,items){
   const existing=lsGet("events",[]);
   const today=dayKey();
-  const daysUntil=(dateKey)=>Math.ceil((new Date(dateKey+"T12:00:00")-new Date(today+"T12:00:00"))/86400000);
+  // One computation per item, reused by both the marker-building pass below
+  // and the immediate-scheduling pass after it, so the two can never
+  // disagree about whether something's actionable yet.
+  const gates=items.map(it=>it.kind==="deadline"&&it.attackBlock?attackBlockActionableDate(it.estimatedHours,it.date,today):null);
   const markerEvents=items.map((it,i)=>{
     const wantsAttack=it.kind==="deadline"&&it.attackBlock;
-    const isActionableNow=wantsAttack&&daysUntil(it.date)<=ASSIGNMENT_ATTACK_ACTIONABLE_DAYS;
+    const gate=gates[i];
+    const isActionableNow=wantsAttack&&gate&&today>=gate.startDate;
     return {
       id:"syl-"+noteId+"-"+i,
       title:it.title,
@@ -6974,6 +6992,10 @@ function commitSyllabusEvents(noteId,tag,items){
       completedAt:null,
       noteId,
       prepPending:(wantsAttack&&!isActionableNow)?true:undefined,
+      // Stored (not just used in-the-moment) so the daily actionable-window
+      // sweep can compare against this exact same computation later without
+      // needing to re-derive it — see the sweep in App().
+      ...(wantsAttack?{estimatedHours:it.estimatedHours||ATTACK_BLOCK_DEFAULT_ESTIMATE_HOURS,attackStartDate:gate?gate.startDate:null}:{}),
       // examWeight ("quiz" vs "major") and confidenceLog together drive the
       // adaptive check-in after each linked study session completes — see
       // evaluateExamPrepAdjustment. Only meaningful for kind:"exam".
@@ -6996,7 +7018,8 @@ function commitSyllabusEvents(noteId,tag,items){
   const attackEvents=[];
   items.forEach((it,i)=>{
     if(it.kind!=="deadline"||!it.attackBlock)return;
-    if(daysUntil(it.date)>ASSIGNMENT_ATTACK_ACTIONABLE_DAYS)return;
+    const gate=gates[i];
+    if(!gate||today<gate.startDate)return;
     const task=startAttackBlockChain({title:it.title,deadline:it.date,priority:5,difficulty:5,noteId,dueEventId:markerEvents[i].id},working,routines,prefs,dayKey(),prefs.workStartTime);
     attackEvents.push(task);working=working.concat([task]);
   });
@@ -15356,7 +15379,7 @@ function App() {
   // Actionable-window prep prompt — same "silent trigger, visible result"
   // idiom as Tier 0 above, but for syllabus assignments that were too far
   // out to schedule real prep time for when the syllabus was first scanned
-  // (see prepPending / ASSIGNMENT_ATTACK_ACTIONABLE_DAYS in
+  // (see prepPending / attackStartDate in
   // commitSyllabusEvents). "ask" mode populates this batch for an
   // accept/decline banner; "auto" mode schedules immediately and uses
   // prepAutoToast instead; "off" never populates either.
@@ -16006,7 +16029,7 @@ function App() {
     // acting on its own.
     const prepMode=getPrepScheduleMode();
     if(prepMode!=="off"){
-      const nowActionable=working.filter(ev=>ev.prepPending&&ev.kind==="deadline"&&ev.status==="pending"&&Math.ceil((new Date(ev.date+"T12:00:00")-new Date(today+"T12:00:00"))/86400000)<=ASSIGNMENT_ATTACK_ACTIONABLE_DAYS);
+      const nowActionable=working.filter(ev=>ev.prepPending&&ev.kind==="deadline"&&ev.status==="pending"&&ev.attackStartDate&&today>=ev.attackStartDate);
       if(nowActionable.length>0){
         if(prepMode==="auto"){
           const routines2=getWeeklyRoutine();
