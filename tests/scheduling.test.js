@@ -1449,6 +1449,54 @@ describe("isTimerEligible (regression: the missed-task nudge fired for fixed com
   });
 });
 
+describe("computeAttackBlockStartDate (Attack Block gate: backward-schedule the latest responsible start, not 'probe now regardless of deadline distance')", () => {
+  test("returns null when either input is missing -- nothing to compute against", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.computeAttackBlockStartDate(null, 600, "2026-07-20"), null);
+    assert.equal(m.computeAttackBlockStartDate("2026-09-01", null, "2026-07-20"), null);
+    assert.equal(m.computeAttackBlockStartDate("2026-09-01", 0, "2026-07-20"), null);
+  });
+
+  test("a genuinely far-off deadline with real effort produces a start date well before the deadline, not today", () => {
+    const m = loadStudlinModule();
+    // A ~20-hour paper (1200 min), due in 10 weeks.
+    const result = m.computeAttackBlockStartDate("2026-09-28", 1200, "2026-07-20");
+    assert.ok(result.startDate > "2026-07-20", "should not start today for a deadline this far out");
+    assert.ok(result.startDate < "2026-09-28", "should still start well before the deadline");
+    assert.equal(result.compressed, false);
+  });
+
+  test("finishByDate sits ATTACK_BLOCK_FINISH_BUFFER_DAYS before the real deadline, not on it", () => {
+    const m = loadStudlinModule();
+    const result = m.computeAttackBlockStartDate("2026-09-28", 1200, "2026-07-20");
+    const gap = Math.round((new Date("2026-09-28T12:00:00") - new Date(result.finishByDate + "T12:00:00")) / 86400000);
+    assert.equal(gap, m.ATTACK_BLOCK_FINISH_BUFFER_DAYS);
+  });
+
+  test("a large estimate needing more weeks than the deadline allows clamps to today, honestly, instead of a start date already in the past", () => {
+    const m = loadStudlinModule();
+    // A 40-hour project (2400 min) due in only 10 days -- the padded,
+    // paced plan mathematically can't fit before the deadline.
+    const result = m.computeAttackBlockStartDate("2026-07-30", 2400, "2026-07-20");
+    assert.equal(result.startDate, "2026-07-20");
+    assert.equal(result.compressed, true, "should honestly flag that there's no real runway left, not silently propose a past date");
+  });
+
+  test("a small estimate close to its deadline starts essentially right away", () => {
+    const m = loadStudlinModule();
+    // A 2-hour reading response (120 min) due in 5 days.
+    const result = m.computeAttackBlockStartDate("2026-07-25", 120, "2026-07-20");
+    assert.equal(result.startDate, "2026-07-20");
+  });
+
+  test("a bigger estimate needs a start date further back than a smaller one for the same deadline", () => {
+    const m = loadStudlinModule();
+    const smallProject = m.computeAttackBlockStartDate("2026-10-01", 300, "2026-07-20"); // 5 hours
+    const bigProject = m.computeAttackBlockStartDate("2026-10-01", 1800, "2026-07-20"); // 30 hours
+    assert.ok(bigProject.startDate < smallProject.startDate, "more work should push the responsible start date earlier");
+  });
+});
+
 describe("logSuggestionDecision (append-only decision log for every accept/dismiss on a Studlin suggestion)", () => {
   test("appends one row with kind, action, context, and a timestamp", () => {
     const m = loadStudlinModule();

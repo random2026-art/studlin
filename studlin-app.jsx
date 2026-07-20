@@ -1799,6 +1799,46 @@ function scheduleAssignmentExtension(task,deadlineKey,totalMins){
 // them self-report how far along they got, and extrapolate the rest.
 const ATTACK_BLOCK_DEFAULT_PROBE_MINS=30;
 const ATTACK_BLOCK_PADDING=1.2; // pacing is rarely linear — pad the extrapolation
+// Backward-scheduling for a long-horizon project's LATEST RESPONSIBLE start
+// date, replacing a fixed day-count threshold with one that actually
+// accounts for how much work the thing needs. Padded heavier (1.5x) than
+// ATTACK_BLOCK_PADDING (1.2x, used to extrapolate remaining time AFTER a
+// real probe has run) since there's zero calibration data yet at this
+// point — a blind pre-probe estimate deserves more correction for the
+// planning fallacy than a post-probe one does.
+const ATTACK_BLOCK_GATE_PADDING=1.5;
+// Finish this many days before the real deadline, not exactly on it — a
+// buffer against the plan itself running long, not just the estimate.
+const ATTACK_BLOCK_FINISH_BUFFER_DAYS=4;
+// Sustainable weekly pace for ONE project alongside a normal course load
+// (~3-4 hrs/week per the spec this was built from) — a starting heuristic,
+// not a measured constant; tune once there's real completion data to look
+// at, the same way TIER0_EXAM_PREP_TOLERANCE_DAYS is flagged as tunable.
+const ATTACK_BLOCK_SUSTAINABLE_WEEKLY_MINS=3.5*60;
+// Returns null for missing inputs (nothing to compute against) or an
+// object describing when Attack Block's first probe should actually
+// start, not just when the assignment is due. Never returns a start date
+// in the past -- if the padded estimate genuinely doesn't fit before the
+// deadline anymore, today already IS the latest responsible start, and
+// `compressed:true` says so honestly instead of silently proposing a
+// start date that's already gone.
+function computeAttackBlockStartDate(deadlineKey,estimatedTotalMins,todayKey){
+  if(!deadlineKey||!estimatedTotalMins)return null;
+  const today=todayKey||dayKey();
+  const paddedMins=estimatedTotalMins*ATTACK_BLOCK_GATE_PADDING;
+  const weeksNeeded=Math.max(1,Math.ceil(paddedMins/ATTACK_BLOCK_SUSTAINABLE_WEEKLY_MINS));
+  const deadline=new Date(deadlineKey+"T12:00:00");
+  const finishBy=new Date(deadline);finishBy.setDate(finishBy.getDate()-ATTACK_BLOCK_FINISH_BUFFER_DAYS);
+  const idealStart=new Date(finishBy);idealStart.setDate(idealStart.getDate()-weeksNeeded*7);
+  const idealStartKey=dayKey(idealStart);
+  const compressed=idealStartKey<today;
+  return {
+    startDate:compressed?today:idealStartKey,
+    finishByDate:dayKey(finishBy),
+    weeksNeeded,
+    compressed,
+  };
+}
 // Starts a new chain: places the first probe session via findReliableSlotFor.
 // No separate "parent" record — this session IS the task, linked to its
 // eventual follow-ups only by attackChainId, same idiom as split-session

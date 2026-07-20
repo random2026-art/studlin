@@ -88,7 +88,8 @@ function loadStudlinModule(options) {
     "dismissWeekBalanceNudge","computeBusyWindowsPayload","BUSY_WINDOW_DAYS_AHEAD",
     "layoutDayEvents","computeEventBlockHeightPx","isTimerEligible",
     "logSuggestionDecision","examPrepIntervalPosition","fmtMovedReasonSuffix",
-    "fmtPlacementReason","TIER0_EXAM_PREP_TOLERANCE_DAYS"];
+    "fmtPlacementReason","TIER0_EXAM_PREP_TOLERANCE_DAYS","computeAttackBlockStartDate",
+    "ATTACK_BLOCK_GATE_PADDING","ATTACK_BLOCK_FINISH_BUFFER_DAYS","ATTACK_BLOCK_SUSTAINABLE_WEEKLY_MINS"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }
