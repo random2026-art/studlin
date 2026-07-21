@@ -6029,28 +6029,35 @@ function Notes({setActive=()=>{}}){
                 <div style={{flex:1}}>
                   <div style={{display:"flex",gap:8,marginBottom:8}}>
                     <Input value={it.title} onChange={ev=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,title:ev.target.value}:x)}))} style={{flex:1}} />
-                    <Input type="date" value={it.date} onChange={ev=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,date:ev.target.value}:x)}))} style={{width:150}} />
+                    {!it.noDate&&<Input type="date" value={it.date} onChange={ev=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,date:ev.target.value}:x)}))} style={{width:150}} />}
                   </div>
-                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                     <SelectChip options={[{value:"deadline",label:"To-Do"},{value:"exam",label:"Exam"}]} value={it.kind} onChange={v=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v,attackBlock:v==="deadline",proposeSessions:v==="exam",sessionCount:x.sessionCount||defaultSessionCountFor()}:x)}))} />
-                    {it.confidence==="low"&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>Low confidence, double-check</span>}
-                    {it.kind==="deadline"&&(
+                    {it.confidence==="low"&&!it.noDate&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>Low confidence, double-check</span>}
+                    <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:T.muted,cursor:"pointer"}}>
+                      <input type="checkbox" checked={!!it.noDate} onChange={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,noDate:!x.noDate}:x)}))} />
+                      Don't know the date yet
+                    </label>
+                    {!it.noDate&&it.kind==="deadline"&&(
                       <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:T.muted,cursor:"pointer"}}>
                         <input type="checkbox" checked={!!it.attackBlock} onChange={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,attackBlock:!x.attackBlock}:x)}))} />
                         Needs prep time, schedule an Attack Block
                       </label>
                     )}
-                    {it.kind==="exam"&&(
+                    {!it.noDate&&it.kind==="exam"&&(
                       <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:T.muted,cursor:"pointer"}}>
                         <input type="checkbox" checked={!!it.proposeSessions} onChange={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,proposeSessions:!x.proposeSessions}:x)}))} />
                         Schedule study sessions leading up to this
                       </label>
                     )}
                   </div>
+                  {it.noDate&&(
+                    <div style={{fontSize:11,color:T.muted,marginTop:6}}>Stays under this class in Your Classes until you set a date.</div>
+                  )}
                   {it.detail&&(
                     <div style={{fontSize:11.5,color:T.muted,marginTop:6,lineHeight:1.4}}>{it.detail}</div>
                   )}
-                  {it.kind==="deadline"&&it.attackBlock&&isPhaseDecompositionCandidate(it.estimatedHours,it.date,dayKey())&&(
+                  {!it.noDate&&it.kind==="deadline"&&it.attackBlock&&isPhaseDecompositionCandidate(it.estimatedHours,it.date,dayKey())&&(
                     <div style={{marginTop:8}}>
                       {it.phases===undefined?(
                         <button type="button" disabled={!!it.phasesLoading} onClick={()=>suggestPhasesFor(it.id)} style={{background:"none",border:`1px dashed ${T.borderHover}`,borderRadius:6,color:T.muted,fontSize:11,fontFamily:T.font,cursor:it.phasesLoading?"default":"pointer",padding:"5px 10px",opacity:it.phasesLoading?0.6:1}}>
@@ -6073,7 +6080,7 @@ function Notes({setActive=()=>{}}){
                       )}
                     </div>
                   )}
-                  {it.kind==="deadline"&&it.attackBlock&&isPhaseDecompositionCandidate(it.estimatedHours,it.date,dayKey())&&(
+                  {!it.noDate&&it.kind==="deadline"&&it.attackBlock&&isPhaseDecompositionCandidate(it.estimatedHours,it.date,dayKey())&&(
                     <div style={{marginTop:8}}>
                       {it.outline===undefined?(
                         <button type="button" disabled={!!it.outlineLoading} onClick={()=>suggestOutlineFor(it.id)} style={{background:"none",border:`1px dashed ${T.borderHover}`,borderRadius:6,color:T.muted,fontSize:11,fontFamily:T.font,cursor:it.outlineLoading?"default":"pointer",padding:"5px 10px",opacity:it.outlineLoading?0.6:1}}>
@@ -6096,7 +6103,7 @@ function Notes({setActive=()=>{}}){
                       )}
                     </div>
                   )}
-                  {it.kind==="exam"&&it.proposeSessions&&(()=>{
+                  {!it.noDate&&it.kind==="exam"&&it.proposeSessions&&(()=>{
                     const dates=computeReviewDates(it.date,dayKey(),it.sessionCount||4);
                     return (
                       <div style={{marginTop:6}}>
@@ -7581,9 +7588,35 @@ function commitSyllabusEvents(noteId,tag,items){
   const today=dayKey();
   // One computation per item, reused by both the marker-building pass below
   // and the immediate-scheduling pass after it, so the two can never
-  // disagree about whether something's actionable yet.
-  const gates=items.map(it=>it.kind==="deadline"&&it.attackBlock?attackBlockActionableDate(it.estimatedHours,it.date,today):null);
+  // disagree about whether something's actionable yet. noDate items never
+  // gate into a real date, so they're excluded here regardless of whatever
+  // attackBlock/proposeSessions the review screen happened to leave set.
+  const gates=items.map(it=>it.kind==="deadline"&&it.attackBlock&&!it.noDate?attackBlockActionableDate(it.estimatedHours,it.date,today):null);
   const markerEvents=items.map((it,i)=>{
+    // "Don't know the date yet" -- same shape the plain Checklist card's
+    // own items use (see addChecklistItem in Dashboard): no date/time, no
+    // scheduling of any kind, just a checkbox that stays put until the
+    // student (or a later syllabus update) actually gives it a date.
+    if(it.noDate){
+      return {
+        id:"syl-"+noteId+"-"+i,
+        title:it.title,
+        date:"",
+        time:"",
+        subject:tag,
+        kind:it.kind==="exam"?"exam":"deadline",
+        notes:it.detail||"",
+        priority:5,
+        difficulty:5,
+        deadline:null,
+        duration:0,
+        status:"pending",
+        timeSpent:0,
+        completedAt:null,
+        noteId,
+        checklist:true,
+      };
+    }
     const wantsAttack=it.kind==="deadline"&&it.attackBlock;
     const gate=gates[i];
     const isActionableNow=wantsAttack&&gate&&today>=gate.startDate;
@@ -7639,7 +7672,7 @@ function commitSyllabusEvents(noteId,tag,items){
   const prefs=getSchedulePreferences();
   const attackEvents=[];
   items.forEach((it,i)=>{
-    if(it.kind!=="deadline"||!it.attackBlock)return;
+    if(it.kind!=="deadline"||!it.attackBlock||it.noDate)return;
     const gate=gates[i];
     if(!gate||today<gate.startDate)return;
     const task=startPhaseAwareAttackChain({title:it.title,deadline:it.date,priority:5,difficulty:5,noteId,dueEventId:markerEvents[i].id},it.phases,working,routines,prefs,dayKey(),prefs.workStartTime);
@@ -7649,7 +7682,7 @@ function commitSyllabusEvents(noteId,tag,items){
   // the exam date (see buildExamSessionEvents above).
   let examSessionEvents=[];
   items.forEach((it,i)=>{
-    if(it.kind!=="exam"||!it.proposeSessions)return;
+    if(it.kind!=="exam"||!it.proposeSessions||it.noDate)return;
     const sessions=buildExamSessionEvents(it.title,it.date,tag,it.sessionCount||4,"examrev-"+noteId+"-"+i,working,routines,prefs,{noteId,dueEventId:markerEvents[i].id},it.difficulty);
     examSessionEvents=examSessionEvents.concat(sessions);working=working.concat(sessions);
   });
@@ -9927,6 +9960,11 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip}){
   const [classList,setClassList]=useState([]); // {id,label,color} added so far this session
   const [addMode,setAddMode]=useState(null); // null (list) | choose | scan | review | hsSchedule | hsReview
   const [scanning,setScanning]=useState(false);
+  // Fallback for syllabi that don't extract cleanly from a file (a scanned
+  // PDF, a Canvas page saved weird) -- paste the text directly instead.
+  // Same extraction function handleScanFile's text branch already calls.
+  const [pasteMode,setPasteMode]=useState(false);
+  const [pasteText,setPasteText]=useState("");
   const [scanError,setScanError]=useState("");
   const [review,setReview]=useState(null); // {subjectName,color,meetingTimes:[],deadlines:[]}
   const [hsReview,setHsReview]=useState(null); // [{id,subjectName,color,startTime,endTime,days}]
@@ -9946,6 +9984,8 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip}){
     setClassList([]);
     setAddMode(null);
     setScanError("");
+    setPasteMode(false);
+    setPasteText("");
     setReview(null);
     setHsReview(null);
     setActivities([]);
@@ -10008,6 +10048,17 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip}){
       if(result.error){setScanError(result.error);return;}
       buildReviewFromExtraction(result);
     }catch(err){setScanError("Couldn't read that file: "+err.message);}
+    finally{setScanning(false);}
+  };
+
+  const handlePasteScan=async()=>{
+    if(!pasteText.trim())return;
+    setScanning(true);setScanError("");
+    try{
+      const result=await extractClassSyllabusText(pasteText);
+      if(result.error){setScanError(result.error);return;}
+      buildReviewFromExtraction(result);
+    }catch(err){setScanError("Couldn't read that text: "+err.message);}
     finally{setScanning(false);}
   };
 
@@ -10117,7 +10168,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip}){
           {step==="classes"&&addMode==="choose"&&(<>
             <TitleSub title="How do you want to add it?" />
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
-              <button type="button" onClick={()=>{setScanError("");setAddMode("scan");}} style={classSetupChoiceStyle}>
+              <button type="button" onClick={()=>{setScanError("");setPasteMode(false);setPasteText("");setAddMode("scan");}} style={classSetupChoiceStyle}>
                 <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Scan a syllabus</div>
                 <div style={{fontSize:12,color:T.muted}}>Upload a file or photo — Studlin reads the class name, meeting time, and deadlines.</div>
               </button>
@@ -10139,10 +10190,21 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip}){
             <TitleSub title="Scan a syllabus" sub="PDF, Word doc, text, or a photo/screenshot — Studlin reads it and fills in the review below." />
             {scanning
               ? <div style={{padding:"40px 0",textAlign:"center",color:T.muted,fontSize:13}}>Reading your syllabus…</div>
-              : <button type="button" onClick={()=>fileInputRef.current&&fileInputRef.current.click()} style={{width:"100%",padding:"32px",borderRadius:12,border:`1.5px dashed ${T.borderHover}`,background:T.card2,color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:13,textAlign:"center"}}>Tap to choose a file</button>
+              : pasteMode ? (
+                <div>
+                  <textarea value={pasteText} onChange={e=>setPasteText(e.target.value)} placeholder="Paste the syllabus text here" rows={8}
+                    style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
+                  <Btn onClick={handlePasteScan} disabled={!pasteText.trim()} style={{marginTop:10,width:"100%",justifyContent:"center",opacity:pasteText.trim()?1:0.45}}>Scan this text</Btn>
+                </div>
+              ) : <button type="button" onClick={()=>fileInputRef.current&&fileInputRef.current.click()} style={{width:"100%",padding:"32px",borderRadius:12,border:`1.5px dashed ${T.borderHover}`,background:T.card2,color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:13,textAlign:"center"}}>Tap to choose a file</button>
             }
             <input ref={fileInputRef} type="file" accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif" style={{display:"none"}} onChange={handleScanFile} />
             {scanError&&<div style={{fontSize:12,color:T.red,marginTop:10}}>{scanError}</div>}
+            {!scanning&&(
+              <button type="button" onClick={()=>{setPasteMode(m=>!m);setScanError("");}} style={{marginTop:12,background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>
+                {pasteMode?"Upload a file instead":"File didn't work? Paste the text instead"}
+              </button>
+            )}
             <button type="button" onClick={()=>setAddMode("choose")} style={{marginTop:16,background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0}}>← Back</button>
           </>)}
 
@@ -10204,25 +10266,32 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip}){
                         <div style={{flex:1}}>
                           <div style={{display:"flex",gap:8,marginBottom:6}}>
                             <Input value={it.title} onChange={e=>setDeadline(i,{title:e.target.value})} style={{flex:1}} />
-                            <Input type="date" value={it.date} onChange={e=>setDeadline(i,{date:e.target.value})} style={{width:140}} />
+                            {!it.noDate&&<Input type="date" value={it.date} onChange={e=>setDeadline(i,{date:e.target.value})} style={{width:140}} />}
                           </div>
                           <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                             <SelectChip options={[{value:"deadline",label:"To-Do"},{value:"exam",label:"Exam"}]} value={it.kind} onChange={v=>setDeadline(i,{kind:v,attackBlock:v==="deadline",proposeSessions:v==="exam",sessionCount:it.sessionCount||defaultSessionCountFor()})} />
-                            {it.confidence==="low"&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>Double-check</span>}
-                            {it.kind==="deadline"&&(
+                            {it.confidence==="low"&&!it.noDate&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>Double-check</span>}
+                            <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:T.muted,cursor:"pointer"}}>
+                              <input type="checkbox" checked={!!it.noDate} onChange={()=>setDeadline(i,{noDate:!it.noDate})} />
+                              Don't know the date yet
+                            </label>
+                            {!it.noDate&&it.kind==="deadline"&&(
                               <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:T.muted,cursor:"pointer"}}>
                                 <input type="checkbox" checked={!!it.attackBlock} onChange={()=>setDeadline(i,{attackBlock:!it.attackBlock})} />
                                 Schedule an Attack Block
                               </label>
                             )}
-                            {it.kind==="exam"&&(
+                            {!it.noDate&&it.kind==="exam"&&(
                               <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:T.muted,cursor:"pointer"}}>
                                 <input type="checkbox" checked={!!it.proposeSessions} onChange={()=>setDeadline(i,{proposeSessions:!it.proposeSessions})} />
                                 Schedule study sessions
                               </label>
                             )}
                           </div>
-                          {it.kind==="exam"&&it.proposeSessions&&(()=>{
+                          {it.noDate&&(
+                            <div style={{fontSize:11,color:T.muted,marginTop:6}}>Stays under this class in Your Classes until you set a date.</div>
+                          )}
+                          {!it.noDate&&it.kind==="exam"&&it.proposeSessions&&(()=>{
                             const dates=computeReviewDates(it.date,dayKey(),it.sessionCount||4);
                             return (
                               <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6}}>
@@ -14889,26 +14958,150 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
         id:ev.id,
       };
     });
-  // ── Master Lists (Assignments / Projects / Exams) — reuses exactly the
-  // data shapes already established this session: plain deadline markers
-  // vs. phased projects are already distinguished by whether `phases`
-  // exists, exams already have computeExamReadiness/linked decks &
-  // practice exams from Studlin Prep. Nothing new is computed here that
-  // doesn't already exist somewhere else in the app. ──
-  const [masterTab,setMasterTab]=useState("assignments"); // assignments | projects | exams
+  // ── Your Classes (Assignments / Projects / Exams / No date yet) — reuses
+  // exactly the data shapes already established this session: plain
+  // deadline markers vs. phased projects are already distinguished by
+  // whether `phases` exists, exams already have computeExamReadiness/linked
+  // decks & practice exams from Studlin Prep, undated items are just
+  // checklist:true markers with a subject (see commitSyllabusEvents).
+  // Nothing new is computed here that doesn't already exist somewhere else
+  // in the app. selectedClassId "all" shows the type tabs across every
+  // class; picking an actual class swaps to one combined view for just
+  // that class instead. ──
+  const [masterTab,setMasterTab]=useState("assignments"); // assignments | projects | exams | nodate
   const [expandedMasterId,setExpandedMasterId]=useState(null);
+  const [selectedClassId,setSelectedClassId]=useState("all");
   const masterAssignments=allEvents.filter(ev=>ev.kind==="deadline"&&!ev.checklist&&!ev.phases&&ev.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
   const masterProjects=allEvents.filter(ev=>ev.kind==="deadline"&&ev.phases&&ev.phases.length>0&&ev.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
   const masterExams=allEvents.filter(ev=>ev.kind==="exam"&&ev.date>=today).sort((a,b)=>a.date.localeCompare(b.date));
+  // Class-linked items with no known date yet (a syllabus scan, or a
+  // manually-added checklist item the student tagged with a subject) --
+  // deliberately excluded from the plain Checklist card (see checklistItems
+  // above), shown here instead, labeled by class + kind.
+  const masterNoDate=allEvents.filter(ev=>ev.checklist&&ev.subject&&ev.status!=="done").sort((a,b)=>a.title.localeCompare(b.title));
   const masterDecks=lsGet("decks",[]);
   const masterPracticeExams=lsGet("practiceExams",[]);
+  const yourClassesSubjects=getSubjects();
   const jumpToPrepExam=(examId)=>{lsSet("openPrepExamId",examId);setActive("prep");};
+  // Gives a dateless item a real date in place -- same lsGet/lsSet-then-
+  // forcePlan pattern toggleChecklistItem already uses. Only sets the date;
+  // doesn't retroactively schedule Attack Block/exam sessions -- the
+  // student can do that afterward the same way any other dated item gets
+  // scheduled (Balance my week, manual placement).
+  const setNoDateItemDate=(item,dateStr)=>{
+    if(!dateStr)return;
+    const all=lsGet("events",[]);
+    const next=all.map(e=>e.id===item.id?{...e,date:dateStr,time:item.kind==="exam"?"09:00":"23:59",checklist:false}:e);
+    lsSet("events",next);
+    setExpandedMasterId(null);
+    forcePlan(x=>x+1);
+  };
+  const renderAssignmentItem=(a)=>{
+    const chainId=(allEvents.find(e=>e.dueEventId===a.id&&e.attackChainId)||{}).attackChainId||null;
+    const sessions=chainId?allEvents.filter(e=>e.attackChainId===chainId):[];
+    const pending=sessions.filter(e=>e.status==="pending");
+    const isExpanded=expandedMasterId===a.id;
+    return(
+      <div key={a.id}>
+        <div onClick={()=>setExpandedMasterId(isExpanded?null:a.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:isExpanded?T.card2:"transparent"}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:600,color:T.text}}>{a.title}</div>
+            <div style={{fontSize:11,color:T.muted,marginTop:1}}>{a.subject}{a.date?" · "+a.date:""}</div>
+          </div>
+          {sessions.length>0&&<span style={{fontSize:10.5,color:T.muted,flexShrink:0}}>{pending.length} block{pending.length!==1?"s":""} scheduled</span>}
+        </div>
+        {isExpanded&&(
+          <div style={{padding:"10px 12px 4px 20px",display:"flex",flexDirection:"column",gap:8}}>
+            {pending.length===0
+              ?<div style={{fontSize:11.5,color:T.muted}}>No Attack Block sessions scheduled for this yet.</div>
+              :pending.map(s=>(
+                <div key={s.id} style={{display:"flex",alignItems:"center",gap:10,fontSize:11.5}}>
+                  <span style={{color:T.text,flex:1}}>{s.date} {fmtClock(s.time)}</span>
+                  <NumField min={5} max={480} fallback={s.duration||25} value={s.duration||25} onChange={v=>{const next=lsGet("events",[]).map(e=>e.id===s.id?{...e,duration:v}:e);lsSet("events",next);forcePlan(x=>x+1);}} style={{width:56}} />
+                  <span style={{color:T.faint}}>min</span>
+                </div>
+              ))}
+            {chainId&&pending.length>0&&<BtnSm variant="subtle" onClick={()=>{reoptimizeAttackChain(chainId);forcePlan(x=>x+1);}}>Re-optimize</BtnSm>}
+          </div>
+        )}
+      </div>
+    );
+  };
+  const renderProjectItem=(p)=>{
+    const isExpanded=expandedMasterId===p.id;
+    const doneCount=p.phases.filter(ph=>ph.status==="done").length;
+    return(
+      <div key={p.id}>
+        <div onClick={()=>setExpandedMasterId(isExpanded?null:p.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:isExpanded?T.card2:"transparent"}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:600,color:T.text}}>{p.title}</div>
+            <div style={{fontSize:11,color:T.muted,marginTop:1}}>{p.subject}{p.date?" · due "+p.date:""}</div>
+          </div>
+          <span style={{fontSize:10.5,color:T.muted,flexShrink:0}}>{doneCount}/{p.phases.length} phases</span>
+        </div>
+        {isExpanded&&(
+          <div style={{padding:"10px 12px 4px 20px",display:"flex",flexDirection:"column",gap:7}}>
+            {p.phases.map((ph,pi)=>{
+              const hasScheduled=allEvents.some(e=>e.dueEventId===p.id&&e.projectPhaseIndex===pi&&e.status==="pending");
+              const stColor=ph.status==="done"?T.lime:ph.status==="active"?T.amber:T.faint;
+              return(
+                <div key={pi} style={{display:"flex",alignItems:"center",gap:8,fontSize:11.5}}>
+                  <span style={{color:T.text,flex:1}}>{pi+1}. {ph.name}</span>
+                  <span style={{fontSize:9.5,fontWeight:700,color:stColor,textTransform:"uppercase"}}>{ph.status}</span>
+                  {ph.status!=="done"&&<span style={{fontSize:10,color:hasScheduled?T.teal:T.muted}}>{hasScheduled?"scheduled":"unscheduled"}</span>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+  const renderExamItem=(ex)=>{
+    const readiness=computeExamReadiness(ex,allEvents,today);
+    const deck=masterDecks.find(d=>d.examEventId===ex.id);
+    const pes=masterPracticeExams.filter(p=>p.examEventId===ex.id);
+    const stateColor=readiness?.state==="behind"||readiness?.state==="at-risk"?T.red:readiness?.state==="on-track"?T.lime:T.muted;
+    return(
+      <div key={ex.id} onClick={()=>jumpToPrepExam(ex.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer"}}>
+        <div style={{minWidth:0}}>
+          <div style={{fontSize:13,fontWeight:600,color:T.text}}>{ex.title}</div>
+          <div style={{fontSize:11,color:T.muted,marginTop:1}}>{ex.subject} · {ex.date} · {deck?deck.count+" cards":"no deck"}{pes.length>0?" · "+pes.length+" practice exam"+(pes.length!==1?"s":""):""}</div>
+        </div>
+        {readiness&&<span style={{fontSize:10,fontWeight:700,color:stateColor,background:stateColor+"14",border:`1px solid ${stateColor}44`,borderRadius:99,padding:"3px 9px",flexShrink:0}}>{readiness.state.toUpperCase().replace("-"," ")}</span>}
+      </div>
+    );
+  };
+  const renderNoDateItem=(item,showSubject)=>{
+    const isExpanded=expandedMasterId===item.id;
+    return(
+      <div key={item.id}>
+        <div onClick={()=>setExpandedMasterId(isExpanded?null:item.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:isExpanded?T.card2:"transparent"}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:600,color:T.text}}>{item.title}</div>
+            <div style={{fontSize:11,color:T.muted,marginTop:1}}>{showSubject?item.subject+" · ":""}{item.kind==="exam"?"Exam":"Assignment"} · date TBD</div>
+          </div>
+        </div>
+        {isExpanded&&(
+          <div style={{padding:"10px 12px 4px 20px",display:"flex",alignItems:"center",gap:10}}>
+            <input type="date" onChange={e=>setNoDateItemDate(item,e.target.value)} style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 10px",color:T.text,fontSize:12.5,fontFamily:T.font,outline:"none"}} />
+            <span style={{fontSize:11,color:T.muted}}>Set a date once you know it</span>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   // Checklist to-dos — no duration, no calendar slot, just a checkbox. Kept
   // in the same `events` localStorage array as everything else (same
   // id/status shape markDone-style toggles already expect), just flagged
-  // and filtered out of every calendar/planner surface above.
-  const checklistItems=allEvents.filter(ev=>ev.checklist&&ev.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
+  // and filtered out of every calendar/planner surface above. Excludes
+  // anything with a subject -- those are class-linked (a syllabus-scanned
+  // deadline with no known date yet, or a manually-added checklist item the
+  // student tagged with a subject) and belong in Your Classes' "No date
+  // yet" section instead, labeled with class + kind rather than showing up
+  // as a bare title in this generic list.
+  const checklistItems=allEvents.filter(ev=>ev.checklist&&ev.status!=="done"&&!ev.subject).sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
   const [checklistDraft,setChecklistDraft]=useState("");
   const toggleChecklistItem=(id)=>{
     const all=lsGet("events",[]);
@@ -15055,115 +15248,97 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {overrunToast}</div>
       )}
 
-      {/* Master Lists — Assignments / Projects / Exams, one inspection hub
-          instead of three separate places to check on what's actually
-          scheduled vs. still just a due date. */}
+      {/* Your Classes — pick a class, see everything tied to it
+          (assignments, projects, exams, undated items) in one place.
+          "All" keeps the original type-tabbed view across every class. */}
       <div style={{background:T.card,borderRadius:22,padding:22,border:`1px solid ${T.border}`}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8,flexWrap:"wrap"}}>
-          <span style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:T.text}}>Master Lists</span>
-          <div style={{display:"flex",gap:6}}>
-            {["assignments","projects","exams"].map(v=>(
-              <button key={v} onClick={()=>{setMasterTab(v);setExpandedMasterId(null);}} style={{padding:"6px 12px",borderRadius:7,fontSize:11.5,fontWeight:600,cursor:"pointer",background:masterTab===v?T.lime+"14":"transparent",color:masterTab===v?T.lime:T.muted,border:`1px solid ${masterTab===v?T.lime+"44":T.border}`,fontFamily:T.font,textTransform:"capitalize"}}>{v}</button>
-            ))}
-          </div>
+        <div style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:T.text,marginBottom:14}}>Your Classes</div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>
+          <button onClick={()=>{setSelectedClassId("all");setExpandedMasterId(null);}} style={{padding:"6px 14px",borderRadius:99,fontSize:11.5,fontWeight:600,cursor:"pointer",background:selectedClassId==="all"?T.lime+"14":"transparent",color:selectedClassId==="all"?T.lime:T.muted,border:`1px solid ${selectedClassId==="all"?T.lime+"44":T.border}`,fontFamily:T.font}}>All</button>
+          {yourClassesSubjects.map(s=>(
+            <button key={s.id} onClick={()=>{setSelectedClassId(s.id);setExpandedMasterId(null);}} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 14px",borderRadius:99,fontSize:11.5,fontWeight:600,cursor:"pointer",background:selectedClassId===s.id?s.color+"18":"transparent",color:selectedClassId===s.id?s.color:T.muted,border:`1px solid ${selectedClassId===s.id?s.color+"55":T.border}`,fontFamily:T.font}}>
+              <span style={{width:7,height:7,borderRadius:"50%",background:s.color,flexShrink:0}} />{s.label}
+            </button>
+          ))}
         </div>
 
-        {masterTab==="assignments"&&(
-          masterAssignments.length===0
-            ?<div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"18px 0"}}>Nothing due yet.</div>
-            :<div style={{display:"flex",flexDirection:"column",gap:6}}>
-              {masterAssignments.map(a=>{
-                const chainId=(allEvents.find(e=>e.dueEventId===a.id&&e.attackChainId)||{}).attackChainId||null;
-                const sessions=chainId?allEvents.filter(e=>e.attackChainId===chainId):[];
-                const pending=sessions.filter(e=>e.status==="pending");
-                const isExpanded=expandedMasterId===a.id;
-                return(
-                  <div key={a.id}>
-                    <div onClick={()=>setExpandedMasterId(isExpanded?null:a.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:isExpanded?T.card2:"transparent"}}>
-                      <div style={{minWidth:0}}>
-                        <div style={{fontSize:13,fontWeight:600,color:T.text}}>{a.title}</div>
-                        <div style={{fontSize:11,color:T.muted,marginTop:1}}>{a.subject}{a.date?" · "+a.date:""}</div>
-                      </div>
-                      {sessions.length>0&&<span style={{fontSize:10.5,color:T.muted,flexShrink:0}}>{pending.length} block{pending.length!==1?"s":""} scheduled</span>}
-                    </div>
-                    {isExpanded&&(
-                      <div style={{padding:"10px 12px 4px 20px",display:"flex",flexDirection:"column",gap:8}}>
-                        {pending.length===0
-                          ?<div style={{fontSize:11.5,color:T.muted}}>No Attack Block sessions scheduled for this yet.</div>
-                          :pending.map(s=>(
-                            <div key={s.id} style={{display:"flex",alignItems:"center",gap:10,fontSize:11.5}}>
-                              <span style={{color:T.text,flex:1}}>{s.date} {fmtClock(s.time)}</span>
-                              <NumField min={5} max={480} fallback={s.duration||25} value={s.duration||25} onChange={v=>{const next=lsGet("events",[]).map(e=>e.id===s.id?{...e,duration:v}:e);lsSet("events",next);forcePlan(x=>x+1);}} style={{width:56}} />
-                              <span style={{color:T.faint}}>min</span>
-                            </div>
-                          ))}
-                        {chainId&&pending.length>0&&<BtnSm variant="subtle" onClick={()=>{reoptimizeAttackChain(chainId);forcePlan(x=>x+1);}}>Re-optimize</BtnSm>}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-        )}
+        {selectedClassId==="all"&&(<>
+          <div style={{display:"flex",gap:6,marginBottom:14}}>
+            {["assignments","projects","exams","nodate"].map(v=>(
+              <button key={v} onClick={()=>{setMasterTab(v);setExpandedMasterId(null);}} style={{padding:"6px 12px",borderRadius:7,fontSize:11.5,fontWeight:600,cursor:"pointer",background:masterTab===v?T.lime+"14":"transparent",color:masterTab===v?T.lime:T.muted,border:`1px solid ${masterTab===v?T.lime+"44":T.border}`,fontFamily:T.font,textTransform:"capitalize"}}>{v==="nodate"?"No date yet":v}</button>
+            ))}
+          </div>
 
-        {masterTab==="projects"&&(
-          masterProjects.length===0
-            ?<div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"18px 0"}}>No multi-phase projects yet.</div>
-            :<div style={{display:"flex",flexDirection:"column",gap:6}}>
-              {masterProjects.map(p=>{
-                const isExpanded=expandedMasterId===p.id;
-                const doneCount=p.phases.filter(ph=>ph.status==="done").length;
-                return(
-                  <div key={p.id}>
-                    <div onClick={()=>setExpandedMasterId(isExpanded?null:p.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:isExpanded?T.card2:"transparent"}}>
-                      <div style={{minWidth:0}}>
-                        <div style={{fontSize:13,fontWeight:600,color:T.text}}>{p.title}</div>
-                        <div style={{fontSize:11,color:T.muted,marginTop:1}}>{p.subject}{p.date?" · due "+p.date:""}</div>
-                      </div>
-                      <span style={{fontSize:10.5,color:T.muted,flexShrink:0}}>{doneCount}/{p.phases.length} phases</span>
-                    </div>
-                    {isExpanded&&(
-                      <div style={{padding:"10px 12px 4px 20px",display:"flex",flexDirection:"column",gap:7}}>
-                        {p.phases.map((ph,pi)=>{
-                          const hasScheduled=allEvents.some(e=>e.dueEventId===p.id&&e.projectPhaseIndex===pi&&e.status==="pending");
-                          const stColor=ph.status==="done"?T.lime:ph.status==="active"?T.amber:T.faint;
-                          return(
-                            <div key={pi} style={{display:"flex",alignItems:"center",gap:8,fontSize:11.5}}>
-                              <span style={{color:T.text,flex:1}}>{pi+1}. {ph.name}</span>
-                              <span style={{fontSize:9.5,fontWeight:700,color:stColor,textTransform:"uppercase"}}>{ph.status}</span>
-                              {ph.status!=="done"&&<span style={{fontSize:10,color:hasScheduled?T.teal:T.muted}}>{hasScheduled?"scheduled":"unscheduled"}</span>}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-        )}
+          {masterTab==="assignments"&&(
+            masterAssignments.length===0
+              ?<div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"18px 0"}}>Nothing due yet.</div>
+              :<div style={{display:"flex",flexDirection:"column",gap:6}}>{masterAssignments.map(renderAssignmentItem)}</div>
+          )}
+          {masterTab==="projects"&&(
+            masterProjects.length===0
+              ?<div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"18px 0"}}>No multi-phase projects yet.</div>
+              :<div style={{display:"flex",flexDirection:"column",gap:6}}>{masterProjects.map(renderProjectItem)}</div>
+          )}
+          {masterTab==="exams"&&(
+            masterExams.length===0
+              ?<div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"18px 0"}}>No upcoming exams yet.</div>
+              :<div style={{display:"flex",flexDirection:"column",gap:6}}>{masterExams.map(renderExamItem)}</div>
+          )}
+          {masterTab==="nodate"&&(
+            masterNoDate.length===0
+              ?<div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"18px 0"}}>Nothing waiting on a date.</div>
+              :<div style={{display:"flex",flexDirection:"column",gap:6}}>{masterNoDate.map(item=>renderNoDateItem(item,true))}</div>
+          )}
+        </>)}
 
-        {masterTab==="exams"&&(
-          masterExams.length===0
-            ?<div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"18px 0"}}>No upcoming exams yet.</div>
-            :<div style={{display:"flex",flexDirection:"column",gap:6}}>
-              {masterExams.map(ex=>{
-                const readiness=computeExamReadiness(ex,allEvents,today);
-                const deck=masterDecks.find(d=>d.examEventId===ex.id);
-                const pes=masterPracticeExams.filter(p=>p.examEventId===ex.id);
-                const stateColor=readiness?.state==="behind"||readiness?.state==="at-risk"?T.red:readiness?.state==="on-track"?T.lime:T.muted;
-                return(
-                  <div key={ex.id} onClick={()=>jumpToPrepExam(ex.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer"}}>
-                    <div style={{minWidth:0}}>
-                      <div style={{fontSize:13,fontWeight:600,color:T.text}}>{ex.title}</div>
-                      <div style={{fontSize:11,color:T.muted,marginTop:1}}>{ex.subject} · {ex.date} · {deck?deck.count+" cards":"no deck"}{pes.length>0?" · "+pes.length+" practice exam"+(pes.length!==1?"s":""):""}</div>
+        {selectedClassId!=="all"&&(()=>{
+          const subj=yourClassesSubjects.find(s=>s.id===selectedClassId);
+          if(!subj)return null;
+          const meetings=getWeeklyRoutine().filter(r=>r.kind==="class"&&r.title===subj.label);
+          const cA=masterAssignments.filter(a=>a.subject===subj.label);
+          const cP=masterProjects.filter(p=>p.subject===subj.label);
+          const cE=masterExams.filter(e=>e.subject===subj.label);
+          const cN=masterNoDate.filter(n=>n.subject===subj.label);
+          const totalCount=cA.length+cP.length+cE.length+cN.length;
+          return (
+            <div>
+              {meetings.length>0&&(
+                <div style={{fontSize:11.5,color:T.muted,marginBottom:14}}>
+                  Meets {meetings.map(m=>m.days.map(d=>ROUTINE_DOW[d]).join("")+" "+fmtClock12(m.startTime)).join(", ")}
+                </div>
+              )}
+              {totalCount===0
+                ?<div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"18px 0"}}>Nothing tracked for {subj.label} yet.</div>
+                :<div style={{display:"flex",flexDirection:"column",gap:16}}>
+                  {cA.length>0&&(
+                    <div>
+                      <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Assignments</div>
+                      <div style={{display:"flex",flexDirection:"column",gap:6}}>{cA.map(renderAssignmentItem)}</div>
                     </div>
-                    {readiness&&<span style={{fontSize:10,fontWeight:700,color:stateColor,background:stateColor+"14",border:`1px solid ${stateColor}44`,borderRadius:99,padding:"3px 9px",flexShrink:0}}>{readiness.state.toUpperCase().replace("-"," ")}</span>}
-                  </div>
-                );
-              })}
+                  )}
+                  {cP.length>0&&(
+                    <div>
+                      <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Projects</div>
+                      <div style={{display:"flex",flexDirection:"column",gap:6}}>{cP.map(renderProjectItem)}</div>
+                    </div>
+                  )}
+                  {cE.length>0&&(
+                    <div>
+                      <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Exams</div>
+                      <div style={{display:"flex",flexDirection:"column",gap:6}}>{cE.map(renderExamItem)}</div>
+                    </div>
+                  )}
+                  {cN.length>0&&(
+                    <div>
+                      <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>No date yet</div>
+                      <div style={{display:"flex",flexDirection:"column",gap:6}}>{cN.map(item=>renderNoDateItem(item,false))}</div>
+                    </div>
+                  )}
+                </div>
+              }
             </div>
-        )}
+          );
+        })()}
       </div>
 
       {/* ROW 2: Today's plan + Checklist (Ask Studlin/aichat card removed
