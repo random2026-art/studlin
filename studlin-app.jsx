@@ -4542,6 +4542,18 @@ function StudlinPrep(){
   const [genMsg,setGenMsg]=useState("");
   const materialText=fileTexts.map(f=>f.text).join("\n\n");
   const fileInputRef=useRef(null);
+  // Paste-text fallback -- same pattern ClassSetupWizard's syllabus scan
+  // already uses. Pushes straight into fileTexts so buildStudyKit/
+  // genDeckForExam/genPracticeExamForExam need zero changes -- it's just
+  // another material source in the same pool.
+  const [pasteMode,setPasteMode]=useState(false);
+  const [pasteText,setPasteText]=useState("");
+  // Reference link (e.g. an existing Quizlet set, a shared notes doc) --
+  // saved and shown back for the student's own convenience only. Never
+  // fetched/scraped/read by Studlin and never enters materialText, so it
+  // has zero effect on flashcard/practice-exam generation -- the Material
+  // card's hint text says this explicitly rather than leaving it implied.
+  const [materialLink,setMaterialLink]=useState("");
   // Pull material straight from Notes already written for this class,
   // instead of forcing a re-upload of content the student already typed
   // somewhere else in the app.
@@ -4646,7 +4658,7 @@ function StudlinPrep(){
   };
   const commitSchedulePreview=()=>{
     if(!schedulePreview)return;
-    const events=lsGet("events",[]);
+    const events=removeGenericExamPrepSessions(lsGet("events",[]),schedulePreview.examId);
     const isDeck=schedulePreview.kind==="deck";
     const newEvents=schedulePreview.sessions.map((s,i)=>({
       id:(isDeck?"deckrev-":"practiceexam-")+schedulePreview.refId+"-"+Date.now()+"-"+i,
@@ -4709,7 +4721,7 @@ function StudlinPrep(){
   };
   const commitStudyKit=()=>{
     if(!kitPreview)return;
-    const events=lsGet("events",[]);
+    const events=removeGenericExamPrepSessions(lsGet("events",[]),kitPreview.examId);
     const deckEvents=kitPreview.deck?kitPreview.deckSessions.map((s,i)=>({
       id:"deckrev-"+kitPreview.deck.id+"-"+Date.now()+"-"+i,
       title:"Review: "+kitPreview.deck.name,
@@ -4796,7 +4808,7 @@ function StudlinPrep(){
               const pes=allPracticeExams.filter(p=>p.examEventId===ex.id);
               const stateColor=readiness?.state==="behind"||readiness?.state==="at-risk"?T.red:readiness?.state==="on-track"?T.lime:T.muted;
               return(
-                <div key={ex.id} onClick={()=>{setSelectedExamId(ex.id);setFileTexts(ex.sourceMaterial?[{name:"From your syllabus",text:ex.sourceMaterial}]:[]);setGenMsg("");}} style={{padding:"14px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,cursor:"pointer",display:"flex",alignItems:"center",gap:14}}>
+                <div key={ex.id} onClick={()=>{setSelectedExamId(ex.id);setFileTexts(ex.sourceMaterial?[{name:"From your syllabus",text:ex.sourceMaterial}]:[]);setGenMsg("");setMaterialLink(ex.referenceLink||"");setPasteMode(false);setPasteText("");}} style={{padding:"14px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,cursor:"pointer",display:"flex",alignItems:"center",gap:14}}>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:14,fontWeight:700,color:T.white}}>{ex.title}</div>
                     <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{ex.subject} · {ex.date}{deck?" · deck linked":""}{pes.length>0?" · "+pes.length+" practice exam"+(pes.length!==1?"s":""):""}</div>
@@ -4828,6 +4840,14 @@ function StudlinPrep(){
                 <div style={{fontSize:12.5,color:T.text,fontWeight:500}}>Click to upload — PDF, DOCX, or TXT</div>
                 <div style={{fontSize:10.5,color:T.muted,marginTop:3}}>Upload once, generate flashcards and a practice exam from the same material</div>
               </div>
+              <button type="button" onClick={()=>setPasteMode(m=>!m)} style={{width:"100%",textAlign:"center",padding:"9px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,marginBottom:pasteMode?10:14}}>{pasteMode?"Upload a file instead":"Or paste text instead"}</button>
+              {pasteMode&&(
+                <div style={{marginBottom:14}}>
+                  <textarea value={pasteText} onChange={e=>setPasteText(e.target.value)} placeholder="Paste your notes or material here" rows={6}
+                    style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
+                  <Btn onClick={()=>{setFileTexts(prev=>[...prev,{name:"Pasted text",text:pasteText}]);setPasteText("");setPasteMode(false);}} disabled={!pasteText.trim()} style={{marginTop:10,width:"100%",justifyContent:"center",opacity:pasteText.trim()?1:0.45}}>Add pasted text</Btn>
+                </div>
+              )}
               {matchingNotes.length>0&&(
                 <button type="button" onClick={()=>setNotesPickerOpen(true)} style={{width:"100%",textAlign:"center",padding:"9px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,marginBottom:fileTexts.length>0?10:14}}>Pull from your notes ({matchingNotes.length} for {selectedExam.subject})</button>
               )}
@@ -4841,6 +4861,11 @@ function StudlinPrep(){
                   ))}
                 </div>
               )}
+              <Field label="Reference link (optional)" hint="Saved for your own reference — Studlin doesn't read Quizlet or other external links, so it won't factor into flashcards or practice exams.">
+                <Input type="url" value={materialLink} onChange={e=>setMaterialLink(e.target.value)}
+                  onBlur={()=>{const next=lsGet("events",[]).map(e=>e.id===selectedExam.id?{...e,referenceLink:materialLink}:e);lsSet("events",next);}}
+                  placeholder="https://quizlet.com/..." />
+              </Field>
               <div style={{marginBottom:10}}>
                 <Btn onClick={buildStudyKit} disabled={!materialText.trim()||kitLoading||genLoading!==null}>{kitLoading?"Building…":"Build my study kit"}</Btn>
                 <div style={{fontSize:10.5,color:T.muted,marginTop:6}}>Flashcards, a practice exam, and review sessions counting down to test day — one action.</div>
@@ -7771,6 +7796,22 @@ function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,workin
     localWorking=localWorking.concat([ev]);
     return ev;
   });
+}
+// A generic "Study: <examTitle>" session (from the syllabus scan above)
+// and a kit-titled session ("Review: <deck>"/"Practice Exam: <set>", see
+// StudlinPrep's commitStudyKit/commitSchedulePreview) can both end up on
+// the calendar for the same exam once a kit is built after the scan
+// already scheduled the generic ones -- redundant, and worse, the
+// generic ones say nothing about what to actually do in that session
+// while the kit-titled ones do. Called right before a kit's own sessions
+// are added, so the survivors are always the ones with a real activity
+// name. Same filter shape EventDetailModal's own cancel-sessions action
+// uses, scoped to just the non-kit subset (kit sessions carry deckId/practiceExamId,
+// generic ones never do) and pending-only -- an already-completed
+// generic session is real history, left alone, same rule cancel-all
+// already follows.
+function removeGenericExamPrepSessions(events,examId){
+  return events.filter(e=>!(e.dueEventId===examId&&e.status==="pending"&&e.isExamPrepSession&&!e.deckId&&!e.practiceExamId));
 }
 
 // Pure Brain Dump placement planner — takes the classified items plus
@@ -11315,7 +11356,198 @@ function RescheduleModal({task,events,commit,onClose}){
   );
 }
 
-function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}={}){
+// Shared "full detail + edit" surface for a single event -- one modal
+// instead of Calendar owning a private one Dashboard can't reach. Takes
+// only an eventId, never an events array: every read below is a fresh
+// lsGet("events",[]) lookup, the same pattern TaskTimerModal's outline
+// checklist already proves safe (a stale array prop would be strictly
+// worse here than in RescheduleModal, which only ever reads events once
+// on open -- this stays open while the student edits many fields).
+// commit(nextEventsArray) is the ONLY way anything here ever persists a
+// change (Save, Unpin, Undo, Cancel-sessions, phase edits, outline
+// edits) -- centralizing that in one place means a caller (Dashboard,
+// CalendarTab) decides once what "persist" means for it, instead of six
+// different inline lsSet calls each needing to remember to also sync
+// whatever local state that caller happens to hold.
+function EventDetailModal({eventId,onClose,commit,onToast}){
+  const allEvents=lsGet("events",[]);
+  const ev=allEvents.find(e=>e.id===eventId);
+  const routines=getWeeklyRoutine();
+  const userSubjects=getSubjects();
+  const SUBJ=[{value:"None",label:"None",color:T.muted},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
+  const toSliderVal=(v,def)=>{const n=v!=null?v:def;return n>10?n:n*100;};
+
+  const [title,setTitle]=useState("");
+  const [date,setDate]=useState("");
+  const [time,setTime]=useState("14:30");
+  const [duration,setDuration]=useState(60);
+  const [deadline,setDeadline]=useState("");
+  const [deadlineErr,setDeadlineErr]=useState("");
+  const [priority,setPriority]=useState(500);
+  const [difficulty,setDifficulty]=useState(500);
+  const [moreOpen,setMoreOpen]=useState(false);
+  const [subject,setSubject]=useState("Chemistry");
+  const [kind,setKind]=useState("deadline");
+  const [notes,setNotes]=useState("");
+  const [cancelConfirmOpen,setCancelConfirmOpen]=useState(false);
+
+  useEffect(()=>{
+    if(!ev)return;
+    setTitle(ev.title||"");setDate(ev.date||dayKey());setTime(ev.time||"14:30");
+    setDuration(ev.duration||60);setDeadline(ev.deadline||"");setDeadlineErr("");
+    setPriority(toSliderVal(ev.priority,5));setDifficulty(toSliderVal(ev.difficulty,5));
+    setMoreOpen(!!(ev.priority&&(ev.priority>10?ev.priority!==500:ev.priority!==5)));
+    setSubject(ev.subject||"Chemistry");setKind(ev.kind||"deadline");setNotes(ev.notes||"");
+    setCancelConfirmOpen(false);
+  },[eventId]);
+
+  if(!eventId||!ev)return null;
+
+  const linkedSessions=allEvents.filter(e=>e.dueEventId===ev.id);
+  const chainIdForReschedule=(allEvents.find(e=>e.dueEventId===ev.id&&e.attackChainId&&e.status==="pending")||{}).attackChainId||null;
+
+  const save=()=>{
+    if(!title.trim())return;
+    if(deadline&&date>deadline){setDeadlineErr("Can't schedule past the deadline ("+deadline+").");return;}
+    const timeChanged=time!==ev.time||date!==ev.date;
+    const updated=allEvents.map(e=>{
+      if(e.id!==ev.id)return e;
+      const merged={...e,title:title.trim(),date,time,duration,deadline:deadline||null,priority,difficulty,subject,kind,notes,...(timeChanged?{userPinned:true}:{})};
+      if(timeChanged){const {movedByStudlin,movedFrom,movedAt,placementReason,...rest}=merged;return rest;}
+      return merged;
+    });
+    const prefs=getSchedulePreferences();
+    const next=date?rebalanceDay(date,updated,routines,prefs):updated;
+    commit(next);onClose();
+  };
+  const writePhases=(nextPhases)=>commit(allEvents.map(x=>x.id===ev.id?{...x,phases:nextPhases}:x));
+  const writeOutline=(nextOutline)=>commit(allEvents.map(x=>x.id===ev.id?{...x,outline:nextOutline}:x));
+  const confirmCancelSessions=()=>{
+    const next=allEvents.filter(e=>!(e.dueEventId===ev.id&&e.status==="pending"));
+    commit(next);setCancelConfirmOpen(false);onClose();
+  };
+
+  return (<>
+    <Modal open={true} onClose={onClose} title="Edit task" sub="Update this task's details." width={580}
+      footer={<><Btn variant="subtle" onClick={onClose}>Cancel</Btn><Btn onClick={save} disabled={!title.trim()} style={{opacity:title.trim()?1:0.45}}>Save changes</Btn></>}>
+      <Field label="Title"><Input value={title} onChange={e=>setTitle(e.target.value)} autoFocus /></Field>
+      <Field label="Type"><SelectChip options={["study block",{value:"deadline",label:"To-Do"},"exam","class","reminder","busy block"]} value={kind} onChange={setKind} /></Field>
+      <Field label="Subject"><SelectChip options={SUBJ} value={subject} onChange={setSubject} /></Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Scheduled date"><Input type="date" value={date} onChange={e=>{setDate(e.target.value);setDeadlineErr("");}} /></Field>
+        <Field label={kind==="reminder"?"Reminder time":"Start time"}><TimeInput value={time} onChange={setTime} /></Field>
+      </div>
+      {ev.userPinned&&(
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:T.muted}}>
+          <span>📌 Pinned. Studlin won't move this automatically.</span>
+          <button type="button" onClick={()=>commit(allEvents.map(x=>x.id===ev.id?{...x,userPinned:false}:x))} style={{background:"none",border:"none",color:T.lime,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Unpin</button>
+        </div>
+      )}
+      {ev.movedByStudlin&&(
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:T.muted}}>
+          <span>↻ Studlin moved this from {fmtMovedFrom(ev.movedFrom)}.{fmtMovedReasonSuffix(ev)}</span>
+          <button type="button" onClick={()=>{
+            const result=undoTier0Move(ev.id);
+            commit(result.events);
+            if(result.blocked&&onToast)onToast("Can't undo — something else is already using that time.");
+            onClose();
+          }} style={{background:"none",border:"none",color:T.lime,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Undo</button>
+        </div>
+      )}
+      {ev.placementReason&&(
+        <div style={{display:"flex",alignItems:"center",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:T.muted}}>
+          <span>🕒 {fmtPlacementReason(ev.placementReason,ev.time)}</span>
+        </div>
+      )}
+      {linkedSessions.length>0&&(()=>{
+        const doneCount=linkedSessions.filter(s=>s.status==="done").length;
+        return (
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:T.muted}}>
+            <span>Studlin scheduled {linkedSessions.length} prep session{linkedSessions.length!==1?"s":""} for this{doneCount>0?" ("+doneCount+" of "+linkedSessions.length+" done)":""}.</span>
+            {doneCount<linkedSessions.length&&<button type="button" onClick={()=>setCancelConfirmOpen(true)} style={{background:"none",border:"none",color:T.red,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Cancel sessions</button>}
+          </div>
+        );
+      })()}
+      {ev.phases&&ev.phases.length>0&&(
+        <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+          <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Phases</div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {ev.phases.map((ph,pi)=>(
+              <div key={pi} style={{display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:9,fontWeight:700,color:ph.status==="done"?T.lime:ph.status==="active"?T.amber:T.faint,width:44,flexShrink:0,textTransform:"uppercase"}}>{ph.status}</span>
+                <Input value={ph.name} onChange={e=>writePhases(ev.phases.map((p,ppi)=>ppi===pi?{...p,name:e.target.value}:p))} style={{flex:1,fontSize:12,padding:"5px 8px"}} />
+                {ph.status==="pending"&&(
+                  <button type="button" onClick={()=>writePhases(ev.phases.filter((_,ppi)=>ppi!==pi))} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,lineHeight:1,padding:2,flexShrink:0}}>×</button>
+                )}
+              </div>
+            ))}
+            <button type="button" onClick={()=>writePhases([...ev.phases,{name:"",status:"pending"}])} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add phase</button>
+          </div>
+        </div>
+      )}
+      {ev.outline&&ev.outline.length>0&&(
+        <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+          <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Outline</div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {ev.outline.map((o,oi)=>(
+              <div key={oi} style={{display:"flex",alignItems:"center",gap:6}}>
+                <input type="checkbox" checked={o.done} onChange={()=>writeOutline(ev.outline.map((x,xi)=>xi===oi?{...x,done:!x.done}:x))} style={{accentColor:T.lime,cursor:"pointer"}} />
+                <Input value={o.text} onChange={e=>writeOutline(ev.outline.map((x,xi)=>xi===oi?{...x,text:e.target.value}:x))} style={{flex:1,fontSize:12,padding:"5px 8px",textDecoration:o.done?"line-through":"none"}} />
+                <button type="button" onClick={()=>writeOutline(ev.outline.filter((_,xi)=>xi!==oi))} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,lineHeight:1,padding:2,flexShrink:0}}>×</button>
+              </div>
+            ))}
+            <button type="button" onClick={()=>writeOutline([...ev.outline,{text:"",done:false}])} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add step</button>
+          </div>
+          {chainIdForReschedule&&(
+            <BtnSm variant="subtle" style={{marginTop:8}} onClick={()=>{reoptimizeAttackChain(chainIdForReschedule);commit(lsGet("events",[]));}}>Re-optimize schedule</BtnSm>
+          )}
+        </div>
+      )}
+      {deadlineErr&&<div style={{fontSize:12,color:T.red,marginTop:-8,marginBottom:14}}>{deadlineErr}</div>}
+      {kind!=="reminder"&&(
+        <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={5} value={duration} onChange={setDuration} /></Field>
+      )}
+      {kind!=="exam"&&kind!=="class"&&kind!=="reminder"&&(
+        <>
+          <Field label="Deadline" hint="When this must be done by"><Input type="date" value={deadline} onChange={e=>{setDeadline(e.target.value);setDeadlineErr("");}} /></Field>
+          {moreOpen ? (
+            <>
+              <Field label={`Impact: ${Math.round(priority/10)}%`} hint="How critical this is, independent of its due date — higher-impact tasks get scheduled earlier">
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  <span style={{fontSize:11,color:T.muted,width:28}}>Low</span>
+                  <div style={{flex:1,position:"relative",paddingTop:24}}>
+                    <div style={{position:"absolute",top:0,left:`${priority/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{prioLabel(priority)}</div>
+                    <input type="range" min={0} max={1000} value={priority} onChange={e=>setPriority(+e.target.value)} style={{width:"100%",accentColor:T.lime,height:6,borderRadius:3,cursor:"pointer"}} />
+                  </div>
+                  <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Urgent</span>
+                </div>
+              </Field>
+              <Field label={`Difficulty: ${diffLabel(difficulty)}`} hint="How hard this task is for you — helps Studlin schedule it when your energy matches">
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  <span style={{fontSize:11,color:T.muted,width:28}}>Easy</span>
+                  <div style={{flex:1,position:"relative",paddingTop:24}}>
+                    <div style={{position:"absolute",top:0,left:`${difficulty/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{diffLabel(difficulty)}</div>
+                    <input type="range" min={0} max={1000} value={difficulty} onChange={e=>setDifficulty(+e.target.value)} style={{width:"100%",accentColor:T.lime,height:6,borderRadius:3,cursor:"pointer"}} />
+                  </div>
+                  <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Hard</span>
+                </div>
+              </Field>
+            </>
+          ) : (
+            <button type="button" onClick={()=>setMoreOpen(true)} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:"4px 0",marginBottom:14,textDecoration:"underline"}}>+ More details (impact &amp; difficulty)</button>
+          )}
+        </>
+      )}
+      <Field label="Notes (optional)"><Textarea value={notes} onChange={e=>setNotes(e.target.value)} /></Field>
+    </Modal>
+    <Modal open={cancelConfirmOpen} onClose={()=>setCancelConfirmOpen(false)} title="Cancel prep sessions?" sub="The due date stays on your calendar. Only the scheduled study time Studlin added for it gets removed. Sessions you've already completed stay put." width={420}
+      footer={<><Btn variant="subtle" onClick={()=>setCancelConfirmOpen(false)}>Never mind</Btn><Btn variant="danger" onClick={confirmCancelSessions}>{"Cancel "+linkedSessions.filter(s=>s.status==="pending").length+" session"+(linkedSessions.filter(s=>s.status==="pending").length!==1?"s":"")}</Btn></>}>
+      <div style={{fontSize:13,color:T.text}}>{ev.title}</div>
+    </Modal>
+  </>);
+}
+
+function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,setDetailEventId,registerSetEvents}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.muted},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   const colorOf=(sub)=>{if(!sub||sub==="None"||sub==="")return T.muted;const x=userSubjects.find(s=>s.label===sub);return x?x.color:T.lime;};
@@ -11441,6 +11673,14 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     mk(5,"10:00","Calculus test · Derivatives","Calculus","exam"),
   ];
   const [events,setEvents]=useState(()=>{const ev=lsGet("events",null);return(ev&&Array.isArray(ev))?ev.filter(e=>!e.id.startsWith("seed-")):[];});
+  // Hands setEvents up to App so a commit made through the shared
+  // App-level EventDetailModal (see its own comment) can update this
+  // component's live state too, not just localStorage -- otherwise the
+  // grid would only pick up an edit made that way on next remount.
+  useEffect(()=>{
+    if(registerSetEvents)registerSetEvents(setEvents);
+    return ()=>{if(registerSetEvents)registerSetEvents(null);};
+  },[]);
 
   const now=new Date();
   const [ym,setYm]=useState({y:now.getFullYear(),m:now.getMonth()});
@@ -11643,8 +11883,6 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   const [weekOffset,setWeekOffset]=useState(0);
   // Collapsible right-hand agenda column — shared across Monthly and Weekly.
   const [isAgendaCollapsed,setIsAgendaCollapsed]=useState(false);
-  const [editOpen,setEditOpen]=useState(false);
-  const [editEv,setEditEv]=useState(null);
   // Monthly grid double-click used to just open "add a task" -- the same
   // gesture most calendar apps use to expand into a full day view, and the
   // one thing double-clicking a day couldn't do here was show you
@@ -11655,24 +11893,6 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   // "+ Add task" button in this modal's own footer, so that capability
   // isn't lost, just relocated.
   const [dayDetailKey,setDayDetailKey]=useState(null);
-  // Cancel-all for prep sessions Studlin generated off a due-date fact (an
-  // Attack Block chain or exam study sessions) — every such session carries
-  // dueEventId back to the marker/exam event it came from, so one query
-  // finds the whole set regardless of how it was built. Confirm-gated per
-  // the delete-needs-a-confirm-modal guardrail; the due-date event itself
-  // is untouched, only its generated sessions are removed.
-  const [cancelPrepEv,setCancelPrepEv]=useState(null);
-  const linkedPrepSessions=(ev)=>ev?events.filter(e=>e.dueEventId===ev.id):[];
-  const confirmCancelPrepSessions=()=>{
-    if(!cancelPrepEv)return;
-    // Only pending sessions get removed — a session the student already
-    // completed is real history, not something "cancel the rest" implies
-    // touching.
-    const next=events.filter(e=>!(e.dueEventId===cancelPrepEv.id&&e.status==="pending"));
-    setEvents(next);lsSet("events",next);
-    setCancelPrepEv(null);
-    closeEdit();
-  };
   // Weekly Routine ("Time Shields") — recurring rules, kept in React state so
   // add/edit/delete re-renders immediately, mirrored to localStorage on every
   // change via saveWeeklyRoutine.
@@ -11793,21 +12013,6 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
     deleteRoutineItem(routineEditItem.id);
     closeRoutineEdit();
   };
-  const [editTitle,setEditTitle]=useState("");
-  const [editDate,setEditDate]=useState("");
-  const [editTime,setEditTime]=useState("14:30");
-  const [editDuration,setEditDuration]=useState(60);
-  const [editDeadline,setEditDeadline]=useState("");
-  const [editDeadlineErr,setEditDeadlineErr]=useState("");
-  const [editPriority,setEditPriority]=useState(500);
-  // Difficulty is still preserved on the underlying task if it already had
-  // one (older data, or AI-set), but there's no slider to change it anymore
-  // — same reasoning as the Add Task flow.
-  const [editDifficulty,setEditDifficulty]=useState(500);
-  const [editMoreOpen,setEditMoreOpen]=useState(false);
-  const [editSubject,setEditSubject]=useState("Chemistry");
-  const [editKind,setEditKind]=useState("deadline");
-  const [editNotes,setEditNotes]=useState("");
   const monthNames=["January","February","March","April","May","June","July","August","September","October","November","December"];
   const lead=(new Date(ym.y,ym.m,1).getDay()+6)%7;
   const dim=new Date(ym.y,ym.m+1,0).getDate();
@@ -12246,28 +12451,12 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
   };
   const nav=(d)=>setYm(c=>{const m2=c.m+d;return {y:c.y+Math.floor(m2/12),m:((m2%12)+12)%12};});
   const toSliderVal=(v,def)=>{const n=v!=null?v:def;return n>10?n:n*100;};
-  const openEdit=(ev)=>{setEditEv(ev);setEditTitle(ev.title||"");setEditDate(ev.date||dayKey());setEditTime(ev.time||"14:30");setEditDuration(ev.duration||60);setEditDeadline(ev.deadline||"");setEditDeadlineErr("");setEditPriority(toSliderVal(ev.priority,5));setEditDifficulty(toSliderVal(ev.difficulty,5));setEditMoreOpen(!!(ev.priority&&(ev.priority>10?ev.priority!==500:ev.priority!==5)));setEditSubject(ev.subject||"Chemistry");setEditKind(ev.kind||"deadline");setEditNotes(ev.notes||"");setEditOpen(true);};
-  const closeEdit=()=>{setEditOpen(false);setEditEv(null);};
-  const saveEdit=()=>{
-    if(!editEv||!editTitle.trim())return;
-    // Hard Wall (Tier 2) — the Edit modal must never silently save a date
-    // past the task's own deadline, same rule enforced on every drag path.
-    if(editDeadline&&editDate>editDeadline){setEditDeadlineErr("Can't schedule past the deadline ("+editDeadline+").");return;}
-    // Only pin if the user actually touched date/time in this edit — a
-    // title/notes-only edit shouldn't newly exempt a task from rebalancing
-    // (though if it was already pinned from an earlier action, ...e keeps
-    // that flag as-is either way).
-    const timeChanged=editTime!==editEv.time||editDate!==editEv.date;
-    const updated=events.map(e=>{
-      if(e.id!==editEv.id)return e;
-      const merged={...e,title:editTitle.trim(),date:editDate,time:editTime,duration:editDuration,deadline:editDeadline||null,priority:editPriority,difficulty:editDifficulty,subject:editSubject,kind:editKind,notes:editNotes,...(timeChanged?{userPinned:true}:{})};
-      if(timeChanged){const {movedByStudlin,movedFrom,movedAt,placementReason,...rest}=merged;return rest;}
-      return merged;
-    });
-    const prefs=getSchedulePreferences();
-    const next=editDate?rebalanceDay(editDate,updated,routines,prefs):updated;
-    setEvents(next);lsSet("events",next);closeEdit();
-  };
+  // Routes to the shared App-level EventDetailModal instead of this
+  // component's own (now-unused) local edit modal -- same function name/
+  // signature kept so every existing caller (WeeklyPlanner/DayPlanner/
+  // AgendaColumn all already receive `openEdit` as a prop, plus the
+  // day-detail modal's own Edit button below) needs zero changes.
+  const openEdit=(ev)=>setDetailEventId(ev.id);
 
   // ── Tier 3: Global Emergency "Studlin Reschedule" ──────────────────────────
   // Deterministic execution engine shared by both the AI-classified path and
@@ -12897,126 +13086,9 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}=
           </Modal>
         ), document.body);
       })()}
-      <Modal open={editOpen} onClose={closeEdit} title="Edit task" sub="Update this task's details." width={580}
-        footer={<><Btn variant="subtle" onClick={closeEdit}>Cancel</Btn><Btn onClick={saveEdit} disabled={!editTitle.trim()} style={{opacity:editTitle.trim()?1:0.45}}>Save changes</Btn></>}>
-        <Field label="Title"><Input value={editTitle} onChange={e=>setEditTitle(e.target.value)} autoFocus /></Field>
-        <Field label="Type"><SelectChip options={["study block",{value:"deadline",label:"To-Do"},"exam","class","reminder","busy block"]} value={editKind} onChange={setEditKind} /></Field>
-        <Field label="Subject"><SelectChip options={SUBJ} value={editSubject} onChange={setEditSubject} /></Field>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <Field label="Scheduled date"><Input type="date" value={editDate} onChange={e=>{setEditDate(e.target.value);setEditDeadlineErr("");}} /></Field>
-          <Field label={editKind==="reminder"?"Reminder time":"Start time"}><TimeInput value={editTime} onChange={setEditTime} /></Field>
-        </div>
-        {editEv&&editEv.userPinned&&(
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:T.muted}}>
-            <span>📌 Pinned. Studlin won't move this automatically.</span>
-            <button type="button" onClick={()=>{
-              const next=events.map(x=>x.id===editEv.id?{...x,userPinned:false}:x);
-              setEvents(next);lsSet("events",next);
-              setEditEv(prev=>prev?{...prev,userPinned:false}:prev);
-            }} style={{background:"none",border:"none",color:T.lime,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Unpin</button>
-          </div>
-        )}
-        {editEv&&editEv.movedByStudlin&&(
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:T.muted}}>
-            <span>↻ Studlin moved this from {fmtMovedFrom(editEv.movedFrom)}.{fmtMovedReasonSuffix(editEv)}</span>
-            <button type="button" onClick={()=>{
-              const result=undoTier0Move(editEv.id);
-              setEvents(result.events);
-              if(result.blocked){
-                setPlacementToast("Can't undo — something else is already using that time.");
-                setTimeout(()=>setPlacementToast(""),3200);
-              }
-              closeEdit();
-            }} style={{background:"none",border:"none",color:T.lime,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Undo</button>
-          </div>
-        )}
-        {editEv&&editEv.placementReason&&(
-          <div style={{display:"flex",alignItems:"center",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:T.muted}}>
-            <span>🕒 {fmtPlacementReason(editEv.placementReason,editEv.time)}</span>
-          </div>
-        )}
-        {editEv&&linkedPrepSessions(editEv).length>0&&(()=>{
-          const sessions=linkedPrepSessions(editEv);
-          const doneCount=sessions.filter(s=>s.status==="done").length;
-          return (
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:T.muted}}>
-              <span>Studlin scheduled {sessions.length} prep session{sessions.length!==1?"s":""} for this{doneCount>0?" ("+doneCount+" of "+sessions.length+" done)":""}.</span>
-              {doneCount<sessions.length&&<button type="button" onClick={()=>setCancelPrepEv(editEv)} style={{background:"none",border:"none",color:T.red,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Cancel sessions</button>}
-            </div>
-          );
-        })()}
-        {editEv&&editEv.phases&&editEv.phases.length>0&&(()=>{
-          // Direct-write pattern, same as the Unpin/Undo buttons above --
-          // phase edits take effect immediately, not gated behind "Save
-          // changes" (which only governs the title/date/duration form
-          // fields below). Only a not-yet-started ("pending") phase can be
-          // removed: the active phase already has a real scheduled chain,
-          // and a done one already happened -- removing either would orphan
-          // real calendar events instead of just editing a future plan.
-          const writePhases=(nextPhases)=>{
-            const next=events.map(x=>x.id===editEv.id?{...x,phases:nextPhases}:x);
-            setEvents(next);lsSet("events",next);
-            setEditEv(prev=>prev?{...prev,phases:nextPhases}:prev);
-          };
-          return (
-            <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:14}}>
-              <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Phases</div>
-              <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                {editEv.phases.map((ph,pi)=>(
-                  <div key={pi} style={{display:"flex",alignItems:"center",gap:6}}>
-                    <span style={{fontSize:9,fontWeight:700,color:ph.status==="done"?T.lime:ph.status==="active"?T.amber:T.faint,width:44,flexShrink:0,textTransform:"uppercase"}}>{ph.status}</span>
-                    <Input value={ph.name} onChange={e=>writePhases(editEv.phases.map((p,ppi)=>ppi===pi?{...p,name:e.target.value}:p))} style={{flex:1,fontSize:12,padding:"5px 8px"}} />
-                    {ph.status==="pending"&&(
-                      <button type="button" onClick={()=>writePhases(editEv.phases.filter((_,ppi)=>ppi!==pi))} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,lineHeight:1,padding:2,flexShrink:0}}>×</button>
-                    )}
-                  </div>
-                ))}
-                <button type="button" onClick={()=>writePhases([...editEv.phases,{name:"",status:"pending"}])} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add phase</button>
-              </div>
-            </div>
-          );
-        })()}
-        {editDeadlineErr&&<div style={{fontSize:12,color:T.red,marginTop:-8,marginBottom:14}}>{editDeadlineErr}</div>}
-        {editKind!=="reminder"&&(
-          <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={5} value={editDuration} onChange={setEditDuration} /></Field>
-        )}
-        {editKind!=="exam"&&editKind!=="class"&&editKind!=="reminder"&&(
-          <>
-            <Field label="Deadline" hint="When this must be done by"><Input type="date" value={editDeadline} onChange={e=>{setEditDeadline(e.target.value);setEditDeadlineErr("");}} /></Field>
-            {editMoreOpen ? (
-              <>
-                <Field label={`Impact: ${Math.round(editPriority/10)}%`} hint="How critical this is, independent of its due date — higher-impact tasks get scheduled earlier">
-                  <div style={{display:"flex",alignItems:"center",gap:12}}>
-                    <span style={{fontSize:11,color:T.muted,width:28}}>Low</span>
-                    <div style={{flex:1,position:"relative",paddingTop:24}}>
-                      <div style={{position:"absolute",top:0,left:`${editPriority/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{prioLabel(editPriority)}</div>
-                      <input type="range" min={0} max={1000} value={editPriority} onChange={e=>setEditPriority(+e.target.value)} style={{width:"100%",accentColor:T.lime,height:6,borderRadius:3,cursor:"pointer"}} />
-                    </div>
-                    <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Urgent</span>
-                  </div>
-                </Field>
-                <Field label={`Difficulty: ${diffLabel(editDifficulty)}`} hint="How hard this task is for you — helps Studlin schedule it when your energy matches">
-                  <div style={{display:"flex",alignItems:"center",gap:12}}>
-                    <span style={{fontSize:11,color:T.muted,width:28}}>Easy</span>
-                    <div style={{flex:1,position:"relative",paddingTop:24}}>
-                      <div style={{position:"absolute",top:0,left:`${editDifficulty/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{diffLabel(editDifficulty)}</div>
-                      <input type="range" min={0} max={1000} value={editDifficulty} onChange={e=>setEditDifficulty(+e.target.value)} style={{width:"100%",accentColor:T.lime,height:6,borderRadius:3,cursor:"pointer"}} />
-                    </div>
-                    <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Hard</span>
-                  </div>
-                </Field>
-              </>
-            ) : (
-              <button type="button" onClick={()=>setEditMoreOpen(true)} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:"4px 0",marginBottom:14,textDecoration:"underline"}}>+ More details (impact &amp; difficulty)</button>
-            )}
-          </>
-        )}
-        <Field label="Notes (optional)"><Textarea value={editNotes} onChange={e=>setEditNotes(e.target.value)} /></Field>
-      </Modal>
-      <Modal open={!!cancelPrepEv} onClose={()=>setCancelPrepEv(null)} title="Cancel prep sessions?" sub="The due date stays on your calendar. Only the scheduled study time Studlin added for it gets removed. Sessions you've already completed stay put." width={420}
-        footer={<><Btn variant="subtle" onClick={()=>setCancelPrepEv(null)}>Never mind</Btn><Btn variant="danger" onClick={confirmCancelPrepSessions}>{"Cancel "+linkedPrepSessions(cancelPrepEv).filter(s=>s.status==="pending").length+" session"+(linkedPrepSessions(cancelPrepEv).filter(s=>s.status==="pending").length!==1?"s":"")}</Btn></>}>
-        <div style={{fontSize:13,color:T.text}}>{cancelPrepEv&&cancelPrepEv.title}</div>
-      </Modal>
+      {/* Event detail/edit is now handled entirely by App's shared
+          EventDetailModal (see openEdit above) -- this component used to
+          own a private copy of the same modal here. */}
       <Modal open={pauseOpen} onClose={()=>{setPauseOpen(false);setPausePreview(null);setPauseError("");}}
         title={pausePreview?pausePreview.label:"Studlin Reschedule"}
         sub={pausePreview?(
@@ -15385,7 +15457,7 @@ function StreakDetailModal({open,onClose,streak}){
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleTask, dashToast, setDashToast}) {
+function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleTask, dashToast, setDashToast, setDetailEventId}) {
   const realStats=sessionStats();
   const realStreak=Math.max(1,getStreak());
   const lvl=levelInfo();
@@ -15488,7 +15560,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
     const isExpanded=expandedMasterId===a.id;
     return(
       <div key={a.id}>
-        <div onClick={()=>setExpandedMasterId(isExpanded?null:a.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:isExpanded?T.card2:"transparent"}}>
+        <div onClick={()=>setExpandedMasterId(isExpanded?null:a.id)} onDoubleClick={()=>setDetailEventId(a.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:isExpanded?T.card2:"transparent"}}>
           <div style={{minWidth:0}}>
             <div style={{fontSize:13,fontWeight:600,color:T.text}}>{a.title}</div>
             <div style={{fontSize:11,color:T.muted,marginTop:1}}>{a.subject}{a.date?" · "+a.date:""}</div>
@@ -15517,7 +15589,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
     const doneCount=p.phases.filter(ph=>ph.status==="done").length;
     return(
       <div key={p.id}>
-        <div onClick={()=>setExpandedMasterId(isExpanded?null:p.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:isExpanded?T.card2:"transparent"}}>
+        <div onClick={()=>setExpandedMasterId(isExpanded?null:p.id)} onDoubleClick={()=>setDetailEventId(p.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:isExpanded?T.card2:"transparent"}}>
           <div style={{minWidth:0}}>
             <div style={{fontSize:13,fontWeight:600,color:T.text}}>{p.title}</div>
             <div style={{fontSize:11,color:T.muted,marginTop:1}}>{p.subject}{p.date?" · due "+p.date:""}</div>
@@ -15552,15 +15624,34 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
     // Studlin Prep exists to act on.
     const needsKit=readiness&&readiness.state==="no-data"&&readiness.daysUntil<=14;
     const stateColor=readiness?.state==="behind"||readiness?.state==="at-risk"?T.red:readiness?.state==="on-track"?T.lime:T.muted;
+    const isExpanded=expandedMasterId===ex.id;
+    // Same dueEventId query every other consumer of this relationship
+    // already uses (computeExamReadiness, linkedPrepSessions) -- every
+    // session Studlin scheduled for this exam, kit-titled or generic.
+    const sessions=allEvents.filter(e=>e.dueEventId===ex.id);
+    const pending=sessions.filter(s=>s.status==="pending");
     return(
-      <div key={ex.id} onClick={()=>jumpToPrepExam(ex.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer"}}>
-        <div style={{minWidth:0}}>
-          <div style={{fontSize:13,fontWeight:600,color:T.text}}>{ex.title}</div>
-          <div style={{fontSize:11,color:T.muted,marginTop:1}}>{ex.subject} · {ex.date} · {deck?deck.count+" cards":"no deck"}{pes.length>0?" · "+pes.length+" practice exam"+(pes.length!==1?"s":""):""}</div>
+      <div key={ex.id}>
+        <div onClick={()=>setExpandedMasterId(isExpanded?null:ex.id)} onDoubleClick={()=>setDetailEventId(ex.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:isExpanded?T.card2:"transparent"}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:600,color:T.text}}>{ex.title}</div>
+            <div style={{fontSize:11,color:T.muted,marginTop:1}}>{ex.subject} · {ex.date} · {deck?deck.count+" cards":"no deck"}{pes.length>0?" · "+pes.length+" practice exam"+(pes.length!==1?"s":""):""}</div>
+          </div>
+          <span onClick={(e)=>{e.stopPropagation();jumpToPrepExam(ex.id);}} style={{fontSize:10,fontWeight:700,color:needsKit?T.lime:stateColor,background:(needsKit?T.lime:stateColor)+"14",border:`1px solid ${needsKit?T.lime:stateColor}44`,borderRadius:99,padding:"3px 9px",flexShrink:0,cursor:"pointer"}}>
+            {needsKit?"Build study kit →":readiness?readiness.state.toUpperCase().replace("-"," "):"Open in Prep →"}
+          </span>
         </div>
-        {needsKit
-          ?<span style={{fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"14",border:`1px solid ${T.lime}44`,borderRadius:99,padding:"3px 9px",flexShrink:0}}>Build study kit →</span>
-          :readiness&&<span style={{fontSize:10,fontWeight:700,color:stateColor,background:stateColor+"14",border:`1px solid ${stateColor}44`,borderRadius:99,padding:"3px 9px",flexShrink:0}}>{readiness.state.toUpperCase().replace("-"," ")}</span>}
+        {isExpanded&&(
+          <div style={{padding:"10px 12px 4px 20px",display:"flex",flexDirection:"column",gap:8}}>
+            {readiness&&<div style={{fontSize:11.5,color:T.muted}}>{readiness.sentence}</div>}
+            {pending.length===0
+              ?<div style={{fontSize:11.5,color:T.muted}}>No study sessions scheduled yet.</div>
+              :pending.map(s=>(
+                <div key={s.id} style={{fontSize:11.5,color:T.text}}>{s.date} {fmtClock(s.time)} — {s.title}</div>
+              ))}
+            <BtnSm variant="subtle" onClick={(e)=>{e.stopPropagation();jumpToPrepExam(ex.id);}}>Open in Studlin Prep →</BtnSm>
+          </div>
+        )}
       </div>
     );
   };
@@ -15568,7 +15659,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
     const isExpanded=expandedMasterId===item.id;
     return(
       <div key={item.id}>
-        <div onClick={()=>setExpandedMasterId(isExpanded?null:item.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:isExpanded?T.card2:"transparent"}}>
+        <div onClick={()=>setExpandedMasterId(isExpanded?null:item.id)} onDoubleClick={()=>setDetailEventId(item.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:isExpanded?T.card2:"transparent"}}>
           <div style={{minWidth:0}}>
             <div style={{fontSize:13,fontWeight:600,color:T.text}}>{item.title}</div>
             <div style={{fontSize:11,color:T.muted,marginTop:1}}>{showSubject?item.subject+" · ":""}{item.kind==="exam"?"Exam":"Assignment"} · date TBD</div>
@@ -17479,6 +17570,20 @@ function App() {
   // sibling of [data-page] fixes that.
   const [rescheduleTask,setRescheduleTask]=useState(null);
   const [dashToast,setDashToast]=useState("");
+  // EventDetailModal -- same true-sibling-of-[data-page] treatment as
+  // rescheduleTask above, and for the same reason: it's how Dashboard
+  // reaches the same full detail/edit surface Calendar's grid already
+  // has, since Dashboard holds no events state of its own to feed a
+  // Calendar-local modal. CalendarTab uses this same modal/state too
+  // (see its own openEdit call sites) -- but CalendarTab, unlike
+  // Dashboard, DOES hold its own live `events` React state, so a commit
+  // made through this App-level modal needs to reach it too or the grid
+  // would only catch up on the next full remount. calendarSetEventsRef
+  // is how CalendarTab hands its setEvents up without lifting `events`
+  // itself to App (which nothing else needs) -- registered/cleared by
+  // CalendarTab's own mount/unmount effect.
+  const [detailEventId,setDetailEventId]=useState(null);
+  const calendarSetEventsRef=useRef(null);
   const [notifOpen,setNotifOpen]=useState(false);
   const [seriousMode,setSeriousMode]=useState(()=>lsGet("settings",{}).seriousMode||false);
   // Fresh accounts skip this forced first-run prompt permanently — they get
@@ -18123,9 +18228,9 @@ function App() {
             container instead of the real viewport. Clearing it once done
             keeps the entrance animation but stops that side effect. */}
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
-          {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} />:
+          {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} />:
-           active==="calendar"?<CalendarTab onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} />:
+           active==="calendar"?<CalendarTab onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} />:
            active==="notes"?<Notes setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="lectures"?<Lectures setActive={setActive} setPricingOpen={setPricingOpen} />:
@@ -18145,6 +18250,15 @@ function App() {
       )}
       {dashToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:1001,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {dashToast}</div>
+      )}
+      {/* EVENT DETAIL MODAL — true sibling of [data-page], see detailEventId's
+          state declaration above for why. The one shared detail/edit surface
+          for Dashboard's "Your Classes" rows; Calendar's grid still has its
+          own local edit modal for now (see EventDetailModal's own comment). */}
+      {detailEventId&&(
+        <EventDetailModal eventId={detailEventId} onClose={()=>setDetailEventId(null)}
+          commit={(next)=>{lsSet("events",next);if(calendarSetEventsRef.current)calendarSetEventsRef.current(next);}}
+          onToast={(msg)=>{setDashToast(msg);setTimeout(()=>setDashToast(""),2800);}} />
       )}
       <StreakDetailModal open={navStreakOpen} onClose={()=>setNavStreakOpen(false)} streak={Math.max(1,getStreak())} />
       <LevelRoadmapModal open={navLevelOpen} onClose={()=>setNavLevelOpen(false)} currentMinutes={levelInfo().minutes} />
