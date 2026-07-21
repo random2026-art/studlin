@@ -809,6 +809,30 @@ const DEMO_CLASSES_BY_SCHOOL={[DEMO_SCHOOL_COLLEGE]:DEMO_CLASSES_COLLEGE,[DEMO_S
 // any bulk-update pass.
 const getWeeklyRoutine=()=>lsGet("weeklyRoutine",[]);
 const saveWeeklyRoutine=(r)=>lsSet("weeklyRoutine",r);
+// One-time backfill for classes added via ClassSetupWizard before its two
+// commit paths (commitReviewedClass/commitHsSchedule) started tagging the
+// recurring class meeting-time routine item with the class's own subject
+// -- without it, colorOf(routine.subject) always fell through to plain
+// gray (an empty subject reads the same as no subject at all), no matter
+// what real color the class itself was assigned. Purely additive: only
+// ever fills a currently-empty subject by matching the routine's own
+// title against an existing subject's label, never overwrites anything,
+// and only ever runs once.
+function backfillClassRoutineSubjects(){
+  if(lsGet("classRoutineSubjectsBackfilled",false))return;
+  const subjects=getSubjects();
+  const routines=getWeeklyRoutine();
+  let changed=false;
+  const next=routines.map(r=>{
+    if(r.kind!=="class"||r.subject)return r;
+    const match=subjects.find(s=>s.label===r.title);
+    if(!match)return r;
+    changed=true;
+    return {...r,subject:match.label};
+  });
+  if(changed)saveWeeklyRoutine(next);
+  lsSet("classRoutineSubjectsBackfilled",true);
+}
 // One-off exceptions to an otherwise-recurring routine rule ("skip today's
 // class") — keyed by date so a lookup during expansion is O(1), value is
 // the list of routine ids not to expand for that one date. The rule itself
@@ -3529,7 +3553,6 @@ function detectConflicts(task,occupiedSlots,startMins){
 function advancedSchedulePlanner(baseEvents){
   const prefs=getSchedulePreferences();
   const tk=dayKey();
-  const done=lsGet("planDone",{});
 
   // Get all events for today — checklist to-dos are excluded, they have no
   // duration and never belong in the scheduled day plan.
@@ -3571,7 +3594,7 @@ function advancedSchedulePlanner(baseEvents){
 
   // Place hard events
   hardEvents.forEach(e=>{
-    scheduled.push({...e,done:!!done[e.id],scheduled:true});
+    scheduled.push({...e,done:e.status==="done",scheduled:true});
   });
 
   // Place flexible tasks in available windows
@@ -3593,7 +3616,7 @@ function advancedSchedulePlanner(baseEvents){
         for(let timeSlot=wStart;timeSlot+dur<=w.end&&!placed;timeSlot+=15){
           if(!detectConflicts(task,occupiedSlots,timeSlot)){
             occupiedSlots.push({start:timeSlot,end:timeSlot+dur,task:task});
-            scheduled.push({...task,time:minutesToTime(timeSlot),done:!!done[task.id],scheduled:true});
+            scheduled.push({...task,time:minutesToTime(timeSlot),done:task.status==="done",scheduled:true});
             placed=true;
           }
         }
@@ -3609,7 +3632,7 @@ function advancedSchedulePlanner(baseEvents){
           scheduled.push({
             ...task,
             time:minutesToTime(timeSlot),
-            done:!!done[task.id],
+            done:task.status==="done",
             scheduled:true,
           });
           placed=true;
@@ -3621,7 +3644,7 @@ function advancedSchedulePlanner(baseEvents){
     if(!placed){
       scheduled.push({
         ...task,
-        done:!!done[task.id],
+        done:task.status==="done",
         scheduled:false,
         reason:"No available window within preferred hours",
       });
@@ -3735,7 +3758,31 @@ function rearrangeUserTasks(tasks, userPrefs){
 }
 
 
-function togglePlanDone(id){const done=lsGet("planDone",{});done[id]=!done[id];lsSet("planDone",done);return done;}
+// Standalone versions of CalendarTab's own markDone/uncrossDone (which stay
+// as thin wrappers around these, so its own callers are unaffected) --
+// pulled out so Dashboard's Today's Plan checkbox can complete a task the
+// exact same way Calendar's own click-to-toggle does, both writing the
+// real ev.status everyone else already reads (Calendar's grid, Tier 0, XP/
+// streak tracking). This replaces the old togglePlanDone/"planDone" shadow
+// map, which only ever toggled a side localStorage key Dashboard alone
+// read -- checking something off in Today's Plan never touched the real
+// event, so Calendar (and everything else keyed off ev.status) still saw
+// it as pending. planDone is fully retired, not just unused: its own two
+// read sites (here and Dashboard's checkbox) are both gone now.
+function markEventDone(id){
+  const events=lsGet("events",[]);
+  const target=events.find(ev=>ev.id===id);
+  if(target&&target.time)logCompletionOutcome("done",target.time,difficultyTierOf(target));
+  const next=events.map(ev=>{if(ev.id!==id)return ev;const {movedByStudlin,movedFrom,movedAt,...rest}=ev;return {...rest,status:"done",completedAt:Date.now()};});
+  lsSet("events",next);
+  return next;
+}
+function uncrossEventDone(id){
+  const events=lsGet("events",[]);
+  const next=events.map(ev=>ev.id===id?{...ev,status:"pending"}:ev);
+  lsSet("events",next);
+  return next;
+}
 function profileStats(){const s=lsGet("sessions",[]);const totalMin=s.reduce((a,x)=>a+(x.m||0),0);const st=sessionStats();return {totalMin,focusSessions:s.length,weekMin:st.weekMin,avg:st.avg};}
 // No more manual Time Zone picker in Settings — always the browser's actual
 // current zone, computed fresh rather than trusted from a possibly-stale
@@ -10085,7 +10132,13 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   const heightPx = computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, WK_PX_HR);
                   const isDone = ev.status === "done";
                   const over = daysOverdue(ev);
-                  const color = over > 0 ? T.red : colorOf(ev.subject);
+                  // Overdue used to fully replace the subject color with flat
+                  // red here -- technically correct, but it meant the one
+                  // moment a block most needs to say "which class is this"
+                  // (it's late, the student is triaging) is exactly when it
+                  // stopped saying that. Subject color now always wins; a
+                  // small red dot (below) carries the overdue signal instead.
+                  const color = colorOf(ev.subject);
                   const isStudy = ev.kind === "study block";
                   const isExam = ev.kind === "exam";
                   const isRoutine = !!ev.isRoutine;
@@ -10111,7 +10164,8 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                       onMouseEnter={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(ev.routineId); }}
                       onMouseLeave={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(null); }}
                       title={isRoutine?"Repeats weekly":"Click to select (Backspace to delete) · Double-click to edit · Drag to reschedule"}
-                      style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:5,padding:"2px 5px",cursor:isRoutine?(editRoutineMode?"pointer":"default"):"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isDone?0.4:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{}),...(isSelected?{outline:`2px solid ${T.lime}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.lime}22`}:{})}}>
+                      style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:5,padding:"2px 5px",cursor:isRoutine?(editRoutineMode?"pointer":"default"):"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isDone?0.6:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{}),...(isSelected?{outline:`2px solid ${T.lime}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.lime}22`}:{})}}>
+                      {over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:`0 0 0 1.5px ${isExam?T.ink:"#fff"}`,zIndex:1}} />}
                       <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                       {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:1}}>{fmtTime(ev.time)}{dur ? " · "+dur+"m" : ""}</div>}
                       {ev.userPinned && !isRoutine && (
@@ -10418,7 +10472,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
     const subj={id:"subj-"+Date.now()+"-"+Math.round(Math.random()*1000),label:name,color:review.color};
     saveSubjects([...getSubjects(),subj]);
     if(review.meetingTimes.length>0){
-      const routineItems=review.meetingTimes.filter(mt=>mt.days.length>0).map(mt=>({id:"rt-"+Date.now()+"-"+Math.round(Math.random()*1000),title:name,kind:"class",days:mt.days,startTime:mt.startTime,duration:mt.duration}));
+      const routineItems=review.meetingTimes.filter(mt=>mt.days.length>0).map(mt=>({id:"rt-"+Date.now()+"-"+Math.round(Math.random()*1000),title:name,kind:"class",subject:name,days:mt.days,startTime:mt.startTime,duration:mt.duration}));
       saveWeeklyRoutine([...getWeeklyRoutine(),...routineItems]);
     }
     const included=review.deadlines.filter(d=>d.include&&d.title.trim());
@@ -10437,7 +10491,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
     saveSubjects([...getSubjects(),...newSubjects]);
     const routineItems=valid.map((p,i)=>{
       const dur=Math.max(15,timeToMinutes(p.endTime)-timeToMinutes(p.startTime));
-      return {id:"rt-"+Date.now()+"-"+i,title:p.subjectName.trim(),kind:"class",days:p.days,startTime:p.startTime,duration:dur};
+      return {id:"rt-"+Date.now()+"-"+i,title:p.subjectName.trim(),kind:"class",subject:p.subjectName.trim(),days:p.days,startTime:p.startTime,duration:dur};
     });
     saveWeeklyRoutine([...getWeeklyRoutine(),...routineItems]);
     setClassList(c=>[...c,...newSubjects]);
@@ -10884,7 +10938,9 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
               const heightPx=computeEventBlockHeightPx(dur,nextInCol?nextInCol.start-start:null,pxPerHr);
               const isDone=ev.status==="done";
               const over=daysOverdue(ev);
-              const color=over>0?T.red:colorOf(ev.subject);
+              // Subject color always wins now -- see the matching comment in
+              // WeeklyPlanner. Overdue is a small red dot, not a full recolor.
+              const color=colorOf(ev.subject);
               const isStudy=ev.kind==="study block";
               const isExam=ev.kind==="exam";
               const kindStyle=isStudy
@@ -10898,7 +10954,8 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
                 <div key={ev.id} onDoubleClick={()=>openEdit(ev)}
                   onClick={()=>{isDone?uncrossDone(ev.id):markDone(ev.id);}}
                   title="Click to toggle done, double-click to edit"
-                  style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:6,padding:"4px 8px",cursor:"pointer",overflow:"hidden",zIndex:3,opacity:isDone?0.4:1,boxSizing:"border-box",...kindStyle}}>
+                  style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:6,padding:"4px 8px",cursor:"pointer",overflow:"hidden",zIndex:3,opacity:isDone?0.6:1,boxSizing:"border-box",...kindStyle}}>
+                  {over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:`0 0 0 1.5px ${isExam?T.ink:"#fff"}`,zIndex:1}} />}
                   <div style={{fontSize:11.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:isDone?"line-through":"none"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                   {heightPx>34&&<div style={{fontSize:9.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:2}}>{fmtTime(ev.time)}{dur?" · "+dur+"m":""}</div>}
                 </div>
@@ -11020,7 +11077,10 @@ function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, c
           :visibleDayEvents.map(ev=>{
             const over=daysOverdue(ev);
             const isDone=ev.status==="done";
-            const color=over>0?T.red:colorOf(ev.subject);
+            // Subject color always wins -- this row already has its own
+            // explicit "Nd overdue" red text label below, so overdue never
+            // needed to also flatten the row's own subject-color identity.
+            const color=colorOf(ev.subject);
             const isStudy=ev.kind==="study block";
             const isExam=ev.kind==="exam";
             const isRoutine=!!ev.isRoutine;
@@ -11098,10 +11158,10 @@ function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, c
           const dl=daysUntilDeadline(ev);
           const over=daysOverdue(ev);
           return(
-          <Card key={ev.id} onClick={()=>{setSelDay(ev.date);const p=ev.date.split("-");setYm({y:+p[0],m:+p[1]-1});}} style={{borderLeft:"2px solid "+(over>0?T.red:colorOf(ev.subject)),marginBottom:8,cursor:"pointer",padding:14}}>
+          <Card key={ev.id} onClick={()=>{setSelDay(ev.date);const p=ev.date.split("-");setYm({y:+p[0],m:+p[1]-1});}} style={{borderLeft:"2px solid "+colorOf(ev.subject),marginBottom:8,cursor:"pointer",padding:14}}>
             <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
               <div style={{fontSize:11,color:T.muted}}>{relDay(ev.date)}</div>
-              <Badge color={over>0?T.red:colorOf(ev.subject)}>{ev.subject}</Badge>
+              <Badge color={colorOf(ev.subject)}>{ev.subject}</Badge>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:6}}>
               {ev.priority&&<span style={{width:6,height:6,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority||3]}} />}
@@ -11918,7 +11978,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
   // Weekly Routine ("Time Shields") — recurring rules, kept in React state so
   // add/edit/delete re-renders immediately, mirrored to localStorage on every
   // change via saveWeeklyRoutine.
-  const [routines,setRoutinesState]=useState(()=>getWeeklyRoutine());
+  const [routines,setRoutinesState]=useState(()=>{backfillClassRoutineSubjects();return getWeeklyRoutine();});
   // Bounded conflict reconciliation: whenever routines change, relocate any
   // already-scheduled *pending*, non-fixed task in the next 14 days that now
   // overlaps a routine occurrence, using the same conflict/slot logic aiArrange
@@ -12473,19 +12533,16 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
     });
     setEvents(next);lsSet("events",next);
   };
-  const markDone=(id)=>{
-    const target=events.find(ev=>ev.id===id);
-    if(target&&target.time)logCompletionOutcome("done",target.time,difficultyTierOf(target));
-    const next=events.map(ev=>{if(ev.id!==id)return ev;const {movedByStudlin,movedFrom,movedAt,...rest}=ev;return {...rest,status:"done",completedAt:Date.now()};});
-    setEvents(next);lsSet("events",next);
-  };
+  // Thin wrappers around the standalone markEventDone/uncrossEventDone
+  // (module scope, near advancedSchedulePlanner) -- shared with Dashboard's
+  // Today's Plan checkbox so both write the same real ev.status. Still
+  // sync setEvents here since CalendarTab (unlike Dashboard) holds events
+  // as live React state.
+  const markDone=(id)=>{setEvents(markEventDone(id));};
   // Deliberately does NOT clear timeSpent/completedAt -- that history is
   // what stops a timer-completed task from being farmed for XP a second
   // time on re-completion (see the onComplete double-count guard).
-  const uncrossDone=(id)=>{
-    const next=events.map(ev=>ev.id===id?{...ev,status:"pending"}:ev);
-    setEvents(next);lsSet("events",next);
-  };
+  const uncrossDone=(id)=>{setEvents(uncrossEventDone(id));};
   const nav=(d)=>setYm(c=>{const m2=c.m+d;return {y:c.y+Math.floor(m2/12),m:((m2%12)+12)%12};});
   const toSliderVal=(v,def)=>{const n=v!=null?v:def;return n>10?n:n*100;};
   // Routes to the shared App-level EventDetailModal instead of this
@@ -12693,11 +12750,12 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
                   <div style={{display:"flex",flexDirection:"column",gap:2,marginTop:3,minWidth:0}}>
                     {evs.slice(0,2).map((ev,j)=>{
                       const over=daysOverdue(ev);
-                      const tagColor=over>0?T.red:colorOf(ev.subject);
+                      const tagColor=colorOf(ev.subject);
                       const isExam=ev.kind==="exam";
                       const isRoutine=!!ev.isRoutine;
                       const dimmedByRoutineMode=editRoutineMode&&!isRoutine;
                       return <div key={j} style={{fontSize:9,fontWeight:600,color:tagColor,background:tagColor+(isExam?"22":"16"),border:isRoutine&&editRoutineMode?`1px solid ${T.lime}`:isExam?`1px solid ${tagColor}`:"none",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%",display:"flex",alignItems:"center",gap:3,opacity:dimmedByRoutineMode?0.3:1}}>
+                        {over>0&&<span title={over+"d overdue"} style={{width:5,height:5,borderRadius:"50%",background:T.red,flexShrink:0}} />}
                         {ev.priority&&ev.priority>=4&&<span style={{width:5,height:5,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority],flexShrink:0}} />}
                         {ev.userPinned&&<span style={{flexShrink:0,fontSize:7}} title="Pinned, won't be auto-rescheduled">📌</span>}
                         {ev.movedByStudlin&&<span style={{flexShrink:0,fontSize:7}} title={"Studlin moved this from "+fmtMovedFrom(ev.movedFrom)+"."+fmtMovedReasonSuffix(ev)}>↻</span>}
@@ -13082,7 +13140,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
                 {detailEvs.map(ev => {
                   const isDone = ev.status === "done";
                   const over = daysOverdue(ev);
-                  const color = over > 0 ? T.red : colorOf(ev.subject);
+                  const color = colorOf(ev.subject);
                   const isExam = ev.kind === "exam";
                   const canBegin = !isDone && isTimerEligible(ev);
                   const canReslot = !isDone && !ev.checklist && ev.time && ev.duration && !TIER0_FIXED_KINDS.has(ev.kind);
@@ -13102,6 +13160,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
                           {ev.subject && ev.time ? " · " : ""}
                           {ev.time ? fmtTime(ev.time) : ""}
                           {ev.duration ? " · " + ev.duration + "m" : ""}
+                          {over>0&&<span style={{color:T.red,fontWeight:600}}> · {over}d overdue</span>}
                         </div>
                       </div>
                       <div style={{display:"flex",gap:4,flexShrink:0}}>
@@ -15895,7 +15954,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
             :plan.map((t)=>{
               const c=scOf(t.subject);
               return(
-                <div key={t.id} onClick={()=>{togglePlanDone(t.id);forcePlan(x=>x+1);}} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer",background:T.card2}}>
+                <div key={t.id} onClick={()=>{if(t.done)uncrossEventDone(t.id);else markEventDone(t.id);forcePlan(x=>x+1);}} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer",background:T.card2}}>
                   <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${t.done?T.text:T.border}`,background:t.done?T.text:"transparent",flex:"none",display:"grid",placeItems:"center"}}>
                     {t.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
                   </div>
