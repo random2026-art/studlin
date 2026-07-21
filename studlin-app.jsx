@@ -638,30 +638,40 @@ const getSubjects=()=>lsGet("user-subjects",DEFAULT_SUBJECTS);
 const saveSubjects=(s)=>lsSet("user-subjects",s);
 
 // ─── SCHOOL DIRECTORY (mock, for the searchable school picker) ──────────────
-// Flat mock list of selectable school names. Exactly two entries
-// (DEMO_SCHOOL_COLLEGE, DEMO_SCHOOL_HS — see the institutional demo section)
-// are wired to real mock class data; every other entry here is just a
-// selectable name with no further behavior.
+// Mock list of selectable schools, each tagged with its type so SchoolSelect
+// can filter to just high schools or just colleges once the student has
+// already told us which one they are -- typing "Univ" while set to
+// "highschool" no longer surfaces "University of Michigan". Exactly two
+// entries (DEMO_SCHOOL_COLLEGE, DEMO_SCHOOL_HS — see the institutional demo
+// section) are wired to real mock class data; every other entry here is just
+// a selectable name with no further behavior.
 const SCHOOL_DIRECTORY=[
-  "Harvard University","Lincoln High School","Stanford University","New York University",
-  "UC Berkeley","UCLA","MIT","Lehigh University","University of Michigan",
-  "Ohio State University","Georgia Tech","Boston University",
-  "Roosevelt High School","Jefferson High School","Central High School",
-  "Riverside High School","Franklin High School","University of Texas at Austin",
-  "Penn State University","Arizona State University","Northwestern University",
-  "Washington High School","University of Florida","Miami Dade College",
+  {name:"Harvard University",type:"college"},{name:"Lincoln High School",type:"highschool"},
+  {name:"Stanford University",type:"college"},{name:"New York University",type:"college"},
+  {name:"UC Berkeley",type:"college"},{name:"UCLA",type:"college"},
+  {name:"MIT",type:"college"},{name:"Lehigh University",type:"college"},
+  {name:"University of Michigan",type:"college"},{name:"Ohio State University",type:"college"},
+  {name:"Georgia Tech",type:"college"},{name:"Boston University",type:"college"},
+  {name:"Roosevelt High School",type:"highschool"},{name:"Jefferson High School",type:"highschool"},
+  {name:"Central High School",type:"highschool"},{name:"Riverside High School",type:"highschool"},
+  {name:"Franklin High School",type:"highschool"},{name:"University of Texas at Austin",type:"college"},
+  {name:"Penn State University",type:"college"},{name:"Arizona State University",type:"college"},
+  {name:"Northwestern University",type:"college"},{name:"Washington High School",type:"highschool"},
+  {name:"University of Florida",type:"college"},{name:"Miami Dade College",type:"college"},
 ];
 // Searchable school picker — type-to-filter + click-to-select, same shape as
 // the friend-search pattern used in Studlin Network (text input + filtered
 // list). Typing always calls onChange immediately, so a school that isn't in
 // the mock directory is never blocked — the "fallback" is structural, not a
 // separate confirm step, which matters since most real students' schools
-// won't be in this small demo list.
-const SchoolSelect=({value,onChange,placeholder,theme})=>{
+// won't be in this small demo list. statusFilter ("highschool"/"college"),
+// when passed, restricts matches to that type; omit it to search everything.
+const SchoolSelect=({value,onChange,placeholder,theme,statusFilter})=>{
   const [q,setQ]=useState(value||"");
   const [open,setOpen]=useState(false);
   useEffect(()=>{setQ(value||"");},[value]);
-  const matches=(q.trim()?SCHOOL_DIRECTORY.filter(s=>s.toLowerCase().includes(q.toLowerCase())):[]).slice(0,6);
+  const pool=statusFilter?SCHOOL_DIRECTORY.filter(s=>s.type===statusFilter):SCHOOL_DIRECTORY;
+  const matches=(q.trim()?pool.filter(s=>s.name.toLowerCase().includes(q.toLowerCase())).map(s=>s.name):[]).slice(0,6);
   const th=theme||{bg:T.card2,border:T.border,text:T.text,muted:T.muted};
   const pick=(name)=>{setQ(name);onChange(name);setOpen(false);};
   return (
@@ -2000,6 +2010,82 @@ async function extractSyllabusDeadlinesFromImage(base64Data,mediaType){
     return{items:[],error:null};
   }catch(e){return{items:[],error:"Couldn't read that image. Try again."};}
 }
+// ─── CLASS SETUP WIZARD extraction ───────────────────────────────────────────
+// Standalone siblings of the two extractors above, built for ClassSetupWizard
+// specifically -- same deadline/exam JSON contract, plus a subject name and
+// recurring meeting time(s) so one scan can seed the class itself, not just
+// its due dates. Deliberately separate from Notes' own extractSyllabusDeadlines
+// (a per-note, subject-already-chosen tool) rather than shared, so that
+// already-shipped feature is never at risk from changes made here.
+const CLASS_SYLLABUS_JSON_CONTRACT=
+  "Respond with ONLY valid JSON, no markdown fences, no commentary, in this exact shape: "+
+  "{\"subject\":{\"name\":\"Biology 101\"},"+
+  "\"meetingTimes\":[{\"days\":[0,2,4],\"startTime\":\"10:00\",\"duration\":50}],"+
+  "\"deadlines\":[{\"title\":\"Problem Set 3\",\"date\":\"2026-09-22\",\"kind\":\"deadline\",\"confidence\":\"high\",\"estimatedHours\":2}]}. "+
+  "\"subject.name\" is the class name as it would appear on a schedule (e.g. \"Biology 101\", \"AP English IV\") -- if genuinely not stated anywhere, use your best guess from context, never leave it blank. "+
+  "\"meetingTimes\" is when the class actually meets each week -- \"days\" uses 0=Monday..6=Sunday, \"startTime\" is 24-hour \"HH:MM\", \"duration\" is minutes. Include one entry per distinct day/time pattern (e.g. a class meeting Mon/Wed/Fri at one time and Tue/Thu at another is two entries). Omit \"meetingTimes\" entirely (empty array) if no recurring meeting time is stated anywhere in the source. "+
+  "\"deadlines\" follows the same rules as before: \"title\" short, \"date\" YYYY-MM-DD (never omit even if uncertain), \"kind\" \"deadline\" or \"exam\", \"examWeight\" (\"quiz\" or \"major\", exams only), \"confidence\" (\"high\"/\"low\"), \"detail\" (optional, only when something concrete is stated), \"estimatedHours\" (deadlines only, best guess). "+
+  "If you find no deadlines at all, return an empty \"deadlines\" array -- never omit the key.";
+async function extractClassSyllabusText(text){
+  if(!text||!text.trim())return{subject:null,meetingTimes:[],deadlines:[],error:null};
+  try{
+    const prompt="This is a class syllabus or schedule (it may include other content too, ignore anything irrelevant). "+
+      "Today's date is "+dayKey()+". If a deadline date has no year, infer the most likely upcoming year given today's date. "+
+      "Extract the class's name, its recurring weekly meeting time(s), and every deadline/due date/exam date mentioned. "+
+      CLASS_SYLLABUS_JSON_CONTRACT+"\n\n"+text.slice(0,30000);
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+    const data=await res.json();
+    if(!res.ok)return{subject:null,meetingTimes:[],deadlines:[],error:data.error||"Couldn't read that file. Try again."};
+    const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
+    const parsed=JSON.parse(raw);
+    return{
+      subject:(parsed&&parsed.subject&&parsed.subject.name)?parsed.subject:null,
+      meetingTimes:(parsed&&Array.isArray(parsed.meetingTimes))?parsed.meetingTimes:[],
+      deadlines:(parsed&&Array.isArray(parsed.deadlines))?parsed.deadlines:[],
+      error:null,
+    };
+  }catch(e){return{subject:null,meetingTimes:[],deadlines:[],error:"Couldn't read that file. Try again."};}
+}
+async function extractClassSyllabusImage(base64Data,mediaType){
+  try{
+    const prompt="This image is a screenshot or photo of a class syllabus, schedule, or Canvas weekly view. "+
+      "Today's date is "+dayKey()+". If a deadline date has no year, infer the most likely upcoming year given today's date. "+
+      "Extract the class's name, its recurring weekly meeting time(s), and every deadline/due date/exam date visible. "+
+      "Never invent a URL or link -- a screenshot's visible text has no way to reveal what an actual link points to. "+
+      CLASS_SYLLABUS_JSON_CONTRACT;
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt,image:{mediaType,data:base64Data}}],model:"standard"})});
+    const data=await res.json();
+    if(!res.ok)return{subject:null,meetingTimes:[],deadlines:[],error:data.error||"Couldn't read that image. Try again."};
+    const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
+    const parsed=JSON.parse(raw);
+    return{
+      subject:(parsed&&parsed.subject&&parsed.subject.name)?parsed.subject:null,
+      meetingTimes:(parsed&&Array.isArray(parsed.meetingTimes))?parsed.meetingTimes:[],
+      deadlines:(parsed&&Array.isArray(parsed.deadlines))?parsed.deadlines:[],
+      error:null,
+    };
+  }catch(e){return{subject:null,meetingTimes:[],deadlines:[],error:"Couldn't read that image. Try again."};}
+}
+// High school schedule grid/table -- a single photo of the whole week's
+// periods, no deadlines involved (a schedule grid has no due dates). Returns
+// one row per period so ClassSetupWizard can bulk-create every class at once.
+async function extractHsScheduleFromImage(base64Data,mediaType){
+  try{
+    const prompt="This image is a photo or screenshot of a high school class schedule -- a table or list of periods, each with a class name and the time it meets. "+
+      "Extract every period you can see. For each return: \"subjectName\" (the class name as shown, e.g. \"English IV\", \"AP Biology\"), "+
+      "\"startTime\" and \"endTime\" (24-hour \"HH:MM\"), "+
+      "\"days\" (which weekdays this period happens, 0=Monday..6=Sunday -- if the schedule doesn't say otherwise, assume every school day it's shown applies to, most commonly Monday-Friday so [0,1,2,3,4]). "+
+      "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
+      "{\"periods\":[{\"subjectName\":\"English IV\",\"startTime\":\"08:00\",\"endTime\":\"08:45\",\"days\":[0,1,2,3,4]}]}. "+
+      "If you can't make out any periods at all, respond with {\"periods\":[]}.";
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt,image:{mediaType,data:base64Data}}],model:"standard"})});
+    const data=await res.json();
+    if(!res.ok)return{periods:[],error:data.error||"Couldn't read that image. Try again."};
+    const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
+    const parsed=JSON.parse(raw);
+    return{periods:(parsed&&Array.isArray(parsed.periods))?parsed.periods:[],error:null};
+  }catch(e){return{periods:[],error:"Couldn't read that image. Try again."};}
+}
 // Starts a new chain: places the first probe session via findReliableSlotFor.
 // No separate "parent" record — this session IS the task, linked to its
 // eventual follow-ups only by attackChainId, same idiom as split-session
@@ -2407,41 +2493,6 @@ async function upsertProfile(extra={}){
   // and email is populated server-side via the Admin SDK (api/me.js).
   try{await fsdb().collection('users').doc(u.uid).set({updatedAt:new Date().toISOString()},{merge:true});}catch(e){}
 }
-// Top-N public profiles ordered by real XP, straight from Firestore — no
-// mock/seed data. Docs that haven't been through upsertProfile() since
-// total_minutes_focused started being synced (or ever) simply lack the
-// field and are naturally excluded by orderBy, rather than sorting in as a
-// false zero.
-async function fetchTopProfiles(n=8){
-  try{
-    const snap=await fsdb().collection('profiles').orderBy('total_minutes_focused','desc').limit(n).get();
-    return snap.docs.map(d=>d.data());
-  }catch(e){return [];}
-}
-const LB_GRADIENTS=["linear-gradient(135deg,#FFD7B5,#FFC9D2)","linear-gradient(135deg,#BFE3FF,#E2D0FF)","linear-gradient(135deg,#C4F0D8,#FFE99A)","linear-gradient(135deg,#E2D0FF,#FFD7B5)","linear-gradient(135deg,#FFE99A,#C4F0D8)","linear-gradient(135deg,#BFE3FF,#FFD7B5)","linear-gradient(135deg,#C4F0D8,#E2D0FF)"];
-// Merges the signed-in user's own live-accurate minutes/streak/name into a
-// fetched top-profiles list (replacing their own possibly-stale doc if it's
-// in there), re-sorts by real total_minutes_focused, and assigns rank + a
-// rotating avatar gradient. Always keeps "you" visible in the returned slice
-// even if your real rank falls outside it, same as the leaderboard has
-// always guaranteed.
-function mergeLeaderboard(profiles, realName, realMinutes, realStreak, myUid, showCount){
-  const others=(profiles||[]).filter(p=>p.uid&&p.uid!==myUid);
-  const you={uid:myUid,name:realName||"You",minutes:Math.max(0,realMinutes||0),streak:realStreak||0,you:true};
-  const sorted=[...others,you].sort((a,b)=>(b.minutes||b.total_minutes_focused||0)-(a.minutes||a.total_minutes_focused||0)).map((u,i)=>({
-    r:i+1,
-    n:u.name||"Student",
-    minutes:u.minutes||u.total_minutes_focused||0,
-    streak:u.streak||0,
-    tier:getProfTitle(u.minutes||u.total_minutes_focused||0),
-    you:!!u.you,
-    grad:LB_GRADIENTS[i%LB_GRADIENTS.length],
-  }));
-  if(!showCount||showCount>=sorted.length)return sorted;
-  const top=sorted.slice(0,showCount);
-  if(top.some(u=>u.you))return top;
-  return [...sorted.slice(0,showCount-1),sorted.find(u=>u.you)];
-}
 const dayKey=(d)=>{const x=d||new Date();return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");};
 function daysOverdue(ev){if(!ev.deadline)return 0;if(ev.date<=ev.deadline)return 0;const d1=new Date(ev.date),d2=new Date(ev.deadline);return Math.ceil((d1-d2)/86400000);}
 function daysUntilDeadline(ev){if(!ev.deadline)return null;const d1=new Date(ev.deadline),d2=new Date(dayKey());return Math.ceil((d1-d2)/86400000);}
@@ -2475,6 +2526,31 @@ function readabilityOf(html){
 }
 function touchStreak(){const days=lsGet("days",[]);const t=dayKey();if(!days.includes(t)){days.push(t);lsSet("days",days);upsertProfile();}}
 function getStreak(){const days=new Set(lsGet("days",[]));let n=0;const d=new Date();while(days.has(dayKey(d))){n++;d.setDate(d.getDate()-1);}return n;}
+// Shared 91-day heatmap data — used by both Profile/nav's StreakDetailModal
+// and (previously) Dashboard's inline streak card, so the two never disagree
+// about what counts as an active day.
+function computeStreakHeatmap(){
+  const loginDaysSet=new Set(lsGet("days",[]));
+  const minsByDay={};
+  lsGet("sessions",[]).forEach(s=>{minsByDay[s.d]=(minsByDay[s.d]||0)+(s.m||0);});
+  const cells=[];
+  const now=new Date();
+  for(let i=90;i>=0;i--){
+    const d=new Date(now);d.setDate(now.getDate()-i);
+    const k=dayKey(d);
+    const mins=minsByDay[k]||0;
+    let lvl=0;
+    if(loginDaysSet.has(k)||mins>0)lvl=mins>=120?4:mins>=60?3:mins>=30?2:1;
+    cells.push(lvl);
+  }
+  let longest=0,cur=0;
+  cells.forEach(v=>{if(v>0){cur++;if(cur>longest)longest=cur;}else{cur=0;}});
+  return {cells,longest};
+}
+function streakCellColor(lvl){
+  if(!lvl)return T.mode==="light"?"rgba(8,12,40,0.06)":"rgba(255,255,255,0.06)";
+  return [null,T.lime+"40",T.lime+"80",T.limeDk,T.forest][lvl];
+}
 function logSession(mins,mode){const s=lsGet("sessions",[]);s.push({d:dayKey(),m:mins,t:Date.now(),mode:mode||"Focus"});lsSet("sessions",s);upsertProfile();}
 // Lightweight in-progress-session record, so a Lock-In session survives
 // the tab losing focus, the machine sleeping, or the timer widget getting
@@ -8498,16 +8574,6 @@ function computeCoopFromParticipants(participants,myUid){
 // ─── CALENDAR ─────────────────────────────────────────────────────────────────
 // ─── TASK TIMER MODAL ────────────────────────────────────────────────────────
 function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignmentExtend,onAttackBlockExtend,onAttackBlockFinish,onLockInError,resumeElapsedSecs=0}){
-  // Snapshot of live leaderboard profiles, fetched once on mount — used for
-  // the before/after rank comparison in the completion screen. A snapshot
-  // is fine here (rather than re-fetching mid-session): competitors' XP
-  // won't meaningfully change in the couple minutes a focus session runs.
-  const [lbProfiles,setLbProfiles]=useState([]);
-  useEffect(()=>{
-    let cancelled=false;
-    fetchTopProfiles(8).then(rows=>{if(!cancelled)setLbProfiles(rows);});
-    return ()=>{cancelled=true;};
-  },[]);
   const totalMins=task.duration||25;
   const myUid=firebase.auth().currentUser?.uid||null;
   // Live studySessions subscription — scoped to this modal's own mount
@@ -8582,7 +8648,6 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
   const [alarmActive,setAlarmActive]=useState(false);
   const [completion,setCompletion]=useState(null);
   const [barFilled,setBarFilled]=useState(false);
-  const [rankRisen,setRankRisen]=useState(false);
   // Collapsible floating widget — tucks itself away during a focus block so
   // it doesn't block the dashboard/calendar, and auto-expands the moment a
   // break starts so the student notices they can step away.
@@ -8723,27 +8788,19 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
     // No-Lie guard: a session can never claim more focus minutes than its
     // own block's stated duration, regardless of what the caller computed.
     const safeMins=Math.min(mins,totalMins);
-    const name=getUserName();
-    const streak=getStreak();
-    const myUid=firebase.auth().currentUser?.uid||null;
     const minutesBefore=getTotalMinutesFocused();
-    const rowsBefore=mergeLeaderboard(lbProfiles,name,minutesBefore,streak,myUid,5);
-    const rankBefore=(rowsBefore.find(u=>u.you)||{}).r||rowsBefore.length;
     // onComplete (App's handler) is what actually logs the session
     // (logSession -> sessions array), so minutesAfter only reflects the gain
     // once this has run — levels are strictly real logged minutes now, no
     // co-op or other synthetic bonus inflates the number.
     if(onComplete)onComplete(safeMins);
     const minutesAfter=getTotalMinutesFocused();
-    const rowsAfter=mergeLeaderboard(lbProfiles,name,minutesAfter,streak,myUid,5);
-    const rankAfter=(rowsAfter.find(u=>u.you)||{}).r||rowsAfter.length;
     setCompletion({
       mins:safeMins,
       gain:Math.max(0,minutesAfter-minutesBefore),
       minutesAfter,
       tierBefore:getProfTitle(minutesBefore),
       tierAfter:getProfTitle(minutesAfter),
-      rankBefore,rankAfter,rows:rowsAfter,
     });
     setPhase("done");
     setRunning(false);
@@ -8830,14 +8887,12 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
     return()=>window.removeEventListener("beforeunload",onBeforeUnload);
   },[phase]);
 
-  // ── Reward reveal sequence: XP bar fills first, then (if the student
-  // passed classmates) their leaderboard position climbs into view ─────────
+  // ── Reward reveal sequence: XP bar fills in on reveal ──────────────────
   useEffect(()=>{
     if(phase!=="done"||!completion)return;
-    setBarFilled(false);setRankRisen(false);
+    setBarFilled(false);
     const t1=setTimeout(()=>setBarFilled(true),80);
-    const t2=setTimeout(()=>setRankRisen(true),950);
-    return()=>{clearTimeout(t1);clearTimeout(t2);};
+    return()=>{clearTimeout(t1);};
   },[phase,completion]);
 
   const startLockIn=()=>{
@@ -9182,15 +9237,12 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
     );
   }
 
-  // ── XP + LEADERBOARD REWARD SCREEN ────────────────────────────────────────
+  // ── XP REWARD SCREEN ───────────────────────────────────────────────────
   if(phase==="done"){
     if(!completion)return null;
-    const {mins,gain,minutesAfter,tierBefore,tierAfter,rankBefore,rankAfter,rows}=completion;
+    const {mins,gain,minutesAfter,tierBefore,tierAfter}=completion;
     const tieredUp=tierBefore!==tierAfter;
-    const rankRose=rankAfter<rankBefore;
     const prog=tierProgressFor(minutesAfter);
-    const ROW_H=42;
-    const deltaRows=Math.max(0,rankBefore-rankAfter);
     return(
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(10px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
         <div style={{width:"100%",maxWidth:440,background:T.card,borderRadius:22,border:`1px solid ${T.border}`,padding:"36px 32px",textAlign:"center",position:"relative",overflow:"hidden",animation:"studlinPop 0.25s cubic-bezier(.2,.85,.3,1)"}}>
@@ -9200,7 +9252,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
             <h2 style={{fontSize:23,fontWeight:700,color:T.white,margin:"0 0 4px"}}>{mins} min focused</h2>
             <div style={{fontSize:13,color:T.muted,marginBottom:22}}>{task.title}</div>
 
-            <div style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(coop.length+1,3)},1fr)`,gap:10,marginBottom:tieredUp||rankRose?16:22}}>
+            <div style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(coop.length+1,3)},1fr)`,gap:10,marginBottom:tieredUp?16:22}}>
               <div style={{background:T.card2,borderRadius:14,padding:"18px 20px",textAlign:"left"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:9}}>
                   <span style={{fontSize:12,color:T.muted,fontWeight:600}}>{coop.length?"You":tierAfter}</span>
@@ -9227,23 +9279,8 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
             {coop.length>2&&<div style={{fontSize:11.5,color:T.muted,marginTop:-6,marginBottom:16}}>+{coop.length-2} more locked in together</div>}
 
             {tieredUp&&(
-              <div style={{fontSize:13,fontWeight:700,color:T.lime,marginBottom:rankRose?14:22,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+              <div style={{fontSize:13,fontWeight:700,color:T.lime,marginBottom:22,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
                 {Icon.star}Ranked up to {tierAfter}
-              </div>
-            )}
-
-            {rankRose&&(
-              <div style={{background:T.card2,borderRadius:14,padding:"14px 16px",marginBottom:22,textAlign:"left",overflow:"hidden"}}>
-                <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:10}}>Leaderboard</div>
-                <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                  {rows.map((u)=>(
-                    <div key={u.n} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 9px",borderRadius:9,background:u.you?T.lime+"14":"transparent",border:`1px solid ${u.you?T.lime+"33":"transparent"}`,transform:u.you&&!rankRisen?`translateY(${deltaRows*ROW_H}px)`:"translateY(0)",transition:"transform 0.9s cubic-bezier(.2,.85,.25,1.05)"}}>
-                      <span style={{width:18,fontFamily:T.mono,fontSize:11,fontWeight:700,color:u.you?T.lime:T.faint}}>{u.r}</span>
-                      <span style={{flex:1,fontSize:12,fontWeight:u.you?700:500,color:u.you?T.white:T.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{u.n}</span>
-                      <span style={{fontFamily:T.mono,fontSize:11,color:u.you?T.lime:T.faint}}>{u.minutes.toLocaleString()}m</span>
-                    </div>
-                  ))}
-                </div>
               </div>
             )}
 
@@ -9813,22 +9850,31 @@ function WizardHsBuilder({schoolStart,setSchoolStart,schoolEnd,setSchoolEnd,item
   );
 }
 
-function WizardCollegeBuilder({items,addItem,removeItem}){
-  const [title,setTitle]=useState("");
+// defaultTitle is optional -- when a caller already has the name elsewhere
+// on screen (ClassSetupWizard's own "Class name" field above this builder),
+// passing it here seeds (and keeps synced with) this builder's own title
+// state and hides the now-redundant Title field, instead of forcing the
+// student to retype the same name a second time before "+ Add" will work.
+// Omit it (existing callers, e.g. RoutineWizardModal) and behavior is
+// unchanged -- an empty, always-visible Title field, exactly as before.
+function WizardCollegeBuilder({items,addItem,removeItem,defaultTitle}){
+  const [title,setTitle]=useState(defaultTitle||"");
   const [kind,setKind]=useState("class");
   const [days,setDays]=useState([]);
   const [time,setTime]=useState("10:00");
   const [duration,setDuration]=useState(50);
+  useEffect(()=>{ if(defaultTitle!==undefined)setTitle(defaultTitle); },[defaultTitle]);
   const toggleDay=(i)=>setDays(days.includes(i)?days.filter(d=>d!==i):[...days,i]);
   const add=()=>{
     if(!title.trim()||days.length===0)return;
     addItem({title:title.trim(),kind,days:[...days],startTime:time,duration});
-    setTitle("");setDays([]);
+    if(defaultTitle===undefined)setTitle("");
+    setDays([]);
   };
   return (
     <div>
       <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:10}}>Add a class or recurring activity</div>
-      <Field label="Title"><Input value={title} onChange={e=>setTitle(e.target.value)} style={{flexGrow:1}} /></Field>
+      {defaultTitle===undefined&&<Field label="Title"><Input value={title} onChange={e=>setTitle(e.target.value)} style={{flexGrow:1}} /></Field>}
       <div style={{display:"flex",gap:8,marginBottom:10}}>
         <button type="button" onClick={()=>setKind("class")} style={wizardChipStyle(kind==="class")}>Class</button>
         <button type="button" onClick={()=>setKind("busy")} style={wizardChipStyle(kind==="busy")}>Activity</button>
@@ -9857,6 +9903,392 @@ function WizardCollegeBuilder({items,addItem,removeItem}){
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+const classSetupChoiceStyle={width:"100%",textAlign:"left",padding:"14px 16px",borderRadius:12,border:`1.5px solid ${T.border}`,background:T.card2,color:T.text,cursor:"pointer",fontFamily:T.font};
+// ─── CLASS SETUP WIZARD ──────────────────────────────────────────────────────
+// Replaces the old subjOnboardOpen (subjects+color, no times) and
+// RoutineWizardModal's automatic first-run pop-open (RoutineWizardModal
+// itself is untouched, still reachable later via "Manage Routine"). One
+// guided flow instead of three disconnected ones: pick status, add classes
+// one at a time (scan a syllabus or enter manually, review before it commits
+// anything), then whatever else repeats weekly (work, sports, clubs), then a
+// preferred focus window. Every write goes through the same plain
+// getSubjects/saveSubjects, getWeeklyRoutine/saveWeeklyRoutine, and
+// commitSyllabusEvents helpers everywhere else in the app already uses —
+// the caller (CalendarTab) re-syncs its own React state from localStorage
+// once onFinish fires, same as subjOnboardOpen's old "Save my classes" did.
+function ClassSetupWizard({open,initialStatus,onFinish,onSkip}){
+  const [step,setStep]=useState("status"); // status | classes | activities | window
+  const [status,setStatus]=useState(initialStatus||"");
+  const [classList,setClassList]=useState([]); // {id,label,color} added so far this session
+  const [addMode,setAddMode]=useState(null); // null (list) | choose | scan | review | hsSchedule | hsReview
+  const [scanning,setScanning]=useState(false);
+  const [scanError,setScanError]=useState("");
+  const [review,setReview]=useState(null); // {subjectName,color,meetingTimes:[],deadlines:[]}
+  const [hsReview,setHsReview]=useState(null); // [{id,subjectName,color,startTime,endTime,days}]
+  const [justAdded,setJustAdded]=useState("");
+  const fileInputRef=useRef(null);
+  const hsFileInputRef=useRef(null);
+  const [activities,setActivities]=useState([]);
+  const [workStart,setWorkStart]=useState("10:00");
+  const [workEnd,setWorkEnd]=useState("18:00");
+  const [peakBuckets,setPeakBuckets]=useState([]);
+  const togglePeakBucket=(id)=>setPeakBuckets(prev=>prev.includes(id)?prev.filter(b=>b!==id):[...prev,id]);
+
+  useEffect(()=>{
+    if(!open)return;
+    setStatus(initialStatus||"");
+    setStep(initialStatus?"classes":"status");
+    setClassList([]);
+    setAddMode(null);
+    setScanError("");
+    setReview(null);
+    setHsReview(null);
+    setActivities([]);
+    const prefs=getSchedulePreferences();
+    setWorkStart(prefs.workStartTime||"10:00");
+    setWorkEnd(prefs.workEndTime||"18:00");
+    setPeakBuckets(prefs.peakHourBuckets||[]);
+  },[open]);
+
+  if(!open)return null;
+
+  const nextColor=()=>SUBJECT_COLORS[classList.length%SUBJECT_COLORS.length];
+
+  const startManual=()=>{
+    setReview({subjectName:"",color:nextColor(),meetingTimes:[],deadlines:[]});
+    setAddMode("review");
+  };
+
+  const buildReviewFromExtraction=(result)=>{
+    setReview({
+      subjectName:(result.subject&&result.subject.name)||"",
+      color:nextColor(),
+      meetingTimes:(result.meetingTimes||[]).map((mt,i)=>({id:"mt-"+Date.now()+"-"+i,days:Array.isArray(mt.days)?mt.days:[],startTime:mt.startTime||"09:00",duration:mt.duration||50})),
+      deadlines:(result.deadlines||[]).map((d,i)=>({id:"cd-"+i,title:d.title||"Untitled",date:d.date||dayKey(),kind:d.kind==="exam"?"exam":"deadline",include:true,attackBlock:d.kind!=="exam",proposeSessions:d.kind==="exam",sessionCount:defaultSessionCountFor(d.examWeight),examWeight:d.examWeight,confidence:d.confidence,detail:d.detail,estimatedHours:d.estimatedHours,difficulty:500})),
+    });
+    setAddMode("review");
+  };
+
+  const IMAGE_EXT_MEDIA_TYPES={png:"image/png",jpg:"image/jpeg",jpeg:"image/jpeg",webp:"image/webp",gif:"image/gif"};
+  const handleScanFile=async(e)=>{
+    const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
+    setScanning(true);setScanError("");
+    try{
+      const ext=file.name.split(".").pop().toLowerCase();
+      if(IMAGE_EXT_MEDIA_TYPES[ext]){
+        const dataUrl=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsDataURL(file);});
+        const base64=(dataUrl.split(",")[1])||"";
+        const result=await extractClassSyllabusImage(base64,IMAGE_EXT_MEDIA_TYPES[ext]);
+        if(result.error){setScanError(result.error);return;}
+        buildReviewFromExtraction(result);
+        return;
+      }
+      let text="";
+      if(ext==="pdf"){
+        const pdfjsLib=await window._pdfjs;const buf=await file.arrayBuffer();const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+        for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();text+=tc.items.map(it=>it.str).join(" ")+"\n\n";}
+      }else if(ext==="docx"){
+        if(!window.mammoth)throw new Error("Document reader still loading, try again in a moment.");
+        const buf=await file.arrayBuffer();
+        const mres=await window.mammoth.extractRawText({arrayBuffer:buf});
+        text=mres.value;
+      }else if(ext==="doc"){
+        setScanError("Studlin can only read .docx, not the older .doc format. Try re-saving it as .docx or PDF.");
+        setScanning(false);
+        return;
+      }else{
+        text=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsText(file);});
+      }
+      const result=await extractClassSyllabusText(text);
+      if(result.error){setScanError(result.error);return;}
+      buildReviewFromExtraction(result);
+    }catch(err){setScanError("Couldn't read that file: "+err.message);}
+    finally{setScanning(false);}
+  };
+
+  const handleHsScheduleFile=async(e)=>{
+    const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
+    const ext=file.name.split(".").pop().toLowerCase();
+    if(!IMAGE_EXT_MEDIA_TYPES[ext]){setScanError("Upload a photo or screenshot of your schedule (JPG, PNG, etc).");return;}
+    setScanning(true);setScanError("");
+    try{
+      const dataUrl=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsDataURL(file);});
+      const base64=(dataUrl.split(",")[1])||"";
+      const result=await extractHsScheduleFromImage(base64,IMAGE_EXT_MEDIA_TYPES[ext]);
+      if(result.error){setScanError(result.error);return;}
+      if(result.periods.length===0){setScanError("Couldn't make out any periods in that image. Try a clearer photo, or add classes manually.");return;}
+      setHsReview(result.periods.map((p,i)=>({id:"hs-"+i,subjectName:p.subjectName||("Period "+(i+1)),color:SUBJECT_COLORS[i%SUBJECT_COLORS.length],startTime:p.startTime||"08:00",endTime:p.endTime||"08:45",days:Array.isArray(p.days)&&p.days.length>0?p.days:[0,1,2,3,4]})));
+      setAddMode("hsReview");
+    }catch(err){setScanError("Couldn't read that image: "+err.message);}
+    finally{setScanning(false);}
+  };
+
+  const commitReviewedClass=()=>{
+    if(!review||!review.subjectName.trim())return;
+    const name=review.subjectName.trim();
+    const subj={id:"subj-"+Date.now()+"-"+Math.round(Math.random()*1000),label:name,color:review.color};
+    saveSubjects([...getSubjects(),subj]);
+    if(review.meetingTimes.length>0){
+      const routineItems=review.meetingTimes.filter(mt=>mt.days.length>0).map(mt=>({id:"rt-"+Date.now()+"-"+Math.round(Math.random()*1000),title:name,kind:"class",days:mt.days,startTime:mt.startTime,duration:mt.duration}));
+      saveWeeklyRoutine([...getWeeklyRoutine(),...routineItems]);
+    }
+    const included=review.deadlines.filter(d=>d.include&&d.title.trim());
+    if(included.length>0)commitSyllabusEvents("wiz-"+subj.id,name,included);
+    setClassList(c=>[...c,subj]);
+    setJustAdded(name);
+    setTimeout(()=>setJustAdded(""),3000);
+    setReview(null);
+    setAddMode(null);
+  };
+
+  const commitHsSchedule=()=>{
+    if(!hsReview||hsReview.length===0)return;
+    const valid=hsReview.filter(p=>p.subjectName.trim());
+    const newSubjects=valid.map(p=>({id:"subj-"+Date.now()+"-"+Math.round(Math.random()*1000),label:p.subjectName.trim(),color:p.color}));
+    saveSubjects([...getSubjects(),...newSubjects]);
+    const routineItems=valid.map((p,i)=>{
+      const dur=Math.max(15,timeToMinutes(p.endTime)-timeToMinutes(p.startTime));
+      return {id:"rt-"+Date.now()+"-"+i,title:p.subjectName.trim(),kind:"class",days:p.days,startTime:p.startTime,duration:dur};
+    });
+    saveWeeklyRoutine([...getWeeklyRoutine(),...routineItems]);
+    setClassList(c=>[...c,...newSubjects]);
+    setJustAdded(valid.length+" classes");
+    setTimeout(()=>setJustAdded(""),3000);
+    setHsReview(null);
+    setAddMode(null);
+  };
+
+  const removeAddedClass=(subj)=>{
+    saveSubjects(getSubjects().filter(s=>s.id!==subj.id));
+    saveWeeklyRoutine(getWeeklyRoutine().filter(r=>!(r.kind==="class"&&r.title===subj.label)));
+    lsSet("events",lsGet("events",[]).filter(e=>!(e.subject===subj.label&&e.id.startsWith("wiz-"))));
+    setClassList(c=>c.filter(x=>x.id!==subj.id));
+  };
+
+  const windowInvalid=timeToMinutes(workEnd)<=timeToMinutes(workStart);
+  const finish=()=>{
+    if(windowInvalid)return;
+    if(activities.length>0)saveWeeklyRoutine([...getWeeklyRoutine(),...activities]);
+    setSchedulePreferences({...getSchedulePreferences(),workStartTime:workStart,workEndTime:workEnd,peakHourBuckets:peakBuckets});
+    onFinish();
+  };
+
+  const TitleSub=({title,sub})=>(
+    <div style={{marginBottom:22}}>
+      <div style={{fontSize:19,fontWeight:700,color:T.white,letterSpacing:"-0.01em",marginBottom:5}}>{title}</div>
+      {sub&&<div style={{fontSize:13,color:T.muted,lineHeight:1.5}}>{sub}</div>}
+    </div>
+  );
+
+  return (
+    <div style={{position:"fixed",inset:0,zIndex:300,background:"rgba(8,12,10,0.82)",backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px"}}>
+      <div style={{width:"100%",maxWidth:620,maxHeight:"88vh",display:"flex",flexDirection:"column",background:T.card,border:`1px solid ${T.border}`,borderRadius:20,boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease"}}>
+        <div style={{padding:"28px 32px 0",overflowY:"auto",flex:1,minHeight:0}}>
+
+          {step==="status"&&(<>
+            <TitleSub title="What best describes you?" sub="Studlin builds your week differently for school hours vs. a college schedule." />
+            <div style={{display:"flex",gap:10}}>
+              <button type="button" onClick={()=>{setStatus("highschool");setStep("classes");}} style={wizardStatusChipStyle(status==="highschool")}>High School</button>
+              <button type="button" onClick={()=>{setStatus("college");setStep("classes");}} style={wizardStatusChipStyle(status==="college")}>College</button>
+            </div>
+          </>)}
+
+          {step==="classes"&&addMode===null&&(<>
+            <TitleSub title="Add your classes" sub="Scan a syllabus and Studlin fills in the class, its meeting time, and its deadlines. Or add one by hand." />
+            {classList.length>0&&(
+              <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:18}}>
+                {classList.map(s=>(
+                  <div key={s.id} style={subjectRowStyle(s.color)}>
+                    <div style={{flex:1,fontSize:13,fontWeight:600,color:T.text}}>{s.label}</div>
+                    <button type="button" onClick={()=>removeAddedClass(s)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:"2px 6px"}}>×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {justAdded&&<div style={{fontSize:12,color:T.lime,fontWeight:600,marginBottom:12}}>Added {justAdded}.</div>}
+            <button type="button" onClick={()=>setAddMode("choose")} style={{width:"100%",padding:"12px",borderRadius:10,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.text,cursor:"pointer",fontFamily:T.font,fontSize:13,fontWeight:600,marginBottom:20}}>+ Add a class</button>
+          </>)}
+
+          {step==="classes"&&addMode==="choose"&&(<>
+            <TitleSub title="How do you want to add it?" />
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <button type="button" onClick={()=>{setScanError("");setAddMode("scan");}} style={classSetupChoiceStyle}>
+                <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Scan a syllabus</div>
+                <div style={{fontSize:12,color:T.muted}}>Upload a file or photo — Studlin reads the class name, meeting time, and deadlines.</div>
+              </button>
+              <button type="button" onClick={startManual} style={classSetupChoiceStyle}>
+                <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Enter manually</div>
+                <div style={{fontSize:12,color:T.muted}}>Type in the class name and when it meets yourself.</div>
+              </button>
+              {status==="highschool"&&(
+                <button type="button" onClick={()=>{setScanError("");setAddMode("hsSchedule");}} style={classSetupChoiceStyle}>
+                  <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Upload your class schedule</div>
+                  <div style={{fontSize:12,color:T.muted}}>One photo of your whole schedule adds every period at once, color-coded.</div>
+                </button>
+              )}
+            </div>
+            <button type="button" onClick={()=>setAddMode(null)} style={{marginTop:16,background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0}}>← Back</button>
+          </>)}
+
+          {step==="classes"&&addMode==="scan"&&(<>
+            <TitleSub title="Scan a syllabus" sub="PDF, Word doc, text, or a photo/screenshot — Studlin reads it and fills in the review below." />
+            {scanning
+              ? <div style={{padding:"40px 0",textAlign:"center",color:T.muted,fontSize:13}}>Reading your syllabus…</div>
+              : <button type="button" onClick={()=>fileInputRef.current&&fileInputRef.current.click()} style={{width:"100%",padding:"32px",borderRadius:12,border:`1.5px dashed ${T.borderHover}`,background:T.card2,color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:13,textAlign:"center"}}>Tap to choose a file</button>
+            }
+            <input ref={fileInputRef} type="file" accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif" style={{display:"none"}} onChange={handleScanFile} />
+            {scanError&&<div style={{fontSize:12,color:T.red,marginTop:10}}>{scanError}</div>}
+            <button type="button" onClick={()=>setAddMode("choose")} style={{marginTop:16,background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0}}>← Back</button>
+          </>)}
+
+          {step==="classes"&&addMode==="hsSchedule"&&(<>
+            <TitleSub title="Upload your class schedule" sub="A photo or screenshot of your period-by-period schedule. Studlin turns each period into a class, color-coded by time." />
+            {scanning
+              ? <div style={{padding:"40px 0",textAlign:"center",color:T.muted,fontSize:13}}>Reading your schedule…</div>
+              : <button type="button" onClick={()=>hsFileInputRef.current&&hsFileInputRef.current.click()} style={{width:"100%",padding:"32px",borderRadius:12,border:`1.5px dashed ${T.borderHover}`,background:T.card2,color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:13,textAlign:"center"}}>Tap to choose a photo</button>
+            }
+            <input ref={hsFileInputRef} type="file" accept=".png,.jpg,.jpeg,.webp,.gif" style={{display:"none"}} onChange={handleHsScheduleFile} />
+            {scanError&&<div style={{fontSize:12,color:T.red,marginTop:10}}>{scanError}</div>}
+            <button type="button" onClick={()=>setAddMode("choose")} style={{marginTop:16,background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0}}>← Back</button>
+          </>)}
+
+          {step==="classes"&&addMode==="hsReview"&&hsReview&&(<>
+            <TitleSub title="Review your schedule" sub="Check the class names and colors, then add them all at once." />
+            <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
+              {hsReview.map((p,i)=>(
+                <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 10px",borderRadius:10,border:`1px solid ${T.border}`}}>
+                  <ColorSelect value={p.color} onChange={c=>setHsReview(r=>r.map((x,xi)=>xi===i?{...x,color:c}:x))} />
+                  <Input value={p.subjectName} onChange={e=>setHsReview(r=>r.map((x,xi)=>xi===i?{...x,subjectName:e.target.value}:x))} style={{flex:1}} />
+                  <div style={{fontSize:11,color:T.muted,whiteSpace:"nowrap"}}>{p.days.map(d=>ROUTINE_DOW[d]).join("")} · {fmtClock12(p.startTime)}–{fmtClock12(p.endTime)}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <Btn onClick={commitHsSchedule}>Add all {hsReview.length} classes</Btn>
+              <Btn variant="subtle" onClick={()=>{setHsReview(null);setAddMode("choose");}}>Cancel</Btn>
+            </div>
+          </>)}
+
+          {step==="classes"&&addMode==="review"&&review&&(()=>{
+            const setMeetingTimes=(updater)=>setReview(r=>({...r,meetingTimes:typeof updater==="function"?updater(r.meetingTimes):updater}));
+            const addMeetingTime=(item)=>setMeetingTimes(mts=>[...mts,{id:"mt-"+Date.now()+"-"+Math.random(),days:item.days,startTime:item.startTime,duration:item.duration}]);
+            const removeMeetingTime=(id)=>setMeetingTimes(mts=>mts.filter(x=>x.id!==id));
+            const meetingItemsForBuilder=review.meetingTimes.map(mt=>({id:mt.id,title:review.subjectName||"Class",kind:"class",days:mt.days,startTime:mt.startTime,duration:mt.duration}));
+            const setDeadline=(i,patch)=>setReview(r=>({...r,deadlines:r.deadlines.map((x,xi)=>xi===i?{...x,...patch}:x)}));
+            return (<>
+              <TitleSub title="Review this class" />
+              <Field label="Class name">
+                <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                  <ColorSelect value={review.color} onChange={c=>setReview(r=>({...r,color:c}))} />
+                  <Input value={review.subjectName} onChange={e=>setReview(r=>({...r,subjectName:e.target.value}))} placeholder="e.g. Biology 101" style={{flex:1}} />
+                </div>
+              </Field>
+              <div style={{marginTop:16,marginBottom:16}}>
+                <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:2}}>When does it meet?</div>
+                <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>Optional — skip this if it's not a class with fixed meeting times.</div>
+                <WizardCollegeBuilder items={meetingItemsForBuilder} addItem={addMeetingTime} removeItem={removeMeetingTime} defaultTitle={review.subjectName||"Class"} />
+              </div>
+              <div style={{marginBottom:8}}>
+                <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:2}}>Assignments &amp; exams</div>
+                <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>{review.deadlines.length===0?"None found — add one if you know of any.":"AI dates are guesses. Check them before they're added."}</div>
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {review.deadlines.map((it,i)=>(
+                    <div key={it.id} style={{padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,background:it.include?T.card2:T.card,opacity:it.include?1:0.55}}>
+                      <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
+                        <input type="checkbox" checked={it.include} onChange={()=>setDeadline(i,{include:!it.include})} style={{marginTop:9,cursor:"pointer"}} />
+                        <div style={{flex:1}}>
+                          <div style={{display:"flex",gap:8,marginBottom:6}}>
+                            <Input value={it.title} onChange={e=>setDeadline(i,{title:e.target.value})} style={{flex:1}} />
+                            <Input type="date" value={it.date} onChange={e=>setDeadline(i,{date:e.target.value})} style={{width:140}} />
+                          </div>
+                          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                            <SelectChip options={[{value:"deadline",label:"To-Do"},{value:"exam",label:"Exam"}]} value={it.kind} onChange={v=>setDeadline(i,{kind:v,attackBlock:v==="deadline",proposeSessions:v==="exam",sessionCount:it.sessionCount||defaultSessionCountFor()})} />
+                            {it.confidence==="low"&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>Double-check</span>}
+                            {it.kind==="deadline"&&(
+                              <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:T.muted,cursor:"pointer"}}>
+                                <input type="checkbox" checked={!!it.attackBlock} onChange={()=>setDeadline(i,{attackBlock:!it.attackBlock})} />
+                                Schedule an Attack Block
+                              </label>
+                            )}
+                            {it.kind==="exam"&&(
+                              <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:T.muted,cursor:"pointer"}}>
+                                <input type="checkbox" checked={!!it.proposeSessions} onChange={()=>setDeadline(i,{proposeSessions:!it.proposeSessions})} />
+                                Schedule study sessions
+                              </label>
+                            )}
+                          </div>
+                          {it.kind==="exam"&&it.proposeSessions&&(()=>{
+                            const dates=computeReviewDates(it.date,dayKey(),it.sessionCount||4);
+                            return (
+                              <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6}}>
+                                <NumField min={1} max={6} fallback={4} value={it.sessionCount||4} onChange={v=>setDeadline(i,{sessionCount:v})} style={{width:48}} />
+                                <span style={{fontSize:10.5,color:T.muted}}>{dates.length===0?"Too close to the exam to fit a session":dates.length+" session"+(dates.length!==1?"s":"")}</span>
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <button type="button" onClick={()=>setReview(r=>({...r,deadlines:[...r.deadlines,{id:"cd-manual-"+Date.now(),title:"",date:dayKey(),kind:"deadline",include:true,attackBlock:true,proposeSessions:false,sessionCount:4,difficulty:500}]}))} style={{marginTop:10,width:"100%",padding:"9px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12}}>+ Add a deadline manually</button>
+              </div>
+              <button type="button" onClick={()=>{setReview(null);setAddMode(null);}} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:8}}>← Cancel, don't add this class</button>
+            </>);
+          })()}
+
+          {step==="activities"&&(<>
+            <TitleSub title="Anything else that repeats every week?" sub="Work shifts, practice, clubs — Studlin will build the rest of your schedule around these too. Optional." />
+            <WizardCollegeBuilder items={activities} addItem={(item)=>setActivities(a=>[...a,{id:"act-"+Date.now()+"-"+Math.random(),...item}])} removeItem={(id)=>setActivities(a=>a.filter(x=>x.id!==id))} />
+          </>)}
+
+          {step==="window"&&(<>
+            <TitleSub title="Preferred Focus Windows" sub="When do you typically prefer to study?" />
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <Field label="Preferred study start"><TimeInput value={workStart} onChange={setWorkStart} /></Field>
+              <Field label="Preferred study end"><TimeInput value={workEnd} onChange={setWorkEnd} /></Field>
+            </div>
+            {windowInvalid&&<div style={{fontSize:11.5,color:T.red,marginTop:8}}>End time must be after start time.</div>}
+            <div style={{marginTop:20}}>
+              <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>
+                Peak Focus Hours <span style={{textTransform:"none",fontWeight:400,color:T.faint}}>(optional)</span>
+              </label>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {TIER0_HOUR_BUCKETS.map(b=>(
+                  <button key={b.id} type="button" onClick={()=>togglePeakBucket(b.id)} style={peakChipStyle(peakBuckets.includes(b.id))}>
+                    {PEAK_BUCKET_LABELS[b.id]}
+                    <span style={{opacity:0.7,marginLeft:4}}>{fmtClock12(minutesToTime(b.startMin))}–{fmtClock12(minutesToTime(b.endMin))}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>)}
+
+        </div>
+
+        <div style={{padding:"18px 32px",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+          <button type="button" onClick={onSkip} style={{fontSize:12.5,color:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>Skip all</button>
+          <div style={{display:"flex",gap:10}}>
+            {step==="classes"&&addMode===null&&(
+              <Btn onClick={()=>setStep("activities")}>{classList.length>0?"Done adding classes":"Skip, I'll add classes later"}</Btn>
+            )}
+            {step==="classes"&&addMode==="review"&&(
+              <Btn onClick={commitReviewedClass} disabled={!review.subjectName.trim()} style={{opacity:review.subjectName.trim()?1:0.45}}>Add this class</Btn>
+            )}
+            {step==="activities"&&(<>
+              <Btn variant="subtle" onClick={()=>setStep("window")}>Skip</Btn>
+              <Btn onClick={()=>setStep("window")}>Continue</Btn>
+            </>)}
+            {step==="window"&&(
+              <Btn onClick={finish} disabled={windowInvalid} style={{opacity:windowInvalid?0.45:1}}>Finish</Btn>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -10463,26 +10895,23 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
   // Subjects); anyone who already has Subjects or Routine configured
   // (existing accounts, from before this tour existed) is untouched.
   const isFreshAccount=!lsGet("subjects-configured",false)&&!lsGet("hasConfiguredRoutine",false)&&!lsGet("seenCalendarTour",false);
-  const [subjOnboardOpen,setSubjOnboardOpen]=useState(()=>!lsGet("subjects-configured",false)&&!isFreshAccount);
-  const [onbSubjs,setOnbSubjs]=useState(()=>getSubjects().map(s=>({...s})));
+  // ClassSetupWizard replaces the old two-modal chain (subjOnboardOpen for
+  // subjects+color, then RoutineWizardModal for recurring times) with one
+  // guided flow that captures both together, per class, plus whatever a
+  // syllabus scan can extract. Same trigger condition the two old modals'
+  // conditions reduced to when combined. Fresh accounts skip the immediate
+  // auto-open — calTourStep below opens it explicitly once the new
+  // walkthrough finishes, same deferral the old sequence used.
+  const [classSetupOpen,setClassSetupOpen]=useState(()=>!lsGet("subjects-configured",false)&&!lsGet("hasConfiguredRoutine",false)&&!isFreshAccount);
 
-  // Deferred Weekly Routine wizard — used to block on the very first Calendar
-  // mount for every new account, before the student had done anything at
-  // all. Now it only auto-opens once they've actually saved a real task
-  // (i.e. on a *later* visit to Calendar, never the first) — the setup ask
-  // comes after they've seen the app do something, not before. Still gated
-  // by the same one-shot "hasConfiguredRoutine" flag, and still reachable
-  // any time via the "Routine" button or Settings > Calendar Preferences
-  // (the latter arrives via openWizardOnMount, since Settings is a separate
-  // top-level tab with no direct access to this component's state). Fresh
-  // accounts skip this old auto-condition entirely — calTourStep below
-  // opens it explicitly once the new walkthrough finishes.
-  const [routineWizardOpen,setRoutineWizardOpen]=useState(()=>!lsGet("hasConfiguredRoutine",false)&&lsGet("events",[]).some(e=>!e.id.startsWith("seed-"))&&!isFreshAccount);
-  // First-time guided walkthrough — Add Task -> Studlin Reschedule ->
-  // (chains into Routine, then Subjects, via their own finish/skip handlers
-  // below). Replaces three independent modals that used to compete for the
-  // same first-run moment with one linear sequence that shows what the app
-  // does before asking for any setup.
+  // RoutineWizardModal itself is untouched and still reachable later via
+  // "Manage Routine" (Settings > Calendar Preferences, arrives here via
+  // openWizardOnMount) — only its automatic first-run pop-open was removed
+  // in favor of ClassSetupWizard above.
+  const [routineWizardOpen,setRoutineWizardOpen]=useState(false);
+  // First-time guided walkthrough — Add Task -> Studlin Reschedule -> chains
+  // into ClassSetupWizard once it finishes, via that wizard's own
+  // finish/skip handlers below.
   const addTaskBtnRef=useRef(null);
   const brainDumpLinkRef=useRef(null);
   const rescheduleBtnRef=useRef(null);
@@ -10496,7 +10925,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
     if(next>=CAL_TOUR_STEPS.length){
       setCalTourStep(-1);
       lsSet("seenCalendarTour",true);
-      setRoutineWizardOpen(true);
+      setClassSetupOpen(true);
       return;
     }
     setCalTourStep(next);
@@ -10504,7 +10933,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
   const skipCalTour=()=>{
     setCalTourStep(-1);
     lsSet("seenCalendarTour",true);
-    setRoutineWizardOpen(true);
+    setClassSetupOpen(true);
   };
   // Routine Control Center — the ongoing management dashboard reached via the
   // gear icon on the Calendar toolbar (as opposed to routineWizardOpen, which
@@ -10515,28 +10944,46 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
   // fields show, instead of being discovered partway through one dense
   // modal that tries to be all four at once.
   const [addMenuOpen,setAddMenuOpen]=useState(false);
+  const [toolsMenuOpen,setToolsMenuOpen]=useState(false);
   useEffect(()=>{
     if(openWizardOnMount){setRoutineWizardOpen(true);if(onWizardOpenedFromSettings)onWizardOpenedFromSettings();}
   },[openWizardOnMount]);
-  // Chains into Subjects setup only if it's genuinely still unconfigured —
-  // a no-op for anyone reopening Routine later from Settings who's already
-  // done Subjects, and the second half of the new-account sequence
-  // (tour -> Routine -> Subjects) for everyone else.
-  const maybeOpenSubjectsNext=()=>{if(!lsGet("subjects-configured",false))setSubjOnboardOpen(true);};
+  // ClassSetupWizard's own finish/skip -- both mark subjects AND routine
+  // "handled" together (it's one combined flow now), then re-sync this
+  // component's React state from what the wizard just wrote straight to
+  // localStorage, same re-sync subjOnboardOpen's old "Save my classes" did.
+  // Note: persistRoutines' own reconcileRoutineConflicts call still reads
+  // this component's (pre-wizard) `events` closure, so it reconciles the
+  // final routine against events that existed before the wizard opened --
+  // it won't catch a session the wizard itself generated for an earlier
+  // class colliding with a later class's meeting time. Rare in practice
+  // (each class's own scan already sees every class added before it), and
+  // strictly better than the old flow, which never reconciled subjects
+  // against routine at all.
+  const finishClassSetup=()=>{
+    lsSet("subjects-configured",true);
+    lsSet("hasConfiguredRoutine",true);
+    setClassSetupOpen(false);
+    setUserSubjectsState(getSubjects());
+    persistRoutines(getWeeklyRoutine());
+    setEvents(lsGet("events",[]).filter(e=>!e.id.startsWith("seed-")));
+  };
+  const skipClassSetup=()=>{
+    lsSet("subjects-configured",true);
+    lsSet("hasConfiguredRoutine",true);
+    setClassSetupOpen(false);
+  };
+  // RoutineWizardModal's own finish/skip -- reachable now only via "Manage
+  // Routine" (openWizardOnMount above), not as a first-run auto-trigger.
   const finishRoutineWizard=(routine,prefs)=>{
     persistRoutines(routine);
     setSchedulePreferences({...getSchedulePreferences(),...prefs});
     lsSet("hasConfiguredRoutine",true);
     setRoutineWizardOpen(false);
-    maybeOpenSubjectsNext();
   };
   const skipRoutineWizard=()=>{
-    // Marks the wizard "handled" so it doesn't keep re-intercepting on every
-    // future Calendar visit — the user can still reopen it anytime via
-    // "Routine".
     lsSet("hasConfiguredRoutine",true);
     setRoutineWizardOpen(false);
-    maybeOpenSubjectsNext();
   };
 
   const mk=(off,time,title,subject,kind)=>{const d=new Date();d.setDate(d.getDate()+off);return {id:"seed-"+off+"-"+time,date:dayKey(d),time,title,subject,kind};};
@@ -11483,18 +11930,36 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
     <div>
       <PH title="Studlin Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}>
         <span ref={rescheduleBtnRef} style={{display:"inline-flex"}}><Btn variant="ghost" onClick={()=>{setPauseOpen(true);setPauseError("");setPausePreview(null);}}><span style={{color:T.red}}>Studlin Reschedule</span></Btn></span>
-        <Btn variant="ghost" onClick={openWeekBalance}>Balance my week</Btn>
-        <Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>setRoutineCenterOpen(true)}>Routine</Btn>
+        <Btn variant="ghost" onClick={()=>{resetForm();setBrainDumpOpen(true);}}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.sparkles,"Brain dump")}</Btn>
+        <div style={{position:"relative"}}>
+          <Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>setToolsMenuOpen(o=>!o)}>Tools</Btn>
+          {toolsMenuOpen&&(<>
+            <div onClick={()=>setToolsMenuOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
+            <div style={{position:"absolute",top:"calc(100% + 6px)",right:0,width:220,background:T.card,border:`1px solid ${T.border}`,borderRadius:12,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
+              {[
+                {icon:Icon.zap,label:"Balance my week",sub:"Rebalance an overloaded week",onClick:()=>{setToolsMenuOpen(false);openWeekBalance();}},
+                {icon:Icon.file,label:"Scan syllabus",sub:"Upload a doc, AI extracts dates",onClick:()=>{setToolsMenuOpen(false);onScanSyllabus();}},
+                {icon:Icon.cal,label:"Routine",sub:"Manage your weekly schedule",onClick:()=>{setToolsMenuOpen(false);setRoutineCenterOpen(true);}},
+              ].map(item=>(
+                <div key={item.label} onClick={item.onClick} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 14px",cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  <span style={{width:16,color:T.muted,display:"flex",marginTop:2}}>{item.icon}</span>
+                  <div>
+                    <div style={{fontSize:12.5,fontWeight:600,color:T.text}}>{item.label}</div>
+                    <div style={{fontSize:11,color:T.muted,marginTop:1}}>{item.sub}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>)}
+        </div>
         <div style={{position:"relative"}} ref={addTaskBtnRef}>
           <Btn onClick={()=>setAddMenuOpen(o=>!o)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn>
           {addMenuOpen&&(<>
             <div onClick={()=>setAddMenuOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
             <div style={{position:"absolute",top:"calc(100% + 6px)",right:0,width:230,background:T.card,border:`1px solid ${T.border}`,borderRadius:12,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
               {[
-                {icon:Icon.sparkles,label:"Brain dump",sub:"Describe everything at once",onClick:()=>{setAddMenuOpen(false);resetForm();setBrainDumpOpen(true);}},
-                {icon:Icon.file,label:"Scan syllabus",sub:"Upload a doc, AI extracts dates",onClick:()=>{setAddMenuOpen(false);onScanSyllabus();}},
-                {icon:Icon.cal,label:"Manual placement",sub:"One task, you pick the time",onClick:()=>{setAddMenuOpen(false);openNewManual(selDay);}},
                 {icon:Icon.zap,label:"AI schedule",sub:"One task, Studlin finds the time",onClick:()=>{setAddMenuOpen(false);openNewAI(selDay);}},
+                {icon:Icon.cal,label:"Manual placement",sub:"One task, you pick the time",onClick:()=>{setAddMenuOpen(false);openNewManual(selDay);}},
               ].map(item=>(
                 <div key={item.label} onClick={item.onClick} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 14px",cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                   <span style={{width:16,color:T.muted,display:"flex",marginTop:2}}>{item.icon}</span>
@@ -11591,26 +12056,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
         <TourStep {...CAL_TOUR_STEPS[calTourStep]} step={calTourStep} total={CAL_TOUR_STEPS.length}
           isLast={calTourStep===CAL_TOUR_STEPS.length-1} onNext={advanceCalTour} onSkip={skipCalTour} />
       )}
-      {subjOnboardOpen&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:20,padding:28,width:520,maxWidth:"90vw",maxHeight:"82vh",overflowY:"auto",boxShadow:"0 32px 64px -16px rgba(0,0,0,0.6)"}}>
-            <div style={{fontSize:20,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:4}}>Set up your subjects</div>
-            <div style={{fontSize:13,color:T.muted,marginBottom:20}}>Add your classes and pick a color for each. You can always manage these in Settings.</div>
-            {onbSubjs.map((s,i)=>(
-              <div key={i} style={{...subjectRowStyle(s.color),marginBottom:10}}>
-                <ColorSelect value={s.color} onChange={c=>setOnbSubjs(a=>a.map((x,j)=>j===i?{...x,color:c}:x))} />
-                <input value={s.label} onChange={e=>setOnbSubjs(a=>a.map((x,j)=>j===i?{...x,label:e.target.value}:x))} placeholder={`Class ${i+1} (e.g. Calculus)`} style={{flex:1,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none"}} />
-                <button onClick={()=>setOnbSubjs(a=>a.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:18,padding:"2px 6px",fontFamily:T.font,lineHeight:1}}>×</button>
-              </div>
-            ))}
-            <button onClick={()=>setOnbSubjs(a=>[...a,{id:String(Date.now()),label:"",color:SUBJECT_COLORS[a.length%SUBJECT_COLORS.length]}])} style={{background:"none",border:`1px dashed ${T.border}`,color:T.muted,cursor:"pointer",borderRadius:8,padding:"8px 14px",fontSize:12,fontFamily:T.font,marginTop:4,width:"100%"}}>+ Add another class</button>
-            <div style={{display:"flex",gap:10,marginTop:20}}>
-              <Btn onClick={()=>{const valid=onbSubjs.filter(s=>s.label.trim());if(valid.length>0)saveSubjects(valid);lsSet("subjects-configured",true);setUserSubjectsState(getSubjects());setSubjOnboardOpen(false);}}>Save my classes</Btn>
-              <Btn variant="subtle" onClick={()=>{lsSet("subjects-configured",true);setSubjOnboardOpen(false);}}>Skip / I'm not a student</Btn>
-            </div>
-          </div>
-        </div>
-      )}
+      <ClassSetupWizard open={classSetupOpen} initialStatus={getProfile().status} onFinish={finishClassSetup} onSkip={skipClassSetup} />
       {toast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} Task added</div>
       )}
@@ -12227,7 +12673,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
           </div>
         </div>
       )}
-      <RoutineWizardModal open={routineWizardOpen&&!subjOnboardOpen} initialStatus={getProfile().status} existingRoutines={routines} onFinish={finishRoutineWizard} onSkip={skipRoutineWizard} />
+      <RoutineWizardModal open={routineWizardOpen} initialStatus={getProfile().status} existingRoutines={routines} onFinish={finishRoutineWizard} onSkip={skipRoutineWizard} />
       <RoutineControlCenterModal open={routineCenterOpen} onClose={()=>setRoutineCenterOpen(false)} routines={routines} fmtTime={fmtTime}
         onEditRoutine={openRoutineEdit} onDeleteRoutine={deleteRoutineItem}
         onAddRoutine={(rule)=>persistRoutines([...routines,{id:String(Date.now()+Math.random()*1000),...rule,subject:""}])}
@@ -13553,7 +13999,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <div style={{fontSize:12,color:T.muted,marginBottom:16}}>How you appear across Studlin.</div>
               <Field label="Display name"><Input value={profile.name} onChange={e=>updProfile({name:e.target.value})} /></Field>
               <Field label="Email"><Input value={profile.email} onChange={e=>updProfile({email:e.target.value})} type="email" /></Field>
-              <Field label="School or affiliation"><SchoolSelect value={profile.school} onChange={v=>updProfile({school:v})} placeholder="Search or type your school" /></Field>
+              <Field label="School or affiliation"><SchoolSelect value={profile.school} onChange={v=>updProfile({school:v})} placeholder="Search or type your school" statusFilter={profile.status} /></Field>
             </Card>
             <Card style={{marginBottom:12}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -14108,21 +14554,8 @@ function Profile({setActive,seriousMode=false}={}) {
   const initials=((prof.name||"").split(" ").map(x=>x[0]).join("").slice(0,2).toUpperCase())||"S";
   const firstName=(prof.name||"there").split(" ")[0];
 
-  // Rank + level roadmap -- moved here now that Dashboard (the only place
-  // that used to show them) is gone. Same fetch-once-per-mount shape
-  // Dashboard used; "you" is always merged in fresh via mergeLeaderboard
-  // so your own row never lags behind minutes you just earned.
-  const [topProfiles,setTopProfiles]=useState([]);
-  useEffect(()=>{
-    let cancelled=false;
-    fetchTopProfiles(20).then(rows=>{if(!cancelled)setTopProfiles(rows);});
-    return ()=>{cancelled=true;};
-  },[]);
   const [levelRoadmapOpen,setLevelRoadmapOpen]=useState(false);
-  const [leaderboardOpen,setLeaderboardOpen]=useState(false);
-  const myUid=firebase.auth().currentUser?.uid;
-  const rankedAll=mergeLeaderboard(topProfiles,firstName,lvl.minutes,streak,myUid,0);
-  const yourRank=(rankedAll.find(u=>u.you)||{}).r||1;
+  const [streakModalOpen,setStreakModalOpen]=useState(false);
 
   const handlePicFile=(e)=>{
     const file=e.target.files&&e.target.files[0];
@@ -14192,7 +14625,7 @@ function Profile({setActive,seriousMode=false}={}) {
           <div style={{fontSize:13,color:T.muted,marginBottom:12}}>{affiliation||prof.school||"No affiliation set"}</div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             <Badge color={T.lime}>Pro</Badge>
-            {!seriousMode&&<Badge color={T.amber}>{streak}-day streak</Badge>}
+            {!seriousMode&&<span onClick={()=>setStreakModalOpen(true)} style={{cursor:"pointer"}}><Badge color={T.amber}>{streak}-day streak</Badge></span>}
             {!seriousMode&&<Badge color={T.blue}>{lvl.title}</Badge>}
             {status&&<Badge color={T.teal}>{status==="highschool"?"High School":"College"}</Badge>}
           </div>
@@ -14225,8 +14658,8 @@ function Profile({setActive,seriousMode=false}={}) {
         </Field>
 
         {status&&(
-          <Field label={affiliationLabel} hint="Visible to classmates on leaderboards.">
-            <SchoolSelect value={affiliation} onChange={setAffiliation} placeholder={affiliationPlaceholder} />
+          <Field label={affiliationLabel} hint="Helps us match you with classmates.">
+            <SchoolSelect value={affiliation} onChange={setAffiliation} placeholder={affiliationPlaceholder} statusFilter={status} />
           </Field>
         )}
 
@@ -14243,8 +14676,7 @@ function Profile({setActive,seriousMode=false}={}) {
         <ExploreClassesCard school={affiliation} classes={DEMO_CLASSES_BY_SCHOOL[affiliation]} setActive={setActive} />
       )}
 
-      {/* ── Stats (real data only) — hidden in Serious Mode, same as the
-          Dashboard leaderboard/tiers used to be. */}
+      {/* ── Stats (real data only) — hidden in Serious Mode. */}
       {!seriousMode&&(()=>{
         const allDecks=lsGet("decks",[]);
         const cardsMastered=allDecks.reduce((a,d)=>a+(d.done||0),0);
@@ -14252,12 +14684,11 @@ function Profile({setActive,seriousMode=false}={}) {
           ["Total study time",fmtH(ps.totalMin)||"0m",T.lime],
           ["Focus sessions",String(ps.focusSessions),T.teal],
           ["Cards reviewed",String(cardsMastered),T.blue],
-          ["Day streak",String(streak),T.amber],
-          ["Level",lvl.title,T.red],
-          ["Rank","#"+yourRank,T.purple,()=>setLeaderboardOpen(true)],
+          ["Day streak",String(streak),T.amber,()=>setStreakModalOpen(true)],
+          ["Level",lvl.title,T.red,()=>setLevelRoadmapOpen(true)],
         ];
         return(
-          <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:10,marginBottom:16}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10,marginBottom:16}}>
             {stats.map(([l,v,c,onClick],i)=>(
               <Card key={i} onClick={onClick} style={{textAlign:"center",padding:16,cursor:onClick?"pointer":"default"}}>
                 <div style={{fontSize:26,fontWeight:700,color:c,letterSpacing:"-0.02em",lineHeight:1}}>{v}</div>
@@ -14312,7 +14743,7 @@ function Profile({setActive,seriousMode=false}={}) {
       })()}
     </div>
     <LevelRoadmapModal open={levelRoadmapOpen} onClose={()=>setLevelRoadmapOpen(false)} currentMinutes={lvl.minutes} />
-    <LeaderboardModal open={leaderboardOpen} onClose={()=>setLeaderboardOpen(false)} currentMinutes={lvl.minutes} currentName={firstName} currentStreak={streak} />
+    <StreakDetailModal open={streakModalOpen} onClose={()=>setStreakModalOpen(false)} streak={streak} />
     </>
   );
 }
@@ -14364,58 +14795,35 @@ function LevelRoadmapModal({open,onClose,currentMinutes}){
   );
 }
 
-// ─── LEADERBOARD MODAL ───────────────────────────────────────────────────────
-function LeaderboardModal({open,onClose,currentMinutes,currentName,currentStreak}){
-  // Hooks must run unconditionally on every render (this component stays
-  // mounted with `open` just toggling as a prop, not conditionally
-  // rendered) — so the "closed" bail-out has to come after all of them.
-  const [filter,setFilter]=useState("global");
-  const [profiles,setProfiles]=useState([]);
-  useEffect(()=>{
-    if(!open)return;
-    let cancelled=false;
-    fetchTopProfiles(30).then(rows=>{if(!cancelled)setProfiles(rows);});
-    return ()=>{cancelled=true;};
-  },[open]);
+// ─── STREAK DETAIL MODAL ─────────────────────────────────────────────────────
+// The one shared "streak widget" every streak-showing surface (nav bar,
+// Profile header badge, Profile stat tile) opens — same heatmap Dashboard's
+// old inline card used to render, now backed by computeStreakHeatmap() so
+// there's exactly one source of truth for what counts as an active day.
+function StreakDetailModal({open,onClose,streak}){
   if(!open)return null;
-  const userTier=getProfTitle(currentMinutes);
-  const myUid=firebase.auth().currentUser?.uid||null;
-  const allUsers=mergeLeaderboard(profiles, currentName, currentMinutes, currentStreak, myUid);
-  const shown=filter==="level"?allUsers.filter(u=>u.tier===userTier||u.you):allUsers;
-  const rankColor=(r)=>r===1?"#FFD700":r===2?"#C0C0C0":r===3?"#CD7F32":T.muted;
-  const rankBg=(r)=>r===1?"rgba(255,215,0,0.12)":r===2?"rgba(192,192,192,0.08)":r===3?"rgba(205,127,50,0.08)":"transparent";
+  const {cells,longest}=computeStreakHeatmap();
   return(
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
-      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:500,maxHeight:"86vh",background:T.card,borderRadius:18,border:`1px solid ${T.border}`,overflow:"hidden",display:"flex",flexDirection:"column",boxShadow:"0 28px 70px -20px rgba(0,0,0,0.55)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:460,background:T.card,borderRadius:18,border:`1px solid ${T.border}`,overflow:"hidden",boxShadow:"0 28px 70px -20px rgba(0,0,0,0.55)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
         <div style={{padding:"20px 22px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div>
-            <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Global Leaderboard</div>
-            <div style={{fontSize:12.5,color:T.muted,marginTop:3}}>Rankings reset weekly</div>
+            <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Study Streak</div>
+            <div style={{fontSize:12.5,color:T.muted,marginTop:3}}>Last 91 days</div>
           </div>
           <button onClick={onClose} style={{width:30,height:30,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer",fontSize:15}}>×</button>
         </div>
-        <div style={{padding:"14px 22px 10px",borderBottom:`1px solid ${T.border}`,display:"flex",gap:6}}>
-          {["global","level"].map(f=>(
-            <button key={f} onClick={()=>setFilter(f)} style={{padding:"6px 14px",borderRadius:6,fontSize:12,cursor:"pointer",border:`1px solid ${filter===f?T.lime+"44":T.border}`,background:filter===f?T.lime+"14":"transparent",color:filter===f?T.lime:T.muted,fontWeight:filter===f?600:400,fontFamily:T.font,letterSpacing:"0.01em",transition:"all 0.15s"}}>
-              {f==="global"?"Global":"By Level ("+userTier+")"}
-            </button>
-          ))}
-        </div>
-        <div style={{overflowY:"auto",flex:1}}>
-          {shown.map((u,i)=>(
-            <div key={u.r} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 22px",borderBottom:`1px solid ${T.border}`,background:u.you?T.lime+"08":rankBg(u.r)}}>
-              <div style={{width:28,height:28,borderRadius:"50%",background:rankBg(u.r)||T.card2,border:`2px solid ${rankColor(u.r)}`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:T.mono,fontSize:11,fontWeight:700,color:rankColor(u.r),flexShrink:0}}>{u.r}</div>
-              <div style={{width:34,height:34,borderRadius:"50%",background:u.grad,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:13,color:T.ink,flexShrink:0}}>{u.n.slice(0,1)}</div>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:13,fontWeight:u.you?700:600,color:u.you?T.lime:T.text}}>{u.n}{u.you&&" (you)"}</div>
-                <div style={{fontSize:11,color:T.muted,marginTop:1}}>{u.tier} · {u.streak>0?u.streak+"-day streak":"No streak"}</div>
-              </div>
-              <div style={{textAlign:"right",flexShrink:0}}>
-                <div style={{fontFamily:T.mono,fontSize:13,fontWeight:700,color:rankColor(u.r)||T.text}}>{u.minutes.toLocaleString()}</div>
-                <div style={{fontSize:10,color:T.faint}}>min</div>
-              </div>
-            </div>
-          ))}
+        <div style={{padding:"20px 22px"}}>
+          <div style={{display:"flex",alignItems:"baseline",gap:6,marginBottom:2}}>
+            <span style={{fontFamily:T.hand,fontSize:38,fontWeight:600,color:T.text}}>{streak}</span>
+            <span style={{fontSize:13,color:T.muted}}>day streak</span>
+          </div>
+          <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.10em",color:T.muted,marginBottom:18}}>LONGEST: {longest}</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(26,1fr)",gap:3}}>
+            {cells.map((lv,i)=>(
+              <div key={i} style={{aspectRatio:"1",borderRadius:3,background:streakCellColor(lv)}} />
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -14423,25 +14831,11 @@ function LeaderboardModal({open,onClose,currentMinutes,currentName,currentStreak
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-// Disabled "for now" per request — flip back to true to restore the inline
-// Global Leaderboard card on the dashboard.
-const SHOW_GLOBAL_LEADERBOARD=false;
 function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleTask, dashToast, setDashToast}) {
   const realStats=sessionStats();
   const realStreak=Math.max(1,getStreak());
   const lvl=levelInfo();
-  // Live top profiles from Firestore, ranked by real XP — fetched once per
-  // mount; "you" is always merged in fresh on every render below so your own
-  // row never lags behind what you just earned.
-  const [topProfiles,setTopProfiles]=useState([]);
-  useEffect(()=>{
-    let cancelled=false;
-    fetchTopProfiles(8).then(rows=>{if(!cancelled)setTopProfiles(rows);});
-    return ()=>{cancelled=true;};
-  },[]);
   const [,forcePlan]=useState(0);
-  const [levelRoadmapOpen,setLevelRoadmapOpen]=useState(false);
-  const [leaderboardOpen,setLeaderboardOpen]=useState(false);
   const plan=todaysPlan();
   const planDoneCount=plan.filter(t=>t.done).length;
   const subjColor={Chemistry:T.red,"English IV":T.purple,Biology:T.teal,Calculus:T.blue,Spanish:T.amber,History:T.muted};
@@ -14588,15 +14982,9 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   doneThisWeek.forEach(ev=>{subjCounts[ev.subject]=(subjCounts[ev.subject]||0)+1;});
   const topSubjectEntry=Object.entries(subjCounts).sort((a,b)=>b[1]-a[1])[0];
   const topSubjectThisWeek=topSubjectEntry?topSubjectEntry[0]:null;
-  // Real 91-day streak heatmap from login days + session minutes
-  const loginDaysSet=new Set(lsGet("days",[]));
+  // Per-day focus minutes -- used by the Weekly Wrapped bar chart below.
   const minsByDay={};
   allSessions.forEach(s=>{minsByDay[s.d]=(minsByDay[s.d]||0)+(s.m||0);});
-  const heatmapCells=(()=>{const cells=[];const now=new Date();for(let i=90;i>=0;i--){const d=new Date(now);d.setDate(now.getDate()-i);const k=dayKey(d);const mins=minsByDay[k]||0;let lvl=0;if(loginDaysSet.has(k)||mins>0){lvl=mins>=120?4:mins>=60?3:mins>=30?2:1;}cells.push(lvl);}return cells;})();
-  const cellColor=(lvl)=>{
-    if(!lvl) return T.mode==="light"?"rgba(8,12,40,0.06)":"rgba(255,255,255,0.06)";
-    return [null,T.lime+"40",T.lime+"80",T.limeDk,T.forest][lvl];
-  };
   // Mono label/eyebrow inside a card
   const Eye=({children,style={}})=>(
     <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.16em",textTransform:"uppercase",color:T.muted,padding:"4px 8px",border:`1px solid ${T.border}`,borderRadius:99,...style}}>{children}</span>
@@ -14621,11 +15009,6 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   const isWrappedWindow=(()=>{const d=new Date();const day=d.getDay();return(day===0||day===1)&&d.getHours()>=18;})();
   const [wrappedOpen,setWrappedOpen]=useState(()=>isWrappedWindow&&!lsGet("wrapped-dismissed-"+wrappedWeekKey,false));
   const dismissWrapped=()=>{lsSet("wrapped-dismissed-"+wrappedWeekKey,true);setWrappedOpen(false);};
-  // Dynamic leaderboard — real Firestore profiles ranked by actual focus minutes, "you" merged in live
-  const myUid=firebase.auth().currentUser?.uid||null;
-  const lbUsers=mergeLeaderboard(topProfiles, firstName, lvl.minutes, realStreak, myUid, 5);
-  const lbRankColor=(r)=>r===1?"#FFD700":r===2?"#C0C0C0":r===3?"#CD7F32":T.muted;
-  const lbRankBg=(r)=>r===1?"rgba(255,215,0,0.10)":r===2?"rgba(192,192,192,0.07)":r===3?"rgba(205,127,50,0.07)":"transparent";
   return (
     <>
     <div style={{display:"flex",flexDirection:"column",gap:16,paddingBottom:40}}>
@@ -14854,39 +15237,6 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
 
       </div>
 
-      {/* ROW 3: Study streak — used to share this row with "Quick tools"
-          (removed: every one of those shortcuts already exists in the
-          sidebar nav, one click away). Full width now that it's on its own.
-          The day-by-day focus bar chart that used to sit here, and the
-          duplicate "Weekly Wrapped" summary card next to it, were both
-          removed too — see the wrappedOpen popup below for where that
-          content now lives instead of being repeated permanently on the
-          dashboard. */}
-      {!seriousMode&&(()=>{
-        var longest=0,cur=0;
-        heatmapCells.forEach((v)=>{if(v>0){cur++;if(cur>longest)longest=cur;}else{cur=0;}});
-        return(
-          <div style={{background:T.card,borderRadius:22,padding:"26px 28px",border:`1px solid ${T.border}`,display:"flex",flexDirection:"column"}}>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
-              <span style={{fontFamily:T.hand,fontSize:26,fontWeight:600,color:T.text}}>Study streak</span>
-              <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.12em",padding:"4px 10px",borderRadius:99,background:T.card2,color:T.muted,fontWeight:600}}>LAST 91 DAYS</span>
-            </div>
-            <div style={{marginBottom:16}}>
-              <div style={{display:"flex",alignItems:"baseline",gap:6}}>
-                <span style={{fontFamily:T.hand,fontSize:38,fontWeight:600,color:T.text}}>{realStreak}</span>
-                <span style={{fontSize:13,color:T.muted}}>day streak</span>
-              </div>
-              <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.10em",color:T.muted,marginTop:4}}>LONGEST: {longest}</div>
-            </div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(26,1fr)",gap:3}}>
-              {heatmapCells.map((lv,i)=>(
-                <div key={i} style={{aspectRatio:"1",borderRadius:3,background:cellColor(lv)}} />
-              ))}
-            </div>
-          </div>
-        );
-      })()}
-
       {/* ROW 5: Upcoming + Pick up where you left off */}
       <div style={{display:"grid",gridTemplateColumns:"5fr 7fr",gap:16}}>
         <div style={{background:T.card,borderRadius:22,padding:22,border:`1px solid ${T.border}`}}>
@@ -14941,53 +15291,19 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
         </div>
       </div>
 
-      {/* ROW 4: GLOBAL LEADERBOARD — conditionally hidden (SHOW_GLOBAL_LEADERBOARD)
-          rather than deleted, per request to disable it "for now." Flip the
-          flag back to true to restore it; lbUsers/lbRankColor/lbRankBg and
-          LeaderboardModal are left fully intact. */}
       {/* "This week, you..." — the second Weekly Wrapped duplicate, removed.
           Same content (focus hours, streak) as the Sunday wrappedOpen popup
           below; the popup is the one real weekly-summary surface now. */}
-
-      {SHOW_GLOBAL_LEADERBOARD && !seriousMode && <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18,gap:12,flexWrap:"wrap"}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <Hand>Global Leaderboard</Hand>
-            <Eye>RESETS WEEKLY</Eye>
-          </div>
-          <button onClick={()=>setLeaderboardOpen(true)} style={{fontSize:12,color:T.muted,display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer",background:"none",border:"none"}}>View all <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
-        </div>
-        <div style={{display:"flex",flexDirection:"column",gap:0}}>
-          {lbUsers.map((u,i)=>(
-            <div key={u.r} style={{display:"flex",alignItems:"center",gap:14,padding:"13px 16px",borderRadius:12,background:u.you?T.lime+"0c":lbRankBg(u.r),marginBottom:4,border:`1px solid ${u.you?T.lime+"33":"transparent"}`}}>
-              <div style={{width:30,height:30,borderRadius:"50%",background:lbRankBg(u.r)||T.card2,border:`2px solid ${lbRankColor(u.r)}`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:T.mono,fontSize:12,fontWeight:700,color:lbRankColor(u.r),flexShrink:0}}>{u.r}</div>
-              <div style={{width:36,height:36,borderRadius:"50%",background:u.grad,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:13,color:T.ink,flexShrink:0}}>{u.n.slice(0,1)}</div>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:13.5,fontWeight:u.you?700:600,color:u.you?T.lime:T.text}}>{u.n}{u.you&&<span style={{marginLeft:8,fontFamily:T.mono,fontSize:10,letterSpacing:"0.08em",background:T.lime+"22",color:T.lime,padding:"2px 7px",borderRadius:4,fontWeight:700}}>YOU</span>}</div>
-                <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{u.tier} · {u.streak>0?u.streak+"-day streak":"No active streak"}</div>
-              </div>
-              <div style={{textAlign:"right",flexShrink:0}}>
-                <div style={{fontFamily:T.mono,fontSize:14,fontWeight:700,color:lbRankColor(u.r)||T.text}}>{u.minutes.toLocaleString()}</div>
-                <div style={{fontSize:10,color:T.faint,marginTop:2}}>min</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>}
 
     </div>
     {/* NOTE (corrected — see App-level "PRICING MODAL"/"PAYWALL" comments for
         the actual root cause): being a sibling of the content div here is
         NOT enough. [data-page] itself carries the transform-bearing
         studlinRise entrance animation, so it's a containing block for any
-        position:fixed descendant *anywhere* inside it, including these two
-        modals, regardless of nesting depth. RescheduleModal/its toast were
-        moved out to the App level (true siblings of [data-page] itself) to
-        fix the reported "have to scroll up to see the reschedule confirm"
-        bug. LevelRoadmapModal/LeaderboardModal below still have the same
-        underlying issue — not fixed yet, flagged for a follow-up pass. */}
-    <LevelRoadmapModal open={levelRoadmapOpen} onClose={()=>setLevelRoadmapOpen(false)} currentMinutes={lvl.minutes} />
-    <LeaderboardModal open={leaderboardOpen} onClose={()=>setLeaderboardOpen(false)} currentMinutes={lvl.minutes} currentName={firstName} currentStreak={realStreak} />
+        position:fixed descendant *anywhere* inside it, including modals,
+        regardless of nesting depth. RescheduleModal/its toast were moved
+        out to the App level (true siblings of [data-page] itself) to fix
+        the reported "have to scroll up to see the reschedule confirm" bug. */}
     {wrappedOpen&&!seriousMode&&(
       <div onClick={dismissWrapped} style={{position:"fixed",inset:0,background:"rgba(8,12,10,0.72)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
         <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:420,background:T.forest,color:T.cream,borderRadius:22,padding:28,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
@@ -15726,8 +16042,8 @@ function InitWizard({onComplete}){
             {status && (
               <div style={{marginTop:4}}>
                 <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:muted,marginBottom:8}}>{affiliationLabel}</label>
-                <SchoolSelect value={affiliation} onChange={setAffiliation} placeholder={affiliationPlaceholder} theme={{bg:"#F0EBE0",border,text:ink,muted}} />
-                <div style={{fontSize:11,color:muted,marginTop:6}}>Visible to classmates on leaderboards.</div>
+                <SchoolSelect value={affiliation} onChange={setAffiliation} placeholder={affiliationPlaceholder} theme={{bg:"#F0EBE0",border,text:ink,muted}} statusFilter={status} />
+                <div style={{fontSize:11,color:muted,marginTop:6}}>Helps us match you with classmates.</div>
               </div>
             )}
           </div>
@@ -16458,6 +16774,10 @@ function App() {
   };
   const [creditsOpen,setCreditsOpen]=useState(false);
   const [pricingOpen,setPricingOpen]=useState(false);
+  // Nav-bar streak pill + level bar detail modals -- same true-sibling-of-
+  // [data-page] treatment as rescheduleTask below, for the same reason.
+  const [navStreakOpen,setNavStreakOpen]=useState(false);
+  const [navLevelOpen,setNavLevelOpen]=useState(false);
   // Dashboard's "Reschedule" confirm + its toast — lifted up from Dashboard
   // itself: [data-page]'s own entrance animation makes it a containing
   // block for any position:fixed descendant anywhere inside it, so a
@@ -16483,6 +16803,13 @@ function App() {
   });
   const [calOnboardGoogleSyncing,setCalOnboardGoogleSyncing]=useState(false);
   const [obGoogleLinked,setObGoogleLinked]=useState(()=>!!lsGet("cal-google",false));
+  // Folded into this same screen instead of a separate onboarding step --
+  // one skippable ask, not two. No time picker here on purpose: actual
+  // shift times get entered later in the class/routine setup wizard's
+  // activities step, alongside sports/clubs, using the same day/time
+  // builder as everything else -- this just plants the flag so that step
+  // knows to prompt for it.
+  const [worksJob,setWorksJob]=useState(null); // null | true | false
   const [notifPermModal,setNotifPermModal]=useState(false);
   const handleNotifAllow=()=>{
     if(Notification&&Notification.requestPermission)Notification.requestPermission();
@@ -17044,11 +17371,18 @@ function App() {
               pushing everything after it to the right. */}
           {(()=>{
             const navStreak=Math.max(1,getStreak());
+            const navLvl=levelInfo();
             return(
-              <div title={navStreak+"-day streak"} style={{marginLeft:"auto",display:"inline-flex",alignItems:"center",gap:6,padding:"7px 13px",background:T.card,border:`1px solid ${T.border}`,borderRadius:99,fontSize:13,fontWeight:700,color:T.amber,flexShrink:0}}>
+              <>
+              <div onClick={()=>setNavStreakOpen(true)} title={navStreak+"-day streak — tap to see your streak"} style={{marginLeft:"auto",display:"inline-flex",alignItems:"center",gap:6,padding:"7px 13px",background:T.card,border:`1px solid ${T.border}`,borderRadius:99,fontSize:13,fontWeight:700,color:T.amber,flexShrink:0,cursor:"pointer"}}>
                 <svg width="14" height="14" viewBox="0 0 24 24" stroke="none"><path fill="currentColor" d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
                 {navStreak}
               </div>
+              <div onClick={()=>setNavLevelOpen(true)} title={navLvl.title+" — tap to see your level roadmap"} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"7px 13px",background:T.card,border:`1px solid ${T.border}`,borderRadius:99,fontSize:12,fontWeight:600,color:T.text,flexShrink:0,cursor:"pointer"}}>
+                <span style={{whiteSpace:"nowrap"}}>{navLvl.title}</span>
+                <div style={{width:44,height:4,background:T.card2,borderRadius:99,overflow:"hidden",flexShrink:0}}><div style={{height:"100%",width:navLvl.tierPct+"%",background:T.lime,borderRadius:99}}/></div>
+              </div>
+              </>
             );
           })()}
           {/* See Pricing button */}
@@ -17121,6 +17455,8 @@ function App() {
       {dashToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:1001,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {dashToast}</div>
       )}
+      <StreakDetailModal open={navStreakOpen} onClose={()=>setNavStreakOpen(false)} streak={Math.max(1,getStreak())} />
+      <LevelRoadmapModal open={navLevelOpen} onClose={()=>setNavLevelOpen(false)} currentMinutes={levelInfo().minutes} />
 
       {/* PRICING MODAL */}
       <Modal open={pricingOpen} onClose={()=>setPricingOpen(false)} title="Studlin plans" sub="Start free. Upgrade when you're ready. Cancel anytime." width={820}>
@@ -17607,9 +17943,18 @@ function App() {
                 </div>
               </div>
             </div>
+            <div style={{borderTop:`1px solid ${T.border}`,paddingTop:18,marginBottom:20}}>
+              <div style={{fontSize:13,fontWeight:600,color:"rgba(255,255,255,0.95)",marginBottom:2}}>Do you work a job?</div>
+              <div style={{fontSize:11.5,color:"rgba(255,255,255,0.5)",marginBottom:10}}>So Studlin knows not to schedule study time over your shifts.</div>
+              <div style={{display:"flex",gap:8}}>
+                <button type="button" onClick={()=>setWorksJob(true)} style={{flex:1,padding:"9px 0",borderRadius:8,fontSize:12.5,fontWeight:600,cursor:"pointer",border:`1.5px solid ${worksJob===true?T.lime:T.border}`,background:worksJob===true?T.lime+"18":"transparent",color:worksJob===true?T.lime:"rgba(255,255,255,0.65)",fontFamily:T.font}}>Yes</button>
+                <button type="button" onClick={()=>setWorksJob(false)} style={{flex:1,padding:"9px 0",borderRadius:8,fontSize:12.5,fontWeight:600,cursor:"pointer",border:`1.5px solid ${worksJob===false?T.lime:T.border}`,background:worksJob===false?T.lime+"18":"transparent",color:worksJob===false?T.lime:"rgba(255,255,255,0.65)",fontFamily:T.font}}>No</button>
+              </div>
+              {worksJob===true&&<div style={{fontSize:11.5,color:"rgba(255,255,255,0.5)",marginTop:8}}>Add your shifts in the next step, with your classes.</div>}
+            </div>
             <div style={{display:"flex",gap:10}}>
-              <Btn style={{flex:1,justifyContent:"center"}} onClick={()=>{lsSet("cal-onboard-done",true);setCalOnboardDone(true);}}>Done</Btn>
-              <Btn variant="subtle" style={{flex:1,justifyContent:"center"}} onClick={()=>{lsSet("cal-onboard-done",true);setCalOnboardDone(true);}}>Skip for now</Btn>
+              <Btn style={{flex:1,justifyContent:"center"}} onClick={()=>{lsSet("cal-onboard-done",true);if(worksJob!==null)lsSet("has-job",worksJob);setCalOnboardDone(true);}}>Done</Btn>
+              <Btn variant="subtle" style={{flex:1,justifyContent:"center"}} onClick={()=>{lsSet("cal-onboard-done",true);if(worksJob!==null)lsSet("has-job",worksJob);setCalOnboardDone(true);}}>Skip for now</Btn>
             </div>
             <div style={{fontSize:11,color:"rgba(255,255,255,0.35)",textAlign:"center",marginTop:14,lineHeight:1.5}}>You can connect or disconnect calendars anytime in Settings → Integrations.</div>
           </div>
