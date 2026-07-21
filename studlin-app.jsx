@@ -1774,6 +1774,90 @@ function undoTier0Move(taskId){
   lsSet("events",next);
   return {events:next,blocked:false};
 }
+// Runs whenever a *batch* of new fixed time enters the calendar from an
+// external source (a scanned work schedule, an imported calendar link, a
+// Google Calendar sync) -- the one thing those paths don't already get for
+// free the way a routine edit does via reconcileRoutineConflicts, or a
+// syllabus scan does by placing its own sessions against live state at
+// creation time. Same interval-overlap + relocate shape as
+// reconcileRoutineConflicts (CalendarTab, ~line 11596), but standalone
+// (reads/writes lsGet/lsSet("events",...) directly) since callers like
+// SettingsTab don't hold CalendarTab's live events React state -- same
+// idiom mergeImportedEvents/countStudyBlockConflicts already use.
+// Two different outcomes depending on what the new event collides with:
+// a flexible study block gets relocated (findLegalSlotOrNull, never the
+// eviction-aware findSlotWithEviction -- that one's eviction candidates
+// are hard-scoped to Tier 0's own imminent-deadline case) and stamped
+// movedByStudlin the same way Tier 0/reconcileRoutineConflicts already do,
+// which gives it the existing per-item undo badge and undoTier0Move for
+// free. A conflict against another *fixed* event (e.g. a new work shift
+// landing on an existing doctor's appointment) can't be resolved by
+// Studlin at all -- neither side is allowed to move -- so that goes to
+// needsAttention instead, same as a flexible block Studlin searched for
+// and genuinely couldn't find a new home for.
+function reconcileFixedEventConflicts(newFixedEvents){
+  const timed=newFixedEvents.filter(nf=>nf.time);
+  if(timed.length===0)return{events:lsGet("events",[]),moved:[],needsAttention:[]};
+  const newIds=new Set(timed.map(e=>e.id));
+  const existing=lsGet("events",[]).filter(e=>!newIds.has(e.id));
+  const routines=getWeeklyRoutine();
+  const prefs=getSchedulePreferences();
+  const toMin=(t)=>{const p=(t||"00:00").split(":").map(Number);return p[0]*60+p[1];};
+  const overlaps=(a,b)=>{
+    if(a.date!==b.date)return false;
+    const aStart=toMin(a.time),aEnd=aStart+(a.duration||30);
+    const bStart=toMin(b.time),bEnd=bStart+(b.duration||30);
+    return aStart<bEnd&&bStart<aEnd;
+  };
+  const moved=[];
+  const needsAttention=[];
+  let working=existing.slice();
+  timed.forEach(nf=>{
+    working.filter(e=>TIER0_FIXED_KINDS.has(e.kind)&&e.time).forEach(e=>{
+      if(overlaps(nf,e))needsAttention.push({newEvent:nf,conflictsWith:e});
+    });
+    working=working.map(e=>{
+      if(e.kind!=="study block"||e.status==="done"||e.checklist||e.userPinned)return e;
+      if(!overlaps(nf,e))return e;
+      const duration=e.duration||30;
+      const slot=findLegalSlotOrNull(working.filter(x=>x.id!==e.id).concat(timed),routines,prefs,e.date,e.time,duration,e.deadline||null);
+      if(!slot||(slot.date===e.date&&slot.time===e.time)){
+        needsAttention.push({newEvent:nf,conflictsWith:e,noSlotFound:true});
+        return e;
+      }
+      const movedReason={type:"displaced",causedByTitle:nf.title};
+      moved.push({id:e.id,title:e.title,from:{date:e.date,time:e.time},to:slot,causedByTitle:nf.title});
+      return{...e,date:slot.date,time:slot.time,movedByStudlin:true,movedFrom:{date:e.date,time:e.time},movedAt:Date.now(),movedReason};
+    });
+  });
+  const finalEvents=working.concat(newFixedEvents);
+  lsSet("events",finalEvents);
+  return{events:finalEvents,moved,needsAttention};
+}
+// Handoff for reconcileFixedEventConflicts' result from a component that
+// doesn't own App's scheduleChangeAlerts state (SettingsTab isn't a child
+// of CalendarTab) -- same one-shot localStorage flag idiom this file
+// already uses for openNoteId/pendingRoutineWizard/openPrepExamId. App
+// reads and clears this on mount. Deliberately NOT merged into Tier 0's
+// own tier0Batch -- that banner's header text ("you missed the original
+// time") would be flat-out wrong for a session that got bumped by a new
+// arrival, not missed, so this is its own single banner covering both
+// outcomes of the same trigger (something moved / something needs a
+// human) rather than two disconnected floating panels.
+function surfaceReconcileResult(result){
+  const entries=result.moved.map(m=>({kind:"moved",...m}))
+    .concat(result.needsAttention.map(a=>({kind:"attention",...a})));
+  if(entries.length>0)lsSet("pendingScheduleChangeAlerts",[...lsGet("pendingScheduleChangeAlerts",[]),...entries]);
+}
+// Short suffix for the toast each call site already shows on success, so
+// what just happened is hinted at immediately rather than only discoverable
+// by noticing the separate banners.
+function reconcileToastSuffix(result){
+  const parts=[];
+  if(result.moved.length>0)parts.push(result.moved.length+" study session"+(result.moved.length!==1?"s":"")+" moved to make room");
+  if(result.needsAttention.length>0)parts.push(result.needsAttention.length+" conflict"+(result.needsAttention.length!==1?"s":"")+" need"+(result.needsAttention.length!==1?"":"s")+" your attention");
+  return parts.length>0?" · "+parts.join(" · "):"";
+}
 function fmtClock12(t){if(!t)return"";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+ap;}
 function fmtMovedFrom(mf){if(!mf)return"";const dk=mf.date===dayKey()?"today":mf.date;return dk+" "+fmtClock12(mf.time);}
 // Copy for a findReliableSlotFor `.reason` — includes the difficulty tier
@@ -1788,6 +1872,11 @@ function fmtPlacementReason(reason,timeStr){
     const diffWord=reason.tier==="easy"?" easy":reason.tier==="hard"?" hard":"";
     return "Scheduled for "+fmtClock12(timeStr)+" — you finish "+Math.round(reason.pct*100)+"% of"+diffWord+" "+label+" tasks.";
   }
+  // reconcileFixedEventConflicts' move -- distinct from Tier 0's own
+  // "you missed it" reasoning above, so this must never share Tier 0's
+  // banner copy: nothing here was ever missed, it got bumped by something
+  // new that landed on top of it.
+  if(reason.type==="displaced")return "Moved to make room for "+reason.causedByTitle+".";
   return "";
 }
 // A Tier 0 move's reasoning was already computed by findTier0Slot's own
@@ -2106,6 +2195,32 @@ async function extractHsScheduleFromImage(base64Data,mediaType){
     const parsed=JSON.parse(raw);
     return{periods:(parsed&&Array.isArray(parsed.periods))?parsed.periods:[],error:null};
   }catch(e){return{periods:[],error:"Couldn't read that image. Try again."};}
+}
+// Work shift schedule -- deliberately dated shifts, not a recurring weekly
+// pattern like the class scan above: shift schedules from apps like When I
+// Work/Homebase/7shifts (or a manager's handwritten/printed sheet) commonly
+// change week to week, so forcing them into a fixed weekly routine would be
+// wrong more often than it's right. Meant to be re-scanned whenever a new
+// week's schedule comes out, same mental model as re-pasting an updated
+// calendar link.
+async function extractWorkScheduleFromImage(base64Data,mediaType){
+  try{
+    const prompt="This image is a photo or screenshot of a work shift schedule -- from an app like When I Work, Homebase, 7shifts, Deputy, Sling, or similar, or a handwritten/printed schedule. "+
+      "Today's date is "+dayKey()+". If a shift's date has no year, infer the most likely upcoming year given today's date. "+
+      "Extract every actual scheduled shift you can see -- skip headers, notes, unscheduled/day-off entries, and anything without a specific start and end time. "+
+      "For each shift return: \"date\" (YYYY-MM-DD, your best guess -- never omit even if uncertain), "+
+      "\"startTime\" and \"endTime\" (24-hour \"HH:MM\"), "+
+      "\"label\" (optional -- only include when a role, position, or location is actually shown, e.g. \"Barista\" or \"Front Desk\"; leave the key out rather than inventing one). "+
+      "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
+      "{\"shifts\":[{\"date\":\"2026-07-24\",\"startTime\":\"09:00\",\"endTime\":\"17:00\",\"label\":\"Barista\"}]}. "+
+      "If you can't make out any shifts at all, respond with {\"shifts\":[]}.";
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt,image:{mediaType,data:base64Data}}],model:"standard"})});
+    const data=await res.json();
+    if(!res.ok)return{shifts:[],error:data.error||"Couldn't read that image. Try again."};
+    const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
+    const parsed=JSON.parse(raw);
+    return{shifts:(parsed&&Array.isArray(parsed.shifts))?parsed.shifts:[],error:null};
+  }catch(e){return{shifts:[],error:"Couldn't read that image. Try again."};}
 }
 // Starts a new chain: places the first probe session via findReliableSlotFor.
 // No separate "parent" record — this session IS the task, linked to its
@@ -14053,8 +14168,15 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   // shared by the "just connected" response and the once-per-load
   // background pull below, so both apply events the exact same way.
   const applyGoogleEvents=(gcalEvents)=>{
+    // Strip stale gcal- events first (Google is authoritative for its own
+    // prefix -- one deleted on Google's side should disappear here too),
+    // so reconcileFixedEventConflicts' own lsGet reads the clean state and
+    // only ever treats the fresh batch as "new."
     const existing=lsGet("events",[]).filter(e=>!e.id.startsWith("gcal-"));
-    lsSet("events",[...existing,...gcalEvents]);
+    lsSet("events",existing);
+    const result=reconcileFixedEventConflicts(gcalEvents);
+    surfaceReconcileResult(result);
+    return result;
   };
 
   // Authorization Code flow (not the old implicit token flow) -- this is
@@ -14080,13 +14202,13 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
           const res=await authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"google-calendar-connect",code:resp.code})});
           const data=await res.json();
           if(!res.ok)throw new Error(data.error||"Sync failed");
-          applyGoogleEvents(data.events);
+          const result=applyGoogleEvents(data.events);
           lsSet("cal-google",true);
           lsSet("cal-google-last-synced",Date.now());
           setGoogleLastSynced(Date.now());
           setCalGoogleLinked(true);
           setGoogleSyncError(null);
-          showToast(`Google Calendar synced · ${data.events.length} event${data.events.length===1?"":"s"} imported`);
+          showToast(`Google Calendar synced · ${data.events.length} event${data.events.length===1?"":"s"} imported`+reconcileToastSuffix(result));
         }catch(e){
           showToast("Failed to fetch calendar events. Check permissions and try again.","error");
         }finally{
@@ -14183,12 +14305,13 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     if(!importCalReview)return;
     const {subId,url,label,sourceType,events:fetched}=importCalReview;
     const merged=mergeImportedEvents(lsGet("events",[]),subId,fetched);
-    lsSet("events",merged);
+    const result=reconcileFixedEventConflicts(merged.filter(e=>e.importSubId===subId));
+    surfaceReconcileResult(result);
     const sub={id:subId,url,label,sourceType,lastSyncedAt:Date.now()};
     const nextSubs=[...importedCals,sub];
     setImportedCals(nextSubs);saveImportedCalendars(nextSubs);
     setImportCalOpen(false);setImportCalReview(null);
-    showToast(fetched.length+" event"+(fetched.length!==1?"s":"")+" synced from "+label);
+    showToast(fetched.length+" event"+(fetched.length!==1?"s":"")+" synced from "+label+reconcileToastSuffix(result));
   };
   // Shared by the manual "Sync now" action and the once-a-day silent
   // auto-resync below -- no review gate here, since re-confirming a
@@ -14200,7 +14323,8 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
       const data=await res.json();
       if(!res.ok||!data.ok)return;
       const merged=mergeImportedEvents(lsGet("events",[]),sub.id,data.events);
-      lsSet("events",merged);
+      const result=reconcileFixedEventConflicts(merged.filter(e=>e.importSubId===sub.id));
+      surfaceReconcileResult(result);
       const nextSubs=importedCals.map(s=>s.id===sub.id?{...s,lastSyncedAt:Date.now()}:s);
       setImportedCals(nextSubs);saveImportedCalendars(nextSubs);
       // Neither this manual click nor the once-a-day silent auto-resync
@@ -14208,7 +14332,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
       // actions (confirmImportCalendar, removeImportedCalendar) which do —
       // short status wording, not an event count, since a resync's fetched
       // count doesn't mean "N new/changed" the way it does on first import.
-      showToast(sub.label+" synced.");
+      showToast(sub.label+" synced."+reconcileToastSuffix(result));
     }catch(e){}
   };
   const removeImportedCalendar=(sub)=>{
@@ -14229,6 +14353,58 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     const stale=getImportedCalendars().filter(s=>!s.lastSyncedAt||Date.now()-s.lastSyncedAt>24*60*60*1000);
     stale.forEach(s=>resyncCalendar(s));
   },[]);
+
+  // Scan a photo of a work shift schedule -- the fallback for the many
+  // shift-scheduling apps (When I Work, Homebase, 7shifts...) that have no
+  // exportable calendar link at all, so the link-paste flow above never
+  // even gets a chance to work for them. A one-off scan rather than a
+  // subscription like importedCals above: shifts are dated, not a
+  // recurring pattern, and the whole point is re-scanning whenever a new
+  // week's schedule photo comes out -- there's no live URL to auto-resync
+  // from the way there is for a calendar link.
+  const [workScanOpen,setWorkScanOpen]=useState(false);
+  const [workScanning,setWorkScanning]=useState(false);
+  const [workScanError,setWorkScanError]=useState("");
+  const [workScanReview,setWorkScanReview]=useState(null); // [{id,date,startTime,endTime,label,include}]
+  const workFileInputRef=useRef(null);
+  const WORK_IMAGE_EXT_MEDIA_TYPES={png:"image/png",jpg:"image/jpeg",jpeg:"image/jpeg",webp:"image/webp",gif:"image/gif"};
+
+  const openWorkScanModal=()=>{
+    setWorkScanError("");setWorkScanReview(null);setWorkScanOpen(true);
+  };
+  const handleWorkScheduleFile=async(e)=>{
+    const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
+    const ext=file.name.split(".").pop().toLowerCase();
+    if(!WORK_IMAGE_EXT_MEDIA_TYPES[ext]){setWorkScanError("Upload a photo or screenshot of your shift schedule (JPG, PNG, etc).");return;}
+    setWorkScanning(true);setWorkScanError("");
+    try{
+      const dataUrl=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsDataURL(file);});
+      const base64=(dataUrl.split(",")[1])||"";
+      const result=await extractWorkScheduleFromImage(base64,WORK_IMAGE_EXT_MEDIA_TYPES[ext]);
+      if(result.error){setWorkScanError(result.error);return;}
+      if(result.shifts.length===0){setWorkScanError("Couldn't make out any shifts in that image. Try a clearer photo.");return;}
+      setWorkScanReview(result.shifts.map((s,i)=>({id:"ws-"+i,date:s.date||dayKey(),startTime:s.startTime||"09:00",endTime:s.endTime||"17:00",label:s.label||"Shift",include:true})));
+    }catch(err){setWorkScanError("Couldn't read that image: "+err.message);}
+    finally{setWorkScanning(false);}
+  };
+  const setWorkShiftField=(id,patch)=>setWorkScanReview(r=>r.map(s=>s.id===id?{...s,...patch}:s));
+  const confirmWorkScan=()=>{
+    const included=(workScanReview||[]).filter(s=>s.include);
+    if(included.length===0)return;
+    const newEvents=included.map(s=>({
+      id:"work-"+Date.now()+"-"+Math.round(Math.random()*10000),
+      title:s.label||"Shift",
+      subject:"Work",
+      kind:"busy block",
+      date:s.date,
+      time:s.startTime,
+      duration:Math.max(15,timeToMinutes(s.endTime)-timeToMinutes(s.startTime)),
+    }));
+    const result=reconcileFixedEventConflicts(newEvents);
+    surfaceReconcileResult(result);
+    setWorkScanOpen(false);setWorkScanReview(null);
+    showToast(newEvents.length+" shift"+(newEvents.length!==1?"s":"")+" added to your calendar."+reconcileToastSuffix(result));
+  };
 
   const toggleApple=()=>{
     const n=!calAppleLinked;
@@ -14629,6 +14805,16 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   </div>
                   <BtnSm variant={importedCals.length>0?"subtle":"lime"} onClick={openImportCalModal} style={{flexShrink:0}}>{importedCals.length>0?"Manage":"Connect"}</BtnSm>
                 </div>
+                <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${T.border}`}}>
+                  <div style={{width:40,height:40,borderRadius:10,background:T.lime+"14",border:`1px solid ${T.lime}33`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:T.lime}}>
+                    {Icon.file}
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:600,color:T.white}}>Scan your work schedule</div>
+                    <div style={{fontSize:11,color:T.muted,marginTop:2}}>No calendar link? Upload a photo — for When I Work, Homebase, or any shift app</div>
+                  </div>
+                  <BtnSm variant="lime" onClick={openWorkScanModal} style={{flexShrink:0}}>Scan</BtnSm>
+                </div>
                 <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${T.border}`,opacity:0.5}}>
                   <div style={{width:40,height:40,borderRadius:10,background:"rgba(255,255,255,0.06)",border:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill={T.text}><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
@@ -14747,6 +14933,41 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 <Btn variant="subtle" onClick={()=>setRemoveCalConfirm(null)}>Cancel</Btn>
                 <Btn variant="danger" onClick={()=>removeImportedCalendar(removeCalConfirm)}>Remove</Btn>
               </>}>
+            </Modal>
+            <Modal open={workScanOpen} onClose={()=>setWorkScanOpen(false)}
+              title={workScanReview?"Review your shifts":"Scan your work schedule"}
+              sub={workScanReview?"These will be added as fixed, occupied time — Studlin will plan around them.":"A photo or screenshot of your shift schedule, from any shift-scheduling app or a printed/handwritten one."}
+              width={520}
+              footer={workScanReview?(
+                <>
+                  <Btn variant="subtle" onClick={()=>setWorkScanReview(null)}>Back</Btn>
+                  <Btn onClick={confirmWorkScan} disabled={!workScanReview.some(s=>s.include)} style={{opacity:workScanReview.some(s=>s.include)?1:0.45}}>
+                    Add {workScanReview.filter(s=>s.include).length} to Calendar →
+                  </Btn>
+                </>
+              ):(
+                <Btn variant="subtle" onClick={()=>setWorkScanOpen(false)}>Cancel</Btn>
+              )}>
+              {!workScanReview?(<>
+                {workScanning
+                  ? <div style={{padding:"40px 0",textAlign:"center",color:T.muted,fontSize:13}}>Reading your schedule…</div>
+                  : <button type="button" onClick={()=>workFileInputRef.current&&workFileInputRef.current.click()} style={{width:"100%",padding:"32px",borderRadius:12,border:`1.5px dashed ${T.borderHover}`,background:T.card2,color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:13,textAlign:"center"}}>Tap to choose a photo</button>
+                }
+                <input ref={workFileInputRef} type="file" accept=".png,.jpg,.jpeg,.webp,.gif" style={{display:"none"}} onChange={handleWorkScheduleFile} />
+                {workScanError&&<div style={{fontSize:12,color:T.red,marginTop:10}}>{workScanError}</div>}
+              </>):(
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {workScanReview.map(s=>(
+                    <div key={s.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,background:s.include?T.card2:T.card,opacity:s.include?1:0.55}}>
+                      <input type="checkbox" checked={s.include} onChange={()=>setWorkShiftField(s.id,{include:!s.include})} style={{cursor:"pointer"}} />
+                      <Input type="date" value={s.date} onChange={e=>setWorkShiftField(s.id,{date:e.target.value})} style={{width:132,flexShrink:0}} />
+                      <Input type="time" value={s.startTime} onChange={e=>setWorkShiftField(s.id,{startTime:e.target.value})} style={{width:100,flexShrink:0}} />
+                      <Input type="time" value={s.endTime} onChange={e=>setWorkShiftField(s.id,{endTime:e.target.value})} style={{width:100,flexShrink:0}} />
+                      <Input value={s.label} onChange={e=>setWorkShiftField(s.id,{label:e.target.value})} placeholder="Shift" style={{flex:1,minWidth:0}} />
+                    </div>
+                  ))}
+                </div>
+              )}
             </Modal>
           </>)}
 
@@ -16993,6 +17214,23 @@ function App() {
   const [tier0Batch,setTier0Batch]=useState([]);
   const getTier0SeenIds=()=>new Set(lsGet("tier0BannerSeenIds",[]));
   const markTier0BannerSeen=(ids)=>{const seen=getTier0SeenIds();ids.forEach(id=>seen.add(id));lsSet("tier0BannerSeenIds",Array.from(seen));};
+  // Result of reconcileFixedEventConflicts when new external fixed time
+  // lands (work-schedule scan, calendar import, Google sync) -- kept
+  // separate from tier0Batch on purpose (see surfaceReconcileResult):
+  // this covers two outcomes of the same trigger (a study session got
+  // bumped to a new time / a conflict needs a human) in one banner, each
+  // entry tagged kind:"moved"|"attention". SettingsTab doesn't hold this
+  // state directly (it isn't a child of this component), so it hands
+  // results over via a one-shot localStorage flag, same idiom as
+  // pendingTour/pendingRoutineWizard above.
+  const [scheduleChangeAlerts,setScheduleChangeAlerts]=useState([]);
+  useEffect(()=>{
+    const pending=lsGet("pendingScheduleChangeAlerts",[]);
+    if(pending.length>0){
+      lsSet("pendingScheduleChangeAlerts",[]);
+      setScheduleChangeAlerts(a=>[...a,...pending]);
+    }
+  },[]);
   // Actionable-window prep prompt — same "silent trigger, visible result"
   // idiom as Tier 0 above, but for syllabus assignments that were too far
   // out to schedule real prep time for when the syllabus was first scanned
@@ -17555,7 +17793,10 @@ function App() {
         const data=await res.json();
         if(!res.ok||!data.connected)return;
         const existing=lsGet("events",[]).filter(e=>!e.id.startsWith("gcal-"));
-        lsSet("events",[...existing,...data.events]);
+        lsSet("events",existing);
+        const result=reconcileFixedEventConflicts(data.events);
+        const entries=result.moved.map(m=>({kind:"moved",...m})).concat(result.needsAttention.map(a=>({kind:"attention",...a})));
+        if(entries.length>0)setScheduleChangeAlerts(a=>[...a,...entries]);
         if(data.lastSyncedAt)lsSet("cal-google-last-synced",new Date(data.lastSyncedAt).getTime());
       }catch(e){}
     })();
@@ -18120,6 +18361,49 @@ function App() {
           <Btn variant="ghost" onClick={()=>{markTier0BannerSeen(tier0Batch.map(m=>m.id));setTier0Batch([]);}} style={{padding:"7px 14px",fontSize:12,width:"100%",justifyContent:"center"}}>Dismiss</Btn>
         </div>
       )}
+      {scheduleChangeAlerts.length>0&&(()=>{
+        const movedCount=scheduleChangeAlerts.filter(a=>a.kind==="moved").length;
+        const attnCount=scheduleChangeAlerts.filter(a=>a.kind==="attention").length;
+        const headerParts=[];
+        if(movedCount>0)headerParts.push(movedCount+" study session"+(movedCount!==1?"s":"")+" moved");
+        if(attnCount>0)headerParts.push(attnCount+" conflict"+(attnCount!==1?"s":"")+" need"+(attnCount!==1?"":"s")+" your attention");
+        return(
+        <div style={{position:"fixed",top:76,right:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:360}}>
+          <div style={{fontSize:13,color:T.white,marginBottom:10}}>
+            Your new schedule came in — <strong style={{color:attnCount>0?T.amber:T.lime}}>{headerParts.join(" · ")}</strong>:
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12,maxHeight:200,overflowY:"auto"}}>
+            {scheduleChangeAlerts.map((a,i)=>a.kind==="moved"?(
+              <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,fontSize:12,padding:"6px 9px",background:T.card2,borderRadius:8}}>
+                <div style={{minWidth:0}}>
+                  <div style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.title}</div>
+                  <div style={{color:T.muted,fontSize:10.5,marginTop:1}}>→ {a.to.date===dayKey()?"Today":a.to.date} {fmtRolloverClock(a.to.time)} · bumped by {a.causedByTitle}</div>
+                </div>
+                <button onClick={()=>{
+                  const result=undoTier0Move(a.id);
+                  if(result.blocked){
+                    setRolloverToast("Can't undo \""+a.title+"\" — something else is already using that time.");
+                    setTimeout(()=>setRolloverToast(""),3200);
+                    return;
+                  }
+                  setScheduleChangeAlerts(b=>b.filter((x,xi)=>xi!==i));
+                }} style={{background:"none",border:"none",color:T.lime,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",flexShrink:0,padding:0}}>Undo</button>
+              </div>
+            ):(
+              <div key={i} style={{fontSize:12,padding:"6px 9px",background:T.card2,borderRadius:8,color:T.text,lineHeight:1.5}}>
+                {a.noSlotFound
+                  ? <>Couldn't find a new time for <strong>{a.conflictsWith.title}</strong> — it still conflicts with <strong>{a.newEvent.title}</strong> on {a.newEvent.date===dayKey()?"today":a.newEvent.date}.</>
+                  : <><strong>{a.newEvent.title}</strong> conflicts with <strong>{a.conflictsWith.title}</strong> on {a.newEvent.date===dayKey()?"today":a.newEvent.date} — neither can move automatically.</>}
+              </div>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <Btn onClick={()=>{setActive("calendar");setScheduleChangeAlerts([]);}} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Open Calendar</Btn>
+            <Btn variant="ghost" onClick={()=>setScheduleChangeAlerts([])} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Dismiss</Btn>
+          </div>
+        </div>
+        );
+      })()}
       {prepPromptBatch.length>0&&(
         <div style={{position:"fixed",bottom:20,right:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           <div style={{fontSize:13,color:T.white,marginBottom:10}}>
