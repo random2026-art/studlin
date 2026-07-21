@@ -1249,7 +1249,7 @@ function findSlotWithEviction(events,routines,prefs,desiredDate,desiredTime,dura
   }
 
   const candidates=events.filter(e=>e.date===desiredDate&&e.kind==="study block"&&e.status==="pending"&&
-    (!e.deadline||daysUntilDeadline(e)>7)
+    !isCoopStudySession(e)&&(!e.deadline||daysUntilDeadline(e)>7)
   ).sort((a,b)=>{
     const da=a.deadline?daysUntilDeadline(a):Infinity;
     const db=b.deadline?daysUntilDeadline(b):Infinity;
@@ -1324,12 +1324,23 @@ function isTimerEligible(ev){
 // but fixed (not proportional) and only ever applied before
 // TIER0_FIXED_KINDS blocks, never between two ordinary flexible blocks.
 const LEAD_IN_BUFFER_MINS=15;
+// A co-op study session -- scheduled together with a friend/group via chat
+// (see confirmStudyTime/scheduleGroupSession), tied to a shared Firestore
+// studySessions doc every invited participant's own calendar copy points
+// back at via studySessionId. Unlike an ordinary solo "study block"
+// (which Studlin is free to reflow/rebalance/evict), moving one of these
+// unilaterally would desync it from what every other participant still
+// sees on their own calendar -- so it's treated as fixed everywhere
+// movability is decided, the same way TIER0_FIXED_KINDS is, even though
+// its own `kind` is ordinarily flexible ("study block").
+function isCoopStudySession(ev){return !!(ev&&ev.studySessionId);}
 function isTier0Missed(ev,todayKey){
   if(ev.status!=="pending")return false;
   if(ev.checklist)return false;
   if(!ev.time)return false;
   if(ev.userPinned)return false;
   if(TIER0_FIXED_KINDS.has(ev.kind))return false;
+  if(isCoopStudySession(ev))return false;
   // A syllabus-scanned due-date marker (kind:"deadline", duration:null) is
   // currently also caught by the deadline<todayKey check below, since its
   // deadline is always set equal to its own date — but that's an implicit
@@ -1813,11 +1824,11 @@ function reconcileFixedEventConflicts(newFixedEvents){
   const needsAttention=[];
   let working=existing.slice();
   timed.forEach(nf=>{
-    working.filter(e=>TIER0_FIXED_KINDS.has(e.kind)&&e.time).forEach(e=>{
+    working.filter(e=>(TIER0_FIXED_KINDS.has(e.kind)||isCoopStudySession(e))&&e.time).forEach(e=>{
       if(overlaps(nf,e))needsAttention.push({newEvent:nf,conflictsWith:e});
     });
     working=working.map(e=>{
-      if(e.kind!=="study block"||e.status==="done"||e.checklist||e.userPinned)return e;
+      if(e.kind!=="study block"||e.status==="done"||e.checklist||e.userPinned||isCoopStudySession(e))return e;
       if(!overlaps(nf,e))return e;
       const duration=e.duration||30;
       const slot=findLegalSlotOrNull(working.filter(x=>x.id!==e.id).concat(timed),routines,prefs,e.date,e.time,duration,e.deadline||null);
@@ -3043,7 +3054,7 @@ function scoreTask(task,prefs,streak){
 function rebalanceDay(dateKey,allEvents,routines,prefs){
   const FIXED=TIER0_FIXED_KINDS;
   const streak=getStreak();
-  const isFixed=function(e){return FIXED.has(e.kind);};
+  const isFixed=function(e){return FIXED.has(e.kind)||isCoopStudySession(e);};
   // userPinned tasks (manually dragged, or hand-typed a time in Add Task /
   // Edit) are excluded from reshuffling the same way FIXED kinds are — they
   // still occupy their slot (fall into `rest`, still block other tasks from
@@ -3133,13 +3144,21 @@ const WEEK_BALANCE_DAYS=7;
 // average flexible-task load — avoids proposing a token 15-minute shuffle
 // between two days that are already close to even.
 const WEEK_BALANCE_HEAVY_THRESHOLD_MINS=45;
+// "Heavy relative to average" is meaningless when the week barely has
+// anything scheduled at all — one 60-minute task on an otherwise empty
+// week trivially clears WEEK_BALANCE_HEAVY_THRESHOLD_MINS against a
+// near-zero average, producing a technically-true but nonsensical "your
+// week is lopsided" nudge for a single task. Require a real minimum
+// amount of total flexible work in the window before "lopsided" is even
+// a meaningful question to ask.
+const WEEK_BALANCE_MIN_TOTAL_MINS=180;
 function computeWeekBalancePlan(events,routines,prefs,startDateKey){
   const days=[];
   for(let i=0;i<WEEK_BALANCE_DAYS;i++){
     const d=new Date(startDateKey+"T12:00:00");d.setDate(d.getDate()+i);
     days.push(dayKey(d));
   }
-  const isFixed=e=>TIER0_FIXED_KINDS.has(e.kind);
+  const isFixed=e=>TIER0_FIXED_KINDS.has(e.kind)||isCoopStudySession(e);
   // Same flexible-task definition rebalanceDay uses (isFlexPending above),
   // plus userPinned excluded the same way — a student who explicitly
   // pinned a task gets to keep it exactly where they put it, even here.
@@ -3149,9 +3168,12 @@ function computeWeekBalancePlan(events,routines,prefs,startDateKey){
   const before={};
   days.forEach(dk=>{before[dk]=minutesFor(dk,events);});
   const avg=days.reduce((sum,dk)=>sum+before[dk],0)/days.length;
+  const totalMins=days.reduce((sum,dk)=>sum+before[dk],0);
 
   // Heaviest day first, so the worst day gets first crack at shedding load.
-  const heavyDays=days.filter(dk=>before[dk]-avg>=WEEK_BALANCE_HEAVY_THRESHOLD_MINS).sort((a,b)=>before[b]-before[a]);
+  // No day is ever "heavy" at all when the week's total flexible load is
+  // too small for "average" to mean anything (see WEEK_BALANCE_MIN_TOTAL_MINS).
+  const heavyDays=totalMins<WEEK_BALANCE_MIN_TOTAL_MINS?[]:days.filter(dk=>before[dk]-avg>=WEEK_BALANCE_HEAVY_THRESHOLD_MINS).sort((a,b)=>before[b]-before[a]);
 
   let working=events.slice();
   const moves=[];
@@ -11922,7 +11944,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
       // this used to omit "reminder", meaning a point-in-time nudge could
       // get silently relocated here even though Tier 0 would never touch
       // one.
-      if(TIER0_FIXED_KINDS.has(ev.kind))return ev;
+      if(TIER0_FIXED_KINDS.has(ev.kind)||isCoopStudySession(ev))return ev;
       if(ev.date>horizonEnd)return ev;
       const duration=ev.duration||30;
       const tMins=timeToMinutes(ev.time);
@@ -12378,6 +12400,21 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
     // unlike assignmentId, a note has no status enum anything else reads, so
     // there's no orphan *state* to clean up on the note side — just a
     // noteId on a now-deleted event, which disappears with the event.
+    // Deleting a co-op study session locally must not leave the other
+    // participant(s) silently stood up — signal the shared doc so App's
+    // own listener can tell them, same idiom as the assignmentId cleanup
+    // above. Fields written here are all already allowed by
+    // firestore.rules' studySessions update rule, no rules change needed.
+    if(ev&&ev.studySessionId){
+      const myUid=firebase.auth().currentUser?.uid;
+      if(myUid){
+        fsdb().collection('studySessions').doc(ev.studySessionId).update({
+          status:"cancelled",
+          ["participants."+myUid+".state"]:"cancelled",
+          updatedAt:new Date().toISOString(),
+        }).catch(()=>{});
+      }
+    }
   };
   const moveEvent=(id,newDate,newTime)=>{
     const ev=events.find(e=>e.id===id);
@@ -17743,6 +17780,56 @@ function App() {
       },()=>{});
     return unsub;
   },[myUid]);
+  // Co-op cancellation notice -- same collection/query shape as the
+  // live-invite listener just above, swapped to status:"cancelled" (set
+  // by removeEvent, CalendarTab, when a student deletes a co-op session
+  // locally). Self-cleaning with no extra "already handled" bookkeeping
+  // beyond the in-memory seenCancelledRef dedup below: it only ever
+  // surfaces while a still-pending local event carries this session's id,
+  // so once the student picks Remove or Keep (below) that link is gone
+  // and it naturally stops matching on the next snapshot -- including for
+  // the canceller's own client, whose local copy is already gone from
+  // their own delete, so no separate "was it me" check is needed either.
+  const seenCancelledRef=useRef(new Set());
+  const [coopCancelAlerts,setCoopCancelAlerts]=useState([]);
+  useEffect(()=>{
+    if(!myUid)return;
+    const unsub=fsdb().collection('studySessions')
+      .where('memberUids','array-contains',myUid).where('status','==','cancelled')
+      .onSnapshot(snap=>{
+        snap.docChanges().forEach(ch=>{
+          if(ch.type==='removed')return;
+          const s={id:ch.doc.id,...ch.doc.data()};
+          if(seenCancelledRef.current.has(s.id))return;
+          const myEvent=lsGet("events",[]).find(e=>e.studySessionId===s.id&&e.status==="pending");
+          if(!myEvent)return;
+          seenCancelledRef.current.add(s.id);
+          const cancelledBy=Object.entries(s.participants||{}).find(([uid,p])=>p.state==="cancelled"&&uid!==myUid);
+          setCoopCancelAlerts(a=>[...a,{sessionId:s.id,eventId:myEvent.id,title:myEvent.title,date:myEvent.date,time:myEvent.time,byName:cancelledBy?cancelledBy[1].name:"Your study partner"}]);
+        });
+      },()=>{});
+    return unsub;
+  },[myUid]);
+  const removeCoopCancelAlert=(sessionId)=>{
+    const alert=coopCancelAlerts.find(a=>a.sessionId===sessionId);
+    if(alert){
+      const next=lsGet("events",[]).filter(e=>e.id!==alert.eventId);
+      lsSet("events",next);
+    }
+    setCoopCancelAlerts(a=>a.filter(x=>x.sessionId!==sessionId));
+  };
+  const keepCoopCancelAlert=(sessionId)=>{
+    const alert=coopCancelAlerts.find(a=>a.sessionId===sessionId);
+    if(alert){
+      const next=lsGet("events",[]).map(e=>{
+        if(e.id!==alert.eventId)return e;
+        const {studySessionId,...rest}=e;
+        return rest;
+      });
+      lsSet("events",next);
+    }
+    setCoopCancelAlerts(a=>a.filter(x=>x.sessionId!==sessionId));
+  };
   const joinLiveInvite=async()=>{
     if(!liveInvite||!myUid)return;
     const now=Date.now();
@@ -18518,6 +18605,24 @@ function App() {
         </div>
         );
       })()}
+      {coopCancelAlerts.length>0&&(
+        <div style={{position:"fixed",bottom:20,left:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
+          <div style={{fontSize:13,color:T.white,marginBottom:10}}>
+            <strong style={{color:T.amber}}>{coopCancelAlerts.length} study session{coopCancelAlerts.length!==1?"s":""}</strong> cancelled:
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:4,maxHeight:220,overflowY:"auto"}}>
+            {coopCancelAlerts.map(a=>(
+              <div key={a.sessionId} style={{padding:"8px 9px",background:T.card2,borderRadius:8,fontSize:12}}>
+                <div style={{color:T.text,marginBottom:6}}>{a.byName} cancelled "{a.title}" — {a.date===dayKey()?"today":a.date} {fmtRolloverClock(a.time)}</div>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>removeCoopCancelAlert(a.sessionId)} style={{background:"none",border:`1px solid ${T.border}`,borderRadius:6,color:T.muted,cursor:"pointer",fontSize:11,padding:"5px 8px",fontFamily:T.font}}>Remove from my calendar</button>
+                  <button onClick={()=>keepCoopCancelAlert(a.sessionId)} style={{background:"none",border:"none",color:T.lime,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Keep it anyway</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {prepPromptBatch.length>0&&(
         <div style={{position:"fixed",bottom:20,right:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           <div style={{fontSize:13,color:T.white,marginBottom:10}}>
