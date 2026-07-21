@@ -1983,6 +1983,25 @@ async function proposeOutline(title,detail,subject){
 // markup -- an assignment's real submission link isn't recoverable from
 // what's visually on screen, only the label text is, and a fabricated
 // link would be worse than not offering one at all.
+// Deterministic backstop against a real failure mode: a scrambled/flattened
+// PDF (a table's text run together out of order) can lead the model to grab
+// a course-header fragment or a random prose sentence as if it were an
+// assignment title, purely because a date-like number happened to sit near
+// it in the mangled text. A real assignment/exam title is essentially
+// always a short, capitalized noun phrase ("Problem Set 3", "Midterm
+// Exam") -- never a full sentence. This runs after every extraction call
+// below, in addition to (not instead of) asking the model directly not to
+// do this in the prompt itself.
+function looksLikeRealDeadlineTitle(title){
+  if(!title||typeof title!=="string")return false;
+  const t=title.trim();
+  if(!t||t.length>60)return false;
+  if(t.split(/\s+/).length>8)return false;
+  if(/^[a-z]/.test(t))return false;
+  return true;
+}
+const ANTI_GARBAGE_EXTRACTION_RULE=
+  "Only extract an item if it is clearly a specific graded assignment, project, reading, quiz, or exam that is due or occurs on that date -- never extract a course title, professor name, room/location, grading policy, or general encouragement text, even if a date-like number happens to sit near it. Each \"title\" must be a short, specific noun phrase naming the actual assignment (e.g. \"Problem Set 3\", \"Midterm Exam\", \"Ch. 5 Reading\") -- never a full sentence or a fragment of one. If you can't confidently name the specific item due, skip that date entirely rather than guessing a title from nearby text. ";
 // Returns {items, error} rather than a bare array so the caller can tell
 // "genuinely found nothing in the image" apart from "the call itself
 // failed" and show a real message instead of a silent empty state either way.
@@ -1998,6 +2017,7 @@ async function extractSyllabusDeadlinesFromImage(base64Data,mediaType){
       "\"detail\" (optional — only include when the image actually shows something concrete beyond the date itself; leave the key out rather than inventing filler when nothing specific is visible). "+
       "\"estimatedHours\" (ONLY when kind is \"deadline\": your best-guess total hours a typical student would need for the whole thing, based on the title — a short reading response or problem set is usually 1-3 hours, an essay or lab report is usually 4-8 hours, a term paper or major project is usually 12-25 hours; omit entirely when kind is \"exam\"). "+
       "Never invent a URL or link — a screenshot's visible text has no way to reveal what an actual link points to, so don't fabricate one even if a title looks clickable. "+
+      ANTI_GARBAGE_EXTRACTION_RULE+
       "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
       "{\"deadlines\":[{\"title\":\"Problem Set 3\",\"date\":\"2026-09-22\",\"kind\":\"deadline\",\"confidence\":\"high\",\"estimatedHours\":2}]}. "+
       "If you find no dates at all in the image, respond with {\"deadlines\":[]}.";
@@ -2006,7 +2026,7 @@ async function extractSyllabusDeadlinesFromImage(base64Data,mediaType){
     if(!res.ok)return{items:[],error:data.error||"Couldn't read that image. Try again."};
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
     const parsed=JSON.parse(raw);
-    if(parsed&&Array.isArray(parsed.deadlines))return{items:parsed.deadlines,error:null};
+    if(parsed&&Array.isArray(parsed.deadlines))return{items:parsed.deadlines.filter(d=>looksLikeRealDeadlineTitle(d&&d.title)),error:null};
     return{items:[],error:null};
   }catch(e){return{items:[],error:"Couldn't read that image. Try again."};}
 }
@@ -2025,6 +2045,7 @@ const CLASS_SYLLABUS_JSON_CONTRACT=
   "\"subject.name\" is the class name as it would appear on a schedule (e.g. \"Biology 101\", \"AP English IV\") -- if genuinely not stated anywhere, use your best guess from context, never leave it blank. "+
   "\"meetingTimes\" is when the class actually meets each week -- \"days\" uses 0=Monday..6=Sunday, \"startTime\" is 24-hour \"HH:MM\", \"duration\" is minutes. Include one entry per distinct day/time pattern (e.g. a class meeting Mon/Wed/Fri at one time and Tue/Thu at another is two entries). Omit \"meetingTimes\" entirely (empty array) if no recurring meeting time is stated anywhere in the source. "+
   "\"deadlines\" follows the same rules as before: \"title\" short, \"date\" YYYY-MM-DD (never omit even if uncertain), \"kind\" \"deadline\" or \"exam\", \"examWeight\" (\"quiz\" or \"major\", exams only), \"confidence\" (\"high\"/\"low\"), \"detail\" (optional, only when something concrete is stated), \"estimatedHours\" (deadlines only, best guess). "+
+  ANTI_GARBAGE_EXTRACTION_RULE+
   "If you find no deadlines at all, return an empty \"deadlines\" array -- never omit the key.";
 async function extractClassSyllabusText(text){
   if(!text||!text.trim())return{subject:null,meetingTimes:[],deadlines:[],error:null};
@@ -2041,7 +2062,7 @@ async function extractClassSyllabusText(text){
     return{
       subject:(parsed&&parsed.subject&&parsed.subject.name)?parsed.subject:null,
       meetingTimes:(parsed&&Array.isArray(parsed.meetingTimes))?parsed.meetingTimes:[],
-      deadlines:(parsed&&Array.isArray(parsed.deadlines))?parsed.deadlines:[],
+      deadlines:(parsed&&Array.isArray(parsed.deadlines))?parsed.deadlines.filter(d=>looksLikeRealDeadlineTitle(d&&d.title)):[],
       error:null,
     };
   }catch(e){return{subject:null,meetingTimes:[],deadlines:[],error:"Couldn't read that file. Try again."};}
@@ -2061,7 +2082,7 @@ async function extractClassSyllabusImage(base64Data,mediaType){
     return{
       subject:(parsed&&parsed.subject&&parsed.subject.name)?parsed.subject:null,
       meetingTimes:(parsed&&Array.isArray(parsed.meetingTimes))?parsed.meetingTimes:[],
-      deadlines:(parsed&&Array.isArray(parsed.deadlines))?parsed.deadlines:[],
+      deadlines:(parsed&&Array.isArray(parsed.deadlines))?parsed.deadlines.filter(d=>looksLikeRealDeadlineTitle(d&&d.title)):[],
       error:null,
     };
   }catch(e){return{subject:null,meetingTimes:[],deadlines:[],error:"Couldn't read that image. Try again."};}
@@ -4376,8 +4397,8 @@ function recordQuizGen(){const u=getQuizGenUsage();lsSet("quizGens",{month:u.mon
 // instead of inventing a parallel system.
 function StudlinPrep(){
   const [tab,setTab]=useState("exams"); // exams | flashcards | practiceExams
-  // One-shot deep-link handoff -- same pattern openSyllabusScanOnNotes/
-  // openNoteId already use elsewhere: a caller (Dashboard's Exams master
+  // One-shot deep-link handoff -- same pattern openNoteId already uses
+  // elsewhere: a caller (Dashboard's Exams master
   // list) sets this before navigating here, consumed once on mount then
   // cleared, so it doesn't keep re-selecting on every later visit.
   const [selectedExamId,setSelectedExamId]=useState(()=>{
@@ -5800,6 +5821,7 @@ function Notes({setActive=()=>{}}){
         "\"confidence\" (\"high\" if an explicit date was stated, \"low\" if you inferred/guessed it, e.g. from \"the Friday after spring break\"), "+
         "\"detail\" (optional — only include this key when the source text actually states something concrete and useful beyond the date itself, e.g. \"Covers chapters 4-6, bring a calculator\" for an exam or \"Submit as PDF, cite 3 sources\" for an assignment; leave the key out entirely rather than inventing generic filler when nothing specific is stated). "+
         "\"estimatedHours\" (ONLY when kind is \"deadline\": your best-guess total hours a typical student would need for the whole thing, based on the title and any detail given — a short reading response or problem set is usually 1-3 hours, an essay or lab report is usually 4-8 hours, a term paper or major project is usually 12-25 hours; omit entirely when kind is \"exam\"). "+
+        ANTI_GARBAGE_EXTRACTION_RULE+
         "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
         "{\"deadlines\":[{\"title\":\"Problem Set 3\",\"date\":\"2026-09-22\",\"kind\":\"deadline\",\"confidence\":\"high\",\"estimatedHours\":2},{\"title\":\"Unit 2 Midterm\",\"date\":\"2026-10-03\",\"kind\":\"exam\",\"examWeight\":\"major\",\"confidence\":\"high\",\"detail\":\"Covers chapters 4-6, bring a calculator\"}]}. "+
         "If you find no dates at all, respond with {\"deadlines\":[]}.\n\n"+text.slice(0,30000);
@@ -5807,7 +5829,7 @@ function Notes({setActive=()=>{}}){
       const data=await res.json();
       const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
       const parsed=JSON.parse(raw);
-      if(parsed&&Array.isArray(parsed.deadlines))return parsed.deadlines;
+      if(parsed&&Array.isArray(parsed.deadlines))return parsed.deadlines.filter(d=>looksLikeRealDeadlineTitle(d&&d.title));
       return regexScanDeadlines(text);
     }catch(e){return regexScanDeadlines(text);}
   };
@@ -10086,7 +10108,7 @@ const classSetupChoiceStyle={width:"100%",textAlign:"left",padding:"14px 16px",b
 // commitSyllabusEvents helpers everywhere else in the app already uses —
 // the caller (CalendarTab) re-syncs its own React state from localStorage
 // once onFinish fires, same as subjOnboardOpen's old "Save my classes" did.
-function ClassSetupWizard({open,initialStatus,onFinish,onSkip}){
+function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
   const [step,setStep]=useState("status"); // status | classes | activities | window
   const [status,setStatus]=useState(initialStatus||"");
   const [classList,setClassList]=useState([]); // {id,label,color} added so far this session
@@ -10112,9 +10134,9 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip}){
   useEffect(()=>{
     if(!open)return;
     setStatus(initialStatus||"");
-    setStep(initialStatus?"classes":"status");
+    setStep(quickScan?"classes":(initialStatus?"classes":"status"));
     setClassList([]);
-    setAddMode(null);
+    setAddMode(quickScan?"scan":null);
     setScanError("");
     setPasteMode(false);
     setPasteText("");
@@ -10477,7 +10499,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip}){
           <button type="button" onClick={onSkip} style={{fontSize:12.5,color:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>Skip all</button>
           <div style={{display:"flex",gap:10}}>
             {step==="classes"&&addMode===null&&(
-              <Btn onClick={()=>setStep("activities")}>{classList.length>0?"Done adding classes":"Skip, I'll add classes later"}</Btn>
+              <Btn onClick={()=>quickScan?finish():setStep("activities")}>{classList.length>0?"Done adding classes":"Skip, I'll add classes later"}</Btn>
             )}
             {step==="classes"&&addMode==="review"&&(
               <Btn onClick={commitReviewedClass} disabled={!review.subjectName.trim()} style={{opacity:review.subjectName.trim()?1:0.45}}>Add this class</Btn>
@@ -11178,7 +11200,7 @@ function RescheduleModal({task,events,commit,onClose}){
   );
 }
 
-function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,onScanSyllabus}={}){
+function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.muted},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   const colorOf=(sub)=>{if(!sub||sub==="None"||sub==="")return T.muted;const x=userSubjects.find(s=>s.label===sub);return x?x.color:T.lime;};
@@ -11200,6 +11222,11 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
   // auto-open — calTourStep below opens it explicitly once the new
   // walkthrough finishes, same deferral the old sequence used.
   const [classSetupOpen,setClassSetupOpen]=useState(()=>!lsGet("subjects-configured",false)&&!lsGet("hasConfiguredRoutine",false)&&!isFreshAccount);
+  // Toolbar's "Scan syllabus" -- a second, independent instance of the same
+  // wizard used for onboarding, opened straight into its scan step (see
+  // quickScan prop) so an already-onboarded student can add one more class's
+  // dates without walking the whole classes->activities->window flow again.
+  const [quickScanOpen,setQuickScanOpen]=useState(false);
 
   // RoutineWizardModal itself is untouched and still reachable later via
   // "Manage Routine" (Settings > Calendar Preferences, arrives here via
@@ -11269,6 +11296,14 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
     lsSet("subjects-configured",true);
     lsSet("hasConfiguredRoutine",true);
     setClassSetupOpen(false);
+  };
+  // Same re-sync finishClassSetup does, minus the onboarding flags (already
+  // true by the time an existing user reaches this from the Tools menu).
+  const finishQuickScan=()=>{
+    setQuickScanOpen(false);
+    setUserSubjectsState(getSubjects());
+    persistRoutines(getWeeklyRoutine());
+    setEvents(lsGet("events",[]).filter(e=>!e.id.startsWith("seed-")));
   };
   // RoutineWizardModal's own finish/skip -- reachable now only via "Manage
   // Routine" (openWizardOnMount above), not as a first-run auto-trigger.
@@ -12235,7 +12270,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
             <div style={{position:"absolute",top:"calc(100% + 6px)",right:0,width:220,background:T.card,border:`1px solid ${T.border}`,borderRadius:12,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
               {[
                 {icon:Icon.zap,label:"Balance my week",sub:"Rebalance an overloaded week",onClick:()=>{setToolsMenuOpen(false);openWeekBalance();}},
-                {icon:Icon.file,label:"Scan syllabus",sub:"Upload a doc, AI extracts dates",onClick:()=>{setToolsMenuOpen(false);onScanSyllabus();}},
+                {icon:Icon.file,label:"Scan syllabus",sub:"Upload a doc, AI extracts dates",onClick:()=>{setToolsMenuOpen(false);setQuickScanOpen(true);}},
                 {icon:Icon.cal,label:"Routine",sub:"Manage your weekly schedule",onClick:()=>{setToolsMenuOpen(false);setRoutineCenterOpen(true);}},
               ].map(item=>(
                 <div key={item.label} onClick={item.onClick} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 14px",cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
@@ -12354,6 +12389,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
           isLast={calTourStep===CAL_TOUR_STEPS.length-1} onNext={advanceCalTour} onSkip={skipCalTour} />
       )}
       <ClassSetupWizard open={classSetupOpen} initialStatus={getProfile().status} onFinish={finishClassSetup} onSkip={skipClassSetup} />
+      <ClassSetupWizard open={quickScanOpen} quickScan initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>setQuickScanOpen(false)} />
       {toast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} Task added</div>
       )}
@@ -17255,11 +17291,6 @@ function App() {
   // just switches tabs and leaves a one-shot flag for it to pick up on mount.
   const [pendingRoutineWizard,setPendingRoutineWizard]=useState(false);
   const openRoutineWizardOnCalendar=()=>{setActive("calendar");setPendingRoutineWizard(true);};
-  // Same one-shot deep-link idiom, reversed: Calendar's "Scan syllabus" button
-  // switches to Notes and leaves a flag for Notes' own openSyllabusScan
-  // useEffect to pick up on mount (mirrors the openNoteId deep link already
-  // used there).
-  const openSyllabusScanOnNotes=()=>{lsSet("openSyllabusScan",true);setActive("notes");};
   const myUid=firebase.auth().currentUser?.uid||null;
 
   // Global unread count for the sidebar badge — mounted here (not inside
@@ -17853,7 +17884,7 @@ function App() {
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
           {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} />:
-           active==="calendar"?<CalendarTab onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} onScanSyllabus={openSyllabusScanOnNotes} />:
+           active==="calendar"?<CalendarTab onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} />:
            active==="notes"?<Notes setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="lectures"?<Lectures setActive={setActive} setPricingOpen={setPricingOpen} />:
