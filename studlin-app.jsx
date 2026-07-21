@@ -4406,6 +4406,19 @@ function StudlinPrep(){
   const [genMsg,setGenMsg]=useState("");
   const materialText=fileTexts.map(f=>f.text).join("\n\n");
   const fileInputRef=useRef(null);
+  // Pull material straight from Notes already written for this class,
+  // instead of forcing a re-upload of content the student already typed
+  // somewhere else in the app.
+  const [notesPickerOpen,setNotesPickerOpen]=useState(false);
+  const [notesPickerSelected,setNotesPickerSelected]=useState([]);
+  const matchingNotes=selectedExam?lsGet("notes",[]).filter(n=>n.tag===selectedExam.subject):[];
+  const toggleNotePick=(id)=>setNotesPickerSelected(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);
+  const confirmNotesPicker=()=>{
+    const chosen=matchingNotes.filter(n=>notesPickerSelected.includes(n.id));
+    const newEntries=chosen.filter(n=>!fileTexts.some(f=>f.name===n.title)).map(n=>({name:n.title,text:stripHtml(n.body)}));
+    setFileTexts(prev=>[...prev,...newEntries]);
+    setNotesPickerOpen(false);setNotesPickerSelected([]);
+  };
 
   const extractPrepFileText=async(file)=>{
     const ext=file.name.split(".").pop().toLowerCase();
@@ -4514,6 +4527,75 @@ function StudlinPrep(){
     setSchedulePreview(null);
   };
 
+  // ── Build my study kit -- one action instead of the five separate clicks
+  // (generate cards, generate quiz, schedule reviews, schedule quiz) the
+  // buttons above require. Generation stays instant/low-stakes exactly like
+  // genDeckForExam/genPracticeExamForExam already are; only the combined
+  // scheduling step is preview-then-confirm, same discipline as everywhere
+  // else. If only one half is allowed (a free-tier limit), proceeds with
+  // just that half instead of blocking the whole action. ──
+  const [kitLoading,setKitLoading]=useState(false);
+  const [kitPreview,setKitPreview]=useState(null); // {deck,pe,deckSessions,peSessions,warnings,examId,examDate}
+  const buildStudyKit=async()=>{
+    if(!materialText.trim()||!selectedExam)return;
+    const canCards=canGenFlashcards();
+    const canQuiz=canGenQuiz();
+    if(!canCards&&!canQuiz){
+      setUpgradeModal({feature:"AI flashcard and practice exam generations",detail:"You've used this month's free flashcard and practice exam generations. They reset in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+", or upgrade for unlimited right now."});
+      return;
+    }
+    setKitLoading(true);setGenMsg("");
+    const warnings=[];
+    const [cards,questions]=await Promise.all([
+      canCards?generateFlashcardsFromText(materialText,selectedExam.subject||"this exam",10):Promise.resolve(null),
+      canQuiz?generateQuizFromText(materialText,selectedExam.subject||"this exam",8):Promise.resolve(null),
+    ]);
+    setKitLoading(false);
+    let deck=null,pe=null;
+    if(canCards){
+      if(cards&&cards.length>0){
+        recordFlashcardGen();
+        deck={id:String(Date.now()+Math.random()*1000),name:selectedExam.title,count:cards.length,done:0,color:colorOf(selectedExam.subject),cards,examEventId:selectedExam.id};
+        lsSet("decks",[deck,...lsGet("decks",[])]);
+      }else warnings.push("Couldn't generate flashcards this time.");
+    }else warnings.push("This month's free flashcard generations are used up.");
+    if(canQuiz){
+      if(questions&&questions.length>0){
+        recordQuizGen();
+        pe=createPracticeExam(selectedExam.title,selectedExam.subject,selectedExam.id,questions);
+      }else warnings.push("Couldn't generate a practice exam this time.");
+    }else warnings.push("This month's free practice exam generations are used up.");
+    refresh();
+    if(!deck&&!pe){setGenMsg(warnings[0]||"Couldn't build a study kit. Try again.");return;}
+    const deckSessions=deck?buildSpacedSessionPreviews(selectedExam.date,selectedExam.subject,4):[];
+    const peSessions=pe?buildSpacedSessionPreviews(selectedExam.date,selectedExam.subject,1,60):[];
+    setKitPreview({deck,pe,deckSessions,peSessions,warnings,examId:selectedExam.id,examDate:selectedExam.date});
+  };
+  const commitStudyKit=()=>{
+    if(!kitPreview)return;
+    const events=lsGet("events",[]);
+    const deckEvents=kitPreview.deck?kitPreview.deckSessions.map((s,i)=>({
+      id:"deckrev-"+kitPreview.deck.id+"-"+Date.now()+"-"+i,
+      title:"Review: "+kitPreview.deck.name,
+      date:s.date,time:s.time,subject:"",kind:"study block",notes:"",
+      priority:5,difficulty:5,deadline:kitPreview.examDate,duration:s.duration,
+      status:"pending",timeSpent:0,completedAt:null,
+      deckId:kitPreview.deck.id,placementReason:s.placementReason||null,
+      dueEventId:kitPreview.examId,isExamPrepSession:true,
+    })):[];
+    const peEvents=kitPreview.pe?kitPreview.peSessions.map((s,i)=>({
+      id:"practiceexam-"+kitPreview.pe.id+"-"+Date.now()+"-"+i,
+      title:"Practice Exam: "+kitPreview.pe.name,
+      date:s.date,time:s.time,subject:"",kind:"study block",notes:"",
+      priority:5,difficulty:5,deadline:kitPreview.examDate,duration:s.duration,
+      status:"pending",timeSpent:0,completedAt:null,
+      practiceExamId:kitPreview.pe.id,placementReason:s.placementReason||null,
+      dueEventId:kitPreview.examId,isExamPrepSession:true,
+    })):[];
+    lsSet("events",events.concat(deckEvents,peEvents));
+    setKitPreview(null);
+  };
+
   // ── Taking a practice exam -- direct execution, right inside Prep, no
   // navigating away. On finishing: records the attempt, writes quizScores
   // onto the linked exam so it feeds computeExamReadiness exactly like a
@@ -4578,7 +4660,7 @@ function StudlinPrep(){
               const pes=allPracticeExams.filter(p=>p.examEventId===ex.id);
               const stateColor=readiness?.state==="behind"||readiness?.state==="at-risk"?T.red:readiness?.state==="on-track"?T.lime:T.muted;
               return(
-                <div key={ex.id} onClick={()=>{setSelectedExamId(ex.id);setFileTexts([]);setGenMsg("");}} style={{padding:"14px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,cursor:"pointer",display:"flex",alignItems:"center",gap:14}}>
+                <div key={ex.id} onClick={()=>{setSelectedExamId(ex.id);setFileTexts(ex.sourceMaterial?[{name:"From your syllabus",text:ex.sourceMaterial}]:[]);setGenMsg("");}} style={{padding:"14px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,cursor:"pointer",display:"flex",alignItems:"center",gap:14}}>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:14,fontWeight:700,color:T.white}}>{ex.title}</div>
                     <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{ex.subject} · {ex.date}{deck?" · deck linked":""}{pes.length>0?" · "+pes.length+" practice exam"+(pes.length!==1?"s":""):""}</div>
@@ -4606,10 +4688,13 @@ function StudlinPrep(){
             <Card style={{padding:20,marginBottom:16}}>
               <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Material</div>
               <input type="file" ref={fileInputRef} onChange={handlePrepFile} accept=".txt,.md,.pdf,.docx" style={{display:"none"}} multiple />
-              <div onClick={()=>fileInputRef.current&&fileInputRef.current.click()} style={{border:`1px dashed ${T.borderHover}`,borderRadius:10,padding:18,textAlign:"center",background:T.card2,cursor:"pointer",marginBottom:fileTexts.length>0?10:14}}>
+              <div onClick={()=>fileInputRef.current&&fileInputRef.current.click()} style={{border:`1px dashed ${T.borderHover}`,borderRadius:10,padding:18,textAlign:"center",background:T.card2,cursor:"pointer",marginBottom:10}}>
                 <div style={{fontSize:12.5,color:T.text,fontWeight:500}}>Click to upload — PDF, DOCX, or TXT</div>
                 <div style={{fontSize:10.5,color:T.muted,marginTop:3}}>Upload once, generate flashcards and a practice exam from the same material</div>
               </div>
+              {matchingNotes.length>0&&(
+                <button type="button" onClick={()=>setNotesPickerOpen(true)} style={{width:"100%",textAlign:"center",padding:"9px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,marginBottom:fileTexts.length>0?10:14}}>Pull from your notes ({matchingNotes.length} for {selectedExam.subject})</button>
+              )}
               {fileTexts.length>0&&(
                 <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:14}}>
                   {fileTexts.map(f=>(
@@ -4620,9 +4705,14 @@ function StudlinPrep(){
                   ))}
                 </div>
               )}
-              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                <BtnSm onClick={genDeckForExam} disabled={!materialText.trim()||genLoading!==null}>{genLoading==="cards"?"Generating…":"Generate Flashcards"}</BtnSm>
-                <BtnSm variant="subtle" onClick={genPracticeExamForExam} disabled={!materialText.trim()||genLoading!==null}>{genLoading==="quiz"?"Generating…":"Generate Practice Exam"}</BtnSm>
+              <div style={{marginBottom:10}}>
+                <Btn onClick={buildStudyKit} disabled={!materialText.trim()||kitLoading||genLoading!==null}>{kitLoading?"Building…":"Build my study kit"}</Btn>
+                <div style={{fontSize:10.5,color:T.muted,marginTop:6}}>Flashcards, a practice exam, and review sessions counting down to test day — one action.</div>
+              </div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                <span style={{fontSize:10.5,color:T.faint}}>or just one:</span>
+                <BtnSm variant="subtle" onClick={genDeckForExam} disabled={!materialText.trim()||genLoading!==null||kitLoading}>{genLoading==="cards"?"Generating…":"Flashcards only"}</BtnSm>
+                <BtnSm variant="subtle" onClick={genPracticeExamForExam} disabled={!materialText.trim()||genLoading!==null||kitLoading}>{genLoading==="quiz"?"Generating…":"Practice exam only"}</BtnSm>
                 {genMsg&&<span style={{fontSize:11.5,color:genMsg.startsWith("✓")?T.teal:T.red,alignSelf:"center"}}>{genMsg}</span>}
               </div>
             </Card>
@@ -4713,6 +4803,72 @@ function StudlinPrep(){
             ))}
           </div>
         )}
+      </Modal>
+
+      {/* ── Study kit preview -- everything Build My Study Kit is about to
+          create/schedule, one confirm instead of stacking the deck/quiz
+          schedule-preview modal above twice in a row. ── */}
+      <Modal open={!!kitPreview} onClose={()=>setKitPreview(null)}
+        title="Your study kit"
+        sub={kitPreview?(kitPreview.deckSessions.length+kitPreview.peSessions.length)+" session"+((kitPreview.deckSessions.length+kitPreview.peSessions.length)!==1?"s":"")+" counting down to "+kitPreview.examDate:""}
+        width={480}
+        footer={<><Btn variant="subtle" onClick={()=>setKitPreview(null)}>Cancel</Btn><Btn onClick={commitStudyKit} disabled={!kitPreview||(!kitPreview.deck&&!kitPreview.pe)}>Add to my calendar</Btn></>}>
+        {kitPreview&&(
+          <div>
+            {kitPreview.warnings.length>0&&(
+              <div style={{fontSize:11.5,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:8,padding:"8px 12px",marginBottom:14}}>
+                {kitPreview.warnings.join(" ")}
+              </div>
+            )}
+            {kitPreview.deck&&(
+              <div style={{marginBottom:14}}>
+                <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>{kitPreview.deck.count} flashcards · {kitPreview.deckSessions.length} review session{kitPreview.deckSessions.length!==1?"s":""}</div>
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  {kitPreview.deckSessions.map((s,i)=>(
+                    <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card2,borderRadius:8}}>
+                      <span style={{color:T.text}}>{s.date}</span>
+                      <span style={{color:T.muted,fontFamily:T.mono}}>{s.time} · {s.duration}m</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {kitPreview.pe&&(
+              <div>
+                <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>{kitPreview.pe.questions.length} practice questions · {kitPreview.peSessions.length} session</div>
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  {kitPreview.peSessions.map((s,i)=>(
+                    <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card2,borderRadius:8}}>
+                      <span style={{color:T.text}}>{s.date}</span>
+                      <span style={{color:T.muted,fontFamily:T.mono}}>{s.time} · {s.duration}m</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      {/* ── Pull from Notes -- picks existing notes tagged to this exam's
+          subject instead of forcing a re-upload of content the student
+          already wrote elsewhere in the app. ── */}
+      <Modal open={notesPickerOpen} onClose={()=>{setNotesPickerOpen(false);setNotesPickerSelected([]);}}
+        title="Pull from your notes"
+        sub={"Notes tagged "+(selectedExam?selectedExam.subject:"")}
+        width={460}
+        footer={<><Btn variant="subtle" onClick={()=>{setNotesPickerOpen(false);setNotesPickerSelected([]);}}>Cancel</Btn><Btn onClick={confirmNotesPicker} disabled={notesPickerSelected.length===0}>Add {notesPickerSelected.length||""} to material</Btn></>}>
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {matchingNotes.map(n=>(
+            <label key={n.id} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"9px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:notesPickerSelected.includes(n.id)?T.card2:"transparent"}}>
+              <input type="checkbox" checked={notesPickerSelected.includes(n.id)} onChange={()=>toggleNotePick(n.id)} style={{marginTop:2,cursor:"pointer"}} />
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:600,color:T.text}}>{n.title}</div>
+                <div style={{fontSize:11,color:T.muted,marginTop:2}}>{n.date}</div>
+              </div>
+            </label>
+          ))}
+        </div>
       </Modal>
 
       {/* ── Direct execution: take a practice exam right here ── */}
@@ -5547,7 +5703,7 @@ function Notes({setActive=()=>{}}){
     recordSyllabusScan();
     setScanningDates(false);
     if(found.length>0){
-      setSyllabusReview({noteId:notes[sel].id,tag:notes[sel].tag,priorScanCount:priorSyllabusScanCount(notes[sel].tag,notes[sel].id),items:found.map((d,i)=>({id:"si-"+i,...d,include:true,attackBlock:d.kind==="deadline",proposeSessions:d.kind==="exam",sessionCount:defaultSessionCountFor(d.examWeight),difficulty:500,moreOpen:false}))});
+      setSyllabusReview({noteId:notes[sel].id,tag:notes[sel].tag,sourceText:plain,priorScanCount:priorSyllabusScanCount(notes[sel].tag,notes[sel].id),items:found.map((d,i)=>({id:"si-"+i,...d,include:true,attackBlock:d.kind==="deadline",proposeSessions:d.kind==="exam",sessionCount:defaultSessionCountFor(d.examWeight),difficulty:500,moreOpen:false}))});
     }else{
       setSyllabusToast("No dates found in this note");
       setTimeout(()=>setSyllabusToast(""),3200);
@@ -5753,7 +5909,7 @@ function Notes({setActive=()=>{}}){
     setSel(0);
     setPopover(null);
     if(syllabusItems!==null){
-      setSyllabusReview({noteId:newNote.id,tag,priorScanCount:priorSyllabusScanCount(tag,newNote.id),items:syllabusItems.map((d,i)=>({id:"si-"+i,...d,include:true,attackBlock:d.kind==="deadline",proposeSessions:d.kind==="exam",sessionCount:defaultSessionCountFor(d.examWeight),difficulty:500,moreOpen:false}))});
+      setSyllabusReview({noteId:newNote.id,tag,sourceText:fileText,priorScanCount:priorSyllabusScanCount(tag,newNote.id),items:syllabusItems.map((d,i)=>({id:"si-"+i,...d,include:true,attackBlock:d.kind==="deadline",proposeSessions:d.kind==="exam",sessionCount:defaultSessionCountFor(d.examWeight),difficulty:500,moreOpen:false}))});
     }
   };
 
@@ -5984,7 +6140,7 @@ function Notes({setActive=()=>{}}){
           <Btn variant="subtle" onClick={()=>setSyllabusReview(null)}>Skip, just save the note</Btn>
           <Btn disabled={aiLoading||!syllabusReview||syllabusReview.items.filter(i=>i.include).length===0} onClick={()=>{
             const included=syllabusReview.items.filter(i=>i.include);
-            commitSyllabusEvents(syllabusReview.noteId,syllabusReview.tag,included);
+            commitSyllabusEvents(syllabusReview.noteId,syllabusReview.tag,included,syllabusReview.sourceText);
             setSyllabusToast(included.length+" deadline"+(included.length!==1?"s":"")+" added to your calendar");
             setTimeout(()=>setSyllabusToast(""),3200);
             setSyllabusReview(null);
@@ -7583,7 +7739,12 @@ function planBrainDumpTasks(items,events,routines,prefs){
   return [...studyTasks,...todoTasks,...eventTasks,...reminderTasks,...examTasks];
 }
 
-function commitSyllabusEvents(noteId,tag,items){
+// sourceMaterial is optional -- the raw scanned text (syllabus, notes),
+// when the caller has it -- attached to exam-kind markers only, so Studlin
+// Prep can pre-seed material for that exam instead of the student having to
+// re-upload the same content that was already just read once. Omit it and
+// nothing changes for any existing caller.
+function commitSyllabusEvents(noteId,tag,items,sourceMaterial){
   const existing=lsGet("events",[]);
   const today=dayKey();
   // One computation per item, reused by both the marker-building pass below
@@ -7615,6 +7776,7 @@ function commitSyllabusEvents(noteId,tag,items){
         completedAt:null,
         noteId,
         checklist:true,
+        ...(it.kind==="exam"&&sourceMaterial?{sourceMaterial}:{}),
       };
     }
     const wantsAttack=it.kind==="deadline"&&it.attackBlock;
@@ -7660,6 +7822,7 @@ function commitSyllabusEvents(noteId,tag,items){
       // deadline marker's difficulty field is unused today, so it's left
       // alone rather than risk touching it.
       ...(it.kind==="exam"?{difficulty:it.difficulty??500}:{}),
+      ...(it.kind==="exam"&&sourceMaterial?{sourceMaterial}:{}),
     };
   });
   // Opted-in deadline items that are already close enough get a real Attack
@@ -10004,10 +10167,11 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip}){
     setAddMode("review");
   };
 
-  const buildReviewFromExtraction=(result)=>{
+  const buildReviewFromExtraction=(result,sourceText)=>{
     setReview({
       subjectName:(result.subject&&result.subject.name)||"",
       color:nextColor(),
+      sourceText:sourceText||"",
       meetingTimes:(result.meetingTimes||[]).map((mt,i)=>({id:"mt-"+Date.now()+"-"+i,days:Array.isArray(mt.days)?mt.days:[],startTime:mt.startTime||"09:00",duration:mt.duration||50})),
       deadlines:(result.deadlines||[]).map((d,i)=>({id:"cd-"+i,title:d.title||"Untitled",date:d.date||dayKey(),kind:d.kind==="exam"?"exam":"deadline",include:true,attackBlock:d.kind!=="exam",proposeSessions:d.kind==="exam",sessionCount:defaultSessionCountFor(d.examWeight),examWeight:d.examWeight,confidence:d.confidence,detail:d.detail,estimatedHours:d.estimatedHours,difficulty:500})),
     });
@@ -10046,7 +10210,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip}){
       }
       const result=await extractClassSyllabusText(text);
       if(result.error){setScanError(result.error);return;}
-      buildReviewFromExtraction(result);
+      buildReviewFromExtraction(result,text);
     }catch(err){setScanError("Couldn't read that file: "+err.message);}
     finally{setScanning(false);}
   };
@@ -10057,7 +10221,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip}){
     try{
       const result=await extractClassSyllabusText(pasteText);
       if(result.error){setScanError(result.error);return;}
-      buildReviewFromExtraction(result);
+      buildReviewFromExtraction(result,pasteText);
     }catch(err){setScanError("Couldn't read that text: "+err.message);}
     finally{setScanning(false);}
   };
@@ -10089,7 +10253,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip}){
       saveWeeklyRoutine([...getWeeklyRoutine(),...routineItems]);
     }
     const included=review.deadlines.filter(d=>d.include&&d.title.trim());
-    if(included.length>0)commitSyllabusEvents("wiz-"+subj.id,name,included);
+    if(included.length>0)commitSyllabusEvents("wiz-"+subj.id,name,included,review.sourceText);
     setClassList(c=>[...c,subj]);
     setJustAdded(name);
     setTimeout(()=>setJustAdded(""),3000);
@@ -15061,6 +15225,11 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
     const readiness=computeExamReadiness(ex,allEvents,today);
     const deck=masterDecks.find(d=>d.examEventId===ex.id);
     const pes=masterPracticeExams.filter(p=>p.examEventId===ex.id);
+    // No study material yet and the exam is soon -- swap the passive
+    // status badge for an active CTA so the row explains what clicking it
+    // does, instead of a label the student has to interpret and remember
+    // Studlin Prep exists to act on.
+    const needsKit=readiness&&readiness.state==="no-data"&&readiness.daysUntil<=14;
     const stateColor=readiness?.state==="behind"||readiness?.state==="at-risk"?T.red:readiness?.state==="on-track"?T.lime:T.muted;
     return(
       <div key={ex.id} onClick={()=>jumpToPrepExam(ex.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer"}}>
@@ -15068,7 +15237,9 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
           <div style={{fontSize:13,fontWeight:600,color:T.text}}>{ex.title}</div>
           <div style={{fontSize:11,color:T.muted,marginTop:1}}>{ex.subject} · {ex.date} · {deck?deck.count+" cards":"no deck"}{pes.length>0?" · "+pes.length+" practice exam"+(pes.length!==1?"s":""):""}</div>
         </div>
-        {readiness&&<span style={{fontSize:10,fontWeight:700,color:stateColor,background:stateColor+"14",border:`1px solid ${stateColor}44`,borderRadius:99,padding:"3px 9px",flexShrink:0}}>{readiness.state.toUpperCase().replace("-"," ")}</span>}
+        {needsKit
+          ?<span style={{fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"14",border:`1px solid ${T.lime}44`,borderRadius:99,padding:"3px 9px",flexShrink:0}}>Build study kit →</span>
+          :readiness&&<span style={{fontSize:10,fontWeight:700,color:stateColor,background:stateColor+"14",border:`1px solid ${stateColor}44`,borderRadius:99,padding:"3px 9px",flexShrink:0}}>{readiness.state.toUpperCase().replace("-"," ")}</span>}
       </div>
     );
   };
