@@ -9670,37 +9670,6 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   if (gapToNextMins == null) return floored;
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
-// Day view's "smart viewport": unlike WeeklyPlanner's fixed 48px/hr (built
-// for glancing across 7 days at once), a single day should try to show its
-// entire schedule with no scrolling at all -- so the scale is computed from
-// how much vertical space is actually available, not fixed. Falls back to
-// the work-hours window when there are no timed events yet (nothing to
-// scale to) rather than defaulting to the full 24h day, which would render
-// mostly empty gridlines. Clamped both directions: too small and blocks
-// stop being legible/clickable; too large and a short day (2-3 events)
-// would render each one absurdly tall for no reason.
-const DAY_VIEW_MIN_PX_HR=22;
-const DAY_VIEW_MAX_PX_HR=90;
-function computeDayViewScale(events,workWindow,viewportHeightPx){
-  const timed=(events||[]).filter(e=>e.time);
-  const starts=timed.map(e=>{const p=e.time.split(":").map(Number);return p[0]*60+p[1];});
-  const ends=timed.map((e,i)=>starts[i]+(e.duration||30));
-  let spanStart=workWindow?workWindow.start:9*60;
-  let spanEnd=workWindow?workWindow.end:18*60;
-  if(starts.length>0){
-    spanStart=Math.min(spanStart,Math.min(...starts));
-    spanEnd=Math.max(spanEnd,Math.max(...ends));
-  }
-  spanStart=Math.max(0,spanStart-30);
-  spanEnd=Math.min(1440,spanEnd+30);
-  const spanHrs=Math.max(1,(spanEnd-spanStart)/60);
-  const fitPxPerHr=(viewportHeightPx||600)/spanHrs;
-  const pxPerHr=Math.max(DAY_VIEW_MIN_PX_HR,Math.min(DAY_VIEW_MAX_PX_HR,fitPxPerHr));
-  // Where to scroll to on open -- 30 minutes before the first real task, so
-  // it lands right at the top instead of exactly flush with the edge.
-  const scrollToMin=starts.length>0?Math.max(spanStart,Math.min(...starts)-30):spanStart;
-  return {spanStart,spanEnd,pxPerHr,scrollToMin};
-}
 
 function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, isAgendaCollapsed, onDeleteEvent}) {
   // Compact, fixed per-hour scale (held constant across the agenda-collapse
@@ -10645,31 +10614,31 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
   );
 }
 
-// Day view — a single-column schedule that tries to show the whole day
-// with no scrolling at all (computeDayViewScale picks the scale from the
-// actual measured container height), and lands scrolled to just before the
-// first real task when it can't quite fit. Deliberately simpler than
-// WeeklyPlanner: no drag-to-reschedule, no routine-editing mode -- those
-// are 7-day-grid concerns that don't apply to a single day, and adding
-// them here would just be unused surface area copied from a component this
-// isn't. Click toggles done (fastest single interaction for "the thing
-// right in front of you"); double-click still opens the full edit modal.
+// Day view — a single-column, full-24h schedule that scrolls (see
+// DAY_PLANNER_PX_PER_HR below) rather than shrinking everything down to
+// fit one screen, landing scrolled to just before the first real task on
+// open. Deliberately simpler than WeeklyPlanner: no drag-to-reschedule, no
+// routine-editing mode -- those are 7-day-grid concerns that don't apply
+// to a single day, and adding them here would just be unused surface area
+// copied from a component this isn't. Click toggles done (fastest single
+// interaction for "the thing right in front of you"); double-click still
+// opens the full edit modal.
+// Fixed height-per-hour for the full 24h day -- deliberately not scaled to
+// fit any particular viewport (that's what used to make this shrink to
+// illegibility on a packed day and clamp to a narrow window on a light
+// one). The container just scrolls, same as any normal calendar, landing
+// near the current time or the first real event on open.
+const DAY_PLANNER_PX_PER_HR=64;
 function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, markDone, uncrossDone, prefs, setSelDay}) {
-  const containerRef=useRef(null);
   const scrollRef=useRef(null);
   const [dayPreviewOpen,setDayPreviewOpen]=useState(false);
   const stepDay=(n)=>{const d=new Date(selDay+"T12:00:00");d.setDate(d.getDate()+n);setSelDay(dayKey(d));};
   const niceDayLabel=(()=>{const p=selDay.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});})();
-  const [viewportH,setViewportH]=useState(560);
-  useEffect(()=>{
-    const measure=()=>{if(containerRef.current)setViewportH(containerRef.current.clientHeight);};
-    measure();
-    window.addEventListener("resize",measure);
-    return ()=>window.removeEventListener("resize",measure);
-  },[]);
   const visibleEvs=(dayEvents||[]).filter(ev=>ev.kind!=="free period"&&ev.time);
   const workWindow=getWorkWindowMinsFor(prefs,selDay);
-  const {spanStart,spanEnd,pxPerHr,scrollToMin}=computeDayViewScale(visibleEvs,workWindow,viewportH);
+  const spanStart=0,spanEnd=1440,pxPerHr=DAY_PLANNER_PX_PER_HR;
+  const starts=visibleEvs.map(ev=>{const p=ev.time.split(":").map(Number);return p[0]*60+p[1];});
+  const scrollToMin=starts.length>0?Math.max(0,Math.min(...starts)-30):(workWindow?workWindow.start:8*60);
   useEffect(()=>{
     if(scrollRef.current)scrollRef.current.scrollTop=(scrollToMin-spanStart)*(pxPerHr/60);
   },[selDay,scrollToMin,spanStart,pxPerHr]);
@@ -10694,7 +10663,7 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
       </div>
     </div>
     <Card style={{padding:16}}>
-      <div ref={containerRef} style={{height:"calc(100vh - 320px)",minHeight:360}}>
+      <div style={{height:"calc(100vh - 320px)",minHeight:360}}>
         <div ref={scrollRef} style={{height:"100%",overflowY:"auto",position:"relative"}}>
           <div style={{position:"relative",height:totalHeightPx,marginLeft:54}}>
             {Array.from({length:Math.max(1,hourEnd-hourStart)},(_,i)=>hourStart+i).map(h=>(
@@ -10707,9 +10676,6 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
                 <div style={{position:"absolute",left:-4,top:-4,width:8,height:8,borderRadius:"50%",background:"#E5484D"}} />
                 <div style={{borderTop:"2px solid #E5484D"}} />
               </div>
-            )}
-            {dayLaidOut.length===0&&(
-              <div style={{position:"absolute",top:16,left:8,right:8,textAlign:"center",color:T.muted,fontSize:13}}>Nothing scheduled yet today.</div>
             )}
             {dayLaidOut.map(({ev,col,totalCols,start})=>{
               const topPx=(start-spanStart)*(pxPerHr/60);
