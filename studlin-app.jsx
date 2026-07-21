@@ -10654,9 +10654,12 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
 // them here would just be unused surface area copied from a component this
 // isn't. Click toggles done (fastest single interaction for "the thing
 // right in front of you"); double-click still opens the full edit modal.
-function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, markDone, uncrossDone, prefs}) {
+function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, markDone, uncrossDone, prefs, setSelDay}) {
   const containerRef=useRef(null);
   const scrollRef=useRef(null);
+  const [dayPreviewOpen,setDayPreviewOpen]=useState(false);
+  const stepDay=(n)=>{const d=new Date(selDay+"T12:00:00");d.setDate(d.getDate()+n);setSelDay(dayKey(d));};
+  const niceDayLabel=(()=>{const p=selDay.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});})();
   const [viewportH,setViewportH]=useState(560);
   useEffect(()=>{
     const measure=()=>{if(containerRef.current)setViewportH(containerRef.current.clientHeight);};
@@ -10677,6 +10680,19 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
   const dayLaidOut=layoutDayEvents(visibleEvs);
   const fmtHourLabel=(mins)=>{const h=Math.floor(mins/60)%24;const ap=h>=12?"PM":"AM";const h12=h%12||12;return h12+ap;};
   return (
+    <>
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,flexWrap:"wrap",gap:8}}>
+      <div>
+        <div style={{fontSize:15,fontWeight:700,color:T.white}}>{niceDayLabel}</div>
+        <div style={{fontSize:11,color:T.muted,marginTop:1}}>{visibleEvs.length} scheduled item{visibleEvs.length!==1?"s":""}</div>
+      </div>
+      <div style={{display:"flex",gap:6}}>
+        <BtnSm variant="ghost" onClick={()=>stepDay(-1)}>Prev</BtnSm>
+        <BtnSm variant="ghost" onClick={()=>setSelDay(todayK)}>Today</BtnSm>
+        <BtnSm variant="ghost" onClick={()=>stepDay(1)}>Next</BtnSm>
+        <BtnSm variant="subtle" onClick={()=>setDayPreviewOpen(true)}>Day Preview</BtnSm>
+      </div>
+    </div>
     <Card style={{padding:16}}>
       <div ref={containerRef} style={{height:"calc(100vh - 320px)",minHeight:360}}>
         <div ref={scrollRef} style={{height:"100%",overflowY:"auto",position:"relative"}}>
@@ -10726,6 +10742,88 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
         </div>
       </div>
     </Card>
+    <DayPreviewModal open={dayPreviewOpen} onClose={()=>setDayPreviewOpen(false)} dayEvents={dayEvents} selDay={selDay} dayLabel={niceDayLabel} colorOf={colorOf} fmtTime={fmtTime} />
+    </>
+  );
+}
+
+// Read-only, glance-and-close summary of a whole day -- deliberately not an
+// editable view (that's the DayPlanner grid underneath); this is meant to
+// answer "what does today actually look like" in one look, scrolling only
+// when the day's real span doesn't comfortably fit, instead of shrinking
+// blocks down to illegibility the way the main grid's computeDayViewScale
+// does. Reuses layoutDayEvents/computeEventBlockHeightPx (proven in
+// DayPlanner) and colorOf (so a class's color here always matches its
+// color everywhere else in the app -- never a fresh palette).
+const DAY_PREVIEW_ICON_BY_KIND={"class":Icon.cal,"study block":Icon.brain,"exam":Icon.zap,"deadline":Icon.file,"reminder":Icon.clock};
+function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime}){
+  if(!open)return null;
+  const visibleEvs=(dayEvents||[]).filter(ev=>ev.kind!=="free period"&&ev.time);
+  const starts=visibleEvs.map(ev=>{const p=ev.time.split(":").map(Number);return p[0]*60+p[1];});
+  const ends=visibleEvs.map((ev,i)=>starts[i]+(ev.duration||30));
+  const spanStart=starts.length?Math.max(0,Math.floor(Math.min(...starts)/60)*60):8*60;
+  const spanEnd=starts.length?Math.min(1440,Math.ceil(Math.max(...ends)/60)*60):18*60;
+  const pxPerHr=64;
+  const totalHeightPx=Math.max(1,spanEnd-spanStart)*(pxPerHr/60);
+  const hourStart=Math.floor(spanStart/60), hourEnd=Math.ceil(spanEnd/60);
+  const dayLaidOut=layoutDayEvents(visibleEvs);
+  const fmtHourLabel=(mins)=>{const h=Math.floor(mins/60)%24;const ap=h>=12?"PM":"AM";const h12=h%12||12;return h12+ap;};
+  const fmtGapLabel=(mins)=>{const h=Math.floor(mins/60)%24;const m=mins%60;const ap=h>=12?"PM":"AM";const h12=h%12||12;return h12+(m?":"+String(m).padStart(2,"0"):"")+ap;};
+  // Free time -- gaps between merged busy ranges, computed independently of
+  // layoutDayEvents' column assignment (a slot only reads as "free" when
+  // nothing in ANY column occupies it, not just the first).
+  const busyRanges=visibleEvs.map((ev,i)=>({start:starts[i],end:ends[i]})).sort((a,b)=>a.start-b.start);
+  const merged=[];
+  busyRanges.forEach(r=>{
+    if(merged.length&&r.start<=merged[merged.length-1].end)merged[merged.length-1].end=Math.max(merged[merged.length-1].end,r.end);
+    else merged.push({...r});
+  });
+  const freeGaps=[];
+  let cursor=spanStart;
+  merged.forEach(r=>{
+    if(r.start-cursor>=20)freeGaps.push({start:cursor,end:r.start});
+    cursor=Math.max(cursor,r.end);
+  });
+  if(spanEnd-cursor>=20)freeGaps.push({start:cursor,end:spanEnd});
+  const iconFor=(kind)=>DAY_PREVIEW_ICON_BY_KIND[kind]||Icon.dot;
+  return(
+    <Modal open={open} onClose={onClose} title={dayLabel} sub={visibleEvs.length+" scheduled item"+(visibleEvs.length!==1?"s":"")} width={520}>
+      {visibleEvs.length===0
+        ?<div style={{textAlign:"center",padding:"24px 0",color:T.muted,fontSize:13}}>Nothing scheduled this day.</div>
+        :<div style={{maxHeight:"62vh",overflowY:"auto"}}>
+          <div style={{position:"relative",height:totalHeightPx,marginLeft:54}}>
+            {Array.from({length:Math.max(1,hourEnd-hourStart)},(_,i)=>hourStart+i).map(h=>(
+              <div key={h} style={{position:"absolute",top:(h*60-spanStart)*(pxPerHr/60),left:0,right:0,borderTop:`1px dashed ${T.borderHover}`,boxSizing:"border-box"}}>
+                <span style={{position:"absolute",left:-54,top:-7,width:46,textAlign:"right",fontSize:10,color:T.faint,fontFamily:T.mono}}>{fmtHourLabel(h*60)}</span>
+              </div>
+            ))}
+            {freeGaps.map((g,i)=>(
+              <div key={"gap-"+i} style={{position:"absolute",top:(g.start-spanStart)*(pxPerHr/60),left:0,right:0,height:(g.end-g.start)*(pxPerHr/60),display:"flex",alignItems:"center",zIndex:1}}>
+                <div style={{width:"100%",borderTop:`1.5px dashed ${T.faint}`,fontSize:10.5,color:T.faint,paddingLeft:8}}>{fmtGapLabel(g.start)}–{fmtGapLabel(g.end)} Free Time</div>
+              </div>
+            ))}
+            {dayLaidOut.map(({ev,col,totalCols,start})=>{
+              const topPx=(start-spanStart)*(pxPerHr/60);
+              const dur=ev.duration||30;
+              const nextInCol=dayLaidOut.filter(o=>o.col===col&&o.start>start).sort((a,b)=>a.start-b.start)[0];
+              const heightPx=computeEventBlockHeightPx(dur,nextInCol?nextInCol.start-start:null,pxPerHr);
+              const color=colorOf(ev.subject);
+              const leftPct=(col/totalCols)*100;
+              const widthPct=100/totalCols;
+              return(
+                <div key={ev.id} style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:8,padding:"6px 10px",overflow:"hidden",zIndex:3,boxSizing:"border-box",background:color+"22",border:`1px solid ${color}55`,display:"flex",flexDirection:"column",justifyContent:"center"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{color,display:"flex",flexShrink:0}}>{iconFor(ev.kind)}</span>
+                    <span style={{fontSize:12,fontWeight:700,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</span>
+                  </div>
+                  {heightPx>30&&<div style={{fontSize:10,color:T.muted,marginTop:2,marginLeft:19}}>{fmtTime(ev.time)}{dur?" · "+dur+"m":""}</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      }
+    </Modal>
   );
 }
 
@@ -12282,7 +12380,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,o
       </CollapsibleAgendaLayout>)}
       {calView==="daily"&&(<CollapsibleAgendaLayout isAgendaCollapsed={isAgendaCollapsed} setIsAgendaCollapsed={setIsAgendaCollapsed}
         agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,onSkipOneOccurrence:skipOneOccurrence,markDone,uncrossDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask,setEvents,allEvents:events}}>
-        <DayPlanner dayEvents={dayEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} />
+        <DayPlanner dayEvents={dayEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} />
       </CollapsibleAgendaLayout>)}
     </div>
       {calTourStep>=0&&(
