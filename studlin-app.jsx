@@ -4684,6 +4684,39 @@ const getQuizGenUsage=makeMonthlyUsage("quizGens");
 function canGenQuiz(){return getPlan()!=="Free"||getQuizGenUsage().count<QUIZ_GEN_LIMIT;}
 function recordQuizGen(){const u=getQuizGenUsage();lsSet("quizGens",{month:u.month,count:u.count+1});}
 
+// Generic "get readable text out of an uploaded file" -- PDF via pdfjsLib,
+// DOCX via mammoth, plain-text fallback for everything else, a clear
+// rejection message for the old .doc format Studlin can't parse. Module-
+// level (not component-local) so both Studlin Prep's own material upload
+// and Class Setup Wizard's per-exam study-material box share one copy
+// instead of two that could quietly drift apart.
+async function extractFileText(file){
+  const ext=file.name.split(".").pop().toLowerCase();
+  if(ext==="pdf"){
+    try{
+      const pdfjsLib=await window._pdfjs;
+      const buf=await file.arrayBuffer();
+      const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+      let text="";
+      for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();text+=tc.items.map(it=>it.str).join(" ")+"\n\n";}
+      return text;
+    }catch(err){return "Could not read PDF: "+err.message;}
+  }
+  if(ext==="docx"){
+    try{
+      if(!window.mammoth)throw new Error("Document reader still loading — try again in a moment.");
+      const buf=await file.arrayBuffer();
+      const result=await window.mammoth.extractRawText({arrayBuffer:buf});
+      return result.value;
+    }catch(err){return "Could not read this document: "+err.message;}
+  }
+  if(ext==="doc")return "This is an older .doc file — Studlin can only read .docx. Try re-saving it as .docx or PDF.";
+  return await new Promise(resolve=>{
+    const reader=new FileReader();
+    reader.onload=()=>resolve(reader.result);
+    reader.readAsText(file);
+  });
+}
 // ─── STUDLIN PREP ─────────────────────────────────────────────────────────────
 // The exam-centric replacement for browsing Notes/Flashcards separately --
 // material gets attached to an exam ONCE and turns into both a flashcard
@@ -4735,7 +4768,10 @@ function StudlinPrep(){
   // fetched/scraped/read by Studlin and never enters materialText, so it
   // has zero effect on flashcard/practice-exam generation -- the Material
   // card's hint text says this explicitly rather than leaving it implied.
-  const [materialLink,setMaterialLink]=useState("");
+  // A list, not a single string -- a student realistically has more than
+  // one useful link (a Quizlet set AND a shared slides doc, say).
+  const [materialLinks,setMaterialLinks]=useState([]);
+  const [linkDraft,setLinkDraft]=useState("");
   // Pull material straight from Notes already written for this class,
   // instead of forcing a re-upload of content the student already typed
   // somewhere else in the app.
@@ -4750,38 +4786,11 @@ function StudlinPrep(){
     setNotesPickerOpen(false);setNotesPickerSelected([]);
   };
 
-  const extractPrepFileText=async(file)=>{
-    const ext=file.name.split(".").pop().toLowerCase();
-    if(ext==="pdf"){
-      try{
-        const pdfjsLib=await window._pdfjs;
-        const buf=await file.arrayBuffer();
-        const pdf=await pdfjsLib.getDocument({data:buf}).promise;
-        let text="";
-        for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();text+=tc.items.map(it=>it.str).join(" ")+"\n\n";}
-        return text;
-      }catch(err){return "Could not read PDF: "+err.message;}
-    }
-    if(ext==="docx"){
-      try{
-        if(!window.mammoth)throw new Error("Document reader still loading — try again in a moment.");
-        const buf=await file.arrayBuffer();
-        const result=await window.mammoth.extractRawText({arrayBuffer:buf});
-        return result.value;
-      }catch(err){return "Could not read this document: "+err.message;}
-    }
-    if(ext==="doc")return "This is an older .doc file — Studlin can only read .docx. Try re-saving it as .docx or PDF.";
-    return await new Promise(resolve=>{
-      const reader=new FileReader();
-      reader.onload=()=>resolve(reader.result);
-      reader.readAsText(file);
-    });
-  };
   const handlePrepFile=async(e)=>{
     const files=Array.from(e.target.files||[]);
     e.target.value="";
     for(const file of files){
-      const text=await extractPrepFileText(file);
+      const text=await extractFileText(file);
       setFileTexts(prev=>[...prev,{name:file.name,text}]);
     }
   };
@@ -4992,7 +5001,19 @@ function StudlinPrep(){
               const pes=allPracticeExams.filter(p=>p.examEventId===ex.id);
               const stateColor=readiness?.state==="behind"||readiness?.state==="at-risk"?T.red:readiness?.state==="on-track"?T.lime:T.muted;
               return(
-                <div key={ex.id} onClick={()=>{setSelectedExamId(ex.id);setFileTexts(ex.sourceMaterial?[{name:"From your syllabus",text:ex.sourceMaterial}]:[]);setGenMsg("");setMaterialLink(ex.referenceLink||"");setPasteMode(false);setPasteText("");}} style={{padding:"14px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,cursor:"pointer",display:"flex",alignItems:"center",gap:14}}>
+                <div key={ex.id} onClick={()=>{
+                  setSelectedExamId(ex.id);
+                  // sourceMaterials/referenceLinks (arrays) are the current
+                  // shape -- sourceMaterial/referenceLink (singular strings)
+                  // are what an exam committed before this became a list
+                  // still carries, so those stay as the fallback rather than
+                  // silently losing material a student already added.
+                  setFileTexts(ex.sourceMaterials&&ex.sourceMaterials.length>0?ex.sourceMaterials:(ex.sourceMaterial?[{name:"From your syllabus",text:ex.sourceMaterial}]:[]));
+                  setGenMsg("");
+                  setMaterialLinks(ex.referenceLinks&&ex.referenceLinks.length>0?ex.referenceLinks:(ex.referenceLink?[ex.referenceLink]:[]));
+                  setLinkDraft("");
+                  setPasteMode(false);setPasteText("");
+                }} style={{padding:"14px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,cursor:"pointer",display:"flex",alignItems:"center",gap:14}}>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:14,fontWeight:700,color:T.white}}>{ex.title}</div>
                     <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{ex.subject} · {ex.date}{deck?" · deck linked":""}{pes.length>0?" · "+pes.length+" practice exam"+(pes.length!==1?"s":""):""}</div>
@@ -5045,10 +5066,22 @@ function StudlinPrep(){
                   ))}
                 </div>
               )}
-              <Field label="Reference link (optional)" hint="Saved for your own reference — Studlin doesn't read Quizlet or other external links, so it won't factor into flashcards or practice exams.">
-                <Input type="url" value={materialLink} onChange={e=>setMaterialLink(e.target.value)}
-                  onBlur={()=>{const next=lsGet("events",[]).map(e=>e.id===selectedExam.id?{...e,referenceLink:materialLink}:e);lsSet("events",next);}}
-                  placeholder="https://quizlet.com/..." />
+              <Field label="Reference links (optional)" hint="Saved for your own reference — Studlin doesn't read these, so they won't factor into flashcards or practice exams.">
+                <div style={{display:"flex",gap:8}}>
+                  <Input type="url" value={linkDraft} onChange={e=>setLinkDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();if(!linkDraft.trim())return;const next=[...materialLinks,linkDraft.trim()];setMaterialLinks(next);setLinkDraft("");lsSet("events",lsGet("events",[]).map(e=>e.id===selectedExam.id?{...e,referenceLinks:next}:e));}}}
+                    placeholder="https://quizlet.com/..." style={{flex:1}} />
+                  <BtnSm variant="subtle" disabled={!linkDraft.trim()} onClick={()=>{if(!linkDraft.trim())return;const next=[...materialLinks,linkDraft.trim()];setMaterialLinks(next);setLinkDraft("");lsSet("events",lsGet("events",[]).map(e=>e.id===selectedExam.id?{...e,referenceLinks:next}:e));}}>+ Add</BtnSm>
+                </div>
+                {materialLinks.length>0&&(
+                  <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:8}}>
+                    {materialLinks.map((link,li)=>(
+                      <div key={li} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,fontSize:12,padding:"7px 10px",background:T.card2,borderRadius:8}}>
+                        <a href={link} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{color:T.text,textDecoration:"underline",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{link}</a>
+                        <button onClick={()=>{const next=materialLinks.filter((_,li2)=>li2!==li);setMaterialLinks(next);lsSet("events",lsGet("events",[]).map(e=>e.id===selectedExam.id?{...e,referenceLinks:next}:e));}} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0}}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </Field>
               <div style={{marginBottom:10}}>
                 <Btn onClick={buildStudyKit} disabled={!materialText.trim()||kitLoading||genLoading!==null}>{kitLoading?"Building…":"Build my study kit"}</Btn>
@@ -6618,6 +6651,7 @@ function Notes({setActive=()=>{}}){
                             <span style={{fontSize:10.5,color:T.muted}}>Easy</span>
                             <input type="range" min={0} max={1000} value={it.difficulty??500} onChange={ev=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,difficulty:+ev.target.value}:x)}))} style={{flex:1,accentColor:T.lime,height:5,borderRadius:3,cursor:"pointer"}} />
                             <span style={{fontSize:10.5,color:T.muted}}>Hard</span>
+                            <button type="button" onClick={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,moreOpen:false}:x)}))} title="Collapse" style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,padding:0,flexShrink:0}}>×</button>
                           </div>
                         ) : (
                           <button type="button" onClick={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,moreOpen:true}:x)}))} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,marginTop:6,textDecoration:"underline"}}>+ How hard is this for you?</button>
@@ -8123,10 +8157,14 @@ function planBrainDumpTasks(items,events,routines,prefs){
 // building logic can run in a preview (Class Setup's multi-class drill-down
 // review, threading one shadow `working` array across several classes) with
 // zero risk of it silently diverging from what a real commit actually does.
-// sourceMaterial (class-level) is a fallback; an item's own
-// sourceMaterial/referenceLink (set per-exam in the review screen) wins when
-// present, so a student's own pasted notes/link for one specific exam don't
-// get overwritten by the whole syllabus's raw text.
+// sourceMaterial (class-level) is a fallback -- the raw scanned syllabus
+// text, folded in as one named entry alongside whatever the student
+// explicitly added per-exam (it.materialFiles/it.materialLinks, both
+// arrays -- a student realistically has more than one file or link worth
+// keeping). Studlin Prep already treats "material" as a list of named
+// {name,text} entries (see its own fileTexts state) -- sourceMaterials on
+// the real event is exactly that same shape, so nothing downstream needs
+// its own separate merge logic.
 function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routines,prefs){
   const today=dayKey();
   // One computation per item, reused by both the marker-building pass below
@@ -8136,6 +8174,7 @@ function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routin
   // attackBlock/proposeSessions the review screen happened to leave set.
   const gates=items.map(it=>it.kind==="deadline"&&it.attackBlock&&!it.noDate?attackBlockActionableDate(it.estimatedHours,it.date,today):null);
   const markerEvents=items.map((it,i)=>{
+    const materialEntries=it.kind==="exam"?[...(sourceMaterial?[{name:"From your syllabus",text:sourceMaterial}]:[]),...(it.materialFiles||[])]:[];
     // "Don't know the date yet" -- same shape the plain Checklist card's
     // own items use (see addChecklistItem in Dashboard): no date/time, no
     // scheduling of any kind, just a checkbox that stays put until the
@@ -8158,8 +8197,8 @@ function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routin
         completedAt:null,
         noteId,
         checklist:true,
-        ...(it.kind==="exam"&&(it.sourceMaterial||sourceMaterial)?{sourceMaterial:it.sourceMaterial||sourceMaterial}:{}),
-        ...(it.kind==="exam"&&it.referenceLink?{referenceLink:it.referenceLink}:{}),
+        ...(materialEntries.length>0?{sourceMaterials:materialEntries}:{}),
+        ...(it.kind==="exam"&&it.materialLinks&&it.materialLinks.length>0?{referenceLinks:it.materialLinks}:{}),
       };
     }
     const wantsAttack=it.kind==="deadline"&&it.attackBlock;
@@ -8205,8 +8244,8 @@ function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routin
       // deadline marker's difficulty field is unused today, so it's left
       // alone rather than risk touching it.
       ...(it.kind==="exam"?{difficulty:it.difficulty??500}:{}),
-      ...(it.kind==="exam"&&(it.sourceMaterial||sourceMaterial)?{sourceMaterial:it.sourceMaterial||sourceMaterial}:{}),
-      ...(it.kind==="exam"&&it.referenceLink?{referenceLink:it.referenceLink}:{}),
+      ...(materialEntries.length>0?{sourceMaterials:materialEntries}:{}),
+      ...(it.kind==="exam"&&it.materialLinks&&it.materialLinks.length>0?{referenceLinks:it.materialLinks}:{}),
     };
   });
   // Opted-in deadline items that are already close enough get a real Attack
@@ -10639,7 +10678,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
           difficulty:typeof d.difficulty==="number"?Math.max(0,Math.min(1000,Math.round(d.difficulty))):500,
           phases:undefined,phasesLoading:false,
           outline:undefined,outlineLoading:false,
-          sourceMaterial:"",referenceLink:"",materialOpen:false,
+          materialFiles:[],materialLinks:[],materialOpen:false,linkDraft:"",pasteMaterialMode:false,pasteMaterialText:"",
         };
       }),
     });
@@ -10900,7 +10939,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
             const removeMeetingTime=(id)=>setMeetingTimes(mts=>mts.filter(x=>x.id!==id));
             const meetingItemsForBuilder=review.meetingTimes.map(mt=>({id:mt.id,title:review.subjectName||"Class",kind:"class",days:mt.days,startTime:mt.startTime,duration:mt.duration}));
             const setItem=(i,patch)=>setReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,...patch}:x)}));
-            const addManualItem=()=>setReview(r=>({...r,items:[...r.items,{id:"cd-manual-"+Date.now(),title:"",date:dayKey(),kind:"assignment",include:true,noDate:false,attackBlock:true,proposeSessions:false,sessionCount:4,detail:"",detailOpen:false,estimatedHours:null,difficulty:500,phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false,sourceMaterial:"",referenceLink:"",materialOpen:false}]}));
+            const addManualItem=()=>setReview(r=>({...r,items:[...r.items,{id:"cd-manual-"+Date.now(),title:"",date:dayKey(),kind:"assignment",include:true,noDate:false,attackBlock:true,proposeSessions:false,sessionCount:4,detail:"",detailOpen:false,estimatedHours:null,difficulty:500,phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false,materialFiles:[],materialLinks:[],materialOpen:false,linkDraft:"",pasteMaterialMode:false,pasteMaterialText:""}]}));
             const suggestPhasesForItem=async(itemId)=>{
               setReview(r=>r&&({...r,items:r.items.map(x=>x.id===itemId?{...x,phasesLoading:true}:x)}));
               const it=review.items.find(x=>x.id===itemId);
@@ -10960,8 +10999,11 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
                           )}
                           <div style={{marginTop:6}}>
                             {it.detailOpen?(
-                              <textarea value={it.detail} onChange={e=>setItem(i,{detail:e.target.value})} rows={2} placeholder="Anything specific the syllabus said about this..."
-                                style={{width:"100%",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 9px",color:T.text,fontSize:11.5,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
+                              <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                                <textarea value={it.detail} onChange={e=>setItem(i,{detail:e.target.value})} rows={2} placeholder="Anything specific the syllabus said about this..."
+                                  style={{width:"100%",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 9px",color:T.text,fontSize:11.5,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
+                                <button type="button" onClick={()=>setItem(i,{detailOpen:false})} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",alignSelf:"flex-start"}}>Collapse</button>
+                              </div>
                             ):(
                               <button type="button" onClick={()=>setItem(i,{detailOpen:true})} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>
                                 {it.detail?"See detail":"+ Add detail"}
@@ -10978,24 +11020,90 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
               <button type="button" onClick={cancelReview} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:8}}>{editingPendingId?"← Cancel":"← Cancel, don't stage this class"}</button>
             </>);
 
+            // Files and pasted text are both just named entries in the same
+            // list -- matches Studlin Prep's own fileTexts model exactly, so
+            // the real exam event this feeds (sourceMaterials) needs no
+            // translation between the two. handleMaterialFiles/
+            // addPastedMaterial/addMaterialLink all key off the item's id
+            // and use setReview's functional-update form (not setItem's
+            // index-based one) because extractFileText is async -- by the
+            // time it resolves, the items array may have already changed
+            // shape (a different item added/removed), so capturing an index
+            // up front would risk writing into the wrong row.
+            const handleMaterialFiles=async(itemId,fileList)=>{
+              const files=Array.from(fileList||[]);
+              for(const file of files){
+                const text=await extractFileText(file);
+                setReview(r=>r&&({...r,items:r.items.map(x=>x.id===itemId?{...x,materialFiles:[...x.materialFiles,{name:file.name,text}]}:x)}));
+              }
+            };
+            const addPastedMaterial=(itemId)=>setReview(r=>r&&({...r,items:r.items.map(x=>{
+              if(x.id!==itemId||!x.pasteMaterialText.trim())return x;
+              const n=x.materialFiles.length;
+              return {...x,materialFiles:[...x.materialFiles,{name:"Pasted text"+(n>0?" "+(n+1):""),text:x.pasteMaterialText}],pasteMaterialText:"",pasteMaterialMode:false};
+            })}));
+            const addMaterialLink=(itemId)=>setReview(r=>r&&({...r,items:r.items.map(x=>{
+              if(x.id!==itemId||!x.linkDraft.trim())return x;
+              return {...x,materialLinks:[...x.materialLinks,x.linkDraft.trim()],linkDraft:""};
+            })}));
+
             if(reviewSub==="smarten")return(<>
-              <TitleSub title="Add study material? (optional)" sub="For any exam here — paste notes, a link to flashcards, anything you've got. Skip it if you're not ready or don't have it yet; you can always add it later in Studlin Prep." />
+              <TitleSub title="Add study material? (optional)" sub="For any exam here — upload files, paste notes, or drop a link. Skip it if you're not ready or don't have it yet; you can always add it later in Studlin Prep." />
               {includedExamCount===0?(
                 <div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"20px 0"}}>No exams in this class yet — nothing to add material for.</div>
               ):review.items.map((it,i)=>{
                 if(!it.include||it.kind!=="exam")return null;
+                const hasMaterial=it.materialFiles.length>0||it.materialLinks.length>0;
                 return (
-                  <div key={it.id} style={{padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,marginBottom:8}}>
-                    <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:6}}>{it.title||"Untitled exam"}</div>
-                    {it.materialOpen?(
-                      <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                        <textarea value={it.sourceMaterial} onChange={e=>setItem(i,{sourceMaterial:e.target.value})} rows={3} placeholder="Paste notes here..."
-                          style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 9px",color:T.text,fontSize:12,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
-                        <Input value={it.referenceLink} onChange={e=>setItem(i,{referenceLink:e.target.value})} placeholder="Link — flashcards, slides, anything" />
+                  <div key={it.id} style={{borderRadius:10,border:`1px solid ${T.border}`,marginBottom:8,overflow:"hidden"}}>
+                    <div onClick={()=>setItem(i,{materialOpen:!it.materialOpen})} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",cursor:"pointer",background:T.card2}}>
+                      <div style={{flex:1,fontSize:12.5,fontWeight:600,color:T.text}}>{it.title||"Untitled exam"}</div>
+                      {hasMaterial&&<span style={{fontSize:10.5,color:T.muted}}>{it.materialFiles.length>0?it.materialFiles.length+" file"+(it.materialFiles.length!==1?"s":""):""}{it.materialFiles.length>0&&it.materialLinks.length>0?" · ":""}{it.materialLinks.length>0?it.materialLinks.length+" link"+(it.materialLinks.length!==1?"s":""):""}</span>}
+                      <span style={{color:T.muted,display:"flex",transform:it.materialOpen?"rotate(180deg)":"none",transition:"transform 0.15s"}}>{Icon.chevDown}</span>
+                    </div>
+                    {it.materialOpen&&(
+                      <div style={{padding:"10px 12px",display:"flex",flexDirection:"column",gap:8}}>
+                        <input type="file" id={"matfile-"+it.id} onChange={e=>{handleMaterialFiles(it.id,e.target.files);e.target.value="";}} accept=".txt,.md,.pdf,.docx" style={{display:"none"}} multiple />
+                        <label htmlFor={"matfile-"+it.id} style={{border:`1px dashed ${T.borderHover}`,borderRadius:8,padding:"12px",textAlign:"center",background:T.card,cursor:"pointer",fontSize:11.5,color:T.muted}}>
+                          Click to upload — PDF, DOCX, or TXT (you can pick more than one)
+                        </label>
+                        <button type="button" onClick={()=>setItem(i,{pasteMaterialMode:!it.pasteMaterialMode})} style={{background:"none",border:"none",color:T.muted,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>
+                          {it.pasteMaterialMode?"Cancel pasting":"Or paste text instead"}
+                        </button>
+                        {it.pasteMaterialMode&&(
+                          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                            <textarea value={it.pasteMaterialText} onChange={e=>setItem(i,{pasteMaterialText:e.target.value})} rows={3} placeholder="Paste your notes here..."
+                              style={{width:"100%",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 9px",color:T.text,fontSize:12,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
+                            <Btn onClick={()=>addPastedMaterial(it.id)} disabled={!it.pasteMaterialText.trim()} style={{justifyContent:"center",opacity:it.pasteMaterialText.trim()?1:0.45}}>Add pasted text</Btn>
+                          </div>
+                        )}
+                        {it.materialFiles.length>0&&(
+                          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                            {it.materialFiles.map((f,fi)=>(
+                              <div key={fi} style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card,borderRadius:8}}>
+                                <span style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</span>
+                                <button onClick={()=>setItem(i,{materialFiles:it.materialFiles.filter((_,fi2)=>fi2!==fi)})} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0,marginLeft:8}}>×</button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <div style={{display:"flex",gap:8}}>
+                          <Input value={it.linkDraft} onChange={e=>setItem(i,{linkDraft:e.target.value})} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addMaterialLink(it.id);}}} placeholder="Link — flashcards, slides, anything" style={{flex:1}} />
+                          <button type="button" onClick={()=>addMaterialLink(it.id)} disabled={!it.linkDraft.trim()} style={{padding:"0 12px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:it.linkDraft.trim()?"pointer":"default",fontFamily:T.font,fontSize:12,opacity:it.linkDraft.trim()?1:0.45}}>+ Add</button>
+                        </div>
+                        {it.materialLinks.length>0&&(
+                          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                            {it.materialLinks.map((link,li)=>(
+                              <div key={li} style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card,borderRadius:8}}>
+                                <span style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{link}</span>
+                                <button onClick={()=>setItem(i,{materialLinks:it.materialLinks.filter((_,li2)=>li2!==li)})} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0,marginLeft:8}}>×</button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                         <div style={{fontSize:10.5,color:T.faint}}>You can also add or change this later in Studlin Prep.</div>
+                        <button type="button" onClick={()=>setItem(i,{materialOpen:false})} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>Collapse</button>
                       </div>
-                    ):(
-                      <button type="button" onClick={()=>setItem(i,{materialOpen:true})} style={{background:"none",border:`1px dashed ${T.borderHover}`,borderRadius:6,color:T.muted,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:"5px 10px"}}>+ Add study material</button>
                     )}
                   </div>
                 );
@@ -12092,6 +12200,7 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
                   <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Hard</span>
                 </div>
               </Field>
+              <button type="button" onClick={()=>setMoreOpen(false)} style={{background:"none",border:"none",color:T.muted,fontSize:11.5,fontFamily:T.font,cursor:"pointer",padding:"0 0 14px",textDecoration:"underline"}}>Collapse</button>
             </>
           ) : (
             <button type="button" onClick={()=>setMoreOpen(true)} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:"4px 0",marginBottom:14,textDecoration:"underline"}}>+ More details (impact &amp; difficulty)</button>
@@ -13564,6 +13673,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
                             <span style={{fontSize:10.5,color:T.muted}}>Easy</span>
                             <input type="range" min={0} max={1000} value={it.difficulty??500} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,difficulty:+ev.target.value}:x)}))} style={{flex:1,accentColor:T.lime,height:5,borderRadius:3,cursor:"pointer"}} />
                             <span style={{fontSize:10.5,color:T.muted}}>Hard</span>
+                            <button type="button" onClick={()=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,moreOpen:false}:x)}))} title="Collapse" style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,padding:0,flexShrink:0}}>×</button>
                           </div>
                         ) : (
                           <button type="button" onClick={()=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,moreOpen:true}:x)}))} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,marginTop:6,textDecoration:"underline"}}>+ How hard is this for you?</button>

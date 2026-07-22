@@ -224,12 +224,27 @@ describe("buildSyllabusEventBatch / commitSyllabusEvents (Class Setup Wizard's e
     assert.equal(result.attackEvents.length, 0, "no legal slot existed, so no session should have been fabricated");
   });
 
-  test("an exam item's own sourceMaterial/referenceLink win over the class-level sourceMaterial fallback", () => {
+  test("an exam item's own materialFiles/materialLinks merge with the class-level sourceMaterial fallback as one combined list", () => {
     const { buildSyllabusEventBatch, getWeeklyRoutine, getSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T09:00:00" });
-    const examItem = syllabusItem({ kind: "exam", proposeSessions: false, sourceMaterial: "my own pasted notes", referenceLink: "https://example.com/notes" });
+    const examItem = syllabusItem({
+      kind: "exam", proposeSessions: false,
+      materialFiles: [{ name: "notes.pdf", text: "my own pasted notes" }],
+      materialLinks: ["https://example.com/notes", "https://example.com/slides"],
+    });
     const { markerEvents } = buildSyllabusEventBatch([], "wiz-3", "Chemistry", [examItem], "whole syllabus raw text", getWeeklyRoutine(), getSchedulePreferences());
-    assert.equal(markerEvents[0].sourceMaterial, "my own pasted notes");
-    assert.equal(markerEvents[0].referenceLink, "https://example.com/notes");
+    assert.equal(markerEvents[0].sourceMaterials.length, 2, "the whole-syllabus text plus the one explicit file");
+    assert.equal(markerEvents[0].sourceMaterials[0].name, "From your syllabus");
+    assert.equal(markerEvents[0].sourceMaterials[1].name, "notes.pdf");
+    assert.deepEqual([...markerEvents[0].referenceLinks], ["https://example.com/notes", "https://example.com/slides"]);
+  });
+
+  test("an exam with no explicit material still gets the class-level sourceMaterial as its one entry", () => {
+    const { buildSyllabusEventBatch, getWeeklyRoutine, getSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const examItem = syllabusItem({ kind: "exam", proposeSessions: false });
+    const { markerEvents } = buildSyllabusEventBatch([], "wiz-3b", "Chemistry", [examItem], "whole syllabus raw text", getWeeklyRoutine(), getSchedulePreferences());
+    assert.equal(markerEvents[0].sourceMaterials.length, 1);
+    assert.equal(markerEvents[0].sourceMaterials[0].text, "whole syllabus raw text");
+    assert.equal(markerEvents[0].referenceLinks, undefined);
   });
 
   test("commitSyllabusEvents (the real, persisting wrapper) still produces the same events buildSyllabusEventBatch would, and writes them to storage", () => {
