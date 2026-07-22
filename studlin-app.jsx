@@ -2252,7 +2252,12 @@ async function proposeSessionFocuses(examTitle,materialText,sessionCount,subject
 // material of its own silently got the whole syllabus text used as if it
 // were its material); a focus line grounded in unrelated course policy
 // text would be worse than no focus line at all.
+// Returns how many exams actually got a focus line attached -- callers
+// use this to decide whether a follow-up toast is worth showing at all
+// (most syllabus scans have no exam with material yet, so silence is the
+// right default; only speak up when something real actually happened).
 async function attachSessionFocusesToSyllabusExams(noteId,tag,items){
+  let patchedCount=0;
   for(let i=0;i<items.length;i++){
     const it=items[i];
     if(it.kind!=="exam"||!it.proposeSessions||it.noDate)continue;
@@ -2269,7 +2274,9 @@ async function attachSessionFocusesToSyllabusExams(noteId,tag,items){
       const idx=idOrder.indexOf(e.id);
       return idx>=0&&focuses[idx]?{...e,notes:focuses[idx]}:e;
     }));
+    patchedCount++;
   }
+  return patchedCount;
 }
 // Vision-based sibling to Notes' own extractSyllabusDeadlines -- reads a
 // screenshot (a Canvas weekly view, a photographed syllabus page) instead
@@ -2473,6 +2480,41 @@ function startPhaseAwareAttackChain(fields,phases,events,routines,prefs,desiredD
   const task=startAttackBlockChain(hasPhases?{...fields,title:fields.title+": "+phases[0]}:fields,events,routines,prefs,desiredDate,desiredTime);
   if(!task)return null;
   return hasPhases?{...task,projectPhaseIndex:0,phaseName:phases[0],projectTitle:fields.title}:task;
+}
+// Add/Edit Task's own entry point for starting an Attack Block on an
+// Assignment or Project -- unlike commitSyllabusEvents' path (which always
+// builds a due-date marker first, then a chain linked to it via
+// dueEventId), Add/Edit Task used to call startPhaseAwareAttackChain
+// directly and commit just the bare chain task. Two real consequences of
+// that gap: a phased Project's `phases` list was never actually stored
+// anywhere (only phase 0's name survived, baked into the task's title),
+// so advanceProjectPhase -- which requires completedTask.dueEventId to
+// resolve to a marker with a real `phases` array -- silently no-opped
+// the moment phase 0 finished, and the project stopped there forever;
+// and neither an Attack-Block Assignment nor Project ever became
+// kind:"deadline", so Dashboard's Assignments/Projects master lists
+// (which filter on exactly that) never saw them. This builds the marker
+// first (same shape buildSyllabusEventBatch's own markers use) and the
+// chain task second, dueEventId-linked back to it, closing both gaps at
+// once. `markerId` is the caller's choice deliberately -- Add Task always
+// mints a fresh id (a brand new marker), Edit Task's retroactive path
+// passes the existing event's own id so the event effectively becomes
+// its own marker in place rather than leaving an orphaned duplicate
+// around. Returns null (same as startAttackBlockChain) when no legal
+// slot exists for the chain at all -- the caller decides how to surface
+// that, same "no open slot" toast every other Attack Block entry point
+// already shows.
+function buildAssignmentAttackBlockPair(markerId,fields,phases,events,routines,prefs,desiredDate,desiredTime){
+  const marker={
+    id:markerId,title:fields.title,date:fields.deadline||desiredDate,time:"23:59",
+    subject:fields.subject||"",notes:fields.notes||"",kind:"deadline",
+    priority:fields.priority??500,difficulty:fields.difficulty??500,
+    deadline:fields.deadline||null,duration:null,status:"pending",timeSpent:0,completedAt:null,
+    ...(phases.length>0?{phases:phases.map((name,pi)=>({name,status:pi===0?"active":"pending"}))}:{}),
+  };
+  const task=startPhaseAwareAttackChain({...fields,dueEventId:marker.id},phases,events.concat([marker]),routines,prefs,desiredDate,desiredTime);
+  if(!task)return null;
+  return {marker,task};
 }
 // Called when a phased Attack Block session is marked genuinely finished
 // (TaskTimerModal's "Yes, I'm finished" -> onAttackBlockFinish), never on
@@ -6744,7 +6786,17 @@ function Notes({setActive=()=>{}}){
           <Btn disabled={aiLoading||!syllabusReview||syllabusReview.items.filter(i=>i.include).length===0} onClick={()=>{
             const included=syllabusReview.items.filter(i=>i.include);
             commitSyllabusEvents(syllabusReview.noteId,syllabusReview.tag,included,syllabusReview.sourceText);
-            attachSessionFocusesToSyllabusExams(syllabusReview.noteId,syllabusReview.tag,included);
+            // Fire-and-forget -- the calendar add above already happened
+            // and this modal is closing regardless; when it resolves (a
+            // few seconds later, background), it's the only feedback a
+            // student gets that their sessions now have real content
+            // instead of just "Study: <exam>", so it's worth a toast, but
+            // only when something actually happened.
+            attachSessionFocusesToSyllabusExams(syllabusReview.noteId,syllabusReview.tag,included).then(patchedCount=>{
+              if(patchedCount===0)return;
+              setSyllabusToast("Added study focus to "+patchedCount+" exam"+(patchedCount!==1?"s'":"'s")+" sessions");
+              setTimeout(()=>setSyllabusToast(""),3200);
+            });
             setSyllabusToast(included.length+" deadline"+(included.length!==1?"s":"")+" added to your calendar");
             setTimeout(()=>setSyllabusToast(""),3200);
             setSyllabusReview(null);
@@ -12360,38 +12412,55 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
 
   const linkedSessions=allEvents.filter(e=>e.dueEventId===ev.id);
   const chainIdForReschedule=(allEvents.find(e=>e.dueEventId===ev.id&&e.attackChainId&&e.status==="pending")||{}).attackChainId||null;
-  // A plain due-date marker with nothing scheduled for it yet and no
-  // phases of its own -- exactly the "assignment added without Attack
-  // Block" gap this closes. Excludes the event itself being an Attack
-  // Block probe (isAttackBlock) or a phased project (phases already imply
-  // a chain exists or will be started per-phase, handled by its own UI
-  // above) so this toggle never offers to double up an existing chain.
-  const canAddAttackBlock=kind==="deadline"&&!ev.isAttackBlock&&linkedSessions.length===0&&!(ev.phases&&ev.phases.length>0);
+  // A plain due-date marker OR a plain manually-placed "study block" with
+  // nothing scheduled for it yet and no phases of its own -- exactly the
+  // "assignment added without Attack Block" gap this closes. "study
+  // block" is included because a Manual-mode Assignment with no Attack
+  // Block IS that kind (see resolveAssignmentKind in CalendarTab) -- it's
+  // the single most common case someone would actually want this toggle
+  // for, not an edge case. Excludes the event itself being an Attack
+  // Block probe (isAttackBlock), already linked to some other marker
+  // (dueEventId), a deck/practice-exam review session, an exam-prep
+  // session, or a phased project (phases already imply a chain exists or
+  // will be started per-phase, handled by its own UI above) -- none of
+  // those are "a plain assignment," they're already a specialized kind of
+  // scheduled session, and offering to double up an Attack Block on top
+  // of one would just create a second, disconnected chain. Also excludes
+  // one piece of a manually split task (splitGroup) -- converting just
+  // one sibling into its own Attack Block chain would orphan it from the
+  // rest of the split.
+  const canAddAttackBlock=(kind==="deadline"||kind==="study block")&&!ev.isAttackBlock&&!ev.dueEventId&&!ev.deckId&&!ev.practiceExamId&&!ev.isExamPrepSession&&!ev.splitGroup&&linkedSessions.length===0&&!(ev.phases&&ev.phases.length>0);
   const isPhaseCandidate=canAddAttackBlock&&isPhaseDecompositionCandidate(ev.estimatedHours,date,dayKey());
 
   const save=()=>{
     if(!title.trim())return;
     if(deadline&&date>deadline){setDeadlineErr("Can't schedule past the deadline ("+deadline+").");return;}
     const timeChanged=time!==ev.time||date!==ev.date;
+    const prefs=getSchedulePreferences();
+    // Retroactive Attack Block converts this event INTO the real due-date
+    // marker (buildAssignmentAttackBlockPair, same shape
+    // buildSyllabusEventBatch's own markers use, reusing this event's own
+    // id rather than leaving its old scheduled date/time behind as an
+    // orphan) plus the actual linked chain task -- same fix Add Task's own
+    // Attack Block path just got (see CalendarTab / buildAssignmentAttackBlockPair's
+    // own comment for why this needs a real marker, not just a bare
+    // chain task).
+    let attackPair=null;
+    if(canAddAttackBlock&&addAttackBlock){
+      const phases=isPhaseCandidate?(projectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
+      const desiredDate=date&&date>=dayKey()?date:dayKey();
+      attackPair=buildAssignmentAttackBlockPair(ev.id,{title:title.trim(),subject,notes,deadline:deadline||null,priority,difficulty,probeMins:attackProbeMins},phases,allEvents,routines,prefs,desiredDate,prefs.workStartTime);
+    }
     const updated=allEvents.map(e=>{
       if(e.id!==ev.id)return e;
+      if(attackPair)return attackPair.marker;
       const merged={...e,title:title.trim(),date,time,duration,deadline:deadline||null,priority,difficulty,subject,kind,notes,...(timeChanged?{userPinned:true}:{}),
         ...(kind==="exam"?{sourceMaterials:examPlan.materialFiles,referenceLinks:examPlan.materialLinks}:{})};
       if(timeChanged){const {movedByStudlin,movedFrom,movedAt,placementReason,...rest}=merged;return rest;}
       return merged;
     });
-    const prefs=getSchedulePreferences();
     let next=date?rebalanceDay(date,updated,routines,prefs):updated;
-    // Retroactive Attack Block -- same startPhaseAwareAttackChain a fresh
-    // Add Task assignment now uses (see CalendarTab), dueEventId-linked
-    // back to this marker so it shows up as a real prep session, not a
-    // second independent task.
-    if(canAddAttackBlock&&addAttackBlock){
-      const phases=isPhaseCandidate?(projectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
-      const desiredDate=date&&date>=dayKey()?date:dayKey();
-      const task=startPhaseAwareAttackChain({title:title.trim(),subject,notes,deadline:deadline||null,priority,difficulty,probeMins:attackProbeMins,dueEventId:ev.id},phases,next,routines,prefs,desiredDate,prefs.workStartTime);
-      if(task)next=next.concat([task]);
-    }
+    if(attackPair)next=next.concat([attackPair.task]);
     if(kind==="exam"&&examPlan.proposeSessions&&linkedSessions.length===0){
       const sessions=buildExamSessionEvents(title.trim(),date,subject,examPlan.sessionCount||4,"edittask-exam-"+ev.id,next,routines,prefs,{dueEventId:ev.id},difficulty);
       next=next.concat(sessions);
@@ -12409,7 +12478,15 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
     <Modal open={true} onClose={onClose} title="Edit task" sub="Update this task's details." width={580}
       footer={<><Btn variant="subtle" onClick={onClose}>Cancel</Btn><Btn onClick={save} disabled={!title.trim()} style={{opacity:title.trim()?1:0.45}}>Save changes</Btn></>}>
       <Field label="Title"><Input value={title} onChange={e=>setTitle(e.target.value)} autoFocus /></Field>
-      <Field label="Type"><SelectChip options={["study block",{value:"deadline",label:"To-Do"},"exam","class","reminder","busy block"]} value={kind} onChange={setKind} /></Field>
+      {/* Labels only, values unchanged -- Add Task now says "Assignment/
+          Activity" instead of "study block/busy block", so this matched
+          the same real kind values to less confusing, consistent wording
+          rather than leaving Edit Task speaking a different vocabulary
+          for the exact same underlying data. "study block" and "deadline"
+          stay two separate picks here (not one merged "Assignment" the
+          way Add Task infers it) since this modal edits an existing
+          real kind directly, not a type that resolves to one at save time. */}
+      <Field label="Type"><SelectChip options={[{value:"study block",label:"Assignment (scheduled)"},{value:"deadline",label:"Assignment (due date)"},"exam","class","reminder",{value:"busy block",label:"Activity"}]} value={kind} onChange={setKind} /></Field>
       <Field label="Subject"><SelectChip options={SUBJ} value={subject} onChange={setSubject} /></Field>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
         <Field label="Scheduled date"><Input type="date" value={date} onChange={e=>{setDate(e.target.value);setDeadlineErr("");}} /></Field>
@@ -13332,16 +13409,18 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
     // Attack Block used to only be reachable through AI-schedule mode --
     // startAttackBlockChain only ever needed a desired date/time, which
     // Manual Placement already collects, so there was never a real reason
-    // for the gap. startPhaseAwareAttackChain degrades to an ordinary
-    // (unphased) chain when there's no project phases, so this one call
-    // covers both Assignment and Project.
+    // for the gap. buildAssignmentAttackBlockPair builds a real due-date
+    // marker (kind:"deadline", carrying phases when this is a Project) plus
+    // the linked chain task -- degrades to an unphased chain for a plain
+    // Assignment, so this one call covers both types.
     if((evKind==="assignment"||evKind==="project")&&evAttackBlock){
       const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
       const prefs=getSchedulePreferences();
       const phases=evKind==="project"?(evProjectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
-      const task=startPhaseAwareAttackChain({title:evTitle.trim(),subject:subj,notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins},phases,events,routines,prefs,evDate,evTime);
-      if(!task){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
-      commitTasks([task]);
+      const markerId=String(Date.now()+Math.random()*1000);
+      const pair=buildAssignmentAttackBlockPair(markerId,{title:evTitle.trim(),subject:subj,notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins},phases,events,routines,prefs,evDate,evTime);
+      if(!pair){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
+      commitTasks([pair.marker,pair.task]);
       return;
     }
     // Exam material/sessions -- exams never split, so this replaces the
@@ -13359,12 +13438,33 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
         ...(evExamPlan.materialFiles.length>0?{sourceMaterials:evExamPlan.materialFiles}:{}),
         ...(evExamPlan.materialLinks.length>0?{referenceLinks:evExamPlan.materialLinks}:{})};
       let tasks=[examTask];
+      const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
       if(evExamPlan.proposeSessions){
-        const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
         const sessions=buildExamSessionEvents(evTitle.trim(),slot.date,subj,evExamPlan.sessionCount||4,"addtask-exam-"+examTask.id,events.concat([examTask]),routines,getSchedulePreferences(),{dueEventId:examTask.id},evDifficulty);
         tasks=tasks.concat(sessions);
       }
       commitTasks(tasks,{userPinned:true});
+      // Fire-and-forget, same pattern attachSessionFocusesToSyllabusExams
+      // uses for the syllabus-scan path -- material was already collected
+      // in this same form, so a session shouldn't have to wait for a
+      // separate trip to Studlin Prep just to get a real "what to study"
+      // line instead of a generic title. Patches both localStorage and
+      // this tab's own live `events` state once it resolves, since
+      // CalendarTab (unlike Studlin Prep) holds events in React state
+      // rather than re-reading localStorage fresh on every render.
+      if(evExamPlan.proposeSessions&&evExamPlan.materialFiles.length>0){
+        const materialText=evExamPlan.materialFiles.map(f=>f.text).join("\n\n");
+        const sessionIds=tasks.slice(1).map(t=>t.id);
+        proposeSessionFocuses(evTitle.trim(),materialText,sessionIds.length,subj).then(focuses=>{
+          if(!focuses)return;
+          const patched=lsGet("events",[]).map(e=>{
+            const idx=sessionIds.indexOf(e.id);
+            return idx>=0&&focuses[idx]?{...e,notes:focuses[idx]}:e;
+          });
+          lsSet("events",patched);
+          setEvents(patched);
+        });
+      }
       return;
     }
     if(!evSplitEnabled){
@@ -13416,10 +13516,11 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
     if(evAttackBlock){
       const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
       const phases=evKind==="project"?(evProjectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
-      const task=startPhaseAwareAttackChain({title:evTitle.trim(),subject:subj,notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins},phases,events,routines,prefs,desiredStartDate,windowStartTime);
+      const markerId=String(Date.now()+Math.random()*1000);
+      const pair=buildAssignmentAttackBlockPair(markerId,{title:evTitle.trim(),subject:subj,notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins},phases,events,routines,prefs,desiredStartDate,windowStartTime);
       setAiLoading(false);
-      if(!task){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
-      commitTasks([task]);
+      if(!pair){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
+      commitTasks([pair.marker,pair.task]);
       return;
     }
     const windowMins=Math.max(0,desiredEndMins-windowStart);

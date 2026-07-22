@@ -2239,6 +2239,56 @@ describe("startPhaseAwareAttackChain (shared phase-0 tagging used by every sched
   });
 });
 
+describe("buildAssignmentAttackBlockPair (Add/Edit Task's Attack Block entry point)", () => {
+  test("a Project's phases survive as a real marker, not just baked into phase 0's title", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const pair = m.buildAssignmentAttackBlockPair("due-proj-1", { title: "Science Fair Board", deadline: "2026-09-28", priority: 500, difficulty: 500 }, ["Research", "Build", "Write-up"], [], [], DEFAULT_PREFS, "2026-07-20", "16:00");
+    assert.ok(pair, "should find a legal slot");
+    assert.equal(pair.marker.id, "due-proj-1");
+    assert.equal(pair.marker.kind, "deadline");
+    assert.equal(pair.marker.phases.length, 3);
+    assert.equal(pair.marker.phases[0].name, "Research");
+    assert.equal(pair.marker.phases[0].status, "active");
+    assert.equal(pair.marker.phases[1].name, "Build");
+    assert.equal(pair.marker.phases[1].status, "pending");
+    assert.equal(pair.marker.phases[2].name, "Write-up");
+    assert.equal(pair.marker.phases[2].status, "pending");
+    assert.equal(pair.task.title, "Science Fair Board: Research");
+    assert.equal(pair.task.dueEventId, "due-proj-1");
+    assert.equal(pair.task.projectPhaseIndex, 0);
+  });
+
+  test("a regression check: without this, advanceProjectPhase silently no-ops once phase 0 finishes -- with it, phase 2 actually gets scheduled", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const pair = m.buildAssignmentAttackBlockPair("due-proj-2", { title: "Science Fair Board", deadline: "2026-09-28", priority: 500, difficulty: 500 }, ["Research", "Build", "Write-up"], [], [], DEFAULT_PREFS, "2026-07-20", "16:00");
+    const events = [pair.marker, pair.task];
+    const result = m.advanceProjectPhase(pair.task, events, [], DEFAULT_PREFS, "2026-07-21");
+    const updatedMarker = result.find(e => e.id === "due-proj-2");
+    assert.equal(updatedMarker.phases[0].status, "done");
+    assert.equal(updatedMarker.phases[1].status, "active");
+    const nextChain = result.find(e => e.projectPhaseIndex === 1);
+    assert.ok(nextChain, "phase 2 (Build) should have been scheduled -- this is exactly what was silently broken before buildAssignmentAttackBlockPair existed");
+    assert.equal(nextChain.title, "Science Fair Board: Build");
+    assert.equal(nextChain.dueEventId, "due-proj-2");
+  });
+
+  test("a plain Assignment (no phases) gets a marker with no phases field, still dueEventId-linked", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const pair = m.buildAssignmentAttackBlockPair("due-asn-1", { title: "Chem lab report", deadline: "2026-07-25", priority: 500, difficulty: 500 }, [], [], [], DEFAULT_PREFS, "2026-07-20", "16:00");
+    assert.equal(pair.marker.kind, "deadline");
+    assert.equal(Object.prototype.hasOwnProperty.call(pair.marker, "phases"), false);
+    assert.equal(pair.task.dueEventId, "due-asn-1");
+    assert.equal(pair.task.title, "Chem lab report");
+  });
+
+  test("no legal slot for the chain -- returns null, same as startAttackBlockChain would", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const packedDay = { date: "2026-07-20", time: DEFAULT_PREFS.workStartTime, duration: 24 * 60, kind: "study block", status: "pending" };
+    const pair = m.buildAssignmentAttackBlockPair("due-asn-2", { title: "Impossible task", deadline: "2026-07-20", priority: 500, difficulty: 500 }, [], [packedDay], [], DEFAULT_PREFS, "2026-07-20", "16:00");
+    assert.equal(pair, null);
+  });
+});
+
 describe("advanceProjectPhase (phase advancement on 'Yes, I'm finished', not on an extended session)", () => {
   const marker = (phases) => ({
     id: "due-1", title: "Term Paper", deadline: "2026-09-28", priority: 5, difficulty: 5, noteId: "note-1", phases,

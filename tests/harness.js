@@ -94,7 +94,7 @@ function loadStudlinModule(options) {
     "getAttackOverrunDismissals","isAttackOverrunDismissedToday","dismissAttackOverrunToday",
     "computeWeekBalancePlan","scheduleAttackBlockFollowUp","logSession","getTotalMinutesFocused",
     "startAttackBlockChain","isPhaseDecompositionCandidate","PHASE_DECOMPOSITION_MIN_WEEKS",
-    "startPhaseAwareAttackChain","commitSyllabusEvents","advanceProjectPhase",
+    "startPhaseAwareAttackChain","buildAssignmentAttackBlockPair","commitSyllabusEvents","advanceProjectPhase",
     "computeDayViewScale","DAY_VIEW_MIN_PX_HR","DAY_VIEW_MAX_PX_HR",
     "buildSpacedSessionPreviews","createPracticeExam","recordPracticeExamAttempt","wrongTopicsFor",
     "reoptimizeAttackChain","upcomingExams","linkDeckToExamStorage",
