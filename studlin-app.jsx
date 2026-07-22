@@ -3061,10 +3061,33 @@ function upcomingExams(){
 // calling this, the same convention every other scheduling helper in this
 // file already follows (read/write localStorage directly, never assume a
 // caller's component state).
+// Additive, not overwriting -- a deck can now be linked to more than one
+// exam. examEventId (singular) stays mirrored to whichever exam was
+// linked FIRST so every existing `d.examEventId===...` read site across
+// the file (there are about 15) keeps working completely unchanged;
+// examEventIds (the real, complete list) is the new source of truth for
+// anywhere that needs to know about every linked exam, not just the
+// first. Deduped via Set so linking the same exam twice is a no-op.
 function linkDeckToExamStorage(deckId,examEventId){
-  const next=lsGet("decks",[]).map(d=>d.id===deckId?{...d,examEventId}:d);
+  const next=lsGet("decks",[]).map(d=>{
+    if(d.id!==deckId)return d;
+    const ids=Array.from(new Set([...(d.examEventIds||(d.examEventId?[d.examEventId]:[])),examEventId]));
+    return {...d,examEventId:d.examEventId||examEventId,examEventIds:ids};
+  });
   lsSet("decks",next);
   return next;
+}
+// deck.examEventId (singular, legacy-compatible) vs deck.examEventIds
+// (the real, complete list going forward) -- this is the one place that
+// reconciles the two shapes, so every read site elsewhere just calls
+// this instead of re-deriving the same fallback logic differently in
+// three places.
+function deckExamIds(deck){
+  if(deck.examEventIds&&deck.examEventIds.length>0)return deck.examEventIds;
+  return deck.examEventId?[deck.examEventId]:[];
+}
+function deckLinkedToExam(deck,examId){
+  return deckExamIds(deck).includes(examId);
 }
 function buildSpacedSessionPreviews(examDate,subject,count,duration){
   const dates=computeReviewDates(examDate,dayKey(),count);
@@ -4688,7 +4711,7 @@ async function generateFlashcardsFromText(content,context,count=10){
     const countInstruction=count==="auto"
       ?"Create as many flashcards as needed to cover the key concepts in this "+context+" — typically 5 to 30. Don't pad with filler or skip real content just to hit a number."
       :"Create "+count+" flashcards from this "+context+".";
-    const prompt=countInstruction+" Format as a JSON array where each object has a \"q\" key (question) and \"a\" key (answer). Return only the JSON array, no other text. Material:\n\n"+content.slice(0,15000);
+    const prompt=countInstruction+" Base every card on real academic content only -- concepts, definitions, facts, processes. If the material also contains course-administrative or policy information (grading breakdowns, exam schedule/count, attendance rules, syllabus logistics), ignore that entirely; it's never something to be tested on. Format as a JSON array where each object has a \"q\" key (question) and \"a\" key (answer). Return only the JSON array, no other text. Material:\n\n"+content.slice(0,15000);
     const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
     const data=await res.json();
     let raw=(data.reply||"").replace(/```json?|```/g,"").trim();
@@ -4735,7 +4758,7 @@ async function generateQuizFromText(text,subject,count){
   const n=Math.max(3,Math.min(12,count||8));
   const prompt="You're building a "+n+"-question multiple-choice practice quiz for a student studying "+(subject||"this material")+". Read the source material and return ONLY this JSON, no other text: "+
     "{\"questions\":[{\"q\":\"the question text\",\"choices\":[\"four answer options, exactly 4, in any order\"],\"answerIndex\":0,\"topic\":\"a short 2-4 word topic label for what this question tests, e.g. 'cell membrane transport'\"}]}. "+
-    "answerIndex is the 0-based index into choices of the single correct answer. Base every question directly on the material below — never invent facts not present in it.\n\nMaterial:\n\n"+text.slice(0,15000);
+    "answerIndex is the 0-based index into choices of the single correct answer. Base every question directly on real academic content in the material below -- concepts, definitions, facts, processes -- never invent facts not present in it. If the material also contains course-administrative or policy information (grading breakdowns, exam schedule/count, attendance rules, syllabus logistics), ignore that entirely; it's never something to be tested on.\n\nMaterial:\n\n"+text.slice(0,15000);
   try{
     const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
     const data=await res.json();
@@ -4859,7 +4882,7 @@ async function extractFileText(file){
 // elsewhere (generateFlashcardsFromText/generateQuizFromText,
 // linkDeckToExamStorage, buildSpacedSessionPreviews, computeExamReadiness)
 // instead of inventing a parallel system.
-function StudlinPrep(){
+function StudlinPrep({setActive=()=>{}}={}){
   const [tab,setTab]=useState("exams"); // exams | flashcards | practiceExams
   // One-shot deep-link handoff -- same pattern openNoteId already uses
   // elsewhere: a caller (Dashboard's Exams master
@@ -4895,7 +4918,18 @@ function StudlinPrep(){
   const [fileTexts,setFileTexts]=useState([]); // [{name,text}]
   const [genLoading,setGenLoading]=useState(null); // null | "cards" | "quiz"
   const [genMsg,setGenMsg]=useState("");
-  const materialText=fileTexts.map(f=>f.text).join("\n\n");
+  // "From your syllabus" (see the exam-card onClick below, and
+  // buildSyllabusEventBatch's own identical literal name) is background
+  // context, not something the student chose -- it's excluded here so it
+  // can never end up as flashcard/quiz/session-focus content. Regression:
+  // a course-policy sentence buried in scanned syllabus text ("how many
+  // exams are required, including the final") was showing up as an actual
+  // practice-quiz question even when the student had uploaded real
+  // chapter material of their own, because materialText joined both
+  // sources with no distinction. The entry stays visible in the material
+  // list below (removable, and useful for the student to read) -- it's
+  // only excluded from what generation actually reads.
+  const materialText=fileTexts.filter(f=>f.name!=="From your syllabus").map(f=>f.text).join("\n\n");
   const fileInputRef=useRef(null);
   // Paste-text fallback -- same pattern ClassSetupWizard's syllabus scan
   // already uses. Pushes straight into fileTexts so buildStudyKit/
@@ -5020,7 +5054,7 @@ function StudlinPrep(){
   // else. If only one half is allowed (a free-tier limit), proceeds with
   // just that half instead of blocking the whole action. ──
   const [kitLoading,setKitLoading]=useState(false);
-  const [kitPreview,setKitPreview]=useState(null); // {deck,pe,deckSessions,peSessions,warnings,examId,examDate}
+  const [kitPreview,setKitPreview]=useState(null); // {deck,pe,reviewSession,deckSessions,peSessions,warnings,examId,examDate,examTitle}
   const buildStudyKit=async()=>{
     if(!materialText.trim()||!selectedExam)return;
     const canCards=canGenFlashcards();
@@ -5031,16 +5065,29 @@ function StudlinPrep(){
     }
     setKitLoading(true);setGenMsg("");
     const warnings=[];
-    const [cards,questions]=await Promise.all([
+    // The plan now stages three things in order -- review the material
+    // first, then spaced flashcard reviews, then a practice exam near the
+    // end -- instead of the deck/PE sessions being the only thing
+    // scheduled. The review session is anchored to the EARLIEST legal
+    // slot (found now, up front) rather than trying to make it "win" a
+    // spot in the deck sessions' own spaced-across-the-window
+    // computation below -- simpler and safer than teaching
+    // buildSpacedSessionPreviews (shared with several other callers)
+    // about a session it doesn't otherwise know about, and guarantees
+    // first-chronologically by construction.
+    const reviewDuration=suggestDurationFor(selectedExam.subject,"study block")||25;
+    const reviewSlot=findReliableSlotFor(lsGet("events",[]),getWeeklyRoutine(),getSchedulePreferences(),dayKey(),getSchedulePreferences().workStartTime,reviewDuration,selectedExam.date,selectedExam.difficulty??5);
+    const [cards,questions,reviewFocusLines]=await Promise.all([
       canCards?generateFlashcardsFromText(materialText,selectedExam.subject||"this exam",10):Promise.resolve(null),
       canQuiz?generateQuizFromText(materialText,selectedExam.subject||"this exam",8):Promise.resolve(null),
+      reviewSlot?proposeSessionFocuses(selectedExam.title,materialText,1,selectedExam.subject):Promise.resolve(null),
     ]);
     setKitLoading(false);
     let deck=null,pe=null;
     if(canCards){
       if(cards&&cards.length>0){
         recordFlashcardGen();
-        deck={id:String(Date.now()+Math.random()*1000),name:selectedExam.title,count:cards.length,done:0,color:colorOf(selectedExam.subject),cards,examEventId:selectedExam.id};
+        deck={id:String(Date.now()+Math.random()*1000),name:selectedExam.title,count:cards.length,done:0,color:colorOf(selectedExam.subject),cards,examEventId:selectedExam.id,examEventIds:[selectedExam.id]};
         lsSet("decks",[deck,...lsGet("decks",[])]);
       }else warnings.push("Couldn't generate flashcards this time.");
     }else warnings.push("This month's free flashcard generations are used up.");
@@ -5054,11 +5101,28 @@ function StudlinPrep(){
     if(!deck&&!pe){setGenMsg(warnings[0]||"Couldn't build a study kit. Try again.");return;}
     const deckSessions=deck?buildSpacedSessionPreviews(selectedExam.date,selectedExam.subject,4):[];
     const peSessions=pe?buildSpacedSessionPreviews(selectedExam.date,selectedExam.subject,1,60):[];
-    setKitPreview({deck,pe,deckSessions,peSessions,warnings,examId:selectedExam.id,examDate:selectedExam.date});
+    // Grounded-or-nothing, same as everywhere else proposeSessionFocuses
+    // is used -- a review session still gets scheduled even with no
+    // focus line (just no notes), never blocked on it.
+    const reviewSession=reviewSlot?{date:reviewSlot.date,time:reviewSlot.time,duration:reviewDuration,notes:(reviewFocusLines&&reviewFocusLines[0])||""}:null;
+    setKitPreview({deck,pe,reviewSession,deckSessions,peSessions,warnings,examId:selectedExam.id,examDate:selectedExam.date,examTitle:selectedExam.title});
   };
   const commitStudyKit=()=>{
     if(!kitPreview)return;
     const events=removeGenericExamPrepSessions(lsGet("events",[]),kitPreview.examId);
+    // Same shape the Study Sessions card's own buildExamSessionEvents
+    // output uses -- no deckId/practiceExamId, so it's correctly treated
+    // as a plain generic session (removeGenericExamPrepSessions above
+    // already cleared out anything stale here on rebuild).
+    const reviewEvents=kitPreview.reviewSession?[{
+      id:"kitreview-"+kitPreview.examId+"-"+Date.now(),
+      title:"Study: "+kitPreview.examTitle,
+      date:kitPreview.reviewSession.date,time:kitPreview.reviewSession.time,subject:"",notes:kitPreview.reviewSession.notes||"",
+      kind:"study block",duration:kitPreview.reviewSession.duration,
+      priority:5,difficulty:5,deadline:kitPreview.examDate,
+      status:"pending",timeSpent:0,completedAt:null,
+      dueEventId:kitPreview.examId,isExamPrepSession:true,
+    }]:[];
     const deckEvents=kitPreview.deck?kitPreview.deckSessions.map((s,i)=>({
       id:"deckrev-"+kitPreview.deck.id+"-"+Date.now()+"-"+i,
       title:"Review: "+kitPreview.deck.name,
@@ -5077,7 +5141,7 @@ function StudlinPrep(){
       practiceExamId:kitPreview.pe.id,placementReason:s.placementReason||null,
       dueEventId:kitPreview.examId,isExamPrepSession:true,
     })):[];
-    lsSet("events",events.concat(deckEvents,peEvents));
+    lsSet("events",events.concat(reviewEvents,deckEvents,peEvents));
     setKitPreview(null);
   };
 
@@ -5143,7 +5207,7 @@ function StudlinPrep(){
           :<div style={{display:"flex",flexDirection:"column",gap:8}}>
             {exams.map(ex=>{
               const readiness=computeExamReadiness(ex,lsGet("events",[]),dayKey());
-              const deck=allDecks.find(d=>d.examEventId===ex.id);
+              const deck=allDecks.find(d=>deckLinkedToExam(d,ex.id));
               const pes=allPracticeExams.filter(p=>p.examEventId===ex.id);
               const stateColor=readiness?.state==="behind"||readiness?.state==="at-risk"?T.red:readiness?.state==="on-track"?T.lime:T.muted;
               return(
@@ -5174,7 +5238,7 @@ function StudlinPrep(){
 
       {tab==="exams"&&selectedExam&&(()=>{
         const readiness=computeExamReadiness(selectedExam,lsGet("events",[]),dayKey());
-        const deck=allDecks.find(d=>d.examEventId===selectedExam.id);
+        const deck=allDecks.find(d=>deckLinkedToExam(d,selectedExam.id));
         const pes=allPracticeExams.filter(p=>p.examEventId===selectedExam.id);
         // Every session Studlin has ever scheduled for this exam, whatever
         // created it (syllabus scan, Add Task, a deck/practice-exam
@@ -5268,6 +5332,7 @@ function StudlinPrep(){
                     <div key={f.name} style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card2,borderRadius:8,gap:8}}>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</div>
+                        {f.name==="From your syllabus"&&<div style={{fontSize:10,color:T.faint,marginTop:1}}>Background only — not used for flashcards, practice exams, or study sessions</div>}
                         {f.empty&&<div style={{fontSize:10,color:T.amber,marginTop:1}}>Couldn't find readable text in this one — try a different file</div>}
                         {f.truncated&&!f.empty&&<div style={{fontSize:10,color:T.faint,marginTop:1}}>Trimmed — only the first part will be used</div>}
                       </div>
@@ -5400,15 +5465,34 @@ function StudlinPrep(){
       {tab==="flashcards"&&(
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           {allDecks.length===0
-            ?<Card style={{padding:"32px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted}}>No flashcard decks yet.</div></Card>
-            :allDecks.map(d=>(
-              <div key={d.id} style={{padding:"12px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,display:"flex",alignItems:"center",gap:14}}>
-                <div style={{flex:1,minWidth:0}}>
+            ?<Card style={{padding:"32px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted}}>No flashcard decks yet — generate one from an exam's material.</div></Card>
+            :allDecks.map(d=>{
+              const linkedExams=deckExamIds(d).map(id=>lsGet("events",[]).find(e=>e.id===id)).filter(Boolean);
+              // Reuses the exact Study/Edit/Send actions already built in
+              // the standalone Flashcards tab (openDeckId/openDeckAction
+              // deep link) instead of a second copy of that UI here --
+              // this list just needs to be a real way IN to that
+              // experience, not a duplicate of it.
+              const goToDeck=(action)=>{lsSet("openDeckId",d.id);lsSet("openDeckAction",action);setActive("flashcards");};
+              return (
+                <div key={d.id} style={{padding:"12px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card}}>
                   <div style={{fontSize:13.5,fontWeight:600,color:T.white}}>{d.name}</div>
-                  <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{d.count} cards{d.examEventId?" · linked to an exam":""}</div>
+                  <div style={{fontSize:11.5,color:T.muted,marginTop:2,marginBottom:10}}>{d.count} card{d.count!==1?"s":""}</div>
+                  {linkedExams.length>0&&(
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+                      {linkedExams.map(ex=>(
+                        <span key={ex.id} style={{fontSize:10.5,fontWeight:700,padding:"3px 8px",borderRadius:99,background:T.lime+"14",color:T.lime,border:`1px solid ${T.lime}33`}}>Exam: {ex.title} · {ex.date}</span>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{display:"flex",gap:6}}>
+                    <BtnSm onClick={()=>goToDeck("study")}>Study now</BtnSm>
+                    <BtnSm variant="ghost" onClick={()=>goToDeck("edit")}>{Icon.pen} Edit</BtnSm>
+                    <BtnSm variant="ghost" onClick={()=>goToDeck("send")}>{Icon.send} Send</BtnSm>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
         </div>
       )}
 
@@ -5454,7 +5538,7 @@ function StudlinPrep(){
           schedule-preview modal above twice in a row. ── */}
       <Modal open={!!kitPreview} onClose={()=>setKitPreview(null)}
         title="Your study kit"
-        sub={kitPreview?(kitPreview.deckSessions.length+kitPreview.peSessions.length)+" session"+((kitPreview.deckSessions.length+kitPreview.peSessions.length)!==1?"s":"")+" counting down to "+kitPreview.examDate:""}
+        sub={kitPreview?((kitPreview.reviewSession?1:0)+kitPreview.deckSessions.length+kitPreview.peSessions.length)+" session"+(((kitPreview.reviewSession?1:0)+kitPreview.deckSessions.length+kitPreview.peSessions.length)!==1?"s":"")+" counting down to "+kitPreview.examDate:""}
         width={480}
         footer={<><Btn variant="subtle" onClick={()=>setKitPreview(null)}>Cancel</Btn><Btn onClick={commitStudyKit} disabled={!kitPreview||(!kitPreview.deck&&!kitPreview.pe)}>Add to my calendar</Btn></>}>
         {kitPreview&&(
@@ -5462,6 +5546,16 @@ function StudlinPrep(){
             {kitPreview.warnings.length>0&&(
               <div style={{fontSize:11.5,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:8,padding:"8px 12px",marginBottom:14}}>
                 {kitPreview.warnings.join(" ")}
+              </div>
+            )}
+            {kitPreview.reviewSession&&(
+              <div style={{marginBottom:14}}>
+                <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>First: review the material</div>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card2,borderRadius:8}}>
+                  <span style={{color:T.text}}>{kitPreview.reviewSession.date}</span>
+                  <span style={{color:T.muted,fontFamily:T.mono}}>{kitPreview.reviewSession.time} · {kitPreview.reviewSession.duration}m</span>
+                </div>
+                {kitPreview.reviewSession.notes&&<div style={{fontSize:11,color:T.muted,marginTop:6}}>{kitPreview.reviewSession.notes}</div>}
               </div>
             )}
             {kitPreview.deck&&(
@@ -5591,15 +5685,23 @@ function Flashcards() {
   const colorMap={Biology:T.teal,"English IV":T.purple,Calculus:T.blue,Spanish:T.amber,Chemistry:T.red};
 
   // One-shot deep-link flag (matches the pendingTour/pendingRoutineWizard
-  // pattern used elsewhere) — currently unset by anything since the
-  // Dashboard card that used to write it was removed, kept as reusable
-  // infrastructure for the next thing that wants to link straight to a deck.
+  // pattern used elsewhere) -- originally kept as reusable infrastructure
+  // with nothing writing it; Studlin Prep's "All Flashcards" list now
+  // does, alongside a companion openDeckAction ("study"/"edit"/"send",
+  // defaulting to "study" for anything -- including old leftover
+  // openDeckId writes -- that never set an action) so the exact same
+  // effect can jump straight to any of the three actions instead of only
+  // ever opening Study.
   useEffect(()=>{
     const wantId=lsGet("openDeckId",null);
     if(!wantId)return;
-    try{localStorage.removeItem("studlin-openDeckId");}catch(e){}
+    const action=lsGet("openDeckAction",null);
+    try{localStorage.removeItem("studlin-openDeckId");localStorage.removeItem("studlin-openDeckAction");}catch(e){}
     const d=deckList.find(x=>x.id===wantId);
-    if(d){setStudyDeck(d);setTab("study");setIdx(0);setFlipped(false);}
+    if(!d)return;
+    if(action==="edit")openEditDeck(d);
+    else if(action==="send")sendDeck(d);
+    else{setStudyDeck(d);setTab("study");setIdx(0);setFlipped(false);}
   },[]);
 
   useEffect(()=>{if(!recOn)return;const id=setInterval(()=>setRecSecs(x=>x+1),1000);return()=>clearInterval(id);},[recOn]);
@@ -5857,16 +5959,21 @@ function Flashcards() {
 
       {/* ── LINK DECK TO EXAM ── */}
       <Modal open={!!linkExamDeckId} onClose={()=>setLinkExamDeckId(null)} title="Link to an exam" sub="Studlin will propose review sessions counting down to the exam date." width={440}>
-        {upcomingExams().length===0
-          ? <div style={{fontSize:13,color:T.muted,padding:"18px 0",textAlign:"center"}}>No upcoming exams on your calendar yet. Add one in Calendar first.</div>
-          : <div style={{display:"flex",flexDirection:"column",gap:8}}>
-              {upcomingExams().map(ex=>(
-                <button key={ex.id} onClick={()=>linkDeckToExam(linkExamDeckId,ex.id)} style={{textAlign:"left",padding:"11px 14px",borderRadius:10,border:`1px solid ${T.border}`,background:T.card2,cursor:"pointer",fontFamily:T.font}}>
-                  <div style={{fontSize:13,fontWeight:600,color:T.white}}>{ex.title}</div>
-                  <div style={{fontSize:11,color:T.muted,marginTop:2}}>{ex.date}{ex.subject?" · "+ex.subject:""}</div>
-                </button>
-              ))}
-            </div>}
+        {(()=>{
+          const linkingDeck=deckList.find(d=>d.id===linkExamDeckId);
+          const alreadyLinked=linkingDeck?deckExamIds(linkingDeck):[];
+          const pickableExams=upcomingExams().filter(ex=>!alreadyLinked.includes(ex.id));
+          return pickableExams.length===0
+            ? <div style={{fontSize:13,color:T.muted,padding:"18px 0",textAlign:"center"}}>{upcomingExams().length===0?"No upcoming exams on your calendar yet. Add one in Calendar first.":"This deck is already linked to every upcoming exam."}</div>
+            : <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {pickableExams.map(ex=>(
+                  <button key={ex.id} onClick={()=>linkDeckToExam(linkExamDeckId,ex.id)} style={{textAlign:"left",padding:"11px 14px",borderRadius:10,border:`1px solid ${T.border}`,background:T.card2,cursor:"pointer",fontFamily:T.font}}>
+                    <div style={{fontSize:13,fontWeight:600,color:T.white}}>{ex.title}</div>
+                    <div style={{fontSize:11,color:T.muted,marginTop:2}}>{ex.date}{ex.subject?" · "+ex.subject:""}</div>
+                  </button>
+                ))}
+              </div>;
+        })()}
       </Modal>
 
       {/* ── REVIEW SCHEDULE PREVIEW — preview-then-commit, same discipline as syllabus/brain-dump review ── */}
@@ -6014,14 +6121,20 @@ function Flashcards() {
                 <div onDoubleClick={(e)=>{e.stopPropagation();openEditDeck(d);}} title="Double-click to edit" style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:4}}>{d.name}</div>
                 <div style={{fontSize:11,color:T.muted,marginBottom:10}}>{d.cards?d.cards.length:d.count} cards{d.source==="imported"&&<span style={{color:T.teal,fontWeight:600}}> · from {d.importedFrom}</span>}</div>
                 {(()=>{
-                  const linkedExam=d.examEventId?lsGet("events",[]).find(e=>e.id===d.examEventId):null;
-                  return linkedExam ? (
-                    <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,flexWrap:"wrap"}}>
-                      <span style={{fontSize:10.5,fontWeight:700,padding:"3px 8px",borderRadius:99,background:T.lime+"14",color:T.lime,border:`1px solid ${T.lime}33`}}>Exam: {linkedExam.title} · {linkedExam.date}</span>
-                      <button onClick={(e)=>{e.stopPropagation();openReviewSchedule(d);}} style={{background:"none",border:"none",color:T.lime,cursor:"pointer",fontFamily:T.font,fontSize:11,fontWeight:600,textDecoration:"underline",padding:0}}>Schedule reviews →</button>
+                  const allEvents=lsGet("events",[]);
+                  const linkedExams=deckExamIds(d).map(id=>allEvents.find(e=>e.id===id)).filter(Boolean);
+                  return (
+                    <div style={{marginBottom:10}}>
+                      {linkedExams.length>0&&(
+                        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6,flexWrap:"wrap"}}>
+                          {linkedExams.map(ex=>(
+                            <span key={ex.id} style={{fontSize:10.5,fontWeight:700,padding:"3px 8px",borderRadius:99,background:T.lime+"14",color:T.lime,border:`1px solid ${T.lime}33`}}>Exam: {ex.title} · {ex.date}</span>
+                          ))}
+                          <button onClick={(e)=>{e.stopPropagation();openReviewSchedule(d);}} style={{background:"none",border:"none",color:T.lime,cursor:"pointer",fontFamily:T.font,fontSize:11,fontWeight:600,textDecoration:"underline",padding:0}}>Schedule reviews →</button>
+                        </div>
+                      )}
+                      <button onClick={(e)=>{e.stopPropagation();setLinkExamDeckId(d.id);}} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:11,textDecoration:"underline",padding:0,display:"block"}}>{linkedExams.length>0?"+ Link another exam":"+ Link to an exam"}</button>
                     </div>
-                  ) : (
-                    <button onClick={(e)=>{e.stopPropagation();setLinkExamDeckId(d.id);}} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:11,textDecoration:"underline",padding:0,marginBottom:10,display:"block"}}>+ Link to an exam</button>
                   );
                 })()}
                 <div style={{display:"flex",gap:6}}>
@@ -16907,7 +17020,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   };
   const renderExamItem=(ex)=>{
     const readiness=computeExamReadiness(ex,allEvents,today);
-    const deck=masterDecks.find(d=>d.examEventId===ex.id);
+    const deck=masterDecks.find(d=>deckLinkedToExam(d,ex.id));
     const pes=masterPracticeExams.filter(p=>p.examEventId===ex.id);
     // No study material yet and the exam is soon -- swap the passive
     // status badge for an active CTA so the row explains what clicking it
@@ -19619,6 +19732,7 @@ function App() {
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="lectures"?<Lectures setActive={setActive} setPricingOpen={setPricingOpen} />:
            active==="profile"?<Profile setActive={setActive} seriousMode={seriousMode} />:
+           active==="prep"?<StudlinPrep setActive={setActive} />:
            ActivePage?<ActivePage />:null}
         </div>
       </div>
