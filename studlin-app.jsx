@@ -2155,20 +2155,30 @@ function isPhaseDecompositionCandidate(estimatedHours,deadlineKey,todayKey){
 // there's nothing concrete to work with, resolves to null so the item
 // falls back to the ordinary flat Attack Block flow instead of a generic,
 // disconnected "outline/draft/revise" template guessed from the title alone.
+// stripEmDash: LLMs pick up on em dashes shown in their OWN prompt (a
+// style tell that bleeds into their output even when the instruction
+// says not to use them), so beyond just telling the model not to, every
+// prompt below is itself kept em-dash-free, and every returned string
+// still goes through this as a deterministic backstop before it ever
+// reaches a student's screen. See feedback_avoid_em_dashes: it reads as
+// AI-written and costs the app credibility, and that risk applies just
+// as much to AI-generated phases/checklists/focus lines as to hand-
+// written UI copy.
+const stripEmDash=(s)=>s.replace(/\s*—\s*/g,": ").replace(/\s*;\s*/g,", ");
 async function proposeProjectPhases(title,detail,subject){
   try{
     const prompt="A student has a large, multi-week project: \""+title+"\""+(subject?" for "+subject:"")+". "+
       (detail?"Here's what's known about it: "+detail+". ":"No further detail is available beyond the title. ")+
-      "Break this into an ordered list of realistic phases (e.g. research, outline, draft, revise — but named specifically for THIS project, not a generic template). "+
-      "Only propose phases if the detail above actually gives you something concrete to ground them in — if all you have is a bare title with no real information about what the project involves, don't guess: respond with {\"phases\":[]} instead of inventing a generic breakdown. "+
-      "3-5 phases is typical, never more than 6. Respond with ONLY valid JSON, no markdown fences, no commentary: "+
-      "{\"phases\":[\"Research & sources\",\"Outline\",\"Draft\",\"Revise & cite\"]}";
+      "Break this into an ordered list of realistic phases (e.g. research, outline, draft, revise -- but named specifically for THIS project, not a generic template). Keep each phase name short, 1-4 words. "+
+      "Only propose phases if the detail above actually gives you something concrete to ground them in. If all you have is a bare title with no real information about what the project involves, don't guess: respond with {\"phases\":[]} instead of inventing a generic breakdown. "+
+      "3-5 phases is typical, never more than 6. Never use an em dash; use \"and\", a colon, or two shorter phase names instead. Respond with ONLY valid JSON, no markdown fences, no commentary: "+
+      "{\"phases\":[\"Research and sources\",\"Outline\",\"Draft\",\"Revise and cite\"]}";
     const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
     const data=await res.json();
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
     const parsed=JSON.parse(raw);
     if(parsed&&Array.isArray(parsed.phases)&&parsed.phases.length>0){
-      const names=parsed.phases.filter(p=>typeof p==="string"&&p.trim()).slice(0,6).map(p=>p.trim());
+      const names=parsed.phases.filter(p=>typeof p==="string"&&p.trim()).slice(0,6).map(p=>stripEmDash(p.trim()));
       return names.length>0?names:null;
     }
     return null;
@@ -2187,15 +2197,15 @@ async function proposeOutline(title,detail,subject){
       (detail?"Here's what's known about it: "+detail+". ":"No further detail is available beyond the title. ")+
       "Break this into a concrete, ordered checklist of specific steps a student would actually check off while doing the work (e.g. \"Read chapters 4-6\", \"Draft the introduction\", \"Cite sources in APA format\" -- not vague phases). "+
       "If the detail above already states its own numbered or bulleted breakdown of steps, use THOSE steps directly rather than inventing your own. "+
-      "Only propose a checklist if the detail above actually gives you something concrete to ground it in — if all you have is a bare title with no real information, don't guess: respond with {\"outline\":[]}. "+
-      "5-12 items is typical, never more than 15. Respond with ONLY valid JSON, no markdown fences, no commentary: "+
+      "Only propose a checklist if the detail above actually gives you something concrete to ground it in. If all you have is a bare title with no real information, don't guess: respond with {\"outline\":[]}. "+
+      "5-12 items is typical, never more than 15. Keep each step short and plain, under 10 words. Never use an em dash; use \"and\", a colon, or two shorter steps instead. Respond with ONLY valid JSON, no markdown fences, no commentary: "+
       "{\"outline\":[\"Read chapters 4-6\",\"Draft the introduction\",\"Write body paragraphs\",\"Cite sources\",\"Proofread\"]}";
     const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
     const data=await res.json();
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
     const parsed=JSON.parse(raw);
     if(parsed&&Array.isArray(parsed.outline)&&parsed.outline.length>0){
-      const items=parsed.outline.filter(o=>typeof o==="string"&&o.trim()).slice(0,15).map(o=>o.trim());
+      const items=parsed.outline.filter(o=>typeof o==="string"&&o.trim()).slice(0,15).map(o=>stripEmDash(o.trim()));
       return items.length>0?items:null;
     }
     return null;
@@ -2219,17 +2229,19 @@ async function proposeSessionFocuses(examTitle,materialText,sessionCount,subject
   try{
     const prompt="A student has "+sessionCount+" spaced study session(s) counting down to their exam: \""+examTitle+"\""+(subject?" ("+subject+")":"")+". "+
       "Here's their study material:\n\n"+materialText.slice(0,6000)+"\n\n"+
-      "Write exactly "+sessionCount+" short, specific \"what to study\" lines, one per session, in the order the sessions happen (earliest session first, working toward full review by the last one) -- e.g. \"Chapters 4-6: cell structure and function\" or \"Practice problems from unit 3, sets 1-2\". "+
-      "Ground every line in the material above -- reference real topics, chapters, or sections that actually appear in it. "+
-      "If the material doesn't give you enough to write "+sessionCount+" genuinely distinct, specific lines, don't pad with generic filler like \"General review\" -- respond with {\"focuses\":[]} instead. "+
+      "Write exactly "+sessionCount+" short study-focus labels, one per session, in the order the sessions happen (earliest first, working toward full review by the last one). "+
+      "Keep each one under 8 words -- a quick label a student can read in passing, like \"Ch 4-6: cell structure\" or \"Unit 3 practice problems\", not a full descriptive sentence. "+
+      "Ground every label in real topics, chapters, or sections that actually appear in the material above. "+
+      "Never use an em dash or semicolon to connect ideas. Use a colon, \"and\", or just cut one instead. "+
+      "If the material doesn't give you enough to write "+sessionCount+" genuinely distinct, specific labels, don't pad with generic filler like \"General review\" -- respond with {\"focuses\":[]} instead. "+
       "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
-      "{\"focuses\":[\"Chapters 4-6: cell structure and function\",\"Chapters 7-8: energy and metabolism\"]}";
+      "{\"focuses\":[\"Ch 4-6: cell structure\",\"Ch 7-8: energy and metabolism\"]}";
     const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",format:"json"})});
     const data=await res.json();
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
     const parsed=JSON.parse(raw);
     if(parsed&&Array.isArray(parsed.focuses)&&parsed.focuses.length>0){
-      const lines=parsed.focuses.filter(f=>typeof f==="string"&&f.trim()).slice(0,sessionCount).map(f=>f.trim());
+      const lines=parsed.focuses.filter(f=>typeof f==="string"&&f.trim()).slice(0,sessionCount).map(f=>stripEmDash(f.trim()));
       return lines.length>0?lines:null;
     }
     return null;
