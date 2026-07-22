@@ -2201,6 +2201,76 @@ async function proposeOutline(title,detail,subject){
     return null;
   }catch(e){return null;}
 }
+// One short "what to actually study" line per spaced exam-prep session,
+// e.g. "Chapters 4-6: cell structure and function" instead of every
+// session just saying "Study: <exam title>" with no content behind it.
+// Same grounded-or-nothing discipline as proposeProjectPhases/
+// proposeOutline above -- a session with nothing concrete to point at
+// gets no focus line at all rather than an invented one, and the caller
+// (Studlin Prep's Study Sessions card, buildSyllabusEventBatch's exam
+// branch) is expected to fall back to the plain generic session with no
+// notes when this returns null, never to block session creation on it.
+// materialText is capped in the prompt itself (not just relying on
+// upstream MATERIAL_TEXT_CAP) since combined multi-file material can
+// still run large and this call only needs enough to ground short focus
+// lines, not the whole document.
+async function proposeSessionFocuses(examTitle,materialText,sessionCount,subject){
+  if(!materialText||!materialText.trim())return null;
+  try{
+    const prompt="A student has "+sessionCount+" spaced study session(s) counting down to their exam: \""+examTitle+"\""+(subject?" ("+subject+")":"")+". "+
+      "Here's their study material:\n\n"+materialText.slice(0,6000)+"\n\n"+
+      "Write exactly "+sessionCount+" short, specific \"what to study\" lines, one per session, in the order the sessions happen (earliest session first, working toward full review by the last one) -- e.g. \"Chapters 4-6: cell structure and function\" or \"Practice problems from unit 3, sets 1-2\". "+
+      "Ground every line in the material above -- reference real topics, chapters, or sections that actually appear in it. "+
+      "If the material doesn't give you enough to write "+sessionCount+" genuinely distinct, specific lines, don't pad with generic filler like \"General review\" -- respond with {\"focuses\":[]} instead. "+
+      "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
+      "{\"focuses\":[\"Chapters 4-6: cell structure and function\",\"Chapters 7-8: energy and metabolism\"]}";
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",format:"json"})});
+    const data=await res.json();
+    const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
+    const parsed=JSON.parse(raw);
+    if(parsed&&Array.isArray(parsed.focuses)&&parsed.focuses.length>0){
+      const lines=parsed.focuses.filter(f=>typeof f==="string"&&f.trim()).slice(0,sessionCount).map(f=>f.trim());
+      return lines.length>0?lines:null;
+    }
+    return null;
+  }catch(e){return null;}
+}
+// Best-effort, fire-and-forget follow-up to commitSyllabusEvents -- never
+// called synchronously inline with it. buildSyllabusEventBatch itself
+// stays plain and synchronous on purpose (buildPendingSchedulePreview
+// calls it on every keystroke of the wizard's live drill-down preview;
+// making it async would break that), so this patches session focus lines
+// on AFTER the real commit has already happened, using the exact marker
+// id shape buildSyllabusEventBatch itself writes ("syl-"+noteId+"-"+i)
+// to find the sessions each exam item just got -- no changed return value
+// needed from commitSyllabusEvents. A caller can safely call this without
+// awaiting it -- the UI has nothing to block on, sessions already exist
+// and work fine with no focus line, this only ever adds one in later.
+// Deliberately does NOT fall back to the whole-syllabus sourceMaterial
+// the way buildSyllabusEventBatch's own materialEntries does -- that's
+// exactly the regression fixed earlier this session (an exam with no
+// material of its own silently got the whole syllabus text used as if it
+// were its material); a focus line grounded in unrelated course policy
+// text would be worse than no focus line at all.
+async function attachSessionFocusesToSyllabusExams(noteId,tag,items){
+  for(let i=0;i<items.length;i++){
+    const it=items[i];
+    if(it.kind!=="exam"||!it.proposeSessions||it.noDate)continue;
+    const materialTexts=[...(it.detail&&it.detail.trim()?[it.detail.trim()]:[]),...(it.materialFiles||[]).map(f=>f.text)];
+    const materialText=materialTexts.join("\n\n");
+    if(!materialText.trim())continue;
+    const markerId="syl-"+noteId+"-"+i;
+    const sessions=lsGet("events",[]).filter(e=>e.dueEventId===markerId&&e.isExamPrepSession).sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
+    if(sessions.length===0)continue;
+    const focuses=await proposeSessionFocuses(it.title,materialText,sessions.length,tag);
+    if(!focuses)continue;
+    const idOrder=sessions.map(s=>s.id);
+    lsSet("events",lsGet("events",[]).map(e=>{
+      const idx=idOrder.indexOf(e.id);
+      return idx>=0&&focuses[idx]?{...e,notes:focuses[idx]}:e;
+    }));
+  }
+}
 // Vision-based sibling to Notes' own extractSyllabusDeadlines -- reads a
 // screenshot (a Canvas weekly view, a photographed syllabus page) instead
 // of pasted text, but returns the exact same {deadlines:[...]} shape so it
@@ -4761,6 +4831,12 @@ function StudlinPrep(){
   const [,forceTick]=useState(0);
   const refresh=()=>forceTick(x=>x+1);
   const [upgradeModal,setUpgradeModal]=useState(null); // {feature,detail}
+  // Desired session count for the Study Sessions card's "Schedule sessions
+  // for me" / "Redo the plan" actions -- reset whenever a different exam
+  // is selected (see the exam-card onClick below) so it never carries a
+  // stale count over from whichever exam was open last.
+  const [sessionCountDraft,setSessionCountDraft]=useState(4);
+  const [sessionScheduleLoading,setSessionScheduleLoading]=useState(false);
   // colorOf is component-local everywhere it exists in this file (Notes,
   // CalendarTab, Flashcards each define their own) -- not a module-level
   // helper, so Prep needs its own too, same lookup Notes already uses.
@@ -5041,6 +5117,7 @@ function StudlinPrep(){
                   setMaterialLinks(ex.referenceLinks&&ex.referenceLinks.length>0?normalizeLinks(ex.referenceLinks):(ex.referenceLink?[{label:"",url:ex.referenceLink}]:[]));
                   setLinkDraft("");setLinkLabelDraft("");
                   setPasteMode(false);setPasteText("");
+                  setSessionCountDraft(defaultSessionCountFor(ex.examWeight));
                 }} style={{padding:"14px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,cursor:"pointer",display:"flex",alignItems:"center",gap:14}}>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:14,fontWeight:700,color:T.white}}>{ex.title}</div>
@@ -5057,6 +5134,65 @@ function StudlinPrep(){
         const readiness=computeExamReadiness(selectedExam,lsGet("events",[]),dayKey());
         const deck=allDecks.find(d=>d.examEventId===selectedExam.id);
         const pes=allPracticeExams.filter(p=>p.examEventId===selectedExam.id);
+        // Every session Studlin has ever scheduled for this exam, whatever
+        // created it (syllabus scan, Add Task, a deck/practice-exam
+        // "Schedule" action below) -- all of them carry dueEventId back to
+        // this marker, so one query is the single source of truth instead
+        // of three separate un-editable summaries.
+        const examSessions=lsGet("events",[]).filter(e=>e.dueEventId===selectedExam.id).sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
+        const hasGenericSessions=examSessions.some(s=>!s.deckId&&!s.practiceExamId);
+        // Regenerating only ever touches the generic (non deck/PE-linked)
+        // sessions -- removeGenericExamPrepSessions is the same guard
+        // commitStudyKit already trusts, so a deliberately-scheduled deck
+        // review or practice-exam sitting never gets silently swept away
+        // by "Redo the plan".
+        // If material is already uploaded for this exam, each session gets
+        // a real "what to study" line (proposeSessionFocuses) instead of
+        // just the generic "Study: <title>" title -- grounded-or-nothing,
+        // same as its proposeProjectPhases/proposeOutline siblings, so a
+        // thin/unhelpful material pool just leaves sessions exactly as
+        // they were before this existed rather than inventing filler.
+        const scheduleGenericSessions=async(count)=>{
+          setSessionScheduleLoading(true);
+          const events=removeGenericExamPrepSessions(lsGet("events",[]),selectedExam.id);
+          const sessions=buildExamSessionEvents(selectedExam.title,selectedExam.date,selectedExam.subject,count,"prep-"+selectedExam.id+"-"+Date.now(),events,getWeeklyRoutine(),getSchedulePreferences(),{dueEventId:selectedExam.id},selectedExam.difficulty);
+          const focuses=materialText.trim()?await proposeSessionFocuses(selectedExam.title,materialText,sessions.length,selectedExam.subject):null;
+          const finalSessions=focuses?sessions.map((s,i)=>focuses[i]?{...s,notes:focuses[i]}:s):sessions;
+          lsSet("events",events.concat(finalSessions));
+          setSessionScheduleLoading(false);
+          refresh();
+        };
+        // Offered once material exists but at least one already-scheduled
+        // generic (non deck/PE) session still has no focus line -- patches
+        // notes onto the existing pending sessions in place rather than
+        // regenerating the whole plan, so dates/times the student already
+        // has don't get reshuffled just to add content to them.
+        const addFocusToExisting=async()=>{
+          const genericPending=examSessions.filter(s=>!s.deckId&&!s.practiceExamId&&s.status!=="done");
+          if(genericPending.length===0)return;
+          setSessionScheduleLoading(true);
+          const focuses=await proposeSessionFocuses(selectedExam.title,materialText,genericPending.length,selectedExam.subject);
+          setSessionScheduleLoading(false);
+          if(!focuses)return;
+          const idOrder=genericPending.map(s=>s.id);
+          lsSet("events",lsGet("events",[]).map(e=>{
+            const idx=idOrder.indexOf(e.id);
+            return idx>=0&&focuses[idx]?{...e,notes:focuses[idx]}:e;
+          }));
+          refresh();
+        };
+        const hasUnfocusedGenericSessions=materialText.trim()&&examSessions.some(s=>!s.deckId&&!s.practiceExamId&&s.status!=="done"&&!s.notes);
+        const addOneSession=()=>{
+          const d=suggestDurationFor(selectedExam.subject,"study block")||25;
+          const previews=buildSpacedSessionPreviews(selectedExam.date,selectedExam.subject,1,d);
+          if(previews.length===0)return;
+          const s=previews[0];
+          const session={id:"prep-"+selectedExam.id+"-"+Date.now(),title:"Study: "+selectedExam.title,date:s.date,time:s.time,subject:selectedExam.subject,notes:"",kind:"study block",duration:s.duration,priority:5,difficulty:selectedExam.difficulty??500,deadline:selectedExam.date,status:"pending",timeSpent:0,completedAt:null,placementReason:s.placementReason||null,isExamPrepSession:true,dueEventId:selectedExam.id};
+          lsSet("events",lsGet("events",[]).concat([session]));
+          refresh();
+        };
+        const patchSession=(id,patch)=>{lsSet("events",lsGet("events",[]).map(e=>e.id===id?{...e,...patch}:e));refresh();};
+        const deleteSession=(id)=>{lsSet("events",lsGet("events",[]).filter(e=>e.id!==id));refresh();};
         return(
           <div>
             <button onClick={()=>setSelectedExamId(null)} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:14,display:"flex",alignItems:"center",gap:4}}>← All exams</button>
@@ -5160,6 +5296,58 @@ function StudlinPrep(){
                       </div>
                     );
                   })}
+                </div>
+              )}
+            </Card>
+
+            <Card style={{padding:20}}>
+              <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Study Sessions</div>
+              {examSessions.length===0?(
+                <>
+                  <div style={{fontSize:12,color:T.muted,marginBottom:10}}>No study sessions scheduled yet.</div>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <NumField min={1} max={6} fallback={4} value={sessionCountDraft} onChange={setSessionCountDraft} style={{width:48}} />
+                    <Btn onClick={()=>scheduleGenericSessions(sessionCountDraft)} disabled={sessionScheduleLoading}>{sessionScheduleLoading?"Scheduling…":"Schedule sessions for me"}</Btn>
+                  </div>
+                </>
+              ):(
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {examSessions.map(s=>{
+                    const isDone=s.status==="done";
+                    return (
+                      <div key={s.id} style={{padding:"10px 12px",borderRadius:8,background:T.card2,opacity:isDone?0.55:1}}>
+                        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:isDone?0:8}}>
+                          <div style={{fontSize:12.5,fontWeight:600,color:T.text,textDecoration:isDone?"line-through":"none"}}>{s.title}</div>
+                          {!isDone&&<button onClick={()=>deleteSession(s.id)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0}}>×</button>}
+                        </div>
+                        {isDone?(
+                          <div style={{fontSize:11,color:T.muted}}>{s.date} · done</div>
+                        ):(
+                          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                            <Input type="date" value={s.date} onChange={e=>patchSession(s.id,{date:e.target.value})} style={{width:130}} />
+                            <TimeInput value={s.time} onChange={v=>patchSession(s.id,{time:v})} />
+                            <NumField min={5} max={240} fallback={25} value={s.duration||25} onChange={v=>patchSession(s.id,{duration:v})} style={{width:56}} />
+                            <span style={{fontSize:10.5,color:T.muted}}>min</span>
+                          </div>
+                        )}
+                        {s.notes&&<div style={{fontSize:11,color:T.muted,marginTop:6}}>{s.notes}</div>}
+                      </div>
+                    );
+                  })}
+                  <button type="button" onClick={addOneSession} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add a session</button>
+                  {hasUnfocusedGenericSessions&&(
+                    <div style={{marginTop:6,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+                      <BtnSm variant="subtle" onClick={addFocusToExisting} disabled={sessionScheduleLoading}>{sessionScheduleLoading?"Reading your material…":"Add study focus from your material"}</BtnSm>
+                      <div style={{fontSize:10.5,color:T.faint,marginTop:4}}>Give your existing sessions a specific "what to study" line, grounded in the material above.</div>
+                    </div>
+                  )}
+                  {hasGenericSessions&&(
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6,paddingTop:10,borderTop:`1px solid ${T.border}`,flexWrap:"wrap"}}>
+                      <NumField min={1} max={6} fallback={4} value={sessionCountDraft} onChange={setSessionCountDraft} style={{width:48}} />
+                      <BtnSm variant="subtle" onClick={()=>scheduleGenericSessions(sessionCountDraft)} disabled={sessionScheduleLoading}>{sessionScheduleLoading?"Scheduling…":"Redo the plan"}</BtnSm>
+                      <span style={{fontSize:10.5,color:T.faint}}>Replaces Studlin's own sessions with a fresh plan for this count — review and practice-exam sessions are kept.</span>
+                    </div>
+                  )}
                 </div>
               )}
             </Card>
@@ -6556,6 +6744,7 @@ function Notes({setActive=()=>{}}){
           <Btn disabled={aiLoading||!syllabusReview||syllabusReview.items.filter(i=>i.include).length===0} onClick={()=>{
             const included=syllabusReview.items.filter(i=>i.include);
             commitSyllabusEvents(syllabusReview.noteId,syllabusReview.tag,included,syllabusReview.sourceText);
+            attachSessionFocusesToSyllabusExams(syllabusReview.noteId,syllabusReview.tag,included);
             setSyllabusToast(included.length+" deadline"+(included.length!==1?"s":"")+" added to your calendar");
             setTimeout(()=>setSyllabusToast(""),3200);
             setSyllabusReview(null);
@@ -11029,7 +11218,10 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
     saveWeeklyRoutine(routine);
     withIds.forEach(cls=>{
       const included=(cls.items||[]).filter(it=>it.include&&it.title.trim());
-      if(included.length>0)commitSyllabusEvents("wiz-"+cls.subjId,cls.name,included,cls.sourceText);
+      if(included.length>0){
+        commitSyllabusEvents("wiz-"+cls.subjId,cls.name,included,cls.sourceText);
+        attachSessionFocusesToSyllabusExams("wiz-"+cls.subjId,cls.name,included);
+      }
     });
     if(activities.length>0)saveWeeklyRoutine([...getWeeklyRoutine(),...activities]);
     setSchedulePreferences({...getSchedulePreferences(),workStartTime:workStart,workEndTime:workEnd,peakHourBuckets:peakBuckets});
@@ -12325,6 +12517,9 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
               );
             })()}
           </div>
+        )}
+        {linkedSessions.length>0&&(
+          <div style={{fontSize:11.5,color:T.muted,marginBottom:14}}>Manage all sessions for this exam — edit, add, or remove any of them — in Studlin Prep.</div>
         )}
       </>)}
       {deadlineErr&&<div style={{fontSize:12,color:T.red,marginTop:-8,marginBottom:14}}>{deadlineErr}</div>}

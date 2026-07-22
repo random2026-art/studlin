@@ -103,7 +103,8 @@ function loadStudlinModule(options) {
     "advancedSchedulePlanner","todaysPlan","chunkTasksWithBreaks",
     "isReorderableTask","calculateTaskPriority","detectConflicts",
     "isLeadInFixed","commitSyllabusEvents","buildSyllabusEventBatch",
-    "buildPendingSchedulePreview","proposeProjectPhases","proposeOutline",
+    "buildPendingSchedulePreview","proposeProjectPhases","proposeOutline","proposeSessionFocuses",
+    "attachSessionFocusesToSyllabusExams",
     "isPhaseDecompositionCandidate","finalizeExtractedText","MATERIAL_TEXT_CAP"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
