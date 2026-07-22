@@ -398,13 +398,18 @@ describe("findSlotWithEviction", () => {
   test("evicted tasks are stamped movedByStudlin/movedFrom (regression: they used to move with no flag, no banner entry, no undo)", () => {
     const m = loadStudlinModule();
     const today = m.dayKey();
-    // Pack the whole work window with freely-evictable study blocks (no
-    // deadline) so an imminent urgent task has nowhere to go without
-    // evicting something.
+    // Pack the whole work window PLUS the same-day catch-up window (see
+    // dayHasRoomFor's own catch-up allowance) with freely-evictable study
+    // blocks (no deadline), so an imminent urgent task genuinely has
+    // nowhere to go -- including the 2-hour catch-up buffer -- without
+    // evicting something. Packing only through workEndTime used to be
+    // enough to force eviction, but now that dayHasRoomFor also sees the
+    // catch-up window, leaving it open would let the task land there
+    // instead of evicting anything, same as findOpenSlotFor already would.
     const packed = [];
     let t = 9 * 60; // matches DEFAULT_PREFS.workStartTime
     let idx = 0;
-    while (t + 30 <= 18 * 60) { // until DEFAULT_PREFS.workEndTime
+    while (t + 30 <= 20 * 60) { // through workEndTime (18:00) + the 2hr catch-up window
       packed.push({ id: "pack-" + idx, title: "Filler " + idx, date: today, time: `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`, kind: "study block", duration: 30, status: "pending", deadline: null });
       t += 30; idx++;
     }
@@ -611,12 +616,27 @@ describe("isTier0Missed", () => {
 });
 
 describe("computeReviewOffsets / computeReviewDates", () => {
-  test("returns nothing when there's less than 2 days of runway", () => {
+  test("an exam that already passed gets no review sessions", () => {
+    const { computeReviewOffsets } = loadStudlinModule();
+    assert.equal(computeReviewOffsets(-1, 4).length, 0);
+  });
+
+  test("an exam tomorrow still gets one cram session today, not zero (regression: daysUntil<2 used to return nothing at all)", () => {
     const { computeReviewOffsets } = loadStudlinModule();
     // Arrays built inside the sandboxed vm context aren't deepEqual-identical
     // to native-realm arrays even with matching contents (a vm quirk, not a
-    // source bug) -- checking length sidesteps that entirely.
-    assert.equal(computeReviewOffsets(1, 4).length, 0);
+    // source bug) -- checking length/contents via .length and indexing
+    // sidesteps that entirely.
+    const offsets = computeReviewOffsets(1, 4);
+    assert.equal(offsets.length, 1);
+    assert.equal(offsets[0], 1, "one session, one day out (today)");
+  });
+
+  test("an exam happening today gets one session at offset 0", () => {
+    const { computeReviewOffsets } = loadStudlinModule();
+    const offsets = computeReviewOffsets(0, 4);
+    assert.equal(offsets.length, 1);
+    assert.equal(offsets[0], 0);
   });
 
   test("respects a student-chosen count, clamped to 1-6", () => {
@@ -706,7 +726,7 @@ describe("planBrainDumpTasks (Brain Dump placement)", () => {
       { kind: "event", title: "Chill", durationMin: 60, dueTime: null, dueDate: null },
       { kind: "event", title: "Gym", durationMin: 60, dueTime: null, dueDate: null },
     ];
-    const tasks = planBrainDumpTasks(items, [], [], DEFAULT_PREFS);
+    const { tasks } = planBrainDumpTasks(items, [], [], DEFAULT_PREFS);
     const chill = tasks.find((t) => t.title === "Chill");
     const gym = tasks.find((t) => t.title === "Gym");
     assert.ok(chill && gym);
@@ -737,7 +757,7 @@ describe("planBrainDumpTasks (Brain Dump placement)", () => {
       { kind: "study", title: "Find bugs", durationMin: 60, immediate: true, chained: false },
       { kind: "study", title: "Paint floor", durationMin: 30, chained: true },
     ];
-    const tasks = planBrainDumpTasks(items, [], [], DEFAULT_PREFS);
+    const { tasks } = planBrainDumpTasks(items, [], [], DEFAULT_PREFS);
     const bugs = tasks.find((t) => t.title === "Find bugs");
     const paint = tasks.find((t) => t.title === "Paint floor");
     assert.ok(bugs && paint);
@@ -759,7 +779,7 @@ describe("planBrainDumpTasks (Brain Dump placement)", () => {
       { kind: "study", title: "First", durationMin: 60, immediate: false, chained: false },
       { kind: "study", title: "Second", durationMin: 30, chained: true },
     ];
-    const tasks = planBrainDumpTasks(items, [], [], prefs);
+    const { tasks } = planBrainDumpTasks(items, [], [], prefs);
     const first = tasks.find((t) => t.title === "First");
     const second = tasks.find((t) => t.title === "Second");
     assert.ok(first && second);
@@ -1665,9 +1685,15 @@ describe("One-tap block actions: findLaterTodaySlot / findNotTodaySlot (Friction
   });
 
   test("findLaterTodaySlot returns null (not tomorrow) when today genuinely has no room left", () => {
-    const m = loadStudlinModule({ now: "2026-07-20T17:50:00" });
+    // 19:50 is inside the same-day catch-up window (workEndTime 18:00 + 2hr
+    // buffer = 20:00), not just past normal work hours -- dayHasRoomFor now
+    // considers that window too (same allowance findOpenSlotFor already
+    // had), so the "genuinely no room" case has to exhaust the catch-up
+    // window as well, not just workEndTime, to still prove this returns
+    // null instead of quietly using catch-up time that doesn't exist.
+    const m = loadStudlinModule({ now: "2026-07-20T19:50:00" });
     const t = task();
-    const slot = m.findLaterTodaySlot(t, [t], [], PREFS, "2026-07-20", 17 * 60 + 50);
+    const slot = m.findLaterTodaySlot(t, [t], [], PREFS, "2026-07-20", 19 * 60 + 50);
     assert.equal(slot, null, "must never silently roll into tomorrow -- that's what 'Not today' is for, not a fallback here");
   });
 

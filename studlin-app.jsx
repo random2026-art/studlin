@@ -995,7 +995,7 @@ const CATCHUP_BUFFER_MINS=120;
 function computeOccupiedIntervals(events,routines,prefs,dateKey){
   return events.filter(e=>e.date===dateKey&&e.time)
     .concat(expandRoutineOccurrences(routines,dateKey,dateKey).filter(o=>o.kind!=="free period"))
-    .map(e=>({start:timeToMinutes(e.time)-(TIER0_FIXED_KINDS.has(e.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
+    .map(e=>({start:timeToMinutes(e.time)-(isLeadInFixed(e)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
 }
 // Privacy-scoped payload for the opt-in shared free/busy feature (Studlin
 // Match, see findSharedStudyWindow in ChatDrawer) — busy TIME intervals
@@ -1139,17 +1139,20 @@ function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,
     // after it rather than allowing zero-gap back-to-back placement.
     const occupied=events.filter(e=>e.date===dk&&e.time)
       .concat(expandRoutineOccurrences(routines,dk,dk).filter(o=>o.kind!=="free period"))
-      .map(e=>({start:timeToMinutes(e.time)-(TIER0_FIXED_KINDS.has(e.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
+      .map(e=>({start:timeToMinutes(e.time)-(isLeadInFixed(e)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
     let scanStart=dayOffset===0?Math.max(prefStartMins,timeToMinutes(desiredTime)):prefStartMins;
     if(dk===todayKey)scanStart=Math.max(scanStart,nowFloorMins);
     if(scanStart+duration>prefEndMins){
       // Normal hours are already full or behind us. For today specifically,
       // try the end-of-day catch-up buffer before giving up and pushing to
       // tomorrow — a late brain-dump deserves one more shot at landing
-      // today rather than automatically bumping.
+      // today rather than automatically bumping. Capped at 1440 (end of
+      // day) -- a late workEndTime preference (e.g. 23:45) plus the 2-hour
+      // buffer could otherwise push catchupEnd past midnight, and every
+      // scan step below assumes "minutes since this same day's midnight."
       if(dk===todayKey){
         const catchupStart=Math.max(scanStart,prefEndMins);
-        const catchupEnd=prefEndMins+CATCHUP_BUFFER_MINS;
+        const catchupEnd=Math.min(1440,prefEndMins+CATCHUP_BUFFER_MINS);
         for(let t=catchupStart;t+duration<=catchupEnd;t+=15){
           if(!occupied.some(o=>!(t+duration<=o.start||t>=o.end)))return {date:dk,time:minutesToTime(t)};
         }
@@ -1187,12 +1190,12 @@ function findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,durat
   // so a legitimately-found catch-up slot doesn't get rejected here as
   // if it were the raw fallback.
   const{start:winStart,end:winEnd}=getWorkWindowMinsFor(prefs,slot.date);
-  const effectiveEnd=slot.date===dayKey()?winEnd+CATCHUP_BUFFER_MINS:winEnd;
+  const effectiveEnd=Math.min(1440,slot.date===dayKey()?winEnd+CATCHUP_BUFFER_MINS:winEnd);
   const tMins=timeToMinutes(slot.time);
   if(tMins<winStart||tMins+duration>effectiveEnd)return null;
   const occupied=events.filter(e=>e.date===slot.date&&e.time)
     .concat(expandRoutineOccurrences(routines,slot.date,slot.date).filter(o=>o.kind!=="free period"))
-    .map(e=>({start:timeToMinutes(e.time)-(TIER0_FIXED_KINDS.has(e.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
+    .map(e=>({start:timeToMinutes(e.time)-(isLeadInFixed(e)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
   const conflict=occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end));
   return conflict?null:slot;
 }
@@ -1207,10 +1210,16 @@ function findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,durat
 function dayHasRoomFor(events,routines,prefs,dateKey,duration,desiredTime){
   const dayWindow=getWorkWindowMinsFor(prefs,dateKey);
   const prefStartMins=desiredTime?Math.max(dayWindow.start,timeToMinutes(desiredTime)):dayWindow.start;
-  const prefEndMins=dayWindow.end;
+  // Same today-only catch-up allowance findOpenSlotFor/findLegalSlotOrNull
+  // already extend -- without this, a real same-day catch-up opening was
+  // invisible here, so findLaterTodaySlot could wrongly report "no room
+  // today" (steering the student to "Not today" instead) and
+  // findSlotWithEviction could evict an unrelated task instead of using
+  // the real catch-up opening that findOpenSlotFor itself would have found.
+  const prefEndMins=dateKey===dayKey()?Math.min(1440,dayWindow.end+CATCHUP_BUFFER_MINS):dayWindow.end;
   const occupied=events.filter(e=>e.date===dateKey&&e.time)
     .concat(expandRoutineOccurrences(routines,dateKey,dateKey).filter(o=>o.kind!=="free period"))
-    .map(e=>({start:timeToMinutes(e.time)-(TIER0_FIXED_KINDS.has(e.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
+    .map(e=>({start:timeToMinutes(e.time)-(isLeadInFixed(e)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
   for(let t=prefStartMins;t+duration<=prefEndMins;t+=15){
     if(!occupied.some(o=>!(t+duration<=o.start||t>=o.end)))return true;
   }
@@ -1358,6 +1367,16 @@ const LEAD_IN_BUFFER_MINS=15;
 // movability is decided, the same way TIER0_FIXED_KINDS is, even though
 // its own `kind` is ordinarily flexible ("study block").
 function isCoopStudySession(ev){return !!(ev&&ev.studySessionId);}
+// Canonical "does this block get a lead-in buffer before its start" check
+// -- TIER0_FIXED_KINDS and co-op sessions both do, per the movability
+// guarantee above (a co-op session's own `kind` is ordinarily flexible, so
+// a bare TIER0_FIXED_KINDS.has(e.kind) check misses it). One shared
+// predicate so every occupied-interval builder in the file stays in sync
+// by construction instead of by convention -- previously only rebalanceDay
+// had its own local copy of this union, so co-op sessions got a lead-in
+// buffer there but not in findOpenSlotFor/findLegalSlotOrNull/dayHasRoomFor/
+// computeOccupiedIntervals, silently disagreeing about the same slot.
+function isLeadInFixed(e){return TIER0_FIXED_KINDS.has(e.kind)||isCoopStudySession(e);}
 function isTier0Missed(ev,todayKey){
   if(ev.status!=="pending")return false;
   if(ev.checklist)return false;
@@ -1439,6 +1458,16 @@ function bucketAnchorMinsInWindow(lowBoundMins){
 const DIFFICULTY_HARD_THRESHOLD=0.3; // matches the existing raw-scale >=3 semantic
 function difficultyTierOf(task){
   return normalizeTaskVal(task&&task.difficulty,5)>=DIFFICULTY_HARD_THRESHOLD?"hard":"easy";
+}
+// PRIORITY_COLORS is a 6-slot array (index 0 unused/blank, 1-5 = the old
+// raw 1-10-scale "tier" a priority used to map to directly). Indexing it
+// with a raw ev.priority value silently breaks for any task made through
+// the current 0-1000 slider (index out of range -> undefined -> the dot
+// just disappears) -- same two-incompatible-scales issue difficultyTierOf
+// above already guards against, applied to priority instead.
+function priorityTierOf(task){
+  const n=normalizeTaskVal(task&&task.priority,5); // 0-1
+  return Math.max(1,Math.min(5,Math.ceil(n*5)));
 }
 // Append-only log, one entry per known outcome — mirrors the `sessions`
 // array logSession writes (scan-on-demand, no running aggregate). Silently
@@ -1768,7 +1797,19 @@ function findReliableSlotFor(events,routines,prefs,desiredDate,desiredTime,durat
     const score=TIER0_SCORE_WEIGHTS.reliability*reliabilityScore-TIER0_SCORE_WEIGHTS.continuity*(continuityMins/1440);
     candidates.push({date:baseline.date,time:t,score,bucket,isDeclaredPeak,reliability});
   });
-  if(candidates.length===0)return baseline;
+  if(candidates.length===0){
+    // baseline can be findOpenSlotFor's own unchecked last-resort fallback
+    // (the raw desired time, verbatim, even if it's actually occupied) when
+    // the day's genuinely full -- returning it here as if it were a real
+    // candidate is exactly how this used to silently double-book (Brain
+    // Dump, Attack Block scheduling, exam-prep placement, manual-entry
+    // conflict resolution all call this function and used to trust the
+    // result blindly). Re-validate through findLegalSlotOrNull instead;
+    // null means there's genuinely nowhere legal to put this, which every
+    // caller now has to handle rather than silently overlapping something.
+    const legal=findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey);
+    return legal?{date:legal.date,time:legal.time,reason:null}:null;
+  }
   candidates.sort((a,b)=>b.score-a.score);
   const win=candidates[0];
   // Only claim a reason when the reliability engine actually changed the
@@ -1799,7 +1840,7 @@ function undoTier0Move(taskId){
   const tMins=timeToMinutes(time);
   const occupied=events.filter(e=>e.id!==taskId&&e.date===date&&e.time)
     .concat(expandRoutineOccurrences(getWeeklyRoutine(),date,date).filter(o=>o.kind!=="free period"))
-    .map(e=>({start:timeToMinutes(e.time)-(TIER0_FIXED_KINDS.has(e.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
+    .map(e=>({start:timeToMinutes(e.time)-(isLeadInFixed(e)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
   if(occupied.some(o=>!(tMins+durationMins<=o.start||tMins>=o.end)))return {events,blocked:true};
   const next=events.map(e=>{
     if(e.id!==taskId)return e;
@@ -1893,7 +1934,14 @@ function reconcileToastSuffix(result){
   if(result.needsAttention.length>0)parts.push(result.needsAttention.length+" conflict"+(result.needsAttention.length!==1?"s":"")+" need"+(result.needsAttention.length!==1?"":"s")+" your attention");
   return parts.length>0?" · "+parts.join(" · "):"";
 }
-function fmtClock12(t){if(!t)return"";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+ap;}
+// A source outside minutesToTime (manual entry, an imported calendar, an
+// AI-returned time) could hand this an out-of-range hour -- most often
+// "24:xx"/"25:xx" from a catch-up-window computation that overflowed past
+// midnight before minutesToTime's own clamp existed. h%12 would silently
+// wrap that into a real-looking but wrong clock time ("24:15" -> "12:15PM",
+// indistinguishable from an actual noon event) instead of surfacing the
+// problem, so bail out to the raw string when the hour is out of [0,24).
+function fmtClock12(t){if(!t)return"";const p=t.split(":");let h=+p[0];if(!(h>=0&&h<24))return t;const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+ap;}
 function fmtMovedFrom(mf){if(!mf)return"";const dk=mf.date===dayKey()?"today":mf.date;return dk+" "+fmtClock12(mf.time);}
 // Copy for a findReliableSlotFor `.reason` — includes the difficulty tier
 // word once Direction 4's tiering is live, since the same bucket can now
@@ -1943,8 +1991,12 @@ function scheduleAssignmentExtension(task,deadlineKey,totalMins){
 
   let cursorDate=dayKey(),cursorTime=prefs.workStartTime;
   const newEvents=[];
-  chunks.forEach((mins,i)=>{
-    const slot=findOpenSlotFor(events.concat(newEvents),routines,prefs,cursorDate,cursorTime,mins,deadlineKey);
+  for(let i=0;i<chunks.length;i++){
+    const mins=chunks[i];
+    const slot=findLegalSlotOrNull(events.concat(newEvents),routines,prefs,cursorDate,cursorTime,mins,deadlineKey);
+    // No legal slot left before the deadline -- stop here and keep whatever
+    // chunks already placed rather than fabricating a double-booked one.
+    if(!slot)break;
     newEvents.push({
       id:String(Date.now()+i)+"-"+i,title:task.title,date:slot.date,time:slot.time,
       subject:task.subject,kind:"study block",duration:mins,
@@ -1952,7 +2004,7 @@ function scheduleAssignmentExtension(task,deadlineKey,totalMins){
     });
     const d=new Date(slot.date+"T12:00:00");d.setDate(d.getDate()+1);
     cursorDate=dayKey(d);cursorTime=prefs.workStartTime;
-  });
+  }
   lsSet("events",events.concat(newEvents));
 }
 // Attack Block — calibration-based duration estimation. Instead of asking a
@@ -2265,6 +2317,7 @@ function startAttackBlockChain(fields,events,routines,prefs,desiredDate,desiredT
   const chainId="attack-"+Date.now()+"-"+Math.random().toString(36).slice(2,7);
   const probeMins=fields.probeMins||ATTACK_BLOCK_DEFAULT_PROBE_MINS;
   const slot=findReliableSlotFor(events,routines,prefs,desiredDate,desiredTime,probeMins,fields.deadline||null,fields.difficulty);
+  if(!slot)return null; // no legal slot before the deadline -- nothing to start a chain with
   return {
     id:String(Date.now()+Math.random()*1000),
     title:fields.title,date:slot.date,time:slot.time,
@@ -2294,6 +2347,7 @@ function startAttackBlockChain(fields,events,routines,prefs,desiredDate,desiredT
 function startPhaseAwareAttackChain(fields,phases,events,routines,prefs,desiredDate,desiredTime){
   const hasPhases=Array.isArray(phases)&&phases.length>0;
   const task=startAttackBlockChain(hasPhases?{...fields,title:fields.title+": "+phases[0]}:fields,events,routines,prefs,desiredDate,desiredTime);
+  if(!task)return null;
   return hasPhases?{...task,projectPhaseIndex:0,phaseName:phases[0],projectTitle:fields.title}:task;
 }
 // Called when a phased Attack Block session is marked genuinely finished
@@ -2334,15 +2388,16 @@ function advanceProjectPhase(completedTask,events,routines,prefs,todayKey){
   return working;
 }
 // How many days out each follow-up chunk should target, given N chunks and
-// a runway of days until the finish-by buffer. A square-root ease: early
-// chunks land close together near today (when a deadline weeks out doesn't
-// feel urgent yet -- exactly when motivation to get ahead is weakest), and
-// later chunks compress toward the deadline as the natural push to finish
-// intensifies -- back-weighted, not evenly spaced and not front-crammed.
-// Falls back to tight day-by-day packing (today, today+1, ...) when there's
-// no deadline to ramp toward, or the runway doesn't even have room for one
-// chunk per day -- spreading thin chunks over a fat runway helps; spreading
-// fat chunks over a thin one just delays necessary work for no reason.
+// a runway of days until the finish-by buffer. A square-root ease: the
+// FIRST gap (today -> chunk 2) is the largest -- exactly when a deadline
+// weeks out doesn't feel urgent yet, so a bigger nudge forward matters more
+// -- and later gaps compress as the deadline approaches, syncing with the
+// natural push to finish that shows up on its own by then. Back-weighted,
+// not evenly spaced and not front-crammed. Falls back to tight day-by-day
+// packing (today, today+1, ...) when there's no deadline to ramp toward, or
+// the runway doesn't even have room for one chunk per day -- spreading thin
+// chunks over a fat runway helps; spreading fat chunks over a thin one just
+// delays necessary work for no reason.
 const ATTACK_BLOCK_RAMP_EXPONENT=0.5;
 function computeAttackBlockRampOffsets(chunkCount,runwayDays){
   if(chunkCount<=1)return [0];
@@ -2397,7 +2452,8 @@ function scheduleAttackBlockFollowUp(task,nextMins){
   const dayOffsets=computeAttackBlockRampOffsets(chunks.length,runwayDays);
   let cursorDate=today;
   const newEvents=[];
-  chunks.forEach((m,i)=>{
+  for(let i=0;i<chunks.length;i++){
+    const m=chunks[i];
     const target=new Date(today+"T12:00:00");target.setDate(target.getDate()+dayOffsets[i]);
     const targetKey=dayKey(target);
     // The ramp offset is a target, never a demotion -- a later chunk can
@@ -2406,6 +2462,9 @@ function scheduleAttackBlockFollowUp(task,nextMins){
     // (e.g. that day was full and findReliableSlotFor bumped it forward).
     const searchFrom=targetKey>cursorDate?targetKey:cursorDate;
     const slot=findReliableSlotFor(events.concat(newEvents),routines,prefs,searchFrom,prefs.workStartTime,m,task.deadline||null,task.difficulty);
+    // No legal slot left anywhere -- stop here and keep whatever chunks
+    // already placed rather than fabricating a double-booked one.
+    if(!slot)break;
     newEvents.push({
       id:String(Date.now()+i)+"-ab-"+i,
       title:task.title,date:slot.date,time:slot.time,
@@ -2429,7 +2488,7 @@ function scheduleAttackBlockFollowUp(task,nextMins){
     });
     const d=new Date(slot.date+"T12:00:00");d.setDate(d.getDate()+1);
     cursorDate=dayKey(d);
-  });
+  }
   lsSet("events",events.concat(newEvents));
 }
 // "Re-optimize" (Dashboard's Assignments master list) -- a chain's
@@ -2765,7 +2824,14 @@ function resolveOrphanedCheckpoint(checkpoint,events){
 // fewer, never schedules into the past.
 function computeReviewOffsets(daysUntil,desiredCount){
   const count=Math.max(1,Math.min(6,desiredCount||4));
-  if(daysUntil<2)return [];
+  if(daysUntil<0)return []; // exam already passed
+  if(daysUntil<2){
+    // Too imminent for the expanding curve to fit even its first (smallest)
+    // interval -- still worth one cram session today, or on the exam date
+    // itself, rather than the exam getting zero auto-scheduled prep at all
+    // just because it's the most urgent case.
+    return daysUntil===0?[0]:[1];
+  }
   const offsets=[];
   let offset=1;
   for(let i=0;i<count;i++){
@@ -2828,9 +2894,10 @@ function buildSpacedSessionPreviews(examDate,subject,count,duration){
   let working=events;
   return dates.map(date=>{
     const slot=findReliableSlotFor(working,routines,prefs,date,prefs.workStartTime,d,examDate,5);
+    if(!slot)return null;
     working=working.concat([{date:slot.date,time:slot.time,duration:d}]);
     return {date:slot.date,time:slot.time,duration:d,include:true,placementReason:slot.reason||null};
-  });
+  }).filter(Boolean);
 }
 function sessionStats(){
   const s=lsGet("sessions",[]);
@@ -2969,7 +3036,17 @@ function applyOverduePenalties(){
     if(ev.status!=="pending")return;
     if(ev.date>=today)return;
     if(ev.deadline&&ev.deadline<today)return;
-    const pen=Math.round((ev.duration||25)*(ev.priority||1)*(ev.difficulty||1));
+    // Two live scales coexist in the same events array (legacy raw 0-10,
+    // current Add/Edit Task slider 0-1000) -- reading .priority/.difficulty
+    // raw here made this penalty's magnitude differ by ~18,000x between two
+    // functionally-identical overdue tasks depending only on which UI
+    // created them. normalizeTaskVal (0-1) *10 puts both back on the same
+    // ~1-10 magnitude this formula's constants were originally tuned
+    // around, instead of collapsing every legacy-scale task's penalty
+    // toward near-zero.
+    const p=normalizeTaskVal(ev.priority,1)*10;
+    const d=normalizeTaskVal(ev.difficulty,1)*10;
+    const pen=Math.round((ev.duration||25)*p*d);
     added+=pen;
     penalized[ev.id]=true;
   });
@@ -3027,9 +3104,17 @@ function timeToMinutes(timeStr){
 }
 
 // Helper: convert minutes since midnight back to "HH:MM"
+// Clamped, never wrapped: a caller that overflows past end-of-day (a late
+// catch-up window colliding with a near-midnight workEndTime, or "now"
+// itself sitting within ~15min of midnight) gets an honestly-late 23:59,
+// never a silent wrap into tomorrow's early morning that would look like
+// an unrelated slot on the same date, and never an invalid "24:xx"/"25:xx"
+// string (see fmtClock12's own guard, and the reminder-notification effect's
+// `new Date(ev.date+"T"+ev.time)`, both of which mis-handle that).
 function minutesToTime(mins){
-  const h=Math.floor(mins/60);
-  const m=mins%60;
+  const clamped=Math.max(0,Math.min(1439,Math.round(mins)));
+  const h=Math.floor(clamped/60);
+  const m=clamped%60;
   return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
 }
 
@@ -3076,9 +3161,8 @@ function scoreTask(task,prefs,streak){
 // Re-score and re-slot all pending flexible tasks on dateKey.
 // Returns the full updated events array; does not persist.
 function rebalanceDay(dateKey,allEvents,routines,prefs){
-  const FIXED=TIER0_FIXED_KINDS;
   const streak=getStreak();
-  const isFixed=function(e){return FIXED.has(e.kind)||isCoopStudySession(e);};
+  const isFixed=isLeadInFixed;
   // userPinned tasks (manually dragged, or hand-typed a time in Add Task /
   // Edit) are excluded from reshuffling the same way FIXED kinds are — they
   // still occupy their slot (fall into `rest`, still block other tasks from
@@ -3134,8 +3218,10 @@ function rebalanceDay(dateKey,allEvents,routines,prefs){
   }
   // Same end-of-day catch-up buffer as findOpenSlotFor — a rebalance
   // triggered late in the day (e.g. adding a second task at 9pm) shouldn't
-  // strand overflow tasks just because normal work hours are full.
-  const dayEnd=isToday?prefEnd+CATCHUP_BUFFER_MINS:prefEnd;
+  // strand overflow tasks just because normal work hours are full. Capped
+  // at 1440 (see findOpenSlotFor's matching cap) so a late workEndTime
+  // preference can't push this past midnight into an invalid time.
+  const dayEnd=isToday?Math.min(1440,prefEnd+CATCHUP_BUFFER_MINS):prefEnd;
 
   const occupied=occupiedBase.slice();
 
@@ -3397,12 +3483,14 @@ function computePausePlan(intent,forcedId){
     let working=all.filter(e=>e.id!==matched.id&&!displaced.some(d=>d.id===e.id))
       .concat([{id:"__retimed__"+matched.id,date:targetDate,time:newStart,duration:newDuration,kind:matched.kind||"busy block",status:"pending"}]);
     const moved=[{id:matched.id,title:matched.title,oldDate:matched.date,oldTime:matched.time,newDate:targetDate,newTime:newStart,newDuration,isRoutine:!!matched.isRoutine,routineId:matched.routineId||null,kind:matched.kind,subject:matched.subject||""}];
+    const couldntMove=[];
     displaced.forEach(ev=>{
-      const slot=findOpenSlotFor(working,routinesNow,prefsNow,ev.date,ev.time,ev.duration||30,ev.deadline||null);
+      const slot=findLegalSlotOrNull(working,routinesNow,prefsNow,ev.date,ev.time,ev.duration||30,ev.deadline||null);
+      if(!slot){couldntMove.push({id:ev.id,title:ev.title,deadline:ev.deadline||null});return;}
       moved.push({id:ev.id,title:ev.title,oldDate:ev.date,oldTime:ev.time,newDate:slot.date,newTime:slot.time});
       working=working.concat([{...ev,date:slot.date,time:slot.time}]);
     });
-    return{label:"Retime "+matched.title,moved,couldntMove:[]};
+    return{label:"Retime "+matched.title,moved,couldntMove};
   }
   if(intent.intent==="skip_class"){
     const date=intent.date||today;
@@ -3465,8 +3553,13 @@ function calculateTaskPriority(task,allTasks){
   const prefs=getSchedulePreferences();
   const now=new Date();
   
-  // Base priority (user-set)
-  const basePriority=task.priority||3;
+  // Base priority (user-set) -- normalizeTaskVal handles the two live
+  // scales (legacy raw 0-10 vs. the current 0-1000 slider) the same way
+  // scoreTask already does; a raw read here meant every slider-created
+  // task (priority commonly ~500) silently tied at the max score below,
+  // and the difficulty branch's raw >=3/<=2 checks similarly misfired for
+  // almost any slider value.
+  const basePriority=normalizeTaskVal(task.priority,3)*10;
   score+=basePriority*100;
   
   // Deadline urgency (exponential scaling as due date approaches)
@@ -3487,7 +3580,7 @@ function calculateTaskPriority(task,allTasks){
   }
   
   // Difficulty preference weighting
-  const diff=task.difficulty||2;
+  const diff=normalizeTaskVal(task.difficulty,2)*10;
   if(prefs.difficultyPreference==="hardFirst"&&diff>=3){
     score+=150;
   }else if(prefs.difficultyPreference==="easyFirst"&&diff<=2){
@@ -3511,9 +3604,14 @@ function chunkTasksWithBreaks(tasks){
       return;
     }
     const dur=task.duration;
-    const chunks=Math.ceil(dur/45);
+    let chunks=Math.ceil(dur/45);
+    // Avoid a near-empty trailing chunk (e.g. 91min -> 45/45/1, a study
+    // block shorter than the 15-min break placed right before it) -- fold
+    // the remainder into the last chunk instead of spawning a tiny extra
+    // one when it'd be under a 20-min floor.
+    if(chunks>1&&dur-((chunks-1)*45)<20)chunks-=1;
     for(let i=0;i<chunks;i++){
-      const chunkDur=Math.min(45,dur-(i*45));
+      const chunkDur=i<chunks-1?45:dur-(45*(chunks-1));
       chunked.push({
         ...task,
         id:task.id+"-chunk-"+i,
@@ -3659,103 +3757,9 @@ function todaysPlan(){
   return advancedSchedulePlanner(events);
 }
 
-// Comprehensive task rearrangement function (Feature 3 advanced implementation)
-function rearrangeUserTasks(tasks, userPrefs){
-  if(!tasks||!Array.isArray(tasks)||tasks.length===0)return tasks;
-  const prefs=userPrefs||getSchedulePreferences();
-  
-  // Parse time values
-  const parseTime=(t)=>{const [h,m]=(t||"10:00").split(":").map(Number);return h*60+m;};
-  const workStart=parseTime(prefs.workStartTime);
-  const workEnd=parseTime(prefs.workEndTime);
-
-  // Calculate baseline score (0-1000) with exponential deadline urgency
-  const calcScore=(task)=>{
-    let score=0;
-    const now=Date.now();
-    const deadline=task.deadline?new Date(task.deadline).getTime():null;
-    
-    // Base: priority level × 100
-    score+=Math.min(500,(task.priority||3)*100);
-    
-    // Exponential deadline urgency
-    if(deadline){
-      const hoursUntil=(deadline-now)/(1000*60*60);
-      if(hoursUntil<=0)score+=300; // overdue = critical
-      else if(hoursUntil<=6)score+=250;
-      else if(hoursUntil<=24)score+=200;
-      else if(hoursUntil<=72)score+=120;
-      else score+=Math.max(50,100-(hoursUntil/24)*5);
-    }
-    
-    // Difficulty weighting based on preference
-    const difficulty=task.difficulty||3;
-    if(prefs.taskDifficultyPreference==="FIRST"&&difficulty>=3)score+=150;
-    else if(prefs.taskDifficultyPreference==="LAST"&&difficulty<=2)score+=100;
-    
-    // Duration penalty (long tasks score lower to prioritize quick wins)
-    const duration=task.duration||60;
-    if(duration>90)score-=50;
-    else if(duration>60)score-=25;
-    
-    return Math.max(0,Math.min(1000,Math.round(score)));
-  };
-  
-  // Separate hard events from flexible tasks
-  const hardEvents=tasks.filter(t=>t.kind==="class"||t.kind==="exam"||!t.isFlexible);
-  const flexibleTasks=tasks.filter(t=>t.isFlexible);
-  
-  // Calculate occupied time slots from hard events
-  const occupiedSlots=[];
-  hardEvents.forEach(ev=>{
-    if(ev.time){
-      const [h,m]=(ev.time.split(":")).map(Number);
-      const startMins=h*60+m;
-      const endMins=startMins+(ev.duration||60);
-      occupiedSlots.push({start:startMins,end:endMins,title:ev.title});
-    }
-  });
-  
-  // Sort flexible tasks by calculated score (highest first)
-  const sorted=[...flexibleTasks].sort((a,b)=>calcScore(b)-calcScore(a));
-  
-  // Try to place each task, apply "LAST" preference by pushing to later slots
-  const scheduled=[];
-  sorted.forEach(task=>{
-    let placed=false;
-    const duration=task.duration||60;
-    
-    // Scan for first available 15-minute window within work constraints
-    for(let mins=workStart;mins<=workEnd-duration;mins+=15){
-      const endMins=mins+duration;
-
-      // Check no conflict with occupied slots
-      const hasConflict=occupiedSlots.some(slot=>
-        (mins<slot.end&&endMins>slot.start)
-      );
-      if(!hasConflict){
-        const h=Math.floor(mins/60);
-        const m=mins%60;
-        const time=String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
-        scheduled.push({...task,scheduledTime:time,score:calcScore(task)});
-        placed=true;
-        break;
-      }
-    }
-    
-    if(!placed){
-      scheduled.push({...task,score:calcScore(task),unschedulable:true,reason:"No available window within preferred work hours"});
-    }
-  });
-  
-  // Add back hard events
-  const final=[...hardEvents,...scheduled].sort((a,b)=>{
-    if(a.date!==b.date)return a.date.localeCompare(b.date);
-    return (a.time||"00:00").localeCompare(b.time||"00:00");
-  });
-  
-  return final;
-}
+// rearrangeUserTasks (a duplicate, raw-scale-priority version of
+// calculateTaskPriority/advancedSchedulePlanner below) was removed here --
+// confirmed zero callers anywhere in the file.
 
 
 // Standalone versions of CalendarTab's own markDone/uncrossDone (which stay
@@ -4838,16 +4842,18 @@ function StudlinPrep(){
         const linkedDeck=allDecks.find(d=>d.examEventId===pe.examEventId);
         if(exam){
           const slot=findReliableSlotFor(next,getWeeklyRoutine(),getSchedulePreferences(),dayKey(),getSchedulePreferences().workStartTime,25,exam.date,5);
-          const followUp={
-            id:"weakspot-"+pe.id+"-"+Date.now(),
-            title:"Review weak spots: "+wrongTopics.slice(0,3).join(", "),
-            date:slot.date,time:slot.time,subject:"",kind:"study block",notes:"",
-            priority:6,difficulty:5,deadline:exam.date,duration:25,
-            status:"pending",timeSpent:0,completedAt:null,
-            ...(linkedDeck?{deckId:linkedDeck.id}:{}),
-            placementReason:slot.reason||null,dueEventId:pe.examEventId,isExamPrepSession:true,
-          };
-          lsSet("events",next.concat([followUp]));
+          if(slot){
+            const followUp={
+              id:"weakspot-"+pe.id+"-"+Date.now(),
+              title:"Review weak spots: "+wrongTopics.slice(0,3).join(", "),
+              date:slot.date,time:slot.time,subject:"",kind:"study block",notes:"",
+              priority:6,difficulty:5,deadline:exam.date,duration:25,
+              status:"pending",timeSpent:0,completedAt:null,
+              ...(linkedDeck?{deckId:linkedDeck.id}:{}),
+              placementReason:slot.reason||null,dueEventId:pe.examEventId,isExamPrepSession:true,
+            };
+            lsSet("events",next.concat([followUp]));
+          }
         }
       }
     }
@@ -7846,8 +7852,10 @@ function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,workin
   const dates=computeReviewDates(examDate,dayKey(),count);
   const duration=suggestDurationFor(subject,"study block")||25;
   let localWorking=working;
-  return dates.map((date,si)=>{
+  const built=[];
+  dates.forEach((date,si)=>{
     const slot=findReliableSlotFor(localWorking,routines,prefs,date,prefs.workStartTime,duration,examDate,difficulty??500);
+    if(!slot)return;
     const ev={
       id:idPrefix+"-"+si,
       title:"Study: "+examTitle,date:slot.date,time:slot.time,
@@ -7863,8 +7871,9 @@ function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,workin
       ...extraFields,
     };
     localWorking=localWorking.concat([ev]);
-    return ev;
+    built.push(ev);
   });
+  return built;
 }
 // A generic "Study: <examTitle>" session (from the syllabus scan above)
 // and a kit-titled session ("Review: <deck>"/"Practice Exam: <set>", see
@@ -7896,6 +7905,15 @@ function planBrainDumpTasks(items,events,routines,prefs){
   const today=dayKey();
   let working=events;
   const studyTasks=[],todoTasks=[],eventTasks=[],reminderTasks=[],examTasks=[];
+  // A brain-dumped item is never allowed to just vanish -- if nothing legal
+  // was found for it, it's downgraded to a plain dateless to-do (same shape
+  // saveChecklistItem already produces) instead of being silently dropped.
+  // `unplaced` is surfaced to commitBrainDump so it can tell the student.
+  const unplaced=[];
+  const downgrade=it=>{
+    const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:it.dueDate||"",time:"",subject:"",kind:"deadline",notes:"",checklist:true,deadline:it.dueDate||null,priority:5,difficulty:5,duration:0,status:"pending",timeSpent:0,completedAt:null};
+    todoTasks.push(task);unplaced.push(task);
+  };
   // Only a REAL stated clock time makes an event an unmovable fixed
   // obstacle, same as the "busy block" kind in the manual Add Task flow —
   // placed first (folded into `working`) so everything chained/placed
@@ -7945,13 +7963,15 @@ function planBrainDumpTasks(items,events,routines,prefs){
       const duration=Math.max(5,it.durationMin||30);
       const desiredDate=(it.chained&&cursorDate)?cursorDate:(it.dueDate||today);
       const desiredTime=(it.chained&&cursorTime)?cursorTime:prefs.workStartTime;
-      const slot=findOpenSlotFor(working,routines,prefs,desiredDate,desiredTime,duration,it.dueDate||null);
+      const slot=findLegalSlotOrNull(working,routines,prefs,desiredDate,desiredTime,duration,it.dueDate||null);
+      if(!slot){downgrade(it);return;}
       const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:slot.date,time:slot.time,subject:"",kind:"busy block",notes:"",priority:5,difficulty:5,deadline:null,duration,status:"pending",timeSpent:0,completedAt:null};
       eventTasks.push(task);working=working.concat([task]);
       cursorDate=slot.date;cursorTime=minutesToTime(timeToMinutes(slot.time)+duration);
     }else if(it.kind==="study"){
       if(it.attackBlock){
         const task=startAttackBlockChain({title:it.title,deadline:it.dueDate||null,priority:5,difficulty:5},working,routines,prefs,today,prefs.workStartTime);
+        if(!task){downgrade(it);return;}
         studyTasks.push(task);working=working.concat([task]);
         return;
       }
@@ -7961,16 +7981,17 @@ function planBrainDumpTasks(items,events,routines,prefs){
         // Chain intent overrides the reliability engine entirely — the
         // whole point of "then" was landing right after the previous item,
         // not wherever's statistically smartest.
-        slot=findOpenSlotFor(working,routines,prefs,cursorDate||today,cursorTime,duration,it.dueDate||null);
+        slot=findLegalSlotOrNull(working,routines,prefs,cursorDate||today,cursorTime,duration,it.dueDate||null);
       }else if(it.immediate){
         // "Now" items skip the reliability-bucket engine entirely and go
         // straight to the plain nearest-open-gap finder — a declared
         // peak-hour bucket should never be able to bump an explicit "now"
         // request later than the actual next available slot.
-        slot=findOpenSlotFor(working,routines,prefs,today,prefs.workStartTime,duration,it.dueDate||null);
+        slot=findLegalSlotOrNull(working,routines,prefs,today,prefs.workStartTime,duration,it.dueDate||null);
       }else{
         slot=findReliableSlotFor(working,routines,prefs,today,prefs.workStartTime,duration,it.dueDate||null,5);
       }
+      if(!slot){downgrade(it);return;}
       const task={id:String(Date.now()+Math.random()*1000),title:it.title,date:slot.date,time:slot.time,subject:"",kind:"study block",notes:"",priority:5,difficulty:5,deadline:it.dueDate||null,duration,status:"pending",timeSpent:0,completedAt:null,placementReason:slot.reason||null};
       studyTasks.push(task);working=working.concat([task]);
       cursorDate=slot.date;cursorTime=minutesToTime(timeToMinutes(slot.time)+duration);
@@ -7983,7 +8004,7 @@ function planBrainDumpTasks(items,events,routines,prefs){
   // Final order intentionally kept identical to the original code — only
   // internal placement order changed above — since commitTasks reads
   // newTasks[0].date to decide which date to navigate the calendar to.
-  return [...studyTasks,...todoTasks,...eventTasks,...reminderTasks,...examTasks];
+  return {tasks:[...studyTasks,...todoTasks,...eventTasks,...reminderTasks,...examTasks],unplaced};
 }
 
 // sourceMaterial is optional -- the raw scanned text (syllabus, notes),
@@ -11111,7 +11132,7 @@ function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, c
               {!isStudy&&!isExam&&<div style={{width:3,alignSelf:"stretch",borderRadius:2,background:color,flexShrink:0}} />}
               <div style={{flex:1,minWidth:0}}>
                 <div style={{display:"flex",alignItems:"center",gap:6,minWidth:0}}>
-                  {ev.priority&&<span style={{width:7,height:7,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority||3],flexShrink:0}} />}
+                  {ev.priority!=null&&<span style={{width:7,height:7,borderRadius:"50%",background:PRIORITY_COLORS[priorityTierOf(ev)],flexShrink:0}} />}
                   {isExam&&<span style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:9.5,fontWeight:800,letterSpacing:"0.04em",color,background:color+"1E",border:`1px solid ${color}55`,borderRadius:5,padding:"1px 6px",flexShrink:0}}><span style={{width:4,height:4,borderRadius:"50%",background:color,flexShrink:0}} />EXAM</span>}
                   {readinessColor&&<span title={readiness.sentence} style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.02em",color:readinessColor,background:readinessColor+"1E",border:`1px solid ${readinessColor}55`,borderRadius:5,padding:"1px 6px",flexShrink:0}}>{readiness.state==="on-track"?"ON TRACK":readiness.state==="behind"?"BEHIND":"AT RISK"}</span>}
                   {isRoutine&&<span style={{fontSize:9,fontWeight:800,letterSpacing:"0.04em",color,background:color+"14",border:`1px solid ${color}44`,borderRadius:5,padding:"1px 6px",flexShrink:0}}>WEEKLY</span>}
@@ -11164,7 +11185,7 @@ function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, c
               <Badge color={colorOf(ev.subject)}>{ev.subject}</Badge>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:6}}>
-              {ev.priority&&<span style={{width:6,height:6,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority||3]}} />}
+              {ev.priority!=null&&<span style={{width:6,height:6,borderRadius:"50%",background:PRIORITY_COLORS[priorityTierOf(ev)]}} />}
               <span style={{fontSize:13,fontWeight:600,color:T.white}}>{ev.title}</span>
             </div>
             <div style={{fontSize:11,color:T.muted,marginTop:4,display:"flex",gap:8}}>
@@ -11351,7 +11372,7 @@ function computeRescheduleCandidates(task,events,routines,prefs){
     // reliability-preferred anchor narrows the window past what's open, even
     // when d genuinely had room earlier in it).
     const reliable=findReliableSlotFor(events,routines,prefs,d,desiredTime,taskMins,deadlineKey,task.difficulty);
-    const timeForDay=(reliable.date===d)?reliable.time:desiredTime;
+    const timeForDay=(reliable&&reliable.date===d)?reliable.time:desiredTime;
     let {events:relocated,placement}=findSlotWithEviction(events,routines,prefs,d,timeForDay,taskMins,deadlineKey);
     // If the reliability time produced no placement, or drifted off d anyway
     // (same forward-scan risk, post-eviction), retry with the original time.
@@ -11359,7 +11380,7 @@ function computeRescheduleCandidates(task,events,routines,prefs){
       ({events:relocated,placement}=findSlotWithEviction(events,routines,prefs,d,desiredTime,taskMins,deadlineKey));
     }
     if(!placement)continue;
-    const reason=(timeForDay!==desiredTime&&placement.time===timeForDay)?(reliable.reason||null):null;
+    const reason=(timeForDay!==desiredTime&&placement.time===timeForDay)?((reliable&&reliable.reason)||null):null;
     const dayEvents=events.filter(e=>e.date===d&&e.status!=="done"&&e.id!==task.id);
     // rawBaseMins (actual existing load, 0 for a genuinely empty day) is what
     // ranking uses — a free day should always win. `baseMins` below may get
@@ -12292,8 +12313,12 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
   // the component-state wiring around it.
   const commitBrainDump=(items)=>{
     const prefs=getSchedulePreferences();
-    const newTasks=planBrainDumpTasks(items,events,routines,prefs);
+    const {tasks:newTasks,unplaced}=planBrainDumpTasks(items,events,routines,prefs);
     commitTasks(newTasks);
+    if(unplaced.length>0){
+      setDeadlineToast((unplaced.length===1?"1 item":unplaced.length+" items")+" didn't have room on the calendar — added as a to-do instead.");
+      setTimeout(()=>setDeadlineToast(""),3200);
+    }
   };
   // Turns the current form into a recurring routine rule instead of a
   // one-off event — used when "Save to my Weekly Routine" is checked. Only
@@ -12320,7 +12345,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
   const resolveManualSlot=(date,time,duration)=>{
     if(evKind==="exam"||evKind==="class"||evKind==="busy block")return {date,time};
     const occupied=events.filter(e=>e.date===date&&e.time)
-      .map(e=>({start:timeToMinutes(e.time)-(TIER0_FIXED_KINDS.has(e.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}))
+      .map(e=>({start:timeToMinutes(e.time)-(isLeadInFixed(e)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}))
       .concat(expandRoutineOccurrences(routines,date,date).filter(o=>o.kind!=="free period")
         .map(o=>({start:timeToMinutes(o.time)-(TIER0_FIXED_KINDS.has(o.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(o.time)+(o.duration||30)+computeBreathingRoom(o.duration||30)})));
     const tMins=timeToMinutes(time);
@@ -12332,6 +12357,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
     if(evSaveToRoutine&&(evKind==="exam"||evKind==="class"||evKind==="busy block")){saveToRoutineFromForm();return;}
     if(!evSplitEnabled){
       const slot=resolveManualSlot(evDate,evTime,evDuration);
+      if(!slot){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
       commitTasks([{...buildTask(slot.date,slot.time),placementReason:slot.reason||null}],{userPinned:true});
       return;
     }
@@ -12341,8 +12367,10 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
     for(let i=0;i<evSplitCount;i++){
       const d=new Date(evDate);d.setDate(d.getDate()+i);
       const slot=resolveManualSlot(dayKey(d),evTime,perSession);
+      if(!slot)break;
       tasks.push({...buildTask(slot.date,slot.time," ("+(i+1)+"/"+evSplitCount+")",{splitGroup:groupId,splitIndex:i+1,splitTotal:evSplitCount,duration:perSession}),placementReason:slot.reason||null});
     }
+    if(tasks.length===0){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
     commitTasks(tasks,{userPinned:true});
   };
   const aiArrange=async()=>{
@@ -12405,10 +12433,12 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
       let cursorDate=firstAvailDate,cursorTime=windowStartTime;
       for(let i=0;i<splitCount;i++){
         const slot=findOpenSlot(cursorDate,cursorTime,perSession);
+        if(!slot)break;
         tasks.push({...buildTask(slot.date,slot.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})),placementReason:slot.reason||null});
         const d=new Date(slot.date+"T12:00:00");d.setDate(d.getDate()+1);
         cursorDate=dayKey(d);cursorTime=minutesToTime(getWorkWindowMinsFor(prefs,cursorDate).start);
       }
+      if(tasks.length===0){setDeadlineToast("Couldn't find any open time for this before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
       commitTasks(tasks);
     };
     try{
@@ -12436,10 +12466,13 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
           // The AI's own happy-path slot (no conflict) has no reason to
           // attach — the reliability engine was never consulted for it.
           return conflict?findOpenSlot(date,time,perSession):{date,time,reason:null};
-        });
-        const groupId=splitCount>1?"split-"+Date.now():null;
-        const tasks=sanitized.slice(0,splitCount).map((s,i)=>({...buildTask(s.date,s.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})),placementReason:s.reason||null}));
-        commitTasks(tasks);
+        }).filter(Boolean);
+        if(sanitized.length===0){fallbackSchedule();}
+        else{
+          const groupId=splitCount>1?"split-"+Date.now():null;
+          const tasks=sanitized.slice(0,splitCount).map((s,i)=>({...buildTask(s.date,s.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})),placementReason:s.reason||null}));
+          commitTasks(tasks);
+        }
       }else{fallbackSchedule();}
     }catch(e){fallbackSchedule();}
     setAiLoading(false);
@@ -12495,7 +12528,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
       // existing nearest-open-slot search below relocates around both
       // uniformly, instead of a separate reject-and-explain path.
       const occupied=events.filter(e=>e.id!==id&&e.date===newDate&&e.time&&e.kind!=="free period").map(e=>({
-        start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)
+        start:timeToMinutes(e.time)-(isLeadInFixed(e)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)
       })).concat(expandRoutineOccurrences(routines,newDate,newDate).filter(o=>o.kind!=="free period").map(o=>({
         start:timeToMinutes(o.time)-(TIER0_FIXED_KINDS.has(o.kind)?LEAD_IN_BUFFER_MINS:0),
         end:timeToMinutes(o.time)+(o.duration||30)+computeBreathingRoom(o.duration||30)
@@ -12756,7 +12789,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
                       const dimmedByRoutineMode=editRoutineMode&&!isRoutine;
                       return <div key={j} style={{fontSize:9,fontWeight:600,color:tagColor,background:tagColor+(isExam?"22":"16"),border:isRoutine&&editRoutineMode?`1px solid ${T.lime}`:isExam?`1px solid ${tagColor}`:"none",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%",display:"flex",alignItems:"center",gap:3,opacity:dimmedByRoutineMode?0.3:1}}>
                         {over>0&&<span title={over+"d overdue"} style={{width:5,height:5,borderRadius:"50%",background:T.red,flexShrink:0}} />}
-                        {ev.priority&&ev.priority>=4&&<span style={{width:5,height:5,borderRadius:"50%",background:PRIORITY_COLORS[ev.priority],flexShrink:0}} />}
+                        {ev.priority!=null&&priorityTierOf(ev)>=4&&<span style={{width:5,height:5,borderRadius:"50%",background:PRIORITY_COLORS[priorityTierOf(ev)],flexShrink:0}} />}
                         {ev.userPinned&&<span style={{flexShrink:0,fontSize:7}} title="Pinned, won't be auto-rescheduled">📌</span>}
                         {ev.movedByStudlin&&<span style={{flexShrink:0,fontSize:7}} title={"Studlin moved this from "+fmtMovedFrom(ev.movedFrom)+"."+fmtMovedReasonSuffix(ev)}>↻</span>}
                         {ev.title}
@@ -16360,6 +16393,7 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
   // confirmReview runs.
   const [reviewData,setReviewData]=useState(null);
   const [studySessionOffer,setStudySessionOffer]=useState(null);
+  const [studySessionScheduleError,setStudySessionScheduleError]=useState("");
   // Practice quiz — quizGenLoading covers the AI call; quizData holds
   // {subject,questions,linkedExamId,linkedExamTitle} once generated (null
   // otherwise, and null also closes the modal); quizAnswers is one
@@ -16508,8 +16542,13 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
     const prefs=getSchedulePreferences();
     const routines=getWeeklyRoutine();
     const all=lsGet("events",[]);
-    const slot=findLegalSlotOrNull(all,routines,prefs,dayKey(),prefs.workStartTime,45,studySessionOffer.examDate)
-      ||findOpenSlotFor(all,routines,prefs,dayKey(),prefs.workStartTime,45,studySessionOffer.examDate);
+    const slot=findLegalSlotOrNull(all,routines,prefs,dayKey(),prefs.workStartTime,45,studySessionOffer.examDate);
+    if(!slot){
+      setStudySessionOffer(null);
+      setStudySessionScheduleError("No open slot before the exam — add it manually from the calendar.");
+      setTimeout(()=>setStudySessionScheduleError(""),3200);
+      return;
+    }
     const task={id:String(Date.now()),title:"Study: "+studySessionOffer.subject,date:slot.date,time:slot.time,subject:studySessionOffer.subject,kind:"study block",notes:"",priority:5,difficulty:5,deadline:studySessionOffer.examDate,duration:45,status:"pending",timeSpent:0,completedAt:null,deckId:studySessionOffer.deckId||null};
     lsSet("events",[...all,task]);
     setStudySessionOffer(null);
@@ -16745,6 +16784,9 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
             <Btn variant="ghost" onClick={()=>setStudySessionOffer(null)} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>No thanks</Btn>
           </div>
         </div>
+      )}
+      {studySessionScheduleError&&(
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.red,color:"#fff",fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)"}}>{studySessionScheduleError}</div>
       )}
       <Modal open={!!quizData} onClose={closeQuiz} title={quizResult?"Quiz results":"Practice quiz"} sub={quizData?.subject||""} width={560}
         footer={quizData&&!quizResult
@@ -17518,7 +17560,7 @@ function App() {
         const prefs=getSchedulePreferences();
         const others=events.filter(e=>e.id!==s.sessionId);
         const slot=findReliableSlotFor(others,routines,prefs,dayKey(),prefs.workStartTime,session.duration,session.deadline||null,5);
-        lsSet("events",events.map(e=>e.id===s.sessionId?{...e,date:slot.date,time:slot.time,placementReason:slot.reason||null}:e));
+        if(slot)lsSet("events",events.map(e=>e.id===s.sessionId?{...e,date:slot.date,time:slot.time,placementReason:slot.reason||null}:e));
       }
     }
     setExamPrepSuggestion(null);
@@ -17536,23 +17578,28 @@ function App() {
     let working=lsGet("events",[]);
     const preview=[];
     rolloverPending.forEach(ev=>{
-      const slot=findOpenSlotFor(working,routines,prefs,today,prefs.workStartTime,ev.duration||30);
+      const slot=findLegalSlotOrNull(working,routines,prefs,today,prefs.workStartTime,ev.duration||30,ev.deadline||null);
+      // No legal slot today (e.g. it'd land past its own deadline) -- leave
+      // it out of the preview entirely so "Roll over" can't commit it either;
+      // it stays in rolloverPending, still visibly overdue, instead of
+      // silently landing on top of something or past its own deadline.
+      if(!slot)return;
       working=working.map(e=>e.id===ev.id?{...e,date:slot.date,time:slot.time}:e);
       preview.push({id:ev.id,title:ev.title,slot});
     });
     return preview;
   },[rolloverPending]);
   const applyRollover=()=>{
-    if(rolloverPending.length===0)return;
+    if(rolloverPreview.length===0)return;
     const all=lsGet("events",[]);
     const working=all.map(e=>{
       const p=rolloverPreview.find(x=>x.id===e.id);
       return p?{...e,date:p.slot.date,time:p.slot.time}:e;
     });
     lsSet("events",working);
-    setRolloverToast(rolloverPending.length+" overdue task"+(rolloverPending.length!==1?"s":"")+" moved to today.");
+    setRolloverToast(rolloverPreview.length+" overdue task"+(rolloverPreview.length!==1?"s":"")+" moved to today.");
     setTimeout(()=>setRolloverToast(""),3200);
-    setRolloverPending([]);
+    setRolloverPending(rolloverPending.filter(ev=>!rolloverPreview.some(p=>p.id===ev.id)));
   };
   const clearExpiredPending=()=>{
     if(expiredPending.length===0)return;
@@ -18070,12 +18117,26 @@ function App() {
     const expired=evs.filter(ev=>ev.status==="pending"&&ev.deadline&&ev.deadline<today);
     if(expired.length>0)setExpiredPending(expired);
     // Completion-reliability signal — logged regardless of tier0Enabled so
-    // the data keeps accumulating even if Tier 0 itself is off. Gated to
-    // ev.date===yesterday (not just date<today) so a task that stays stuck
-    // across multiple days only logs one "missed" per occurrence, not once
-    // per day it remains overdue.
-    const yesterday=(()=>{const d=new Date(today+"T12:00:00");d.setDate(d.getDate()-1);return dayKey(d);})();
-    evs.filter(ev=>isTier0Missed(ev,today)&&ev.date===yesterday).forEach(ev=>logCompletionOutcome("missed",ev.time,difficultyTierOf(ev)));
+    // the data keeps accumulating even if Tier 0 itself is off. Was gated
+    // to ev.date===yesterday only, which meant a student who skipped
+    // opening the app for more than one day permanently lost the misses
+    // from every day in between (not delayed -- dropped), silently
+    // skewing getBucketReliability's rate rosier than reality for exactly
+    // the least-engaged students. A persisted (id,date) dedup set instead:
+    // any currently-missed pending item gets logged exactly once for its
+    // current occurrence no matter how many days were skipped, and if it's
+    // later reflowed to a new date and misses again, that's a genuinely
+    // new occurrence with its own key -- no risk of double-logging the
+    // same miss on a later revisit.
+    const missedLoggedKeys=new Set(lsGet("missedLoggedKeys",[]));
+    const newlyMissed=evs.filter(ev=>isTier0Missed(ev,today)&&!missedLoggedKeys.has(ev.id+"|"+ev.date));
+    if(newlyMissed.length>0){
+      newlyMissed.forEach(ev=>{
+        logCompletionOutcome("missed",ev.time,difficultyTierOf(ev));
+        missedLoggedKeys.add(ev.id+"|"+ev.date);
+      });
+      lsSet("missedLoggedKeys",Array.from(missedLoggedKeys));
+    }
     // Proactive nudge — a RECENT run of misses in one bucket, checked right
     // after the log write above so today's data (if any landed here) is
     // already included. Independent of tier0Enabled below: this is about
