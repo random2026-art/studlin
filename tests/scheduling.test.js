@@ -276,6 +276,14 @@ describe("buildSyllabusEventBatch / commitSyllabusEvents (Class Setup Wizard's e
     assert.equal(markerEvents[0].referenceLinks, undefined);
   });
 
+  test("regression: an exam with a real per-item detail uses that instead of dumping the whole syllabus in as 'material'", () => {
+    const { buildSyllabusEventBatch, getWeeklyRoutine, getSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const examItem = syllabusItem({ kind: "exam", proposeSessions: false, detail: "Covers chapters 4-6, closed book" });
+    const { markerEvents } = buildSyllabusEventBatch([], "wiz-3c", "Chemistry", [examItem], "whole syllabus raw text -- grading policy, every class's dates, etc.", getWeeklyRoutine(), getSchedulePreferences());
+    assert.equal(markerEvents[0].sourceMaterials.length, 1, "the specific detail, not also the whole syllabus dump");
+    assert.equal(markerEvents[0].sourceMaterials[0].text, "Covers chapters 4-6, closed book");
+  });
+
   test("commitSyllabusEvents (the real, persisting wrapper) still produces the same events buildSyllabusEventBatch would, and writes them to storage", () => {
     const sandbox = loadStudlinModule({ now: "2026-07-20T09:00:00" });
     const { commitSyllabusEvents, lsGet } = sandbox;

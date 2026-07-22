@@ -8193,14 +8193,24 @@ function planBrainDumpTasks(items,events,routines,prefs){
 // building logic can run in a preview (Class Setup's multi-class drill-down
 // review, threading one shadow `working` array across several classes) with
 // zero risk of it silently diverging from what a real commit actually does.
-// sourceMaterial (class-level) is a fallback -- the raw scanned syllabus
-// text, folded in as one named entry alongside whatever the student
-// explicitly added per-exam (it.materialFiles/it.materialLinks, both
-// arrays -- a student realistically has more than one file or link worth
-// keeping). Studlin Prep already treats "material" as a list of named
-// {name,text} entries (see its own fileTexts state) -- sourceMaterials on
-// the real event is exactly that same shape, so nothing downstream needs
-// its own separate merge logic.
+// sourceMaterial (class-level) is a last-resort fallback -- the raw scanned
+// syllabus text, folded in as one named entry only when there's nothing
+// more specific to use. Regression: this used to be the FIRST thing tried,
+// so an exam with no material the student actually added still silently
+// got the entire syllabus (course policies, grading breakdown, every other
+// class's dates) auto-attached and treated as real flashcard/practice-exam
+// material -- confusing (cards generated from "no material") and low
+// quality (a syllabus isn't exam content). it.detail -- the short, item-
+// specific note the extraction already tries to capture ("covers ch 4-6,
+// closed book") -- is genuinely useful and is tried first now; the whole
+// syllabus text is still there as a fallback so an exam with no detail at
+// all isn't left with literally nothing, same as before this fix.
+// Whatever the student explicitly added per-exam (it.materialFiles/
+// it.materialLinks, both arrays -- a student realistically has more than
+// one file or link worth keeping) always comes along too. Studlin Prep
+// already treats "material" as a list of named {name,text} entries (see
+// its own fileTexts state) -- sourceMaterials on the real event is exactly
+// that same shape, so nothing downstream needs its own separate merge logic.
 function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routines,prefs){
   const today=dayKey();
   // One computation per item, reused by both the marker-building pass below
@@ -8210,7 +8220,10 @@ function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routin
   // attackBlock/proposeSessions the review screen happened to leave set.
   const gates=items.map(it=>it.kind==="deadline"&&it.attackBlock&&!it.noDate?attackBlockActionableDate(it.estimatedHours,it.date,today):null);
   const markerEvents=items.map((it,i)=>{
-    const materialEntries=it.kind==="exam"?[...(sourceMaterial?[{name:"From your syllabus",text:sourceMaterial}]:[]),...(it.materialFiles||[])]:[];
+    const syllabusSeed=it.detail&&it.detail.trim()
+      ?[{name:"From your syllabus",text:it.detail.trim()}]
+      :(sourceMaterial?[{name:"From your syllabus",text:sourceMaterial}]:[]);
+    const materialEntries=it.kind==="exam"?[...syllabusSeed,...(it.materialFiles||[])]:[];
     // "Don't know the date yet" -- same shape the plain Checklist card's
     // own items use (see addChecklistItem in Dashboard): no date/time, no
     // scheduling of any kind, just a checkbox that stays put until the
@@ -10583,6 +10596,171 @@ function WizardCollegeBuilder({items,addItem,removeItem,defaultTitle}){
 }
 
 const classSetupChoiceStyle={width:"100%",textAlign:"left",padding:"14px 16px",borderRadius:12,border:`1.5px solid ${T.border}`,background:T.card2,color:T.text,cursor:"pointer",fontFamily:T.font};
+
+// Shared by Class Setup Wizard's exam review step, Add Task, and Edit
+// Task -- one file/paste/link editor instead of three copies that could
+// drift apart. `item` needs materialFiles/materialLinks/materialOpen/
+// pasteMaterialMode/pasteMaterialText/linkDraft/linkLabelDraft (the exact
+// shape Class Setup Wizard's review items already carry); `onChange`
+// receives a partial patch to merge onto the caller's own copy of `item`,
+// same convention as ClassSetupWizard's own setItem(i,patch) -- the
+// caller decides how "merge this patch" actually applies (index-based,
+// id-based, or a single flat object), this component never assumes which.
+// `idPrefix` must be a value that's stable across renders for the same
+// logical item (an id, not Math.random()) so the hidden file input's
+// label association doesn't break.
+function MaterialEditor({item,onChange,label,idPrefix}){
+  const hasMaterial=item.materialFiles.length>0||item.materialLinks.length>0;
+  // Accumulates locally across the loop instead of reading item.materialFiles
+  // fresh each iteration -- item is a prop snapshot from when this render
+  // started, so without this a second file in the same multi-select would
+  // overwrite the first instead of appending after it.
+  const handleFiles=async(fileList)=>{
+    const files=Array.from(fileList||[]);
+    let acc=item.materialFiles;
+    for(const file of files){
+      const{text,truncated,empty}=await extractFileText(file);
+      acc=[...acc,{name:file.name,text,truncated,empty}];
+      onChange({materialFiles:acc});
+    }
+  };
+  const addPasted=()=>{
+    if(!item.pasteMaterialText.trim())return;
+    const n=item.materialFiles.length;
+    onChange({materialFiles:[...item.materialFiles,{name:"Pasted text"+(n>0?" "+(n+1):""),...finalizeExtractedText(item.pasteMaterialText)}],pasteMaterialText:"",pasteMaterialMode:false});
+  };
+  const addLink=()=>{
+    if(!item.linkDraft.trim())return;
+    onChange({materialLinks:[...item.materialLinks,{label:item.linkLabelDraft.trim(),url:item.linkDraft.trim()}],linkDraft:"",linkLabelDraft:""});
+  };
+  const fileInputId="matfile-"+idPrefix;
+  return (
+    <div style={{borderRadius:10,border:`1px solid ${T.border}`,marginBottom:8,overflow:"hidden"}}>
+      <div onClick={()=>onChange({materialOpen:!item.materialOpen})} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",cursor:"pointer",background:T.card2}}>
+        <div style={{flex:1,fontSize:12.5,fontWeight:600,color:T.text}}>{label}</div>
+        {hasMaterial&&<span style={{fontSize:10.5,color:T.muted}}>{item.materialFiles.length>0?item.materialFiles.length+" file"+(item.materialFiles.length!==1?"s":""):""}{item.materialFiles.length>0&&item.materialLinks.length>0?" · ":""}{item.materialLinks.length>0?item.materialLinks.length+" link"+(item.materialLinks.length!==1?"s":""):""}</span>}
+        <span style={{color:T.muted,display:"flex",transform:item.materialOpen?"rotate(180deg)":"none",transition:"transform 0.15s"}}>{Icon.chevDown}</span>
+      </div>
+      {item.materialOpen&&(
+        <div style={{padding:"10px 12px",display:"flex",flexDirection:"column",gap:8}}>
+          <input type="file" id={fileInputId} onChange={e=>{handleFiles(e.target.files);e.target.value="";}} accept=".txt,.md,.pdf,.docx" style={{display:"none"}} multiple />
+          <label htmlFor={fileInputId} style={{border:`1px dashed ${T.borderHover}`,borderRadius:8,padding:"12px",textAlign:"center",background:T.card,cursor:"pointer",fontSize:11.5,color:T.muted}}>
+            Click to upload — PDF, DOCX, or TXT (you can pick more than one)
+          </label>
+          <button type="button" onClick={()=>onChange({pasteMaterialMode:!item.pasteMaterialMode})} style={{background:"none",border:"none",color:T.muted,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>
+            {item.pasteMaterialMode?"Cancel pasting":"Or paste text instead"}
+          </button>
+          {item.pasteMaterialMode&&(
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              <textarea value={item.pasteMaterialText} onChange={e=>onChange({pasteMaterialText:e.target.value})} rows={3} placeholder="Paste your notes here..."
+                style={{width:"100%",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 9px",color:T.text,fontSize:12,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
+              <Btn onClick={addPasted} disabled={!item.pasteMaterialText.trim()} style={{justifyContent:"center",opacity:item.pasteMaterialText.trim()?1:0.45}}>Add pasted text</Btn>
+            </div>
+          )}
+          {item.materialFiles.length>0&&(
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {item.materialFiles.map((f,fi)=>(
+                <div key={fi} style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card,borderRadius:8,gap:8}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</div>
+                    {f.empty&&<div style={{fontSize:10,color:T.amber,marginTop:1}}>Couldn't find readable text in this one — try a different file</div>}
+                    {f.truncated&&!f.empty&&<div style={{fontSize:10,color:T.faint,marginTop:1}}>Trimmed — only the first part will be used</div>}
+                  </div>
+                  <button onClick={()=>onChange({materialFiles:item.materialFiles.filter((_,fi2)=>fi2!==fi)})} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0}}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{display:"flex",gap:8}}>
+            <Input value={item.linkLabelDraft} onChange={e=>onChange({linkLabelDraft:e.target.value})} placeholder="Label (optional)" style={{width:110,flexShrink:0}} />
+            <Input value={item.linkDraft} onChange={e=>onChange({linkDraft:e.target.value})} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addLink();}}} placeholder="Link — flashcards, slides, anything" style={{flex:1,minWidth:0}} />
+            <button type="button" onClick={addLink} disabled={!item.linkDraft.trim()} style={{padding:"0 12px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:item.linkDraft.trim()?"pointer":"default",fontFamily:T.font,fontSize:12,opacity:item.linkDraft.trim()?1:0.45,flexShrink:0}}>+ Add</button>
+          </div>
+          {item.materialLinks.length>0&&(
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {item.materialLinks.map((link,li)=>(
+                <div key={li} style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card,borderRadius:8,gap:8}}>
+                  <div style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                    {link.label&&<span style={{color:T.text,fontWeight:600}}>{link.label}: </span>}
+                    <span style={{color:link.label?T.muted:T.text}}>{link.url}</span>
+                  </div>
+                  <button onClick={()=>onChange({materialLinks:item.materialLinks.filter((_,li2)=>li2!==li)})} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0}}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{fontSize:10.5,color:T.faint}}>You can also add or change this later in Studlin Prep.</div>
+          <button type="button" onClick={()=>onChange({materialOpen:false})} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>Collapse</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Shared phases (a big project's coarse-grained plan -- only the first
+// ever gets a real scheduled chain, see proposeProjectPhases) + outline (a
+// flat, more granular checklist, see proposeOutline) editor. Used by Class
+// Setup Wizard's review screen, Add Task, and Edit Task so "break this
+// into phases"/"add a checklist" is one implementation, not three.
+// `item` needs title/detail/phases/phasesLoading/outline/outlineLoading;
+// `onChange` receives a partial patch, same convention as MaterialEditor
+// above; `subject` feeds the AI prompts the same way it always has.
+function PhasesOutlineEditor({item,onChange,subject}){
+  const suggestPhases=async()=>{
+    onChange({phasesLoading:true});
+    const names=await proposeProjectPhases(item.title,item.detail||"",subject);
+    onChange({phasesLoading:false,phases:names||[]});
+  };
+  const suggestOutline=async()=>{
+    onChange({outlineLoading:true});
+    const steps=await proposeOutline(item.title,item.detail||"",subject);
+    onChange({outlineLoading:false,outline:steps||[]});
+  };
+  return (<>
+    <div style={{marginTop:8}}>
+      {item.phases===undefined?(
+        <button type="button" disabled={!!item.phasesLoading} onClick={suggestPhases} style={{background:"none",border:`1px dashed ${T.borderHover}`,borderRadius:6,color:T.muted,fontSize:11,fontFamily:T.font,cursor:item.phasesLoading?"default":"pointer",padding:"5px 10px",opacity:item.phasesLoading?0.6:1}}>
+          {item.phasesLoading?"Thinking through phases…":"This looks big. Break it into phases?"}
+        </button>
+      ):item.phases.length===0?(
+        <div style={{fontSize:11,color:T.muted}}>Not enough detail here to break into phases. Add detail above, or leave it as one Attack Block.</div>
+      ):(
+        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+          <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Phases: only the first gets scheduled now</div>
+          {item.phases.map((ph,pi)=>(
+            <div key={pi} style={{display:"flex",alignItems:"center",gap:6}}>
+              <span style={{fontSize:10,color:T.faint,width:14,flexShrink:0,fontFamily:T.mono}}>{pi+1}</span>
+              <Input value={ph} onChange={e=>onChange({phases:item.phases.map((p,ppi)=>ppi===pi?e.target.value:p)})} style={{flex:1,fontSize:12,padding:"5px 8px"}} />
+              <button type="button" onClick={()=>onChange({phases:item.phases.filter((_,ppi)=>ppi!==pi)})} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,lineHeight:1,padding:2,flexShrink:0}}>×</button>
+            </div>
+          ))}
+          <button type="button" onClick={()=>onChange({phases:[...item.phases,""]})} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add phase</button>
+        </div>
+      )}
+    </div>
+    <div style={{marginTop:8}}>
+      {item.outline===undefined?(
+        <button type="button" disabled={!!item.outlineLoading} onClick={suggestOutline} style={{background:"none",border:`1px dashed ${T.borderHover}`,borderRadius:6,color:T.muted,fontSize:11,fontFamily:T.font,cursor:item.outlineLoading?"default":"pointer",padding:"5px 10px",opacity:item.outlineLoading?0.6:1}}>
+          {item.outlineLoading?"Drafting a checklist…":"Add a step-by-step checklist?"}
+        </button>
+      ):item.outline.length===0?(
+        <div style={{fontSize:11,color:T.muted}}>Not enough detail here for a checklist. Add detail above, or skip it.</div>
+      ):(
+        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+          <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Checklist</div>
+          {item.outline.map((s,si)=>(
+            <div key={si} style={{display:"flex",alignItems:"center",gap:6}}>
+              <span style={{fontSize:10,color:T.faint,width:14,flexShrink:0,fontFamily:T.mono}}>{si+1}</span>
+              <Input value={s} onChange={e=>onChange({outline:item.outline.map((step,ssi)=>ssi===si?e.target.value:step)})} style={{flex:1,fontSize:12,padding:"5px 8px"}} />
+              <button type="button" onClick={()=>onChange({outline:item.outline.filter((_,ssi)=>ssi!==si)})} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,lineHeight:1,padding:2,flexShrink:0}}>×</button>
+            </div>
+          ))}
+          <button type="button" onClick={()=>onChange({outline:[...item.outline,""]})} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add step</button>
+        </div>
+      )}
+    </div>
+  </>);
+}
 // ─── CLASS SETUP WIZARD ──────────────────────────────────────────────────────
 // Replaces the old subjOnboardOpen (subjects+color, no times) and
 // RoutineWizardModal's automatic first-run pop-open (RoutineWizardModal
@@ -10976,20 +11154,6 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
             const meetingItemsForBuilder=review.meetingTimes.map(mt=>({id:mt.id,title:review.subjectName||"Class",kind:"class",days:mt.days,startTime:mt.startTime,duration:mt.duration}));
             const setItem=(i,patch)=>setReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,...patch}:x)}));
             const addManualItem=()=>setReview(r=>({...r,items:[...r.items,{id:"cd-manual-"+Date.now(),title:"",date:dayKey(),kind:"assignment",include:true,noDate:false,attackBlock:true,proposeSessions:false,sessionCount:4,detail:"",detailOpen:false,estimatedHours:null,difficulty:500,phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false,materialFiles:[],materialLinks:[],materialOpen:false,linkDraft:"",linkLabelDraft:"",pasteMaterialMode:false,pasteMaterialText:""}]}));
-            const suggestPhasesForItem=async(itemId)=>{
-              setReview(r=>r&&({...r,items:r.items.map(x=>x.id===itemId?{...x,phasesLoading:true}:x)}));
-              const it=review.items.find(x=>x.id===itemId);
-              if(!it)return;
-              const names=await proposeProjectPhases(it.title,it.detail||"",review.subjectName);
-              setReview(r=>r&&({...r,items:r.items.map(x=>x.id===itemId?{...x,phasesLoading:false,phases:names||[]}:x)}));
-            };
-            const suggestOutlineForItem=async(itemId)=>{
-              setReview(r=>r&&({...r,items:r.items.map(x=>x.id===itemId?{...x,outlineLoading:true}:x)}));
-              const it=review.items.find(x=>x.id===itemId);
-              if(!it)return;
-              const steps=await proposeOutline(it.title,it.detail||"",review.subjectName);
-              setReview(r=>r&&({...r,items:r.items.map(x=>x.id===itemId?{...x,outlineLoading:false,outline:steps||[]}:x)}));
-            };
             const includedExamCount=review.items.filter(it=>it.include&&it.kind==="exam").length;
             const cancelReview=()=>{setReview(null);setEditingPendingId(null);setReviewSub("items");setAddMode(null);};
             const ITEM_KIND_OPTIONS=[{value:"assignment",label:"Assignment"},{value:"exam",label:"Exam"},{value:"project",label:"Project"}];
@@ -11056,101 +11220,13 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
               <button type="button" onClick={cancelReview} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:8}}>{editingPendingId?"← Cancel":"← Cancel, don't stage this class"}</button>
             </>);
 
-            // Files and pasted text are both just named entries in the same
-            // list -- matches Studlin Prep's own fileTexts model exactly, so
-            // the real exam event this feeds (sourceMaterials) needs no
-            // translation between the two. handleMaterialFiles/
-            // addPastedMaterial/addMaterialLink all key off the item's id
-            // and use setReview's functional-update form (not setItem's
-            // index-based one) because extractFileText is async -- by the
-            // time it resolves, the items array may have already changed
-            // shape (a different item added/removed), so capturing an index
-            // up front would risk writing into the wrong row.
-            const handleMaterialFiles=async(itemId,fileList)=>{
-              const files=Array.from(fileList||[]);
-              for(const file of files){
-                const {text,truncated,empty}=await extractFileText(file);
-                setReview(r=>r&&({...r,items:r.items.map(x=>x.id===itemId?{...x,materialFiles:[...x.materialFiles,{name:file.name,text,truncated,empty}]}:x)}));
-              }
-            };
-            const addPastedMaterial=(itemId)=>setReview(r=>r&&({...r,items:r.items.map(x=>{
-              if(x.id!==itemId||!x.pasteMaterialText.trim())return x;
-              const n=x.materialFiles.length;
-              return {...x,materialFiles:[...x.materialFiles,{name:"Pasted text"+(n>0?" "+(n+1):""),...finalizeExtractedText(x.pasteMaterialText)}],pasteMaterialText:"",pasteMaterialMode:false};
-            })}));
-            const addMaterialLink=(itemId)=>setReview(r=>r&&({...r,items:r.items.map(x=>{
-              if(x.id!==itemId||!x.linkDraft.trim())return x;
-              return {...x,materialLinks:[...x.materialLinks,{label:x.linkLabelDraft.trim(),url:x.linkDraft.trim()}],linkDraft:"",linkLabelDraft:""};
-            })}));
-
             if(reviewSub==="smarten")return(<>
               <TitleSub title="Add study material? (optional)" sub="For any exam here — upload files, paste notes, or drop a link. Skip it if you're not ready or don't have it yet; you can always add it later in Studlin Prep." />
               {includedExamCount===0?(
                 <div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"20px 0"}}>No exams in this class yet — nothing to add material for.</div>
               ):review.items.map((it,i)=>{
                 if(!it.include||it.kind!=="exam")return null;
-                const hasMaterial=it.materialFiles.length>0||it.materialLinks.length>0;
-                return (
-                  <div key={it.id} style={{borderRadius:10,border:`1px solid ${T.border}`,marginBottom:8,overflow:"hidden"}}>
-                    <div onClick={()=>setItem(i,{materialOpen:!it.materialOpen})} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",cursor:"pointer",background:T.card2}}>
-                      <div style={{flex:1,fontSize:12.5,fontWeight:600,color:T.text}}>{it.title||"Untitled exam"}</div>
-                      {hasMaterial&&<span style={{fontSize:10.5,color:T.muted}}>{it.materialFiles.length>0?it.materialFiles.length+" file"+(it.materialFiles.length!==1?"s":""):""}{it.materialFiles.length>0&&it.materialLinks.length>0?" · ":""}{it.materialLinks.length>0?it.materialLinks.length+" link"+(it.materialLinks.length!==1?"s":""):""}</span>}
-                      <span style={{color:T.muted,display:"flex",transform:it.materialOpen?"rotate(180deg)":"none",transition:"transform 0.15s"}}>{Icon.chevDown}</span>
-                    </div>
-                    {it.materialOpen&&(
-                      <div style={{padding:"10px 12px",display:"flex",flexDirection:"column",gap:8}}>
-                        <input type="file" id={"matfile-"+it.id} onChange={e=>{handleMaterialFiles(it.id,e.target.files);e.target.value="";}} accept=".txt,.md,.pdf,.docx" style={{display:"none"}} multiple />
-                        <label htmlFor={"matfile-"+it.id} style={{border:`1px dashed ${T.borderHover}`,borderRadius:8,padding:"12px",textAlign:"center",background:T.card,cursor:"pointer",fontSize:11.5,color:T.muted}}>
-                          Click to upload — PDF, DOCX, or TXT (you can pick more than one)
-                        </label>
-                        <button type="button" onClick={()=>setItem(i,{pasteMaterialMode:!it.pasteMaterialMode})} style={{background:"none",border:"none",color:T.muted,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>
-                          {it.pasteMaterialMode?"Cancel pasting":"Or paste text instead"}
-                        </button>
-                        {it.pasteMaterialMode&&(
-                          <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                            <textarea value={it.pasteMaterialText} onChange={e=>setItem(i,{pasteMaterialText:e.target.value})} rows={3} placeholder="Paste your notes here..."
-                              style={{width:"100%",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 9px",color:T.text,fontSize:12,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
-                            <Btn onClick={()=>addPastedMaterial(it.id)} disabled={!it.pasteMaterialText.trim()} style={{justifyContent:"center",opacity:it.pasteMaterialText.trim()?1:0.45}}>Add pasted text</Btn>
-                          </div>
-                        )}
-                        {it.materialFiles.length>0&&(
-                          <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                            {it.materialFiles.map((f,fi)=>(
-                              <div key={fi} style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card,borderRadius:8,gap:8}}>
-                                <div style={{flex:1,minWidth:0}}>
-                                  <div style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</div>
-                                  {f.empty&&<div style={{fontSize:10,color:T.amber,marginTop:1}}>Couldn't find readable text in this one — try a different file</div>}
-                                  {f.truncated&&!f.empty&&<div style={{fontSize:10,color:T.faint,marginTop:1}}>Trimmed — only the first part will be used</div>}
-                                </div>
-                                <button onClick={()=>setItem(i,{materialFiles:it.materialFiles.filter((_,fi2)=>fi2!==fi)})} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0}}>×</button>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        <div style={{display:"flex",gap:8}}>
-                          <Input value={it.linkLabelDraft} onChange={e=>setItem(i,{linkLabelDraft:e.target.value})} placeholder="Label (optional)" style={{width:110,flexShrink:0}} />
-                          <Input value={it.linkDraft} onChange={e=>setItem(i,{linkDraft:e.target.value})} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addMaterialLink(it.id);}}} placeholder="Link — flashcards, slides, anything" style={{flex:1,minWidth:0}} />
-                          <button type="button" onClick={()=>addMaterialLink(it.id)} disabled={!it.linkDraft.trim()} style={{padding:"0 12px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:it.linkDraft.trim()?"pointer":"default",fontFamily:T.font,fontSize:12,opacity:it.linkDraft.trim()?1:0.45,flexShrink:0}}>+ Add</button>
-                        </div>
-                        {it.materialLinks.length>0&&(
-                          <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                            {it.materialLinks.map((link,li)=>(
-                              <div key={li} style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card,borderRadius:8,gap:8}}>
-                                <div style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                                  {link.label&&<span style={{color:T.text,fontWeight:600}}>{link.label}: </span>}
-                                  <span style={{color:link.label?T.muted:T.text}}>{link.url}</span>
-                                </div>
-                                <button onClick={()=>setItem(i,{materialLinks:it.materialLinks.filter((_,li2)=>li2!==li)})} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0}}>×</button>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        <div style={{fontSize:10.5,color:T.faint}}>You can also add or change this later in Studlin Prep.</div>
-                        <button type="button" onClick={()=>setItem(i,{materialOpen:false})} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>Collapse</button>
-                      </div>
-                    )}
-                  </div>
-                );
+                return <MaterialEditor key={it.id} item={it} onChange={patch=>setItem(i,patch)} label={it.title||"Untitled exam"} idPrefix={it.id} />;
               })}
               <button type="button" onClick={()=>setReviewSub("items")} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0,marginTop:4}}>← Back</button>
             </>);
@@ -11190,50 +11266,9 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
                       <input type="range" min={0} max={1000} value={it.difficulty??500} onChange={e=>setItem(i,{difficulty:+e.target.value})} style={{flex:1,accentColor:T.lime,height:5,borderRadius:3,cursor:"pointer"}} />
                       <span style={{fontSize:10.5,color:T.muted}}>Hard</span>
                     </div>
-                    {it.kind!=="exam"&&it.attackBlock&&showPhases&&(<>
-                      <div style={{marginTop:8}}>
-                        {it.phases===undefined?(
-                          <button type="button" disabled={!!it.phasesLoading} onClick={()=>suggestPhasesForItem(it.id)} style={{background:"none",border:`1px dashed ${T.borderHover}`,borderRadius:6,color:T.muted,fontSize:11,fontFamily:T.font,cursor:it.phasesLoading?"default":"pointer",padding:"5px 10px",opacity:it.phasesLoading?0.6:1}}>
-                            {it.phasesLoading?"Thinking through phases…":"This looks big. Break it into phases?"}
-                          </button>
-                        ):it.phases.length===0?(
-                          <div style={{fontSize:11,color:T.muted}}>Not enough detail here to break into phases. Add detail on the previous step, or leave it as one Attack Block.</div>
-                        ):(
-                          <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                            <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Phases: only the first gets scheduled now</div>
-                            {it.phases.map((ph,pi)=>(
-                              <div key={pi} style={{display:"flex",alignItems:"center",gap:6}}>
-                                <span style={{fontSize:10,color:T.faint,width:14,flexShrink:0,fontFamily:T.mono}}>{pi+1}</span>
-                                <Input value={ph} onChange={e=>setItem(i,{phases:it.phases.map((p,ppi)=>ppi===pi?e.target.value:p)})} style={{flex:1,fontSize:12,padding:"5px 8px"}} />
-                                <button type="button" onClick={()=>setItem(i,{phases:it.phases.filter((_,ppi)=>ppi!==pi)})} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,lineHeight:1,padding:2,flexShrink:0}}>×</button>
-                              </div>
-                            ))}
-                            <button type="button" onClick={()=>setItem(i,{phases:[...it.phases,""]})} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add phase</button>
-                          </div>
-                        )}
-                      </div>
-                      <div style={{marginTop:8}}>
-                        {it.outline===undefined?(
-                          <button type="button" disabled={!!it.outlineLoading} onClick={()=>suggestOutlineForItem(it.id)} style={{background:"none",border:`1px dashed ${T.borderHover}`,borderRadius:6,color:T.muted,fontSize:11,fontFamily:T.font,cursor:it.outlineLoading?"default":"pointer",padding:"5px 10px",opacity:it.outlineLoading?0.6:1}}>
-                            {it.outlineLoading?"Drafting a checklist…":"Add a step-by-step checklist?"}
-                          </button>
-                        ):it.outline.length===0?(
-                          <div style={{fontSize:11,color:T.muted}}>Not enough detail here for a checklist. Add detail on the previous step, or skip it.</div>
-                        ):(
-                          <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                            <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Checklist</div>
-                            {it.outline.map((s,si)=>(
-                              <div key={si} style={{display:"flex",alignItems:"center",gap:6}}>
-                                <span style={{fontSize:10,color:T.faint,width:14,flexShrink:0,fontFamily:T.mono}}>{si+1}</span>
-                                <Input value={s} onChange={e=>setItem(i,{outline:it.outline.map((step,ssi)=>ssi===si?e.target.value:step)})} style={{flex:1,fontSize:12,padding:"5px 8px"}} />
-                                <button type="button" onClick={()=>setItem(i,{outline:it.outline.filter((_,ssi)=>ssi!==si)})} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,lineHeight:1,padding:2,flexShrink:0}}>×</button>
-                              </div>
-                            ))}
-                            <button type="button" onClick={()=>setItem(i,{outline:[...it.outline,""]})} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add step</button>
-                          </div>
-                        )}
-                      </div>
-                    </>)}
+                    {it.kind!=="exam"&&it.attackBlock&&showPhases&&(
+                      <PhasesOutlineEditor item={it} onChange={patch=>setItem(i,patch)} subject={review.subjectName} />
+                    )}
                   </div>
                 );
               })}
@@ -12102,6 +12137,19 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
   const [kind,setKind]=useState("deadline");
   const [notes,setNotes]=useState("");
   const [cancelConfirmOpen,setCancelConfirmOpen]=useState(false);
+  // Retroactive Attack Block for a deadline marker that never got one --
+  // closes the gap where an assignment added without Attack Block had no
+  // way to get one later. Only offered for a plain marker with nothing
+  // scheduled for it yet (see the gate below); startPhaseAwareAttackChain
+  // adds a real linked session, same shape a syllabus-scanned assignment's
+  // first prep session already gets.
+  const [addAttackBlock,setAddAttackBlock]=useState(false);
+  const [attackProbeMins,setAttackProbeMins]=useState(ATTACK_BLOCK_DEFAULT_PROBE_MINS);
+  // Exam study material + spaced-session generation, retrofitted onto an
+  // existing exam the same way Add Task now offers it for a new one --
+  // same MaterialEditor/buildExamSessionEvents shape used there.
+  const [examPlan,setExamPlan]=useState({materialFiles:[],materialLinks:[],materialOpen:false,pasteMaterialMode:false,pasteMaterialText:"",linkDraft:"",linkLabelDraft:"",proposeSessions:false,sessionCount:4});
+  const [projectPlan,setProjectPlan]=useState({phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false});
 
   useEffect(()=>{
     if(!ev)return;
@@ -12111,12 +12159,23 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
     setMoreOpen(!!(ev.priority&&(ev.priority>10?ev.priority!==500:ev.priority!==5)));
     setSubject(ev.subject||"Chemistry");setKind(ev.kind||"deadline");setNotes(ev.notes||"");
     setCancelConfirmOpen(false);
+    setAddAttackBlock(false);setAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);
+    setExamPlan({materialFiles:ev.sourceMaterials||[],materialLinks:ev.referenceLinks||[],materialOpen:false,pasteMaterialMode:false,pasteMaterialText:"",linkDraft:"",linkLabelDraft:"",proposeSessions:false,sessionCount:4});
+    setProjectPlan({phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false});
   },[eventId]);
 
   if(!eventId||!ev)return null;
 
   const linkedSessions=allEvents.filter(e=>e.dueEventId===ev.id);
   const chainIdForReschedule=(allEvents.find(e=>e.dueEventId===ev.id&&e.attackChainId&&e.status==="pending")||{}).attackChainId||null;
+  // A plain due-date marker with nothing scheduled for it yet and no
+  // phases of its own -- exactly the "assignment added without Attack
+  // Block" gap this closes. Excludes the event itself being an Attack
+  // Block probe (isAttackBlock) or a phased project (phases already imply
+  // a chain exists or will be started per-phase, handled by its own UI
+  // above) so this toggle never offers to double up an existing chain.
+  const canAddAttackBlock=kind==="deadline"&&!ev.isAttackBlock&&linkedSessions.length===0&&!(ev.phases&&ev.phases.length>0);
+  const isPhaseCandidate=canAddAttackBlock&&isPhaseDecompositionCandidate(ev.estimatedHours,date,dayKey());
 
   const save=()=>{
     if(!title.trim())return;
@@ -12124,12 +12183,27 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
     const timeChanged=time!==ev.time||date!==ev.date;
     const updated=allEvents.map(e=>{
       if(e.id!==ev.id)return e;
-      const merged={...e,title:title.trim(),date,time,duration,deadline:deadline||null,priority,difficulty,subject,kind,notes,...(timeChanged?{userPinned:true}:{})};
+      const merged={...e,title:title.trim(),date,time,duration,deadline:deadline||null,priority,difficulty,subject,kind,notes,...(timeChanged?{userPinned:true}:{}),
+        ...(kind==="exam"?{sourceMaterials:examPlan.materialFiles,referenceLinks:examPlan.materialLinks}:{})};
       if(timeChanged){const {movedByStudlin,movedFrom,movedAt,placementReason,...rest}=merged;return rest;}
       return merged;
     });
     const prefs=getSchedulePreferences();
-    const next=date?rebalanceDay(date,updated,routines,prefs):updated;
+    let next=date?rebalanceDay(date,updated,routines,prefs):updated;
+    // Retroactive Attack Block -- same startPhaseAwareAttackChain a fresh
+    // Add Task assignment now uses (see CalendarTab), dueEventId-linked
+    // back to this marker so it shows up as a real prep session, not a
+    // second independent task.
+    if(canAddAttackBlock&&addAttackBlock){
+      const phases=isPhaseCandidate?(projectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
+      const desiredDate=date&&date>=dayKey()?date:dayKey();
+      const task=startPhaseAwareAttackChain({title:title.trim(),subject,notes,deadline:deadline||null,priority,difficulty,probeMins:attackProbeMins,dueEventId:ev.id},phases,next,routines,prefs,desiredDate,prefs.workStartTime);
+      if(task)next=next.concat([task]);
+    }
+    if(kind==="exam"&&examPlan.proposeSessions&&linkedSessions.length===0){
+      const sessions=buildExamSessionEvents(title.trim(),date,subject,examPlan.sessionCount||4,"edittask-exam-"+ev.id,next,routines,prefs,{dueEventId:ev.id},difficulty);
+      next=next.concat(sessions);
+    }
     commit(next);onClose();
   };
   const writePhases=(nextPhases)=>commit(allEvents.map(x=>x.id===ev.id?{...x,phases:nextPhases}:x));
@@ -12215,6 +12289,44 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
           )}
         </div>
       )}
+      {canAddAttackBlock&&(
+        <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14}}>
+          <div onClick={()=>setAddAttackBlock(a=>!a)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+            <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Start an Attack Block for this</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>A short probe session, scheduled the moment you save. Studlin figures out the rest.</div></div>
+            <div style={{width:36,height:20,borderRadius:10,background:addAttackBlock?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer"}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:addAttackBlock?18:2,transition:"left 0.2s"}} /></div>
+          </div>
+          {addAttackBlock&&(<>
+            <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
+              <Field label="Probe session length"><NumField min={15} max={60} fallback={ATTACK_BLOCK_DEFAULT_PROBE_MINS} value={attackProbeMins} onChange={setAttackProbeMins} /></Field>
+            </div>
+            {isPhaseCandidate&&(
+              <PhasesOutlineEditor item={{...projectPlan,title,detail:notes}} onChange={patch=>setProjectPlan(p=>({...p,...patch}))} subject={subject} />
+            )}
+          </>)}
+        </div>
+      )}
+      {kind==="exam"&&(<>
+        <Field label="Study material (optional)" hint="Upload files, paste notes, or drop a link — you can always add more later in Studlin Prep.">
+          <MaterialEditor item={examPlan} onChange={patch=>setExamPlan(m=>({...m,...patch}))} label={title.trim()||"Untitled exam"} idPrefix={"edittask-"+ev.id} />
+        </Field>
+        {linkedSessions.length===0&&(
+          <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14}}>
+            <div onClick={()=>setExamPlan(m=>({...m,proposeSessions:!m.proposeSessions}))} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+              <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Have Studlin make your study plan</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Spaced study sessions counting down to the exam date, added the moment you save.</div></div>
+              <div style={{width:36,height:20,borderRadius:10,background:examPlan.proposeSessions?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer"}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:examPlan.proposeSessions?18:2,transition:"left 0.2s"}} /></div>
+            </div>
+            {examPlan.proposeSessions&&(()=>{
+              const dates=date?computeReviewDates(date,dayKey(),examPlan.sessionCount||4):[];
+              return (
+                <div style={{display:"flex",alignItems:"center",gap:8,marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
+                  <NumField min={1} max={6} fallback={4} value={examPlan.sessionCount||4} onChange={v=>setExamPlan(m=>({...m,sessionCount:v}))} style={{width:48}} />
+                  <span style={{fontSize:10.5,color:T.muted}}>{dates.length===0?"Too close to the exam to fit a session":dates.length+" session"+(dates.length!==1?"s":"")+": "+dates.join(", ")}</span>
+                </div>
+              );
+            })()}
+          </div>
+        )}
+      </>)}
       {deadlineErr&&<div style={{fontSize:12,color:T.red,marginTop:-8,marginBottom:14}}>{deadlineErr}</div>}
       {kind!=="reminder"&&(
         <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={5} value={duration} onChange={setDuration} /></Field>
@@ -12405,8 +12517,25 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
   const [evPrefillDate,setEvPrefillDate]=useState(dayKey());
   const [evSubject,setEvSubject]=useState("None");
   const [evCustom,setEvCustom]=useState("");
-  const [evKind,setEvKind]=useState("study block");
+  // "assignment" folds the old separate "study block"/"deadline" (To-Do)
+  // type picks into one -- which real kind actually gets written is now
+  // inferred at save time (see buildTask/saveManual/aiArrange) instead of
+  // asked as its own question. "project" is a new type, never itself a
+  // real wire kind -- it always resolves to kind:"deadline" + phases,
+  // matching Dashboard's existing masterProjects filter convention.
+  const [evKind,setEvKind]=useState("assignment");
   const [evNotes,setEvNotes]=useState("");
+  // Exam study material + spaced-session generation from Add/Edit Task --
+  // same shape MaterialEditor/buildExamSessionEvents already expect from
+  // Class Setup Wizard's per-item state, just a single object here since
+  // Add Task only ever creates one exam at a time.
+  const [evExamPlan,setEvExamPlan]=useState({materialFiles:[],materialLinks:[],materialOpen:false,pasteMaterialMode:false,pasteMaterialText:"",linkDraft:"",linkLabelDraft:"",proposeSessions:false,sessionCount:4});
+  // Project phases/checklist -- same shape PhasesOutlineEditor expects.
+  const [evProjectPlan,setEvProjectPlan]=useState({phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false});
+  const resetTypeExtras=()=>{
+    setEvExamPlan({materialFiles:[],materialLinks:[],materialOpen:false,pasteMaterialMode:false,pasteMaterialText:"",linkDraft:"",linkLabelDraft:"",proposeSessions:false,sessionCount:4});
+    setEvProjectPlan({phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false});
+  };
   const [evPriority,setEvPriority]=useState(500); // 0-1000 continuous scale
   // Difficulty slider removed from the UI entirely — deciding "how hard is
   // this really" is friction with no payoff for a procrastination-prone
@@ -12757,7 +12886,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
   // "let AI schedule this". The clicked day is remembered so fixed-time kinds
   // (exam/class/reminder), which always need a real date, can still default
   // to it once the user picks one of those types.
-  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("");setEvSubject("None");setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setNewOpen(true);};
+  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("");setEvSubject("None");setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);resetTypeExtras();setNewOpen(true);};
   // Same form as openNew, just arriving with the scheduling mode already
   // decided by which "Add task" menu option was tapped -- the in-modal
   // manual/AI toggle stays visible so it's correctable, not a dead end.
@@ -12774,14 +12903,54 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
   // overwrites a value the student actually touched.
   useEffect(()=>{
     if(!newOpen||evDurationTouched)return;
-    const suggested=suggestDurationFor(evSubject,evKind);
+    const suggested=suggestDurationFor(evSubject,resolveAssignmentKind());
     if(suggested)setEvDuration(suggested);
-  },[evSubject,evKind,newOpen]);
-  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvDate("");setEvTime("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setAiLoading(false);setAsChecklist(false);};
-  const onEvKindChange=(k)=>{setEvKind(k);if((k==="exam"||k==="class"||k==="reminder"||k==="busy block")&&!evDate)setEvDate(evPrefillDate);};
+  },[evSubject,evKind,taskMode,newOpen]);
+  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvDate("");setEvTime("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setAiLoading(false);setAsChecklist(false);resetTypeExtras();};
+  const onEvKindChange=(k)=>{
+    setEvKind(k);
+    const willBeFixed=(k==="exam"||k==="class"||k==="reminder"||k==="busy block");
+    if(willBeFixed&&!evDate)setEvDate(evPrefillDate);
+    // None of these fields are ever shown for a fixed-time kind (exam/
+    // class/reminder/busy block) -- but nothing used to reset them on a
+    // kind switch, so a deadline typed (or Attack Block toggled on) while
+    // on a different kind could still silently ride along into a freshly-
+    // picked fixed-time one, since buildTask includes every one of these
+    // fields on the built event unconditionally, regardless of whether
+    // the form is currently showing them.
+    if(willBeFixed){
+      setEvDeadline("");setEvDeadlineTime("23:59");
+      setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);
+      setEvSplitEnabled(false);setEvSplitCount(2);
+    }
+    if(k!=="assignment")setAsChecklist(false);
+    // Exam material/session drafts and Project phases/outline drafts are
+    // both purely local to whichever type is currently picked -- carrying
+    // either across a switch to a different type (or between exam <->
+    // project) would silently resurrect stale draft state the student
+    // never asked for on the newly-picked type.
+    resetTypeExtras();
+  };
+  // Assignment/Project are UI-level types only, never real wire kinds --
+  // this is where they resolve to the real kind that actually gets
+  // written. Assignment: AI mode always implies a real due-date concept
+  // distinct from wherever the AI ends up placing it, so it's a
+  // "deadline" marker; Manual mode picks an exact date/time with no
+  // separate due-date concept at all, so it's a plain "study block" --
+  // exactly what "study block" already meant before this type existed.
+  // Project always writes "deadline" + phases (matches Dashboard's
+  // existing masterProjects filter). Attack Block bypasses this entirely
+  // (see saveManual/aiArrange) -- startAttackBlockChain hardcodes its own
+  // "study block" kind for the actual scheduled probe session.
+  const resolveAssignmentKind=()=>evKind==="assignment"?(taskMode==="ai"?"deadline":"study block"):(evKind==="project"?"deadline":evKind);
   const buildTask=(date,time,titleSuffix,splitInfo)=>{
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
-    return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,kind:evKind,notes:evNotes,priority:evPriority,difficulty:evDifficulty,deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,...(splitInfo||{})};
+    const projectPhases=evKind==="project"&&evProjectPlan.phases?evProjectPlan.phases.map(p=>p.trim()).filter(Boolean):[];
+    const projectOutline=evKind==="project"&&evProjectPlan.outline?evProjectPlan.outline.map(s=>s.trim()).filter(Boolean):[];
+    return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,kind:resolveAssignmentKind(),notes:evNotes,priority:evPriority,difficulty:evDifficulty,deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,
+      ...(projectPhases.length>0?{phases:projectPhases.map((name,pi)=>({name,status:pi===0?"active":"pending"}))}:{}),
+      ...(projectOutline.length>0?{outline:projectOutline.map(text=>({text,done:false}))}:{}),
+      ...(splitInfo||{})};
   };
   const commitTasks=(newTasks,opts)=>{
     const prefs=getSchedulePreferences();
@@ -12965,6 +13134,44 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
   const saveManual=()=>{
     if(!evTitle.trim()||!evDate.trim()||!evTime.trim())return;
     if(evSaveToRoutine&&(evKind==="exam"||evKind==="class"||evKind==="busy block")){saveToRoutineFromForm();return;}
+    // Attack Block used to only be reachable through AI-schedule mode --
+    // startAttackBlockChain only ever needed a desired date/time, which
+    // Manual Placement already collects, so there was never a real reason
+    // for the gap. startPhaseAwareAttackChain degrades to an ordinary
+    // (unphased) chain when there's no project phases, so this one call
+    // covers both Assignment and Project.
+    if((evKind==="assignment"||evKind==="project")&&evAttackBlock){
+      const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
+      const prefs=getSchedulePreferences();
+      const phases=evKind==="project"?(evProjectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
+      const task=startPhaseAwareAttackChain({title:evTitle.trim(),subject:subj,notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins},phases,events,routines,prefs,evDate,evTime);
+      if(!task){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
+      commitTasks([task]);
+      return;
+    }
+    // Exam material/sessions -- exams never split, so this replaces the
+    // generic non-split path below rather than layering onto it. The exam
+    // event itself carries the uploaded/pasted material (sourceMaterials)
+    // and links (referenceLinks), same shape a syllabus-scanned exam
+    // already gets (see buildSyllabusEventBatch); opted-in study sessions
+    // are real buildExamSessionEvents output, dueEventId-linked back to
+    // this exam so Studlin Prep and the exam-readiness engine find them
+    // exactly like any other linked session.
+    if(evKind==="exam"){
+      const slot=resolveManualSlot(evDate,evTime,evDuration);
+      if(!slot){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
+      const examTask={...buildTask(slot.date,slot.time),placementReason:slot.reason||null,
+        ...(evExamPlan.materialFiles.length>0?{sourceMaterials:evExamPlan.materialFiles}:{}),
+        ...(evExamPlan.materialLinks.length>0?{referenceLinks:evExamPlan.materialLinks}:{})};
+      let tasks=[examTask];
+      if(evExamPlan.proposeSessions){
+        const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
+        const sessions=buildExamSessionEvents(evTitle.trim(),slot.date,subj,evExamPlan.sessionCount||4,"addtask-exam-"+examTask.id,events.concat([examTask]),routines,getSchedulePreferences(),{dueEventId:examTask.id},evDifficulty);
+        tasks=tasks.concat(sessions);
+      }
+      commitTasks(tasks,{userPinned:true});
+      return;
+    }
     if(!evSplitEnabled){
       const slot=resolveManualSlot(evDate,evTime,evDuration);
       if(!slot){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
@@ -13013,9 +13220,11 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
     // yet.
     if(evAttackBlock){
       const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
-      const task=startAttackBlockChain({title:evTitle.trim(),subject:subj,notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins},events,routines,prefs,desiredStartDate,windowStartTime);
-      commitTasks([task]);
+      const phases=evKind==="project"?(evProjectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
+      const task=startPhaseAwareAttackChain({title:evTitle.trim(),subject:subj,notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins},phases,events,routines,prefs,desiredStartDate,windowStartTime);
       setAiLoading(false);
+      if(!task){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
+      commitTasks([task]);
       return;
     }
     const windowMins=Math.max(0,desiredEndMins-windowStart);
@@ -13283,13 +13492,16 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
     setPausePreview(null);setPauseOpen(false);setPauseText("");
     setToast(true);setTimeout(()=>setToast(false),2200);
   };
-  // Fixed real-world blocks (exam/class) only take Day/Start Time/Duration and
-  // are never AI-scheduled. Reminders are simple Date/Time markers. Everything
-  // else (deadline/study block) is a "task" that can be placed manually or by AI.
+  // Fixed real-world blocks (exam/class/activity) only take Day/Start
+  // Time/Duration and are never AI-scheduled. Reminders are simple
+  // Date/Time markers. Everything else (Assignment/Project) is a "task"
+  // that can be placed manually or by AI.
   const isFixedKind=evKind==="exam"||evKind==="class"||evKind==="busy block";
   const isReminderKind=evKind==="reminder";
   const isTaskKind=!isFixedKind&&!isReminderKind;
-  const isChecklistMode=evKind==="deadline"&&asChecklist;
+  const isExamKind=evKind==="exam";
+  const isProjectKind=evKind==="project";
+  const isChecklistMode=evKind==="assignment"&&asChecklist;
   const manualMode=isTaskKind&&!isChecklistMode&&taskMode==="manual";
   return (
     <>
@@ -13492,10 +13704,10 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
         <Field label="Title"><Input placeholder="e.g. Study Bio chapter 4-6" value={evTitle} onChange={ev=>setEvTitle(ev.target.value)} autoFocus /></Field>
 
         <Field label="Type" hint={isFixedKind?"Fixed real-world block — Studlin will never move or reschedule this.":"Choose what kind of entry this is"}>
-          <SelectChip options={["study block",{value:"deadline",label:"To-Do"},"exam","class","reminder","busy block"]} value={evKind} onChange={onEvKindChange} />
+          <SelectChip options={[{value:"assignment",label:"Assignment"},{value:"project",label:"Project"},"exam","class",{value:"busy block",label:"Activity"},"reminder"]} value={evKind} onChange={onEvKindChange} />
         </Field>
 
-        {evKind==="deadline"&&(
+        {evKind==="assignment"&&(
           <label className="checkbox" onClick={()=>setAsChecklist(s=>!s)} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:14,fontSize:12.5,color:T.text}}>
             <span style={{width:16,height:16,borderRadius:4,border:`1.5px solid ${asChecklist?T.lime:T.border}`,background:asChecklist?T.lime:"transparent",display:"grid",placeItems:"center",flexShrink:0,color:T.ink}}>{asChecklist&&Icon.check}</span>
             No specific time, add to checklist instead
@@ -13528,6 +13740,41 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
           </>
         )}
 
+        {isExamKind&&(<>
+          <Field label="Study material (optional)" hint="Upload files, paste notes, or drop a link — you can always add more later in Studlin Prep.">
+            <MaterialEditor item={evExamPlan} onChange={patch=>setEvExamPlan(m=>({...m,...patch}))} label={evTitle.trim()||"Untitled exam"} idPrefix="addtask-exam" />
+          </Field>
+          <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14}}>
+            <div onClick={()=>setEvExamPlan(m=>({...m,proposeSessions:!m.proposeSessions}))} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+              <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Have Studlin make your study plan</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Spaced study sessions counting down to the exam date. Leave this off to plan it yourself.</div></div>
+              <div style={{width:36,height:20,borderRadius:10,background:evExamPlan.proposeSessions?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer"}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:evExamPlan.proposeSessions?18:2,transition:"left 0.2s"}} /></div>
+            </div>
+            {evExamPlan.proposeSessions&&(()=>{
+              const dates=evDate?computeReviewDates(evDate,dayKey(),evExamPlan.sessionCount||4):[];
+              return (
+                <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                    <NumField min={1} max={6} fallback={4} value={evExamPlan.sessionCount||4} onChange={v=>setEvExamPlan(m=>({...m,sessionCount:v}))} style={{width:48}} />
+                    <span style={{fontSize:10.5,color:T.muted}}>{!evDate?"Pick a date above first":dates.length===0?"Too close to the exam to fit a session":dates.length+" session"+(dates.length!==1?"s":"")+": "+dates.join(", ")}</span>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:10.5,color:T.muted}}>Easy</span>
+                    <input type="range" min={0} max={1000} value={evDifficulty} onChange={ev=>setEvDifficulty(+ev.target.value)} style={{flex:1,accentColor:T.lime,height:5,borderRadius:3,cursor:"pointer"}} />
+                    <span style={{fontSize:10.5,color:T.muted}}>Hard</span>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </>)}
+
+        {isProjectKind&&(<>
+          <Field label="Describe what you want to do" hint="A sentence or two is enough — Studlin uses this to suggest phases and a checklist.">
+            <Textarea placeholder="e.g. Build a working demo, write a report, present to the class by the deadline." value={evNotes} onChange={ev=>setEvNotes(ev.target.value)} />
+          </Field>
+          <PhasesOutlineEditor item={{...evProjectPlan,title:evTitle,detail:evNotes}} onChange={patch=>setEvProjectPlan(p=>({...p,...patch}))} subject={evSubject==="Other"?evCustom:evSubject} />
+        </>)}
+
         {isTaskKind&&!isChecklistMode&&taskMode==="manual"&&(
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
             <Field label="Date"><Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} /></Field>
@@ -13547,13 +13794,13 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
         {isTaskKind&&!isChecklistMode&&!evAttackBlock&&(
           <Field label="Duration (minutes)" hint="How long you plan to spend">
             <NumField min={5} max={480} fallback={5} value={evDuration} onChange={v=>{setEvDuration(v);setEvDurationTouched(true);}} />
-            {(()=>{const s=suggestDurationFor(evSubject,evKind);return s&&s!==evDuration&&(
+            {(()=>{const s=suggestDurationFor(evSubject,resolveAssignmentKind());return s&&s!==evDuration&&(
               <div style={{fontSize:11.5,color:T.muted,marginTop:6}}>Similar tasks usually take you ~{s}m — <button type="button" onClick={()=>{setEvDuration(s);setEvDurationTouched(true);}} style={{background:"none",border:"none",color:T.lime,cursor:"pointer",fontSize:11.5,fontFamily:T.font,padding:0,textDecoration:"underline"}}>use this</button></div>
             );})()}
           </Field>
         )}
 
-        {isTaskKind&&!isChecklistMode&&taskMode==="ai"&&!evSplitEnabled&&(
+        {isTaskKind&&!isChecklistMode&&!evSplitEnabled&&(
           <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14}}>
             <div onClick={()=>setEvAttackBlock(a=>!a)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
               <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>I don't know how long this takes</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Start with a short probe session. Studlin figures out the rest.</div></div>
@@ -13611,7 +13858,9 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
           </div>
         )}
 
-        <Field label="Notes (optional)"><Textarea placeholder="e.g. Bring calculator, covers chapters 4 to 6." value={evNotes} onChange={ev=>setEvNotes(ev.target.value)} /></Field>
+        {!isProjectKind&&(
+          <Field label="Notes (optional)"><Textarea placeholder="e.g. Bring calculator, covers chapters 4 to 6." value={evNotes} onChange={ev=>setEvNotes(ev.target.value)} /></Field>
+        )}
       </Modal>
 
       {/* ── BRAIN DUMP — tell Studlin everything at once instead of one task at a time ── */}
