@@ -4684,12 +4684,34 @@ const getQuizGenUsage=makeMonthlyUsage("quizGens");
 function canGenQuiz(){return getPlan()!=="Free"||getQuizGenUsage().count<QUIZ_GEN_LIMIT;}
 function recordQuizGen(){const u=getQuizGenUsage();lsSet("quizGens",{month:u.month,count:u.count+1});}
 
+// Cap on how much text one uploaded/pasted material entry can contribute --
+// keeps a single huge PDF from blowing up the flashcard/practice-exam
+// generation prompt unbounded (the syllabus scanner caps its own input the
+// same way, at the prompt-building step instead of at extraction; capping
+// here instead means every consumer of extractFileText's output gets the
+// protection for free, not just syllabus scanning).
+const MATERIAL_TEXT_CAP=50000;
+function finalizeExtractedText(raw){
+  const text=raw||"";
+  const trimmed=text.trim();
+  return {
+    text:text.length>MATERIAL_TEXT_CAP?text.slice(0,MATERIAL_TEXT_CAP):text,
+    truncated:text.length>MATERIAL_TEXT_CAP,
+    // Under ~20 real characters almost always means a scanned/image-only
+    // PDF with no actual text layer, or a genuinely empty file -- worth
+    // flagging to the student rather than silently handing an AI generator
+    // nothing to work with later.
+    empty:trimmed.length<20,
+  };
+}
 // Generic "get readable text out of an uploaded file" -- PDF via pdfjsLib,
 // DOCX via mammoth, plain-text fallback for everything else, a clear
 // rejection message for the old .doc format Studlin can't parse. Module-
 // level (not component-local) so both Studlin Prep's own material upload
 // and Class Setup Wizard's per-exam study-material box share one copy
-// instead of two that could quietly drift apart.
+// instead of two that could quietly drift apart. Returns
+// {text,truncated,empty} rather than a bare string so callers can warn
+// the student instead of silently storing something unreadable/oversized.
 async function extractFileText(file){
   const ext=file.name.split(".").pop().toLowerCase();
   if(ext==="pdf"){
@@ -4699,21 +4721,21 @@ async function extractFileText(file){
       const pdf=await pdfjsLib.getDocument({data:buf}).promise;
       let text="";
       for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();text+=tc.items.map(it=>it.str).join(" ")+"\n\n";}
-      return text;
-    }catch(err){return "Could not read PDF: "+err.message;}
+      return finalizeExtractedText(text);
+    }catch(err){return {text:"Could not read PDF: "+err.message,truncated:false,empty:true};}
   }
   if(ext==="docx"){
     try{
       if(!window.mammoth)throw new Error("Document reader still loading — try again in a moment.");
       const buf=await file.arrayBuffer();
       const result=await window.mammoth.extractRawText({arrayBuffer:buf});
-      return result.value;
-    }catch(err){return "Could not read this document: "+err.message;}
+      return finalizeExtractedText(result.value);
+    }catch(err){return {text:"Could not read this document: "+err.message,truncated:false,empty:true};}
   }
-  if(ext==="doc")return "This is an older .doc file — Studlin can only read .docx. Try re-saving it as .docx or PDF.";
+  if(ext==="doc")return {text:"This is an older .doc file — Studlin can only read .docx. Try re-saving it as .docx or PDF.",truncated:false,empty:true};
   return await new Promise(resolve=>{
     const reader=new FileReader();
-    reader.onload=()=>resolve(reader.result);
+    reader.onload=()=>resolve(finalizeExtractedText(reader.result));
     reader.readAsText(file);
   });
 }
@@ -4770,8 +4792,14 @@ function StudlinPrep(){
   // card's hint text says this explicitly rather than leaving it implied.
   // A list, not a single string -- a student realistically has more than
   // one useful link (a Quizlet set AND a shared slides doc, say).
-  const [materialLinks,setMaterialLinks]=useState([]);
+  const [materialLinks,setMaterialLinks]=useState([]); // [{label,url}]
   const [linkDraft,setLinkDraft]=useState("");
+  const [linkLabelDraft,setLinkLabelDraft]=useState("");
+  // referenceLinks has gone through two shapes -- a plain string[] (briefly)
+  // and now [{label,url}] -- normalizing here means every read site below
+  // can assume the current shape regardless of which one a given exam's
+  // data was actually saved under.
+  const normalizeLinks=(arr)=>(arr||[]).map(l=>typeof l==="string"?{label:"",url:l}:l);
   // Pull material straight from Notes already written for this class,
   // instead of forcing a re-upload of content the student already typed
   // somewhere else in the app.
@@ -4781,7 +4809,7 @@ function StudlinPrep(){
   const toggleNotePick=(id)=>setNotesPickerSelected(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);
   const confirmNotesPicker=()=>{
     const chosen=matchingNotes.filter(n=>notesPickerSelected.includes(n.id));
-    const newEntries=chosen.filter(n=>!fileTexts.some(f=>f.name===n.title)).map(n=>({name:n.title,text:stripHtml(n.body)}));
+    const newEntries=chosen.filter(n=>!fileTexts.some(f=>f.name===n.title)).map(n=>({name:n.title,...finalizeExtractedText(stripHtml(n.body))}));
     setFileTexts(prev=>[...prev,...newEntries]);
     setNotesPickerOpen(false);setNotesPickerSelected([]);
   };
@@ -4790,8 +4818,8 @@ function StudlinPrep(){
     const files=Array.from(e.target.files||[]);
     e.target.value="";
     for(const file of files){
-      const text=await extractFileText(file);
-      setFileTexts(prev=>[...prev,{name:file.name,text}]);
+      const {text,truncated,empty}=await extractFileText(file);
+      setFileTexts(prev=>[...prev,{name:file.name,text,truncated,empty}]);
     }
   };
   const removePrepFile=(name)=>setFileTexts(prev=>prev.filter(f=>f.name!==name));
@@ -5010,8 +5038,8 @@ function StudlinPrep(){
                   // silently losing material a student already added.
                   setFileTexts(ex.sourceMaterials&&ex.sourceMaterials.length>0?ex.sourceMaterials:(ex.sourceMaterial?[{name:"From your syllabus",text:ex.sourceMaterial}]:[]));
                   setGenMsg("");
-                  setMaterialLinks(ex.referenceLinks&&ex.referenceLinks.length>0?ex.referenceLinks:(ex.referenceLink?[ex.referenceLink]:[]));
-                  setLinkDraft("");
+                  setMaterialLinks(ex.referenceLinks&&ex.referenceLinks.length>0?normalizeLinks(ex.referenceLinks):(ex.referenceLink?[{label:"",url:ex.referenceLink}]:[]));
+                  setLinkDraft("");setLinkLabelDraft("");
                   setPasteMode(false);setPasteText("");
                 }} style={{padding:"14px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,cursor:"pointer",display:"flex",alignItems:"center",gap:14}}>
                   <div style={{flex:1,minWidth:0}}>
@@ -5050,7 +5078,7 @@ function StudlinPrep(){
                 <div style={{marginBottom:14}}>
                   <textarea value={pasteText} onChange={e=>setPasteText(e.target.value)} placeholder="Paste your notes or material here" rows={6}
                     style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
-                  <Btn onClick={()=>{setFileTexts(prev=>[...prev,{name:"Pasted text",text:pasteText}]);setPasteText("");setPasteMode(false);}} disabled={!pasteText.trim()} style={{marginTop:10,width:"100%",justifyContent:"center",opacity:pasteText.trim()?1:0.45}}>Add pasted text</Btn>
+                  <Btn onClick={()=>{setFileTexts(prev=>[...prev,{name:"Pasted text",...finalizeExtractedText(pasteText)}]);setPasteText("");setPasteMode(false);}} disabled={!pasteText.trim()} style={{marginTop:10,width:"100%",justifyContent:"center",opacity:pasteText.trim()?1:0.45}}>Add pasted text</Btn>
                 </div>
               )}
               {matchingNotes.length>0&&(
@@ -5059,24 +5087,32 @@ function StudlinPrep(){
               {fileTexts.length>0&&(
                 <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:14}}>
                   {fileTexts.map(f=>(
-                    <div key={f.name} style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card2,borderRadius:8}}>
-                      <span style={{color:T.text}}>{f.name}</span>
-                      <button onClick={()=>removePrepFile(f.name)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1}}>×</button>
+                    <div key={f.name} style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card2,borderRadius:8,gap:8}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</div>
+                        {f.empty&&<div style={{fontSize:10,color:T.amber,marginTop:1}}>Couldn't find readable text in this one — try a different file</div>}
+                        {f.truncated&&!f.empty&&<div style={{fontSize:10,color:T.faint,marginTop:1}}>Trimmed — only the first part will be used</div>}
+                      </div>
+                      <button onClick={()=>removePrepFile(f.name)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0}}>×</button>
                     </div>
                   ))}
                 </div>
               )}
               <Field label="Reference links (optional)" hint="Saved for your own reference — Studlin doesn't read these, so they won't factor into flashcards or practice exams.">
                 <div style={{display:"flex",gap:8}}>
-                  <Input type="url" value={linkDraft} onChange={e=>setLinkDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();if(!linkDraft.trim())return;const next=[...materialLinks,linkDraft.trim()];setMaterialLinks(next);setLinkDraft("");lsSet("events",lsGet("events",[]).map(e=>e.id===selectedExam.id?{...e,referenceLinks:next}:e));}}}
-                    placeholder="https://quizlet.com/..." style={{flex:1}} />
-                  <BtnSm variant="subtle" disabled={!linkDraft.trim()} onClick={()=>{if(!linkDraft.trim())return;const next=[...materialLinks,linkDraft.trim()];setMaterialLinks(next);setLinkDraft("");lsSet("events",lsGet("events",[]).map(e=>e.id===selectedExam.id?{...e,referenceLinks:next}:e));}}>+ Add</BtnSm>
+                  <Input value={linkLabelDraft} onChange={e=>setLinkLabelDraft(e.target.value)} placeholder="Label (optional)" style={{width:110,flexShrink:0}} />
+                  <Input type="url" value={linkDraft} onChange={e=>setLinkDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();if(!linkDraft.trim())return;const next=[...materialLinks,{label:linkLabelDraft.trim(),url:linkDraft.trim()}];setMaterialLinks(next);setLinkDraft("");setLinkLabelDraft("");lsSet("events",lsGet("events",[]).map(e=>e.id===selectedExam.id?{...e,referenceLinks:next}:e));}}}
+                    placeholder="https://quizlet.com/..." style={{flex:1,minWidth:0}} />
+                  <BtnSm variant="subtle" disabled={!linkDraft.trim()} onClick={()=>{if(!linkDraft.trim())return;const next=[...materialLinks,{label:linkLabelDraft.trim(),url:linkDraft.trim()}];setMaterialLinks(next);setLinkDraft("");setLinkLabelDraft("");lsSet("events",lsGet("events",[]).map(e=>e.id===selectedExam.id?{...e,referenceLinks:next}:e));}}>+ Add</BtnSm>
                 </div>
                 {materialLinks.length>0&&(
                   <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:8}}>
                     {materialLinks.map((link,li)=>(
                       <div key={li} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,fontSize:12,padding:"7px 10px",background:T.card2,borderRadius:8}}>
-                        <a href={link} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{color:T.text,textDecoration:"underline",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{link}</a>
+                        <a href={link.url} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0,textDecoration:"underline"}}>
+                          {link.label&&<span style={{color:T.text,fontWeight:600}}>{link.label}: </span>}
+                          <span style={{color:link.label?T.muted:T.text}}>{link.url}</span>
+                        </a>
                         <button onClick={()=>{const next=materialLinks.filter((_,li2)=>li2!==li);setMaterialLinks(next);lsSet("events",lsGet("events",[]).map(e=>e.id===selectedExam.id?{...e,referenceLinks:next}:e));}} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0}}>×</button>
                       </div>
                     ))}
@@ -10678,7 +10714,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
           difficulty:typeof d.difficulty==="number"?Math.max(0,Math.min(1000,Math.round(d.difficulty))):500,
           phases:undefined,phasesLoading:false,
           outline:undefined,outlineLoading:false,
-          materialFiles:[],materialLinks:[],materialOpen:false,linkDraft:"",pasteMaterialMode:false,pasteMaterialText:"",
+          materialFiles:[],materialLinks:[],materialOpen:false,linkDraft:"",linkLabelDraft:"",pasteMaterialMode:false,pasteMaterialText:"",
         };
       }),
     });
@@ -10939,7 +10975,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
             const removeMeetingTime=(id)=>setMeetingTimes(mts=>mts.filter(x=>x.id!==id));
             const meetingItemsForBuilder=review.meetingTimes.map(mt=>({id:mt.id,title:review.subjectName||"Class",kind:"class",days:mt.days,startTime:mt.startTime,duration:mt.duration}));
             const setItem=(i,patch)=>setReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,...patch}:x)}));
-            const addManualItem=()=>setReview(r=>({...r,items:[...r.items,{id:"cd-manual-"+Date.now(),title:"",date:dayKey(),kind:"assignment",include:true,noDate:false,attackBlock:true,proposeSessions:false,sessionCount:4,detail:"",detailOpen:false,estimatedHours:null,difficulty:500,phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false,materialFiles:[],materialLinks:[],materialOpen:false,linkDraft:"",pasteMaterialMode:false,pasteMaterialText:""}]}));
+            const addManualItem=()=>setReview(r=>({...r,items:[...r.items,{id:"cd-manual-"+Date.now(),title:"",date:dayKey(),kind:"assignment",include:true,noDate:false,attackBlock:true,proposeSessions:false,sessionCount:4,detail:"",detailOpen:false,estimatedHours:null,difficulty:500,phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false,materialFiles:[],materialLinks:[],materialOpen:false,linkDraft:"",linkLabelDraft:"",pasteMaterialMode:false,pasteMaterialText:""}]}));
             const suggestPhasesForItem=async(itemId)=>{
               setReview(r=>r&&({...r,items:r.items.map(x=>x.id===itemId?{...x,phasesLoading:true}:x)}));
               const it=review.items.find(x=>x.id===itemId);
@@ -11033,18 +11069,18 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
             const handleMaterialFiles=async(itemId,fileList)=>{
               const files=Array.from(fileList||[]);
               for(const file of files){
-                const text=await extractFileText(file);
-                setReview(r=>r&&({...r,items:r.items.map(x=>x.id===itemId?{...x,materialFiles:[...x.materialFiles,{name:file.name,text}]}:x)}));
+                const {text,truncated,empty}=await extractFileText(file);
+                setReview(r=>r&&({...r,items:r.items.map(x=>x.id===itemId?{...x,materialFiles:[...x.materialFiles,{name:file.name,text,truncated,empty}]}:x)}));
               }
             };
             const addPastedMaterial=(itemId)=>setReview(r=>r&&({...r,items:r.items.map(x=>{
               if(x.id!==itemId||!x.pasteMaterialText.trim())return x;
               const n=x.materialFiles.length;
-              return {...x,materialFiles:[...x.materialFiles,{name:"Pasted text"+(n>0?" "+(n+1):""),text:x.pasteMaterialText}],pasteMaterialText:"",pasteMaterialMode:false};
+              return {...x,materialFiles:[...x.materialFiles,{name:"Pasted text"+(n>0?" "+(n+1):""),...finalizeExtractedText(x.pasteMaterialText)}],pasteMaterialText:"",pasteMaterialMode:false};
             })}));
             const addMaterialLink=(itemId)=>setReview(r=>r&&({...r,items:r.items.map(x=>{
               if(x.id!==itemId||!x.linkDraft.trim())return x;
-              return {...x,materialLinks:[...x.materialLinks,x.linkDraft.trim()],linkDraft:""};
+              return {...x,materialLinks:[...x.materialLinks,{label:x.linkLabelDraft.trim(),url:x.linkDraft.trim()}],linkDraft:"",linkLabelDraft:""};
             })}));
 
             if(reviewSub==="smarten")return(<>
@@ -11080,23 +11116,31 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
                         {it.materialFiles.length>0&&(
                           <div style={{display:"flex",flexDirection:"column",gap:6}}>
                             {it.materialFiles.map((f,fi)=>(
-                              <div key={fi} style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card,borderRadius:8}}>
-                                <span style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</span>
-                                <button onClick={()=>setItem(i,{materialFiles:it.materialFiles.filter((_,fi2)=>fi2!==fi)})} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0,marginLeft:8}}>×</button>
+                              <div key={fi} style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card,borderRadius:8,gap:8}}>
+                                <div style={{flex:1,minWidth:0}}>
+                                  <div style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</div>
+                                  {f.empty&&<div style={{fontSize:10,color:T.amber,marginTop:1}}>Couldn't find readable text in this one — try a different file</div>}
+                                  {f.truncated&&!f.empty&&<div style={{fontSize:10,color:T.faint,marginTop:1}}>Trimmed — only the first part will be used</div>}
+                                </div>
+                                <button onClick={()=>setItem(i,{materialFiles:it.materialFiles.filter((_,fi2)=>fi2!==fi)})} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0}}>×</button>
                               </div>
                             ))}
                           </div>
                         )}
                         <div style={{display:"flex",gap:8}}>
-                          <Input value={it.linkDraft} onChange={e=>setItem(i,{linkDraft:e.target.value})} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addMaterialLink(it.id);}}} placeholder="Link — flashcards, slides, anything" style={{flex:1}} />
-                          <button type="button" onClick={()=>addMaterialLink(it.id)} disabled={!it.linkDraft.trim()} style={{padding:"0 12px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:it.linkDraft.trim()?"pointer":"default",fontFamily:T.font,fontSize:12,opacity:it.linkDraft.trim()?1:0.45}}>+ Add</button>
+                          <Input value={it.linkLabelDraft} onChange={e=>setItem(i,{linkLabelDraft:e.target.value})} placeholder="Label (optional)" style={{width:110,flexShrink:0}} />
+                          <Input value={it.linkDraft} onChange={e=>setItem(i,{linkDraft:e.target.value})} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addMaterialLink(it.id);}}} placeholder="Link — flashcards, slides, anything" style={{flex:1,minWidth:0}} />
+                          <button type="button" onClick={()=>addMaterialLink(it.id)} disabled={!it.linkDraft.trim()} style={{padding:"0 12px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,cursor:it.linkDraft.trim()?"pointer":"default",fontFamily:T.font,fontSize:12,opacity:it.linkDraft.trim()?1:0.45,flexShrink:0}}>+ Add</button>
                         </div>
                         {it.materialLinks.length>0&&(
                           <div style={{display:"flex",flexDirection:"column",gap:6}}>
                             {it.materialLinks.map((link,li)=>(
-                              <div key={li} style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card,borderRadius:8}}>
-                                <span style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{link}</span>
-                                <button onClick={()=>setItem(i,{materialLinks:it.materialLinks.filter((_,li2)=>li2!==li)})} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0,marginLeft:8}}>×</button>
+                              <div key={li} style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card,borderRadius:8,gap:8}}>
+                                <div style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                                  {link.label&&<span style={{color:T.text,fontWeight:600}}>{link.label}: </span>}
+                                  <span style={{color:link.label?T.muted:T.text}}>{link.url}</span>
+                                </div>
+                                <button onClick={()=>setItem(i,{materialLinks:it.materialLinks.filter((_,li2)=>li2!==li)})} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0}}>×</button>
                               </div>
                             ))}
                           </div>

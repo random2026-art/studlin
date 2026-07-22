@@ -104,7 +104,7 @@ function loadStudlinModule(options) {
     "isReorderableTask","calculateTaskPriority","detectConflicts",
     "isLeadInFixed","commitSyllabusEvents","buildSyllabusEventBatch",
     "buildPendingSchedulePreview","proposeProjectPhases","proposeOutline",
-    "isPhaseDecompositionCandidate"];
+    "isPhaseDecompositionCandidate","finalizeExtractedText","MATERIAL_TEXT_CAP"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }

@@ -186,6 +186,32 @@ describe("advancedSchedulePlanner / todaysPlan (Today's Plan, regression: isFlex
   });
 });
 
+describe("finalizeExtractedText (study-material size cap + empty-file detection)", () => {
+  test("text under the cap passes through untouched", () => {
+    const { finalizeExtractedText } = loadStudlinModule();
+    const result = finalizeExtractedText("a normal amount of lecture notes");
+    assert.equal(result.text, "a normal amount of lecture notes");
+    assert.equal(result.truncated, false);
+    assert.equal(result.empty, false);
+  });
+
+  test("text over the cap is trimmed and flagged, regression: an unbounded upload must never reach the AI prompt whole", () => {
+    const { finalizeExtractedText, MATERIAL_TEXT_CAP } = loadStudlinModule();
+    const huge = "x".repeat(MATERIAL_TEXT_CAP + 5000);
+    const result = finalizeExtractedText(huge);
+    assert.equal(result.text.length, MATERIAL_TEXT_CAP);
+    assert.equal(result.truncated, true);
+  });
+
+  test("a blank or near-blank extraction (e.g. a scanned image-only PDF) is flagged empty", () => {
+    const { finalizeExtractedText } = loadStudlinModule();
+    assert.equal(finalizeExtractedText("").empty, true);
+    assert.equal(finalizeExtractedText("   \n\n  ").empty, true);
+    assert.equal(finalizeExtractedText("short").empty, true);
+    assert.equal(finalizeExtractedText("this is definitely long enough to count as real content").empty, false);
+  });
+});
+
 describe("buildSyllabusEventBatch / commitSyllabusEvents (Class Setup Wizard's event builder)", () => {
   function syllabusItem(overrides) {
     return {
@@ -229,13 +255,16 @@ describe("buildSyllabusEventBatch / commitSyllabusEvents (Class Setup Wizard's e
     const examItem = syllabusItem({
       kind: "exam", proposeSessions: false,
       materialFiles: [{ name: "notes.pdf", text: "my own pasted notes" }],
-      materialLinks: ["https://example.com/notes", "https://example.com/slides"],
+      materialLinks: [{ label: "Flashcards", url: "https://example.com/notes" }, { label: "", url: "https://example.com/slides" }],
     });
     const { markerEvents } = buildSyllabusEventBatch([], "wiz-3", "Chemistry", [examItem], "whole syllabus raw text", getWeeklyRoutine(), getSchedulePreferences());
     assert.equal(markerEvents[0].sourceMaterials.length, 2, "the whole-syllabus text plus the one explicit file");
     assert.equal(markerEvents[0].sourceMaterials[0].name, "From your syllabus");
     assert.equal(markerEvents[0].sourceMaterials[1].name, "notes.pdf");
-    assert.deepEqual([...markerEvents[0].referenceLinks], ["https://example.com/notes", "https://example.com/slides"]);
+    assert.equal(markerEvents[0].referenceLinks.length, 2);
+    assert.equal(markerEvents[0].referenceLinks[0].label, "Flashcards");
+    assert.equal(markerEvents[0].referenceLinks[0].url, "https://example.com/notes");
+    assert.equal(markerEvents[0].referenceLinks[1].url, "https://example.com/slides");
   });
 
   test("an exam with no explicit material still gets the class-level sourceMaterial as its one entry", () => {
