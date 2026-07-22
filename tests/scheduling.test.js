@@ -186,6 +186,108 @@ describe("advancedSchedulePlanner / todaysPlan (Today's Plan, regression: isFlex
   });
 });
 
+describe("buildSyllabusEventBatch / commitSyllabusEvents (Class Setup Wizard's event builder)", () => {
+  function syllabusItem(overrides) {
+    return {
+      title: "Problem Set 3", date: "2026-08-05", kind: "deadline", include: true,
+      attackBlock: true, proposeSessions: false, noDate: false, detail: "",
+      estimatedHours: 3, difficulty: 500, ...overrides,
+    };
+  }
+
+  test("a normal deadline item gets a marker and an Attack Block chain on an empty calendar", () => {
+    const { buildSyllabusEventBatch, getWeeklyRoutine, getSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const { markerEvents, attackEvents } = buildSyllabusEventBatch([], "wiz-1", "Chemistry", [syllabusItem()], null, getWeeklyRoutine(), getSchedulePreferences());
+    assert.equal(markerEvents.length, 1);
+    assert.equal(markerEvents[0].kind, "deadline");
+    assert.ok(attackEvents.length > 0, "an Attack Block chain should have been scheduled");
+  });
+
+  test("regression: a fully-packed calendar must not throw or double-book when no legal Attack Block slot exists", () => {
+    const { buildSyllabusEventBatch, getWeeklyRoutine, getSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    let existing = [];
+    for (let d = 0; d < 25; d++) {
+      const dt = new Date(); dt.setDate(dt.getDate() + d);
+      const dk = dt.toISOString().slice(0, 10);
+      for (let m = 0; m < 1440; m += 30) {
+        const hh = String(Math.floor(m / 60)).padStart(2, "0"), mm = String(m % 60).padStart(2, "0");
+        existing.push({ id: "pk-" + dk + "-" + m, date: dk, time: hh + ":" + mm, duration: 30, kind: "busy block", status: "pending" });
+      }
+    }
+    let result;
+    try {
+      result = buildSyllabusEventBatch(existing, "wiz-2", "Chemistry", [syllabusItem({ date: "2026-08-20" })], null, getWeeklyRoutine(), getSchedulePreferences());
+    } catch (e) {
+      assert.fail("threw: " + e.message);
+    }
+    assert.equal(result.markerEvents.length, 1, "the due-date fact itself must still exist");
+    assert.equal(result.attackEvents.length, 0, "no legal slot existed, so no session should have been fabricated");
+  });
+
+  test("an exam item's own sourceMaterial/referenceLink win over the class-level sourceMaterial fallback", () => {
+    const { buildSyllabusEventBatch, getWeeklyRoutine, getSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const examItem = syllabusItem({ kind: "exam", proposeSessions: false, sourceMaterial: "my own pasted notes", referenceLink: "https://example.com/notes" });
+    const { markerEvents } = buildSyllabusEventBatch([], "wiz-3", "Chemistry", [examItem], "whole syllabus raw text", getWeeklyRoutine(), getSchedulePreferences());
+    assert.equal(markerEvents[0].sourceMaterial, "my own pasted notes");
+    assert.equal(markerEvents[0].referenceLink, "https://example.com/notes");
+  });
+
+  test("commitSyllabusEvents (the real, persisting wrapper) still produces the same events buildSyllabusEventBatch would, and writes them to storage", () => {
+    const sandbox = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const { commitSyllabusEvents, lsGet } = sandbox;
+    const result = commitSyllabusEvents("wiz-4", "Chemistry", [syllabusItem()], null);
+    assert.equal(result.length, 2, "one marker + one Attack Block session");
+    const stored = lsGet("events", []);
+    assert.equal(stored.length, 2);
+  });
+});
+
+describe("buildPendingSchedulePreview (Class Setup Wizard's multi-class drill-down review)", () => {
+  function pendingClass(overrides) {
+    return {
+      id: "pend-1", name: "Chemistry", color: "#7BACDF", meetingTimes: [],
+      items: [{
+        id: "cd-1", title: "Midterm", date: "2026-08-10", kind: "exam",
+        include: true, noDate: false, proposeSessions: true, sessionCount: 2,
+        difficulty: 500,
+      }],
+      sourceText: "", ...overrides,
+    };
+  }
+
+  test("never touches real storage -- a pure preview, not a commit", () => {
+    const sandbox = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const { buildPendingSchedulePreview, getWeeklyRoutine, getSchedulePreferences, lsGet } = sandbox;
+    buildPendingSchedulePreview([pendingClass()], getWeeklyRoutine(), getSchedulePreferences());
+    assert.deepEqual(lsGet("events", []), []);
+  });
+
+  test("zips each item back up with its own marker and scheduled sessions", () => {
+    const { buildPendingSchedulePreview, getWeeklyRoutine, getSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const preview = buildPendingSchedulePreview([pendingClass()], getWeeklyRoutine(), getSchedulePreferences());
+    assert.equal(preview.length, 1);
+    assert.equal(preview[0].items.length, 1);
+    assert.equal(preview[0].items[0].item.title, "Midterm");
+    assert.ok(preview[0].items[0].sessions.length > 0, "exam sessions should have been placed");
+  });
+
+  test("a second pending class's preview sees the first class's sessions as already occupying time", () => {
+    const { buildPendingSchedulePreview, getWeeklyRoutine, getSchedulePreferences, setSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    // A narrow window so two same-day exam sessions genuinely can't both fit
+    // without the second class's preview seeing the first's already-placed load.
+    setSchedulePreferences({ workStartTime: "10:00", workEndTime: "10:45", weekendEnabled: false, weekendStartTime: "10:00", weekendEndTime: "18:00", peakHourBuckets: [] });
+    const classA = pendingClass({ id: "pend-a", name: "Chemistry", items: [{ id: "a1", title: "Exam A", date: "2026-08-10", kind: "exam", include: true, noDate: false, proposeSessions: true, sessionCount: 1, difficulty: 500 }] });
+    const classB = pendingClass({ id: "pend-b", name: "Physics", items: [{ id: "b1", title: "Exam B", date: "2026-08-10", kind: "exam", include: true, noDate: false, proposeSessions: true, sessionCount: 1, difficulty: 500 }] });
+    const preview = buildPendingSchedulePreview([classA, classB], getWeeklyRoutine(), getSchedulePreferences());
+    const sessionsA = preview[0].items[0].sessions;
+    const sessionsB = preview[1].items[0].sessions;
+    if (sessionsA.length > 0 && sessionsB.length > 0) {
+      const overlap = sessionsA.some((sa) => sessionsB.some((sb) => sa.date === sb.date && sa.time === sb.time));
+      assert.equal(overlap, false, "class B's preview must not land on top of class A's already-previewed session");
+    }
+  });
+});
+
 describe("computePausePlan (Studlin Reschedule)", () => {
   test("never moves a duration-less due-date marker's actual due date", () => {
     // computePausePlan reads events from localStorage directly, not a param.

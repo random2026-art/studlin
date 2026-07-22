@@ -102,7 +102,9 @@ function loadStudlinModule(options) {
     "findLaterTodaySlot","findNotTodaySlot",
     "advancedSchedulePlanner","todaysPlan","chunkTasksWithBreaks",
     "isReorderableTask","calculateTaskPriority","detectConflicts",
-    "isLeadInFixed"];
+    "isLeadInFixed","commitSyllabusEvents","buildSyllabusEventBatch",
+    "buildPendingSchedulePreview","proposeProjectPhases","proposeOutline",
+    "isPhaseDecompositionCandidate"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }

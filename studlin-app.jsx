@@ -569,16 +569,18 @@ const NumField = ({value,onChange,min,max,fallback,style,...rest}) => {
     />
   );
 };
-const SelectChip = ({options, value, onChange}) => (
-  <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+const SelectChip = ({options, value, onChange, size}) => (
+  <div style={{display:"flex",gap:size==="sm"?4:6,flexWrap:"wrap"}}>
     {options.map(o=>{
       const v = typeof o==="string"?o:o.value;
       const label = typeof o==="string"?o:o.label;
       const color = (typeof o==="object" && o.color) || null;
       const sel = value===v;
       return (
-        <button key={v} type="button" onClick={()=>onChange(v)} style={{padding:"7px 13px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${sel?T.lime+"66":T.border}`,background:sel?T.lime+"14":"transparent",color:sel?T.lime:T.muted,fontFamily:T.font,fontWeight:sel?600:400,display:"inline-flex",alignItems:"center",gap:6}}>
-          {color && <span style={{width:7,height:7,borderRadius:"50%",background:color}} />}
+        <button key={v} type="button" onClick={()=>onChange(v)} style={size==="sm"
+          ?{padding:"4px 9px",borderRadius:6,fontSize:10.5,cursor:"pointer",border:`1px solid ${sel?T.lime+"66":T.border}`,background:sel?T.lime+"14":"transparent",color:sel?T.lime:T.muted,fontFamily:T.font,fontWeight:sel?600:400,display:"inline-flex",alignItems:"center",gap:4}
+          :{padding:"7px 13px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${sel?T.lime+"66":T.border}`,background:sel?T.lime+"14":"transparent",color:sel?T.lime:T.muted,fontFamily:T.font,fontWeight:sel?600:400,display:"inline-flex",alignItems:"center",gap:6}}>
+          {color && <span style={{width:size==="sm"?6:7,height:size==="sm"?6:7,borderRadius:"50%",background:color}} />}
           {label}
         </button>
       );
@@ -2227,10 +2229,13 @@ const CLASS_SYLLABUS_JSON_CONTRACT=
   "Respond with ONLY valid JSON, no markdown fences, no commentary, in this exact shape: "+
   "{\"subject\":{\"name\":\"Biology 101\"},"+
   "\"meetingTimes\":[{\"days\":[0,2,4],\"startTime\":\"10:00\",\"duration\":50}],"+
-  "\"deadlines\":[{\"title\":\"Problem Set 3\",\"date\":\"2026-09-22\",\"kind\":\"deadline\",\"confidence\":\"high\",\"estimatedHours\":2}]}. "+
+  "\"deadlines\":[{\"title\":\"Problem Set 3\",\"date\":\"2026-09-22\",\"kind\":\"assignment\",\"confidence\":\"high\",\"estimatedHours\":2,\"difficulty\":450}]}. "+
   "\"subject.name\" is the class name as it would appear on a schedule (e.g. \"Biology 101\", \"AP English IV\") -- if genuinely not stated anywhere, use your best guess from context, never leave it blank. "+
   "\"meetingTimes\" is when the class actually meets each week -- \"days\" uses 0=Monday..6=Sunday, \"startTime\" is 24-hour \"HH:MM\", \"duration\" is minutes. Include one entry per distinct day/time pattern (e.g. a class meeting Mon/Wed/Fri at one time and Tue/Thu at another is two entries). Omit \"meetingTimes\" entirely (empty array) if no recurring meeting time is stated anywhere in the source. "+
-  "\"deadlines\" follows the same rules as before: \"title\" short, \"date\" YYYY-MM-DD (never omit even if uncertain), \"kind\" \"deadline\" or \"exam\", \"examWeight\" (\"quiz\" or \"major\", exams only), \"confidence\" (\"high\"/\"low\"), \"detail\" (optional, only when something concrete is stated), \"estimatedHours\" (deadlines only, best guess). "+
+  "\"deadlines\" follows the same rules as before, plus a third \"kind\": \"title\" short, \"date\" YYYY-MM-DD (never omit even if uncertain), "+
+  "\"kind\" is \"exam\" for quizzes/tests/midterms/finals, \"project\" for a genuinely multi-step, multi-week deliverable (a research paper, a term project, a presentation with real preparation involved -- not just a due date, an actual body of work), or \"assignment\" for everything else (problem sets, readings, short papers, labs, quick responses). "+
+  "\"examWeight\" (\"quiz\" or \"major\", exams only), \"confidence\" (\"high\"/\"low\"), \"detail\" (optional, only when something concrete is stated beyond the title), \"estimatedHours\" (assignment/project only, best guess of total hours a typical student needs), "+
+  "\"difficulty\" (your best guess of how mentally demanding this specific item is for a typical student, an integer 0-1000 where 500 is average -- base it on the title and detail, e.g. a short reading response is well below average, a proof-based problem set or a comprehensive final is well above). "+
   ANTI_GARBAGE_EXTRACTION_RULE+
   "If you find no deadlines at all, return an empty \"deadlines\" array -- never omit the key.";
 async function extractClassSyllabusText(text){
@@ -8057,13 +8062,18 @@ function planBrainDumpTasks(items,events,routines,prefs){
   return {tasks:[...studyTasks,...todoTasks,...eventTasks,...reminderTasks,...examTasks],unplaced};
 }
 
-// sourceMaterial is optional -- the raw scanned text (syllabus, notes),
-// when the caller has it -- attached to exam-kind markers only, so Studlin
-// Prep can pre-seed material for that exam instead of the student having to
-// re-upload the same content that was already just read once. Omit it and
-// nothing changes for any existing caller.
-function commitSyllabusEvents(noteId,tag,items,sourceMaterial){
-  const existing=lsGet("events",[]);
+// The pure core of commitSyllabusEvents (below) -- takes the "existing"
+// events array as a param and a routines/prefs pair instead of reading
+// lsGet/getWeeklyRoutine/getSchedulePreferences itself, and never calls
+// lsSet. Split out so the exact same marker/Attack-Block/exam-session
+// building logic can run in a preview (Class Setup's multi-class drill-down
+// review, threading one shadow `working` array across several classes) with
+// zero risk of it silently diverging from what a real commit actually does.
+// sourceMaterial (class-level) is a fallback; an item's own
+// sourceMaterial/referenceLink (set per-exam in the review screen) wins when
+// present, so a student's own pasted notes/link for one specific exam don't
+// get overwritten by the whole syllabus's raw text.
+function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routines,prefs){
   const today=dayKey();
   // One computation per item, reused by both the marker-building pass below
   // and the immediate-scheduling pass after it, so the two can never
@@ -8094,7 +8104,8 @@ function commitSyllabusEvents(noteId,tag,items,sourceMaterial){
         completedAt:null,
         noteId,
         checklist:true,
-        ...(it.kind==="exam"&&sourceMaterial?{sourceMaterial}:{}),
+        ...(it.kind==="exam"&&(it.sourceMaterial||sourceMaterial)?{sourceMaterial:it.sourceMaterial||sourceMaterial}:{}),
+        ...(it.kind==="exam"&&it.referenceLink?{referenceLink:it.referenceLink}:{}),
       };
     }
     const wantsAttack=it.kind==="deadline"&&it.attackBlock;
@@ -8140,7 +8151,8 @@ function commitSyllabusEvents(noteId,tag,items,sourceMaterial){
       // deadline marker's difficulty field is unused today, so it's left
       // alone rather than risk touching it.
       ...(it.kind==="exam"?{difficulty:it.difficulty??500}:{}),
-      ...(it.kind==="exam"&&sourceMaterial?{sourceMaterial}:{}),
+      ...(it.kind==="exam"&&(it.sourceMaterial||sourceMaterial)?{sourceMaterial:it.sourceMaterial||sourceMaterial}:{}),
+      ...(it.kind==="exam"&&it.referenceLink?{referenceLink:it.referenceLink}:{}),
     };
   });
   // Opted-in deadline items that are already close enough get a real Attack
@@ -8149,14 +8161,17 @@ function commitSyllabusEvents(noteId,tag,items,sourceMaterial){
   // scheduling. Anything further out stays prepPending (see above) instead
   // of scheduling now.
   let working=existing.concat(markerEvents);
-  const routines=getWeeklyRoutine();
-  const prefs=getSchedulePreferences();
   const attackEvents=[];
   items.forEach((it,i)=>{
     if(it.kind!=="deadline"||!it.attackBlock||it.noDate)return;
     const gate=gates[i];
     if(!gate||today<gate.startDate)return;
     const task=startPhaseAwareAttackChain({title:it.title,deadline:it.date,priority:5,difficulty:5,noteId,dueEventId:markerEvents[i].id},it.phases,working,routines,prefs,dayKey(),prefs.workStartTime);
+    // No legal slot exists for this item at all -- the marker fact still
+    // exists (pushed above), just without a scheduled session yet, same as
+    // any other "couldn't place it" outcome elsewhere in this file rather
+    // than silently double-booking or crashing.
+    if(!task)return;
     attackEvents.push(task);working=working.concat([task]);
   });
   // Opted-in exam items get real spaced study sessions counting down to
@@ -8167,8 +8182,48 @@ function commitSyllabusEvents(noteId,tag,items,sourceMaterial){
     const sessions=buildExamSessionEvents(it.title,it.date,tag,it.sessionCount||4,"examrev-"+noteId+"-"+i,working,routines,prefs,{noteId,dueEventId:markerEvents[i].id},it.difficulty);
     examSessionEvents=examSessionEvents.concat(sessions);working=working.concat(sessions);
   });
+  return {markerEvents,attackEvents,examSessionEvents};
+}
+// sourceMaterial is optional -- the raw scanned text (syllabus, notes),
+// when the caller has it -- attached to exam-kind markers only, so Studlin
+// Prep can pre-seed material for that exam instead of the student having to
+// re-upload the same content that was already just read once. Omit it and
+// nothing changes for any existing caller.
+function commitSyllabusEvents(noteId,tag,items,sourceMaterial){
+  const existing=lsGet("events",[]);
+  const routines=getWeeklyRoutine();
+  const prefs=getSchedulePreferences();
+  const {markerEvents,attackEvents,examSessionEvents}=buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routines,prefs);
   lsSet("events",existing.concat(markerEvents,attackEvents,examSessionEvents));
   return markerEvents.concat(attackEvents,examSessionEvents);
+}
+// Preview-only sibling of commitSyllabusEvents, for Class Setup Wizard's
+// multi-class drill-down review (before "Add to Calendar" has been pressed,
+// nothing here is real yet). Threads one shared `working` events array
+// across every pending class in the order they were added -- so class 2's
+// preview correctly sees class 1's sessions as already occupying time --
+// starting from whatever's genuinely already on the calendar. Never calls
+// lsSet; uses the exact same buildSyllabusEventBatch the real commit does,
+// so what a student sees here is never able to drift from what they'd
+// actually get.
+function buildPendingSchedulePreview(pendingClasses,routines,prefs){
+  const existing=lsGet("events",[]);
+  let working=existing;
+  return pendingClasses.map(cls=>{
+    const included=(cls.items||[]).filter(it=>it.include&&it.title&&it.title.trim());
+    const {markerEvents,attackEvents,examSessionEvents}=buildSyllabusEventBatch(working,"preview-"+cls.id,cls.name,included,null,routines,prefs);
+    working=working.concat(markerEvents,attackEvents,examSessionEvents);
+    // Zip each included item back up with its own marker + whatever got
+    // scheduled for it, keyed positionally (buildSyllabusEventBatch's own
+    // markerEvents preserve the same order as the `items` it was given) so
+    // the drill-down review never has to re-derive that matching itself.
+    const items=included.map((it,idx)=>{
+      const marker=markerEvents[idx];
+      const sessions=[...attackEvents,...examSessionEvents].filter(ev=>ev.dueEventId===marker.id);
+      return {item:it,marker,sessions};
+    });
+    return {classId:cls.id,items};
+  });
 }
 
 // How many of the student's existing study blocks now time-overlap the
@@ -10412,10 +10467,15 @@ const classSetupChoiceStyle={width:"100%",textAlign:"left",padding:"14px 16px",b
 // the caller (CalendarTab) re-syncs its own React state from localStorage
 // once onFinish fires, same as subjOnboardOpen's old "Save my classes" did.
 function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
-  const [step,setStep]=useState("status"); // status | classes | activities | window
+  const [step,setStep]=useState("status"); // status | classes | activities | window | finalReview
   const [status,setStatus]=useState(initialStatus||"");
-  const [classList,setClassList]=useState([]); // {id,label,color} added so far this session
+  // Classes fully reviewed this session, staged -- nothing in here touches
+  // the real calendar until "Add to Calendar" on the final review step.
+  // Each entry: {id,name,color,meetingTimes:[...],items:[...],sourceText}.
+  const [pendingClasses,setPendingClasses]=useState([]);
   const [addMode,setAddMode]=useState(null); // null (list) | choose | scan | review | hsSchedule | hsReview
+  const [reviewSub,setReviewSub]=useState("items"); // items | smarten | sessions -- sub-steps inside addMode==="review"
+  const [editingPendingId,setEditingPendingId]=useState(null); // set when the review screen is editing an already-staged class rather than building a new one
   const [scanning,setScanning]=useState(false);
   // Fallback for syllabi that don't extract cleanly from a file (a scanned
   // PDF, a Canvas page saved weird) -- paste the text directly instead.
@@ -10423,7 +10483,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
   const [pasteMode,setPasteMode]=useState(false);
   const [pasteText,setPasteText]=useState("");
   const [scanError,setScanError]=useState("");
-  const [review,setReview]=useState(null); // {subjectName,color,meetingTimes:[],deadlines:[]}
+  const [review,setReview]=useState(null); // {subjectName,color,meetingTimes:[],items:[],sourceText}
   const [hsReview,setHsReview]=useState(null); // [{id,subjectName,color,startTime,endTime,days}]
   const [justAdded,setJustAdded]=useState("");
   const fileInputRef=useRef(null);
@@ -10432,59 +10492,105 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
   const [workStart,setWorkStart]=useState("10:00");
   const [workEnd,setWorkEnd]=useState("18:00");
   const [peakBuckets,setPeakBuckets]=useState([]);
+  const [expandedClassId,setExpandedClassId]=useState(null); // final drill-down review: which class is expanded
+  const [expandedItemId,setExpandedItemId]=useState(null); // final drill-down review: which item within it is expanded
   const togglePeakBucket=(id)=>setPeakBuckets(prev=>prev.includes(id)?prev.filter(b=>b!==id):[...prev,id]);
+
+  const persistPending=(next)=>{setPendingClasses(next);lsSet("classSetupPending",next);};
 
   useEffect(()=>{
     if(!open)return;
     setStatus(initialStatus||"");
     setStep(quickScan?"classes":(initialStatus?"classes":"status"));
-    setClassList([]);
+    // A half-finished multi-class review (closed the wizard, refreshed the
+    // page, came back) is safely recoverable -- nothing in it was ever
+    // written to the real calendar, so there's no stale-real-state risk,
+    // only lost typing to avoid.
+    const saved=lsGet("classSetupPending",[]);
+    setPendingClasses(Array.isArray(saved)?saved:[]);
     setAddMode(quickScan?"scan":null);
+    setReviewSub("items");
+    setEditingPendingId(null);
     setScanError("");
     setPasteMode(false);
     setPasteText("");
     setReview(null);
     setHsReview(null);
     setActivities([]);
+    setExpandedClassId(null);
+    setExpandedItemId(null);
     const prefs=getSchedulePreferences();
     setWorkStart(prefs.workStartTime||"10:00");
     setWorkEnd(prefs.workEndTime||"18:00");
     setPeakBuckets(prefs.peakHourBuckets||[]);
   },[open]);
 
+  // What the final drill-down review actually shows -- threads one shared
+  // shadow events array across every staged class (see
+  // buildPendingSchedulePreview), so it can never disagree with what "Add
+  // to Calendar" is about to actually commit. Recomputed only when the
+  // staged classes themselves change, not on every render (a hook, so it
+  // has to run on every render regardless of `open`/step, same as any
+  // other hook in this component).
+  const finalPreview=useMemo(()=>buildPendingSchedulePreview(pendingClasses,getWeeklyRoutine(),getSchedulePreferences()),[pendingClasses]);
+
   if(!open)return null;
 
-  const nextColor=()=>SUBJECT_COLORS[classList.length%SUBJECT_COLORS.length];
+  const nextColor=()=>SUBJECT_COLORS[pendingClasses.length%SUBJECT_COLORS.length];
 
   const startManual=()=>{
-    setReview({subjectName:"",color:nextColor(),meetingTimes:[],deadlines:[],editingSubjId:null});
+    setReview({subjectName:"",color:nextColor(),meetingTimes:[],items:[],sourceText:""});
+    setEditingPendingId(null);
+    setReviewSub("items");
     setAddMode("review");
   };
 
-  // Double-click (or the pencil icon) on an already-added class in the list
-  // below reopens this same review screen pre-filled with its current name/
-  // color/meeting times -- the actual real-world need (a scan got a day or
-  // the class name slightly wrong) is a quick correction, not a full re-scan.
-  // Deliberately scoped to name/color/meeting-time: existing deadlines/exams/
-  // study sessions for this class are left completely alone (deadlines
-  // starts empty here, so anything added on this screen is purely new, never
-  // a destructive reconciliation against work that may already be underway).
-  const editAddedClass=(subj)=>{
-    const meetingTimes=getWeeklyRoutine().filter(r=>r.kind==="class"&&r.title===subj.label)
-      .map(r=>({id:r.id,days:r.days,startTime:r.startTime,duration:r.duration}));
-    setReview({subjectName:subj.label,color:subj.color,meetingTimes,deadlines:[],editingSubjId:subj.id});
+  // Double-click (or the pencil icon) on a class already staged this session
+  // reopens the review screen pre-filled with everything captured so far.
+  // Nothing here is real yet -- this just edits local draft state, no
+  // real-data reconciliation needed at all (contrast with editing a class
+  // from a previous, already-committed session, which isn't this screen).
+  const editPendingClass=(cls)=>{
+    setReview({subjectName:cls.name,color:cls.color,meetingTimes:cls.meetingTimes,items:cls.items,sourceText:cls.sourceText||""});
+    setEditingPendingId(cls.id);
+    setReviewSub("items");
     setAddMode("review");
   };
 
   const buildReviewFromExtraction=(result,sourceText)=>{
+    const today=dayKey();
     setReview({
       subjectName:(result.subject&&result.subject.name)||"",
       color:nextColor(),
       sourceText:sourceText||"",
-      editingSubjId:null,
       meetingTimes:(result.meetingTimes||[]).map((mt,i)=>({id:"mt-"+Date.now()+"-"+i,days:Array.isArray(mt.days)?mt.days:[],startTime:mt.startTime||"09:00",duration:mt.duration||50})),
-      deadlines:(result.deadlines||[]).map((d,i)=>({id:"cd-"+i,title:d.title||"Untitled",date:d.date||dayKey(),kind:d.kind==="exam"?"exam":"deadline",include:true,attackBlock:d.kind!=="exam",proposeSessions:d.kind==="exam",sessionCount:defaultSessionCountFor(d.examWeight),examWeight:d.examWeight,confidence:d.confidence,detail:d.detail,estimatedHours:d.estimatedHours,difficulty:500})),
+      items:(result.deadlines||[]).map((d,i)=>{
+        const kind=d.kind==="exam"?"exam":d.kind==="project"?"project":"assignment";
+        const isPast=!!d.date&&d.date<today;
+        return {
+          id:"cd-"+i,title:d.title||"Untitled",date:d.date||today,kind,
+          // A mid-semester scan surfaces work that's already done -- default
+          // those unchecked (still visible, freely re-checkable) instead of
+          // presenting a pile of finished work as if it were new.
+          include:!isPast,
+          noDate:false,
+          attackBlock:kind!=="exam",
+          proposeSessions:kind==="exam",
+          sessionCount:defaultSessionCountFor(d.examWeight),
+          examWeight:d.examWeight,
+          confidence:d.confidence,
+          detail:d.detail||"",
+          detailOpen:false,
+          estimatedHours:d.estimatedHours,
+          difficulty:typeof d.difficulty==="number"?Math.max(0,Math.min(1000,Math.round(d.difficulty))):500,
+          phases:undefined,phasesLoading:false,
+          outline:undefined,outlineLoading:false,
+          sourceMaterial:"",referenceLink:"",materialOpen:false,
+        };
+      }),
     });
+    setEditingPendingId(null);
+    setReviewSub("items");
     setAddMode("review");
   };
 
@@ -10553,51 +10659,20 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
     finally{setScanning(false);}
   };
 
-  const commitReviewedClass=()=>{
+  // "Done" on the review screen never touches the real calendar -- it just
+  // folds this class's reviewed items into the session's pending draft (a
+  // new class, or replacing the one being edited). Real persistence only
+  // ever happens once, in commitAllToCalendar below.
+  const finishReviewingClass=()=>{
     if(!review||!review.subjectName.trim())return;
     const name=review.subjectName.trim();
-    if(review.editingSubjId){
-      const oldSubj=getSubjects().find(s=>s.id===review.editingSubjId);
-      const oldLabel=oldSubj?oldSubj.label:name;
-      saveSubjects(getSubjects().map(s=>s.id===review.editingSubjId?{...s,label:name,color:review.color}:s));
-      // A rename has to cascade to everything that references the class by
-      // its label string (weekly routine rows, real calendar events) --
-      // there's no stable id link between those and the subject, so a typo
-      // fix here would otherwise silently orphan everything already
-      // scheduled under the old name.
-      if(oldLabel!==name){
-        saveWeeklyRoutine(getWeeklyRoutine().map(r=>r.title===oldLabel?{...r,title:name,subject:name}:r));
-        lsSet("events",lsGet("events",[]).map(e=>e.subject===oldLabel?{...e,subject:name}:e));
-      }
-      // Meeting times are fully replaced -- this screen is the source of
-      // truth for "when does this class meet," so a corrected or removed
-      // row shouldn't leave a stale one still blocking that time.
-      const routineItems=review.meetingTimes.filter(mt=>mt.days.length>0).map(mt=>({id:"rt-"+Date.now()+"-"+Math.round(Math.random()*1000),title:name,kind:"class",subject:name,days:mt.days,startTime:mt.startTime,duration:mt.duration}));
-      saveWeeklyRoutine([...getWeeklyRoutine().filter(r=>!(r.kind==="class"&&r.title===name)),...routineItems]);
-      // Purely additive -- review.deadlines starts empty on an edit (see
-      // editAddedClass), so anything here is new, never touching whatever
-      // was already scheduled/completed for this class.
-      const included=review.deadlines.filter(d=>d.include&&d.title.trim());
-      if(included.length>0)commitSyllabusEvents("wiz-"+review.editingSubjId+"-edit-"+Date.now(),name,included,review.sourceText);
-      setClassList(c=>c.map(s=>s.id===review.editingSubjId?{...s,label:name,color:review.color}:s));
-      setJustAdded("Updated "+name);
-      setTimeout(()=>setJustAdded(""),3000);
-      setReview(null);
-      setAddMode(null);
-      return;
-    }
-    const subj={id:"subj-"+Date.now()+"-"+Math.round(Math.random()*1000),label:name,color:review.color};
-    saveSubjects([...getSubjects(),subj]);
-    if(review.meetingTimes.length>0){
-      const routineItems=review.meetingTimes.filter(mt=>mt.days.length>0).map(mt=>({id:"rt-"+Date.now()+"-"+Math.round(Math.random()*1000),title:name,kind:"class",subject:name,days:mt.days,startTime:mt.startTime,duration:mt.duration}));
-      saveWeeklyRoutine([...getWeeklyRoutine(),...routineItems]);
-    }
-    const included=review.deadlines.filter(d=>d.include&&d.title.trim());
-    if(included.length>0)commitSyllabusEvents("wiz-"+subj.id,name,included,review.sourceText);
-    setClassList(c=>[...c,subj]);
-    setJustAdded(name);
+    const entry={id:editingPendingId||("pend-"+Date.now()+"-"+Math.round(Math.random()*1000)),name,color:review.color,meetingTimes:review.meetingTimes,items:review.items,sourceText:review.sourceText||""};
+    const next=editingPendingId?pendingClasses.map(c=>c.id===editingPendingId?entry:c):[...pendingClasses,entry];
+    persistPending(next);
+    setJustAdded(editingPendingId?("Updated "+name):name);
     setTimeout(()=>setJustAdded(""),3000);
     setReview(null);
+    setEditingPendingId(null);
     setAddMode(null);
   };
 
@@ -10611,31 +10686,48 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
       return {id:"rt-"+Date.now()+"-"+i,title:p.subjectName.trim(),kind:"class",subject:p.subjectName.trim(),days:p.days,startTime:p.startTime,duration:dur};
     });
     saveWeeklyRoutine([...getWeeklyRoutine(),...routineItems]);
-    setClassList(c=>[...c,...newSubjects]);
+    // Whole-schedule photo import has no deadlines to review, so there's
+    // nothing to stage -- it commits immediately, same as it always has.
     setJustAdded(valid.length+" classes");
     setTimeout(()=>setJustAdded(""),3000);
     setHsReview(null);
     setAddMode(null);
   };
 
-  const removeAddedClass=(subj)=>{
-    saveSubjects(getSubjects().filter(s=>s.id!==subj.id));
-    saveWeeklyRoutine(getWeeklyRoutine().filter(r=>!(r.kind==="class"&&r.title===subj.label)));
-    // noteId (not an id-prefix guess) is the reliable link back to
-    // everything commitSyllabusEvents created for this class -- markers,
-    // Attack Block chains, and exam-prep sessions all carry it, even though
-    // only markers' own ids literally start with "wiz-" (regression: the
-    // old id.startsWith("wiz-") check missed every derived event, silently
-    // leaving them behind with no class routine attached anymore).
-    lsSet("events",lsGet("events",[]).filter(e=>e.noteId!==("wiz-"+subj.id)));
-    setClassList(c=>c.filter(x=>x.id!==subj.id));
-  };
+  // Nothing here is real yet, so removing/editing a staged class is just
+  // local draft state -- no real-storage cleanup needed at all.
+  const removePendingClass=(id)=>persistPending(pendingClasses.filter(c=>c.id!==id));
 
   const windowInvalid=timeToMinutes(workEnd)<=timeToMinutes(workStart);
-  const finish=()=>{
-    if(windowInvalid)return;
+  // The one place anything from this wizard actually touches the real
+  // calendar: subjects + weekly routine rows for every staged class first
+  // (so every class exists before any class's events get built against
+  // them), then one commitSyllabusEvents call per class in order -- the
+  // exact same function a single immediate "Add this class" used to call,
+  // just invoked once per class in a loop instead of once per click. Each
+  // call still reads the real events array fresh via lsGet internally, so
+  // class 2's scheduling correctly sees class 1's just-committed sessions,
+  // same threading a single sequential commit always had.
+  const commitAllToCalendar=()=>{
+    if(windowInvalid||pendingClasses.length===0)return;
+    let subjects=getSubjects();
+    const withIds=pendingClasses.map(cls=>({...cls,subjId:"subj-"+Date.now()+"-"+Math.round(Math.random()*1000)+"-"+cls.id}));
+    let routine=getWeeklyRoutine();
+    withIds.forEach(cls=>{
+      subjects=[...subjects,{id:cls.subjId,label:cls.name,color:cls.color}];
+      const routineItems=(cls.meetingTimes||[]).filter(mt=>mt.days.length>0).map(mt=>({id:"rt-"+Date.now()+"-"+Math.round(Math.random()*1000),title:cls.name,kind:"class",subject:cls.name,days:mt.days,startTime:mt.startTime,duration:mt.duration}));
+      routine=[...routine,...routineItems];
+    });
+    saveSubjects(subjects);
+    saveWeeklyRoutine(routine);
+    withIds.forEach(cls=>{
+      const included=(cls.items||[]).filter(it=>it.include&&it.title.trim());
+      if(included.length>0)commitSyllabusEvents("wiz-"+cls.subjId,cls.name,included,cls.sourceText);
+    });
     if(activities.length>0)saveWeeklyRoutine([...getWeeklyRoutine(),...activities]);
     setSchedulePreferences({...getSchedulePreferences(),workStartTime:workStart,workEndTime:workEnd,peakHourBuckets:peakBuckets});
+    lsSet("classSetupPending",[]);
+    setPendingClasses([]);
     onFinish();
   };
 
@@ -10660,19 +10752,20 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
           </>)}
 
           {step==="classes"&&addMode===null&&(<>
-            <TitleSub title="Add your classes" sub="Scan a syllabus and Studlin fills in the class, its meeting time, and its deadlines. Or add one by hand. Double-click a class to edit it." />
-            {classList.length>0&&(
+            <TitleSub title="Add your classes" sub="Scan a syllabus and Studlin reads the class, its meeting time, and its assignments, exams, and projects. Nothing goes on your calendar until you review everything and hit Add to Calendar at the end. Double-click a class to edit it." />
+            {pendingClasses.length>0&&(
               <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:18}}>
-                {classList.map(s=>(
-                  <div key={s.id} onDoubleClick={()=>editAddedClass(s)} style={{...subjectRowStyle(s.color),cursor:"pointer"}}>
-                    <div style={{flex:1,fontSize:13,fontWeight:600,color:T.text}}>{s.label}</div>
-                    <button type="button" onClick={()=>editAddedClass(s)} title="Edit" style={{background:"none",border:"none",color:T.muted,cursor:"pointer",display:"flex",padding:"2px 6px"}}>{Icon.pen}</button>
-                    <button type="button" onClick={()=>removeAddedClass(s)} title="Remove" style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:"2px 6px"}}>×</button>
+                {pendingClasses.map(cls=>(
+                  <div key={cls.id} onDoubleClick={()=>editPendingClass(cls)} style={{...subjectRowStyle(cls.color),cursor:"pointer"}}>
+                    <div style={{flex:1,fontSize:13,fontWeight:600,color:T.text}}>{cls.name}</div>
+                    <span style={{fontSize:10,color:T.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.04em"}}>Staged</span>
+                    <button type="button" onClick={()=>editPendingClass(cls)} title="Edit" style={{background:"none",border:"none",color:T.muted,cursor:"pointer",display:"flex",padding:"2px 6px"}}>{Icon.pen}</button>
+                    <button type="button" onClick={()=>removePendingClass(cls.id)} title="Remove" style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:"2px 6px"}}>×</button>
                   </div>
                 ))}
               </div>
             )}
-            {justAdded&&<div style={{fontSize:12,color:T.lime,fontWeight:600,marginBottom:12}}>Added {justAdded}.</div>}
+            {justAdded&&<div style={{fontSize:12,color:T.lime,fontWeight:600,marginBottom:12}}>Staged {justAdded}.</div>}
             <button type="button" onClick={()=>setAddMode("choose")} style={{width:"100%",padding:"12px",borderRadius:10,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.text,cursor:"pointer",fontFamily:T.font,fontSize:13,fontWeight:600,marginBottom:20}}>+ Add a class</button>
           </>)}
 
@@ -10752,9 +10845,28 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
             const addMeetingTime=(item)=>setMeetingTimes(mts=>[...mts,{id:"mt-"+Date.now()+"-"+Math.random(),days:item.days,startTime:item.startTime,duration:item.duration}]);
             const removeMeetingTime=(id)=>setMeetingTimes(mts=>mts.filter(x=>x.id!==id));
             const meetingItemsForBuilder=review.meetingTimes.map(mt=>({id:mt.id,title:review.subjectName||"Class",kind:"class",days:mt.days,startTime:mt.startTime,duration:mt.duration}));
-            const setDeadline=(i,patch)=>setReview(r=>({...r,deadlines:r.deadlines.map((x,xi)=>xi===i?{...x,...patch}:x)}));
-            return (<>
-              <TitleSub title={review.editingSubjId?"Edit this class":"Review this class"} />
+            const setItem=(i,patch)=>setReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,...patch}:x)}));
+            const addManualItem=()=>setReview(r=>({...r,items:[...r.items,{id:"cd-manual-"+Date.now(),title:"",date:dayKey(),kind:"assignment",include:true,noDate:false,attackBlock:true,proposeSessions:false,sessionCount:4,detail:"",detailOpen:false,estimatedHours:null,difficulty:500,phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false,sourceMaterial:"",referenceLink:"",materialOpen:false}]}));
+            const suggestPhasesForItem=async(itemId)=>{
+              setReview(r=>r&&({...r,items:r.items.map(x=>x.id===itemId?{...x,phasesLoading:true}:x)}));
+              const it=review.items.find(x=>x.id===itemId);
+              if(!it)return;
+              const names=await proposeProjectPhases(it.title,it.detail||"",review.subjectName);
+              setReview(r=>r&&({...r,items:r.items.map(x=>x.id===itemId?{...x,phasesLoading:false,phases:names||[]}:x)}));
+            };
+            const suggestOutlineForItem=async(itemId)=>{
+              setReview(r=>r&&({...r,items:r.items.map(x=>x.id===itemId?{...x,outlineLoading:true}:x)}));
+              const it=review.items.find(x=>x.id===itemId);
+              if(!it)return;
+              const steps=await proposeOutline(it.title,it.detail||"",review.subjectName);
+              setReview(r=>r&&({...r,items:r.items.map(x=>x.id===itemId?{...x,outlineLoading:false,outline:steps||[]}:x)}));
+            };
+            const includedExamCount=review.items.filter(it=>it.include&&it.kind==="exam").length;
+            const cancelReview=()=>{setReview(null);setEditingPendingId(null);setReviewSub("items");setAddMode(null);};
+            const ITEM_KIND_OPTIONS=[{value:"assignment",label:"Assignment"},{value:"exam",label:"Exam"},{value:"project",label:"Project"}];
+
+            if(reviewSub==="items")return(<>
+              <TitleSub title={editingPendingId?"Edit this class":"Review this class"} sub="Check what Studlin found, fix anything wrong, and mark what each thing actually is." />
               <Field label="Class name">
                 <div style={{display:"flex",gap:10,alignItems:"center"}}>
                   <ColorSelect value={review.color} onChange={c=>setReview(r=>({...r,color:c}))} />
@@ -10767,60 +10879,159 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
                 <WizardCollegeBuilder items={meetingItemsForBuilder} addItem={addMeetingTime} removeItem={removeMeetingTime} defaultTitle={review.subjectName||"Class"} />
               </div>
               <div style={{marginBottom:8}}>
-                <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:2}}>Assignments &amp; exams</div>
+                <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:2}}>Assignments, exams &amp; projects</div>
                 <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>
-                  {review.editingSubjId?"Add anything new here — deadlines already on your calendar for this class aren't shown or touched by this screen.":(review.deadlines.length===0?"None found — add one if you know of any.":"AI dates are guesses. Check them before they're added.")}
+                  {review.items.length===0?"None found — add one if you know of any.":"AI dates and detail are guesses — check them. Anything already past its date is unchecked."}
                 </div>
                 <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                  {review.deadlines.map((it,i)=>(
+                  {review.items.map((it,i)=>(
                     <div key={it.id} style={{padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,background:it.include?T.card2:T.card,opacity:it.include?1:0.55}}>
                       <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
-                        <input type="checkbox" checked={it.include} onChange={()=>setDeadline(i,{include:!it.include})} style={{marginTop:9,cursor:"pointer"}} />
+                        <input type="checkbox" checked={it.include} onChange={()=>setItem(i,{include:!it.include})} style={{marginTop:9,cursor:"pointer"}} />
                         <div style={{flex:1}}>
                           <div style={{display:"flex",gap:8,marginBottom:6}}>
-                            <Input value={it.title} onChange={e=>setDeadline(i,{title:e.target.value})} style={{flex:1}} />
-                            {!it.noDate&&<Input type="date" value={it.date} onChange={e=>setDeadline(i,{date:e.target.value})} style={{width:140}} />}
+                            <Input value={it.title} onChange={e=>setItem(i,{title:e.target.value})} style={{flex:1}} />
+                            {!it.noDate&&<Input type="date" value={it.date} onChange={e=>setItem(i,{date:e.target.value})} style={{width:140}} />}
                           </div>
                           <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                            <SelectChip options={[{value:"deadline",label:"To-Do"},{value:"exam",label:"Exam"}]} value={it.kind} onChange={v=>setDeadline(i,{kind:v,attackBlock:v==="deadline",proposeSessions:v==="exam",sessionCount:it.sessionCount||defaultSessionCountFor()})} />
+                            <SelectChip size="sm" options={ITEM_KIND_OPTIONS} value={it.kind} onChange={v=>setItem(i,{kind:v,attackBlock:v!=="exam",proposeSessions:v==="exam",sessionCount:it.sessionCount||defaultSessionCountFor()})} />
                             {it.confidence==="low"&&!it.noDate&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>Double-check</span>}
                             <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:T.muted,cursor:"pointer"}}>
-                              <input type="checkbox" checked={!!it.noDate} onChange={()=>setDeadline(i,{noDate:!it.noDate})} />
+                              <input type="checkbox" checked={!!it.noDate} onChange={()=>setItem(i,{noDate:!it.noDate})} />
                               Don't know the date yet
                             </label>
-                            {!it.noDate&&it.kind==="deadline"&&(
-                              <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:T.muted,cursor:"pointer"}}>
-                                <input type="checkbox" checked={!!it.attackBlock} onChange={()=>setDeadline(i,{attackBlock:!it.attackBlock})} />
-                                Schedule an Attack Block
-                              </label>
-                            )}
-                            {!it.noDate&&it.kind==="exam"&&(
-                              <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:T.muted,cursor:"pointer"}}>
-                                <input type="checkbox" checked={!!it.proposeSessions} onChange={()=>setDeadline(i,{proposeSessions:!it.proposeSessions})} />
-                                Schedule study sessions
-                              </label>
-                            )}
                           </div>
                           {it.noDate&&(
                             <div style={{fontSize:11,color:T.muted,marginTop:6}}>Stays under this class in Your Classes until you set a date.</div>
                           )}
-                          {!it.noDate&&it.kind==="exam"&&it.proposeSessions&&(()=>{
-                            const dates=computeReviewDates(it.date,dayKey(),it.sessionCount||4);
-                            return (
-                              <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6}}>
-                                <NumField min={1} max={6} fallback={4} value={it.sessionCount||4} onChange={v=>setDeadline(i,{sessionCount:v})} style={{width:48}} />
-                                <span style={{fontSize:10.5,color:T.muted}}>{dates.length===0?"Too close to the exam to fit a session":dates.length+" session"+(dates.length!==1?"s":"")}</span>
-                              </div>
-                            );
-                          })()}
+                          <div style={{marginTop:6}}>
+                            {it.detailOpen?(
+                              <textarea value={it.detail} onChange={e=>setItem(i,{detail:e.target.value})} rows={2} placeholder="Anything specific the syllabus said about this..."
+                                style={{width:"100%",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 9px",color:T.text,fontSize:11.5,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
+                            ):(
+                              <button type="button" onClick={()=>setItem(i,{detailOpen:true})} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>
+                                {it.detail?"See detail":"+ Add detail"}
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
                   ))}
                 </div>
-                <button type="button" onClick={()=>setReview(r=>({...r,deadlines:[...r.deadlines,{id:"cd-manual-"+Date.now(),title:"",date:dayKey(),kind:"deadline",include:true,attackBlock:true,proposeSessions:false,sessionCount:4,difficulty:500}]}))} style={{marginTop:10,width:"100%",padding:"9px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12}}>+ Add a deadline manually</button>
+                <button type="button" onClick={addManualItem} style={{marginTop:10,width:"100%",padding:"9px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12}}>+ Add one manually</button>
               </div>
-              <button type="button" onClick={()=>{setReview(null);setAddMode(null);}} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:8}}>{review.editingSubjId?"← Cancel":"← Cancel, don't add this class"}</button>
+              <button type="button" onClick={cancelReview} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:8}}>{editingPendingId?"← Cancel":"← Cancel, don't stage this class"}</button>
+            </>);
+
+            if(reviewSub==="smarten")return(<>
+              <TitleSub title="Add study material? (optional)" sub="For any exam here — paste notes, a link to flashcards, anything you've got. Skip it if you're not ready or don't have it yet; you can always add it later in Studlin Prep." />
+              {includedExamCount===0?(
+                <div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"20px 0"}}>No exams in this class yet — nothing to add material for.</div>
+              ):review.items.map((it,i)=>{
+                if(!it.include||it.kind!=="exam")return null;
+                return (
+                  <div key={it.id} style={{padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,marginBottom:8}}>
+                    <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:6}}>{it.title||"Untitled exam"}</div>
+                    {it.materialOpen?(
+                      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                        <textarea value={it.sourceMaterial} onChange={e=>setItem(i,{sourceMaterial:e.target.value})} rows={3} placeholder="Paste notes here..."
+                          style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 9px",color:T.text,fontSize:12,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
+                        <Input value={it.referenceLink} onChange={e=>setItem(i,{referenceLink:e.target.value})} placeholder="Link — flashcards, slides, anything" />
+                        <div style={{fontSize:10.5,color:T.faint}}>You can also add or change this later in Studlin Prep.</div>
+                      </div>
+                    ):(
+                      <button type="button" onClick={()=>setItem(i,{materialOpen:true})} style={{background:"none",border:`1px dashed ${T.borderHover}`,borderRadius:6,color:T.muted,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:"5px 10px"}}>+ Add study material</button>
+                    )}
+                  </div>
+                );
+              })}
+              <button type="button" onClick={()=>setReviewSub("items")} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0,marginTop:4}}>← Back</button>
+            </>);
+
+            if(reviewSub==="sessions")return(<>
+              <TitleSub title="Sessions & outlines" sub="Exams get spaced study sessions counting down to the date. Projects can be broken into phases. Edit anything, including duration and difficulty." />
+              {review.items.filter(it=>it.include&&!it.noDate).length===0?(
+                <div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"20px 0"}}>Nothing dated to plan yet.</div>
+              ):review.items.map((it,i)=>{
+                if(!it.include||it.noDate)return null;
+                const showPhases=it.kind==="project"||isPhaseDecompositionCandidate(it.estimatedHours,it.date,dayKey());
+                return (
+                  <div key={it.id} style={{padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,marginBottom:8}}>
+                    <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:8}}>{it.title||"Untitled"}</div>
+                    {it.kind==="exam"?(<>
+                      <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,color:T.muted,cursor:"pointer",marginBottom:6}}>
+                        <input type="checkbox" checked={!!it.proposeSessions} onChange={()=>setItem(i,{proposeSessions:!it.proposeSessions})} />
+                        Schedule study sessions
+                      </label>
+                      {it.proposeSessions&&(()=>{
+                        const dates=computeReviewDates(it.date,dayKey(),it.sessionCount||4);
+                        return (
+                          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                            <NumField min={1} max={6} fallback={4} value={it.sessionCount||4} onChange={v=>setItem(i,{sessionCount:v})} style={{width:48}} />
+                            <span style={{fontSize:10.5,color:T.muted}}>{dates.length===0?"Too close to the exam to fit a session":dates.length+" session"+(dates.length!==1?"s":"")+": "+dates.join(", ")}</span>
+                          </div>
+                        );
+                      })()}
+                    </>):(
+                      <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,color:T.muted,cursor:"pointer",marginBottom:6}}>
+                        <input type="checkbox" checked={!!it.attackBlock} onChange={()=>setItem(i,{attackBlock:!it.attackBlock})} />
+                        Schedule an Attack Block
+                      </label>
+                    )}
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:showPhases&&(it.kind==="exam"||it.attackBlock)?8:0}}>
+                      <span style={{fontSize:10.5,color:T.muted}}>Easy</span>
+                      <input type="range" min={0} max={1000} value={it.difficulty??500} onChange={e=>setItem(i,{difficulty:+e.target.value})} style={{flex:1,accentColor:T.lime,height:5,borderRadius:3,cursor:"pointer"}} />
+                      <span style={{fontSize:10.5,color:T.muted}}>Hard</span>
+                    </div>
+                    {it.kind!=="exam"&&it.attackBlock&&showPhases&&(<>
+                      <div style={{marginTop:8}}>
+                        {it.phases===undefined?(
+                          <button type="button" disabled={!!it.phasesLoading} onClick={()=>suggestPhasesForItem(it.id)} style={{background:"none",border:`1px dashed ${T.borderHover}`,borderRadius:6,color:T.muted,fontSize:11,fontFamily:T.font,cursor:it.phasesLoading?"default":"pointer",padding:"5px 10px",opacity:it.phasesLoading?0.6:1}}>
+                            {it.phasesLoading?"Thinking through phases…":"This looks big. Break it into phases?"}
+                          </button>
+                        ):it.phases.length===0?(
+                          <div style={{fontSize:11,color:T.muted}}>Not enough detail here to break into phases. Add detail on the previous step, or leave it as one Attack Block.</div>
+                        ):(
+                          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                            <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Phases: only the first gets scheduled now</div>
+                            {it.phases.map((ph,pi)=>(
+                              <div key={pi} style={{display:"flex",alignItems:"center",gap:6}}>
+                                <span style={{fontSize:10,color:T.faint,width:14,flexShrink:0,fontFamily:T.mono}}>{pi+1}</span>
+                                <Input value={ph} onChange={e=>setItem(i,{phases:it.phases.map((p,ppi)=>ppi===pi?e.target.value:p)})} style={{flex:1,fontSize:12,padding:"5px 8px"}} />
+                                <button type="button" onClick={()=>setItem(i,{phases:it.phases.filter((_,ppi)=>ppi!==pi)})} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,lineHeight:1,padding:2,flexShrink:0}}>×</button>
+                              </div>
+                            ))}
+                            <button type="button" onClick={()=>setItem(i,{phases:[...it.phases,""]})} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add phase</button>
+                          </div>
+                        )}
+                      </div>
+                      <div style={{marginTop:8}}>
+                        {it.outline===undefined?(
+                          <button type="button" disabled={!!it.outlineLoading} onClick={()=>suggestOutlineForItem(it.id)} style={{background:"none",border:`1px dashed ${T.borderHover}`,borderRadius:6,color:T.muted,fontSize:11,fontFamily:T.font,cursor:it.outlineLoading?"default":"pointer",padding:"5px 10px",opacity:it.outlineLoading?0.6:1}}>
+                            {it.outlineLoading?"Drafting a checklist…":"Add a step-by-step checklist?"}
+                          </button>
+                        ):it.outline.length===0?(
+                          <div style={{fontSize:11,color:T.muted}}>Not enough detail here for a checklist. Add detail on the previous step, or skip it.</div>
+                        ):(
+                          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                            <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Checklist</div>
+                            {it.outline.map((s,si)=>(
+                              <div key={si} style={{display:"flex",alignItems:"center",gap:6}}>
+                                <span style={{fontSize:10,color:T.faint,width:14,flexShrink:0,fontFamily:T.mono}}>{si+1}</span>
+                                <Input value={s} onChange={e=>setItem(i,{outline:it.outline.map((step,ssi)=>ssi===si?e.target.value:step)})} style={{flex:1,fontSize:12,padding:"5px 8px"}} />
+                                <button type="button" onClick={()=>setItem(i,{outline:it.outline.filter((_,ssi)=>ssi!==si)})} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,lineHeight:1,padding:2,flexShrink:0}}>×</button>
+                              </div>
+                            ))}
+                            <button type="button" onClick={()=>setItem(i,{outline:[...it.outline,""]})} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add step</button>
+                          </div>
+                        )}
+                      </div>
+                    </>)}
+                  </div>
+                );
+              })}
+              <button type="button" onClick={()=>setReviewSub(includedExamCount>0?"smarten":"items")} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0,marginTop:4}}>← Back</button>
             </>);
           })()}
 
@@ -10851,23 +11062,110 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
             </div>
           </>)}
 
+          {step==="finalReview"&&(()=>{
+            const patchPendingItem=(clsId,itemId,patch)=>persistPending(pendingClasses.map(c=>c.id!==clsId?c:{...c,items:c.items.map(it=>it.id!==itemId?it:{...it,...patch})}));
+            const removePendingItem=(clsId,itemId)=>persistPending(pendingClasses.map(c=>c.id!==clsId?c:{...c,items:c.items.filter(it=>it.id!==itemId)}));
+            const KIND_LABELS={assignment:"Assignments",exam:"Exams",project:"Projects"};
+            return (<>
+              <TitleSub title="Review everything before it goes on your calendar" sub="Click a class to see what's in it. Click an assignment, exam, or project for exactly when it's scheduled — edit, remove, or add more before you commit." />
+              {pendingClasses.length===0?(
+                <div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"24px 0"}}>No classes staged yet — go back and add one.</div>
+              ):pendingClasses.map(cls=>{
+                const clsPreview=finalPreview.find(p=>p.classId===cls.id);
+                const included=cls.items.filter(it=>it.include);
+                const byKind={assignment:included.filter(it=>it.kind==="assignment"),exam:included.filter(it=>it.kind==="exam"),project:included.filter(it=>it.kind==="project")};
+                const expanded=expandedClassId===cls.id;
+                return (
+                  <div key={cls.id} style={{marginBottom:10,borderRadius:12,border:`1px solid ${T.border}`,overflow:"hidden"}}>
+                    <div onClick={()=>{setExpandedClassId(expanded?null:cls.id);setExpandedItemId(null);}} style={{...subjectRowStyle(cls.color),cursor:"pointer",borderRadius:0}}>
+                      <div style={{flex:1,fontSize:13,fontWeight:600,color:T.text}}>{cls.name}</div>
+                      <div style={{fontSize:10.5,color:T.muted,whiteSpace:"nowrap"}}>{included.length} item{included.length!==1?"s":""}</div>
+                      <span style={{color:T.muted,display:"flex",transform:expanded?"rotate(180deg)":"none",transition:"transform 0.15s"}}>{Icon.chevDown}</span>
+                    </div>
+                    {expanded&&(
+                      <div style={{padding:"10px 14px",background:T.card}}>
+                        {included.length===0&&<div style={{fontSize:12,color:T.muted,padding:"8px 0"}}>Nothing checked in for this class.</div>}
+                        {["assignment","exam","project"].map(kind=>byKind[kind].length>0&&(
+                          <div key={kind} style={{marginBottom:10}}>
+                            <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>{KIND_LABELS[kind]}</div>
+                            {byKind[kind].map(it=>{
+                              const pv=clsPreview&&clsPreview.items.find(x=>x.item.id===it.id);
+                              const itemExpanded=expandedItemId===it.id;
+                              return (
+                                <div key={it.id} style={{borderRadius:8,border:`1px solid ${T.border}`,marginBottom:6,overflow:"hidden"}}>
+                                  <div onClick={()=>setExpandedItemId(itemExpanded?null:it.id)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",cursor:"pointer",background:T.card2}}>
+                                    <div style={{flex:1,fontSize:12,color:T.text,fontWeight:500}}>{it.title||"Untitled"}</div>
+                                    <span style={{fontSize:10.5,color:T.faint,fontFamily:T.mono}}>{it.noDate?"no date":it.date}</span>
+                                    <button type="button" onClick={e=>{e.stopPropagation();removePendingItem(cls.id,it.id);}} title="Remove" style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,padding:"0 2px"}}>×</button>
+                                  </div>
+                                  {itemExpanded&&(
+                                    <div style={{padding:"8px 10px",fontSize:11.5,color:T.muted,lineHeight:1.5}}>
+                                      {it.kind==="exam"&&(
+                                        it.proposeSessions?(
+                                          !pv||pv.sessions.length===0
+                                            ?<div>No open slot found for any session yet.</div>
+                                            :<div style={{display:"flex",flexDirection:"column",gap:3}}>
+                                                <div style={{fontWeight:600,color:T.text}}>Study sessions</div>
+                                                {pv.sessions.map((s,si)=><div key={si}>{s.date} · {fmtClock12(s.time)} · {s.duration}min</div>)}
+                                              </div>
+                                        ):<div>No study sessions scheduled for this exam.</div>
+                                      )}
+                                      {it.kind!=="exam"&&(
+                                        !it.attackBlock?<div>No Attack Block for this one.</div>
+                                        :!pv||pv.sessions.length===0?<div>No open slot found before the deadline — add it manually after committing.</div>
+                                        :(<div style={{display:"flex",flexDirection:"column",gap:3}}>
+                                            <div style={{fontWeight:600,color:T.text}}>{it.kind==="project"?"See plan":"First session"}</div>
+                                            <div>{pv.sessions[0].date} · {fmtClock12(pv.sessions[0].time)} · {pv.sessions[0].duration}min{it.phases&&it.phases.length>0?" — "+(it.phases[0]||"Phase 1"):""}</div>
+                                            {it.phases&&it.phases.length>1&&(
+                                              <div style={{marginTop:4}}>
+                                                <div style={{fontSize:10.5,color:T.faint,fontStyle:"italic"}}>Later phases schedule themselves once the one before finishes, not guessed dates up front:</div>
+                                                {it.phases.slice(1).map((ph,pi)=><div key={pi} style={{marginLeft:8}}>· {ph}</div>)}
+                                              </div>
+                                            )}
+                                          </div>)
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              <button type="button" onClick={()=>setStep("window")} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0,marginTop:8}}>← Back</button>
+            </>);
+          })()}
+
         </div>
 
         <div style={{padding:"18px 32px",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
           <button type="button" onClick={onSkip} style={{fontSize:12.5,color:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>Skip all</button>
           <div style={{display:"flex",gap:10}}>
             {step==="classes"&&addMode===null&&(
-              <Btn onClick={()=>quickScan?finish():setStep("activities")}>{classList.length>0?"Done adding classes":"Skip, I'll add classes later"}</Btn>
+              <Btn onClick={()=>quickScan?setStep("finalReview"):setStep("activities")}>{pendingClasses.length>0?"Done adding classes":"Skip, I'll add classes later"}</Btn>
             )}
-            {step==="classes"&&addMode==="review"&&(
-              <Btn onClick={commitReviewedClass} disabled={!review.subjectName.trim()} style={{opacity:review.subjectName.trim()?1:0.45}}>{review.editingSubjId?"Save changes":"Add this class"}</Btn>
+            {step==="classes"&&addMode==="review"&&reviewSub==="items"&&(
+              <Btn onClick={()=>setReviewSub(review.items.filter(it=>it.include&&it.kind==="exam").length>0?"smarten":"sessions")} disabled={!review.subjectName.trim()} style={{opacity:review.subjectName.trim()?1:0.45}}>Continue</Btn>
+            )}
+            {step==="classes"&&addMode==="review"&&reviewSub==="smarten"&&(
+              <Btn onClick={()=>setReviewSub("sessions")}>Continue</Btn>
+            )}
+            {step==="classes"&&addMode==="review"&&reviewSub==="sessions"&&(
+              <Btn onClick={finishReviewingClass}>{editingPendingId?"Save changes":"Done"}</Btn>
             )}
             {step==="activities"&&(<>
               <Btn variant="subtle" onClick={()=>setStep("window")}>Skip</Btn>
               <Btn onClick={()=>setStep("window")}>Continue</Btn>
             </>)}
             {step==="window"&&(
-              <Btn onClick={finish} disabled={windowInvalid} style={{opacity:windowInvalid?0.45:1}}>Finish</Btn>
+              <Btn onClick={()=>setStep("finalReview")} disabled={windowInvalid} style={{opacity:windowInvalid?0.45:1}}>Continue</Btn>
+            )}
+            {step==="finalReview"&&(
+              <Btn onClick={commitAllToCalendar} disabled={pendingClasses.length===0} style={{opacity:pendingClasses.length===0?0.45:1}}>Add to Calendar</Btn>
             )}
           </div>
         </div>
