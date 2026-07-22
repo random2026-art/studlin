@@ -63,6 +63,129 @@ describe("rebalanceDay", () => {
   });
 });
 
+describe("chunkTasksWithBreaks (Today's Plan chunking, regression: was dead code -- isFlexible was read but never set anywhere)", () => {
+  test("a >90min task splits into 45-min chunks + 15-min breaks anchored at its own committed time", () => {
+    const { chunkTasksWithBreaks } = loadStudlinModule();
+    const task = realTask({ id: "long-1", time: "10:00", duration: 120 });
+    const rows = chunkTasksWithBreaks([task]);
+    const chunks = rows.filter((r) => r.isChunk);
+    const breaks = rows.filter((r) => r.isBreak);
+    assert.equal(chunks.length, 3);
+    assert.equal(breaks.length, 2);
+    assert.equal(chunks[0].time, "10:00");
+    assert.equal(chunks[0].duration, 45);
+    assert.equal(breaks[0].time, "10:45");
+    assert.equal(chunks[1].time, "11:00");
+    assert.equal(chunks[1].duration, 45);
+    assert.equal(breaks[1].time, "11:45");
+    assert.equal(chunks[2].time, "12:00");
+    assert.equal(chunks[2].duration, 30);
+  });
+
+  test("only the first chunk keeps the real event id -- later chunks/breaks never point at a real events[] entry", () => {
+    const { chunkTasksWithBreaks } = loadStudlinModule();
+    const task = realTask({ id: "long-1", time: "10:00", duration: 120 });
+    const rows = chunkTasksWithBreaks([task]);
+    const chunks = rows.filter((r) => r.isChunk);
+    assert.equal(chunks[0].id, "long-1");
+    assert.notEqual(chunks[1].id, "long-1");
+    assert.notEqual(chunks[2].id, "long-1");
+  });
+
+  test("every chunk carries the real session's full duration separately from its own slice (regression: Reschedule must search for room for the whole session, not just one 45-min piece)", () => {
+    const { chunkTasksWithBreaks } = loadStudlinModule();
+    const task = realTask({ id: "long-1", time: "10:00", duration: 120 });
+    const rows = chunkTasksWithBreaks([task]);
+    const chunks = rows.filter((r) => r.isChunk);
+    assert.equal(chunks[0].duration, 45, "the chunk's own slice length");
+    assert.equal(chunks[0].fullDuration, 120, "the real session's total length, for Reschedule");
+  });
+
+  test("a task with no anchor time is left unchunked -- there's nothing to anchor sub-times to", () => {
+    const { chunkTasksWithBreaks } = loadStudlinModule();
+    const task = realTask({ id: "no-time", time: "", duration: 120 });
+    const rows = chunkTasksWithBreaks([task]);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].id, "no-time");
+  });
+
+  test("a <=90min task is left as a single row", () => {
+    const { chunkTasksWithBreaks } = loadStudlinModule();
+    const task = realTask({ id: "short-1", time: "10:00", duration: 90 });
+    const rows = chunkTasksWithBreaks([task]);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].id, "short-1");
+  });
+});
+
+describe("advancedSchedulePlanner / todaysPlan (Today's Plan, regression: isFlexible was dead code)", () => {
+  test("a real >90min study block's chunks stay anchored at its own committed time -- Today's Plan can never disagree with Calendar", () => {
+    const { advancedSchedulePlanner } = loadStudlinModule({ now: "2026-07-20T08:00:00" });
+    const block = realTask({ id: "real-block", time: "14:00", duration: 120 });
+    const plan = advancedSchedulePlanner([block]);
+    const primary = plan.find((t) => t.id === "real-block");
+    assert.ok(primary, "the primary (first-chunk) row should keep the real event id");
+    assert.equal(primary.time, "14:00", "a real committed time must never be re-derived");
+    const continuation = plan.filter((t) => t.parentId === "real-block" && t.id !== "real-block");
+    assert.ok(continuation.length > 0, "a >90min block should still get chunked for display");
+  });
+
+  test("a fixed-kind block (busy block/class/exam/reminder) is never chunked even if long", () => {
+    const { advancedSchedulePlanner } = loadStudlinModule({ now: "2026-07-20T08:00:00" });
+    const busy = realTask({ id: "busy-1", kind: "busy block", time: "09:00", duration: 180 });
+    const plan = advancedSchedulePlanner([busy]);
+    assert.equal(plan.length, 1);
+    assert.equal(plan[0].id, "busy-1");
+    assert.equal(plan[0].time, "09:00");
+    assert.equal(plan[0].duration, 180);
+  });
+
+  test("a userPinned study block is treated as fixed -- never chunked or reordered", () => {
+    const { advancedSchedulePlanner } = loadStudlinModule({ now: "2026-07-20T08:00:00" });
+    const pinned = realTask({ id: "pinned-1", time: "13:00", duration: 150, userPinned: true });
+    const plan = advancedSchedulePlanner([pinned]);
+    assert.equal(plan.length, 1);
+    assert.equal(plan[0].id, "pinned-1");
+    assert.equal(plan[0].time, "13:00");
+  });
+
+  test("a done study block is never chunked", () => {
+    const { advancedSchedulePlanner } = loadStudlinModule({ now: "2026-07-20T08:00:00" });
+    const done = realTask({ id: "done-1", time: "13:00", duration: 150, status: "done" });
+    const plan = advancedSchedulePlanner([done]);
+    assert.equal(plan.length, 1);
+    assert.equal(plan[0].done, true);
+  });
+
+  test("when two timeless due-today items compete for one slot, the higher-priority one gets placed", () => {
+    const { advancedSchedulePlanner, setSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T08:00:00" });
+    setSchedulePreferences({ ...DEFAULT_PREFS, workStartTime: "10:00", workEndTime: "14:00" });
+    const highPri = dueDateMarker({ id: "high-pri", time: "", kind: "study block", duration: 200, priority: 900 });
+    const lowPri = dueDateMarker({ id: "low-pri", time: "", kind: "study block", duration: 200, priority: 100 });
+    const plan = advancedSchedulePlanner([highPri, lowPri]);
+    const placedHigh = plan.find((t) => t.id === "high-pri" || t.parentId === "high-pri");
+    const placedLow = plan.find((t) => t.id === "low-pri" || t.parentId === "low-pri");
+    assert.ok(placedHigh && placedHigh.time, "the higher-priority item should win the only slot that fits");
+    assert.ok(!placedLow || !placedLow.time, "the lower-priority item should be left unplaced, not silently overlapped");
+  });
+
+  test("the returned plan is sorted by actual start time regardless of hard/flexible origin", () => {
+    const { advancedSchedulePlanner } = loadStudlinModule({ now: "2026-07-20T08:00:00" });
+    const lateFixed = realTask({ id: "late-fixed", kind: "busy block", time: "16:00", duration: 30 });
+    const earlyFlexible = realTask({ id: "early-flex", time: "09:30", duration: 30 });
+    const plan = advancedSchedulePlanner([lateFixed, earlyFlexible]);
+    const times = plan.filter((t) => t.time).map((t) => t.time);
+    // Arrays built inside the sandboxed vm context aren't deepEqual-identical
+    // to native-realm arrays even with matching contents (see the identical
+    // note on computeReviewOffsets' tests above) -- comparing pairwise via
+    // .length/indexing sidesteps that entirely.
+    for (let i = 1; i < times.length; i++) {
+      assert.ok(times[i - 1] <= times[i], `expected ${times[i - 1]} to sort before ${times[i]}`);
+    }
+    assert.equal(plan[0].id, "early-flex");
+  });
+});
+
 describe("computePausePlan (Studlin Reschedule)", () => {
   test("never moves a duration-less due-date marker's actual due date", () => {
     // computePausePlan reads events from localStorage directly, not a param.

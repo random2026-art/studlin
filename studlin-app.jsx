@@ -1377,6 +1377,16 @@ function isCoopStudySession(ev){return !!(ev&&ev.studySessionId);}
 // buffer there but not in findOpenSlotFor/findLegalSlotOrNull/dayHasRoomFor/
 // computeOccupiedIntervals, silently disagreeing about the same slot.
 function isLeadInFixed(e){return TIER0_FIXED_KINDS.has(e.kind)||isCoopStudySession(e);}
+// Canonical "is this task eligible to be reshuffled/reordered" check --
+// shared by rebalanceDay (real calendar reshuffling) and Today's Plan
+// (display-only reordering/chunking) so the two can never define
+// "flexible" two different ways. Deliberately doesn't check e.time/e.duration
+// itself -- rebalanceDay needs those as extra constraints of its own,
+// Today's Plan needs to also catch genuinely timeless due-today markers,
+// so each caller layers its own on top of this shared core.
+function isReorderableTask(e){
+  return !isLeadInFixed(e)&&!e.checklist&&e.status!=="done"&&!e.userPinned;
+}
 function isTier0Missed(ev,todayKey){
   if(ev.status!=="pending")return false;
   if(ev.checklist)return false;
@@ -3175,7 +3185,11 @@ function rebalanceDay(dateKey,allEvents,routines,prefs){
   // 60-min footprint at the front of the day, potentially displacing real
   // study blocks. Same "no duration = fact, not a task" rule as isDuePill
   // in WeeklyPlanner and isTier0Missed's implicit same-day-deadline guard.
-  const isFlexPending=function(e){return e.date===dateKey&&!isFixed(e)&&!e.checklist&&e.status!=="done"&&e.time&&e.duration&&!e.userPinned;};
+  // Fixed/checklist/done/pinned exclusions now live in the shared
+  // isReorderableTask (also used by Today's Plan) -- this layers on the
+  // two constraints specific to an actual reshuffle: must be today, and
+  // must already be a real, duration-bearing work block.
+  const isFlexPending=function(e){return e.date===dateKey&&e.time&&e.duration&&isReorderableTask(e);};
 
   const flex=allEvents.filter(isFlexPending);
   if(flex.length===0)return allEvents;
@@ -3595,11 +3609,18 @@ function calculateTaskPriority(task,allTasks){
   return Math.min(1000,Math.max(0,score));
 }
 
-// Feature 4: Duration-aware chunking & auto-inject breaks
+// Feature 4: Duration-aware chunking & auto-inject breaks -- splits a task
+// longer than 90min into 45-min chunks + 15-min breaks, purely for Today's
+// Plan's display. Only ever called on tasks that already have a real,
+// committed `.time` (either a real calendar event's own time, or a slot
+// Today's Plan itself just found for a genuinely timeless item) -- there's
+// no anchor to chunk from otherwise, and this never changes what's
+// actually on the calendar, only how one long sitting is broken up on
+// screen.
 function chunkTasksWithBreaks(tasks){
   const chunked=[];
   tasks.forEach(task=>{
-    if(!task.isFlexible||(task.duration||0)<=90){
+    if((task.duration||0)<=90||!task.time){
       chunked.push(task);
       return;
     }
@@ -3610,25 +3631,43 @@ function chunkTasksWithBreaks(tasks){
     // the remainder into the last chunk instead of spawning a tiny extra
     // one when it'd be under a 20-min floor.
     if(chunks>1&&dur-((chunks-1)*45)<20)chunks-=1;
+    let cursorMins=timeToMinutes(task.time);
     for(let i=0;i<chunks;i++){
       const chunkDur=i<chunks-1?45:dur-(45*(chunks-1));
       chunked.push({
         ...task,
-        id:task.id+"-chunk-"+i,
+        // Only the first chunk keeps the real event id -- Today's Plan's
+        // checkbox and Reschedule button both key off a real events[] id
+        // matching, and later chunks/breaks are display-only continuations
+        // of the same real session, never independently actionable (see
+        // Dashboard's row render, which gates on chunkIndex).
+        id:i===0?task.id:task.id+"-chunk-"+i,
         title:task.title+(chunks>1?` (Part ${i+1}/${chunks})`:""),
+        time:minutesToTime(cursorMins),
         duration:chunkDur,
+        // The real session's own full duration, separate from this one
+        // chunk's 45-min slice -- Reschedule (only ever offered on chunk 0)
+        // needs to search for room for the WHOLE session, not just its
+        // first piece, or it could suggest a day that only actually has
+        // room for 45 minutes of it.
+        fullDuration:dur,
         parentId:task.id,
         isChunk:true,
+        chunkIndex:i,
       });
+      cursorMins+=chunkDur;
       if(i<chunks-1){
         chunked.push({
           id:"break-"+task.id+"-"+i,
           title:"Break",
+          time:minutesToTime(cursorMins),
           duration:15,
           isBreak:true,
           subject:"Rest",
           priority:1,
+          status:task.status,
         });
+        cursorMins+=15;
       }
     }
   });
@@ -3667,15 +3706,21 @@ function advancedSchedulePlanner(baseEvents){
   const workStart=Math.max(todayWindow.start,nowFloorMins);
   const workEnd=todayWindow.end;
 
-  // Separate hard events (fixed time) and flexible tasks
-  const hardEvents=events.filter(e=>!e.isFlexible&&e.time);
-  const flexibleTasks=events.filter(e=>e.isFlexible||!e.time).sort((a,b)=>calculateTaskPriority(b,events)-calculateTaskPriority(a,events));
-
-  // Chunk long flexible tasks and add breaks
-  const flexibleChunked=chunkTasksWithBreaks(flexibleTasks);
-
-  // Sort hard events by time
-  hardEvents.sort((a,b)=>(a.time||"")<(b.time||"")?-1:1);
+  // Separate hard (fixed/pinned/done, never reordered) from flexible --
+  // isReorderableTask is the exact same predicate rebalanceDay uses for the
+  // real calendar, so Today's Plan can never disagree with an actual
+  // reshuffle about what counts as flexible.
+  const hardEvents=events.filter(e=>e.time&&!isReorderableTask(e));
+  // A flexible task that already has a real committed time (an Attack
+  // Block session, exam-prep session, manual/AI-arranged block) keeps that
+  // exact time -- this never runs it back through the slot scanner, so
+  // Today's Plan can never show a different time than the real Calendar
+  // for the same event. Only a genuinely timeless due-today item (nothing
+  // scheduled for it yet) goes through the scan below, and only those
+  // compete against each other on priority for the scarce slots it finds.
+  const flexibleTimed=events.filter(e=>e.time&&isReorderableTask(e));
+  const flexibleTimeless=events.filter(e=>!e.time&&isReorderableTask(e))
+    .sort((a,b)=>calculateTaskPriority(b,events)-calculateTaskPriority(a,events));
 
   // Weekly Routine occurrences for today are absolute shields, folded into
   // occupiedSlots right alongside real hard events. "Free period" occurrences
@@ -3684,24 +3729,20 @@ function advancedSchedulePlanner(baseEvents){
   const shieldOccurrences=routineToday.filter(r=>r.kind!=="free period");
   const freeWindows=routineToday.filter(r=>r.kind==="free period").map(r=>({start:timeToMinutes(r.time),end:timeToMinutes(r.time)+(r.duration||30)}));
 
-  const scheduled=[];
+  // Seeded with everything that already has a real, fixed span -- hard
+  // events AND already-timed flexible tasks both have to block a timeless
+  // item from landing on top of them.
   const occupiedSlots=[
-    ...hardEvents.map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30),event:e})),
-    ...shieldOccurrences.map(r=>({start:timeToMinutes(r.time),end:timeToMinutes(r.time)+(r.duration||30),event:r})),
+    ...hardEvents.map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)})),
+    ...flexibleTimed.map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)})),
+    ...shieldOccurrences.map(r=>({start:timeToMinutes(r.time),end:timeToMinutes(r.time)+(r.duration||30)})),
   ];
 
-  // Place hard events
-  hardEvents.forEach(e=>{
-    scheduled.push({...e,done:e.status==="done",scheduled:true});
-  });
-
-  // Place flexible tasks in available windows
-  flexibleChunked.forEach(task=>{
-    if(task.isBreak){
-      scheduled.push(task);
-      return;
-    }
-
+  // Place genuinely timeless flexible tasks into whatever room is left,
+  // highest-priority first.
+  const placedTimeless=[];
+  const unplacedTimeless=[];
+  flexibleTimeless.forEach(task=>{
     const dur=task.duration||30;
     let placed=false;
 
@@ -3713,8 +3754,8 @@ function advancedSchedulePlanner(baseEvents){
         const wStart=Math.max(w.start,nowFloorMins);
         for(let timeSlot=wStart;timeSlot+dur<=w.end&&!placed;timeSlot+=15){
           if(!detectConflicts(task,occupiedSlots,timeSlot)){
-            occupiedSlots.push({start:timeSlot,end:timeSlot+dur,task:task});
-            scheduled.push({...task,time:minutesToTime(timeSlot),done:task.status==="done",scheduled:true});
+            occupiedSlots.push({start:timeSlot,end:timeSlot+dur});
+            placedTimeless.push({...task,time:minutesToTime(timeSlot)});
             placed=true;
           }
         }
@@ -3726,13 +3767,8 @@ function advancedSchedulePlanner(baseEvents){
     if(!placed){
       for(let timeSlot=workStart;timeSlot+dur<=workEnd;timeSlot+=15){
         if(!detectConflicts(task,occupiedSlots,timeSlot)){
-          occupiedSlots.push({start:timeSlot,end:timeSlot+dur,task:task});
-          scheduled.push({
-            ...task,
-            time:minutesToTime(timeSlot),
-            done:task.status==="done",
-            scheduled:true,
-          });
+          occupiedSlots.push({start:timeSlot,end:timeSlot+dur});
+          placedTimeless.push({...task,time:minutesToTime(timeSlot)});
           placed=true;
           break;
         }
@@ -3740,16 +3776,30 @@ function advancedSchedulePlanner(baseEvents){
     }
 
     if(!placed){
-      scheduled.push({
-        ...task,
-        done:task.status==="done",
-        scheduled:false,
-        reason:"No available window within preferred hours",
-      });
+      unplacedTimeless.push({...task,reason:"No available window within preferred hours"});
     }
   });
 
-  return scheduled;
+  // Every task with a real placement time -- hard events untouched, real
+  // flexible sessions at their own committed time, timeless ones at
+  // whatever slot was just found -- is eligible for chunking: a long
+  // single sitting gets split into 45-min pieces with breaks purely for
+  // display, never touching the real calendar event or its committed time.
+  const chunked=chunkTasksWithBreaks([...flexibleTimed,...placedTimeless]);
+
+  // Merge everything and sort by actual start time. Previously hard events
+  // were pushed first and flexible ones appended after with no real sort --
+  // that only ever looked right because the flexible bucket was always
+  // empty (isFlexible was never set anywhere). Anything with no time (a
+  // task that genuinely couldn't be placed anywhere today) sorts last.
+  return [...hardEvents,...chunked,...unplacedTimeless]
+    .map(t=>({...t,done:t.status==="done",scheduled:!!t.time}))
+    .sort((a,b)=>{
+      if(!a.time&&!b.time)return 0;
+      if(!a.time)return 1;
+      if(!b.time)return -1;
+      return a.time<b.time?-1:a.time>b.time?1:0;
+    });
 }
 
 function todaysPlan(){
@@ -15592,7 +15642,13 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   const lvl=levelInfo();
   const [,forcePlan]=useState(0);
   const plan=todaysPlan();
-  const planDoneCount=plan.filter(t=>t.done).length;
+  // A single real session can now expand into several display rows (see
+  // chunkTasksWithBreaks) -- "X/Y done" should still mean "X of Y real
+  // sessions," not "X of Y rows," so only count each session's primary row
+  // (never a break, never a continuation chunk past the first).
+  const isPlanPrimaryRow=t=>!t.isBreak&&!(t.isChunk&&t.chunkIndex>0);
+  const planCountable=plan.filter(isPlanPrimaryRow);
+  const planDoneCount=planCountable.filter(t=>t.done).length;
   const subjColor={Chemistry:T.red,"English IV":T.purple,Biology:T.teal,Calculus:T.blue,Spanish:T.amber,History:T.muted};
   const scOf=(s)=>subjColor[s]||T.lime;
   const fmtClock=(t)=>{if(!t)return"";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+ap;};
@@ -15971,11 +16027,11 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8,flexWrap:"wrap"}}>
             <span style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:T.text}}>Today's plan</span>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.1em",padding:"4px 9px",borderRadius:99,background:T.card2,color:T.muted,fontWeight:600}}>{planDoneCount} / {plan.length} DONE</span>
+              <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.1em",padding:"4px 9px",borderRadius:99,background:T.card2,color:T.muted,fontWeight:600}}>{planDoneCount} / {planCountable.length} DONE</span>
               <button onClick={()=>setActive("calendar")} style={{fontSize:12,color:T.muted,display:"inline-flex",alignItems:"center",gap:3,cursor:"pointer",background:"none",border:"none",fontFamily:T.font,fontWeight:500}}>Calendar <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
             </div>
           </div>
-          {plan.length>0&&<div style={{height:3,background:T.card2,borderRadius:99,marginBottom:14,overflow:"hidden"}}><div style={{height:"100%",width:Math.round(planDoneCount/Math.max(plan.length,1)*100)+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}} /></div>}
+          {plan.length>0&&<div style={{height:3,background:T.card2,borderRadius:99,marginBottom:14,overflow:"hidden"}}><div style={{height:"100%",width:Math.round(planDoneCount/Math.max(planCountable.length,1)*100)+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}} /></div>}
           {plan.length===0
             ?<div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 8px",textAlign:"center"}}>
               <div style={{fontSize:13,color:T.muted,marginBottom:18,lineHeight:1.6}}>Nothing scheduled for today. Add events to your calendar and they appear here automatically.</div>
@@ -15986,6 +16042,21 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
             </div>
             :plan.map((t)=>{
               const c=scOf(t.subject);
+              // A chunk past the first, or a "Break" row, is a display-only
+              // continuation of the real session above it -- its id doesn't
+              // point at a real events[] entry (see chunkTasksWithBreaks),
+              // so it renders as a plain, non-clickable sub-row instead of
+              // reusing the checkbox/Reschedule affordances that need a
+              // real id to act on.
+              if(!isPlanPrimaryRow(t)){
+                return(
+                  <div key={t.id} style={{display:"flex",alignItems:"center",gap:12,padding:"7px 14px 7px 34px",marginBottom:8,opacity:0.55}}>
+                    <span style={{fontSize:12,color:t.done?T.faint:T.muted,textDecoration:t.done?"line-through":"none",fontStyle:t.isBreak?"italic":"normal"}}>{t.title}</span>
+                    <span style={{flex:1}} />
+                    <span style={{fontFamily:T.mono,fontSize:10,color:T.faint}}>{fmtClock(t.time)}</span>
+                  </div>
+                );
+              }
               return(
                 <div key={t.id} onClick={()=>{if(t.done)uncrossEventDone(t.id);else markEventDone(t.id);forcePlan(x=>x+1);}} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer",background:T.card2}}>
                   <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${t.done?T.text:T.border}`,background:t.done?T.text:"transparent",flex:"none",display:"grid",placeItems:"center"}}>
@@ -15997,7 +16068,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                   </div>
                   <span style={{fontFamily:T.mono,fontSize:10,color:T.faint}}>{fmtClock(t.time)}</span>
                   {!t.done&&t.duration&&(t.kind==="study block"||t.kind==="deadline")&&(
-                    <button onClick={(e)=>{e.stopPropagation();setRescheduleTask(t);}} style={{flexShrink:0,padding:"3px 7px",borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Reschedule</button>
+                    <button onClick={(e)=>{e.stopPropagation();setRescheduleTask(t.isChunk?{...t,duration:t.fullDuration}:t);}} style={{flexShrink:0,padding:"3px 7px",borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Reschedule</button>
                   )}
                 </div>
               );
