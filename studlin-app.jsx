@@ -10457,7 +10457,22 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
   const nextColor=()=>SUBJECT_COLORS[classList.length%SUBJECT_COLORS.length];
 
   const startManual=()=>{
-    setReview({subjectName:"",color:nextColor(),meetingTimes:[],deadlines:[]});
+    setReview({subjectName:"",color:nextColor(),meetingTimes:[],deadlines:[],editingSubjId:null});
+    setAddMode("review");
+  };
+
+  // Double-click (or the pencil icon) on an already-added class in the list
+  // below reopens this same review screen pre-filled with its current name/
+  // color/meeting times -- the actual real-world need (a scan got a day or
+  // the class name slightly wrong) is a quick correction, not a full re-scan.
+  // Deliberately scoped to name/color/meeting-time: existing deadlines/exams/
+  // study sessions for this class are left completely alone (deadlines
+  // starts empty here, so anything added on this screen is purely new, never
+  // a destructive reconciliation against work that may already be underway).
+  const editAddedClass=(subj)=>{
+    const meetingTimes=getWeeklyRoutine().filter(r=>r.kind==="class"&&r.title===subj.label)
+      .map(r=>({id:r.id,days:r.days,startTime:r.startTime,duration:r.duration}));
+    setReview({subjectName:subj.label,color:subj.color,meetingTimes,deadlines:[],editingSubjId:subj.id});
     setAddMode("review");
   };
 
@@ -10466,6 +10481,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
       subjectName:(result.subject&&result.subject.name)||"",
       color:nextColor(),
       sourceText:sourceText||"",
+      editingSubjId:null,
       meetingTimes:(result.meetingTimes||[]).map((mt,i)=>({id:"mt-"+Date.now()+"-"+i,days:Array.isArray(mt.days)?mt.days:[],startTime:mt.startTime||"09:00",duration:mt.duration||50})),
       deadlines:(result.deadlines||[]).map((d,i)=>({id:"cd-"+i,title:d.title||"Untitled",date:d.date||dayKey(),kind:d.kind==="exam"?"exam":"deadline",include:true,attackBlock:d.kind!=="exam",proposeSessions:d.kind==="exam",sessionCount:defaultSessionCountFor(d.examWeight),examWeight:d.examWeight,confidence:d.confidence,detail:d.detail,estimatedHours:d.estimatedHours,difficulty:500})),
     });
@@ -10540,6 +10556,36 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
   const commitReviewedClass=()=>{
     if(!review||!review.subjectName.trim())return;
     const name=review.subjectName.trim();
+    if(review.editingSubjId){
+      const oldSubj=getSubjects().find(s=>s.id===review.editingSubjId);
+      const oldLabel=oldSubj?oldSubj.label:name;
+      saveSubjects(getSubjects().map(s=>s.id===review.editingSubjId?{...s,label:name,color:review.color}:s));
+      // A rename has to cascade to everything that references the class by
+      // its label string (weekly routine rows, real calendar events) --
+      // there's no stable id link between those and the subject, so a typo
+      // fix here would otherwise silently orphan everything already
+      // scheduled under the old name.
+      if(oldLabel!==name){
+        saveWeeklyRoutine(getWeeklyRoutine().map(r=>r.title===oldLabel?{...r,title:name,subject:name}:r));
+        lsSet("events",lsGet("events",[]).map(e=>e.subject===oldLabel?{...e,subject:name}:e));
+      }
+      // Meeting times are fully replaced -- this screen is the source of
+      // truth for "when does this class meet," so a corrected or removed
+      // row shouldn't leave a stale one still blocking that time.
+      const routineItems=review.meetingTimes.filter(mt=>mt.days.length>0).map(mt=>({id:"rt-"+Date.now()+"-"+Math.round(Math.random()*1000),title:name,kind:"class",subject:name,days:mt.days,startTime:mt.startTime,duration:mt.duration}));
+      saveWeeklyRoutine([...getWeeklyRoutine().filter(r=>!(r.kind==="class"&&r.title===name)),...routineItems]);
+      // Purely additive -- review.deadlines starts empty on an edit (see
+      // editAddedClass), so anything here is new, never touching whatever
+      // was already scheduled/completed for this class.
+      const included=review.deadlines.filter(d=>d.include&&d.title.trim());
+      if(included.length>0)commitSyllabusEvents("wiz-"+review.editingSubjId+"-edit-"+Date.now(),name,included,review.sourceText);
+      setClassList(c=>c.map(s=>s.id===review.editingSubjId?{...s,label:name,color:review.color}:s));
+      setJustAdded("Updated "+name);
+      setTimeout(()=>setJustAdded(""),3000);
+      setReview(null);
+      setAddMode(null);
+      return;
+    }
     const subj={id:"subj-"+Date.now()+"-"+Math.round(Math.random()*1000),label:name,color:review.color};
     saveSubjects([...getSubjects(),subj]);
     if(review.meetingTimes.length>0){
@@ -10575,7 +10621,13 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
   const removeAddedClass=(subj)=>{
     saveSubjects(getSubjects().filter(s=>s.id!==subj.id));
     saveWeeklyRoutine(getWeeklyRoutine().filter(r=>!(r.kind==="class"&&r.title===subj.label)));
-    lsSet("events",lsGet("events",[]).filter(e=>!(e.subject===subj.label&&e.id.startsWith("wiz-"))));
+    // noteId (not an id-prefix guess) is the reliable link back to
+    // everything commitSyllabusEvents created for this class -- markers,
+    // Attack Block chains, and exam-prep sessions all carry it, even though
+    // only markers' own ids literally start with "wiz-" (regression: the
+    // old id.startsWith("wiz-") check missed every derived event, silently
+    // leaving them behind with no class routine attached anymore).
+    lsSet("events",lsGet("events",[]).filter(e=>e.noteId!==("wiz-"+subj.id)));
     setClassList(c=>c.filter(x=>x.id!==subj.id));
   };
 
@@ -10608,13 +10660,14 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
           </>)}
 
           {step==="classes"&&addMode===null&&(<>
-            <TitleSub title="Add your classes" sub="Scan a syllabus and Studlin fills in the class, its meeting time, and its deadlines. Or add one by hand." />
+            <TitleSub title="Add your classes" sub="Scan a syllabus and Studlin fills in the class, its meeting time, and its deadlines. Or add one by hand. Double-click a class to edit it." />
             {classList.length>0&&(
               <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:18}}>
                 {classList.map(s=>(
-                  <div key={s.id} style={subjectRowStyle(s.color)}>
+                  <div key={s.id} onDoubleClick={()=>editAddedClass(s)} style={{...subjectRowStyle(s.color),cursor:"pointer"}}>
                     <div style={{flex:1,fontSize:13,fontWeight:600,color:T.text}}>{s.label}</div>
-                    <button type="button" onClick={()=>removeAddedClass(s)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:"2px 6px"}}>×</button>
+                    <button type="button" onClick={()=>editAddedClass(s)} title="Edit" style={{background:"none",border:"none",color:T.muted,cursor:"pointer",display:"flex",padding:"2px 6px"}}>{Icon.pen}</button>
+                    <button type="button" onClick={()=>removeAddedClass(s)} title="Remove" style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:"2px 6px"}}>×</button>
                   </div>
                 ))}
               </div>
@@ -10701,7 +10754,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
             const meetingItemsForBuilder=review.meetingTimes.map(mt=>({id:mt.id,title:review.subjectName||"Class",kind:"class",days:mt.days,startTime:mt.startTime,duration:mt.duration}));
             const setDeadline=(i,patch)=>setReview(r=>({...r,deadlines:r.deadlines.map((x,xi)=>xi===i?{...x,...patch}:x)}));
             return (<>
-              <TitleSub title="Review this class" />
+              <TitleSub title={review.editingSubjId?"Edit this class":"Review this class"} />
               <Field label="Class name">
                 <div style={{display:"flex",gap:10,alignItems:"center"}}>
                   <ColorSelect value={review.color} onChange={c=>setReview(r=>({...r,color:c}))} />
@@ -10715,7 +10768,9 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
               </div>
               <div style={{marginBottom:8}}>
                 <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:2}}>Assignments &amp; exams</div>
-                <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>{review.deadlines.length===0?"None found — add one if you know of any.":"AI dates are guesses. Check them before they're added."}</div>
+                <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>
+                  {review.editingSubjId?"Add anything new here — deadlines already on your calendar for this class aren't shown or touched by this screen.":(review.deadlines.length===0?"None found — add one if you know of any.":"AI dates are guesses. Check them before they're added.")}
+                </div>
                 <div style={{display:"flex",flexDirection:"column",gap:8}}>
                   {review.deadlines.map((it,i)=>(
                     <div key={it.id} style={{padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,background:it.include?T.card2:T.card,opacity:it.include?1:0.55}}>
@@ -10765,7 +10820,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
                 </div>
                 <button type="button" onClick={()=>setReview(r=>({...r,deadlines:[...r.deadlines,{id:"cd-manual-"+Date.now(),title:"",date:dayKey(),kind:"deadline",include:true,attackBlock:true,proposeSessions:false,sessionCount:4,difficulty:500}]}))} style={{marginTop:10,width:"100%",padding:"9px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12}}>+ Add a deadline manually</button>
               </div>
-              <button type="button" onClick={()=>{setReview(null);setAddMode(null);}} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:8}}>← Cancel, don't add this class</button>
+              <button type="button" onClick={()=>{setReview(null);setAddMode(null);}} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:8}}>{review.editingSubjId?"← Cancel":"← Cancel, don't add this class"}</button>
             </>);
           })()}
 
@@ -10805,7 +10860,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
               <Btn onClick={()=>quickScan?finish():setStep("activities")}>{classList.length>0?"Done adding classes":"Skip, I'll add classes later"}</Btn>
             )}
             {step==="classes"&&addMode==="review"&&(
-              <Btn onClick={commitReviewedClass} disabled={!review.subjectName.trim()} style={{opacity:review.subjectName.trim()?1:0.45}}>Add this class</Btn>
+              <Btn onClick={commitReviewedClass} disabled={!review.subjectName.trim()} style={{opacity:review.subjectName.trim()?1:0.45}}>{review.editingSubjId?"Save changes":"Add this class"}</Btn>
             )}
             {step==="activities"&&(<>
               <Btn variant="subtle" onClick={()=>setStep("window")}>Skip</Btn>
