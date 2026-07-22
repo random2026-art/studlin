@@ -10547,16 +10547,16 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
           const isSel = selDay!=null && dk === selDay;
           const duePills = (byDay[dk] || []).filter(isDuePill);
           return (
-            <div key={i} onClick={()=>{if(setSelDay)setSelDay(dk);}} style={{textAlign:"center",padding:"7px 4px 9px",borderLeft:`1px solid ${T.border}`,cursor:setSelDay?"pointer":"default",background:isSel?T.card2:"transparent"}}>
+            <div key={i} onClick={()=>{if(setSelDay)setSelDay(dk);}} style={{textAlign:"center",padding:"7px 4px 9px",borderLeft:`1px solid ${T.border}`,cursor:setSelDay?"pointer":"default",background:isSel?T.card2:"transparent",minWidth:0}}>
               <div style={{fontSize:9,fontWeight:700,letterSpacing:"0.1em",color:T.muted,marginBottom:4}}>{DAY_NAMES[i]}</div>
               <div onDoubleClick={(e)=>{e.stopPropagation();openNew(dk);}} style={{width:28,height:28,borderRadius:"50%",background:isToday?T.lime:"transparent",color:isToday?T.ink:T.white,fontSize:13,fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>{d.getDate()}</div>
               {duePills.length>0&&(
-                <div style={{display:"flex",flexDirection:"column",gap:2,marginTop:5,textAlign:"left"}}>
+                <div style={{display:"flex",flexDirection:"column",gap:2,marginTop:5,textAlign:"left",minWidth:0}}>
                   {duePills.slice(0,2).map((ev,j)=>{
                     const isExam=ev.kind==="exam";
                     const tagColor=colorOf(ev.subject);
                     return (
-                      <div key={j} onClick={(e)=>{e.stopPropagation();openEdit(ev);}} title={ev.title} style={{fontSize:9,fontWeight:600,color:tagColor,background:tagColor+(isExam?"22":"16"),border:isExam?`1px solid ${tagColor}`:"none",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",cursor:"pointer"}}>
+                      <div key={j} onClick={(e)=>{e.stopPropagation();openEdit(ev);}} title={ev.title} style={{fontSize:9,fontWeight:600,color:tagColor,background:tagColor+(isExam?"22":"16"),border:isExam?`1px solid ${tagColor}`:"none",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",cursor:"pointer",maxWidth:"100%",boxSizing:"border-box"}}>
                         {ev.title}
                       </div>
                     );
