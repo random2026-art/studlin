@@ -169,6 +169,24 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Shared, cross-user school/university directory for SchoolSelect's
+    // autocomplete (studlin-app.jsx) -- same shape as usernames above: the
+    // doc id existing at all means that school is already known, so the
+    // second student at the same school finds it instead of retyping it
+    // fresh. schoolId is a client-computed slug of the name; once created
+    // a doc is permanent (no update/delete) so it can never be silently
+    // renamed or removed out from under students already relying on it.
+    match /schools/{schoolId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 100
+        && request.resource.data.type in ['highschool','college']
+        && schoolId.matches('^[a-z0-9-]{1,100}$');
+      allow update, delete: if false;
+    }
+
     // Shared AI chat conversations — public by design. Anyone with the share
     // ID can read. Only authenticated users can create (share). Immutable
     // once created: no updates or deletes.

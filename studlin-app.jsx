@@ -668,12 +668,44 @@ const SCHOOL_DIRECTORY=[
 // separate confirm step, which matters since most real students' schools
 // won't be in this small demo list. statusFilter ("highschool"/"college"),
 // when passed, restricts matches to that type; omit it to search everything.
-const SchoolSelect=({value,onChange,placeholder,theme,statusFilter})=>{
+const SchoolSelect=({value,onChange,placeholder,theme,statusFilter,onCommit})=>{
   const [q,setQ]=useState(value||"");
   const [open,setOpen]=useState(false);
+  const [liveMatches,setLiveMatches]=useState([]); // [{name,type}] from the shared cross-user schools directory
   useEffect(()=>{setQ(value||"");},[value]);
+  // Live results from every student who's ever picked/typed a school
+  // before, not just this hardcoded seed list -- debounced the same way
+  // the friend search already debounces its own Firestore queries
+  // (see runQuery), `active` discards a stale response if a newer query
+  // started before this one resolved. Only a single-field range query on
+  // nameLower -- filtering by statusFilter happens client-side below
+  // rather than as a second `where` clause, so this never needs a
+  // Firestore composite index to be deployed for it to work.
+  useEffect(()=>{
+    const term=q.trim().toLowerCase();
+    if(!term){setLiveMatches([]);return;}
+    let active=true;
+    const t=setTimeout(()=>{
+      fsdb().collection('schools').where('nameLower','>=',term).where('nameLower','<=',term+"").limit(15).get()
+        .then(snap=>{if(active)setLiveMatches(snap.docs.map(d=>d.data()));})
+        .catch(()=>{if(active)setLiveMatches([]);});
+    },250);
+    return()=>{active=false;clearTimeout(t);};
+  },[q]);
   const pool=statusFilter?SCHOOL_DIRECTORY.filter(s=>s.type===statusFilter):SCHOOL_DIRECTORY;
-  const matches=(q.trim()?pool.filter(s=>s.name.toLowerCase().includes(q.toLowerCase())).map(s=>s.name):[]).slice(0,6);
+  const localMatches=q.trim()?pool.filter(s=>s.name.toLowerCase().includes(q.toLowerCase())).map(s=>s.name):[];
+  const liveNames=(statusFilter?liveMatches.filter(s=>s.type===statusFilter):liveMatches).map(s=>s.name);
+  // Live (real, cross-user) results first, seed list fills in behind them,
+  // deduped case-insensitively -- the seed list is what keeps the two demo
+  // schools (and a zero-latency first paint) available even before any
+  // real student has added them to the shared directory.
+  const seenNames=new Set();
+  const matches=[...liveNames,...localMatches].filter(name=>{
+    const key=name.toLowerCase();
+    if(seenNames.has(key))return false;
+    seenNames.add(key);
+    return true;
+  }).slice(0,6);
   const th=theme||{bg:T.card2,border:T.border,text:T.text,muted:T.muted};
   const pick=(name)=>{setQ(name);onChange(name);setOpen(false);};
   return (
@@ -682,7 +714,14 @@ const SchoolSelect=({value,onChange,placeholder,theme,statusFilter})=>{
         value={q}
         onChange={e=>{setQ(e.target.value);onChange(e.target.value);setOpen(true);}}
         onFocus={()=>setOpen(true)}
-        onBlur={()=>setTimeout(()=>setOpen(false),150)}
+        onBlur={()=>{
+          // Fires once when the student is actually done editing (whether
+          // they picked a suggestion or typed something brand new) --
+          // never on every keystroke, which is what makes this safe to use
+          // as the trigger for adding a new school to the shared directory.
+          if(onCommit&&q.trim())onCommit(q.trim());
+          setTimeout(()=>setOpen(false),150);
+        }}
         placeholder={placeholder||"Search or type your school"}
         style={{width:"100%",background:th.bg,border:`1px solid ${th.border}`,borderRadius:8,padding:"10px 12px",color:th.text,fontSize:13.5,fontFamily:T.font,outline:"none",boxSizing:"border-box"}}
       />
@@ -2737,6 +2776,21 @@ async function upsertProfile(extra={}){
   // firestore.rules); name already lives on the public profiles doc above,
   // and email is populated server-side via the Admin SDK (api/me.js).
   try{await fsdb().collection('users').doc(u.uid).set({updatedAt:new Date().toISOString()},{merge:true});}catch(e){}
+}
+// Adds a school to the shared cross-user directory SchoolSelect searches --
+// fire-and-forget, called once at an actual save point (never from the
+// picker's own onChange, which fires every keystroke). The doc id is a
+// slug of the name, so two students typing different casing/spacing for
+// the same real school land on the exact same doc with no query-time dedup
+// needed. firestore.rules only allows create, never update/delete, so a
+// `set` against an already-existing doc is rejected by the rules engine
+// (evaluated as an update) -- the catch below is that expected, harmless
+// "someone already added this" outcome, not a real failure.
+function ensureSchoolInDirectory(name,type){
+  if(!name||!name.trim())return;
+  const slug=name.trim().toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"").slice(0,100);
+  if(!slug)return;
+  try{fsdb().collection('schools').doc(slug).set({name:name.trim(),nameLower:name.trim().toLowerCase(),type,createdAt:new Date().toISOString()}).catch(()=>{});}catch(e){}
 }
 const dayKey=(d)=>{const x=d||new Date();return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");};
 function daysOverdue(ev){if(!ev.deadline)return 0;if(ev.date<=ev.deadline)return 0;const d1=new Date(ev.date),d2=new Date(ev.deadline);return Math.ceil((d1-d2)/86400000);}
@@ -15112,7 +15166,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <div style={{fontSize:12,color:T.muted,marginBottom:16}}>How you appear across Studlin.</div>
               <Field label="Display name"><Input value={profile.name} onChange={e=>updProfile({name:e.target.value})} /></Field>
               <Field label="Email"><Input value={profile.email} onChange={e=>updProfile({email:e.target.value})} type="email" /></Field>
-              <Field label="School or affiliation"><SchoolSelect value={profile.school} onChange={v=>updProfile({school:v})} placeholder="Search or type your school" statusFilter={profile.status} /></Field>
+              <Field label="School or affiliation"><SchoolSelect value={profile.school} onChange={v=>updProfile({school:v})} onCommit={name=>ensureSchoolInDirectory(name,profile.status)} placeholder="Search or type your school" statusFilter={profile.status} /></Field>
             </Card>
             <Card style={{marginBottom:12}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -15817,7 +15871,7 @@ function Profile({setActive,seriousMode=false}={}) {
 
         {status&&(
           <Field label={affiliationLabel} hint="Helps us match you with classmates.">
-            <SchoolSelect value={affiliation} onChange={setAffiliation} placeholder={affiliationPlaceholder} statusFilter={status} />
+            <SchoolSelect value={affiliation} onChange={setAffiliation} onCommit={name=>ensureSchoolInDirectory(name,status)} placeholder={affiliationPlaceholder} statusFilter={status} />
           </Field>
         )}
 
@@ -17371,7 +17425,7 @@ function InitWizard({onComplete}){
             {status && (
               <div style={{marginTop:4}}>
                 <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:muted,marginBottom:8}}>{affiliationLabel}</label>
-                <SchoolSelect value={affiliation} onChange={setAffiliation} placeholder={affiliationPlaceholder} theme={{bg:"#F0EBE0",border,text:ink,muted}} statusFilter={status} />
+                <SchoolSelect value={affiliation} onChange={setAffiliation} onCommit={name=>ensureSchoolInDirectory(name,status)} placeholder={affiliationPlaceholder} theme={{bg:"#F0EBE0",border,text:ink,muted}} statusFilter={status} />
                 <div style={{fontSize:11,color:muted,marginTop:6}}>Helps us match you with classmates.</div>
               </div>
             )}
