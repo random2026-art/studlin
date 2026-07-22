@@ -4976,7 +4976,16 @@ function StudlinPrep({setActive=()=>{}}={}){
   };
   const removePrepFile=(name)=>setFileTexts(prev=>prev.filter(f=>f.name!==name));
 
-  const genDeckForExam=async()=>{
+  // Regenerating (new material, a second click, whatever the reason) used
+  // to just pile on -- a brand new deck/practice exam every time, with the
+  // previous one and its scheduled sessions left behind untouched and
+  // invisible (the exam hub only ever shows the FIRST deck it finds for
+  // an exam). replaceConfirm gates every generation path that could
+  // orphan an existing deck/PE behind an explicit confirm -- deleting a
+  // deck a student may have already studied from is real data loss, not
+  // something to do silently on a second button click.
+  const [replaceConfirm,setReplaceConfirm]=useState(null); // {type:"deck"|"quiz"|"kit", existingDeck, existingPE}
+  const doGenDeckForExam=async()=>{
     if(!materialText.trim()||!selectedExam)return;
     if(!canGenFlashcards()){
       setUpgradeModal({feature:"AI flashcard generations",detail:"You've used all "+FLASHCARD_GEN_LIMIT+" free flashcard generations this month. They reset in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+", or upgrade for unlimited right now."});
@@ -4987,12 +4996,12 @@ function StudlinPrep({setActive=()=>{}}={}){
     setGenLoading(null);
     if(cards.length===0){setGenMsg("Couldn't generate cards. Try again.");return;}
     recordFlashcardGen();
-    const nd={id:String(Date.now()+Math.random()*1000),name:selectedExam.title,count:cards.length,done:0,color:colorOf(selectedExam.subject),cards,examEventId:selectedExam.id};
+    const nd={id:String(Date.now()+Math.random()*1000),name:selectedExam.title,count:cards.length,done:0,color:colorOf(selectedExam.subject),cards,examEventId:selectedExam.id,examEventIds:[selectedExam.id]};
     lsSet("decks",[nd,...lsGet("decks",[])]);
     setGenMsg("✓ Flashcards ready for "+selectedExam.title);
     refresh();
   };
-  const genPracticeExamForExam=async()=>{
+  const doGenPracticeExamForExam=async()=>{
     if(!materialText.trim()||!selectedExam)return;
     if(!canGenQuiz()){
       setUpgradeModal({feature:"AI practice exams",detail:"You've used all "+QUIZ_GEN_LIMIT+" free practice exams this month. They reset in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+", or upgrade for unlimited right now."});
@@ -5006,6 +5015,41 @@ function StudlinPrep({setActive=()=>{}}={}){
     createPracticeExam(selectedExam.title,selectedExam.subject,selectedExam.id,questions);
     setGenMsg("✓ Practice exam ready for "+selectedExam.title);
     refresh();
+  };
+  // Deletes a deck/PE's own object plus every session it's linked to
+  // (deckId/practiceExamId-tagged, exactly the fields removeGenericExamPrepSessions
+  // already treats as "not generic") -- never touches the plain "Study: X"
+  // review sessions or anything belonging to a different deck/PE.
+  const deleteDeckAndSessions=(deckId)=>{
+    lsSet("decks",lsGet("decks",[]).filter(d=>d.id!==deckId));
+    lsSet("events",lsGet("events",[]).filter(e=>e.deckId!==deckId));
+  };
+  const deletePracticeExamAndSessions=(peId)=>{
+    lsSet("practiceExams",lsGet("practiceExams",[]).filter(p=>p.id!==peId));
+    lsSet("events",lsGet("events",[]).filter(e=>e.practiceExamId!==peId));
+  };
+  const genDeckForExam=()=>{
+    if(!selectedExam)return;
+    const existingDeck=allDecks.find(d=>deckLinkedToExam(d,selectedExam.id));
+    if(existingDeck){setReplaceConfirm({type:"deck",existingDeck,existingPE:null});return;}
+    doGenDeckForExam();
+  };
+  const genPracticeExamForExam=()=>{
+    if(!selectedExam)return;
+    const existingPE=allPracticeExams.find(p=>p.examEventId===selectedExam.id);
+    if(existingPE){setReplaceConfirm({type:"quiz",existingDeck:null,existingPE});return;}
+    doGenPracticeExamForExam();
+  };
+  const confirmReplace=async()=>{
+    if(!replaceConfirm)return;
+    const{type,existingDeck,existingPE}=replaceConfirm;
+    if(existingDeck)deleteDeckAndSessions(existingDeck.id);
+    if(existingPE)deletePracticeExamAndSessions(existingPE.id);
+    setReplaceConfirm(null);
+    refresh();
+    if(type==="deck")await doGenDeckForExam();
+    else if(type==="quiz")await doGenPracticeExamForExam();
+    else if(type==="kit")await doBuildStudyKit();
   };
 
   // ── Scheduling — reuses buildSpacedSessionPreviews (shared with
@@ -5055,7 +5099,14 @@ function StudlinPrep({setActive=()=>{}}={}){
   // just that half instead of blocking the whole action. ──
   const [kitLoading,setKitLoading]=useState(false);
   const [kitPreview,setKitPreview]=useState(null); // {deck,pe,reviewSession,deckSessions,peSessions,warnings,examId,examDate,examTitle}
-  const buildStudyKit=async()=>{
+  const buildStudyKit=()=>{
+    if(!selectedExam)return;
+    const existingDeck=allDecks.find(d=>deckLinkedToExam(d,selectedExam.id));
+    const existingPE=allPracticeExams.find(p=>p.examEventId===selectedExam.id);
+    if(existingDeck||existingPE){setReplaceConfirm({type:"kit",existingDeck:existingDeck||null,existingPE:existingPE||null});return;}
+    doBuildStudyKit();
+  };
+  const doBuildStudyKit=async()=>{
     if(!materialText.trim()||!selectedExam)return;
     const canCards=canGenFlashcards();
     const canQuiz=canGenQuiz();
@@ -5529,6 +5580,24 @@ function StudlinPrep({setActive=()=>{}}={}){
                 <span style={{color:T.muted,fontFamily:T.mono}}>{s.time} · {s.duration}m</span>
               </div>
             ))}
+          </div>
+        )}
+      </Modal>
+
+      {/* ── Replace confirm -- regenerating when a deck/PE already exists
+          for this exam deletes it (and its scheduled sessions) first, so
+          this is a real "are you sure" per CLAUDE.md's data-safety rule,
+          not a silent overwrite on a second click of the same button. ── */}
+      <Modal open={!!replaceConfirm} onClose={()=>setReplaceConfirm(null)} title="Replace existing material?" width={440}
+        footer={<><Btn variant="subtle" onClick={()=>setReplaceConfirm(null)}>Cancel</Btn><Btn variant="danger" onClick={confirmReplace}>Replace</Btn></>}>
+        {replaceConfirm&&(
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {replaceConfirm.existingDeck&&(
+              <div style={{fontSize:13,color:T.text,lineHeight:1.5}}>This exam already has a deck — <strong>{replaceConfirm.existingDeck.name}</strong> ({replaceConfirm.existingDeck.count} cards). Rebuilding will delete it, along with any review sessions already scheduled from it, and generate a fresh one from your current material.</div>
+            )}
+            {replaceConfirm.existingPE&&(
+              <div style={{fontSize:13,color:T.text,lineHeight:1.5}}>This exam already has a practice exam — <strong>{replaceConfirm.existingPE.name}</strong> ({replaceConfirm.existingPE.questions.length} questions). Rebuilding will delete it, along with its scheduled session, and generate a fresh one.</div>
+            )}
           </div>
         )}
       </Modal>
