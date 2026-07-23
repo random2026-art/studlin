@@ -135,6 +135,29 @@ service cloud.firestore {
       allow delete: if request.auth != null && request.auth.uid == resource.data.createdBy;
     }
 
+    // Shared/group projects — one project, invited collaborators. Same
+    // frozen-memberUids trust boundary as studySessions/chatRooms above:
+    // every collaborator is already an accepted friend, and Firestore rules
+    // can't restrict "may only write your own key inside participants" (a
+    // whole-document diff, not a per-map-key ACL), so this accepts the same
+    // trust posture those two already do. ownerUid/memberUids are frozen
+    // after creation; the update allowlist below was checked against every
+    // real client write site before shipping — see the chatRooms comment
+    // above for what happens when this list silently drifts out of sync.
+    match /sharedProjects/{projectId} {
+      allow read: if request.auth != null && request.auth.uid in resource.data.memberUids;
+      allow create: if request.auth != null
+        && request.auth.uid == request.resource.data.ownerUid
+        && request.auth.uid in request.resource.data.memberUids
+        && request.resource.data.memberUids.size() >= 2;
+      allow update: if request.auth != null && request.auth.uid in resource.data.memberUids
+        && request.resource.data.memberUids == resource.data.memberUids
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['participants','outline','phases','lastProgressBy','lastProgressNote','updatedAt']);
+      allow delete: if request.auth != null && request.auth.uid == resource.data.ownerUid;
+    }
+
     // Opt-in shared free/busy for "Find Shared Study Window" (Studlin
     // Match) — busy TIME intervals only (see computeBusyWindowsPayload in
     // studlin-app.jsx), never event titles/kinds/subjects. Doc id is the

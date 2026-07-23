@@ -2983,6 +2983,81 @@ async function fetchFriendsBusyIntervals(otherUids){
   }));
   return byDate;
 }
+// ─── SHARED / GROUP PROJECTS ────────────────────────────────────────────────
+// One Firestore doc per shared project, same frozen-memberUids trust shape
+// studySessions already uses (see firestore.rules) -- the owner's own local
+// marker (already created, this is an EXISTING project) gets tagged
+// sharedProjectId directly by the caller, no local event needed for them
+// ("proposer's acceptance is implicit," same as scheduleGroupSession).
+// collaboratorUids/collaboratorNames are parallel arrays (not a map) so the
+// caller doesn't need to pre-build the participants shape itself.
+async function createSharedProject(ownerUid,ownerName,collaboratorUids,collaboratorNames,project){
+  const memberUids=[ownerUid,...collaboratorUids];
+  const participants={[ownerUid]:{name:ownerName,state:"accepted"}};
+  collaboratorUids.forEach((uid,i)=>{participants[uid]={name:collaboratorNames[i]||"Studlin User",state:"invited"};});
+  const now=new Date().toISOString();
+  const doc=await fsdb().collection('sharedProjects').add({
+    ownerUid,memberUids,
+    title:project.title,subject:project.subject||"",deadline:project.deadline||null,
+    phases:project.phases||[],outline:project.outline||[],
+    participants,lastProgressBy:null,lastProgressNote:"",
+    createdAt:now,updatedAt:now,
+  });
+  return doc.id;
+}
+// Runs on the ACCEPTING user's own client only -- there's no backend that
+// can write into someone else's account (see confirmStudyTime's own
+// comment, same reasoning), so this is the one function call that actually
+// materializes a shared project onto a collaborator's calendar. Builds
+// their own real marker via buildAssignmentAttackBlockPair (same one Add
+// Task/EventDetailModal/Brain Dump already use for a solo project), tags
+// it sharedProjectId, and flips this user's own participant state in
+// Firestore -- both, so a decline never leaves a local event behind and an
+// accept never leaves Firestore unaware locally.
+async function acceptSharedProject(projectDoc,myUid){
+  const events=lsGet("events",[]);
+  const routines=getWeeklyRoutine();
+  const prefs=getSchedulePreferences();
+  // Best-effort mutual-availability nudge for this first probe session --
+  // folds already-accepted collaborators' opted-in busy times in as extra
+  // occupied intervals (same synthetic-busy-block trick findSharedStudyWindow's
+  // own placement search relies on), so the very first session lands
+  // somewhere everyone's actually free when that data exists. Degrades
+  // honestly to a plain solo placement when it doesn't (nobody else has
+  // accepted yet, or nobody's opted into sharing) -- fetchFriendsBusyIntervals
+  // already returns an empty Map in that case, so this composes for free,
+  // no separate "couldn't find a match" branch needed here.
+  const otherAcceptedUids=Object.entries(projectDoc.participants||{})
+    .filter(([uid,p])=>uid!==myUid&&p&&p.state==="accepted").map(([uid])=>uid);
+  const busyByDate=otherAcceptedUids.length>0?await fetchFriendsBusyIntervals(otherAcceptedUids):new Map();
+  const syntheticBusy=[];
+  busyByDate.forEach((intervals,date)=>intervals.forEach(iv=>{
+    syntheticBusy.push({id:"shproj-busy-"+date+"-"+iv.s,date,time:minutesToTime(iv.s),duration:iv.e-iv.s,kind:"busy block",status:"pending"});
+  }));
+  const eventsForPlacement=events.concat(syntheticBusy);
+  const markerId="shproj-"+projectDoc.id+"-"+Date.now();
+  const pair=buildAssignmentAttackBlockPair(markerId,
+    {title:projectDoc.title,subject:projectDoc.subject,notes:"",deadline:projectDoc.deadline,priority:500,difficulty:500,outline:projectDoc.outline},
+    (projectDoc.phases||[]).map(p=>p.name),eventsForPlacement,routines,prefs,dayKey(),prefs.workStartTime);
+  if(!pair)return {ok:false,matchedAvailability:false};
+  const marker={...pair.marker,sharedProjectId:projectDoc.id};
+  lsSet("events",events.concat([marker,pair.task]));
+  await fsdb().collection('sharedProjects').doc(projectDoc.id).update({
+    ["participants."+myUid+".state"]:"accepted",updatedAt:new Date().toISOString(),
+  }).catch(()=>{});
+  // Honest signal for the caller's toast: did real shared-availability data
+  // actually exist to place this against, per findSharedStudyWindow's own
+  // "say so instead of silently guessing" precedent -- never claims a
+  // match happened when it was really just a plain solo placement.
+  return {ok:true,matchedAvailability:busyByDate.size>0};
+}
+// Decline never touches the local calendar at all -- same as today's
+// chat-proposal decline, nothing to undo because nothing was ever created.
+async function declineSharedProject(projectId,myUid){
+  await fsdb().collection('sharedProjects').doc(projectId).update({
+    ["participants."+myUid+".state"]:"declined",updatedAt:new Date().toISOString(),
+  }).catch(()=>{});
+}
 const slugUsername=(name)=>(name||"").toLowerCase().replace(/[^a-z0-9]/g,"").slice(0,24)||"student";
 // Creates/refreshes this user's public directory entry so they're searchable
 // and their name/school stay current. Safe to call anytime a signed-in user
@@ -7820,6 +7895,19 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
   const [friends,setFriends]=useState([]); // accepted, either direction — {uid,n,h,s,online,presence}
   const [incomingReqs,setIncomingReqs]=useState([]); // pending, received by me — {id,senderId,n,h,s}
   const [outgoingReqIds,setOutgoingReqIds]=useState(()=>new Set()); // uids I've already sent a pending request to
+  // Shared-project invites still awaiting my response — real-time, same
+  // shape/reasoning as incomingReqs above. Nothing about a shared project
+  // ever touches my calendar until I explicitly accept one of these (see
+  // acceptSharedProject) — this list is purely "here's what's waiting."
+  const [incomingProjectInvites,setIncomingProjectInvites]=useState([]);
+  useEffect(()=>{
+    if(!myUid)return;
+    const unsub=fsdb().collection('sharedProjects')
+      .where('memberUids','array-contains',myUid)
+      .where('participants.'+myUid+'.state','==','invited')
+      .onSnapshot(snap=>setIncomingProjectInvites(snap.docs.map(d=>({id:d.id,...d.data()}))),()=>{});
+    return unsub;
+  },[myUid]);
   const [myRooms,setMyRooms]=useState({}); // chatRooms I'm a member of, keyed by id — DM rooms only exist once opened
   const groupRooms=Object.values(myRooms).filter(r=>r.type==="group");
   const activeGroups=groupRooms.filter(g=>!g.expiresAt||g.expiresAt>Date.now());
@@ -8030,6 +8118,22 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
   };
   const acceptReq=async(id)=>{try{await fsdb().collection('friendships').doc(id).update({status:'accepted',updatedAt:new Date().toISOString()});}catch(e){}};
   const declineReq=async(id)=>{try{await fsdb().collection('friendships').doc(id).delete();}catch(e){}};
+  const [projectInviteBusyId,setProjectInviteBusyId]=useState(null);
+  const acceptProjectInvite=async(proj)=>{
+    if(!myUid)return;
+    setProjectInviteBusyId(proj.id);
+    const result=await acceptSharedProject(proj,myUid);
+    setProjectInviteBusyId(null);
+    if(!result.ok){showNetToast("Couldn't find room on your calendar before the deadline — check it manually in Prep.");return;}
+    showNetToast(result.matchedAvailability?"Added to your calendar, timed to when you're both free.":"Added to your calendar — couldn't confirm a mutual free time, so this is based on your own schedule.");
+  };
+  const declineProjectInvite=async(proj)=>{
+    if(!myUid)return;
+    setProjectInviteBusyId(proj.id);
+    await declineSharedProject(proj.id,myUid);
+    setProjectInviteBusyId(null);
+    showNetToast("Invite declined.");
+  };
   // The accepted friendship's doc id was never cached client-side (only the
   // other uid), so unfriending looks it up fresh in whichever direction it
   // was created — either party can be senderId, and Firestore rules allow
@@ -8146,6 +8250,36 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
                 <div style={{display:"flex",gap:7,flexShrink:0}}>
                   <button onClick={()=>acceptReq(req.id)} style={{padding:"6px 14px",borderRadius:7,background:T.lime,color:T.ink,border:"none",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Accept</button>
                   <button onClick={()=>declineReq(req.id)} style={{padding:"6px 13px",borderRadius:7,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Decline</button>
+                </div>
+              </div>
+            ))}
+          </Card>
+        </div>
+      )}
+
+      {/* ── SHARED PROJECT INVITES — same "surfaced first, needs action"
+          treatment as friend requests above, but its own card since a
+          project invite can sit unanswered for weeks (unlike a live co-op
+          session's transient chat prompt), so it needs to survive outside
+          any one chat thread. Nothing on the invitee's calendar until
+          Accept is clicked (acceptSharedProject). ── */}
+      {incomingProjectInvites.length>0&&(
+        <div style={{marginBottom:16}}>
+          <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:8,display:"flex",alignItems:"center",gap:8}}>
+            Project Invites
+            <span style={{background:T.amber,color:T.ink,fontSize:9,fontWeight:800,borderRadius:4,padding:"1px 6px"}}>{incomingProjectInvites.length}</span>
+          </div>
+          <Card style={{padding:0,overflow:"hidden"}}>
+            {incomingProjectInvites.map((proj,i)=>(
+              <div key={proj.id} style={{display:"flex",alignItems:"center",gap:12,padding:"13px 16px",borderBottom:i<incomingProjectInvites.length-1?`1px solid ${T.border}`:"none"}}>
+                <Av initials={proj.title.slice(0,2).toUpperCase()} color={T.amber} size={36} picUrl="" />
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:600,color:T.white}}>{proj.title}</div>
+                  <div style={{fontSize:11,color:T.muted}}>From {(proj.participants&&proj.participants[proj.ownerUid]&&proj.participants[proj.ownerUid].name)||"a friend"}{proj.deadline?" · due "+proj.deadline:""}</div>
+                </div>
+                <div style={{display:"flex",gap:7,flexShrink:0}}>
+                  <button disabled={projectInviteBusyId===proj.id} onClick={()=>acceptProjectInvite(proj)} style={{padding:"6px 14px",borderRadius:7,background:T.lime,color:T.ink,border:"none",fontSize:11.5,fontWeight:700,cursor:projectInviteBusyId===proj.id?"default":"pointer",fontFamily:T.font,opacity:projectInviteBusyId===proj.id?0.6:1}}>{projectInviteBusyId===proj.id?"…":"Accept"}</button>
+                  <button disabled={projectInviteBusyId===proj.id} onClick={()=>declineProjectInvite(proj)} style={{padding:"6px 13px",borderRadius:7,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,fontSize:11.5,fontWeight:600,cursor:projectInviteBusyId===proj.id?"default":"pointer",fontFamily:T.font,opacity:projectInviteBusyId===proj.id?0.6:1}}>Decline</button>
                 </div>
               </div>
             ))}
@@ -12845,6 +12979,22 @@ function ProjectCheckInModal({taskId,onClose,onToast}){
   const recMins=outlineRecMins!=null?outlineRecMins:plainRecMins;
   const submit=()=>{
     scheduleAttackBlockFollowUp(task,recMins);
+    // Push the updated checklist back to the shared doc so every other
+    // accepted collaborator's client picks it up via its own onSnapshot
+    // listener (see the App-level sharedProjectId reconciliation effect)
+    // and can show them what changed and why -- same transparency the
+    // solo readiness-adjustment feature already gives one person, now
+    // extended across whoever's actually on this project together.
+    if(marker.sharedProjectId){
+      const myName=getUserName()||"A collaborator";
+      const freshMarker=lsGet("events",[]).find(e=>e.id===marker.id);
+      fsdb().collection('sharedProjects').doc(marker.sharedProjectId).update({
+        outline:(freshMarker&&freshMarker.outline)||outline||[],
+        lastProgressBy:myName,
+        lastProgressNote:myName+" made progress on this project, so Studlin adjusted the remaining sessions.",
+        updatedAt:new Date().toISOString(),
+      }).catch(()=>{});
+    }
     onToast&&onToast("Studlin scheduled "+recMins+"m to finish it up.");
     onClose();
   };
@@ -12958,6 +13108,14 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
   const [kind,setKind]=useState("deadline");
   const [notes,setNotes]=useState("");
   const [cancelConfirmOpen,setCancelConfirmOpen]=useState(false);
+  // Add-collaborators picker (shared/group projects) -- fetched fresh each
+  // time the picker opens rather than a live subscription, same one-shot
+  // pattern Studlin Prep's "Pull from your notes" picker already uses for a
+  // similarly occasional, non-realtime list.
+  const [collabPickerOpen,setCollabPickerOpen]=useState(false);
+  const [collabCandidates,setCollabCandidates]=useState([]);
+  const [collabSelected,setCollabSelected]=useState([]);
+  const [collabLoading,setCollabLoading]=useState(false);
   // Retroactive Attack Block for a deadline marker that never got one --
   // closes the gap where an assignment added without Attack Block had no
   // way to get one later. Only offered for a plain marker with nothing
@@ -13014,6 +13172,33 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
   // matching Add Task's own "Describe what you want to do" treatment for
   // the same generation step.
   const showsPhaseDetail=addAttackBlock&&isPhaseCandidate;
+  // A project, for the purposes of "can this be shared with collaborators" --
+  // same signal the syllabus review/Brain Dump already treat as "this is a
+  // project" (a real phases or outline array), not a fresh kind check that
+  // doesn't exist once stored (project always collapses to kind:"deadline").
+  const isProject=!!((ev.phases&&ev.phases.length>0)||(ev.outline&&ev.outline.length>0));
+  const openCollabPicker=async()=>{
+    setCollabPickerOpen(true);setCollabSelected([]);setCollabLoading(true);
+    const myUid=firebase.auth().currentUser?.uid;
+    const uids=myUid?await getAcceptedFriendUids(myUid):[];
+    const docs=await Promise.all(uids.map(uid=>fsdb().collection('profiles').doc(uid).get().catch(()=>null)));
+    setCollabCandidates(uids.map((uid,i)=>{
+      const p=docs[i]&&docs[i].exists?docs[i].data():null;
+      return {uid,name:(p&&p.name)||"Studlin User"};
+    }));
+    setCollabLoading(false);
+  };
+  const toggleCollabSelected=(uid)=>setCollabSelected(s=>s.includes(uid)?s.filter(x=>x!==uid):[...s,uid]);
+  const confirmAddCollaborators=async()=>{
+    const myUid=firebase.auth().currentUser?.uid;
+    if(!myUid||collabSelected.length===0)return;
+    const names=collabSelected.map(uid=>(collabCandidates.find(c=>c.uid===uid)||{}).name||"Studlin User");
+    const projectId=await createSharedProject(myUid,getUserName()||"You",collabSelected,names,
+      {title:title.trim(),subject,deadline:deadline||null,phases:ev.phases||[],outline:ev.outline||[]});
+    commit(lsGet("events",[]).map(e=>e.id===ev.id?{...e,sharedProjectId:projectId}:e));
+    setCollabPickerOpen(false);
+    onToast&&onToast("Invite sent — it'll appear on their calendar once they accept.");
+  };
 
   const save=()=>{
     if(!title.trim())return;
@@ -13145,6 +13330,13 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
           )}
         </div>
       )}
+      {isProject&&(
+        <div style={{marginBottom:14}}>
+          {ev.sharedProjectId
+            ?<div style={{fontSize:11.5,color:T.muted}}>Shared with collaborators — they'll see your progress once they accept.</div>
+            :<BtnSm variant="subtle" onClick={openCollabPicker}>+ Add collaborators</BtnSm>}
+        </div>
+      )}
       {canAddAttackBlock&&(
         <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14}}>
           <div onClick={()=>setAddAttackBlock(a=>!a)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
@@ -13230,6 +13422,27 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
     <Modal open={cancelConfirmOpen} onClose={()=>setCancelConfirmOpen(false)} title="Cancel prep sessions?" sub="The due date stays on your calendar. Only the scheduled study time Studlin added for it gets removed. Sessions you've already completed stay put." width={420}
       footer={<><Btn variant="subtle" onClick={()=>setCancelConfirmOpen(false)}>Never mind</Btn><Btn variant="danger" onClick={confirmCancelSessions}>{"Cancel "+linkedSessions.filter(s=>s.status==="pending").length+" session"+(linkedSessions.filter(s=>s.status==="pending").length!==1?"s":"")}</Btn></>}>
       <div style={{fontSize:13,color:T.text}}>{ev.title}</div>
+    </Modal>
+    {/* ── Add collaborators -- nothing lands on anyone else's calendar from
+        this click alone; createSharedProject only invites (state:"invited"),
+        each collaborator's own accept is what actually materializes it on
+        their side (see acceptSharedProject). ── */}
+    <Modal open={collabPickerOpen} onClose={()=>setCollabPickerOpen(false)} title="Add collaborators" sub="They'll get an invite and won't see this on their calendar until they accept." width={420}
+      footer={<><Btn variant="subtle" onClick={()=>setCollabPickerOpen(false)}>Cancel</Btn><Btn onClick={confirmAddCollaborators} disabled={collabSelected.length===0}>Send {collabSelected.length||""} invite{collabSelected.length!==1?"s":""}</Btn></>}>
+      {collabLoading?(
+        <div style={{fontSize:12.5,color:T.muted}}>Loading your friends…</div>
+      ):collabCandidates.length===0?(
+        <div style={{fontSize:12.5,color:T.muted}}>No friends yet — add some in Studlin Network first.</div>
+      ):(
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {collabCandidates.map(c=>(
+            <label key={c.uid} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:collabSelected.includes(c.uid)?T.card2:"transparent"}}>
+              <input type="checkbox" checked={collabSelected.includes(c.uid)} onChange={()=>toggleCollabSelected(c.uid)} style={{cursor:"pointer"}} />
+              <div style={{fontSize:13,fontWeight:600,color:T.text}}>{c.name}</div>
+            </label>
+          ))}
+        </div>
+      )}
     </Modal>
   </>);
 }
@@ -19342,6 +19555,36 @@ function App() {
   // Routes to whichever check-in actually applies, and does nothing for a
   // plain to-do with no linkage, preserving today's frictionless checkbox
   // behavior for everything that isn't project/exam-prep-linked.
+  // Reconciles every shared project this account has already accepted --
+  // one onSnapshot per sharedProjectId found on a local marker at mount.
+  // When another collaborator's check-in (ProjectCheckInModal's submit)
+  // updates the shared doc, this merges the fresh outline/phases into this
+  // user's OWN local marker and surfaces a toast explaining what changed
+  // and why, same transparency-first pattern the solo readiness-adjustment
+  // feature already uses. Known v1 limit: a project accepted mid-session
+  // (from the Project Invites card) only gets a live listener on next
+  // reload, not immediately -- acceptable for now, not silently pretended
+  // to be handled.
+  useEffect(()=>{
+    const myUid=firebase.auth().currentUser?.uid;
+    if(!myUid)return;
+    const ids=[...new Set(lsGet("events",[]).map(e=>e.sharedProjectId).filter(Boolean))];
+    const unsubs=ids.map(id=>fsdb().collection('sharedProjects').doc(id).onSnapshot(snap=>{
+      if(!snap.exists)return;
+      const data=snap.data();
+      const events=lsGet("events",[]);
+      const marker=events.find(e=>e.sharedProjectId===id);
+      if(!marker)return;
+      const changed=JSON.stringify(marker.outline||[])!==JSON.stringify(data.outline||[])||JSON.stringify(marker.phases||[])!==JSON.stringify(data.phases||[]);
+      if(!changed)return;
+      lsSet("events",events.map(e=>e.id===marker.id?{...e,outline:data.outline||e.outline,phases:data.phases||e.phases}:e));
+      if(data.lastProgressBy&&data.lastProgressBy!==(getUserName()||"You")){
+        setDashToast(data.lastProgressNote||(data.lastProgressBy+" updated "+marker.title));
+        setTimeout(()=>setDashToast(""),3800);
+      }
+    },()=>{}));
+    return ()=>unsubs.forEach(u=>u());
+  },[]);
   const handleTaskCompleted=(taskId)=>{
     const events=lsGet("events",[]);
     const task=events.find(e=>e.id===taskId);
