@@ -16455,6 +16455,14 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                     <div style={{fontSize:11,color:googleSyncError?T.red:calGoogleLinked?T.teal:(googleSyncing?T.amber:T.muted),marginTop:2}}>
                       {googleSyncing?"Importing events from Google…":googleSyncError?"Sync stopped working — reconnect below":calGoogleLinked?"Connected · syncs automatically · last synced "+timeAgoLabel(googleLastSynced):"Read-only · imports your upcoming events, and blocks the time on your calendar"}
                     </div>
+                    {/* Google's own OAuth verification review is pending for
+                        this app, which shows every user an "unverified app"
+                        warning until it clears -- can't be fixed client-side,
+                        so this points at the real, already-working
+                        alternative below instead of leaving a student stuck. */}
+                    {!calGoogleLinked&&!googleSyncing&&(
+                      <div style={{fontSize:10.5,color:T.faint,marginTop:3}}>Seeing an "unverified app" warning? Paste your calendar's secret address into "Calendar or work schedule" below instead: no verification needed.</div>
+                    )}
                   </div>
                   {calGoogleLinked&&!googleSyncError&&<BtnSm variant="subtle" onClick={syncGoogleNow} disabled={googleSyncing} style={{flexShrink:0,opacity:googleSyncing?0.55:1}}>{Icon.refresh}</BtnSm>}
                   <BtnSm variant={calGoogleLinked&&!googleSyncError?"subtle":"lime"} onClick={googleSyncError?connectGoogle:(calGoogleLinked?disconnectGoogle:connectGoogle)} disabled={googleSyncing} style={{flexShrink:0,opacity:googleSyncing?0.55:1}}>
@@ -16468,7 +16476,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:13,fontWeight:600,color:T.white}}>Calendar or work schedule</div>
                     <div style={{fontSize:11,color:importedCals.length>0?T.teal:T.muted,marginTop:2}}>
-                      {importedCals.length>0?importedCals.length+" connected · Outlook, iCloud, or a shift-scheduling app":"Paste any calendar link — Outlook, iCloud, or your work shift schedule"}
+                      {importedCals.length>0?importedCals.length+" connected · Google, Outlook, iCloud, or a shift-scheduling app":"Paste any calendar link: Google, Outlook, iCloud, or your work shift schedule"}
                     </div>
                   </div>
                   <BtnSm variant={importedCals.length>0?"subtle":"lime"} onClick={openImportCalModal} style={{flexShrink:0}}>{importedCals.length>0?"Manage":"Connect"}</BtnSm>
