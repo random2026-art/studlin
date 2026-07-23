@@ -2293,6 +2293,22 @@ async function proposeOutline(title,detail,subject){
     return null;
   }catch(e){return null;}
 }
+// Outline steps stay plain strings until a student sets an optional mini
+// due date on one (see PhasesOutlineEditor's per-step date field, and
+// scheduleAttackBlockFollowUp's effectiveDeadline use of it), at which
+// point that one step becomes {text,dueDate}. Normalizes either shape into
+// the final {text,done:false,dueDate?} form every commit path (buildTask,
+// buildAssignmentAttackBlockPair, buildSyllabusEventBatch,
+// planBrainDumpTasks) stores, trimming and dropping empty steps -- one
+// place, so a mixed draft (some steps edited to add a date, some still
+// plain strings) always lands in one consistent shape.
+function normalizeOutlineDraft(outline){
+  return (outline||[]).map(s=>{
+    const text=(typeof s==="string"?s:(s.text||"")).trim();
+    const dueDate=typeof s==="string"?"":(s.dueDate||"");
+    return text?{text,done:false,...(dueDate?{dueDate}:{})}:null;
+  }).filter(Boolean);
+}
 // One short "what to actually study" line per spaced exam-prep session,
 // e.g. "Chapters 4-6: cell structure and function" instead of every
 // session just saying "Study: <exam title>" with no content behind it.
@@ -2605,6 +2621,14 @@ function buildAssignmentAttackBlockPair(markerId,fields,phases,events,routines,p
     priority:fields.priority??500,difficulty:fields.difficulty??500,
     deadline:fields.deadline||null,duration:null,status:"pending",timeSpent:0,completedAt:null,
     ...(phases.length>0?{phases:phases.map((name,pi)=>({name,status:pi===0?"active":"pending"}))}:{}),
+    // Previously dropped silently -- a Project created with the Attack
+    // Block toggle on got its phases but never its checklist, since nothing
+    // here ever wrote `outline` onto the marker. Passed via fields (not a
+    // new positional param) so every existing call site/test using the old
+    // signature keeps working unchanged. fields.outline is expected already
+    // normalized (see normalizeOutlineDraft) -- final {text,done,dueDate?}
+    // shape, ready to store as-is.
+    ...(fields.outline&&fields.outline.length>0?{outline:fields.outline}:{}),
   };
   const task=startPhaseAwareAttackChain({...fields,dueEventId:marker.id},phases,events.concat([marker]),routines,prefs,desiredDate,desiredTime);
   if(!task)return null;
@@ -2703,9 +2727,17 @@ function scheduleAttackBlockFollowUp(task,nextMins){
   let remaining=Math.max(5,nextMins);
   while(remaining>0){const c=Math.min(CHUNK,remaining);chunks.push(c);remaining-=c;}
   const today=dayKey();
+  // A professor-imposed mini-deadline on the NEXT not-yet-done outline item
+  // (see PhasesOutlineEditor's optional per-step due date) tightens where
+  // this follow-up gets placed, without overwriting the project's own real
+  // deadline below -- "part 1 due the 10th" should pull the next session
+  // earlier than the final due date alone would, not replace it.
+  const marker=task.dueEventId?events.find(e=>e.id===task.dueEventId):null;
+  const nextOutlineItem=(marker&&Array.isArray(marker.outline))?marker.outline.find(o=>!o.done&&o.dueDate):null;
+  const effectiveDeadline=(nextOutlineItem&&(!task.deadline||nextOutlineItem.dueDate<task.deadline))?nextOutlineItem.dueDate:(task.deadline||null);
   let runwayDays=null;
-  if(task.deadline){
-    const finishByD=new Date(task.deadline+"T12:00:00");finishByD.setDate(finishByD.getDate()-ATTACK_BLOCK_FINISH_BUFFER_DAYS);
+  if(effectiveDeadline){
+    const finishByD=new Date(effectiveDeadline+"T12:00:00");finishByD.setDate(finishByD.getDate()-ATTACK_BLOCK_FINISH_BUFFER_DAYS);
     const days=Math.ceil((finishByD-new Date(today+"T12:00:00"))/86400000);
     if(days>0)runwayDays=days;
   }
@@ -2721,7 +2753,7 @@ function scheduleAttackBlockFollowUp(task,nextMins){
     // slot came out earlier than where the previous chunk actually landed
     // (e.g. that day was full and findReliableSlotFor bumped it forward).
     const searchFrom=targetKey>cursorDate?targetKey:cursorDate;
-    const slot=findReliableSlotFor(events.concat(newEvents),routines,prefs,searchFrom,prefs.workStartTime,m,task.deadline||null,task.difficulty);
+    const slot=findReliableSlotFor(events.concat(newEvents),routines,prefs,searchFrom,prefs.workStartTime,m,effectiveDeadline,task.difficulty);
     // No legal slot left anywhere -- stop here and keep whatever chunks
     // already placed rather than fabricating a double-booked one.
     if(!slot)break;
@@ -5090,6 +5122,10 @@ function StudlinPrep({setActive=()=>{}}={}){
   // deck a student may have already studied from is real data loss, not
   // something to do silently on a second button click.
   const [replaceConfirm,setReplaceConfirm]=useState(null); // {type:"deck"|"quiz"|"kit", existingDeck, existingPE}
+  // Direct student-initiated delete (distinct from replaceConfirm above,
+  // which only fires as a side effect of regenerating) -- same CLAUDE.md
+  // data-safety rule: no single-click delete anywhere data disappears.
+  const [deleteConfirm,setDeleteConfirm]=useState(null); // {type:"deck"|"deckAll"|"pe", id, examId, name}
   const doGenDeckForExam=async()=>{
     if(!materialText.trim()||!selectedExam)return;
     if(!canGenFlashcards()){
@@ -5147,6 +5183,22 @@ function StudlinPrep({setActive=()=>{}}={}){
   const deletePracticeExamAndSessions=(peId)=>{
     lsSet("practiceExams",lsGet("practiceExams",[]).filter(p=>p.id!==peId));
     lsSet("events",lsGet("events",[]).filter(e=>e.practiceExamId!==peId));
+  };
+  // Full delete for the "All Flashcards" list -- unlike deleteDeckAndSessions
+  // above (used when regenerating from one exam's page, which only unlinks
+  // a shared deck from THAT exam), a Delete click here is an explicit
+  // whole-deck action regardless of how many exams it's linked to.
+  const deleteDeckFully=(deckId)=>{
+    lsSet("decks",lsGet("decks",[]).filter(d=>d.id!==deckId));
+    lsSet("events",lsGet("events",[]).filter(e=>e.deckId!==deckId));
+  };
+  const confirmDelete=()=>{
+    if(!deleteConfirm)return;
+    if(deleteConfirm.type==="deck")deleteDeckAndSessions(deleteConfirm.id,deleteConfirm.examId);
+    else if(deleteConfirm.type==="deckAll")deleteDeckFully(deleteConfirm.id);
+    else deletePracticeExamAndSessions(deleteConfirm.id);
+    setDeleteConfirm(null);
+    refresh();
   };
   const genDeckForExam=()=>{
     if(!selectedExam)return;
@@ -5322,7 +5374,17 @@ function StudlinPrep({setActive=()=>{}}={}){
   // quiz taken from Lectures/Notes, and -- the actual weak-spot follow-up
   // -- schedules one real review block naming whatever topics were missed,
   // linked to the deck if one already exists for this exam. ──
-  const [takingQuiz,setTakingQuiz]=useState(null); // {pe, idx, picked, answers, done}
+  // One-shot deep-link handoff, same pattern openPrepExamId/openDeckId
+  // already use elsewhere -- lets the Lock-In timer's "Take practice exam"
+  // shortcut jump straight into taking it, instead of just dropping the
+  // student back on the exam page to go find it themselves.
+  const [takingQuiz,setTakingQuiz]=useState(()=>{
+    const pendingPeId=lsGet("openPracticeExamId",null);
+    if(!pendingPeId)return null;
+    lsSet("openPracticeExamId",null);
+    const pe=lsGet("practiceExams",[]).find(p=>p.id===pendingPeId);
+    return pe?{pe,idx:0,picked:null,answers:Array(pe.questions.length).fill(null),done:false}:null;
+  }); // {pe, idx, picked, answers, done}
   const startPracticeExam=(pe)=>setTakingQuiz({pe,idx:0,picked:null,answers:Array(pe.questions.length).fill(null),done:false});
   const finishPracticeExam=()=>{
     const {pe,answers}=takingQuiz;
@@ -5481,7 +5543,7 @@ function StudlinPrep({setActive=()=>{}}={}){
             </Card>
 
             <Card style={{padding:20,marginBottom:16}}>
-              <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Material</div>
+              <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Add study material</div>
               {(fileTexts.length>0||materialLinks.length>0)&&(
                 <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>
                   {fileTexts.map(f=>(
@@ -5566,39 +5628,6 @@ function StudlinPrep({setActive=()=>{}}={}){
             </Card>
 
             <Card style={{padding:20,marginBottom:16}}>
-              <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Flashcards</div>
-              {!deck?<div style={{fontSize:12,color:T.muted}}>No deck yet — generate one from material above.</div>:(
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
-                  <div style={{fontSize:12.5,color:T.text}}>{deck.name} · {deck.count} cards</div>
-                  <BtnSm variant="subtle" onClick={()=>openScheduleDeckReviews(deck)}>Schedule Review Sessions</BtnSm>
-                </div>
-              )}
-            </Card>
-
-            <Card style={{padding:20}}>
-              <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Practice Exams</div>
-              {pes.length===0?<div style={{fontSize:12,color:T.muted}}>No practice exams yet — generate one from material above.</div>:(
-                <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                  {pes.map(pe=>{
-                    const lastAttempt=pe.attempts&&pe.attempts.length>0?pe.attempts[pe.attempts.length-1]:null;
-                    return(
-                      <div key={pe.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"9px 12px",background:T.card2,borderRadius:8}}>
-                        <div>
-                          <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>{pe.name}</div>
-                          <div style={{fontSize:11,color:T.muted,marginTop:2}}>{pe.questions.length} questions{lastAttempt?" · last score "+lastAttempt.score+"/"+lastAttempt.total:" · not taken yet"}</div>
-                        </div>
-                        <div style={{display:"flex",gap:6,flexShrink:0}}>
-                          <BtnSm variant="subtle" onClick={()=>openSchedulePracticeExam(pe)}>Schedule</BtnSm>
-                          <BtnSm onClick={()=>startPracticeExam(pe)}>Take</BtnSm>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </Card>
-
-            <Card style={{padding:20}}>
               <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Study Sessions</div>
               {examSessions.length===0?(
                 <>
@@ -5661,6 +5690,43 @@ function StudlinPrep({setActive=()=>{}}={}){
                 );
               })()}
             </Card>
+
+            <Card style={{padding:20,marginBottom:16}}>
+              <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Flashcards</div>
+              {!deck?<div style={{fontSize:12,color:T.muted}}>No deck yet — generate one from material above.</div>:(
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+                  <div style={{fontSize:12.5,color:T.text}}>{deck.name} · {deck.count} cards</div>
+                  <div style={{display:"flex",gap:6,flexShrink:0}}>
+                    <BtnSm variant="subtle" onClick={()=>openScheduleDeckReviews(deck)}>Schedule Review Sessions</BtnSm>
+                    <BtnSm variant="ghost" onClick={()=>setDeleteConfirm({type:"deck",id:deck.id,examId:selectedExam.id,name:deck.name})}>Delete</BtnSm>
+                  </div>
+                </div>
+              )}
+            </Card>
+
+            <Card style={{padding:20}}>
+              <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Practice Exams</div>
+              {pes.length===0?<div style={{fontSize:12,color:T.muted}}>No practice exams yet — generate one from material above.</div>:(
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {pes.map(pe=>{
+                    const lastAttempt=pe.attempts&&pe.attempts.length>0?pe.attempts[pe.attempts.length-1]:null;
+                    return(
+                      <div key={pe.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"9px 12px",background:T.card2,borderRadius:8}}>
+                        <div>
+                          <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>{pe.name}</div>
+                          <div style={{fontSize:11,color:T.muted,marginTop:2}}>{pe.questions.length} questions{lastAttempt?" · last score "+lastAttempt.score+"/"+lastAttempt.total:" · not taken yet"}</div>
+                        </div>
+                        <div style={{display:"flex",gap:6,flexShrink:0}}>
+                          <BtnSm variant="subtle" onClick={()=>openSchedulePracticeExam(pe)}>Schedule</BtnSm>
+                          <BtnSm onClick={()=>startPracticeExam(pe)}>Take</BtnSm>
+                          <BtnSm variant="ghost" onClick={()=>setDeleteConfirm({type:"pe",id:pe.id,name:pe.name})}>Delete</BtnSm>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
           </div>
         );
       })()}
@@ -5692,6 +5758,7 @@ function StudlinPrep({setActive=()=>{}}={}){
                     <BtnSm onClick={()=>goToDeck("study")}>Study now</BtnSm>
                     <BtnSm variant="ghost" onClick={()=>goToDeck("edit")}>{Icon.pen} Edit</BtnSm>
                     <BtnSm variant="ghost" onClick={()=>goToDeck("send")}>{Icon.send} Send</BtnSm>
+                    <BtnSm variant="ghost" onClick={()=>setDeleteConfirm({type:"deckAll",id:d.id,name:d.name})}>Delete</BtnSm>
                   </div>
                 </div>
               );
@@ -5711,7 +5778,10 @@ function StudlinPrep({setActive=()=>{}}={}){
                     <div style={{fontSize:13.5,fontWeight:600,color:T.white}}>{pe.name}</div>
                     <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{pe.questions.length} questions{lastAttempt?" · last score "+lastAttempt.score+"/"+lastAttempt.total:" · not taken yet"}</div>
                   </div>
-                  <BtnSm onClick={()=>startPracticeExam(pe)}>Take</BtnSm>
+                  <div style={{display:"flex",gap:6,flexShrink:0}}>
+                    <BtnSm onClick={()=>startPracticeExam(pe)}>Take</BtnSm>
+                    <BtnSm variant="ghost" onClick={()=>setDeleteConfirm({type:"pe",id:pe.id,name:pe.name})}>Delete</BtnSm>
+                  </div>
                 </div>
               );
             })}
@@ -5756,6 +5826,22 @@ function StudlinPrep({setActive=()=>{}}={}){
             {replaceConfirm.existingPE&&(
               <div style={{fontSize:13,color:T.text,lineHeight:1.5}}>This exam already has a practice exam: <strong>{replaceConfirm.existingPE.name}</strong> ({replaceConfirm.existingPE.questions.length} questions). Rebuilding will delete it, along with its scheduled session, and generate a fresh one.</div>
             )}
+          </div>
+        )}
+      </Modal>
+
+      {/* ── Delete confirm -- direct student-initiated delete of a deck or
+          practice exam from Prep. Distinct from replaceConfirm above (which
+          only fires as a side effect of regenerating); this is CLAUDE.md's
+          "anything that deletes user data needs a confirm modal" rule for
+          the plain Delete buttons themselves. ── */}
+      <Modal open={!!deleteConfirm} onClose={()=>setDeleteConfirm(null)} title="Delete this?" width={420}
+        footer={<><Btn variant="subtle" onClick={()=>setDeleteConfirm(null)}>Cancel</Btn><Btn variant="danger" onClick={confirmDelete}>Delete</Btn></>}>
+        {deleteConfirm&&(
+          <div style={{fontSize:13,color:T.text,lineHeight:1.5}}>
+            {deleteConfirm.type==="pe"
+              ?<>This deletes <strong>{deleteConfirm.name}</strong> and any scheduled sessions for it. This can't be undone.</>
+              :<>This deletes <strong>{deleteConfirm.name}</strong> and its scheduled review sessions. This can't be undone.</>}
           </div>
         )}
       </Modal>
@@ -8702,7 +8788,7 @@ function expandRecurringBrainDumpDates(startDate,days,untilDate){
 function planBrainDumpTasks(items,events,routines,prefs){
   const today=dayKey();
   let working=events;
-  const studyTasks=[],todoTasks=[],eventTasks=[],reminderTasks=[],examTasks=[];
+  const studyTasks=[],todoTasks=[],eventTasks=[],reminderTasks=[],examTasks=[],projectTasks=[];
   // A brain-dumped item is never allowed to just vanish -- if nothing legal
   // was found for it, it's downgraded to a plain dateless to-do (same shape
   // saveChecklistItem already produces) instead of being silently dropped.
@@ -8742,6 +8828,21 @@ function planBrainDumpTasks(items,events,routines,prefs){
       const sessions=buildExamSessionEvents(it.title,examDate,"",it.sessionCount||4,"bdexam-"+examTask.id,working,routines,prefs,{dueEventId:examTask.id},it.difficulty);
       examTasks.push(...sessions);working=working.concat(sessions);
     }
+  });
+  // Project items -- same due-date-marker-plus-Attack-Block-chain shape Add
+  // Task/EventDetailModal already build for a Project (buildAssignmentAttackBlockPair),
+  // reused here rather than inventing a second construction path. A project
+  // dumped with no usable phases/outline (student skipped detail, or detail
+  // was too thin) still gets a real marker and probe session -- it just
+  // degrades to an unphased Attack Block, exactly like a plain oversized
+  // Assignment would.
+  items.filter(it=>it.kind==="project").forEach(it=>{
+    const phases=(it.phases||[]).map(p=>p.trim()).filter(Boolean);
+    const outline=normalizeOutlineDraft(it.outline);
+    const markerId="bdproj-"+String(Date.now()+Math.random()*1000);
+    const pair=buildAssignmentAttackBlockPair(markerId,{title:it.title,subject:"",notes:it.detail||"",deadline:it.dueDate||null,priority:5,difficulty:5,outline},phases,working,routines,prefs,today,prefs.workStartTime);
+    if(!pair){downgrade(it);return;}
+    projectTasks.push(pair.marker,pair.task);working=working.concat([pair.marker,pair.task]);
   });
   // Study-kind items (and timeless events, see above) get a real slot via
   // the same deterministic placement engine every other scheduling path
@@ -8802,7 +8903,7 @@ function planBrainDumpTasks(items,events,routines,prefs){
   // Final order intentionally kept identical to the original code — only
   // internal placement order changed above — since commitTasks reads
   // newTasks[0].date to decide which date to navigate the calendar to.
-  return {tasks:[...studyTasks,...todoTasks,...eventTasks,...reminderTasks,...examTasks],unplaced};
+  return {tasks:[...studyTasks,...todoTasks,...eventTasks,...reminderTasks,...examTasks,...projectTasks],unplaced};
 }
 
 // The pure core of commitSyllabusEvents (below) -- takes the "existing"
@@ -8837,7 +8938,12 @@ function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routin
   // disagree about whether something's actionable yet. noDate items never
   // gate into a real date, so they're excluded here regardless of whatever
   // attackBlock/proposeSessions the review screen happened to leave set.
-  const gates=items.map(it=>it.kind==="deadline"&&it.attackBlock&&!it.noDate?attackBlockActionableDate(it.estimatedHours,it.date,today):null);
+  // "project" is included alongside "deadline" here and in wantsAttack below --
+  // a syllabus-reviewed Project item still carries kind:"project" at this
+  // point (only collapsed to the stored kind:"deadline" further down), and
+  // without this it silently never qualified for Attack Block gating at all,
+  // so its phases/outline never got attached to the committed event.
+  const gates=items.map(it=>(it.kind==="deadline"||it.kind==="project")&&it.attackBlock&&!it.noDate?attackBlockActionableDate(it.estimatedHours,it.date,today):null);
   const markerEvents=items.map((it,i)=>{
     const syllabusSeed=it.detail&&it.detail.trim()
       ?[{name:"From your syllabus",text:it.detail.trim()}]
@@ -8869,7 +8975,7 @@ function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routin
         ...(it.kind==="exam"&&it.materialLinks&&it.materialLinks.length>0?{referenceLinks:it.materialLinks}:{}),
       };
     }
-    const wantsAttack=it.kind==="deadline"&&it.attackBlock;
+    const wantsAttack=(it.kind==="deadline"||it.kind==="project")&&it.attackBlock;
     const gate=gates[i];
     const isActionableNow=wantsAttack&&gate&&today>=gate.startDate;
     return {
@@ -9903,7 +10009,7 @@ function computeCoopFromParticipants(participants,myUid){
 }
 // ─── CALENDAR ─────────────────────────────────────────────────────────────────
 // ─── TASK TIMER MODAL ────────────────────────────────────────────────────────
-function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignmentExtend,onAttackBlockExtend,onAttackBlockFinish,onLockInError,resumeElapsedSecs=0}){
+function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignmentExtend,onAttackBlockExtend,onAttackBlockFinish,onLockInError,onGoToLinkedResource,resumeElapsedSecs=0}){
   const totalMins=task.duration||25;
   const myUid=firebase.auth().currentUser?.uid||null;
   // Live studySessions subscription — scoped to this modal's own mount
@@ -10357,7 +10463,11 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
           <div style={{fontSize:16,fontStyle:"italic",color:T.text,lineHeight:1.7,marginBottom:8,fontFamily:T.serif}}>"{q.text}"</div>
           <div style={{fontSize:12,color:T.muted,marginBottom:28}}>— {q.author}</div>
           <div style={{fontSize:15,fontWeight:600,color:T.white,marginBottom:4}}>{task.title}</div>
-          <div style={{fontSize:12,color:T.muted,marginBottom:28}}>{totalMins} minutes · {task.subject||"Study session"}</div>
+          <div style={{fontSize:12,color:T.muted,marginBottom:task.notes||task.deckId||task.practiceExamId?8:28}}>{totalMins} minutes · {task.subject||"Study session"}</div>
+          {task.notes&&<div style={{fontSize:12,color:T.text,lineHeight:1.5,marginBottom:(task.deckId||task.practiceExamId)?12:28}}>{task.notes}</div>}
+          {(task.deckId||task.practiceExamId)&&onGoToLinkedResource&&(
+            <button type="button" onClick={()=>onGoToLinkedResource(task)} style={{background:"none",border:`1px solid ${T.borderHover}`,borderRadius:8,color:T.lime,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:600,padding:"7px 14px",marginBottom:28}}>{task.deckId?"Study these cards first →":"Take the practice exam first →"}</button>
+          )}
 
           {/* Interactive timeline */}
           <div style={{marginBottom:24,textAlign:"left"}}>
@@ -11367,14 +11477,31 @@ function PhasesOutlineEditor({item,onChange,subject}){
       ):(
         <div style={{display:"flex",flexDirection:"column",gap:6}}>
           <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Checklist</div>
-          {item.outline.map((s,si)=>(
-            <div key={si} style={{display:"flex",alignItems:"center",gap:6}}>
-              <span style={{fontSize:10,color:T.faint,width:14,flexShrink:0,fontFamily:T.mono}}>{si+1}</span>
-              <Input value={s} onChange={e=>onChange({outline:item.outline.map((step,ssi)=>ssi===si?e.target.value:step)})} style={{flex:1,fontSize:12,padding:"5px 8px"}} />
-              <button type="button" onClick={()=>onChange({outline:item.outline.filter((_,ssi)=>ssi!==si)})} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,lineHeight:1,padding:2,flexShrink:0}}>×</button>
-            </div>
-          ))}
+          {item.outline.map((s,si)=>{
+            // Outline steps start as plain strings (proposeOutline's raw
+            // AI output) and only ever become {text,dueDate} objects once a
+            // mini due date gets set on one -- normalized here rather than
+            // forced everywhere else outline is read, so plain-string
+            // outlines elsewhere in the file (the marker's stored version,
+            // once committed) are untouched by this optional feature.
+            const stepText=typeof s==="string"?s:(s.text||"");
+            const stepDue=typeof s==="string"?"":(s.dueDate||"");
+            const patchStep=(patch)=>onChange({outline:item.outline.map((step,ssi)=>{
+              if(ssi!==si)return step;
+              const base=typeof step==="string"?{text:step}:step;
+              return {...base,...patch};
+            })});
+            return (
+              <div key={si} style={{display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:10,color:T.faint,width:14,flexShrink:0,fontFamily:T.mono}}>{si+1}</span>
+                <Input value={stepText} onChange={e=>patchStep({text:e.target.value})} style={{flex:1,fontSize:12,padding:"5px 8px"}} />
+                <Input type="date" value={stepDue} onChange={e=>patchStep({dueDate:e.target.value})} title="Due date for this step (optional)" style={{width:120,fontSize:11,padding:"5px 6px",flexShrink:0}} />
+                <button type="button" onClick={()=>onChange({outline:item.outline.filter((_,ssi)=>ssi!==si)})} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,lineHeight:1,padding:2,flexShrink:0}}>×</button>
+              </div>
+            );
+          })}
           <button type="button" onClick={()=>onChange({outline:[...item.outline,""]})} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add step</button>
+          <div style={{fontSize:10,color:T.faint}}>Add a date on any step your professor gave its own due date for -- optional, only tightens scheduling for that step.</div>
         </div>
       )}
     </div>
@@ -11830,6 +11957,9 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
                               <button type="button" onClick={()=>setItem(i,{detailOpen:true})} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>
                                 {it.detail?"See detail":"+ Add detail"}
                               </button>
+                            )}
+                            {it.kind==="project"&&it.include&&!(it.detail&&it.detail.trim())&&(
+                              <div style={{fontSize:11,color:T.red,marginTop:4}}>Add detail above so Studlin can suggest real phases, not a generic template.</div>
                             )}
                           </div>
                         </div>
@@ -12674,6 +12804,74 @@ function computeRescheduleCandidates(task,events,routines,prefs){
   return candidates.slice(0,RESCHEDULE_MAX_CANDIDATES);
 }
 
+// Completing an Attack-Block/project-linked task via a plain checkbox click
+// (Dashboard's Today's Plan, Calendar's day/agenda views) used to get none
+// of the "how far along are you, want the rest re-estimated" follow-up that
+// finishing the exact same task through the Lock-In Timer already gets --
+// only students who used the timer ever got their remaining sessions
+// resized. This is a standalone equivalent, built fresh rather than
+// extracted out of TaskTimerModal's own attackCheckIn phase (that phase is
+// tightly coupled to live timer refs/state; duplicating just the small
+// check-in FORM here, while reusing the exact same pure math
+// (computeOutlineRemainingMins, ATTACK_BLOCK_PADDING, scheduleAttackBlockFollowUp)
+// the timer already trusts, is far lower-risk than rewiring a proven,
+// delicate flow). Never opened for a plain to-do -- see shouldOfferProjectCheckIn.
+function shouldOfferProjectCheckIn(task,events){
+  if(!task||!task.attackChainId||!task.dueEventId)return false;
+  const marker=events.find(e=>e.id===task.dueEventId);
+  return !!marker;
+}
+function ProjectCheckInModal({taskId,onClose,onToast}){
+  const [itemPct,setItemPct]=useState(50);
+  const [,forceTick]=useState(0);
+  if(!taskId)return null;
+  const events=lsGet("events",[]);
+  const task=events.find(e=>e.id===taskId);
+  const marker=task&&task.dueEventId?events.find(e=>e.id===task.dueEventId):null;
+  if(!task||!marker)return null;
+  const outline=(Array.isArray(marker.outline)&&marker.outline.length>0)?marker.outline:null;
+  const toggleItem=(idx)=>{
+    lsSet("events",lsGet("events",[]).map(e=>e.id===marker.id?{...e,outline:e.outline.map((o,oi)=>oi===idx?{...o,done:!o.done}:o)}:e));
+    forceTick(x=>x+1);
+  };
+  const priorMins=events.filter(e=>e.attackChainId===task.attackChainId&&e.status==="done"&&e.id!==task.id).reduce((s,e)=>s+(e.timeSpent||e.duration||0),0);
+  const totalMinsSoFar=priorMins+(task.timeSpent||task.duration||0);
+  const outlineRecMins=outline?computeOutlineRemainingMins(outline,totalMinsSoFar,itemPct):null;
+  const plainRecMins=(()=>{
+    const raw=totalMinsSoFar*(100-itemPct)/itemPct;
+    const padded=raw*ATTACK_BLOCK_PADDING;
+    return Math.max(10,Math.min(90,Math.round(padded/5)*5));
+  })();
+  const recMins=outlineRecMins!=null?outlineRecMins:plainRecMins;
+  const submit=()=>{
+    scheduleAttackBlockFollowUp(task,recMins);
+    onToast&&onToast("Studlin scheduled "+recMins+"m to finish it up.");
+    onClose();
+  };
+  return (
+    <Modal open={!!taskId} onClose={onClose} title="How far along are you?" width={420}
+      footer={<><Btn variant="subtle" onClick={onClose}>Skip</Btn><Btn onClick={submit}>Schedule +{recMins}m</Btn></>}>
+      <div style={{display:"flex",flexDirection:"column",gap:14}}>
+        {outline&&(
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {outline.map((o,oi)=>(
+              <label key={oi} style={{display:"flex",alignItems:"center",gap:8,fontSize:12.5,color:T.text,cursor:"pointer"}}>
+                <input type="checkbox" checked={o.done} onChange={()=>toggleItem(oi)} style={{accentColor:T.lime,cursor:"pointer"}} />
+                <span style={{textDecoration:o.done?"line-through":"none"}}>{o.text}</span>
+              </label>
+            ))}
+          </div>
+        )}
+        <div>
+          <div style={{fontSize:11,fontWeight:600,color:T.muted,marginBottom:8}}>How much of {outline?"the current step":"what's left"} did you get through?</div>
+          <input type="range" min={5} max={95} step={1} value={itemPct} onChange={e=>setItemPct(parseInt(e.target.value,10))} style={{width:"100%",accentColor:T.lime}} />
+          <div style={{fontSize:11,color:T.muted,marginTop:4,textAlign:"right"}}>{itemPct}%</div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function RescheduleModal({task,events,commit,onClose}){
   const prefs=getSchedulePreferences();
   const routines=getWeeklyRoutine();
@@ -12752,6 +12950,7 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
   const [duration,setDuration]=useState(60);
   const [deadline,setDeadline]=useState("");
   const [deadlineErr,setDeadlineErr]=useState("");
+  const [detailErr,setDetailErr]=useState("");
   const [priority,setPriority]=useState(500);
   const [difficulty,setDifficulty]=useState(500);
   const [moreOpen,setMoreOpen]=useState(false);
@@ -12780,7 +12979,7 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
     setPriority(toSliderVal(ev.priority,5));setDifficulty(toSliderVal(ev.difficulty,5));
     setMoreOpen(!!(ev.priority&&(ev.priority>10?ev.priority!==500:ev.priority!==5)));
     setSubject(ev.subject||"Chemistry");setKind(ev.kind||"deadline");setNotes(ev.notes||"");
-    setCancelConfirmOpen(false);
+    setCancelConfirmOpen(false);setDetailErr("");
     setAddAttackBlock(false);setAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);
     setExamPlan({materialFiles:ev.sourceMaterials||[],materialLinks:ev.referenceLinks||[],materialOpen:false,pasteMaterialMode:false,pasteMaterialText:"",linkDraft:"",linkLabelDraft:"",proposeSessions:false,sessionCount:4});
     setProjectPlan({phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false});
@@ -12809,10 +13008,18 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
   // rest of the split.
   const canAddAttackBlock=(kind==="deadline"||kind==="study block")&&!ev.isAttackBlock&&!ev.dueEventId&&!ev.deckId&&!ev.practiceExamId&&!ev.isExamPrepSession&&!ev.splitGroup&&linkedSessions.length===0&&!(ev.phases&&ev.phases.length>0);
   const isPhaseCandidate=canAddAttackBlock&&isPhaseDecompositionCandidate(ev.estimatedHours,date,dayKey());
+  // True exactly when PhasesOutlineEditor below is live and about to ground
+  // proposeProjectPhases/proposeOutline in whatever's typed into `notes` --
+  // the one moment this field is actually detail, not an optional aside,
+  // matching Add Task's own "Describe what you want to do" treatment for
+  // the same generation step.
+  const showsPhaseDetail=addAttackBlock&&isPhaseCandidate;
 
   const save=()=>{
     if(!title.trim())return;
     if(deadline&&date>deadline){setDeadlineErr("Can't schedule past the deadline ("+deadline+").");return;}
+    if(showsPhaseDetail&&!notes.trim()){setDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");return;}
+    setDetailErr("");
     const timeChanged=time!==ev.time||date!==ev.date;
     const prefs=getSchedulePreferences();
     // Retroactive Attack Block converts this event INTO the real due-date
@@ -12826,8 +13033,9 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
     let attackPair=null;
     if(canAddAttackBlock&&addAttackBlock){
       const phases=isPhaseCandidate?(projectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
+      const outline=isPhaseCandidate?normalizeOutlineDraft(projectPlan.outline):[];
       const desiredDate=date&&date>=dayKey()?date:dayKey();
-      attackPair=buildAssignmentAttackBlockPair(ev.id,{title:title.trim(),subject,notes,deadline:deadline||null,priority,difficulty,probeMins:attackProbeMins},phases,allEvents,routines,prefs,desiredDate,prefs.workStartTime);
+      attackPair=buildAssignmentAttackBlockPair(ev.id,{title:title.trim(),subject,notes,deadline:deadline||null,priority,difficulty,probeMins:attackProbeMins,outline},phases,allEvents,routines,prefs,desiredDate,prefs.workStartTime);
     }
     const updated=allEvents.map(e=>{
       if(e.id!==ev.id)return e;
@@ -12926,6 +13134,7 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
               <div key={oi} style={{display:"flex",alignItems:"center",gap:6}}>
                 <input type="checkbox" checked={o.done} onChange={()=>writeOutline(ev.outline.map((x,xi)=>xi===oi?{...x,done:!x.done}:x))} style={{accentColor:T.lime,cursor:"pointer"}} />
                 <Input value={o.text} onChange={e=>writeOutline(ev.outline.map((x,xi)=>xi===oi?{...x,text:e.target.value}:x))} style={{flex:1,fontSize:12,padding:"5px 8px",textDecoration:o.done?"line-through":"none"}} />
+                <Input type="date" value={o.dueDate||""} onChange={e=>writeOutline(ev.outline.map((x,xi)=>xi===oi?{...x,dueDate:e.target.value}:x))} title="Due date for this step (optional)" style={{width:120,fontSize:11,padding:"5px 6px",flexShrink:0}} />
                 <button type="button" onClick={()=>writeOutline(ev.outline.filter((_,xi)=>xi!==oi))} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,lineHeight:1,padding:2,flexShrink:0}}>×</button>
               </div>
             ))}
@@ -13013,7 +13222,10 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
           )}
         </>
       )}
-      <Field label="Notes (optional)"><Textarea value={notes} onChange={e=>setNotes(e.target.value)} /></Field>
+      <Field label={showsPhaseDetail?"Detail":"Notes (optional)"} hint={showsPhaseDetail?"A sentence or two is enough — Studlin uses this to suggest phases and a checklist.":undefined}>
+        <Textarea value={notes} onChange={e=>{setNotes(e.target.value);if(detailErr)setDetailErr("");}} />
+      </Field>
+      {detailErr&&<div style={{fontSize:12,color:T.red,marginTop:-8,marginBottom:14}}>{detailErr}</div>}
     </Modal>
     <Modal open={cancelConfirmOpen} onClose={()=>setCancelConfirmOpen(false)} title="Cancel prep sessions?" sub="The due date stays on your calendar. Only the scheduled study time Studlin added for it gets removed. Sessions you've already completed stay put." width={420}
       footer={<><Btn variant="subtle" onClick={()=>setCancelConfirmOpen(false)}>Never mind</Btn><Btn variant="danger" onClick={confirmCancelSessions}>{"Cancel "+linkedSessions.filter(s=>s.status==="pending").length+" session"+(linkedSessions.filter(s=>s.status==="pending").length!==1?"s":"")}</Btn></>}>
@@ -13022,7 +13234,7 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
   </>);
 }
 
-function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,setDetailEventId,registerSetEvents}={}){
+function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,setDetailEventId,registerSetEvents,onTaskCompleted}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.muted},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   const colorOf=(sub)=>{if(!sub||sub==="None"||sub==="")return T.muted;const x=userSubjects.find(s=>s.label===sub);return x?x.color:T.lime;};
@@ -13175,6 +13387,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
   // matching Dashboard's existing masterProjects filter convention.
   const [evKind,setEvKind]=useState("assignment");
   const [evNotes,setEvNotes]=useState("");
+  const [evDetailErr,setEvDetailErr]=useState("");
   // Exam study material + spaced-session generation from Add/Edit Task --
   // same shape MaterialEditor/buildExamSessionEvents already expect from
   // Class Setup Wizard's per-item state, just a single object here since
@@ -13596,10 +13809,10 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
   const buildTask=(date,time,titleSuffix,splitInfo)=>{
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
     const projectPhases=evKind==="project"&&evProjectPlan.phases?evProjectPlan.phases.map(p=>p.trim()).filter(Boolean):[];
-    const projectOutline=evKind==="project"&&evProjectPlan.outline?evProjectPlan.outline.map(s=>s.trim()).filter(Boolean):[];
+    const projectOutline=evKind==="project"&&evProjectPlan.outline?normalizeOutlineDraft(evProjectPlan.outline):[];
     return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,kind:resolveAssignmentKind(),notes:evNotes,priority:evPriority,difficulty:evDifficulty,deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,
       ...(projectPhases.length>0?{phases:projectPhases.map((name,pi)=>({name,status:pi===0?"active":"pending"}))}:{}),
-      ...(projectOutline.length>0?{outline:projectOutline.map(text=>({text,done:false}))}:{}),
+      ...(projectOutline.length>0?{outline:projectOutline}:{}),
       ...(splitInfo||{})};
   };
   const commitTasks=(newTasks,opts)=>{
@@ -13652,7 +13865,8 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
         "Today's date is "+dayKey()+" ("+new Date().toLocaleDateString("en-US",{weekday:"long"})+"). "+
         "For each item return: \"title\" (short, e.g. \"Chem homework\" or \"Email counselor\"), "+
         "\"kind\", one of: "+
-        "\"study\" — anything that takes real focused work time (homework, studying, a project) — Studlin finds an open slot for it; "+
+        "\"study\" — anything that takes real focused work time in a single sitting (homework, studying, reading) — Studlin finds an open slot for it; "+
+        "\"project\" — a bigger, multi-step piece of work with a due date further out (a paper, a presentation, building something, a multi-part assignment) — never a single-sitting task; "+
         "\"todo\" — a quick task with no real duration and no fixed time, like sending an email, a form, or a phone call — this includes submitting or sending anything related to a class or exam (e.g. \"send AP exam scores to a college\", \"submit lab report\"), since the ACTION being done is a quick task even though the subject matter is academic; classify by the verb, not by incidental words like \"exam\" or \"class\" in the title; "+
         "\"event\" — something the student personally attends or is present for at a specific real-world time that Studlin should never move, like an appointment, a class, a shift, or a meeting — never taking an exam/test/quiz itself (that's its own kind below), and never an action ABOUT an exam or class, like sending, submitting, or emailing something related to one; "+
         "\"exam\" — the student is taking a quiz, test, midterm, or final at a specific date (e.g. \"I have a chem test Friday\", \"my bio midterm is the 12th\") — never an action about an exam like submitting or sending something; "+
@@ -13660,7 +13874,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
         "\"durationMin\" (your best-guess minutes needed, for kind:\"study\" or kind:\"event\" — null otherwise), "+
         "\"immediate\" (true ONLY for kind:\"study\" when the student explicitly said \"now\"/\"right now\"/\"immediately\" — meaning start this the moment it's added, not just sometime today; false for everything else, including generic same-day urgency like \"today\" or \"tonight\" with no explicit \"now\"), "+
         "\"chained\" (true ONLY for kind:\"study\" or a timeless kind:\"event\" when the student described it as coming right after the PREVIOUS item in this same dump — words like \"then\", \"after that\", \"next\", \"once I'm done with that\" — meaning it should start the moment the previous item ends, back-to-back in the order given, not get independently slotted wherever's smartest. The first item of a sequence has nothing before it, so it's \"chained\":false even if it kicks off an ordered plan — only items 2 and onward in that same plan are \"chained\":true. A plain list of separate homeworks with their own due dates and no \"then\"/sequence language is \"chained\":false throughout), "+
-        "\"dueDate\" (YYYY-MM-DD. For \"study\"/\"todo\" this is the deadline; for \"event\"/\"exam\"/\"reminder\" this is the day it happens. \"today\"/\"tonight\" means the date given above, \"Friday\" means the next occurrence of that weekday. Be literal: if the student named a specific day, always return it, even if it's today. Only use null when truly no timing was mentioned at all), "+
+        "\"dueDate\" (YYYY-MM-DD. For \"study\"/\"todo\"/\"project\" this is the deadline; for \"event\"/\"exam\"/\"reminder\" this is the day it happens. \"today\"/\"tonight\" means the date given above, \"Friday\" means the next occurrence of that weekday. Be literal: if the student named a specific day, always return it, even if it's today. Only use null when truly no timing was mentioned at all), "+
         "\"dueTime\" (HH:MM 24-hour — ONLY for kind:\"event\" or kind:\"reminder\", when a specific time was stated or clearly implied like \"tonight\"=20:00 or \"this morning\"=9:00; null if genuinely no time was said), "+
         "\"examWeight\" (ONLY when kind is \"exam\": \"quiz\" for a quiz or short in-class test worth relatively little, \"major\" for a midterm, final, or unit exam worth significant grade weight — omit otherwise), "+
         "\"needsDuration\" (true ONLY if kind is \"study\" and you genuinely can't make a reasonable guess from context — be generous, most things can get a rough estimate), "+
@@ -13711,7 +13925,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
     // blank instead of showing this submission's leftover prompt.
     setBrainDumpText("");
     setBdError("");
-    const validKinds=["study","todo","event","exam","reminder"];
+    const validKinds=["study","todo","event","exam","project","reminder"];
     const prefs=getSchedulePreferences();
     const todayKeyNow=dayKey();
     const nowMins=(()=>{const n=new Date();return n.getHours()*60+n.getMinutes();})();
@@ -13740,7 +13954,10 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
       // actually described, "just this one" is the opt-out, not the default.
       const recurringDays=(kind==="event"&&it.recurring&&Array.isArray(it.recurring.days))?it.recurring.days.filter(d=>WEEKDAY_ABBR_TO_JS_DOW[d]!==undefined):[];
       const recurring=(recurringDays.length>0&&it.recurring.until&&it.dueDate)?{days:recurringDays,until:it.recurring.until}:null;
-      return {id:"bd-"+i,title:it.title,kind,durationMin:it.durationMin||30,dueDate:it.dueDate||"",dueTime:it.dueTime||"",needsDuration:!!it.needsDuration,attackBlock:!!it.needsDuration,proposeSessions:it.kind==="exam",sessionCount:defaultSessionCountFor(it.examWeight),examWeight:it.examWeight||"major",difficulty:500,moreOpen:false,clarify,recurring,recurringExpandAll:!!recurring,immediate:!!it.immediate,chained:!!it.chained,include:true};
+      return {id:"bd-"+i,title:it.title,kind,durationMin:it.durationMin||30,dueDate:it.dueDate||"",dueTime:it.dueTime||"",needsDuration:!!it.needsDuration,attackBlock:!!it.needsDuration,proposeSessions:it.kind==="exam",sessionCount:defaultSessionCountFor(it.examWeight),examWeight:it.examWeight||"major",difficulty:500,moreOpen:false,clarify,recurring,recurringExpandAll:!!recurring,immediate:!!it.immediate,chained:!!it.chained,include:true,
+        // Project-only fields -- same shape PhasesOutlineEditor/syllabus
+        // review already use, harmless no-ops for every other kind.
+        detail:"",detailOpen:false,phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false};
     })});
   };
   // Turns a "recurringExpandAll" item into one real item per matching
@@ -13805,6 +14022,8 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
   };
   const saveManual=()=>{
     if(!evTitle.trim()||!evDate.trim()||!evTime.trim())return;
+    if(evKind==="project"&&!evNotes.trim()){setEvDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");return;}
+    setEvDetailErr("");
     if(evSaveToRoutine&&(evKind==="exam"||evKind==="class"||evKind==="busy block")){saveToRoutineFromForm();return;}
     // Attack Block used to only be reachable through AI-schedule mode --
     // startAttackBlockChain only ever needed a desired date/time, which
@@ -13817,8 +14036,9 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
       const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
       const prefs=getSchedulePreferences();
       const phases=evKind==="project"?(evProjectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
+      const outline=evKind==="project"?normalizeOutlineDraft(evProjectPlan.outline):[];
       const markerId=String(Date.now()+Math.random()*1000);
-      const pair=buildAssignmentAttackBlockPair(markerId,{title:evTitle.trim(),subject:subj,notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins},phases,events,routines,prefs,evDate,evTime);
+      const pair=buildAssignmentAttackBlockPair(markerId,{title:evTitle.trim(),subject:subj,notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins,outline},phases,events,routines,prefs,evDate,evTime);
       if(!pair){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
       commitTasks([pair.marker,pair.task]);
       return;
@@ -13889,6 +14109,8 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
     if(!evTitle.trim())return;
     if(evKind==="exam"||evKind==="class"||evKind==="busy block")return; // fixed real-world blocks — AI never touches these
     if(taskMode==="manual")return; // Manual Placement is active — use Save to Calendar instead
+    if(evKind==="project"&&!evNotes.trim()){setEvDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");return;}
+    setEvDetailErr("");
     setAiLoading(true);
     const now=new Date();
     const tk=dayKey();
@@ -13916,8 +14138,9 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
     if(evAttackBlock){
       const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
       const phases=evKind==="project"?(evProjectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
+      const outline=evKind==="project"?normalizeOutlineDraft(evProjectPlan.outline):[];
       const markerId=String(Date.now()+Math.random()*1000);
-      const pair=buildAssignmentAttackBlockPair(markerId,{title:evTitle.trim(),subject:subj,notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins},phases,events,routines,prefs,desiredStartDate,windowStartTime);
+      const pair=buildAssignmentAttackBlockPair(markerId,{title:evTitle.trim(),subject:subj,notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins,outline},phases,events,routines,prefs,desiredStartDate,windowStartTime);
       setAiLoading(false);
       if(!pair){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
       commitTasks([pair.marker,pair.task]);
@@ -14086,7 +14309,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
   // Today's Plan checkbox so both write the same real ev.status. Still
   // sync setEvents here since CalendarTab (unlike Dashboard) holds events
   // as live React state.
-  const markDone=(id)=>{setEvents(markEventDone(id));};
+  const markDone=(id)=>{setEvents(markEventDone(id));onTaskCompleted&&onTaskCompleted(id);};
   // Deliberately does NOT clear timeSpent/completedAt -- that history is
   // what stops a timer-completed task from being farmed for XP a second
   // time on re-completion (see the onComplete double-count guard).
@@ -14466,8 +14689,9 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
 
         {isProjectKind&&(<>
           <Field label="Describe what you want to do" hint="A sentence or two is enough — Studlin uses this to suggest phases and a checklist.">
-            <Textarea placeholder="e.g. Build a working demo, write a report, present to the class by the deadline." value={evNotes} onChange={ev=>setEvNotes(ev.target.value)} />
+            <Textarea placeholder="e.g. Build a working demo, write a report, present to the class by the deadline." value={evNotes} onChange={ev=>{setEvNotes(ev.target.value);if(evDetailErr)setEvDetailErr("");}} />
           </Field>
+          {evDetailErr&&<div style={{fontSize:12,color:T.red,marginTop:-8,marginBottom:14}}>{evDetailErr}</div>}
           <PhasesOutlineEditor item={{...evProjectPlan,title:evTitle,detail:evNotes}} onChange={patch=>setEvProjectPlan(p=>({...p,...patch}))} subject={evSubject==="Other"?evCustom:evSubject} />
         </>)}
 
@@ -14613,7 +14837,10 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
                     <Input value={it.title} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,title:ev.target.value}:x)}))} style={{flex:1}} />
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                    <SelectChip options={[{value:"study",label:"Study Session"},{value:"todo",label:"To-Do"},{value:"event",label:"Event"},{value:"exam",label:"Exam"},{value:"reminder",label:"Reminder"}]} value={it.kind} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v,proposeSessions:v==="exam",sessionCount:x.sessionCount||4}:x)}))} />
+                    <SelectChip options={[{value:"study",label:"Study Session"},{value:"todo",label:"To-Do"},{value:"event",label:"Event"},{value:"exam",label:"Exam"},{value:"project",label:"Project"},{value:"reminder",label:"Reminder"}]} value={it.kind} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v,proposeSessions:v==="exam",sessionCount:x.sessionCount||4}:x)}))} />
+                    {it.kind==="project"&&(
+                      <Input type="date" value={it.dueDate} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueDate:ev.target.value}:x)}))} style={{width:138}} />
+                    )}
                     {it.kind==="study"&&!it.attackBlock&&(
                       <div style={{display:"flex",alignItems:"center",gap:6}}>
                         <NumField min={5} max={480} fallback={30} value={it.durationMin} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,durationMin:v}:x)}))} />
@@ -14695,6 +14922,30 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
                       </div>
                     );
                   })()}
+                  {/* Same "describe it, Studlin suggests phases/a checklist"
+                      flow Add Task and the syllabus review already use for
+                      Project -- kept collapsed-by-default look here too
+                      (detailOpen) so a student not adding a project never
+                      sees anything different from before this existed. */}
+                  {it.kind==="project"&&(
+                    <div style={{marginTop:8}}>
+                      {it.detailOpen?(
+                        <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                          <textarea value={it.detail||""} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,detail:ev.target.value}:x)}))} rows={2} placeholder="A sentence or two on what this project actually involves..."
+                            style={{width:"100%",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 9px",color:T.text,fontSize:11.5,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
+                          <button type="button" onClick={()=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,detailOpen:false}:x)}))} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",alignSelf:"flex-start"}}>Collapse</button>
+                        </div>
+                      ):(
+                        <button type="button" onClick={()=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,detailOpen:true}:x)}))} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>
+                          {it.detail?"See detail":"+ Add detail"}
+                        </button>
+                      )}
+                      {it.include&&!(it.detail&&it.detail.trim())&&(
+                        <div style={{fontSize:11,color:T.red,marginTop:4}}>Add detail above so Studlin can suggest real phases, not a generic template.</div>
+                      )}
+                      <PhasesOutlineEditor item={it} onChange={patch=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,...patch}:x)}))} subject="" />
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -17134,7 +17385,7 @@ function StreakDetailModal({open,onClose,streak}){
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleTask, dashToast, setDashToast, setDetailEventId}) {
+function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleTask, dashToast, setDashToast, setDetailEventId, onTaskCompleted}) {
   const realStats=sessionStats();
   const realStreak=Math.max(1,getStreak());
   const lvl=levelInfo();
@@ -17556,7 +17807,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                 );
               }
               return(
-                <div key={t.id} onClick={()=>{if(t.done)uncrossEventDone(t.id);else markEventDone(t.id);forcePlan(x=>x+1);}} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer",background:T.card2}}>
+                <div key={t.id} onClick={()=>{if(t.done)uncrossEventDone(t.id);else{markEventDone(t.id);onTaskCompleted&&onTaskCompleted(t.id);}forcePlan(x=>x+1);}} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer",background:T.card2}}>
                   <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${t.done?T.text:T.border}`,background:t.done?T.text:"transparent",flex:"none",display:"grid",placeItems:"center"}}>
                     {t.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
                   </div>
@@ -19077,6 +19328,27 @@ function App() {
   // new branch called out inline.
   const [examCheckIn,setExamCheckIn]=useState(null);
   const [examPrepSuggestion,setExamPrepSuggestion]=useState(null);
+  // Same "how'd it go" idea as examCheckIn above, but for Attack-Block/
+  // project-linked tasks -- these get the richer outline+percent check-in
+  // (ProjectCheckInModal) instead of the plain solid/okay/shaky one, since
+  // there's real remaining-work math to re-estimate, not just a confidence
+  // rating. Holds just the completed task's id (not the whole object) since
+  // ProjectCheckInModal re-reads live from storage itself.
+  const [projectCheckInTaskId,setProjectCheckInTaskId]=useState(null);
+  // Single entry point for "a task just got marked done outside the Lock-In
+  // Timer" (Dashboard's Today's Plan checkbox, Calendar's day/agenda
+  // checkboxes) -- the timer has its own separate, already-working
+  // completion path (onComplete/attackCheckIn below) and never calls this.
+  // Routes to whichever check-in actually applies, and does nothing for a
+  // plain to-do with no linkage, preserving today's frictionless checkbox
+  // behavior for everything that isn't project/exam-prep-linked.
+  const handleTaskCompleted=(taskId)=>{
+    const events=lsGet("events",[]);
+    const task=events.find(e=>e.id===taskId);
+    if(!task)return;
+    if(shouldOfferProjectCheckIn(task,events))setProjectCheckInTaskId(taskId);
+    else if(task.kind==="study block")setExamCheckIn(task);
+  };
   const submitExamCheckIn=(rating)=>{
     if(!examCheckIn)return;
     // Always upgrades this session's own completionLog row with the
@@ -20019,9 +20291,9 @@ function App() {
             container instead of the real viewport. Clearing it once done
             keeps the entrance animation but stops that side effect. */}
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
-          {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} />:
+          {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} onTaskCompleted={handleTaskCompleted} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} />:
-           active==="calendar"?<CalendarTab onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} />:
+           active==="calendar"?<CalendarTab onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} />:
            active==="notes"?<Notes setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="lectures"?<Lectures setActive={setActive} setPricingOpen={setPricingOpen} />:
@@ -20185,6 +20457,17 @@ function App() {
         }
         setTimerTask(null);
       }}
+        onGoToLinkedResource={(t)=>{
+          // Same deep-link handoff Studlin Prep's own "All Flashcards" list
+          // uses (openDeckId/openDeckAction) plus the equivalent for a
+          // practice exam (openPracticeExamId) -- close the timer first,
+          // exactly like a normal onClose, then navigate straight to the
+          // linked deck/practice exam instead of leaving the student to
+          // find it themselves.
+          setTimerTask(null);
+          if(t.deckId){lsSet("openDeckId",t.deckId);lsSet("openDeckAction","study");setActive("flashcards");}
+          else if(t.practiceExamId){lsSet("openPracticeExamId",t.practiceExamId);if(t.dueEventId)lsSet("openPrepExamId",t.dueEventId);setActive("prep");}
+        }}
         onAssignmentComplete={()=>{
           const aid=timerTask.assignmentId;
           fsdb().collection('assignments').doc(aid).update({status:"completed",updatedAt:new Date().toISOString()}).catch(()=>{});
@@ -20367,6 +20650,7 @@ function App() {
           <Btn variant="ghost" onClick={()=>submitExamCheckIn("shaky")} style={{width:"100%",justifyContent:"center"}}>😟 Still shaky</Btn>
         </div>
       </Modal>
+      <ProjectCheckInModal taskId={projectCheckInTaskId} onClose={()=>setProjectCheckInTaskId(null)} onToast={(msg)=>{setDashToast(msg);setTimeout(()=>setDashToast(""),2800);}} />
       {examPrepSuggestion&&(
         <div style={{position:"fixed",bottom:20,right:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:360}}>
           <div style={{fontSize:13,color:T.text,marginBottom:12,lineHeight:1.5}}>{examPrepSuggestion.reason}</div>
