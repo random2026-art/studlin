@@ -178,7 +178,42 @@ const QUOTES=[
   {text:"Studying is not about time spent but about effort invested.",author:"Anonymous"},
   {text:"The pain of studying is temporary. The pain of not knowing is forever.",author:"Anonymous"},
   {text:"Your future self will thank you for the work you put in today.",author:"Anonymous"},
+  {text:"Motivation gets you started. Habit keeps you going.",author:"Jim Rohn"},
+  {text:"You don't need to see the whole staircase, just take the first step.",author:"Martin Luther King Jr."},
+  {text:"What you do today can improve all your tomorrows.",author:"Ralph Marston"},
+  {text:"Well begun is half done.",author:"Aristotle"},
+  {text:"The future depends on what you do today.",author:"Mahatma Gandhi"},
+  {text:"Do the hard part now so later is easy.",author:"Anonymous"},
+  {text:"Consistency is what turns average into excellence.",author:"Anonymous"},
+  {text:"You are capable of more than you think.",author:"Anonymous"},
+  {text:"Every session you show up for is a vote for who you're becoming.",author:"James Clear"},
+  {text:"Not all storms come to disrupt your life. Some come to clear your path.",author:"Anonymous"},
+  {text:"The comeback is always stronger than the setback.",author:"Anonymous"},
+  {text:"One focused hour beats five distracted ones.",author:"Anonymous"},
+  {text:"Progress, not perfection.",author:"Anonymous"},
+  {text:"Slow progress is still progress.",author:"Anonymous"},
+  {text:"Doing a little is always better than doing nothing.",author:"Anonymous"},
+  {text:"You've survived 100% of your hard days so far.",author:"Anonymous"},
+  {text:"The best time to start was earlier. The next best time is now.",author:"Anonymous"},
+  {text:"Effort compounds. So does avoidance.",author:"Anonymous"},
+  {text:"Nothing worth having comes easy.",author:"Theodore Roosevelt"},
+  {text:"Push yourself, because no one else is going to do it for you.",author:"Anonymous"},
 ];
+// Plain Math.random() picked with replacement, so the same handful could
+// (and did, per a week of real use) resurface within a few sessions even
+// with 20 quotes to choose from. Tracks the last ~10 shown indices in
+// localStorage and excludes them from the next pick until the pool's
+// exhausted, then resets -- a real no-repeat guarantee instead of just a
+// bigger list making repeats slightly rarer.
+const QUOTE_RECENT_MEMORY=10;
+function pickFreshQuote(){
+  const recent=lsGet("recentQuoteIdxs",[]);
+  const eligible=QUOTES.map((_,i)=>i).filter(i=>!recent.includes(i));
+  const pool=eligible.length>0?eligible:QUOTES.map((_,i)=>i);
+  const idx=pool[Math.floor(Math.random()*pool.length)];
+  lsSet("recentQuoteIdxs",[idx,...recent].slice(0,Math.min(QUOTE_RECENT_MEMORY,QUOTES.length-1)));
+  return QUOTES[idx];
+}
 const BREAK_IDEAS=[
   "Go for a quick walk. Even 2 minutes helps clear your head.",
   "Are you hungry? Go eat silly.",
@@ -2139,6 +2174,93 @@ function scheduleAssignmentExtension(task,deadlineKey,totalMins){
     cursorDate=dayKey(d);cursorTime=prefs.workStartTime;
   }
   lsSet("events",events.concat(newEvents));
+}
+// Generalizes scheduleAssignmentExtension's chunk-and-place pattern for a
+// plain flexible study block (no assignmentId/isAttackBlock) that ran out
+// of time -- built as its own small function rather than widening
+// scheduleAssignmentExtension itself, since that one's already proven and
+// shipping; duplicating ~15 lines here is a much smaller risk than
+// touching it. The one real addition: if this task shares a dueEventId
+// with another still-pending session (spaced exam-prep, a project phase),
+// the extension should land BEFORE that sibling, not just before this
+// task's own deadline -- doing flashcards before finishing the chapter
+// review they depend on would be backwards. Tries the tighter,
+// sibling-respecting bound first; if nothing legal fits there, retries
+// once against the looser real-deadline bound so the work still gets
+// scheduled somewhere, and tells the caller which happened (or that
+// neither did) rather than silently picking one or fabricating a
+// double-booked slot.
+function scheduleStudyBlockExtension(task,totalMins){
+  const events=lsGet("events",[]);
+  const routines=getWeeklyRoutine();
+  const prefs=getSchedulePreferences();
+  const sibling=task.dueEventId
+    ?events.filter(e=>e.dueEventId===task.dueEventId&&e.status==="pending"&&e.id!==task.id).sort((a,b)=>a.date<b.date?-1:1)[0]
+    :null;
+  const CHUNK=90;
+  const chunks=[];
+  let remaining=totalMins;
+  while(remaining>0){const c=Math.min(CHUNK,remaining);chunks.push(c);remaining-=c;}
+  const place=(deadlineKey,enforceSiblingTime)=>{
+    let cursorDate=dayKey(),cursorTime=prefs.workStartTime;
+    const newEvents=[];
+    for(let i=0;i<chunks.length;i++){
+      const mins=chunks[i];
+      const slot=findLegalSlotOrNull(events.concat(newEvents),routines,prefs,cursorDate,cursorTime,mins,deadlineKey);
+      // findLegalSlotOrNull's deadline check is date-only -- a sibling
+      // session later THE SAME DAY wouldn't be caught by that alone, so
+      // this enforces same-day ordering too, not just same-day-or-earlier.
+      const violatesSiblingTime=enforceSiblingTime&&slot&&sibling&&slot.date===sibling.date&&timeToMinutes(slot.time)>=timeToMinutes(sibling.time);
+      if(!slot||violatesSiblingTime)return null;
+      newEvents.push({
+        id:String(Date.now()+i)+"-sb-"+i,title:task.title,date:slot.date,time:slot.time,
+        subject:task.subject,kind:"study block",duration:mins,
+        dueEventId:task.dueEventId||null,status:"pending",deadline:task.deadline||null,
+      });
+      const d=new Date(slot.date+"T12:00:00");d.setDate(d.getDate()+1);
+      cursorDate=dayKey(d);cursorTime=prefs.workStartTime;
+    }
+    return newEvents;
+  };
+  if(sibling){
+    const tight=place(sibling.date,true);
+    if(tight){lsSet("events",events.concat(tight));return {tasks:tight,mode:"sibling-respected",sibling};}
+  }
+  const loose=place(task.deadline||null,false);
+  if(loose){lsSet("events",events.concat(loose));return {tasks:loose,mode:sibling?"deadline-only":"placed",sibling};}
+  return {tasks:[],mode:"failed",sibling};
+}
+// "Can I go?" — a dry-run impact check, never a real write.
+// Folds a synthetic busy block over the requested window into a scratch
+// copy of events (same synthetic-busy-block trick the shared-project
+// mutual-availability check already uses), then checks whether every
+// pending exam-prep/deadline-bound session that actually overlaps that
+// window could still legally be placed somewhere before its own deadline.
+// Only ever reports a consequence; nothing here schedules or moves
+// anything for real — a real gap only ever shows up later on its own, the
+// same honest-degrade precedent findSharedStudyWindow already set.
+function checkTimeOffImpact(hours){
+  const events=lsGet("events",[]);
+  const routines=getWeeklyRoutine();
+  const prefs=getSchedulePreferences();
+  const today=dayKey();
+  const now=new Date();
+  const startTime=minutesToTime(now.getHours()*60+now.getMinutes());
+  const startMins=timeToMinutes(startTime);
+  const endMins=startMins+hours*60;
+  const affected=events.filter(e=>e.date===today&&e.time&&e.status==="pending"&&(e.isExamPrepSession||e.deadline)).filter(e=>{
+    const s=timeToMinutes(e.time),en=s+(e.duration||30);
+    return !(endMins<=s||startMins>=en);
+  });
+  if(affected.length===0)return {ok:true};
+  const synthetic={id:"timeoff-sim",date:today,time:startTime,duration:hours*60,kind:"busy block",status:"pending"};
+  for(const task of affected){
+    const others=events.filter(x=>x.id!==task.id).concat([synthetic]);
+    const slot=findLegalSlotOrNull(others,routines,prefs,today,prefs.workStartTime,task.duration||30,task.deadline||null);
+    if(!slot)return {ok:false,blocked:true,title:task.title};
+    if(slot.date!==task.date||slot.time!==task.time)return {ok:false,blocked:false,title:task.title,newDate:slot.date};
+  }
+  return {ok:true};
 }
 // Attack Block — calibration-based duration estimation. Instead of asking a
 // student to guess how long an ambiguous task takes (the exact skill they're
@@ -10143,7 +10265,7 @@ function computeCoopFromParticipants(participants,myUid){
 }
 // ─── CALENDAR ─────────────────────────────────────────────────────────────────
 // ─── TASK TIMER MODAL ────────────────────────────────────────────────────────
-function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignmentExtend,onAttackBlockExtend,onAttackBlockFinish,onLockInError,onGoToLinkedResource,resumeElapsedSecs=0}){
+function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignmentExtend,onAttackBlockExtend,onAttackBlockFinish,onStudyBlockExtend,onLockInError,onGoToLinkedResource,resumeElapsedSecs=0}){
   const totalMins=task.duration||25;
   const myUid=firebase.auth().currentUser?.uid||null;
   // Live studySessions subscription — scoped to this modal's own mount
@@ -10161,7 +10283,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
   // back to the synthetic single-entry task.coop the co-op "Join Lock-In"
   // flow passes directly for its own optimistic first-render UI.
   const coop=liveSession?computeCoopFromParticipants(liveSession.participants,myUid):(task.coop||[]);
-  const quoteRef=useRef(QUOTES[Math.floor(Math.random()*QUOTES.length)]);
+  const quoteRef=useRef(pickFreshQuote());
   const breakIdeaRef=useRef(BREAK_IDEAS[Math.floor(Math.random()*BREAK_IDEAS.length)]);
   const focusElapsed=useRef(0);
   // No-Lie guard: a second, independent elapsed-time tracker using
@@ -10316,6 +10438,25 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
   const abOutlineRecMins=abOutline?computeOutlineRemainingMins(abOutline,abTotalMins,abItemPct):null;
   const abEffectiveRecMins=abOutlineRecMins!=null?abOutlineRecMins:abRecMins;
 
+  // ── Plain flexible study block "not done yet" sub-state (only used when
+  // phase==="studyBlockCheck", i.e. neither isAttackBlock nor assignmentId
+  // is set) -- the one gap in this whole check-in chain: time runs out and
+  // there was previously no way to say "not done." sbExtraMins tracks real
+  // minutes added via quick-add so verifiedMins/completeSession's cap below
+  // grows with it instead of silently discarding genuine extra focus time
+  // (the same "never undercount real effort" discipline the No-Lie guard
+  // elsewhere in this file already follows) -- deliberately NOT touching
+  // totalMins itself, since the break-position timeline math still needs
+  // the original planned duration, not the extended one. ──
+  const [sbStep,setSbStep]=useState("choice"); // choice | slider
+  const [sbQuickAddCount,setSbQuickAddCount]=useState(0); // capped at 2 -- see the "A few more minutes" button below
+  const [sbExtraMins,setSbExtraMins]=useState(0);
+  const [sbPct,setSbPct]=useState(50);
+  const sbRecMins=(()=>{
+    const raw=pendingMinsRef.current*(100-sbPct)/sbPct;
+    return Math.max(10,Math.min(180,Math.round(raw/5)*5));
+  })();
+
   // A soft three-note ascending chime (C5-E5-G5) rather than a single sharp
   // sweep — noticeable enough that a session-end never gets missed, but
   // pleasant enough that finishing a focus block doesn't feel like an alarm
@@ -10357,7 +10498,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
     clearTimerCheckpoint();
     // No-Lie guard: a session can never claim more focus minutes than its
     // own block's stated duration, regardless of what the caller computed.
-    const safeMins=Math.min(mins,totalMins);
+    const safeMins=Math.min(mins,totalMins+sbExtraMins);
     const minutesBefore=getTotalMinutesFocused();
     // onComplete (App's handler) is what actually logs the session
     // (logSession -> sessions array), so minutesAfter only reflects the gain
@@ -10380,7 +10521,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
   // Date.now() (what the rest of the app uses) and performance.now() (a
   // monotonic clock a system-clock change can't move). Whichever direction
   // the wall clock was tampered, the untampered one caps the result.
-  const verifiedMins=()=>Math.max(1,Math.min(totalMins,Math.round(Math.min(focusElapsed.current,focusElapsedMono.current)/60)));
+  const verifiedMins=()=>Math.max(1,Math.min(totalMins+sbExtraMins,Math.round(Math.min(focusElapsed.current,focusElapsedMono.current)/60)));
 
   useEffect(()=>{
     if(!running)return;
@@ -10424,7 +10565,18 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
             setRunning(false);
             setPhase("assignmentCheck");
           }else{
-            completeSession(mins);
+            // A plain flexible study block used to auto-complete here with
+            // no way to say "not done yet" -- the one real gap in this
+            // whole chain. studyBlockCheck below is that missing check-in.
+            // Unlike attackCheckIn/assignmentCheck (which never touch the
+            // alarm today), this one explicitly keeps it ringing -- same
+            // reasoning as the focus1->break transition -- since it's easy
+            // to miss this screen if you stepped away when time ran out.
+            pendingMinsRef.current=mins;
+            setRunning(false);
+            setPhase("studyBlockCheck");
+            setAlarmActive(true);
+            if(soundOn)playBeep();
           }
         }
       }
@@ -10720,6 +10872,56 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
             <div style={{display:"flex",gap:10}}>
               <Btn variant="subtle" onClick={()=>setAsgStep("choice")} style={{flex:1,justifyContent:"center"}}>Back</Btn>
               <Btn onClick={onScheduleExtension} style={{flex:1,justifyContent:"center"}}>Schedule +{asgFinalMins}m</Btn>
+            </div>
+          </>)}
+        </div>
+      </div>
+    );
+  }
+
+  if(phase==="studyBlockCheck"){
+    const onFinishStudyBlock=()=>{completeSession(pendingMinsRef.current);};
+    // Doesn't end the session -- resumes the live timer with real extra
+    // time, unlike every other choice here (which all close this session
+    // out, extended or not, and schedule any remainder separately). Capped
+    // at two uses (see the button's own gate below) specifically so this
+    // never becomes a silent, unrecorded hour of ad-hoc extensions -- past
+    // the cap, "schedule the rest" is the only forward path, which DOES
+    // leave a real record (a real calendar block, not just more ticking).
+    const onQuickAddTime=()=>{
+      setAlarmActive(false);
+      setSbQuickAddCount(c=>c+1);
+      setSbExtraMins(m=>m+10);
+      setSecs(s=>s+600);
+      setPhase("focus2");
+      setRunning(true);
+    };
+    const onScheduleRest=()=>{
+      if(onStudyBlockExtend)onStudyBlockExtend(task,pendingMinsRef.current,sbRecMins);
+      completeSession(pendingMinsRef.current);
+    };
+    return(
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(10px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+        <div style={{width:"100%",maxWidth:480,background:T.card,borderRadius:20,border:`1px solid ${T.border}`,padding:"36px 32px",textAlign:"center"}}>
+          {sbStep==="choice"&&(<>
+            <div style={{fontSize:17,fontWeight:700,color:T.white,marginBottom:8}}>Time's up on "{task.title}"</div>
+            <div style={{fontSize:13,color:T.text,marginBottom:28,lineHeight:1.6}}>Did you finish it?</div>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <Btn onClick={onFinishStudyBlock} style={{width:"100%",justifyContent:"center"}}>Actually, I'm finished</Btn>
+              {sbQuickAddCount<2&&<Btn variant="subtle" onClick={onQuickAddTime} style={{width:"100%",justifyContent:"center"}}>A few more minutes</Btn>}
+              <Btn variant="subtle" onClick={()=>setSbStep("slider")} style={{width:"100%",justifyContent:"center"}}>Not now — schedule the rest</Btn>
+            </div>
+          </>)}
+
+          {sbStep==="slider"&&(<>
+            <div style={{fontSize:17,fontWeight:700,color:T.white,marginBottom:8}}>How far did you get?</div>
+            <div style={{fontSize:13,color:T.text,marginBottom:24,lineHeight:1.6}}>Drag to estimate how much you got through.</div>
+            <input type="range" min={5} max={95} step={1} value={sbPct} onChange={e=>setSbPct(parseInt(e.target.value,10))} style={{width:"100%",marginBottom:8}} />
+            <div style={{fontSize:13,fontWeight:600,color:T.lime,marginBottom:20}}>{sbPct}% complete</div>
+            <div style={{fontSize:13,color:T.text,marginBottom:24}}>Studlin will schedule <strong>+{sbRecMins}m</strong> to finish it up.</div>
+            <div style={{display:"flex",gap:10}}>
+              <Btn variant="subtle" onClick={()=>setSbStep("choice")} style={{flex:1,justifyContent:"center"}}>Back</Btn>
+              <Btn onClick={onScheduleRest} style={{flex:1,justifyContent:"center"}}>Schedule +{sbRecMins}m</Btn>
             </div>
           </>)}
         </div>
@@ -12932,7 +13134,7 @@ function computeRescheduleCandidates(task,events,routines,prefs){
       const orig=events.find(o=>o.id===e.id);
       return orig&&orig.date===d&&e.date!==d;
     }).length;
-    candidates.push({date:d,dayOffset:i,placement,events:relocated,reason,taskMins,baseMins,rawBaseMins,pct,isHigh:pct>=15,evictedCount});
+    candidates.push({date:d,dayOffset:i,placement,events:relocated,reason,taskMins,baseMins,rawBaseMins,pct,isHigh:pct>=15,evictedCount,isEmpty:rawBaseMins<=0});
   }
   candidates.sort((a,b)=>a.rawBaseMins-b.rawBaseMins||a.evictedCount-b.evictedCount||a.dayOffset-b.dayOffset);
   return candidates.slice(0,RESCHEDULE_MAX_CANDIDATES);
@@ -13057,7 +13259,10 @@ function RescheduleModal({task,events,commit,onClose}){
                     {selectedIdx===i&&<span style={{color:T.lime,fontSize:12}}>✓</span>}
                   </div>
                   <div style={{fontSize:12,color:T.muted,marginTop:3}}>
-                    Adds <strong style={{color:c.isHigh?T.amber:T.muted}}>{c.pct}%</strong> to that day's workload{c.evictedCount>0?` · bumps ${c.evictedCount} other${c.evictedCount!==1?"s":""}`:""}
+                    {c.isEmpty
+                      ?<strong style={{color:T.teal}}>Currently free</strong>
+                      :<>Adds <strong style={{color:c.isHigh?T.amber:T.muted}}>{c.pct}%</strong> to that day's workload</>}
+                    {c.evictedCount>0?` · bumps ${c.evictedCount} other${c.evictedCount!==1?"s":""}`:""}
                   </div>
                 </div>
               ))}
@@ -13474,6 +13679,9 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
   // quickScan prop) so an already-onboarded student can add one more class's
   // dates without walking the whole classes->activities->window flow again.
   const [quickScanOpen,setQuickScanOpen]=useState(false);
+  const [timeOffOpen,setTimeOffOpen]=useState(false);
+  const [timeOffHours,setTimeOffHours]=useState(2);
+  const [timeOffResult,setTimeOffResult]=useState(null);
 
   // RoutineWizardModal itself is untouched and still reachable later via
   // "Manage Routine" (Settings > Calendar Preferences, arrives here via
@@ -14657,6 +14865,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
                 {icon:Icon.zap,label:"Balance my week",sub:"Rebalance an overloaded week",onClick:()=>{setToolsMenuOpen(false);openWeekBalance();}},
                 {icon:Icon.file,label:"Scan syllabus",sub:"Upload a doc, AI extracts dates",onClick:()=>{setToolsMenuOpen(false);setQuickScanOpen(true);}},
                 {icon:Icon.cal,label:"Routine",sub:"Manage your weekly schedule",onClick:()=>{setToolsMenuOpen(false);setRoutineCenterOpen(true);}},
+                {icon:Icon.check,label:"Can I go?",sub:"See if free time now is safe",onClick:()=>{setToolsMenuOpen(false);setTimeOffResult(null);setTimeOffOpen(true);}},
               ].map(item=>(
                 <div key={item.label} onClick={item.onClick} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 14px",cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                   <span style={{width:16,color:T.muted,display:"flex",marginTop:2}}>{item.icon}</span>
@@ -14776,6 +14985,29 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
       )}
       <ClassSetupWizard open={classSetupOpen} initialStatus={getProfile().status} onFinish={finishClassSetup} onSkip={skipClassSetup} />
       <ClassSetupWizard open={quickScanOpen} quickScan initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>setQuickScanOpen(false)} />
+      {/* ── "Can I go?" -- a pure dry-run, nothing here ever
+          writes to the calendar. See checkTimeOffImpact's own comment for
+          why: it's the exact same "compute, don't commit" approach the
+          shared-project mutual-availability check already uses. ── */}
+      <Modal open={timeOffOpen} onClose={()=>setTimeOffOpen(false)} title="Can I go?" sub="Pick how long, starting now — Studlin checks what's actually at risk." width={400}
+        footer={<><Btn variant="subtle" onClick={()=>setTimeOffOpen(false)}>Close</Btn><Btn onClick={()=>setTimeOffResult(checkTimeOffImpact(timeOffHours))}>Check</Btn></>}>
+        <div style={{display:"flex",gap:8,marginBottom:16}}>
+          {[1,2,3].map(h=>(
+            <button key={h} type="button" onClick={()=>{setTimeOffHours(h);setTimeOffResult(null);}} style={{flex:1,padding:"9px",borderRadius:8,border:`1px solid ${timeOffHours===h?T.lime+"66":T.border}`,background:timeOffHours===h?T.lime+"14":T.card2,color:timeOffHours===h?T.lime:T.text,cursor:"pointer",fontFamily:T.font,fontSize:13,fontWeight:600}}>{h}h</button>
+          ))}
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <NumField min={1} max={12} fallback={2} value={timeOffHours} onChange={v=>{setTimeOffHours(v);setTimeOffResult(null);}} style={{width:48}} />
+            <span style={{fontSize:11.5,color:T.muted}}>hrs</span>
+          </div>
+        </div>
+        {timeOffResult&&(
+          <div style={{fontSize:13,lineHeight:1.5,padding:"12px 14px",borderRadius:10,background:timeOffResult.ok?T.teal+"14":timeOffResult.blocked?T.red+"14":T.amber+"14",border:`1px solid ${timeOffResult.ok?T.teal+"33":timeOffResult.blocked?T.red+"33":T.amber+"33"}`,color:T.text}}>
+            {timeOffResult.ok?"Go ahead — nothing's at risk."
+              :timeOffResult.blocked?"I'd hold off — \""+timeOffResult.title+"\" doesn't have room to recover if you take this now."
+              :"Cutting it close — \""+timeOffResult.title+"\" would need to move to "+timeOffResult.newDate+"."}
+          </div>
+        )}
+      </Modal>
       {toast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} Task added</div>
       )}
@@ -20723,6 +20955,14 @@ function App() {
         onAttackBlockExtend={(totalMinsSoFar,pct,nextMins)=>{
           scheduleAttackBlockFollowUp(timerTask,nextMins);
         }}
+        onStudyBlockExtend={(task,verifiedMinsSoFar,nextMins)=>{
+          const result=scheduleStudyBlockExtension(task,nextMins);
+          const msg=result.mode==="sibling-respected"?"Scheduled +"+nextMins+"m to finish it up."
+            :result.mode==="placed"?"Scheduled +"+nextMins+"m to finish it up."
+            :result.mode==="deadline-only"?"Scheduled +"+nextMins+"m, but it lands after \""+result.sibling.title+"\" — you may want to move that around."
+            :"Couldn't find room before the deadline — add it manually in your calendar.";
+          setDashToast(msg);setTimeout(()=>setDashToast(""),4200);
+        }}
         onAttackBlockFinish={()=>{
           const events=lsGet("events",[]);
           const next=advanceProjectPhase(timerTask,events,getWeeklyRoutine(),getSchedulePreferences(),dayKey());
@@ -20886,11 +21126,11 @@ function App() {
           {lockInErrorToast}
         </div>
       )}
-      <Modal open={!!examCheckIn} onClose={()=>setExamCheckIn(null)} title="How'd that go?" sub={examCheckIn?"Quick check-in on \""+examCheckIn.title+"\". Skippable, helps Studlin plan the rest.":""} width={380}>
+      <Modal open={!!examCheckIn} onClose={()=>setExamCheckIn(null)} title="How'd it go?" width={380}>
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
-          <Btn variant="ghost" onClick={()=>submitExamCheckIn("solid")} style={{width:"100%",justifyContent:"center"}}>🙂 Solid, I've got this</Btn>
-          <Btn variant="ghost" onClick={()=>submitExamCheckIn("okay")} style={{width:"100%",justifyContent:"center"}}>😐 Okay, still sinking in</Btn>
-          <Btn variant="ghost" onClick={()=>submitExamCheckIn("shaky")} style={{width:"100%",justifyContent:"center"}}>😟 Still shaky</Btn>
+          <Btn variant="ghost" onClick={()=>submitExamCheckIn("solid")} style={{width:"100%",justifyContent:"center"}}>Nailed it</Btn>
+          <Btn variant="ghost" onClick={()=>submitExamCheckIn("okay")} style={{width:"100%",justifyContent:"center"}}>Still sinking in</Btn>
+          <Btn variant="ghost" onClick={()=>submitExamCheckIn("shaky")} style={{width:"100%",justifyContent:"center"}}>Still shaky</Btn>
         </div>
       </Modal>
       <ProjectCheckInModal taskId={projectCheckInTaskId} onClose={()=>setProjectCheckInTaskId(null)} onToast={(msg)=>{setDashToast(msg);setTimeout(()=>setDashToast(""),2800);}} />
