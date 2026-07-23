@@ -1976,6 +1976,88 @@ function surfaceReconcileResult(result){
     .concat(result.needsAttention.map(a=>({kind:"attention",...a})));
   if(entries.length>0)lsSet("pendingScheduleChangeAlerts",[...lsGet("pendingScheduleChangeAlerts",[]),...entries]);
 }
+// Merges a batch of server-shaped gcal-* events (googleItemToEvent's
+// shape, produced identically by connectGoogleCalendar's response and by
+// api/_lib/google-calendar.js server-side) into local storage -- module
+// scope (not SettingsTab-local) so it's the one place Settings' own
+// connect/pull flow AND the first-run onboarding overlay both land,
+// instead of two independent implementations that can drift.
+function applyGoogleEvents(gcalEvents){
+  // Strip stale gcal- events first (Google is authoritative for its own
+  // prefix -- one deleted on Google's side should disappear here too),
+  // so reconcileFixedEventConflicts' own lsGet reads the clean state and
+  // only ever treats the fresh batch as "new."
+  const existing=lsGet("events",[]).filter(e=>!e.id.startsWith("gcal-"));
+  lsSet("events",existing);
+  const result=reconcileFixedEventConflicts(gcalEvents);
+  surfaceReconcileResult(result);
+  return result;
+}
+// The one real, server-backed Google Calendar connection flow --
+// authorization-code OAuth (not the old implicit token flow), which is
+// what lets the server get a refresh token it can use on its own later,
+// with nobody signed in, instead of every sync needing a fresh popup.
+// access_type:'offline' + prompt:'consent' together guarantee Google
+// actually issues that refresh token (it's otherwise only granted once,
+// silently, the very first time a student ever consents). Used to only
+// live in Settings -- the first-run onboarding overlay had its own
+// second, fake implementation (implicit-token flow, direct client-side
+// fetch, never touched the server, no refresh token, no webhook, never
+// ran again) that still set the identical "connected" flag Settings
+// reads, so a student who connected through onboarding saw "Connected ·
+// syncs automatically" with nothing real behind it. This is now the only
+// implementation; the caller owns its own loading/toast UI around the
+// call, since Settings and the onboarding overlay each show that
+// differently.
+function connectGoogleCalendar(){
+  return new Promise((resolve)=>{
+    if(typeof google==="undefined"||!google.accounts||!google.accounts.oauth2){
+      resolve({success:false,error:"Google sign-in not ready. Try refreshing the page."});
+      return;
+    }
+    const codeClient=google.accounts.oauth2.initCodeClient({
+      client_id:"16831354472-e2vauavtunm3ot771cg7pgline10i9rk.apps.googleusercontent.com",
+      scope:"https://www.googleapis.com/auth/calendar.events.readonly",
+      ux_mode:"popup",
+      access_type:"offline",
+      prompt:"consent",
+      callback:async(resp)=>{
+        if(resp.error){resolve({success:false,error:"Google Calendar connection failed."});return;}
+        try{
+          const res=await authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"google-calendar-connect",code:resp.code})});
+          const data=await res.json();
+          if(!res.ok)throw new Error(data.error||"Sync failed");
+          const result=applyGoogleEvents(data.events);
+          lsSet("cal-google",true);
+          lsSet("cal-google-last-synced",Date.now());
+          resolve({success:true,eventCount:data.events.length,reconcileResult:result});
+        }catch(e){
+          resolve({success:false,error:"Failed to fetch calendar events. Check permissions and try again."});
+        }
+      }
+    });
+    codeClient.requestCode();
+  });
+}
+// The "actual automatic part" of a Google Calendar connection -- pulls
+// whatever the daily background cron (api/google-calendar-cron.js) or a
+// live webhook push most recently fetched server-side (a plain
+// Firestore read, no Google popup, no click). connectGoogleCalendar
+// above only ever runs from an explicit Connect/Sync-now click; this is
+// what actually keeps a connected student's calendar current afterward.
+// Returns null (a no-op) when not connected or the pull fails -- callers
+// treat that as "nothing changed," never as an error to surface.
+async function pullGoogleCalendarIfConnected(){
+  if(!lsGet("cal-google",false))return null;
+  try{
+    const res=await authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"google-calendar-pull"})});
+    const data=await res.json();
+    if(!res.ok||!data.connected)return null;
+    const result=applyGoogleEvents(data.events);
+    if(data.lastSyncedAt)lsSet("cal-google-last-synced",new Date(data.lastSyncedAt).getTime());
+    return {reconcileResult:result,lastSyncedAt:data.lastSyncedAt||null,lastSyncError:data.lastSyncError||null};
+  }catch(e){return null;}
+}
 // Short suffix for the toast each call site already shows on success, so
 // what just happened is hinted at immediately rather than only discoverable
 // by noticing the separate banners.
@@ -4914,6 +4996,17 @@ function StudlinPrep({setActive=()=>{}}={}){
   // stale count over from whichever exam was open last.
   const [sessionCountDraft,setSessionCountDraft]=useState(4);
   const [sessionScheduleLoading,setSessionScheduleLoading]=useState(false);
+  // Progressive disclosure for the exam-detail view -- everything used to
+  // render at once (upload/paste/notes/links, three generate buttons, the
+  // full editable session list) regardless of whether the student had
+  // added anything yet or just wanted the one obvious next step. These
+  // default closed except materialAddOpen, which the render below also
+  // forces open whenever there's genuinely no material yet -- there's
+  // nothing to be less overwhelming than a first-time student's one
+  // real option, so there's no reason to hide it behind a click.
+  const [materialAddOpen,setMaterialAddOpen]=useState(false);
+  const [moreGenOptionsOpen,setMoreGenOptionsOpen]=useState(false);
+  const [sessionsExpanded,setSessionsExpanded]=useState(false);
   // colorOf is component-local everywhere it exists in this file (Notes,
   // CalendarTab, Flashcards each define their own) -- not a module-level
   // helper, so Prep needs its own too, same lookup Notes already uses.
@@ -5287,6 +5380,7 @@ function StudlinPrep({setActive=()=>{}}={}){
                   setLinkDraft("");setLinkLabelDraft("");
                   setPasteMode(false);setPasteText("");
                   setSessionCountDraft(defaultSessionCountFor(ex.examWeight));
+                  setMaterialAddOpen(false);setMoreGenOptionsOpen(false);setSessionsExpanded(false);
                 }} style={{padding:"14px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,cursor:"pointer",display:"flex",alignItems:"center",gap:14}}>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:14,fontWeight:700,color:T.white}}>{ex.title}</div>
@@ -5373,24 +5467,8 @@ function StudlinPrep({setActive=()=>{}}={}){
 
             <Card style={{padding:20,marginBottom:16}}>
               <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Material</div>
-              <input type="file" ref={fileInputRef} onChange={handlePrepFile} accept=".txt,.md,.pdf,.docx" style={{display:"none"}} multiple />
-              <div onClick={()=>fileInputRef.current&&fileInputRef.current.click()} style={{border:`1px dashed ${T.borderHover}`,borderRadius:10,padding:18,textAlign:"center",background:T.card2,cursor:"pointer",marginBottom:10}}>
-                <div style={{fontSize:12.5,color:T.text,fontWeight:500}}>Click to upload — PDF, DOCX, or TXT</div>
-                <div style={{fontSize:10.5,color:T.muted,marginTop:3}}>Upload once, generate flashcards and a practice exam from the same material</div>
-              </div>
-              <button type="button" onClick={()=>setPasteMode(m=>!m)} style={{width:"100%",textAlign:"center",padding:"9px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,marginBottom:pasteMode?10:14}}>{pasteMode?"Upload a file instead":"Or paste text instead"}</button>
-              {pasteMode&&(
-                <div style={{marginBottom:14}}>
-                  <textarea value={pasteText} onChange={e=>setPasteText(e.target.value)} placeholder="Paste your notes or material here" rows={6}
-                    style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
-                  <Btn onClick={()=>{setFileTexts(prev=>[...prev,{name:"Pasted text",...finalizeExtractedText(pasteText)}]);setPasteText("");setPasteMode(false);}} disabled={!pasteText.trim()} style={{marginTop:10,width:"100%",justifyContent:"center",opacity:pasteText.trim()?1:0.45}}>Add pasted text</Btn>
-                </div>
-              )}
-              {matchingNotes.length>0&&(
-                <button type="button" onClick={()=>setNotesPickerOpen(true)} style={{width:"100%",textAlign:"center",padding:"9px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,marginBottom:fileTexts.length>0?10:14}}>Pull from your notes ({matchingNotes.length} for {selectedExam.subject})</button>
-              )}
-              {fileTexts.length>0&&(
-                <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:14}}>
+              {(fileTexts.length>0||materialLinks.length>0)&&(
+                <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>
                   {fileTexts.map(f=>(
                     <div key={f.name} style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card2,borderRadius:8,gap:8}}>
                       <div style={{flex:1,minWidth:0}}>
@@ -5402,39 +5480,67 @@ function StudlinPrep({setActive=()=>{}}={}){
                       <button onClick={()=>removePrepFile(f.name)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0}}>×</button>
                     </div>
                   ))}
+                  {materialLinks.map((link,li)=>(
+                    <div key={li} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,fontSize:12,padding:"7px 10px",background:T.card2,borderRadius:8}}>
+                      <a href={link.url} target="_blank" rel="noopener noreferrer" style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0,textDecoration:"underline"}}>
+                        {link.label&&<span style={{color:T.text,fontWeight:600}}>{link.label}: </span>}
+                        <span style={{color:link.label?T.muted:T.text}}>{link.url}</span>
+                      </a>
+                      <button onClick={()=>{const next=materialLinks.filter((_,li2)=>li2!==li);setMaterialLinks(next);lsSet("events",lsGet("events",[]).map(e=>e.id===selectedExam.id?{...e,referenceLinks:next}:e));}} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0}}>×</button>
+                    </div>
+                  ))}
                 </div>
               )}
-              <Field label="Reference links (optional)" hint="Saved for your own reference — Studlin doesn't read these, so they won't factor into flashcards or practice exams.">
-                <div style={{display:"flex",gap:8}}>
-                  <Input value={linkLabelDraft} onChange={e=>setLinkLabelDraft(e.target.value)} placeholder="Label (optional)" style={{width:110,flexShrink:0}} />
-                  <Input type="url" value={linkDraft} onChange={e=>setLinkDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();if(!linkDraft.trim())return;const next=[...materialLinks,{label:linkLabelDraft.trim(),url:linkDraft.trim()}];setMaterialLinks(next);setLinkDraft("");setLinkLabelDraft("");lsSet("events",lsGet("events",[]).map(e=>e.id===selectedExam.id?{...e,referenceLinks:next}:e));}}}
-                    placeholder="https://quizlet.com/..." style={{flex:1,minWidth:0}} />
-                  <BtnSm variant="subtle" disabled={!linkDraft.trim()} onClick={()=>{if(!linkDraft.trim())return;const next=[...materialLinks,{label:linkLabelDraft.trim(),url:linkDraft.trim()}];setMaterialLinks(next);setLinkDraft("");setLinkLabelDraft("");lsSet("events",lsGet("events",[]).map(e=>e.id===selectedExam.id?{...e,referenceLinks:next}:e));}}>+ Add</BtnSm>
+              {/* Only offered as a single "+ Add material"/"+ Add more"
+                  trigger once something already exists -- for a fresh
+                  exam with nothing yet, the upload area below is already
+                  the one obvious next step, so it stays open by default
+                  instead of hiding behind an extra click. */}
+              {!materialAddOpen&&(fileTexts.length>0||materialLinks.length>0)&&(
+                <button type="button" onClick={()=>setMaterialAddOpen(true)} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:14,textDecoration:"underline"}}>+ Add more material</button>
+              )}
+              {(materialAddOpen||(fileTexts.length===0&&materialLinks.length===0))&&(<>
+                <input type="file" ref={fileInputRef} onChange={handlePrepFile} accept=".txt,.md,.pdf,.docx" style={{display:"none"}} multiple />
+                <div onClick={()=>fileInputRef.current&&fileInputRef.current.click()} style={{border:`1px dashed ${T.borderHover}`,borderRadius:10,padding:18,textAlign:"center",background:T.card2,cursor:"pointer",marginBottom:10}}>
+                  <div style={{fontSize:12.5,color:T.text,fontWeight:500}}>Click to upload — PDF, DOCX, or TXT</div>
                 </div>
-                {materialLinks.length>0&&(
-                  <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:8}}>
-                    {materialLinks.map((link,li)=>(
-                      <div key={li} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,fontSize:12,padding:"7px 10px",background:T.card2,borderRadius:8}}>
-                        <a href={link.url} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0,textDecoration:"underline"}}>
-                          {link.label&&<span style={{color:T.text,fontWeight:600}}>{link.label}: </span>}
-                          <span style={{color:link.label?T.muted:T.text}}>{link.url}</span>
-                        </a>
-                        <button onClick={()=>{const next=materialLinks.filter((_,li2)=>li2!==li);setMaterialLinks(next);lsSet("events",lsGet("events",[]).map(e=>e.id===selectedExam.id?{...e,referenceLinks:next}:e));}} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0}}>×</button>
-                      </div>
-                    ))}
+                <button type="button" onClick={()=>setPasteMode(m=>!m)} style={{width:"100%",textAlign:"center",padding:"9px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,marginBottom:pasteMode?10:14}}>{pasteMode?"Upload a file instead":"Or paste text instead"}</button>
+                {pasteMode&&(
+                  <div style={{marginBottom:14}}>
+                    <textarea value={pasteText} onChange={e=>setPasteText(e.target.value)} placeholder="Paste your notes or material here" rows={6}
+                      style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
+                    <Btn onClick={()=>{setFileTexts(prev=>[...prev,{name:"Pasted text",...finalizeExtractedText(pasteText)}]);setPasteText("");setPasteMode(false);}} disabled={!pasteText.trim()} style={{marginTop:10,width:"100%",justifyContent:"center",opacity:pasteText.trim()?1:0.45}}>Add pasted text</Btn>
                   </div>
                 )}
-              </Field>
+                {matchingNotes.length>0&&(
+                  <button type="button" onClick={()=>setNotesPickerOpen(true)} style={{width:"100%",textAlign:"center",padding:"9px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,marginBottom:14}}>Pull from your notes ({matchingNotes.length} for {selectedExam.subject})</button>
+                )}
+                <Field label="Reference links (optional)" hint="Saved for your own reference — Studlin doesn't read these, so they won't factor into flashcards or practice exams.">
+                  <div style={{display:"flex",gap:8}}>
+                    <Input value={linkLabelDraft} onChange={e=>setLinkLabelDraft(e.target.value)} placeholder="Label (optional)" style={{width:110,flexShrink:0}} />
+                    <Input type="url" value={linkDraft} onChange={e=>setLinkDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();if(!linkDraft.trim())return;const next=[...materialLinks,{label:linkLabelDraft.trim(),url:linkDraft.trim()}];setMaterialLinks(next);setLinkDraft("");setLinkLabelDraft("");lsSet("events",lsGet("events",[]).map(e=>e.id===selectedExam.id?{...e,referenceLinks:next}:e));}}}
+                      placeholder="https://quizlet.com/..." style={{flex:1,minWidth:0}} />
+                    <BtnSm variant="subtle" disabled={!linkDraft.trim()} onClick={()=>{if(!linkDraft.trim())return;const next=[...materialLinks,{label:linkLabelDraft.trim(),url:linkDraft.trim()}];setMaterialLinks(next);setLinkDraft("");setLinkLabelDraft("");lsSet("events",lsGet("events",[]).map(e=>e.id===selectedExam.id?{...e,referenceLinks:next}:e));}}>+ Add</BtnSm>
+                  </div>
+                </Field>
+                {(fileTexts.length>0||materialLinks.length>0)&&(
+                  <button type="button" onClick={()=>setMaterialAddOpen(false)} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:14,textDecoration:"underline"}}>Done adding material</button>
+                )}
+              </>)}
               <div style={{marginBottom:10}}>
                 <Btn onClick={buildStudyKit} disabled={!materialText.trim()||kitLoading||genLoading!==null}>{kitLoading?"Building…":"Build my study kit"}</Btn>
-                <div style={{fontSize:10.5,color:T.muted,marginTop:6}}>Flashcards, a practice exam, and review sessions counting down to test day — one action.</div>
+                <div style={{fontSize:10.5,color:T.muted,marginTop:6}}>Flashcards, a practice exam, and review sessions counting down to test day.</div>
               </div>
-              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-                <span style={{fontSize:10.5,color:T.faint}}>or just one:</span>
-                <BtnSm variant="subtle" onClick={genDeckForExam} disabled={!materialText.trim()||genLoading!==null||kitLoading}>{genLoading==="cards"?"Generating…":"Flashcards only"}</BtnSm>
-                <BtnSm variant="subtle" onClick={genPracticeExamForExam} disabled={!materialText.trim()||genLoading!==null||kitLoading}>{genLoading==="quiz"?"Generating…":"Practice exam only"}</BtnSm>
-                {genMsg&&<span style={{fontSize:11.5,color:genMsg.startsWith("✓")?T.teal:T.red,alignSelf:"center"}}>{genMsg}</span>}
-              </div>
+              {!moreGenOptionsOpen&&!genMsg?(
+                <button type="button" onClick={()=>setMoreGenOptionsOpen(true)} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>More options</button>
+              ):(
+                <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                  <span style={{fontSize:10.5,color:T.faint}}>or just one:</span>
+                  <BtnSm variant="subtle" onClick={genDeckForExam} disabled={!materialText.trim()||genLoading!==null||kitLoading}>{genLoading==="cards"?"Generating…":"Flashcards only"}</BtnSm>
+                  <BtnSm variant="subtle" onClick={genPracticeExamForExam} disabled={!materialText.trim()||genLoading!==null||kitLoading}>{genLoading==="quiz"?"Generating…":"Practice exam only"}</BtnSm>
+                  {genMsg&&<span style={{fontSize:11.5,color:genMsg.startsWith("✓")?T.teal:T.red,alignSelf:"center"}}>{genMsg}</span>}
+                </div>
+              )}
             </Card>
 
             <Card style={{padding:20,marginBottom:16}}>
@@ -5480,8 +5586,18 @@ function StudlinPrep({setActive=()=>{}}={}){
                     <Btn onClick={()=>scheduleGenericSessions(sessionCountDraft)} disabled={sessionScheduleLoading}>{sessionScheduleLoading?"Scheduling…":"Schedule sessions for me"}</Btn>
                   </div>
                 </>
-              ):(
+              ):(()=>{
+                const doneCount=examSessions.filter(s=>s.status==="done").length;
+                const nextPending=examSessions.find(s=>s.status!=="done");
+                return (
                 <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+                    <div style={{fontSize:12.5,color:T.text}}>
+                      {examSessions.length} session{examSessions.length!==1?"s":""}{doneCount>0?" · "+doneCount+" done":""}{nextPending?" · next "+nextPending.date:""}
+                    </div>
+                    <BtnSm variant="subtle" onClick={()=>setSessionsExpanded(x=>!x)}>{sessionsExpanded?"Hide":"Manage sessions"}</BtnSm>
+                  </div>
+                  {sessionsExpanded&&(<>
                   {examSessions.map(s=>{
                     const isDone=s.status==="done";
                     return (
@@ -5518,8 +5634,10 @@ function StudlinPrep({setActive=()=>{}}={}){
                       <span style={{fontSize:10.5,color:T.faint}}>Replaces Studlin's own sessions with a fresh plan for this count — review and practice-exam sessions are kept.</span>
                     </div>
                   )}
+                  </>)}
                 </div>
-              )}
+                );
+              })()}
             </Card>
           </div>
         );
@@ -7812,6 +7930,18 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
       await Promise.all([...asSenderSnap.docs,...asReceiverSnap.docs].map(d=>d.ref.delete()));
     }catch(e){}
   };
+  // outgoingReqIds only ever stored the target uid, not the friendship
+  // doc id (same gap unfriend already solves for accepted friendships,
+  // same query-then-delete fix here) -- the "Pending" badge used to have
+  // nothing to call, even though Firestore's own delete rule for
+  // friendships already allows either party to cancel a pending request.
+  const cancelOutgoingRequest=async(targetUid)=>{
+    if(!myUid||!targetUid)return;
+    try{
+      const snap=await fsdb().collection('friendships').where('senderId','==',myUid).where('receiverId','==',targetUid).where('status','==','pending').get();
+      await Promise.all(snap.docs.map(d=>d.ref.delete()));
+    }catch(e){}
+  };
 
   // ── Co-op "Join Lock-In" — real Firestore-backed join, then hands off to
   // the global TaskTimerModal (via the same window._setTimerTask bridge
@@ -7981,7 +8111,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
                     const incomingFromThem=incomingReqs.find(r=>r.senderId===u.uid);
                     const isPendingOut=outgoingReqIds.has(u.uid);
                     const label=isFriend?"Following":incomingFromThem?"Accept":isPendingOut?"Pending":"Add";
-                    const onClickBtn=isFriend||isPendingOut?undefined:incomingFromThem?()=>acceptReq(incomingFromThem.id):()=>sendFriendRequest(u.uid);
+                    const onClickBtn=isFriend?undefined:isPendingOut?()=>cancelOutgoingRequest(u.uid):incomingFromThem?()=>acceptReq(incomingFromThem.id):()=>sendFriendRequest(u.uid);
                     return (
                       <div key={u.uid} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
                         <Av initials={u.n.split(" ").map(x=>x[0]).join("")} color={T.lime} size={34} picUrl="" />
@@ -7989,7 +8119,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
                           <div style={{fontSize:13,fontWeight:600,color:T.white}}>{u.n}</div>
                           <div style={{fontSize:11,color:T.muted}}>{u.h}</div>
                         </div>
-                        <BtnSm variant={label==="Add"||label==="Accept"?"lime":"subtle"} onClick={onClickBtn} style={{flexShrink:0,opacity:onClickBtn?1:0.7}}>{label}</BtnSm>
+                        <BtnSm variant={label==="Add"||label==="Accept"?"lime":"subtle"} onClick={onClickBtn} title={isPendingOut?"Click to cancel this request":undefined} style={{flexShrink:0,opacity:onClickBtn?1:0.7}}>{label}</BtnSm>
                       </div>
                     );
                   })
@@ -8045,7 +8175,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
                     const incomingFromThem=incomingReqs.find(r=>r.senderId===u.uid);
                     const isPendingOut=outgoingReqIds.has(u.uid);
                     const label=isFriend?"Following":incomingFromThem?"Accept":isPendingOut?"Pending":"Add";
-                    const onClickBtn=isFriend||isPendingOut?undefined:incomingFromThem?()=>acceptReq(incomingFromThem.id):()=>sendFriendRequest(u.uid);
+                    const onClickBtn=isFriend?undefined:isPendingOut?()=>cancelOutgoingRequest(u.uid):incomingFromThem?()=>acceptReq(incomingFromThem.id):()=>sendFriendRequest(u.uid);
                     return (
                       <div key={u.uid} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
                         <div style={{position:"relative",flexShrink:0}}>
@@ -8055,7 +8185,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
                           <div style={{fontSize:13,fontWeight:600,color:T.white}}>{u.n}</div>
                           <div style={{fontSize:11,color:T.muted}}>{u.h}{u.s&&<> · <span style={{color:T.blue}}>{u.s}</span></>}</div>
                         </div>
-                        <BtnSm variant={label==="Add"||label==="Accept"?"lime":"subtle"} onClick={onClickBtn} style={{flexShrink:0,opacity:onClickBtn?1:0.7}}>{label}</BtnSm>
+                        <BtnSm variant={label==="Add"||label==="Accept"?"lime":"subtle"} onClick={onClickBtn} title={isPendingOut?"Click to cancel this request":undefined} style={{flexShrink:0,opacity:onClickBtn?1:0.7}}>{label}</BtnSm>
                       </div>
                     );
                   })
@@ -15713,61 +15843,21 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     setTimeout(()=>setIntegrationToast(null),3500);
   };
 
-  // Merges a batch of server-shaped gcal-* events (googleItemToEvent's
-  // shape, produced identically by the client's old direct-fetch path and
-  // by api/_lib/google-calendar.js server-side) into local storage --
-  // shared by the "just connected" response and the once-per-load
-  // background pull below, so both apply events the exact same way.
-  const applyGoogleEvents=(gcalEvents)=>{
-    // Strip stale gcal- events first (Google is authoritative for its own
-    // prefix -- one deleted on Google's side should disappear here too),
-    // so reconcileFixedEventConflicts' own lsGet reads the clean state and
-    // only ever treats the fresh batch as "new."
-    const existing=lsGet("events",[]).filter(e=>!e.id.startsWith("gcal-"));
-    lsSet("events",existing);
-    const result=reconcileFixedEventConflicts(gcalEvents);
-    surfaceReconcileResult(result);
-    return result;
-  };
-
-  // Authorization Code flow (not the old implicit token flow) -- this is
-  // what lets the server get a refresh token it can use on its own, later,
-  // with nobody signed in, instead of every sync needing a fresh popup.
-  // access_type:'offline' + prompt:'consent' together guarantee Google
-  // actually issues that refresh token (it's otherwise only granted once,
-  // silently, the very first time a student ever consents).
-  const requestGoogleSync=()=>{
-    if(typeof google==="undefined"||!google.accounts||!google.accounts.oauth2){
-      showToast("Google sign-in not ready. Try refreshing the page.","error");return;
-    }
+  // applyGoogleEvents/connectGoogleCalendar/pullGoogleCalendarIfConnected
+  // are module scope now (shared with App()'s onboarding overlay, which
+  // used to have its own separate, fake, non-server-backed
+  // implementation -- see those functions' own comments). This is a thin
+  // wrapper: connectGoogleCalendar owns the OAuth popup + server call,
+  // this just owns Settings' own loading/toast UI around it.
+  const requestGoogleSync=async()=>{
     setGoogleSyncing(true);
-    const codeClient=google.accounts.oauth2.initCodeClient({
-      client_id:"16831354472-e2vauavtunm3ot771cg7pgline10i9rk.apps.googleusercontent.com",
-      scope:"https://www.googleapis.com/auth/calendar.events.readonly",
-      ux_mode:"popup",
-      access_type:"offline",
-      prompt:"consent",
-      callback:async(resp)=>{
-        if(resp.error){showToast("Google Calendar connection failed.","error");setGoogleSyncing(false);return;}
-        try{
-          const res=await authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"google-calendar-connect",code:resp.code})});
-          const data=await res.json();
-          if(!res.ok)throw new Error(data.error||"Sync failed");
-          const result=applyGoogleEvents(data.events);
-          lsSet("cal-google",true);
-          lsSet("cal-google-last-synced",Date.now());
-          setGoogleLastSynced(Date.now());
-          setCalGoogleLinked(true);
-          setGoogleSyncError(null);
-          showToast(`Google Calendar synced · ${data.events.length} event${data.events.length===1?"":"s"} imported`+reconcileToastSuffix(result));
-        }catch(e){
-          showToast("Failed to fetch calendar events. Check permissions and try again.","error");
-        }finally{
-          setGoogleSyncing(false);
-        }
-      }
-    });
-    codeClient.requestCode();
+    const result=await connectGoogleCalendar();
+    setGoogleSyncing(false);
+    if(!result.success){showToast(result.error,"error");return;}
+    setGoogleLastSynced(Date.now());
+    setCalGoogleLinked(true);
+    setGoogleSyncError(null);
+    showToast(`Google Calendar synced · ${result.eventCount} event${result.eventCount===1?"":"s"} imported`+reconcileToastSuffix(result.reconcileResult));
   };
   const connectGoogle=requestGoogleSync;
   const syncGoogleNow=requestGoogleSync;
@@ -15776,18 +15866,17 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   // background cron (api/google-calendar-cron.js) most recently fetched --
   // a plain Firestore read server-side, no Google popup, no click. This is
   // the actual "automatic" part of the connection; requestGoogleSync above
-  // only ever runs from an explicit Connect/Sync-now click.
+  // only ever runs from an explicit Connect/Sync-now click. App() also
+  // runs this same pull once on every app load (not just when Settings
+  // happens to be open) -- this effect additionally keeps Settings' own
+  // "last synced"/error UI current whenever a student does visit it.
   useEffect(()=>{
     if(!calGoogleLinked)return;
     (async()=>{
-      try{
-        const res=await authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"google-calendar-pull"})});
-        const data=await res.json();
-        if(!res.ok||!data.connected)return;
-        applyGoogleEvents(data.events);
-        if(data.lastSyncedAt){lsSet("cal-google-last-synced",new Date(data.lastSyncedAt).getTime());setGoogleLastSynced(new Date(data.lastSyncedAt).getTime());}
-        setGoogleSyncError(data.lastSyncError||null);
-      }catch(e){}
+      const result=await pullGoogleCalendarIfConnected();
+      if(!result)return;
+      if(result.lastSyncedAt){lsSet("cal-google-last-synced",new Date(result.lastSyncedAt).getTime());setGoogleLastSynced(new Date(result.lastSyncedAt).getTime());}
+      setGoogleSyncError(result.lastSyncError||null);
     })();
   },[]);
 
@@ -19098,6 +19187,21 @@ function App() {
   // CalendarTab's own mount/unmount effect.
   const [detailEventId,setDetailEventId]=useState(null);
   const calendarSetEventsRef=useRef(null);
+  // Google Calendar used to only ever re-pull the server's cached copy
+  // when Settings happened to be open (SettingsTab's own mount effect) --
+  // a connected student who never revisited Settings would never see an
+  // event added on Google's side, no matter how long they waited. This
+  // runs the same pull once per app load regardless of which tab is
+  // active, and pushes the result straight into CalendarTab's live state
+  // via the same calendarSetEventsRef bridge already used for App-level
+  // modal commits above, so it's reflected immediately rather than only
+  // on CalendarTab's next full remount.
+  useEffect(()=>{
+    pullGoogleCalendarIfConnected().then(result=>{
+      if(!result)return;
+      if(calendarSetEventsRef.current)calendarSetEventsRef.current(lsGet("events",[]));
+    });
+  },[]);
   const [notifOpen,setNotifOpen]=useState(false);
   const [seriousMode,setSeriousMode]=useState(()=>lsGet("settings",{}).seriousMode||false);
   // Fresh accounts skip this forced first-run prompt permanently — they get
@@ -20345,27 +20449,18 @@ function App() {
                 </div>
                 {obGoogleLinked
                   ?<div style={{display:"flex",alignItems:"center",gap:6,color:T.teal,fontSize:12,fontWeight:600}}>{Icon.check} Connected</div>
-                  :<BtnSm variant="lime" style={{flexShrink:0,opacity:calOnboardGoogleSyncing?0.55:1}} onClick={()=>{
-                    if(typeof google==="undefined"||!google.accounts||!google.accounts.oauth2){alert("Google sign-in not ready. Try refreshing.");return;}
-                    const tc=google.accounts.oauth2.initTokenClient({
-                      client_id:"16831354472-e2vauavtunm3ot771cg7pgline10i9rk.apps.googleusercontent.com",
-                      scope:"https://www.googleapis.com/auth/calendar.events.readonly",
-                      callback:async(resp)=>{
-                        if(resp.error)return;
-                        setCalOnboardGoogleSyncing(true);
-                        try{
-                          const now=new Date().toISOString();
-                          const res=await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=50&orderBy=startTime&singleEvents=true&timeMin=${encodeURIComponent(now)}`,{headers:{Authorization:`Bearer ${resp.access_token}`}});
-                          const data=await res.json();
-                          const gcalEvents=(data.items||[]).map(item=>({id:"gcal-"+item.id,date:(item.start.dateTime||item.start.date).slice(0,10),time:item.start.dateTime?item.start.dateTime.slice(11,16):"",title:item.summary||"Untitled",subject:"General",kind:"deadline"}));
-                          const existing=lsGet("events",[]).filter(e=>!e.id.startsWith("gcal-"));
-                          lsSet("events",[...existing,...gcalEvents]);
-                          lsSet("cal-google",true);
-                          setObGoogleLinked(true);
-                        }catch(e){}finally{setCalOnboardGoogleSyncing(false);}
-                      }
-                    });
-                    tc.requestAccessToken();
+                  :<BtnSm variant="lime" style={{flexShrink:0,opacity:calOnboardGoogleSyncing?0.55:1}} onClick={async()=>{
+                    // Same real, server-backed connectGoogleCalendar Settings
+                    // uses -- this used to be a separate implicit-token,
+                    // client-only, one-time fetch that still set the same
+                    // "connected" flag Settings reads, so a student who
+                    // connected here saw "Connected · syncs automatically"
+                    // with no real connection behind it at all. Now there's
+                    // only one way to connect, and it's always real.
+                    setCalOnboardGoogleSyncing(true);
+                    const result=await connectGoogleCalendar();
+                    setCalOnboardGoogleSyncing(false);
+                    if(result.success)setObGoogleLinked(true);
                   }}>{calOnboardGoogleSyncing?"Syncing…":"Connect"}</BtnSm>
                 }
               </div>

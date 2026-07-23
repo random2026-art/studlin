@@ -40,7 +40,7 @@
     },
     {
       "source": "/studlin-app.jsx",
-      "headers": [{ "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }]
+      "headers": [{ "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" }]
     },
     {
       "source": "/signin.jsx",
