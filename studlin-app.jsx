@@ -5121,14 +5121,29 @@ function StudlinPrep({setActive=()=>{}}={}){
     setGenMsg("✓ Practice exam ready for "+selectedExam.title);
     refresh();
   };
-  // Deletes a deck/PE's own object plus every session it's linked to
-  // (deckId/practiceExamId-tagged, exactly the fields removeGenericExamPrepSessions
-  // already treats as "not generic") -- never touches the plain "Study: X"
-  // review sessions or anything belonging to a different deck/PE.
-  const deleteDeckAndSessions=(deckId)=>{
-    lsSet("decks",lsGet("decks",[]).filter(d=>d.id!==deckId));
-    lsSet("events",lsGet("events",[]).filter(e=>e.deckId!==deckId));
+  // Deletes a deck's own object plus this exam's own linked sessions
+  // (deckId+dueEventId tagged -- scoped to this exam specifically, since
+  // a shared deck's sessions for a different exam carry that exam's own
+  // dueEventId, not this one). A deck can now be linked to more than one
+  // exam (see linkDeckToExamStorage) -- regenerating from THIS exam's
+  // page used to delete the deck object outright, which would silently
+  // break a different exam's link to the same deck too. If it's still
+  // linked elsewhere, only unlink this exam from it and leave the deck
+  // (and whatever it's still doing for that other exam) alone.
+  const deleteDeckAndSessions=(deckId,examId)=>{
+    const deck=lsGet("decks",[]).find(d=>d.id===deckId);
+    const linkedIds=deck?deckExamIds(deck):[];
+    if(linkedIds.length>1){
+      const remaining=linkedIds.filter(id=>id!==examId);
+      lsSet("decks",lsGet("decks",[]).map(d=>d.id===deckId?{...d,examEventIds:remaining,examEventId:remaining[0]||null}:d));
+    }else{
+      lsSet("decks",lsGet("decks",[]).filter(d=>d.id!==deckId));
+    }
+    lsSet("events",lsGet("events",[]).filter(e=>!(e.deckId===deckId&&e.dueEventId===examId)));
   };
+  // Practice exams aren't multi-exam-linkable (createPracticeExam only
+  // ever writes a single examEventId, no examEventIds array), so no
+  // equivalent unlink-instead-of-delete case exists here.
   const deletePracticeExamAndSessions=(peId)=>{
     lsSet("practiceExams",lsGet("practiceExams",[]).filter(p=>p.id!==peId));
     lsSet("events",lsGet("events",[]).filter(e=>e.practiceExamId!==peId));
@@ -5146,9 +5161,9 @@ function StudlinPrep({setActive=()=>{}}={}){
     doGenPracticeExamForExam();
   };
   const confirmReplace=async()=>{
-    if(!replaceConfirm)return;
+    if(!replaceConfirm||!selectedExam)return;
     const{type,existingDeck,existingPE}=replaceConfirm;
-    if(existingDeck)deleteDeckAndSessions(existingDeck.id);
+    if(existingDeck)deleteDeckAndSessions(existingDeck.id,selectedExam.id);
     if(existingPE)deletePracticeExamAndSessions(existingPE.id);
     setReplaceConfirm(null);
     refresh();
@@ -5502,7 +5517,7 @@ function StudlinPrep({setActive=()=>{}}={}){
               {(materialAddOpen||(fileTexts.length===0&&materialLinks.length===0))&&(<>
                 <input type="file" ref={fileInputRef} onChange={handlePrepFile} accept=".txt,.md,.pdf,.docx" style={{display:"none"}} multiple />
                 <div onClick={()=>fileInputRef.current&&fileInputRef.current.click()} style={{border:`1px dashed ${T.borderHover}`,borderRadius:10,padding:18,textAlign:"center",background:T.card2,cursor:"pointer",marginBottom:10}}>
-                  <div style={{fontSize:12.5,color:T.text,fontWeight:500}}>Click to upload — PDF, DOCX, or TXT</div>
+                  <div style={{fontSize:12.5,color:T.text,fontWeight:500}}>Click to upload: PDF, DOCX, or TXT</div>
                 </div>
                 <button type="button" onClick={()=>setPasteMode(m=>!m)} style={{width:"100%",textAlign:"center",padding:"9px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,marginBottom:pasteMode?10:14}}>{pasteMode?"Upload a file instead":"Or paste text instead"}</button>
                 {pasteMode&&(
@@ -5515,7 +5530,7 @@ function StudlinPrep({setActive=()=>{}}={}){
                 {matchingNotes.length>0&&(
                   <button type="button" onClick={()=>setNotesPickerOpen(true)} style={{width:"100%",textAlign:"center",padding:"9px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,marginBottom:14}}>Pull from your notes ({matchingNotes.length} for {selectedExam.subject})</button>
                 )}
-                <Field label="Reference links (optional)" hint="Saved for your own reference — Studlin doesn't read these, so they won't factor into flashcards or practice exams.">
+                <Field label="Reference links (optional)" hint="Saved for your own reference: Studlin doesn't read these, so they won't factor into flashcards or practice exams.">
                   <div style={{display:"flex",gap:8}}>
                     <Input value={linkLabelDraft} onChange={e=>setLinkLabelDraft(e.target.value)} placeholder="Label (optional)" style={{width:110,flexShrink:0}} />
                     <Input type="url" value={linkDraft} onChange={e=>setLinkDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();if(!linkDraft.trim())return;const next=[...materialLinks,{label:linkLabelDraft.trim(),url:linkDraft.trim()}];setMaterialLinks(next);setLinkDraft("");setLinkLabelDraft("");lsSet("events",lsGet("events",[]).map(e=>e.id===selectedExam.id?{...e,referenceLinks:next}:e));}}}
@@ -5534,11 +5549,18 @@ function StudlinPrep({setActive=()=>{}}={}){
               {!moreGenOptionsOpen&&!genMsg?(
                 <button type="button" onClick={()=>setMoreGenOptionsOpen(true)} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>More options</button>
               ):(
-                <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-                  <span style={{fontSize:10.5,color:T.faint}}>or just one:</span>
-                  <BtnSm variant="subtle" onClick={genDeckForExam} disabled={!materialText.trim()||genLoading!==null||kitLoading}>{genLoading==="cards"?"Generating…":"Flashcards only"}</BtnSm>
-                  <BtnSm variant="subtle" onClick={genPracticeExamForExam} disabled={!materialText.trim()||genLoading!==null||kitLoading}>{genLoading==="quiz"?"Generating…":"Practice exam only"}</BtnSm>
-                  {genMsg&&<span style={{fontSize:11.5,color:genMsg.startsWith("✓")?T.teal:T.red,alignSelf:"center"}}>{genMsg}</span>}
+                <div>
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:genMsg?6:0}}>
+                    <span style={{fontSize:10.5,color:T.faint}}>or just one:</span>
+                    <BtnSm variant="subtle" onClick={genDeckForExam} disabled={!materialText.trim()||genLoading!==null||kitLoading}>{genLoading==="cards"?"Generating…":"Flashcards only"}</BtnSm>
+                    <BtnSm variant="subtle" onClick={genPracticeExamForExam} disabled={!materialText.trim()||genLoading!==null||kitLoading}>{genLoading==="quiz"?"Generating…":"Practice exam only"}</BtnSm>
+                  </div>
+                  {genMsg&&(
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <span style={{fontSize:11.5,color:genMsg.startsWith("✓")?T.teal:T.red}}>{genMsg}</span>
+                      <button type="button" onClick={()=>{setGenMsg("");setMoreGenOptionsOpen(false);}} style={{background:"none",border:"none",color:T.faint,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>Hide</button>
+                    </div>
+                  )}
                 </div>
               )}
             </Card>
@@ -5722,11 +5744,17 @@ function StudlinPrep({setActive=()=>{}}={}){
         footer={<><Btn variant="subtle" onClick={()=>setReplaceConfirm(null)}>Cancel</Btn><Btn variant="danger" onClick={confirmReplace}>Replace</Btn></>}>
         {replaceConfirm&&(
           <div style={{display:"flex",flexDirection:"column",gap:10}}>
-            {replaceConfirm.existingDeck&&(
-              <div style={{fontSize:13,color:T.text,lineHeight:1.5}}>This exam already has a deck — <strong>{replaceConfirm.existingDeck.name}</strong> ({replaceConfirm.existingDeck.count} cards). Rebuilding will delete it, along with any review sessions already scheduled from it, and generate a fresh one from your current material.</div>
-            )}
+            {replaceConfirm.existingDeck&&(()=>{
+              const sharedWithOther=deckExamIds(replaceConfirm.existingDeck).length>1;
+              return (
+                <div style={{fontSize:13,color:T.text,lineHeight:1.5}}>
+                  This exam already has a deck: <strong>{replaceConfirm.existingDeck.name}</strong> ({replaceConfirm.existingDeck.count} cards).
+                  {" "}Rebuilding will {sharedWithOther?"unlink it from this exam (it's still linked to another exam, so the deck itself stays)":"delete it"}, remove this exam's review sessions from it, and generate a fresh one from your current material.
+                </div>
+              );
+            })()}
             {replaceConfirm.existingPE&&(
-              <div style={{fontSize:13,color:T.text,lineHeight:1.5}}>This exam already has a practice exam — <strong>{replaceConfirm.existingPE.name}</strong> ({replaceConfirm.existingPE.questions.length} questions). Rebuilding will delete it, along with its scheduled session, and generate a fresh one.</div>
+              <div style={{fontSize:13,color:T.text,lineHeight:1.5}}>This exam already has a practice exam: <strong>{replaceConfirm.existingPE.name}</strong> ({replaceConfirm.existingPE.questions.length} questions). Rebuilding will delete it, along with its scheduled session, and generate a fresh one.</div>
             )}
           </div>
         )}
