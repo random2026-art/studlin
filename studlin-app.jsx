@@ -8664,6 +8664,32 @@ function removeGenericExamPrepSessions(events,examId){
   return events.filter(e=>!(e.dueEventId===examId&&e.status==="pending"&&e.isExamPrepSession&&!e.deckId&&!e.practiceExamId));
 }
 
+// A brain-dumped item describing a repeating pattern ("work 3-11pm
+// Mon-Fri for the next 2 weeks") used to just get flagged with an inert
+// "clarify" note asking the student a question the review screen gave no
+// way to actually answer -- parseBrainDump's own "recurring" field
+// captures the real structured pattern instead, and this turns that back
+// into the list of real dates it describes, one per matching weekday
+// from startDate (the first occurrence) through untilDate (inclusive).
+// Uses JS's native Sunday=0 getDay() convention directly rather than
+// ROUTINE_DOW's Monday-indexed one, since this has nothing to do with
+// the Weekly Routine system. Capped at 180 days out as a hard guard
+// against a malformed/huge AI-returned range ever looping unbounded.
+const WEEKDAY_ABBR_TO_JS_DOW={Sun:0,Mon:1,Tue:2,Wed:3,Thu:4,Fri:5,Sat:6};
+function expandRecurringBrainDumpDates(startDate,days,untilDate){
+  const dowSet=new Set((days||[]).map(d=>WEEKDAY_ABBR_TO_JS_DOW[d]).filter(x=>x!==undefined));
+  if(dowSet.size===0||!startDate||!untilDate)return [];
+  const cursor=new Date(startDate+"T12:00:00");
+  const end=new Date(untilDate+"T12:00:00");
+  const dates=[];
+  let guard=0;
+  while(cursor<=end&&guard<180){
+    if(dowSet.has(cursor.getDay()))dates.push(dayKey(cursor));
+    cursor.setDate(cursor.getDate()+1);
+    guard++;
+  }
+  return dates;
+}
 // Pure Brain Dump placement planner — takes the classified items plus
 // current events/routines/prefs, returns the tasks to commit. Pulled out of
 // CalendarTab's commitBrainDump (a closure over component state) into a
@@ -13638,9 +13664,10 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
         "\"dueTime\" (HH:MM 24-hour — ONLY for kind:\"event\" or kind:\"reminder\", when a specific time was stated or clearly implied like \"tonight\"=20:00 or \"this morning\"=9:00; null if genuinely no time was said), "+
         "\"examWeight\" (ONLY when kind is \"exam\": \"quiz\" for a quiz or short in-class test worth relatively little, \"major\" for a midterm, final, or unit exam worth significant grade weight — omit otherwise), "+
         "\"needsDuration\" (true ONLY if kind is \"study\" and you genuinely can't make a reasonable guess from context — be generous, most things can get a rough estimate), "+
-        "\"clarify\" (a short, specific follow-up question ONLY if something essential is truly missing and you can't reasonably guess it — e.g. an \"event\", \"exam\", or \"reminder\" with no date/time at all mentioned, or a title too vague to act on. null otherwise — most items should NOT have this). "+
+        "\"recurring\" (ONLY for kind:\"event\" items describing something that happens on more than one distinct calendar day in a repeating weekly pattern, e.g. \"work 3-11pm Monday through Friday for the next 2 weeks\" or \"soccer practice every Tuesday and Thursday until October\" — an object {\"days\":[\"Mon\",\"Tue\",...],\"until\":\"YYYY-MM-DD\"} using 3-letter weekday abbreviations and the last date it repeats through, inclusive. dueDate stays the FIRST occurrence. A single one-time event, even a long one, is never recurring — null for those and everything else), "+
+        "\"clarify\" (a short, specific follow-up question ONLY if something essential is truly missing and you can't reasonably guess it — e.g. an \"event\", \"exam\", or \"reminder\" with no date/time at all mentioned, or a title too vague to act on. Never used for a recurring pattern — \"recurring\" above already covers that. null otherwise — most items should NOT have this). "+
         "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
-        "{\"items\":[{\"title\":\"Chem homework\",\"kind\":\"study\",\"durationMin\":45,\"immediate\":false,\"chained\":false,\"dueDate\":null,\"dueTime\":null,\"needsDuration\":false,\"clarify\":null},{\"title\":\"Chem test\",\"kind\":\"exam\",\"dueDate\":\"2026-07-17\",\"examWeight\":\"major\",\"clarify\":null}]}. "+
+        "{\"items\":[{\"title\":\"Chem homework\",\"kind\":\"study\",\"durationMin\":45,\"immediate\":false,\"chained\":false,\"dueDate\":null,\"dueTime\":null,\"needsDuration\":false,\"recurring\":null,\"clarify\":null},{\"title\":\"Chem test\",\"kind\":\"exam\",\"dueDate\":\"2026-07-17\",\"examWeight\":\"major\",\"clarify\":null},{\"title\":\"Work shift\",\"kind\":\"event\",\"dueDate\":\"2026-07-27\",\"dueTime\":\"15:00\",\"durationMin\":480,\"recurring\":{\"days\":[\"Mon\",\"Tue\",\"Wed\",\"Thu\",\"Fri\"],\"until\":\"2026-08-07\"},\"clarify\":null}]}. "+
         "If nothing usable is in the text, respond {\"items\":[]}.\n\n"+text.slice(0,4000);
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",format:"json"})});
       const data=await res.json().catch(()=>({}));
@@ -13704,9 +13731,30 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
           clarify="No open time right now — the next slot that fits is "+fmtClock12(slot.time)+(slot.date!==todayKeyNow?" on "+slot.date:"")+".";
         }
       }
-      return {id:"bd-"+i,title:it.title,kind,durationMin:it.durationMin||30,dueDate:it.dueDate||"",dueTime:it.dueTime||"",needsDuration:!!it.needsDuration,attackBlock:!!it.needsDuration,proposeSessions:it.kind==="exam",sessionCount:defaultSessionCountFor(it.examWeight),examWeight:it.examWeight||"major",difficulty:500,moreOpen:false,clarify,immediate:!!it.immediate,chained:!!it.chained,include:true};
+      // Validated defensively -- an AI response is never trusted as-is:
+      // only real weekday abbreviations survive, and a pattern with
+      // nothing left after that (or no dueDate to anchor the first
+      // occurrence to) just isn't treated as recurring at all rather than
+      // risking a malformed expansion later. Defaults to expanding into
+      // every occurrence, not just the first -- that's what the student
+      // actually described, "just this one" is the opt-out, not the default.
+      const recurringDays=(kind==="event"&&it.recurring&&Array.isArray(it.recurring.days))?it.recurring.days.filter(d=>WEEKDAY_ABBR_TO_JS_DOW[d]!==undefined):[];
+      const recurring=(recurringDays.length>0&&it.recurring.until&&it.dueDate)?{days:recurringDays,until:it.recurring.until}:null;
+      return {id:"bd-"+i,title:it.title,kind,durationMin:it.durationMin||30,dueDate:it.dueDate||"",dueTime:it.dueTime||"",needsDuration:!!it.needsDuration,attackBlock:!!it.needsDuration,proposeSessions:it.kind==="exam",sessionCount:defaultSessionCountFor(it.examWeight),examWeight:it.examWeight||"major",difficulty:500,moreOpen:false,clarify,recurring,recurringExpandAll:!!recurring,immediate:!!it.immediate,chained:!!it.chained,include:true};
     })});
   };
+  // Turns a "recurringExpandAll" item into one real item per matching
+  // date instead of leaving it as just the single first-occurrence item
+  // parseBrainDump originally extracted -- this is what "All N" in the
+  // review screen actually commits to, computed fresh right before
+  // commit (and for the button's own count) rather than exploding the
+  // review list itself into N rows the moment the radio is toggled.
+  const expandBrainDumpReviewItems=(items)=>items.flatMap(it=>{
+    if(!it.recurring||!it.recurringExpandAll)return [it];
+    const dates=expandRecurringBrainDumpDates(it.dueDate,it.recurring.days,it.recurring.until);
+    if(dates.length===0)return [it];
+    return dates.map((d,di)=>({...it,id:it.id+"-"+di,dueDate:d}));
+  });
   // Study-kind items get a real slot via the same deterministic placement
   // engine every other scheduling path trusts — no separate AI call per
   // item, the one parseBrainDump call above already did the understanding.
@@ -14532,9 +14580,9 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
           <Btn variant="subtle" onClick={()=>setBrainDumpReview(null)}>Cancel</Btn>
           <Btn disabled={!brainDumpReview||brainDumpReview.items.filter(i=>i.include).length===0} onClick={()=>{
             const included=brainDumpReview.items.filter(i=>i.include);
-            commitBrainDump(included);
+            commitBrainDump(expandBrainDumpReviewItems(included));
             setBrainDumpReview(null);
-          }}>{"Add "+(brainDumpReview?brainDumpReview.items.filter(i=>i.include).length:0)+" to your plan →"}</Btn>
+          }}>{"Add "+(brainDumpReview?expandBrainDumpReviewItems(brainDumpReview.items.filter(i=>i.include)).length:0)+" to your plan →"}</Btn>
         </>}>
         {brainDumpReview&&brainDumpReview.items.length===0&&(
           <div style={{textAlign:"center",padding:"24px 0",color:T.muted,fontSize:13}}>Couldn't find anything in that. Try rephrasing.</div>
@@ -14593,8 +14641,33 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
                     {it.kind==="exam"&&(
                       <Input type="date" value={it.dueDate} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueDate:ev.target.value}:x)}))} style={{width:138}} />
                     )}
-                    {it.clarify&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>{it.clarify}</span>}
+                    {it.clarify&&!it.recurring&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>{it.clarify}</span>}
                   </div>
+                  {/* A recurring pattern ("work Mon-Fri for 2 weeks") used
+                      to get flagged with a plain sentence asking whether to
+                      add every occurrence, with no way to actually answer
+                      it -- this is that answer, backed by the AI's own
+                      structured days/until data instead of guessing at
+                      free text. */}
+                  {it.recurring&&(()=>{
+                    const dates=expandRecurringBrainDumpDates(it.dueDate,it.recurring.days,it.recurring.until);
+                    const n=dates.length;
+                    return (
+                      <div style={{marginTop:8,fontSize:11,color:T.text,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:8,padding:"8px 10px"}}>
+                        <div style={{marginBottom:6}}>This repeats {it.recurring.days.join(", ")} through {it.recurring.until}{n>0?" ("+n+" time"+(n!==1?"s":"")+")":""}.</div>
+                        <div style={{display:"flex",gap:14}}>
+                          <label style={{display:"flex",alignItems:"center",gap:5,cursor:"pointer",fontWeight:600}}>
+                            <input type="radio" name={"bd-recur-"+it.id} checked={!it.recurringExpandAll} onChange={()=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,recurringExpandAll:false}:x)}))} />
+                            Just this one
+                          </label>
+                          <label style={{display:"flex",alignItems:"center",gap:5,cursor:"pointer",fontWeight:600}}>
+                            <input type="radio" name={"bd-recur-"+it.id} checked={!!it.recurringExpandAll} onChange={()=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,recurringExpandAll:true}:x)}))} disabled={n===0} />
+                            All {n}
+                          </label>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {it.kind==="exam"&&(
                     <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:T.muted,cursor:"pointer",marginTop:6}}>
                       <input type="checkbox" checked={!!it.proposeSessions} onChange={()=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,proposeSessions:!x.proposeSessions}:x)}))} />
