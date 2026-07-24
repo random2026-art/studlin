@@ -13569,6 +13569,16 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
   const [moreOpen,setMoreOpen]=useState(false);
   const [subject,setSubject]=useState("Chemistry");
   const [kind,setKind]=useState("deadline");
+  // Project and To-do aren't real `kind` values (a project is
+  // kind:"deadline"+phases/outline, a to-do is kind:"deadline"+checklist) --
+  // see isProjectMarker. Tracked as their own UI-level choice, same
+  // "type resolves to a real kind at save time" split Add Task already
+  // uses, so the Type selector below can show what something actually is
+  // regardless of whether Add Task, Brain Dump, or a syllabus scan created
+  // it, instead of every project/to-do collapsing into "Assignment" the
+  // moment you reopen it.
+  const [asProject,setAsProject]=useState(false);
+  const [asChecklist,setAsChecklist]=useState(false);
   const [notes,setNotes]=useState("");
   const [cancelConfirmOpen,setCancelConfirmOpen]=useState(false);
   // Add-collaborators picker (shared/group projects) -- fetched fresh each
@@ -13600,6 +13610,7 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
     setPriority(toSliderVal(ev.priority,5));setDifficulty(toSliderVal(ev.difficulty,5));
     setMoreOpen(!!(ev.priority&&(ev.priority>10?ev.priority!==500:ev.priority!==5)));
     setSubject(ev.subject||"Chemistry");setKind(ev.kind||"deadline");setNotes(ev.notes||"");
+    setAsProject(isProjectMarker(ev));setAsChecklist(!!ev.checklist);
     setCancelConfirmOpen(false);setDetailErr("");
     setAddAttackBlock(false);setAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);
     setExamPlan({materialFiles:ev.sourceMaterials||[],materialLinks:ev.referenceLinks||[],materialOpen:false,pasteMaterialMode:false,pasteMaterialText:"",linkDraft:"",linkLabelDraft:"",proposeSessions:false,sessionCount:4});
@@ -13640,6 +13651,21 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
   // project" (a real phases or outline array), not a fresh kind check that
   // doesn't exist once stored (project always collapses to kind:"deadline").
   const isProject=isProjectMarker(ev);
+  // "Project"/"To-do" are shown as their own Type chips (see below) but
+  // both resolve to kind:"deadline" underneath, so picking either always
+  // forces kind to "deadline" -- exactly mirroring resolveAssignmentKind's
+  // evKind==="project" case in Add Task. requiresProjectDetail is true only
+  // when Project is newly being turned on (isProject reflects the ORIGINAL
+  // saved state, asProject the current picker) -- an already-existing
+  // project's phases/outline are edited via the display blocks above/below,
+  // not regenerated on every save.
+  const typeChoice=asChecklist?"todo":asProject?"project":kind;
+  const onTypeChange=(v)=>{
+    if(v==="project"){setAsProject(true);setAsChecklist(false);setKind("deadline");}
+    else if(v==="todo"){setAsChecklist(true);setAsProject(false);setKind("deadline");}
+    else{setAsProject(false);setAsChecklist(false);setKind(v);}
+  };
+  const requiresProjectDetail=asProject&&!isProject;
   const openCollabPicker=async()=>{
     setCollabPickerOpen(true);setCollabSelected([]);setCollabLoading(true);
     const myUid=firebase.auth().currentUser?.uid;
@@ -13666,10 +13692,22 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
   const save=()=>{
     if(!title.trim())return;
     if(deadline&&date>deadline){setDeadlineErr("Can't schedule past the deadline ("+deadline+").");return;}
-    if(showsPhaseDetail&&!notes.trim()){setDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");return;}
+    if((showsPhaseDetail||requiresProjectDetail)&&!notes.trim()){setDetailErr("Add a bit of detail so Studlin can suggest real phases, not a generic template.");return;}
     setDetailErr("");
     const timeChanged=time!==ev.time||date!==ev.date;
     const prefs=getSchedulePreferences();
+    // Project/To-do are UI-level Type choices, not real kind values (see
+    // typeChoice above) -- resolved here into the actual fields that get
+    // written, same "type resolves at save time" split Add Task uses.
+    // droppedProject clears a previously-real project's phases/outline so
+    // switching away from Project doesn't leave it silently still tagged
+    // as one; newProjPhases/newProjOutline only ever apply when Project was
+    // JUST turned on this edit (requiresProjectDetail), never touching an
+    // already-existing project's checklist (that's edited via the display
+    // blocks above instead).
+    const droppedProject=isProject&&!asProject;
+    const newProjPhases=requiresProjectDetail?(projectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
+    const newProjOutline=requiresProjectDetail?normalizeOutlineDraft(projectPlan.outline):[];
     // Retroactive Attack Block converts this event INTO the real due-date
     // marker (buildAssignmentAttackBlockPair, same shape
     // buildSyllabusEventBatch's own markers use, reusing this event's own
@@ -13688,8 +13726,11 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
     const updated=allEvents.map(e=>{
       if(e.id!==ev.id)return e;
       if(attackPair)return attackPair.marker;
-      const merged={...e,title:title.trim(),date,time,duration,deadline:deadline||null,priority,difficulty,subject,kind,notes,...(timeChanged?{userPinned:true}:{}),
-        ...(kind==="exam"?{sourceMaterials:examPlan.materialFiles,referenceLinks:examPlan.materialLinks}:{})};
+      const merged={...e,title:title.trim(),date,time,duration,deadline:deadline||null,priority,difficulty,subject,kind,notes,checklist:asChecklist,...(timeChanged?{userPinned:true}:{}),
+        ...(kind==="exam"?{sourceMaterials:examPlan.materialFiles,referenceLinks:examPlan.materialLinks}:{}),
+        ...(droppedProject?{phases:undefined,outline:undefined}:{}),
+        ...(requiresProjectDetail&&newProjPhases.length>0?{phases:newProjPhases.map((name,pi)=>({name,status:pi===0?"active":"pending"}))}:{}),
+        ...(requiresProjectDetail&&newProjOutline.length>0?{outline:newProjOutline}:{})};
       if(timeChanged){const {movedByStudlin,movedFrom,movedAt,placementReason,...rest}=merged;return rest;}
       return merged;
     });
@@ -13720,7 +13761,7 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
           stay two separate picks here (not one merged "Assignment" the
           way Add Task infers it) since this modal edits an existing
           real kind directly, not a type that resolves to one at save time. */}
-      <Field label="Type"><SelectChip options={[{value:"study block",label:"Assignment (scheduled)"},{value:"deadline",label:"Assignment (due date)"},"exam","class","reminder",{value:"busy block",label:"Activity"}]} value={kind} onChange={setKind} /></Field>
+      <Field label="Type"><SelectChip options={[{value:"study block",label:"Assignment (scheduled)"},{value:"deadline",label:"Assignment (due date)"},{value:"project",label:"Project"},{value:"todo",label:"To-do"},"exam","class","reminder",{value:"busy block",label:"Activity"}]} value={typeChoice} onChange={onTypeChange} /></Field>
       <Field label="Subject"><SelectChip options={SUBJ} value={subject} onChange={setSubject} /></Field>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
         <Field label="Scheduled date"><Input type="date" value={date} onChange={e=>{setDate(e.target.value);setDeadlineErr("");}} /></Field>
@@ -13791,6 +13832,12 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
           {chainIdForReschedule&&(
             <BtnSm variant="subtle" style={{marginTop:8}} onClick={()=>{reoptimizeAttackChain(chainIdForReschedule);commit(lsGet("events",[]));}}>Re-optimize schedule</BtnSm>
           )}
+        </div>
+      )}
+      {requiresProjectDetail&&(
+        <div style={{marginBottom:14}}>
+          <div style={{fontSize:11.5,color:T.muted,marginBottom:8}}>Marked as a Project — use the Detail field below to describe it, and Studlin will suggest phases and a checklist.</div>
+          <PhasesOutlineEditor item={{...projectPlan,title,detail:notes}} onChange={patch=>setProjectPlan(p=>({...p,...patch}))} subject={subject} />
         </div>
       )}
       {isProject&&(
@@ -13877,7 +13924,7 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
           )}
         </>
       )}
-      <Field label={showsPhaseDetail?"Detail":"Notes (optional)"} hint={showsPhaseDetail?"A sentence or two is enough — Studlin uses this to suggest phases and a checklist.":undefined}>
+      <Field label={(showsPhaseDetail||requiresProjectDetail)?"Detail":"Notes (optional)"} hint={(showsPhaseDetail||requiresProjectDetail)?"A sentence or two is enough — Studlin uses this to suggest phases and a checklist.":undefined}>
         <Textarea value={notes} onChange={e=>{setNotes(e.target.value);if(detailErr)setDetailErr("");}} />
       </Field>
       {detailErr&&<div style={{fontSize:12,color:T.red,marginTop:-8,marginBottom:14}}>{detailErr}</div>}
