@@ -5236,6 +5236,18 @@ function StudlinPrep({setActive=()=>{}}={}){
   const [materialAddOpen,setMaterialAddOpen]=useState(false);
   const [moreGenOptionsOpen,setMoreGenOptionsOpen]=useState(false);
   const [sessionsExpanded,setSessionsExpanded]=useState(false);
+  const [examSearch,setExamSearch]=useState("");
+  // Study/Edit/Send/Add Deck used to hard-navigate to the standalone
+  // Flashcards page (setActive("flashcards")), fully unmounting Studlin Prep
+  // and leaving no way back except clicking a different sidebar item --
+  // Flashcards is rendered through the generic `pages` registry with no
+  // setActive prop, so it structurally has no back button of its own. Kept
+  // as a real overlay instead: `active` never leaves "prep", the sidebar
+  // stays on Studlin Prep, and the close button below is a guaranteed way
+  // back. Flashcards itself is untouched/reused as-is (its own
+  // openDeckId/openDeckAction/openNewDeckOnMount deep-link flags still
+  // drive which view it opens on).
+  const [flashcardsOverlay,setFlashcardsOverlay]=useState(false);
   // colorOf is component-local everywhere it exists in this file (Notes,
   // CalendarTab, Flashcards each define their own) -- not a module-level
   // helper, so Prep needs its own too, same lookup Notes already uses.
@@ -5243,6 +5255,12 @@ function StudlinPrep({setActive=()=>{}}={}){
   const colorOf=(tg)=>{const s=userSubjects.find(x=>x.label===tg);return s?s.color:T.lime;};
 
   const exams=upcomingExams();
+  const visibleExams=examSearch.trim()
+    ?exams.filter(ex=>{
+      const q=examSearch.trim().toLowerCase();
+      return (ex.title||"").toLowerCase().includes(q)||(ex.subject||"").toLowerCase().includes(q);
+    })
+    :exams;
   const allDecks=lsGet("decks",[]);
   const allPracticeExams=lsGet("practiceExams",[]);
   const selectedExam=selectedExamId?lsGet("events",[]).find(e=>e.id===selectedExamId):null;
@@ -5635,7 +5653,13 @@ function StudlinPrep({setActive=()=>{}}={}){
             <div style={{fontSize:13,color:T.muted,marginBottom:14}}>No upcoming exams yet — add one from your calendar to start building material for it.</div>
           </Card>
           :<div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {exams.map(ex=>{
+            {exams.length>3&&(
+              <Input placeholder="Search your exams…" value={examSearch} onChange={e=>setExamSearch(e.target.value)} style={{marginBottom:2}} />
+            )}
+            {visibleExams.length===0&&(
+              <div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"14px 0"}}>No exams match "{examSearch.trim()}".</div>
+            )}
+            {visibleExams.map(ex=>{
               const readiness=computeExamReadiness(ex,lsGet("events",[]),dayKey());
               const deck=allDecks.find(d=>deckLinkedToExam(d,ex.id));
               const pes=allPracticeExams.filter(p=>p.examEventId===ex.id);
@@ -5739,6 +5763,26 @@ function StudlinPrep({setActive=()=>{}}={}){
               {readiness&&<div style={{fontSize:12.5,color:T.text,lineHeight:1.5,background:T.card2,borderRadius:8,padding:"10px 12px"}}>{readiness.sentence}</div>}
             </Card>
 
+            {/* A jump-to strip so the 4 sections below read as one flow
+                ("here's where you are across this exam") instead of 4
+                disconnected cards you have to scroll past to orient
+                yourself -- purely a navigation/status aid, doesn't hide or
+                change any of the sections' own content or logic. */}
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:16}}>
+              {[
+                {id:"prep-sec-material",label:"Material",done:fileTexts.length>0||materialLinks.length>0},
+                {id:"prep-sec-sessions",label:"Study Sessions",done:examSessions.length>0},
+                {id:"prep-sec-flashcards",label:"Flashcards",done:!!deck},
+                {id:"prep-sec-pe",label:"Practice Exam",done:pes.length>0},
+              ].map(s=>(
+                <button key={s.id} type="button" onClick={()=>document.getElementById(s.id)?.scrollIntoView({behavior:"smooth",block:"start"})}
+                  style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:99,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,background:s.done?T.lime+"14":T.card2,color:s.done?T.lime:T.muted,border:`1px solid ${s.done?T.lime+"44":T.border}`}}>
+                  {s.done?"✓":"○"} {s.label}
+                </button>
+              ))}
+            </div>
+
+            <div id="prep-sec-material" />
             <Card style={{padding:20,marginBottom:16}}>
               <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Add study material</div>
               {(fileTexts.length>0||materialLinks.length>0)&&(
@@ -5824,6 +5868,7 @@ function StudlinPrep({setActive=()=>{}}={}){
               )}
             </Card>
 
+            <div id="prep-sec-sessions" />
             <Card style={{padding:20,marginBottom:16}}>
               <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Study Sessions</div>
               {examSessions.length===0?(
@@ -5888,12 +5933,15 @@ function StudlinPrep({setActive=()=>{}}={}){
               })()}
             </Card>
 
+            <div id="prep-sec-flashcards" />
             <Card style={{padding:20,marginBottom:16}}>
               <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Flashcards</div>
               {!deck?<div style={{fontSize:12,color:T.muted}}>No deck yet — generate one from material above.</div>:(
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
                   <div style={{fontSize:12.5,color:T.text}}>{deck.name} · {deck.count} cards</div>
-                  <div style={{display:"flex",gap:6,flexShrink:0}}>
+                  <div style={{display:"flex",gap:6,flexShrink:0,flexWrap:"wrap"}}>
+                    <BtnSm onClick={()=>{lsSet("openDeckId",deck.id);lsSet("openDeckAction","study");setFlashcardsOverlay(true);}}>Study now</BtnSm>
+                    <BtnSm variant="ghost" onClick={()=>{lsSet("openDeckId",deck.id);lsSet("openDeckAction","edit");setFlashcardsOverlay(true);}}>{Icon.pen} Edit</BtnSm>
                     <BtnSm variant="subtle" onClick={()=>openScheduleDeckReviews(deck)}>Schedule Review Sessions</BtnSm>
                     <BtnSm variant="ghost" onClick={()=>setDeleteConfirm({type:"deck",id:deck.id,examId:selectedExam.id,name:deck.name})}>Delete</BtnSm>
                   </div>
@@ -5901,6 +5949,7 @@ function StudlinPrep({setActive=()=>{}}={}){
               )}
             </Card>
 
+            <div id="prep-sec-pe" />
             <Card style={{padding:20}}>
               <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Practice Exams</div>
               {pes.length===0?<div style={{fontSize:12,color:T.muted}}>No practice exams yet — generate one from material above.</div>:(
@@ -5930,8 +5979,11 @@ function StudlinPrep({setActive=()=>{}}={}){
 
       {tab==="flashcards"&&(
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          <div style={{display:"flex",justifyContent:"flex-end"}}>
+            <BtnSm onClick={()=>{lsSet("openNewDeckOnMount",true);setFlashcardsOverlay(true);}}>{Icon.plus} Add Deck</BtnSm>
+          </div>
           {allDecks.length===0
-            ?<Card style={{padding:"32px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted}}>No flashcard decks yet — generate one from an exam's material.</div></Card>
+            ?<Card style={{padding:"32px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted,marginBottom:14}}>No flashcard decks yet — generate one from an exam's material, or add one yourself.</div><BtnSm onClick={()=>{lsSet("openNewDeckOnMount",true);setFlashcardsOverlay(true);}}>{Icon.plus} Add Deck</BtnSm></Card>
             :allDecks.map(d=>{
               const linkedExams=deckExamIds(d).map(id=>lsGet("events",[]).find(e=>e.id===id)).filter(Boolean);
               // Reuses the exact Study/Edit/Send actions already built in
@@ -5939,7 +5991,7 @@ function StudlinPrep({setActive=()=>{}}={}){
               // deep link) instead of a second copy of that UI here --
               // this list just needs to be a real way IN to that
               // experience, not a duplicate of it.
-              const goToDeck=(action)=>{lsSet("openDeckId",d.id);lsSet("openDeckAction",action);setActive("flashcards");};
+              const goToDeck=(action)=>{lsSet("openDeckId",d.id);lsSet("openDeckAction",action);setFlashcardsOverlay(true);};
               return (
                 <div key={d.id} style={{padding:"12px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card}}>
                   <div style={{fontSize:13.5,fontWeight:600,color:T.white}}>{d.name}</div>
@@ -6164,6 +6216,14 @@ function StudlinPrep({setActive=()=>{}}={}){
       </Modal>
 
       <UpgradeModal open={!!upgradeModal} feature={upgradeModal?upgradeModal.feature:""} detail={upgradeModal?upgradeModal.detail:""} onClose={()=>setUpgradeModal(null)} onUpgraded={()=>setUpgradeModal(null)} />
+      {flashcardsOverlay&&(
+        <div style={{position:"fixed",inset:0,zIndex:900,background:T.bg,overflowY:"auto"}}>
+          <div style={{position:"sticky",top:0,zIndex:2,background:T.bg,borderBottom:`1px solid ${T.border}`,padding:"12px 32px"}}>
+            <button onClick={()=>setFlashcardsOverlay(false)} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontWeight:600,fontFamily:T.font,cursor:"pointer",padding:"6px 0",display:"flex",alignItems:"center",gap:6}}>← Back to Studlin Prep</button>
+          </div>
+          <div style={{padding:"24px 32px"}}><Flashcards /></div>
+        </div>
+      )}
     </div>
   );
 }
@@ -6203,6 +6263,13 @@ function Flashcards() {
   // effect can jump straight to any of the three actions instead of only
   // ever opening Study.
   useEffect(()=>{
+    // "+ Add Deck" from Studlin Prep's All Flashcards tab has no deck id to
+    // hand off (nothing exists yet) — a separate one-shot flag straight to
+    // the New Deck modal, same fire-once-then-clear pattern as openDeckId.
+    if(lsGet("openNewDeckOnMount",false)){
+      try{localStorage.removeItem("studlin-openNewDeckOnMount");}catch(e){}
+      setNewOpen(true);
+    }
     const wantId=lsGet("openDeckId",null);
     if(!wantId)return;
     const action=lsGet("openDeckAction",null);
@@ -13173,6 +13240,13 @@ function ProjectCheckInModal({taskId,onClose,onToast}){
   const priorMins=events.filter(e=>e.attackChainId===task.attackChainId&&e.status==="done"&&e.id!==task.id).reduce((s,e)=>s+(e.timeSpent||e.duration||0),0);
   const totalMinsSoFar=priorMins+(task.timeSpent||task.duration||0);
   const outlineRecMins=outline?computeOutlineRemainingMins(outline,totalMinsSoFar,itemPct):null;
+  // Name the actual checklist item the slider affects instead of the vague
+  // "the current step" -- computeOutlineRemainingMins only ever applies
+  // itemPct to the first unchecked item (see its own comment), so that's
+  // the one this question has to be unambiguous about. Falls back to the
+  // generic phrasing if every item's already checked off (nothing left for
+  // the slider to refine) or there's no outline at all.
+  const currentStepItem=outline?outline.find(o=>!o.done):null;
   const plainRecMins=(()=>{
     const raw=totalMinsSoFar*(100-itemPct)/itemPct;
     const padded=raw*ATTACK_BLOCK_PADDING;
@@ -13215,7 +13289,7 @@ function ProjectCheckInModal({taskId,onClose,onToast}){
           </div>
         )}
         <div>
-          <div style={{fontSize:11,fontWeight:600,color:T.muted,marginBottom:8}}>How much of {outline?"the current step":"what's left"} did you get through?</div>
+          <div style={{fontSize:11,fontWeight:600,color:T.muted,marginBottom:8}}>{currentStepItem?<>How much of "{currentStepItem.text}" did you get through?</>:"How much of what's left did you get through?"}</div>
           <input type="range" min={5} max={95} step={1} value={itemPct} onChange={e=>setItemPct(parseInt(e.target.value,10))} style={{width:"100%",accentColor:T.lime}} />
           <div style={{fontSize:11,color:T.muted,marginTop:4,textAlign:"right"}}>{itemPct}%</div>
         </div>
@@ -13804,8 +13878,9 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
   // type picks into one -- which real kind actually gets written is now
   // inferred at save time (see buildTask/saveManual/aiArrange) instead of
   // asked as its own question. "project" is a new type, never itself a
-  // real wire kind -- it always resolves to kind:"deadline" + phases,
-  // matching Dashboard's existing masterProjects filter convention.
+  // real wire kind -- it always resolves to kind:"deadline" + either
+  // phases or outline (whichever PhasesOutlineEditor produced), matching
+  // Dashboard's masterProjects filter convention (isProjectMarker).
   const [evKind,setEvKind]=useState("assignment");
   const [evNotes,setEvNotes]=useState("");
   const [evDetailErr,setEvDetailErr]=useState("");
@@ -13816,9 +13891,31 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
   const [evExamPlan,setEvExamPlan]=useState({materialFiles:[],materialLinks:[],materialOpen:false,pasteMaterialMode:false,pasteMaterialText:"",linkDraft:"",linkLabelDraft:"",proposeSessions:false,sessionCount:4});
   // Project phases/checklist -- same shape PhasesOutlineEditor expects.
   const [evProjectPlan,setEvProjectPlan]=useState({phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false});
+  // Add-collaborators picker for a project being created right now -- same
+  // shape/flow as EventDetailModal's own collabPicker* state, just picked
+  // *before* the project exists yet. The actual invite (createSharedProject)
+  // can't fire until the marker event has a real id, so this only holds who
+  // was picked; commitTasks sends the invite once the marker is committed.
+  const [evCollabPickerOpen,setEvCollabPickerOpen]=useState(false);
+  const [evCollabCandidates,setEvCollabCandidates]=useState([]);
+  const [evCollabSelected,setEvCollabSelected]=useState([]);
+  const [evCollabLoading,setEvCollabLoading]=useState(false);
+  const openEvCollabPicker=async()=>{
+    setEvCollabPickerOpen(true);setEvCollabLoading(true);
+    const myUid=firebase.auth().currentUser?.uid;
+    const uids=myUid?await getAcceptedFriendUids(myUid):[];
+    const docs=await Promise.all(uids.map(uid=>fsdb().collection('profiles').doc(uid).get().catch(()=>null)));
+    setEvCollabCandidates(uids.map((uid,i)=>{
+      const p=docs[i]&&docs[i].exists?docs[i].data():null;
+      return {uid,name:(p&&p.name)||"Studlin User"};
+    }));
+    setEvCollabLoading(false);
+  };
+  const toggleEvCollabSelected=(uid)=>setEvCollabSelected(s=>s.includes(uid)?s.filter(x=>x!==uid):[...s,uid]);
   const resetTypeExtras=()=>{
     setEvExamPlan({materialFiles:[],materialLinks:[],materialOpen:false,pasteMaterialMode:false,pasteMaterialText:"",linkDraft:"",linkLabelDraft:"",proposeSessions:false,sessionCount:4});
     setEvProjectPlan({phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false});
+    setEvCollabPickerOpen(false);setEvCollabCandidates([]);setEvCollabSelected([]);setEvCollabLoading(false);
   };
   const [evPriority,setEvPriority]=useState(500); // 0-1000 continuous scale
   // Difficulty slider removed from the UI entirely — deciding "how hard is
@@ -14222,8 +14319,8 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
   // "deadline" marker; Manual mode picks an exact date/time with no
   // separate due-date concept at all, so it's a plain "study block" --
   // exactly what "study block" already meant before this type existed.
-  // Project always writes "deadline" + phases (matches Dashboard's
-  // existing masterProjects filter). Attack Block bypasses this entirely
+  // Project always writes "deadline" + phases and/or outline (matches
+  // Dashboard's masterProjects/isProjectMarker filter). Attack Block bypasses this entirely
   // (see saveManual/aiArrange) -- startAttackBlockChain hardcodes its own
   // "study block" kind for the actual scheduled probe session.
   const resolveAssignmentKind=()=>evKind==="assignment"?(taskMode==="ai"?"deadline":"study block"):(evKind==="project"?"deadline":evKind);
@@ -14247,6 +14344,29 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
     let next=events.concat(tasksToAdd);
     datesAffected.forEach(function(dk){next=rebalanceDay(dk,next,routines,prefs);});
     setEvents(next);lsSet("events",next);
+    // Collaborators can only be picked before the project exists (the Add
+    // Task form has no event id yet to hang an invite off of), so the
+    // actual createSharedProject call is deferred to right here, once the
+    // marker (the task carrying phases/outline, not a scheduled session) has
+    // a real id to invite people onto. Captured before resetForm() below
+    // clears evCollabSelected. Fire-and-forget, same pattern
+    // proposeSessionFocuses already uses for a patch that lands after this
+    // function returns.
+    if(evKind==="project"&&evCollabSelected.length>0){
+      const marker=tasksToAdd.find(t=>(t.phases&&t.phases.length>0)||(t.outline&&t.outline.length>0));
+      const myUid=firebase.auth().currentUser?.uid;
+      if(marker&&myUid){
+        const names=evCollabSelected.map(uid=>(evCollabCandidates.find(c=>c.uid===uid)||{}).name||"Studlin User");
+        createSharedProject(myUid,getUserName()||"You",evCollabSelected,names,
+          {title:marker.title,subject:marker.subject||"",deadline:marker.deadline||null,phases:marker.phases||[],outline:marker.outline||[]}
+        ).then(projectId=>{
+          const patched=lsGet("events",[]).map(e=>e.id===marker.id?{...e,sharedProjectId:projectId}:e);
+          lsSet("events",patched);setEvents(patched);
+          setPlacementToast("Invite sent — it'll appear on their calendar once they accept.");
+          setTimeout(()=>setPlacementToast(""),3200);
+        });
+      }
+    }
     resetForm();
     // Checklist items can have no date at all (a to-do with no due date) —
     // skip the day/month-jump entirely rather than feeding an empty string
@@ -14761,10 +14881,11 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
     setPauseLoading(true);setPauseError("");
     const today=dayKey();
     const tomorrow=dayKey(new Date(Date.now()+86400000));
+    const nextWeekSameDay=dayKey(new Date(Date.now()+7*86400000));
     const weekday=new Date().toLocaleDateString("en-US",{weekday:"long"});
     const prompt="You are a scheduling-intent classifier for a student calendar app. Today is "+weekday+", "+today+". The student typed: \""+pauseText.trim()+"\". Classify this into EXACTLY one of these intents and respond with ONLY this JSON, no markdown fences, no explanation:\n"+
       "{\"intent\":\"shift\"|\"clear_day\"|\"clear_week\"|\"skip_class\"|\"move_event\"|\"retime_event\"|\"unsupported\",\"days\":<integer 1-14 or null>,\"date\":\"YYYY-MM-DD or null\",\"target\":\"<short name of the specific event, or null>\",\"targetDate\":\"YYYY-MM-DD or null\",\"destDate\":\"YYYY-MM-DD or null\",\"newStart\":\"HH:MM 24h or null\",\"newDuration\":<integer minutes or null>}\n"+
-      "Rules: \"shift\" pushes everything from today onward back by a number of days, only use it if the student gave (or clearly implied) an explicit day count, never invent a number. \"clear_day\" empties one specific date, resolve relative phrases like \"tomorrow\" against today's date above. \"clear_week\" clears the next 7 days starting today, no parameters. \"skip_class\" is for when the student says they aren't physically attending class/school on a specific day (sick, break, no school) and wants that day's class time opened up for other work, resolve relative phrases like \"today\"/\"tomorrow\" against today's date above. \"move_event\" is for when the student can't make ONE specific named fixed thing (a class, practice, gym, appointment) at its current time and wants just that one thing relocated, not their whole schedule — \"target\" is the event's name as the student said it, \"targetDate\" is the date it's currently on (default to today's date above if not mentioned), \"destDate\" is the day they want it moved to (resolve relative phrases against today's date above; leave null if they didn't specify a day, e.g. \"sometime\"). \"retime_event\" is for when ONE specific named fixed thing's own time changed (not cancelled — moved to a new time) and the student wants everything else fit around the new time — \"target\" and \"targetDate\" as above, \"newStart\" is the new start time in 24-hour HH:MM, \"newDuration\" is the length in minutes if a range was given (e.g. \"7-9pm\" is 120 minutes), null if only a start time was given. Leave every field not used by the chosen intent as null. If the request is ambiguous, asks for more than one action, doesn't name a specific event when one is required, implies permanently deleting/cancelling things, or doesn't clearly match one of these, respond \"unsupported\".\n"+
+      "Rules: \"shift\" pushes everything from today onward back by a number of days, only use it if the student gave (or clearly implied) an explicit day count, never invent a number. \"clear_day\" empties one specific date, resolve relative phrases like \"tomorrow\" against today's date above. \"clear_week\" clears the next 7 days starting today, no parameters. \"skip_class\" is for when the student says they aren't physically attending class/school on a specific day (sick, break, no school) and wants that day's class time opened up for other work, resolve relative phrases like \"today\"/\"tomorrow\" against today's date above. \"move_event\" is for when the student can't make ONE specific named fixed thing (a class, practice, gym, appointment) at its current time and wants just that one thing relocated, not their whole schedule — \"target\" is the event's name as the student said it, \"targetDate\" is the date it's currently on (default to today's date above if not mentioned), \"destDate\" is the day they want it moved to (resolve relative phrases against today's date above; leave null if they didn't specify a day, e.g. \"sometime\"). \"retime_event\" is for when ONE specific named fixed thing's own time changed (not cancelled — moved to a new time) and the student wants everything else fit around the new time — \"target\" and \"targetDate\" as above, \"newStart\" is the new start time in 24-hour HH:MM, \"newDuration\" is the length in minutes if a range was given (e.g. \"7-9pm\" is 120 minutes), null if only a start time was given. Leave every field not used by the chosen intent as null. Relative-date phrases are never off by less than what they literally say: \"tomorrow\" is exactly today's date above + 1 day, never same-day. \"next week\" (with no specific weekday named) means "+nextWeekSameDay+" (today's date above + 7 days) — it must NEVER resolve to a date less than 7 days after today's date above, and must NEVER be treated the same as \"tomorrow\". \"next Monday\"/\"next Friday\"/etc name a specific weekday within the next 7 days — resolve to that exact date. If the request is ambiguous, asks for more than one action, doesn't name a specific event when one is required, implies permanently deleting/cancelling things, or doesn't clearly match one of these, respond \"unsupported\".\n"+
       "Examples:\n"+
       "\"I'm sick, push everything back 3 days\" -> {\"intent\":\"shift\",\"days\":3,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null}\n"+
       "\"clear my day tomorrow\" -> {\"intent\":\"clear_day\",\"days\":null,\"date\":\""+tomorrow+"\",\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null}\n"+
@@ -14773,6 +14894,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
       "\"no school tomorrow\" -> {\"intent\":\"skip_class\",\"days\":null,\"date\":\""+tomorrow+"\",\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null}\n"+
       "\"I won't be able to go to the gym today, make it sometime tomorrow\" -> {\"intent\":\"move_event\",\"days\":null,\"date\":null,\"target\":\"gym\",\"targetDate\":\""+today+"\",\"destDate\":\""+tomorrow+"\",\"newStart\":null,\"newDuration\":null}\n"+
       "\"can't make practice, move it to tomorrow\" -> {\"intent\":\"move_event\",\"days\":null,\"date\":null,\"target\":\"practice\",\"targetDate\":\""+today+"\",\"destDate\":\""+tomorrow+"\",\"newStart\":null,\"newDuration\":null}\n"+
+      "\"reschedule working on my arduino project today to sometime next week\" -> {\"intent\":\"move_event\",\"days\":null,\"date\":null,\"target\":\"arduino project\",\"targetDate\":\""+today+"\",\"destDate\":\""+nextWeekSameDay+"\",\"newStart\":null,\"newDuration\":null}\n"+
       "\"my track practice got moved to 7-9pm\" -> {\"intent\":\"retime_event\",\"days\":null,\"date\":null,\"target\":\"track practice\",\"targetDate\":\""+today+"\",\"destDate\":null,\"newStart\":\"19:00\",\"newDuration\":120}\n"+
       "\"chem class got pushed to 3pm today\" -> {\"intent\":\"retime_event\",\"days\":null,\"date\":null,\"target\":\"chem class\",\"targetDate\":\""+today+"\",\"destDate\":null,\"newStart\":\"15:00\",\"newDuration\":null}\n"+
       "\"push things back a couple days\" -> {\"intent\":\"unsupported\",\"days\":null,\"date\":null,\"target\":null,\"targetDate\":null,\"destDate\":null,\"newStart\":null,\"newDuration\":null}\n"+
@@ -15008,6 +15130,26 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
           </div>
         )}
       </Modal>
+      {/* ── Add collaborators (project creation) -- same picker as
+          EventDetailModal's, just picking who to invite before the project
+          exists yet; the actual invite fires from commitTasks once saved. ── */}
+      <Modal open={evCollabPickerOpen} onClose={()=>setEvCollabPickerOpen(false)} title="Add collaborators" sub="They'll get an invite once you save this project, and won't see it on their calendar until they accept." width={420}
+        footer={<Btn variant="subtle" onClick={()=>setEvCollabPickerOpen(false)}>Done</Btn>}>
+        {evCollabLoading?(
+          <div style={{fontSize:12.5,color:T.muted}}>Loading your friends…</div>
+        ):evCollabCandidates.length===0?(
+          <div style={{fontSize:12.5,color:T.muted}}>No friends yet — add some in Studlin Network first.</div>
+        ):(
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {evCollabCandidates.map(c=>(
+              <label key={c.uid} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:evCollabSelected.includes(c.uid)?T.card2:"transparent"}}>
+                <input type="checkbox" checked={evCollabSelected.includes(c.uid)} onChange={()=>toggleEvCollabSelected(c.uid)} style={{cursor:"pointer"}} />
+                <div style={{fontSize:13,fontWeight:600,color:T.text}}>{c.name}</div>
+              </label>
+            ))}
+          </div>
+        )}
+      </Modal>
       {toast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} Task added</div>
       )}
@@ -15138,6 +15280,17 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
           </Field>
           {evDetailErr&&<div style={{fontSize:12,color:T.red,marginTop:-8,marginBottom:14}}>{evDetailErr}</div>}
           <PhasesOutlineEditor item={{...evProjectPlan,title:evTitle,detail:evNotes}} onChange={patch=>setEvProjectPlan(p=>({...p,...patch}))} subject={evSubject==="Other"?evCustom:evSubject} />
+          <div style={{marginBottom:14}}>
+            {evCollabSelected.length>0
+              ?<div style={{display:"flex",flexWrap:"wrap",gap:6,alignItems:"center"}}>
+                {evCollabSelected.map(uid=>{
+                  const name=(evCollabCandidates.find(c=>c.uid===uid)||{}).name||"Studlin User";
+                  return <span key={uid} style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:11.5,fontWeight:600,color:T.text,background:T.card2,border:`1px solid ${T.border}`,borderRadius:99,padding:"4px 10px"}}>{name}<button type="button" onClick={()=>toggleEvCollabSelected(uid)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:0,fontSize:13,lineHeight:1}}>×</button></span>;
+                })}
+                <BtnSm variant="subtle" onClick={openEvCollabPicker}>+ Add more</BtnSm>
+              </div>
+              :<BtnSm variant="subtle" onClick={openEvCollabPicker}>+ Add collaborators</BtnSm>}
+          </div>
         </>)}
 
         {isTaskKind&&!isChecklistMode&&taskMode==="manual"&&(
@@ -17907,8 +18060,16 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   const [masterTab,setMasterTab]=useState("assignments"); // assignments | projects | exams | nodate
   const [expandedMasterId,setExpandedMasterId]=useState(null);
   const [selectedClassId,setSelectedClassId]=useState("all");
-  const masterAssignments=allEvents.filter(ev=>ev.kind==="deadline"&&!ev.checklist&&!ev.phases&&ev.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
-  const masterProjects=allEvents.filter(ev=>ev.kind==="deadline"&&ev.phases&&ev.phases.length>0&&ev.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
+  // A project's checklist lives in one of two fields depending on how it was
+  // built: `phases` (the "break it into phases?" path) or `outline` (the
+  // plain checklist path — see PhasesOutlineEditor). EventDetailModal's own
+  // isProject check (~13384) already treats either as project-qualifying;
+  // this pair of filters has to agree with that definition or an
+  // outline-only project silently falls into Assignments instead of
+  // Projects.
+  const isProjectMarker=ev=>(ev.phases&&ev.phases.length>0)||(ev.outline&&ev.outline.length>0);
+  const masterAssignments=allEvents.filter(ev=>ev.kind==="deadline"&&!ev.checklist&&!isProjectMarker(ev)&&ev.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
+  const masterProjects=allEvents.filter(ev=>ev.kind==="deadline"&&isProjectMarker(ev)&&ev.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
   const masterExams=allEvents.filter(ev=>ev.kind==="exam"&&ev.date>=today).sort((a,b)=>a.date.localeCompare(b.date));
   // Class-linked items with no known date yet (a syllabus scan, or a
   // manually-added checklist item the student tagged with a subject) --
@@ -17965,7 +18126,17 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   };
   const renderProjectItem=(p)=>{
     const isExpanded=expandedMasterId===p.id;
-    const doneCount=p.phases.filter(ph=>ph.status==="done").length;
+    // Phases (status: pending/active/done) and outline (done: boolean) are
+    // the two shapes a project's checklist can be in — see isProjectMarker
+    // above. Normalized here to one {label,done,active}[] shape so this
+    // card can render either without caring which path built the project.
+    const hasPhases=p.phases&&p.phases.length>0;
+    const steps=hasPhases
+      ?p.phases.map(ph=>({label:ph.name,done:ph.status==="done",active:ph.status==="active"}))
+      :(p.outline||[]).map(o=>({label:o.text,done:!!o.done,active:false}));
+    const firstUndone=steps.findIndex(s=>!s.done);
+    if(!hasPhases&&firstUndone>=0)steps[firstUndone].active=true;
+    const doneCount=steps.filter(s=>s.done).length;
     return(
       <div key={p.id}>
         <div onClick={()=>setExpandedMasterId(isExpanded?null:p.id)} onDoubleClick={()=>setDetailEventId(p.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:isExpanded?T.card2:"transparent"}}>
@@ -17973,18 +18144,19 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
             <div style={{fontSize:13,fontWeight:600,color:T.text}}>{p.title}</div>
             <div style={{fontSize:11,color:T.muted,marginTop:1}}>{p.subject}{p.date?" · due "+p.date:""}</div>
           </div>
-          <span style={{fontSize:10.5,color:T.muted,flexShrink:0}}>{doneCount}/{p.phases.length} phases</span>
+          <span style={{fontSize:10.5,color:T.muted,flexShrink:0}}>{doneCount}/{steps.length} {hasPhases?"phases":"steps"}</span>
         </div>
         {isExpanded&&(
           <div style={{padding:"10px 12px 4px 20px",display:"flex",flexDirection:"column",gap:7}}>
-            {p.phases.map((ph,pi)=>{
+            {steps.map((s,pi)=>{
               const hasScheduled=allEvents.some(e=>e.dueEventId===p.id&&e.projectPhaseIndex===pi&&e.status==="pending");
-              const stColor=ph.status==="done"?T.lime:ph.status==="active"?T.amber:T.faint;
+              const stColor=s.done?T.lime:s.active?T.amber:T.faint;
+              const statusLabel=s.done?"done":s.active?"active":"pending";
               return(
                 <div key={pi} style={{display:"flex",alignItems:"center",gap:8,fontSize:11.5}}>
-                  <span style={{color:T.text,flex:1}}>{pi+1}. {ph.name}</span>
-                  <span style={{fontSize:9.5,fontWeight:700,color:stColor,textTransform:"uppercase"}}>{ph.status}</span>
-                  {ph.status!=="done"&&<span style={{fontSize:10,color:hasScheduled?T.teal:T.muted}}>{hasScheduled?"scheduled":"unscheduled"}</span>}
+                  <span style={{color:T.text,flex:1}}>{pi+1}. {s.label}</span>
+                  <span style={{fontSize:9.5,fontWeight:700,color:stColor,textTransform:"uppercase"}}>{statusLabel}</span>
+                  {hasPhases&&!s.done&&<span style={{fontSize:10,color:hasScheduled?T.teal:T.muted}}>{hasScheduled?"scheduled":"unscheduled"}</span>}
                 </div>
               );
             })}
@@ -18332,7 +18504,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
           )}
           {masterTab==="projects"&&(
             masterProjects.length===0
-              ?<div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"18px 0"}}>No multi-phase projects yet.</div>
+              ?<div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"18px 0"}}>No projects yet.</div>
               :<div style={{display:"flex",flexDirection:"column",gap:6}}>{masterProjects.map(renderProjectItem)}</div>
           )}
           {masterTab==="exams"&&(
