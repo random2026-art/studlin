@@ -3412,6 +3412,16 @@ function deckExamIds(deck){
 function deckLinkedToExam(deck,examId){
   return deckExamIds(deck).includes(examId);
 }
+// A project's checklist lives in one of two fields depending on how it was
+// built: `phases` (the "break it into phases?" path) or `outline` (the
+// plain checklist path — see PhasesOutlineEditor). Every place that needs
+// to know "is this deadline-kind event actually a project" — Dashboard's
+// masterProjects/masterAssignments split, EventDetailModal's collaborator
+// gate, Studlin Prep's assignments/projects list — has to agree on this
+// exact definition, so it lives here once instead of three drifting copies.
+function isProjectMarker(ev){
+  return !!((ev.phases&&ev.phases.length>0)||(ev.outline&&ev.outline.length>0));
+}
 function buildSpacedSessionPreviews(examDate,subject,count,duration){
   const dates=computeReviewDates(examDate,dayKey(),count);
   const d=duration||suggestDurationFor(subject,"study block")||25;
@@ -5205,7 +5215,7 @@ async function extractFileText(file){
 // elsewhere (generateFlashcardsFromText/generateQuizFromText,
 // linkDeckToExamStorage, buildSpacedSessionPreviews, computeExamReadiness)
 // instead of inventing a parallel system.
-function StudlinPrep({setActive=()=>{}}={}){
+function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   const [tab,setTab]=useState("exams"); // exams | flashcards | practiceExams
   // One-shot deep-link handoff -- same pattern openNoteId already uses
   // elsewhere: a caller (Dashboard's Exams master
@@ -5248,6 +5258,51 @@ function StudlinPrep({setActive=()=>{}}={}){
   // openDeckId/openDeckAction/openNewDeckOnMount deep-link flags still
   // drive which view it opens on).
   const [flashcardsOverlay,setFlashcardsOverlay]=useState(false);
+  // Standalone practice-exam creation — decks have had this (manual/AI/
+  // file/paste, then optionally link to an exam) since Phase 3; practice
+  // exams never got the equivalent, only ever generated top-down from an
+  // exam's own material. Mirrors the exam-material upload pattern already
+  // below (extractFileText/finalizeExtractedText) rather than the deck
+  // modal's 4-source system, since this only needs file-or-paste.
+  const [peCreateOpen,setPeCreateOpen]=useState(false);
+  const [peName,setPeName]=useState("");
+  const [peSubject,setPeSubject]=useState("None");
+  const [peCustomSubject,setPeCustomSubject]=useState("");
+  const [peFileTexts,setPeFileTexts]=useState([]);
+  const [pePasteMode,setPePasteMode]=useState(false);
+  const [pePasteText,setPePasteText]=useState("");
+  const [peQuestionCount,setPeQuestionCount]=useState(8);
+  const [peGenerating,setPeGenerating]=useState(false);
+  const [peGenError,setPeGenError]=useState("");
+  const [peLinkExamId,setPeLinkExamId]=useState(null); // set right after creating, to offer linking
+  const resetPeForm=()=>{
+    setPeName("");setPeSubject("None");setPeCustomSubject("");setPeFileTexts([]);
+    setPePasteMode(false);setPePasteText("");setPeQuestionCount(8);setPeGenError("");
+  };
+  const peFileRef=useRef(null);
+  const handlePeFile=async(e)=>{
+    const files=Array.from(e.target.files||[]);
+    e.target.value="";
+    for(const file of files){
+      const{text,truncated,empty}=await extractFileText(file);
+      setPeFileTexts(prev=>[...prev,{name:file.name,text,truncated,empty}]);
+    }
+  };
+  const removePeFile=(name)=>setPeFileTexts(prev=>prev.filter(f=>f.name!==name));
+  const peMaterialText=peFileTexts.map(f=>f.text).join("\n\n");
+  const generateStandalonePE=async()=>{
+    if(!peMaterialText.trim()||peGenerating)return;
+    setPeGenerating(true);setPeGenError("");
+    const subj=peSubject==="None"?"":(peSubject==="Other"&&peCustomSubject.trim()?peCustomSubject.trim():peSubject);
+    const questions=await generateQuizFromText(peMaterialText,subj||"this material",peQuestionCount);
+    setPeGenerating(false);
+    if(!questions||questions.length===0){setPeGenError("Couldn't generate questions from that material — try adding more, or different, content.");return;}
+    const pe=createPracticeExam(peName.trim()||"Practice Exam",subj,null,questions);
+    setPeCreateOpen(false);
+    resetPeForm();
+    refresh();
+    setPeLinkExamId(pe.id); // offer linking right away, same as decks' post-create nudge
+  };
   // colorOf is component-local everywhere it exists in this file (Notes,
   // CalendarTab, Flashcards each define their own) -- not a module-level
   // helper, so Prep needs its own too, same lookup Notes already uses.
@@ -5264,6 +5319,11 @@ function StudlinPrep({setActive=()=>{}}={}){
   const allDecks=lsGet("decks",[]);
   const allPracticeExams=lsGet("practiceExams",[]);
   const selectedExam=selectedExamId?lsGet("events",[]).find(e=>e.id===selectedExamId):null;
+  // Same split Dashboard's "Your Classes" uses (isProjectMarker, module
+  // scope) so a project shows up here exactly when it would show up there --
+  // no separate classification to drift out of sync with.
+  const prepAssignments=lsGet("events",[]).filter(ev=>ev.kind==="deadline"&&!ev.checklist&&!isProjectMarker(ev)&&ev.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
+  const prepProjects=lsGet("events",[]).filter(ev=>ev.kind==="deadline"&&isProjectMarker(ev)&&ev.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
 
   // ── Material upload -- one text pool per open hub, shared by both the
   // flashcard and practice-exam generators, so nothing gets uploaded twice. ──
@@ -5641,8 +5701,8 @@ function StudlinPrep({setActive=()=>{}}={}){
     <div>
       <PH title="Studlin Prep" sub="Attach material once. Get flashcards and a practice exam, scheduled to test day." action={
         <div style={{display:"flex",gap:6}}>
-          {["exams","flashcards","practiceExams"].map(v=>(
-            <button key={v} onClick={()=>{setTab(v);setSelectedExamId(null);}} style={{padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",background:tab===v?T.lime+"14":"transparent",color:tab===v?T.lime:T.muted,border:`1px solid ${tab===v?T.lime+"44":T.border}`,fontFamily:T.font}}>{v==="exams"?"By Exam":v==="flashcards"?"All Flashcards":"All Practice Exams"}</button>
+          {["exams","assignments","flashcards","practiceExams"].map(v=>(
+            <button key={v} onClick={()=>{setTab(v);setSelectedExamId(null);}} style={{padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",background:tab===v?T.lime+"14":"transparent",color:tab===v?T.lime:T.muted,border:`1px solid ${tab===v?T.lime+"44":T.border}`,fontFamily:T.font}}>{v==="exams"?"Exams":v==="assignments"?"Assignments":v==="flashcards"?"Flashcards":"Practice Exams"}</button>
           ))}
         </div>
       } />
@@ -5689,6 +5749,48 @@ function StudlinPrep({setActive=()=>{}}={}){
               );
             })}
           </div>
+      )}
+
+      {tab==="assignments"&&(
+        <div style={{display:"flex",flexDirection:"column",gap:20}}>
+          <div>
+            <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Assignments</div>
+            {prepAssignments.length===0
+              ?<Card style={{padding:"24px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted}}>No assignments yet — add one from your calendar.</div></Card>
+              :<div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {prepAssignments.map(a=>(
+                  <div key={a.id} style={{padding:"12px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,display:"flex",alignItems:"center",gap:14}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13.5,fontWeight:600,color:T.white}}>{a.title}</div>
+                      <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{a.subject}{a.date?" · due "+a.date:""}</div>
+                    </div>
+                    <BtnSm variant="subtle" onClick={()=>setDetailEventId(a.id)}>{Icon.pen} Edit</BtnSm>
+                  </div>
+                ))}
+              </div>}
+          </div>
+          <div>
+            <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Projects</div>
+            {prepProjects.length===0
+              ?<Card style={{padding:"24px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted}}>No projects yet.</div></Card>
+              :<div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {prepProjects.map(p=>{
+                  const hasPhases=p.phases&&p.phases.length>0;
+                  const steps=hasPhases?p.phases:(p.outline||[]);
+                  const doneCount=hasPhases?steps.filter(s=>s.status==="done").length:steps.filter(s=>s.done).length;
+                  return(
+                    <div key={p.id} style={{padding:"12px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,display:"flex",alignItems:"center",gap:14}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13.5,fontWeight:600,color:T.white}}>{p.title}</div>
+                        <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{p.subject}{p.date?" · due "+p.date:""} · {doneCount}/{steps.length} {hasPhases?"phases":"steps"}</div>
+                      </div>
+                      <BtnSm variant="subtle" onClick={()=>setDetailEventId(p.id)}>{Icon.pen} Edit</BtnSm>
+                    </div>
+                  );
+                })}
+              </div>}
+          </div>
+        </div>
       )}
 
       {tab==="exams"&&selectedExam&&(()=>{
@@ -6003,9 +6105,10 @@ function StudlinPrep({setActive=()=>{}}={}){
                       ))}
                     </div>
                   )}
-                  <div style={{display:"flex",gap:6}}>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                     <BtnSm onClick={()=>goToDeck("study")}>Study now</BtnSm>
                     <BtnSm variant="ghost" onClick={()=>goToDeck("edit")}>{Icon.pen} Edit</BtnSm>
+                    <BtnSm variant="subtle" onClick={()=>goToDeck("link")}>{linkedExams.length>0?"+ Link another exam":"+ Link to an exam"}</BtnSm>
                     <BtnSm variant="ghost" onClick={()=>goToDeck("send")}>{Icon.send} Send</BtnSm>
                     <BtnSm variant="ghost" onClick={()=>setDeleteConfirm({type:"deckAll",id:d.id,name:d.name})}>Delete</BtnSm>
                   </div>
@@ -6017,18 +6120,30 @@ function StudlinPrep({setActive=()=>{}}={}){
 
       {tab==="practiceExams"&&(
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          <div style={{display:"flex",justifyContent:"flex-end"}}>
+            <BtnSm onClick={()=>setPeCreateOpen(true)}>{Icon.plus} Add Practice Exam</BtnSm>
+          </div>
           {allPracticeExams.length===0
-            ?<Card style={{padding:"32px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted}}>No practice exams yet.</div></Card>
+            ?<Card style={{padding:"32px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted,marginBottom:14}}>No practice exams yet — generate one from an exam's material, or add one yourself.</div><BtnSm onClick={()=>setPeCreateOpen(true)}>{Icon.plus} Add Practice Exam</BtnSm></Card>
             :allPracticeExams.map(pe=>{
               const lastAttempt=pe.attempts&&pe.attempts.length>0?pe.attempts[pe.attempts.length-1]:null;
+              const linkedExam=pe.examEventId?lsGet("events",[]).find(e=>e.id===pe.examEventId):null;
               return(
-                <div key={pe.id} style={{padding:"12px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,display:"flex",alignItems:"center",gap:14}}>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:13.5,fontWeight:600,color:T.white}}>{pe.name}</div>
-                    <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{pe.questions.length} questions{lastAttempt?" · last score "+lastAttempt.score+"/"+lastAttempt.total:" · not taken yet"}</div>
+                <div key={pe.id} style={{padding:"12px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card}}>
+                  <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:linkedExam?8:0}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13.5,fontWeight:600,color:T.white}}>{pe.name}</div>
+                      <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{pe.questions.length} questions{lastAttempt?" · last score "+lastAttempt.score+"/"+lastAttempt.total:" · not taken yet"}</div>
+                    </div>
                   </div>
-                  <div style={{display:"flex",gap:6,flexShrink:0}}>
+                  {linkedExam&&(
+                    <div style={{marginBottom:10}}>
+                      <span style={{fontSize:10.5,fontWeight:700,padding:"3px 8px",borderRadius:99,background:T.lime+"14",color:T.lime,border:`1px solid ${T.lime}33`}}>Exam: {linkedExam.title} · {linkedExam.date}</span>
+                    </div>
+                  )}
+                  <div style={{display:"flex",gap:6,flexShrink:0,flexWrap:"wrap"}}>
                     <BtnSm onClick={()=>startPracticeExam(pe)}>Take</BtnSm>
+                    <BtnSm variant="subtle" onClick={()=>setPeLinkExamId(pe.id)}>{linkedExam?"Change exam":"+ Link to an exam"}</BtnSm>
                     <BtnSm variant="ghost" onClick={()=>setDeleteConfirm({type:"pe",id:pe.id,name:pe.name})}>Delete</BtnSm>
                   </div>
                 </div>
@@ -6036,6 +6151,74 @@ function StudlinPrep({setActive=()=>{}}={}){
             })}
         </div>
       )}
+
+      {/* ── Create a standalone practice exam -- same file-or-paste pattern as
+          exam material above, not the deck modal's 4-source system, since
+          this only ever needs one or the other. ── */}
+      <Modal open={peCreateOpen} onClose={()=>{setPeCreateOpen(false);resetPeForm();}} title="Add Practice Exam" sub="Upload material or paste text, and Studlin writes the questions." width={520}
+        footer={<><Btn variant="subtle" onClick={()=>{setPeCreateOpen(false);resetPeForm();}}>Cancel</Btn><Btn onClick={generateStandalonePE} disabled={!peMaterialText.trim()||peGenerating}>{peGenerating?"Generating…":"Generate"}</Btn></>}>
+        <Field label="Name (optional)"><Input placeholder="e.g. Unit 3 Practice Exam" value={peName} onChange={e=>setPeName(e.target.value)} /></Field>
+        <Field label="Subject (optional)">
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            {["None",...userSubjects.map(s=>s.label),"Other"].map(s=>(
+              <button key={s} type="button" onClick={()=>setPeSubject(s)} style={{padding:"6px 12px",borderRadius:99,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,background:peSubject===s?T.lime+"14":T.card2,color:peSubject===s?T.lime:T.muted,border:`1px solid ${peSubject===s?T.lime+"44":T.border}`}}>{s}</button>
+            ))}
+          </div>
+          {peSubject==="Other"&&<Input placeholder="Subject name" value={peCustomSubject} onChange={e=>setPeCustomSubject(e.target.value)} style={{marginTop:8}} />}
+        </Field>
+        <Field label="Material" hint="Upload files or paste text — the more real content, the better the questions.">
+          <input type="file" ref={peFileRef} onChange={handlePeFile} accept=".txt,.md,.pdf,.docx" style={{display:"none"}} multiple />
+          <div onClick={()=>peFileRef.current&&peFileRef.current.click()} style={{border:`1px dashed ${T.borderHover}`,borderRadius:10,padding:18,textAlign:"center",background:T.card2,cursor:"pointer",marginBottom:10}}>
+            <div style={{fontSize:12.5,color:T.text,fontWeight:500}}>Click to upload: PDF, DOCX, or TXT</div>
+          </div>
+          {peFileTexts.length>0&&(
+            <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>
+              {peFileTexts.map(f=>(
+                <div key={f.name} style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card2,borderRadius:8,gap:8}}>
+                  <div style={{flex:1,minWidth:0,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</div>
+                  <button onClick={()=>removePeFile(f.name)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0}}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <button type="button" onClick={()=>setPePasteMode(m=>!m)} style={{width:"100%",textAlign:"center",padding:"9px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12}}>{pePasteMode?"Upload a file instead":"Or paste text instead"}</button>
+          {pePasteMode&&(
+            <div style={{marginTop:10}}>
+              <textarea value={pePasteText} onChange={e=>setPePasteText(e.target.value)} placeholder="Paste your notes or material here" rows={5}
+                style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
+              <Btn onClick={()=>{setPeFileTexts(prev=>[...prev,{name:"Pasted text",...finalizeExtractedText(pePasteText)}]);setPePasteText("");setPePasteMode(false);}} disabled={!pePasteText.trim()} style={{marginTop:10,width:"100%",justifyContent:"center",opacity:pePasteText.trim()?1:0.45}}>Add pasted text</Btn>
+            </div>
+          )}
+        </Field>
+        <Field label="Number of questions">
+          <div style={{display:"flex",gap:8}}>
+            {[5,8,10,12].map(n=>(
+              <button key={n} type="button" onClick={()=>setPeQuestionCount(n)} style={{flex:1,padding:"8px 0",borderRadius:8,border:"1px solid "+(peQuestionCount===n?T.lime+"66":T.border),background:peQuestionCount===n?T.lime+"14":T.card2,color:peQuestionCount===n?T.lime:T.text,fontWeight:peQuestionCount===n?700:400,fontSize:13,cursor:"pointer",fontFamily:T.font}}>{n}</button>
+            ))}
+          </div>
+        </Field>
+        {peGenError&&<div style={{fontSize:12,color:T.red}}>{peGenError}</div>}
+      </Modal>
+
+      {/* ── Link a (possibly just-created) practice exam to an exam --
+          practice exams only ever carry one examEventId (not the
+          examEventIds[] array decks got in Phase 3), so this always
+          replaces rather than appends. ── */}
+      <Modal open={!!peLinkExamId} onClose={()=>setPeLinkExamId(null)} title="Link to an exam" sub="Studlin will propose a practice-exam session counting down to the exam date." width={440}>
+        {(()=>{
+          const pickableExams=upcomingExams();
+          return pickableExams.length===0
+            ? <div style={{fontSize:13,color:T.muted,padding:"18px 0",textAlign:"center"}}>No upcoming exams on your calendar yet. Add one in Calendar first.</div>
+            : <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {pickableExams.map(ex=>(
+                  <button key={ex.id} onClick={()=>{lsSet("practiceExams",lsGet("practiceExams",[]).map(p=>p.id===peLinkExamId?{...p,examEventId:ex.id}:p));setPeLinkExamId(null);refresh();}} style={{textAlign:"left",padding:"11px 14px",borderRadius:10,border:`1px solid ${T.border}`,background:T.card2,cursor:"pointer",fontFamily:T.font}}>
+                    <div style={{fontSize:13,fontWeight:600,color:T.white}}>{ex.title}</div>
+                    <div style={{fontSize:11,color:T.muted,marginTop:2}}>{ex.date}{ex.subject?" · "+ex.subject:""}</div>
+                  </button>
+                ))}
+              </div>;
+        })()}
+      </Modal>
 
       {/* ── Schedule preview -- confirm-first, same discipline as Balance My Week ── */}
       <Modal open={!!schedulePreview} onClose={()=>setSchedulePreview(null)}
@@ -6278,6 +6461,7 @@ function Flashcards() {
     if(!d)return;
     if(action==="edit")openEditDeck(d);
     else if(action==="send")sendDeck(d);
+    else if(action==="link")setLinkExamDeckId(d.id);
     else{setStudyDeck(d);setTab("study");setIdx(0);setFlipped(false);}
   },[]);
 
@@ -13455,7 +13639,7 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
   // same signal the syllabus review/Brain Dump already treat as "this is a
   // project" (a real phases or outline array), not a fresh kind check that
   // doesn't exist once stored (project always collapses to kind:"deadline").
-  const isProject=!!((ev.phases&&ev.phases.length>0)||(ev.outline&&ev.outline.length>0));
+  const isProject=isProjectMarker(ev);
   const openCollabPicker=async()=>{
     setCollabPickerOpen(true);setCollabSelected([]);setCollabLoading(true);
     const myUid=firebase.auth().currentUser?.uid;
@@ -18060,14 +18244,6 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   const [masterTab,setMasterTab]=useState("assignments"); // assignments | projects | exams | nodate
   const [expandedMasterId,setExpandedMasterId]=useState(null);
   const [selectedClassId,setSelectedClassId]=useState("all");
-  // A project's checklist lives in one of two fields depending on how it was
-  // built: `phases` (the "break it into phases?" path) or `outline` (the
-  // plain checklist path — see PhasesOutlineEditor). EventDetailModal's own
-  // isProject check (~13384) already treats either as project-qualifying;
-  // this pair of filters has to agree with that definition or an
-  // outline-only project silently falls into Assignments instead of
-  // Projects.
-  const isProjectMarker=ev=>(ev.phases&&ev.phases.length>0)||(ev.outline&&ev.outline.length>0);
   const masterAssignments=allEvents.filter(ev=>ev.kind==="deadline"&&!ev.checklist&&!isProjectMarker(ev)&&ev.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
   const masterProjects=allEvents.filter(ev=>ev.kind==="deadline"&&isProjectMarker(ev)&&ev.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
   const masterExams=allEvents.filter(ev=>ev.kind==="exam"&&ev.date>=today).sort((a,b)=>a.date.localeCompare(b.date));
@@ -20945,7 +21121,7 @@ function App() {
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="lectures"?<Lectures setActive={setActive} setPricingOpen={setPricingOpen} />:
            active==="profile"?<Profile setActive={setActive} seriousMode={seriousMode} />:
-           active==="prep"?<StudlinPrep setActive={setActive} />:
+           active==="prep"?<StudlinPrep setActive={setActive} setDetailEventId={setDetailEventId} />:
            ActivePage?<ActivePage />:null}
         </div>
       </div>
