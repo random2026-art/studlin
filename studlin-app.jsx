@@ -3594,9 +3594,13 @@ const DataStore={
   // No gcal- style exclusion needed -- deck ids are plain String(Date.now())
   // with no special prefix anywhere in this file (confirmed by grep).
   decks:createCollectionSync({localKey:"decks",firestoreCollection:"decks",queueKey:"decksSyncQueue",updatedAtKey:"decksUpdatedAt",errorPrefix:"decks",isSyncable:(id)=>typeof id==="string"&&id.length>0}),
+  // Same as decks -- note ids are plain String(Date.now()), no special
+  // prefix (confirmed by grep of every `newNote={id:...}` site).
+  notes:createCollectionSync({localKey:"notes",firestoreCollection:"notes",queueKey:"notesSyncQueue",updatedAtKey:"notesUpdatedAt",errorPrefix:"notes",isSyncable:(id)=>typeof id==="string"&&id.length>0}),
 };
 syncWriteHooks.events=(items)=>DataStore.events.onLocalWrite(items);
 syncWriteHooks.decks=(items)=>DataStore.decks.onLocalWrite(items);
+syncWriteHooks.notes=(items)=>DataStore.notes.onLocalWrite(items);
 const dayKey=(d)=>{const x=d||new Date();return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");};
 function daysOverdue(ev){if(!ev.deadline)return 0;if(ev.date<=ev.deadline)return 0;const d1=new Date(ev.date),d2=new Date(ev.deadline);return Math.ceil((d1-d2)/86400000);}
 function daysUntilDeadline(ev){if(!ev.deadline)return null;const d1=new Date(ev.deadline),d2=new Date(dayKey());return Math.ceil((d1-d2)/86400000);}
@@ -20246,6 +20250,7 @@ function AuthGate(){
         const profilePromise=fetchUserProfile();upsertProfile();
         DataStore.events.hydrateOnAuth();
         DataStore.decks.hydrateOnAuth();
+        DataStore.notes.hydrateOnAuth();
         // "onboarded" otherwise lives only in this browser's localStorage —
         // if it's not already set here, wait for the profile fetch (which
         // reconciles it against the account's own record) before mounting

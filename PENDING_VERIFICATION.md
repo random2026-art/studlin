@@ -46,11 +46,11 @@ Also found, as a side effect, **6 orphaned `profiles` docs** with no matching Au
 
 **Conclusion: this item is closed.** Both negotiation paths verified against production Firestore, not just UI state. Safe to remove from future pending-verification passes.
 
-## DataStore sync (events + decks): no "synced" UI feedback
+## DataStore sync (events + decks + notes): no "synced" UI feedback
 
-**Where:** `studlin-app.jsx`'s `createCollectionSync` factory (used by both `DataStore.events` and `DataStore.decks`).
+**Where:** `studlin-app.jsx`'s `createCollectionSync` factory (used by `DataStore.events`, `DataStore.decks`, `DataStore.notes`).
 
-**What's missing:** sync (hydrate on sign-in, background push/flush) runs completely silently for both collections. The only observability is the `users/{uid}/_sync/status` doc (`eventsLastSyncedAt`/`eventsLastError`, `decksLastSyncedAt`/`decksLastError`), which isn't surfaced anywhere in the UI. This is arguably a gap against this project's own CLAUDE.md guardrail that successful async actions (sent, saved, synced) get a toast/confirmation, not silence.
+**What's missing:** sync (hydrate on sign-in, background push/flush) runs completely silently for all three collections. The only observability is the `users/{uid}/_sync/status` doc (`<type>LastSyncedAt`/`<type>LastError`), which isn't surfaced anywhere in the UI. This is arguably a gap against this project's own CLAUDE.md guardrail that successful async actions (sent, saved, synced) get a toast/confirmation, not silence.
 
 **Verification needed before launch:** add a toast or similar confirmation when a sync/flush actually completes (and probably a discreet indicator on failure, given `_sync/status` already tracks `*LastError`). Deliberately not built yet — out of scope for the migration itself; scoped as its own follow-up. Applies equally to every future collection built on this same factory.
 
@@ -62,7 +62,7 @@ Also found, as a side effect, **6 orphaned `profiles` docs** with no matching Au
 
 **Verified 2026-07-27 against the preview deployment** (real signed-in test accounts, not just unit tests): cross-device sync, delete propagation, an edit followed by an immediate tab close, and an offline edit all confirmed working. Merged to `main`. **This item is closed** for events specifically.
 
-**Still open for decks (step 2, same factory, not yet live-verified):** decks reuses this exact machinery (`createCollectionSync`) with its own localStorage keys (`decksSyncQueue`, `decksUpdatedAt`) and Firestore subcollection. Covered by the same unit + emulator test suites, but has NOT been through a real-device verification pass the way events just was -- treat decks as "logic verified, not yet live-verified" until that happens.
+**Still open for decks (step 2) and notes (step 3), same factory, neither live-verified yet:** both reuse this exact machinery (`createCollectionSync`) with their own localStorage keys (`decksSyncQueue`/`decksUpdatedAt`, `notesSyncQueue`/`notesUpdatedAt`) and Firestore subcollections. Covered by the same unit + emulator test suites, but neither has been through a real-device verification pass the way events just was -- treat both as "logic verified, not yet live-verified" until that happens. Decks is pushed (`firestore-step2-decks`) and awaiting its preview test; notes is pushed (`firestore-step3-notes`) and hasn't been previewed at all yet.
 
 ## 9 pre-existing test failures in tests/scheduling.test.js -- unrelated to any Firestore/DataStore work above
 
