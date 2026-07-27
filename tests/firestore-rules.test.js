@@ -78,6 +78,27 @@ for (const type of PERSONAL_TYPES) {
     );
   });
 
+  // Regression guard for a real landmine found while building the events
+  // sync (DataStore, studlin-app.jsx): every OTHER Firestore write already
+  // in this codebase (upsertProfile, declineSharedProject,
+  // ensureSchoolInDirectory, etc.) stores its own updatedAt as
+  // `new Date().toISOString()` -- a plain string. `is timestamp` in the
+  // rule below requires an actual Firestore Timestamp, which a string is
+  // NOT -- the Firestore SDK only auto-converts a native Date OBJECT, not
+  // a stringified one. Naively copying this file's own established
+  // convention into the events/notes/etc DataStore would silently reject
+  // every write. `new Date()` (this test's control case, and what
+  // DataStore actually sends) must keep succeeding; the stringified form
+  // must keep failing -- if either flips, something upstream changed in
+  // a way that would resurrect this exact bug.
+  test(`${type}: updatedAt as an ISO string is rejected (must be a real Timestamp, not a string)`, async () => {
+    const dbA = testEnv.authenticatedContext(USER_A).firestore();
+    await assertFails(
+      dbA.collection('users').doc(USER_A).collection(type).doc('item-str-ts')
+        .set({ title: 'stringified timestamp', updatedAt: new Date().toISOString() })
+    );
+  });
+
   test(`${type}: hard delete is always rejected, soft-delete via update is allowed`, async () => {
     const dbA = testEnv.authenticatedContext(USER_A).firestore();
     const ref = dbA.collection('users').doc(USER_A).collection(type).doc('item3');

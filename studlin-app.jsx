@@ -651,7 +651,15 @@ const StatNum = ({label,value,sub,accent,style={}}) => (
 
 // ─── PERSISTENCE + MONETIZATION HELPERS ──────────────────────────────────────
 const lsGet=(k,d)=>{try{const v=localStorage.getItem("studlin-"+k);return v===null?d:JSON.parse(v);}catch(e){return d;}};
-const lsSet=(k,v)=>{try{localStorage.setItem("studlin-"+k,JSON.stringify(v));}catch(e){}};
+// onEventsWrite is filled in once DataStore is defined further down this
+// file (see "DataStore: events Firestore sync"). It's a plain hook
+// variable rather than calling DataStore directly so lsSet keeps working
+// even before that point in the script has run, and so every one of the
+// ~85 existing lsSet("events",...) call sites needs zero changes -- the
+// Firestore mirroring is injected transparently at this single choke
+// point instead.
+let onEventsWrite=null;
+const lsSet=(k,v)=>{try{localStorage.setItem("studlin-"+k,JSON.stringify(v));}catch(e){}if(k==="events"&&onEventsWrite)onEventsWrite(v);};
 // A fire-and-forget write failing used to just vanish — no record anywhere,
 // for us or the student. This is the one place that decides "does a caught
 // error get reported," so a silent .catch(()=>{}) can become
@@ -3242,6 +3250,144 @@ function ensureSchoolInDirectory(name,type){
   if(!slug)return;
   try{fsdb().collection('schools').doc(slug).set({name:name.trim(),nameLower:name.trim().toLowerCase(),type,createdAt:new Date().toISOString()}).catch(()=>{});}catch(e){}
 }
+// ─── DataStore: events Firestore sync (personal-content migration step 1) ──
+// SCOPE: only `events` is wired up here. firestore.rules already has
+// matching owner-only rules deployed for notes/decks/essays/lectures/
+// timerLogs/practiceExams too (see users/{uid} comment in firestore.rules),
+// but those aren't touched by this change -- each is its own separate step.
+//
+// THE GOTCHA THIS CODE EXISTS TO AVOID: every other Firestore write in
+// this file stores updatedAt as `new Date().toISOString()` -- a STRING
+// (see upsertProfile, declineSharedProject, ensureSchoolInDirectory,
+// above). The events/notes/etc rule instead requires
+// `request.resource.data.updatedAt is timestamp`, which only a real
+// Firestore Timestamp satisfies -- a plain string fails that check. The
+// Firestore SDK auto-converts a native `Date` object to a Timestamp on
+// write, so the fix is simply to never call .toISOString() here and pass
+// `new Date()` as-is. Copying this file's own established
+// .toISOString() convention into this module would silently break every
+// event sync (write rejected, swallowed by the same style of empty
+// .catch(()=>{}) that has already caused this exact class of bug once
+// before in this codebase -- see PENDING_VERIFICATION.md's chatRooms
+// entry). tests/firestore-rules.test.js has a regression case asserting
+// a string updatedAt is rejected, specifically to guard this.
+//
+// Local delete semantics are hard-delete-by-array-filter everywhere
+// (~85 lsSet("events",...) call sites throughout this file) -- no
+// tombstone concept exists locally. The events rule forbids delete
+// entirely (delete: if false); DataStore bridges this by diffing on
+// every write via computePushDiff (see datastore-events-sync.js): ids
+// that vanish from the local array become a Firestore
+// update{deletedAt} instead of a delete or a local hard removal.
+// Nothing about local behavior changes -- the array is filtered exactly
+// as it always was.
+//
+// Sync is a one-time pull-and-merge on sign-in (hydrateOnAuth), not a
+// live listener -- real-time cross-device sync while both are open
+// simultaneously is a larger, separate concern deliberately deferred to
+// a future step, as is propagating a delete made on one device into
+// another device's still-populated local array (see
+// mergeRemoteIntoLocal's own comment in datastore-events-sync.js).
+const DataStore=(()=>{
+  const S=(typeof window!=="undefined"&&window.StudlinEventsSync)||null;
+  let syncedSigs={}; // {id: sig} -- what DataStore believes is already in Firestore
+  let pushTimer=null;
+  let hydrating=false;
+  let hydratedForUid=null;
+
+  const currentUid=()=>{try{return firebase.auth().currentUser?.uid||null;}catch(e){return null;}};
+
+  function reportSyncStatus(uid,patch){
+    try{fsdb().collection('users').doc(uid).collection('_sync').doc('status').set(patch,{merge:true}).catch(()=>{});}catch(e){}
+  }
+
+  // Firestore batches cap at 500 writes -- chunk defensively even though
+  // a student's event list realistically never gets close to that.
+  function chunk(arr,size){const out=[];for(let i=0;i<arr.length;i+=size)out.push(arr.slice(i,i+size));return out;}
+
+  async function pushDiff(events){
+    if(!S)return;
+    const uid=currentUid();
+    if(!uid)return;
+    const {upserts,deletedIds}=S.computePushDiff(syncedSigs,events);
+    if(upserts.length===0&&deletedIds.length===0)return;
+    const col=fsdb().collection('users').doc(uid).collection('events');
+    const now=new Date();
+    const ops=[
+      ...upserts.map(ev=>{const {id,...body}=ev;return {id,fn:(b)=>b.set(col.doc(id),Object.assign({},body,{updatedAt:now}),{merge:true})};}),
+      ...deletedIds.map(id=>({id,fn:(b)=>b.update(col.doc(id),{deletedAt:now,updatedAt:now})})),
+    ];
+    try{
+      for(const group of chunk(ops,400)){
+        const batch=fsdb().batch();
+        group.forEach(o=>o.fn(batch));
+        await batch.commit();
+      }
+      const nextSigs=Object.assign({},syncedSigs);
+      upserts.forEach(ev=>{nextSigs[ev.id]=S.sigOf(ev);});
+      deletedIds.forEach(id=>{delete nextSigs[id];});
+      syncedSigs=nextSigs;
+      reportSyncStatus(uid,{eventsLastSyncedAt:now,eventsLastError:null});
+    }catch(err){
+      // Never throws back into lsSet's caller -- a Firestore hiccup must
+      // not block the local write that already succeeded. Recorded in
+      // _sync/status instead of a bare swallowed catch, so a persistent
+      // failure is at least discoverable later rather than invisible.
+      reportSyncStatus(uid,{eventsLastError:String((err&&err.message)||err),eventsLastErrorAt:new Date()});
+    }
+  }
+
+  function onLocalWrite(events){
+    // Guards out entirely when there's no StudlinEventsSync global (no
+    // <script> tag loaded it -- e.g. other bundles/entry points, or the
+    // Node test harness's bare vm sandbox, which has no `window` and no
+    // `setTimeout`). Every one of the ~85 existing lsSet("events",...)
+    // call sites -- several already exercised by tests/scheduling.test.js
+    // and tests/cal-import.test.js via the harness's vm sandbox -- must
+    // keep working identically with zero Firestore/DataStore involvement
+    // in that environment.
+    if(!S||typeof setTimeout==="undefined")return;
+    if(pushTimer)clearTimeout(pushTimer);
+    // Debounced -- several of the ~85 write call sites fire more than once
+    // in quick succession for a single user action (e.g. reschedule
+    // helpers that call lsSet twice), so this coalesces bursts into one
+    // Firestore round trip instead of one per intermediate write.
+    pushTimer=setTimeout(()=>{pushDiff(lsGet("events",[]));},800);
+  }
+
+  async function hydrateOnAuth(){
+    if(!S)return;
+    const uid=currentUid();
+    if(!uid||hydrating||hydratedForUid===uid)return;
+    hydrating=true;
+    try{
+      const snap=await fsdb().collection('users').doc(uid).collection('events').get();
+      const remote=[];
+      const sigs={};
+      snap.forEach(doc=>{
+        const d=doc.data();
+        if(d.deletedAt)return; // soft-deleted -- excluded from the merge, not resurrected locally
+        const {updatedAt,deletedAt,...rest}=d;
+        const ev=Object.assign({},rest,{id:doc.id});
+        remote.push(ev);
+        sigs[doc.id]=S.sigOf(ev);
+      });
+      syncedSigs=sigs;
+      const merged=S.mergeRemoteIntoLocal(lsGet("events",[]),remote);
+      lsSet("events",merged); // routes back through onLocalWrite, reconciling anything remote had that local didn't yet
+      hydratedForUid=uid;
+    }catch(e){
+      // Leaves hydratedForUid unset so a transient failure (offline,
+      // Firestore hiccup) can retry on the next auth-state tick rather
+      // than permanently skipping sync for the rest of the session.
+    }finally{
+      hydrating=false;
+    }
+  }
+
+  return {events:{onLocalWrite,hydrateOnAuth}};
+})();
+onEventsWrite=(events)=>DataStore.events.onLocalWrite(events);
 const dayKey=(d)=>{const x=d||new Date();return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");};
 function daysOverdue(ev){if(!ev.deadline)return 0;if(ev.date<=ev.deadline)return 0;const d1=new Date(ev.date),d2=new Date(ev.deadline);return Math.ceil((d1-d2)/86400000);}
 function daysUntilDeadline(ev){if(!ev.deadline)return null;const d1=new Date(ev.deadline),d2=new Date(dayKey());return Math.ceil((d1-d2)/86400000);}
@@ -19889,6 +20035,7 @@ function AuthGate(){
       }
       if(u&&(!isPasswordAccount(u)||u.emailVerified)){
         const profilePromise=fetchUserProfile();upsertProfile();
+        DataStore.events.hydrateOnAuth();
         // "onboarded" otherwise lives only in this browser's localStorage —
         // if it's not already set here, wait for the profile fetch (which
         // reconciles it against the account's own record) before mounting
