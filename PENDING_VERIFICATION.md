@@ -14,6 +14,22 @@ Known/suspected issues deliberately deferred rather than fixed blind — each ne
 
 The full contents of this branch's `firestore.rules` (commit 5f36610) were manually pasted into the Firebase Console and published on 2026-07-27. Live rules now match the committed file. See `project_firestore_rules_undeployed` in Claude's memory for the prior stale-rules history this closes out.
 
+## Prep overlay clipping (Decks/Study) -- fixed, needs re-verification on preview
+
+**Where:** `studlin-app.jsx`, `StudlinPrep`'s `flashcardsOverlay` render block.
+
+**Root cause:** the overlay is `position:fixed;inset:0` but was rendered in place, nested inside `[data-page]` rather than portaled out of it. `[data-page]` has a CSS `animation` targeting `transform`, which per spec makes it a containing block for any `position:fixed` descendant even when not portaled to `document.body` -- so `inset:0` filled `[data-page]`'s own box instead of the real viewport, silently clipping everything past wherever that box's bottom edge fell (tab pills, deck grid, study view -- all of it, no scroll to reveal the rest). Same class of bug as the tour callout elsewhere in this file, which already works around it the same way.
+
+**Fix:** wrapped the overlay in `ReactDOM.createPortal(..., document.body)`, matching the established pattern used elsewhere in the file. Verified: esbuild parse-check clean, full `node --test` suite (281/290 pass, same 9 pre-existing `computeDayViewScale` failures as before -- see below, unrelated), and `npm run test:rules` (55/55 pass). Not yet re-verified visually on a real preview deploy -- needs a human check of Prep → Decks → open a deck → Study at a real viewport size before this item is removed.
+
+## Phantom flashcard on failed AI generation -- fixed, needs re-verification on preview
+
+**Where:** `studlin-app.jsx`, `Flashcards`'s `createDeck`.
+
+**Root cause:** `generateFlashcardsFromText`'s inner JSON-parse fallback returns `[]` (not a thrown error) when the AI response has no usable content -- e.g. a missing `ANTHROPIC_API_KEY` on preview causes a server error response with no `reply` field, which parses to an empty string, fails `JSON.parse`, and the regex fallback finds no matches. `createDeck` then treated any empty `cards` array (across `manual` with zero drafted cards, `file` with no upload, `record` with no audio, and genuine AI-generation failure) identically: substitute a placeholder card and create the deck anyway. That's how preview testing produced a deck labeled "1 cards" containing a fake "No cards were generated" card.
+
+**Fix:** `createDeck` now validates before generating (no file uploaded / no audio recorded / no manual cards added -- inline red error via a new `createDeckError` state, deck is never created) and treats a genuine post-generation empty result as a failure too (inline error, deck not created), rather than ever substituting a fake card. Matches the CLAUDE.md rule that validation failures render as inline text beneath the field, not silent fallbacks. Verified: esbuild parse-check clean, same full test suite results as above. Not yet re-verified visually on preview -- needs a human check that triggering a real generation failure (e.g. on the preview deploy with no API key configured) now shows the inline error and creates no deck at all, instead of the old phantom-card deck.
+
 ## Three-account username/profile audit — VERIFIED 2026-07-27
 
 **Accounts checked:** `shenouday7@gmail.com` (real, pre-existing, previously bounced to onboarding Step 3 by the stale-rules 403, manually completed by the founder the morning of the deploy), `shenouday7+test1@gmail.com`, `shenouday7+test2@gmail.com` (both fresh signups created after the deploy).
