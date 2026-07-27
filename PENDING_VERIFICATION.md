@@ -58,11 +58,30 @@ Also found, as a side effect, **6 orphaned `profiles` docs** with no matching Au
 
 **Where:** `studlin-app.jsx`'s `DataStore` object + `datastore-events-sync.js` (`mergeRemoteIntoLocal`, the `studlin-syncQueue` offline write queue).
 
-**What's implemented:** a delete made on one device now propagates to remove a still-present item on another device (unless that device has a genuinely newer edit, in which case its edit wins and un-deletes it) — this was a real gap in the first version of this migration, fixed after review caught it. Writes are also queued durably to `localStorage["studlin-syncQueue"]` on every edit, synchronously, before the debounced network push starts, so a tab closed immediately after an edit doesn't lose it; the queue flushes on auth-ready, the browser's `online` event, and a capped-backoff retry (2s doubling to 5min) on failure.
+**What's implemented:** a delete made on one device now propagates to remove a still-present item on another device (unless that device has a genuinely newer edit, in which case its edit wins and un-deletes it) — this was a real gap in the first version of this migration, fixed after review caught it. The propagation mechanism itself has no remaining gap; what's bounded is *when* it runs -- only on hydrate (sign-in / fresh page load), since there's no live listener (same pre-existing "one-time pull-and-merge, not live" limitation stated from the first commit, not something specific to deletes). Writes are also queued durably to `localStorage["studlin-syncQueue"]` on every edit, synchronously, before the debounced network push starts, so a tab closed immediately after an edit doesn't lose it; the queue flushes on auth-ready, the browser's `online` event, and a capped-backoff retry (2s doubling to 5min) on failure.
 
 **Why this isn't marked fully done:** both are covered by unit tests against synthetic inputs (`tests/events-sync.test.js` — merge/delete-propagation cases, and a simulated edit -> JSON round-trip ("tab close/reopen") -> flush case for the queue), but neither has been exercised against a real two-device scenario or a real offline/reconnect cycle in an actual browser. Same category of risk as the chatRooms allowlist entry above: logic that's correct on paper needs a real run before it's trusted.
 
 **Verification needed before launch:** (1) two real signed-in devices/browsers, edit the same event on both while one is offline, confirm the newest edit wins and the loser doesn't silently reappear; (2) delete an event on device A, confirm it disappears from device B on next hydrate; (3) edit an event, kill the tab/close the browser immediately, reopen, confirm the edit reaches Firestore without further action.
+
+## 9 pre-existing test failures in tests/scheduling.test.js -- unrelated to any Firestore/DataStore work above
+
+**Confirmed pre-existing, not a regression:** verified via `git stash` against this branch before the events-sync work landed -- same 9 failures, same error, already present. Logged here (rather than left as unexplained red output) so they don't get silently normalized as "tests always have some red" and don't get confused with anything Firestore-related in this same test run.
+
+**Root cause:** all 9 are children of `describe("computeDayViewScale (Day view's smart viewport: fit the whole day, scroll to the first task)")` in `tests/scheduling.test.js`, and all fail with the identical `TypeError: m.computeDayViewScale is not a function`. The function doesn't exist anywhere in `studlin-app.jsx` -- confirmed by grep, the name only appears once, in an unrelated comment. The actual Day view component (~line 12897) has similar logic (a `scrollToMin` calc, a fixed pxPerHr) inlined directly in the component instead, hardcoded to a constant full-day span rather than the dynamic per-event-widening/viewport-fitting behavior these tests expect. Either this function was written aspirationally ahead of the real implementation and never extracted, or it existed once and got inlined away during a later refactor without updating the harness's export list or these tests -- can't tell which from the code alone.
+
+**What each test expects `computeDayViewScale(events, workWindow, viewportHeightPx)` to return** (a `{spanStart, spanEnd, pxPerHr, scrollToMin}` object), one line each:
+1. "no events falls back to the plain work-hours window" -- with nothing scheduled, the visible span is just the work-hours window padded 30min on each side.
+2. "an event earlier than the work window widens the span to include it" -- a 6am event pulls `spanStart` back to include it (minus the same 30min pad).
+3. "an event later than the work window widens the span to include it" -- a 10pm event pushes `spanEnd` out to include it.
+4. "pxPerHr is computed to fit the whole span in the given viewport height" -- pixels-per-hour scales so the full computed span exactly fits the given viewport height.
+5. "pxPerHr never drops below the legibility floor even for a very short viewport" -- a cramped viewport clamps to `DAY_VIEW_MIN_PX_HR` instead of shrinking events to illegibility.
+6. "pxPerHr never exceeds the max even for a very tall viewport with a short day" -- a very tall viewport with little scheduled clamps to `DAY_VIEW_MAX_PX_HR` instead of stretching events absurdly.
+7. "scrollToMin lands 30 minutes before the first real task, not at the very edge of the span" -- auto-scroll position leaves 30min of breathing room before the day's first event, doesn't snap to the exact top.
+8. "with no events, scrollToMin is just the span start -- nothing to scroll ahead to" -- no events means no reason to scroll past the top of the span.
+9. "events with no time (checklist-style) are ignored for span/scroll purposes" -- untimed checklist-style items (no `time` field) don't affect span-widening or scroll position, only timed events do.
+
+**Verification needed before launch:** decide whether `computeDayViewScale` should be extracted as a real, tested pure function (matching what these 9 tests already specify) or whether the tests should be updated/removed to match the inlined implementation that actually ships today. Either is a legitimate outcome; leaving the mismatch unexamined is not.
 
 ## users/{uid} write rule errors (doesn't cleanly deny) on a true first-time create
 
