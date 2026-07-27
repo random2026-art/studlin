@@ -68,28 +68,66 @@
     return { upserts, deletedIds };
   }
 
-  // Folds a remote snapshot (already filtered to exclude soft-deleted
-  // docs by the caller) into the local array on hydrate (sign-in /
-  // fresh device). Local wins whenever both sides have the same id --
-  // there's no per-item updatedAt on the LOCAL side to compare against
-  // remote's, so "local is authoritative, remote only fills in items
-  // this device doesn't have yet" is the only conflict rule that can't
-  // silently discard a local edit. Remote-only items (created on
-  // another device) are adopted as-is.
+  // Folds a remote snapshot into the local array on hydrate (sign-in /
+  // fresh device). Real newest-wins: an id present on both sides is
+  // decided by comparing localUpdatedAtMs[id] (this device's own record
+  // of when it last changed that item -- see studlin-app.jsx's
+  // onLocalWrite, which stamps this on every real content change,
+  // independent of the local event objects themselves) against
+  // remoteUpdatedAtMs[id] (the Firestore doc's real updatedAt, in ms).
+  // When there's NO local timestamp on record at all -- an id this
+  // device's own bookkeeping has never seen -- remote wins by default:
+  // "newest wins" has no basis for favoring local when there's zero
+  // signal for when local last changed, while remote at least carries a
+  // real timestamp. In practice this only happens for a genuine
+  // cross-device id collision with no local edit history, which
+  // essentially can't occur through normal use (ids are per-device
+  // timestamps -- see isSyncableId's comment). A tie favors local.
   //
-  // Known limitation, deliberately deferred rather than solved wrong:
-  // this does NOT propagate a deletion made on another device into a
-  // local array that still has the item -- that direction (remote
-  // delete -> local removal) isn't implemented in step 1. Local ->
-  // remote soft-delete works (see computePushDiff above); the reverse
-  // needs either a live listener or a real local updatedAt convention,
-  // both out of scope for this step.
-  function mergeRemoteIntoLocal(localEvents, remoteEvents) {
+  // remoteDeletedIds is every id soft-deleted on the remote side (see
+  // computePushDiff's own comment for why deletes are soft/update-only,
+  // never a real Firestore delete). Same newest-wins rule applies: the
+  // delete only propagates into a still-present local item when that
+  // item has no newer LOCAL edit than the delete itself -- otherwise a
+  // local edit made after another device's delete would be silently
+  // discarded, which is exactly the class of bug this whole function
+  // exists to avoid.
+  //
+  // Returns { merged, adoptedFromRemote } -- adoptedFromRemote (a Set of
+  // ids) tells the caller which ids just had their content replaced by
+  // the remote copy, so it can correctly re-seed its own bookkeeping
+  // (see hydrateOnAuth) instead of treating an adopted remote value as a
+  // brand-new local edit.
+  function mergeRemoteIntoLocal(localEvents, remoteEvents, remoteDeletedIds, localUpdatedAtMs, remoteUpdatedAtMs) {
+    localUpdatedAtMs = localUpdatedAtMs || {};
+    remoteUpdatedAtMs = remoteUpdatedAtMs || {};
+    const deletedSet = new Set(remoteDeletedIds || []);
     const byId = new Map(localEvents.map((e) => [e.id, e]));
-    for (const r of remoteEvents) {
-      if (!byId.has(r.id)) byId.set(r.id, r);
+    const adoptedFromRemote = new Set();
+
+    function localIsAuthoritative(id) {
+      const localMs = localUpdatedAtMs[id];
+      if (localMs === undefined) return false; // no local signal -- defer to remote
+      const remoteMs = remoteUpdatedAtMs[id];
+      if (remoteMs === undefined) return true;
+      return localMs >= remoteMs; // tie -> local
     }
-    return Array.from(byId.values());
+
+    for (const r of remoteEvents) {
+      if (!byId.has(r.id)) {
+        byId.set(r.id, r); // remote-only -> adopt (created on another device)
+        adoptedFromRemote.add(r.id);
+        continue;
+      }
+      if (!localIsAuthoritative(r.id)) {
+        byId.set(r.id, r);
+        adoptedFromRemote.add(r.id);
+      }
+    }
+    for (const id of deletedSet) {
+      if (byId.has(id) && !localIsAuthoritative(id)) byId.delete(id);
+    }
+    return { merged: Array.from(byId.values()), adoptedFromRemote };
   }
 
   const api = { isSyncableId, sigOf, computePushDiff, mergeRemoteIntoLocal };

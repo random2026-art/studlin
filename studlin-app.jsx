@@ -3285,15 +3285,48 @@ function ensureSchoolInDirectory(name,type){
 // Sync is a one-time pull-and-merge on sign-in (hydrateOnAuth), not a
 // live listener -- real-time cross-device sync while both are open
 // simultaneously is a larger, separate concern deliberately deferred to
-// a future step, as is propagating a delete made on one device into
-// another device's still-populated local array (see
-// mergeRemoteIntoLocal's own comment in datastore-events-sync.js).
+// a future step.
+//
+// Conflict rule is real newest-updatedAt-wins, not "local always wins":
+// eventsUpdatedAt (a separate localStorage map, {id: epoch ms}) records
+// when THIS device last actually changed each item's content -- stamped
+// by onLocalWrite below, independent of whether/when the Firestore push
+// itself succeeds. hydrateOnAuth compares that against each remote doc's
+// real Firestore updatedAt and keeps whichever is newer; when local has
+// NO timestamp on record at all, remote wins by default (no signal to
+// justify favoring local -- see mergeRemoteIntoLocal's own comment in
+// datastore-events-sync.js). A tie favors local. A delete made on another
+// device (Firestore doc has deletedAt) propagates into a still-present
+// local item the same way -- unless local has a newer edit than the
+// delete, in which case local's edit wins and un-deletes it (see
+// mergeRemoteIntoLocal in datastore-events-sync.js for the actual
+// comparison, and pushDiff's explicit deletedAt clear below for why an
+// upsert after a delete needs to say so, not just omit the field).
 const DataStore=(()=>{
   const S=(typeof window!=="undefined"&&window.StudlinEventsSync)||null;
   let syncedSigs={}; // {id: sig} -- what DataStore believes is already in Firestore
+  // {id: sig} -- what this device last locally SAW (used only to detect
+  // "did the content actually change" for stamping eventsUpdatedAt).
+  // Deliberately separate from syncedSigs above: that one only advances
+  // after a successful Firestore commit (async, can lag or fail);
+  // lastSeenSigs advances synchronously on every local write regardless
+  // of network, because the local-edit timestamp needs to be honest even
+  // offline or before the debounced push has had a chance to run.
+  let lastSeenSigs={};
   let pushTimer=null;
   let hydrating=false;
   let hydratedForUid=null;
+
+  // Seed lastSeenSigs from whatever's already in localStorage at script
+  // load, so app-boot re-writes of the events array (several existing
+  // functions re-save it on load/rebalance) aren't mistaken for a fresh
+  // local edit and given a false "just now" timestamp before the user
+  // has touched anything this session.
+  try{
+    for(const ev of lsGet("events",[])){
+      if(ev&&S&&S.isSyncableId(ev.id))lastSeenSigs[ev.id]=S.sigOf(ev);
+    }
+  }catch(e){}
 
   const currentUid=()=>{try{return firebase.auth().currentUser?.uid||null;}catch(e){return null;}};
 
@@ -3314,7 +3347,14 @@ const DataStore=(()=>{
     const col=fsdb().collection('users').doc(uid).collection('events');
     const now=new Date();
     const ops=[
-      ...upserts.map(ev=>{const {id,...body}=ev;return {id,fn:(b)=>b.set(col.doc(id),Object.assign({},body,{updatedAt:now}),{merge:true})};}),
+      // deletedAt explicitly cleared (not just omitted) on every upsert --
+      // {merge:true} only ever ADDS/overwrites fields it's given, it never
+      // unsets an absent one. Without this, a local edit made after
+      // another device's delete would push its content back up but leave
+      // the doc's deletedAt=true untouched, so the "undelete via newer
+      // local edit" case in mergeRemoteIntoLocal would keep it alive
+      // locally while Firestore still silently thought it was deleted.
+      ...upserts.map(ev=>{const {id,...body}=ev;return {id,fn:(b)=>b.set(col.doc(id),Object.assign({},body,{updatedAt:now,deletedAt:firebase.firestore.FieldValue.delete()}),{merge:true})};}),
       ...deletedIds.map(id=>({id,fn:(b)=>b.update(col.doc(id),{deletedAt:now,updatedAt:now})})),
     ];
     try{
@@ -3347,6 +3387,29 @@ const DataStore=(()=>{
     // keep working identically with zero Firestore/DataStore involvement
     // in that environment.
     if(!S||typeof setTimeout==="undefined")return;
+
+    // Stamp eventsUpdatedAt for anything whose content actually changed
+    // since we last saw it -- this is the ONLY source of truth
+    // hydrateOnAuth has for "did local change this more recently than
+    // remote." Runs synchronously, independent of the debounced Firestore
+    // push below, so it's correct even if the tab closes before that
+    // push ever fires.
+    const prevMap=lsGet("eventsUpdatedAt",{});
+    const nextMap=Object.assign({},prevMap);
+    let mapChanged=false;
+    const liveIds=new Set();
+    for(const ev of events){
+      if(!ev||!S.isSyncableId(ev.id))continue;
+      liveIds.add(ev.id);
+      const sig=S.sigOf(ev);
+      if(lastSeenSigs[ev.id]!==sig){nextMap[ev.id]=Date.now();mapChanged=true;}
+      lastSeenSigs[ev.id]=sig;
+    }
+    for(const id in lastSeenSigs){
+      if(!liveIds.has(id)){nextMap[id]=Date.now();mapChanged=true;delete lastSeenSigs[id];}
+    }
+    if(mapChanged)lsSet("eventsUpdatedAt",nextMap); // "eventsUpdatedAt" =/= "events" -- does not recurse back into onLocalWrite
+
     if(pushTimer)clearTimeout(pushTimer);
     // Debounced -- several of the ~85 write call sites fire more than once
     // in quick succession for a single user action (e.g. reschedule
@@ -3363,18 +3426,42 @@ const DataStore=(()=>{
     try{
       const snap=await fsdb().collection('users').doc(uid).collection('events').get();
       const remote=[];
-      const sigs={};
+      const remoteDeletedIds=[];
+      const remoteUpdatedAtMs={};
       snap.forEach(doc=>{
         const d=doc.data();
-        if(d.deletedAt)return; // soft-deleted -- excluded from the merge, not resurrected locally
+        const ts=d.updatedAt&&typeof d.updatedAt.toMillis==="function"?d.updatedAt.toMillis():undefined;
+        if(ts!==undefined)remoteUpdatedAtMs[doc.id]=ts;
+        if(d.deletedAt){remoteDeletedIds.push(doc.id);return;}
         const {updatedAt,deletedAt,...rest}=d;
-        const ev=Object.assign({},rest,{id:doc.id});
-        remote.push(ev);
-        sigs[doc.id]=S.sigOf(ev);
+        remote.push(Object.assign({},rest,{id:doc.id}));
       });
-      syncedSigs=sigs;
-      const merged=S.mergeRemoteIntoLocal(lsGet("events",[]),remote);
-      lsSet("events",merged); // routes back through onLocalWrite, reconciling anything remote had that local didn't yet
+      const localUpdatedAtMs=lsGet("eventsUpdatedAt",{});
+      const {merged,adoptedFromRemote}=S.mergeRemoteIntoLocal(lsGet("events",[]),remote,remoteDeletedIds,localUpdatedAtMs,remoteUpdatedAtMs);
+
+      // Re-seed bookkeeping to reflect the ACTUAL merged content, not "now"
+      // -- otherwise the lsSet below would route through onLocalWrite and
+      // mistake every remote-adopted id for a brand-new local edit,
+      // stamping it "just now" and quietly making local look authoritative
+      // for it on the very next hydrate.
+      const nextLocalMap={};
+      const nextSyncedSigs={};
+      lastSeenSigs={};
+      for(const ev of merged){
+        lastSeenSigs[ev.id]=S.sigOf(ev);
+        nextLocalMap[ev.id]=adoptedFromRemote.has(ev.id)&&remoteUpdatedAtMs[ev.id]!==undefined
+          ?remoteUpdatedAtMs[ev.id]
+          :(localUpdatedAtMs[ev.id]!==undefined?localUpdatedAtMs[ev.id]:Date.now());
+        // syncedSigs reflects "what Firestore currently has" -- always the
+        // REMOTE content's signature when remote has this id at all, even
+        // if local ends up winning the merge, so a subsequent pushDiff
+        // correctly detects the local/remote mismatch and pushes the
+        // newer local edit up instead of treating it as already in sync.
+      }
+      remote.forEach(ev=>{nextSyncedSigs[ev.id]=S.sigOf(ev);});
+      lsSet("eventsUpdatedAt",nextLocalMap);
+      syncedSigs=nextSyncedSigs;
+      lsSet("events",merged);
       hydratedForUid=uid;
     }catch(e){
       // Leaves hydratedForUid unset so a transient failure (offline,

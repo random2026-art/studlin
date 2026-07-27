@@ -76,34 +76,69 @@ describe("mergeRemoteIntoLocal", () => {
   test("remote-only items (created on another device) are adopted", () => {
     const local = [{ id: "a1", title: "Local one" }];
     const remote = [{ id: "b1", title: "From another device" }];
-    const merged = S.mergeRemoteIntoLocal(local, remote);
-    assert.deepEqual(
-      merged.map((e) => e.id).sort(),
-      ["a1", "b1"]
-    );
-  });
-
-  test("local wins on id collision -- no local updatedAt exists to arbitrate by", () => {
-    const local = [{ id: "a1", title: "Local edit in progress" }];
-    const remote = [{ id: "a1", title: "Stale remote copy" }];
-    const merged = S.mergeRemoteIntoLocal(local, remote);
-    assert.equal(merged.length, 1);
-    assert.equal(merged[0].title, "Local edit in progress");
+    const { merged, adoptedFromRemote } = S.mergeRemoteIntoLocal(local, remote, [], {}, {});
+    assert.deepEqual(merged.map((e) => e.id).sort(), ["a1", "b1"]);
+    assert.deepEqual([...adoptedFromRemote], ["b1"]);
   });
 
   test("empty remote leaves local untouched", () => {
     const local = [{ id: "a1", title: "Only local" }];
-    const merged = S.mergeRemoteIntoLocal(local, []);
+    const { merged } = S.mergeRemoteIntoLocal(local, [], [], {}, {});
     assert.deepEqual(merged, local);
   });
 
-  test("known limitation: a remote-side deletion does not remove a still-present local item", () => {
-    // Documents the deliberate step-1 scope gap (see mergeRemoteIntoLocal's
-    // own comment): remote-delete -> local-removal isn't implemented yet.
-    // This test exists so that gap shows up as an explicit, intentional
-    // assertion instead of silently changing behavior in a later refactor.
-    const local = [{ id: "a1", title: "Deleted on another device but still here" }];
-    const merged = S.mergeRemoteIntoLocal(local, []); // caller already excludes soft-deleted docs from `remote`
+  test("no local timestamp on record -- defers to remote, since there's no evidence local is newer", () => {
+    // "Newest wins" can't justify favoring local when there's zero signal
+    // for when local last changed -- remote at least has a real timestamp.
+    // In practice this only comes up for a genuine cross-device id
+    // collision with no local edit history at all, which essentially
+    // can't happen through normal use (ids are per-device timestamps).
+    const local = [{ id: "a1", title: "Local, never tracked by this device" }];
+    const remote = [{ id: "a1", title: "Remote copy" }];
+    const { merged, adoptedFromRemote } = S.mergeRemoteIntoLocal(local, remote, [], {}, { a1: 1000 });
+    assert.equal(merged[0].title, "Remote copy");
+    assert.equal(adoptedFromRemote.has("a1"), true);
+  });
+
+  test("exact tie favors local", () => {
+    const local = [{ id: "a1", title: "Local" }];
+    const remote = [{ id: "a1", title: "Remote" }];
+    const { merged } = S.mergeRemoteIntoLocal(local, remote, [], { a1: 5000 }, { a1: 5000 });
+    assert.equal(merged[0].title, "Local");
+  });
+
+  test("remote strictly newer wins -- a stale local device does not clobber a newer remote edit", () => {
+    const local = [{ id: "a1", title: "Stale local copy" }];
+    const remote = [{ id: "a1", title: "Newer remote edit" }];
+    const { merged, adoptedFromRemote } = S.mergeRemoteIntoLocal(local, remote, [], { a1: 1000 }, { a1: 9000 });
+    assert.equal(merged[0].title, "Newer remote edit");
+    assert.equal(adoptedFromRemote.has("a1"), true);
+  });
+
+  test("local strictly newer wins -- a real local edit is not discarded", () => {
+    const local = [{ id: "a1", title: "Newer local edit" }];
+    const remote = [{ id: "a1", title: "Older remote copy" }];
+    const { merged, adoptedFromRemote } = S.mergeRemoteIntoLocal(local, remote, [], { a1: 9000 }, { a1: 1000 });
+    assert.equal(merged[0].title, "Newer local edit");
+    assert.equal(adoptedFromRemote.has("a1"), false);
+  });
+
+  test("a remote-side delete propagates and removes a still-present local item with no newer local edit", () => {
+    const local = [{ id: "a1", title: "Deleted on another device" }];
+    const { merged } = S.mergeRemoteIntoLocal(local, [], ["a1"], { a1: 1000 }, { a1: 9000 });
+    assert.equal(merged.length, 0);
+  });
+
+  test("a remote-side delete does NOT propagate when local has a newer edit -- local un-deletes it", () => {
+    const local = [{ id: "a1", title: "Edited locally after the remote delete" }];
+    const { merged } = S.mergeRemoteIntoLocal(local, [], ["a1"], { a1: 9000 }, { a1: 1000 });
     assert.equal(merged.length, 1);
+    assert.equal(merged[0].title, "Edited locally after the remote delete");
+  });
+
+  test("a remote-side delete with no local timestamp on record propagates (legacy default defers to remote)", () => {
+    const local = [{ id: "a1", title: "Never tracked locally" }];
+    const { merged } = S.mergeRemoteIntoLocal(local, [], ["a1"], {}, { a1: 1000 });
+    assert.equal(merged.length, 0);
   });
 });
