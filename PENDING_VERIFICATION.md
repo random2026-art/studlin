@@ -2,6 +2,14 @@
 
 Known/suspected issues deliberately deferred rather than fixed blind — each needs a specific verification step before launch, not just a code read. Remove an item once it's actually been tested and resolved (or promote it to a real fix if verification shows it's broken).
 
+## Marketing/legal copy advertises features removed in chore/remove-dead-features
+
+**Where:** `index.html` (hero copy, a marquee item, an FAQ section, and a pricing/credits section header — all "AI Tutor"; separately, "essay polish" in the hero subtitle; separately, "Lecture recording" listed as a real credit-metered pricing feature), `terms.html` and `privacy.html` (both reference "AI tutor" in liability/data-processing language).
+
+**What happened:** `chore/remove-dead-features` deleted `AiTutor`/`GrammarPolish`/`AiHumanizer`/`WriteStudio`/`Solve`/`Essays` (confirmed dead — never instantiated as JSX anywhere, not reachable from any nav path) and cut `Lectures` (had exactly one real entry point, the "Record lecture" option in Notes, which that same branch removed). None of that touched `index.html`/`terms.html`/`privacy.html` — this is a content/marketing/possibly-legal decision, not a code cleanup one, and pricing copy already has known drift across multiple files from prior work, so a partial fix here isn't right either.
+
+**Verification needed before launch:** decide what to do with the marketing/legal copy — rewrite it to stop advertising AI Tutor/essay polish/Lecture recording, or revisit whether one of these features should actually be rebuilt/re-exposed instead of the marketing copy changed. Either is legitimate; the current state (advertising features with zero working entry point) is not.
+
 ## Rules deploy status: LIVE as of 2026-07-27
 
 The full contents of this branch's `firestore.rules` (commit 5f36610) were manually pasted into the Firebase Console and published on 2026-07-27. Live rules now match the committed file. See `project_firestore_rules_undeployed` in Claude's memory for the prior stale-rules history this closes out.
