@@ -247,3 +247,23 @@ describe("durable offline write queue", () => {
     assert.equal(retryOps[0].id, "chunk2-item");
   });
 });
+
+describe("computePushDiff with a custom isSyncable predicate (step 2: decks reuse this machinery)", () => {
+  // Decks have no gcal- style exclusion (no special id prefix anywhere in
+  // studlin-app.jsx for deck ids -- confirmed by grep, they're all plain
+  // String(Date.now())), so createCollectionSync passes decks its own
+  // plain non-empty-string check instead of the events-specific default.
+  const decksIsSyncable = (id) => typeof id === "string" && id.length > 0;
+
+  test("a deck-shaped id with no gcal- prefix is treated as syncable under the custom predicate", () => {
+    const deck = { id: "1699999999999", name: "Chapter 4 Vocab" };
+    const { upserts } = S.computePushDiff({}, [deck], decksIsSyncable);
+    assert.deepEqual(upserts, [deck]);
+  });
+
+  test("the default predicate is used when isSyncable is omitted -- existing events behavior is unaffected", () => {
+    const gcalEvent = { id: "gcal-abc123", title: "Imported" };
+    const { upserts } = S.computePushDiff({}, [gcalEvent]);
+    assert.deepEqual(upserts, []); // still excluded by default
+  });
+});

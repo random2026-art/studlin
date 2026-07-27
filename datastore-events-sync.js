@@ -1,7 +1,14 @@
-// Pure, dependency-free sync/merge logic for the events->Firestore
-// migration (step 1 of the personal-content migration described in
-// firestore.rules' users/{uid}/events comment). Deliberately has zero
-// Firebase/DOM dependencies so the exact same code can be:
+// Pure, dependency-free sync/merge logic for the personal-content
+// migration described in firestore.rules' users/{uid} comment
+// (events/notes/decks/essays/lectures/timerLogs/practiceExams). Despite
+// the filename (kept as-is from step 1 to avoid churning the
+// studlin-web-app.html <script> tag and this file's own Node require
+// path for a purely cosmetic rename), every function here is generic --
+// operates on any array of {id, ...} items, not events specifically.
+// studlin-app.jsx's createCollectionSync factory is what makes each
+// collection (events, decks, ...) its own instance of this logic with
+// its own localStorage keys and Firestore subcollection. Deliberately
+// has zero Firebase/DOM dependencies so the exact same code can be:
 //   - loaded as a plain <script> before studlin-app.jsx (browser global
 //     `window.StudlinEventsSync`), since this codebase has no bundler and
 //     no shared-module system between or within bundles (see CLAUDE.md /
@@ -37,29 +44,34 @@
 
   // prevSyncedSigs: plain object {id: sig} describing what DataStore
   // believes is already in Firestore (from the last successful push or
-  // the initial hydrate). currentEvents: the live local events array.
-  // Returns {upserts, deletedIds} -- upserts is the list of full event
-  // objects that are new or changed; deletedIds is every previously-
-  // synced id that's no longer present locally.
+  // the initial hydrate). currentItems: the live local array for
+  // whichever collection this is (events, decks, ...). isSyncable:
+  // optional predicate, defaults to isSyncableId (the events-specific
+  // gcal- exclusion) -- a collection with no such exclusion (e.g. decks)
+  // passes its own plain "non-empty string id" check instead. Returns
+  // {upserts, deletedIds} -- upserts is the list of full items that are
+  // new or changed; deletedIds is every previously-synced id that's no
+  // longer present locally.
   //
   // Local deletes are hard-deletes-by-array-filter everywhere in this
-  // codebase (no tombstone concept exists locally at all). The events
-  // Firestore rule forbids delete entirely (delete: if false) --
-  // soft-delete via an update that sets deletedAt is the only allowed
-  // path. This function is the bridge: an id disappearing from the
-  // local array becomes a deletedIds entry, which the caller turns into
-  // a Firestore update{deletedAt} instead of a delete. Local behavior
-  // itself is completely unchanged -- the array is still just filtered
-  // as it always was.
-  function computePushDiff(prevSyncedSigs, currentEvents) {
+  // codebase (no tombstone concept exists locally at all). The Firestore
+  // rules for these collections forbid delete entirely (delete: if
+  // false) -- soft-delete via an update that sets deletedAt is the only
+  // allowed path. This function is the bridge: an id disappearing from
+  // the local array becomes a deletedIds entry, which the caller turns
+  // into a Firestore update{deletedAt} instead of a delete. Local
+  // behavior itself is completely unchanged -- the array is still just
+  // filtered as it always was.
+  function computePushDiff(prevSyncedSigs, currentItems, isSyncable) {
+    const check = isSyncable || isSyncableId;
     const prev = prevSyncedSigs || {};
     const upserts = [];
     const seen = Object.create(null);
-    for (const ev of currentEvents) {
-      if (!ev || !isSyncableId(ev.id)) continue;
-      seen[ev.id] = true;
-      const s = sigOf(ev);
-      if (prev[ev.id] !== s) upserts.push(ev);
+    for (const item of currentItems) {
+      if (!item || !check(item.id)) continue;
+      seen[item.id] = true;
+      const s = sigOf(item);
+      if (prev[item.id] !== s) upserts.push(item);
     }
     const deletedIds = [];
     for (const id in prev) {
