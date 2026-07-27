@@ -2,15 +2,47 @@
 
 Known/suspected issues deliberately deferred rather than fixed blind — each needs a specific verification step before launch, not just a code read. Remove an item once it's actually been tested and resolved (or promote it to a real fix if verification shows it's broken).
 
-## chatRooms/messages update allowlist — unverified live
+## Rules deploy status: LIVE as of 2026-07-27
+
+The full contents of this branch's `firestore.rules` (commit 5f36610) were manually pasted into the Firebase Console and published on 2026-07-27. Live rules now match the committed file. See `project_firestore_rules_undeployed` in Claude's memory for the prior stale-rules history this closes out.
+
+## Three-account username/profile audit — VERIFIED 2026-07-27
+
+**Accounts checked:** `shenouday7@gmail.com` (real, pre-existing, previously bounced to onboarding Step 3 by the stale-rules 403, manually completed by the founder the morning of the deploy), `shenouday7+test1@gmail.com`, `shenouday7+test2@gmail.com` (both fresh signups created after the deploy).
+
+**Method:** read `profiles/{uid}` and `usernames/{username}` directly in Firestore Console (not the app UI) for all three.
+
+**Result — all three PASS:**
+
+| Account | uid | profiles doc | usernames doc | uid match |
+|---|---|---|---|---|
+| shenouday7@gmail.com | `23oK85PZtBSPllintSlB2rO0TDB3` | complete (name, school, status, streak, minutes) | `usernames/shenoudanessim` | ✓ |
+| test1 | `Nh4g0CLKu6SqlWVN3riK9Wl5Nh73` | complete | `usernames/shenneno` | ✓ |
+| test2 | `mN0iaCMaxLXxESRxX6pOpxsjTxP2` | complete | `usernames/shenoootwonen` | ✓ |
+
+All three `profiles.updatedAt` timestamps are from 2026-07-27 (post-deploy), confirming the writes are landing under the new rules rather than being stale pre-existing data. No partial/inconsistent writes found on any of the three.
+
+## Stale-rules blast radius — AUDITED 2026-07-27
+
+**Method:** compared all 78 Firebase Auth accounts (project `studlin-cb78b`) against all 65 `profiles` collection docs by UID, via Firestore/Auth console (no Admin SDK access available in this environment to script it).
+
+**Result:** 19 Auth accounts have no `profiles` doc at all:
+- **11 are the founder's own Playwright/QA test fixtures** (`studlin.qa*`, `studlin.diag*`, `studlin.e2e*`, all created Jul 2–9) — not real users, no action needed.
+- **8 look like real signups, never completed onboarding**: `johntimeones@gmail.com`, `nora49284@gmail.com`, `yemil34@gmail.com`, `shenouda@gmail.com`, `studlin2026@gmail.com`, `shen@gmail.com`, `shenouday@gmail.com`, `studlin.bis@gmail.com`. Several of these read like the founder's own alt-testing emails rather than distinct outside users; `johntimeones` and `nora49284` are the clearest candidates for genuine outside testers affected by the stale-rules bug.
+
+Also found, as a side effect, **6 orphaned `profiles` docs** with no matching Auth user (leftover from deleted test accounts — Firestore doesn't cascade-delete on Auth user deletion). Unrelated to this bug; harmless.
+
+**Self-heal status:** unconfirmed for the 8 real-looking accounts. The one account manually verified (the founder's real account) required a manual completion of onboarding Step 3 after being bounced there — it did not silently repair itself without that action. Whether the app's bounce-to-onboarding logic fires automatically for a different account on next login has not been tested with any of the 8.
+
+## chatRooms/messages update allowlist — PARTIALLY VERIFIED live (2026-07-27)
 
 **Where:** `firestore.rules`, the `chatRooms/{roomId}/messages/{messageId}` `allow update` rule.
 
 **What happened:** the rule's own comment documents a past incident where the update-field allowlist (`status`, `scheduledOption`, `scheduledMode`, `proposedBy`, `memberUids`, `studySessionId`, `responses`) drifted out of sync with what the client actually writes during the propose/accept/decline session-negotiation flow — Firestore silently rejected the whole update, and the client's own empty `.catch(()=>{})` masked it as a success. The committed rules file already contains what looks like the fix (the full field list above).
 
-**Why it's not just marked done:** nobody has run the actual negotiation flow (propose a shared session → have the other party accept/decline) against the currently-deployed rules to confirm the fix is live and complete. A rules file change without a matching deploy, or a still-incomplete allowlist, would reproduce the exact same silent-failure bug.
+**Propose → accept: VERIFIED PASS.** Real two-account test (test1 → test2, both logged in live) against production, confirmed directly in Firestore (not UI): `chatRooms/dm_Nh4g0CLKu6SqlWVN3riK9Wl5Nh73_mN0iaCMaxLXxESRxX6pOpxsjTxP2/messages/hbvD9GEhNTngdP5dKRpd` shows `status: "confirmed"`, `proposedBy` set to test1, `responses` map with both UIDs correctly `"accepted"`, and a real `studySessionId` assigned. The write genuinely committed — this is not swallowed-error optimistic UI.
 
-**Verification needed before launch:** two real accounts, run a full propose → accept and a full propose → decline through the actual UI, confirm the Firestore write succeeds (no console error, state updates on both sides, not just optimistic local state).
+**Propose → decline: not yet tested.** Still needs a second proposal + an explicit Decline from test2, verified the same way (Firestore doc, not UI state).
 
 ## users/{uid} write rule errors (doesn't cleanly deny) on a true first-time create
 
