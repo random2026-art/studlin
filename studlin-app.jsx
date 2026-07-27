@@ -2050,6 +2050,17 @@ function connectGoogleCalendar(){
       resolve({success:false,error:"Google sign-in not ready. Try refreshing the page."});
       return;
     }
+    // initCodeClient's callback only fires once Google's popup actually
+    // completes -- if the popup gets silently blocked (browser/extension
+    // popup blocker) it never opens and the callback never fires, so
+    // without this timeout the caller's promise, and the "Syncing..." UI
+    // built on it, would hang forever with no feedback.
+    let settled=false;
+    const timeoutId=setTimeout(()=>{
+      if(settled)return;
+      settled=true;
+      resolve({success:false,error:"Google's sign-in window didn't open. Your browser may have blocked the popup -- allow popups for this site and try again."});
+    },90000);
     const codeClient=google.accounts.oauth2.initCodeClient({
       client_id:"16831354472-e2vauavtunm3ot771cg7pgline10i9rk.apps.googleusercontent.com",
       scope:"https://www.googleapis.com/auth/calendar.events.readonly",
@@ -2057,7 +2068,9 @@ function connectGoogleCalendar(){
       access_type:"offline",
       prompt:"consent",
       callback:async(resp)=>{
-        if(resp.error){resolve({success:false,error:"Google Calendar connection failed."});return;}
+        if(settled)return;
+        clearTimeout(timeoutId);
+        if(resp.error){settled=true;resolve({success:false,error:"Google Calendar connection failed."});return;}
         try{
           const res=await authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"google-calendar-connect",code:resp.code})});
           const data=await res.json();
@@ -2065,8 +2078,10 @@ function connectGoogleCalendar(){
           const result=applyGoogleEvents(data.events);
           lsSet("cal-google",true);
           lsSet("cal-google-last-synced",Date.now());
+          settled=true;
           resolve({success:true,eventCount:data.events.length,reconcileResult:result});
         }catch(e){
+          settled=true;
           resolve({success:false,error:"Failed to fetch calendar events. Check permissions and try again."});
         }
       }
@@ -17041,7 +17056,23 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     showToast(`Google Calendar synced · ${result.eventCount} event${result.eventCount===1?"":"s"} imported`+reconcileToastSuffix(result.reconcileResult));
   };
   const connectGoogle=requestGoogleSync;
-  const syncGoogleNow=requestGoogleSync;
+  // "Sync now" on an already-connected calendar shouldn't force a fresh
+  // OAuth consent popup -- it used to be aliased straight to
+  // requestGoogleSync (the full popup flow), which meant a single blocked
+  // popup left this button stuck on "Syncing..." forever with no way out
+  // but a page refresh. This reuses the same no-popup server pull the
+  // automatic effect below runs on mount, so a click here can only ever
+  // succeed, fail fast, or surface the real lastSyncError -- never hang.
+  const syncGoogleNow=async()=>{
+    setGoogleSyncing(true);
+    const result=await pullGoogleCalendarIfConnected();
+    setGoogleSyncing(false);
+    if(!result){showToast("Sync failed. Try reconnecting below.","error");return;}
+    if(result.lastSyncedAt){setGoogleLastSynced(new Date(result.lastSyncedAt).getTime());}
+    setGoogleSyncError(result.lastSyncError||null);
+    if(result.lastSyncError){showToast(result.lastSyncError,"error");return;}
+    showToast("Google Calendar synced"+reconcileToastSuffix(result.reconcileResult));
+  };
 
   // Once-per-load, if already connected: pull whatever the daily
   // background cron (api/google-calendar-cron.js) most recently fetched --
