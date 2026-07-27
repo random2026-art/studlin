@@ -6,3 +6,5 @@ node_modules/
 package-lock.json
 .vercel
 .env*
+.tools/
+firestore-debug.log

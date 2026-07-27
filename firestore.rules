@@ -15,6 +15,67 @@ service cloud.firestore {
         && request.auth.uid == userId
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['status','affiliation','school','workStartTime','workEndTime','bedtime','bedtimeGuardEnabled','difficultyPreference','taskDifficultyPreference','bufferMarginStrategy','onboarded','onboardedAt','updatedAt','preferences','fcmTokens']);
+
+      // Personal-content migration (events/notes/decks/essays/lectures/
+      // timerLogs/practiceExams -- see DataStore module). Ownership is
+      // expressed by the path segment (userId), not a data field, so
+      // unlike courses/assignments below it can't be spoofed by putting a
+      // different uid inside the document body. Each subcollection is
+      // owner-only, full stop -- no sharing/membership model like
+      // chatRooms/sharedProjects, so there's no allowlist-drift risk to
+      // guard against here, only "is this genuinely the owner." Delete is
+      // always false: the app never hard-deletes these, only soft-deletes
+      // via an update that sets deletedAt (see DataStore.remove) -- this
+      // rule makes that the enforced behavior, not just a convention a
+      // client-side bug could quietly skip.
+      function isOwnerContent() {
+        return request.auth != null && request.auth.uid == userId;
+      }
+      function hasUpdatedAt() {
+        return request.resource.data.updatedAt is timestamp;
+      }
+      match /events/{itemId} {
+        allow read: if isOwnerContent();
+        allow create, update: if isOwnerContent() && hasUpdatedAt();
+        allow delete: if false;
+      }
+      match /notes/{itemId} {
+        allow read: if isOwnerContent();
+        allow create, update: if isOwnerContent() && hasUpdatedAt();
+        allow delete: if false;
+      }
+      match /decks/{itemId} {
+        allow read: if isOwnerContent();
+        allow create, update: if isOwnerContent() && hasUpdatedAt();
+        allow delete: if false;
+      }
+      match /essays/{itemId} {
+        allow read: if isOwnerContent();
+        allow create, update: if isOwnerContent() && hasUpdatedAt();
+        allow delete: if false;
+      }
+      match /lectures/{itemId} {
+        allow read: if isOwnerContent();
+        allow create, update: if isOwnerContent() && hasUpdatedAt();
+        allow delete: if false;
+      }
+      match /timerLogs/{itemId} {
+        allow read: if isOwnerContent();
+        allow create, update: if isOwnerContent() && hasUpdatedAt();
+        allow delete: if false;
+      }
+      match /practiceExams/{itemId} {
+        allow read: if isOwnerContent();
+        allow create, update: if isOwnerContent() && hasUpdatedAt();
+        allow delete: if false;
+      }
+
+      // Per-user sync/migration metadata (DataStore._sync). Never read or
+      // written by anyone but the owner -- no directory-style sharing need
+      // like profiles/{userId} has.
+      match /_sync/status {
+        allow read, write: if isOwnerContent();
+      }
     }
 
     // Public directory entry — just enough to search for and display a
