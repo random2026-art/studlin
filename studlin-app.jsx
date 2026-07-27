@@ -3381,41 +3381,61 @@ const DataStore=(()=>{
     if(ops.length===0){backoffMs=0;return;}
     flushing=true;
     const col=fsdb().collection('users').doc(uid).collection('events');
-    const batchOps=ops.map(op=>{
-      const ts=new Date(op.ms); // the REAL edit moment, stamped when it happened -- not now, whenever the network finally sends it
-      if(op.type==="delete")return (b)=>b.update(col.doc(op.id),{deletedAt:ts,updatedAt:ts});
-      // deletedAt explicitly cleared (not just omitted) -- {merge:true}
-      // only ever adds/overwrites fields it's given, it never unsets an
-      // absent one. Without this, an upsert that supersedes another
-      // device's delete (mergeRemoteIntoLocal's undelete case) would push
-      // new content up but leave the doc's deletedAt=true untouched.
-      return (b)=>b.set(col.doc(op.id),Object.assign({},op.body,{updatedAt:ts,deletedAt:firebase.firestore.FieldValue.delete()}),{merge:true});
-    });
     try{
-      for(const group of chunk(batchOps,400)){
+      let failure=null;
+      // Chunked at 400 (Firestore's batch cap is 500). A first sync for a
+      // real account with months of accumulated events can genuinely span
+      // MULTIPLE chunks -- the tiny preview test accounts never exercised
+      // that, only ever producing a single chunk. Bookkeeping (syncedSigs,
+      // the persisted queue) is updated per-chunk, immediately after that
+      // chunk's own commit succeeds, specifically so a failure on a LATER
+      // chunk doesn't cause an EARLIER, already-committed chunk to be
+      // redundantly re-sent on the next retry -- harmless (upserts are
+      // idempotent) but wasteful, and only matters once a sync is large
+      // enough to need more than one chunk.
+      for(const group of chunk(ops,400)){
         const batch=fsdb().batch();
-        group.forEach(fn=>fn(batch));
-        await batch.commit();
+        group.forEach(op=>{
+          const ts=new Date(op.ms); // the REAL edit moment, stamped when it happened -- not now, whenever the network finally sends it
+          if(op.type==="delete"){batch.update(col.doc(op.id),{deletedAt:ts,updatedAt:ts});return;}
+          // deletedAt explicitly cleared (not just omitted) -- {merge:true}
+          // only ever adds/overwrites fields it's given, it never unsets an
+          // absent one. Without this, an upsert that supersedes another
+          // device's delete (mergeRemoteIntoLocal's undelete case) would push
+          // new content up but leave the doc's deletedAt=true untouched.
+          batch.set(col.doc(op.id),Object.assign({},op.body,{updatedAt:ts,deletedAt:firebase.firestore.FieldValue.delete()}),{merge:true});
+        });
+        try{
+          await batch.commit();
+        }catch(err){
+          failure=err;
+          break; // stop attempting further chunks this pass -- already-committed chunks are already recorded below, nothing about them needs retrying
+        }
+        const nextSigs=Object.assign({},syncedSigs);
+        const chunkQueueSlice={};
+        group.forEach(op=>{
+          chunkQueueSlice[op.id]=queueAtStart[op.id];
+          if(op.type==="delete")delete nextSigs[op.id];
+          else nextSigs[op.id]=S.sigOf(Object.assign({},op.body,{id:op.id}));
+        });
+        syncedSigs=nextSigs;
+        // Only drops entries that are still exactly what THIS chunk just
+        // flushed -- a newer edit could have queued again for the same id
+        // while this chunk's network round trip was in flight (see
+        // queueAfterFlushSuccess's own comment in datastore-events-sync.js).
+        lsSet("syncQueue",S.queueAfterFlushSuccess(chunkQueueSlice,lsGet("syncQueue",{})));
       }
-      const nextSigs=Object.assign({},syncedSigs);
-      ops.forEach(op=>{
-        if(op.type==="delete")delete nextSigs[op.id];
-        else nextSigs[op.id]=S.sigOf(Object.assign({},op.body,{id:op.id}));
-      });
-      syncedSigs=nextSigs;
-      // Only drops entries that are still exactly what was just flushed --
-      // a newer edit could have queued again for the same id while this
-      // batch's network round trip was in flight (see
-      // queueAfterFlushSuccess's own comment in datastore-events-sync.js).
-      lsSet("syncQueue",S.queueAfterFlushSuccess(queueAtStart,lsGet("syncQueue",{})));
-      backoffMs=0;
-      reportSyncStatus(uid,{eventsLastSyncedAt:new Date(),eventsLastError:null});
-    }catch(err){
-      // Never throws back into lsSet's caller -- a Firestore hiccup must
-      // not block the local write that already succeeded, and the queue
-      // itself is left untouched so nothing here is lost, only retried.
-      reportSyncStatus(uid,{eventsLastError:String((err&&err.message)||err),eventsLastErrorAt:new Date()});
-      scheduleRetry();
+      if(failure){
+        // Never throws back into lsSet's caller -- a Firestore hiccup must
+        // not block the local write that already succeeded, and any
+        // not-yet-flushed queue entries are left untouched so nothing here
+        // is lost, only retried.
+        reportSyncStatus(uid,{eventsLastError:String((failure&&failure.message)||failure),eventsLastErrorAt:new Date()});
+        scheduleRetry();
+      }else{
+        backoffMs=0;
+        reportSyncStatus(uid,{eventsLastSyncedAt:new Date(),eventsLastError:null});
+      }
     }finally{
       flushing=false;
     }

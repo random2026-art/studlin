@@ -213,4 +213,37 @@ describe("durable offline write queue", () => {
   test("computeFlushOps on an empty queue is a no-op", () => {
     assert.deepEqual(S.computeFlushOps({}), []);
   });
+
+  test("a large first sync spanning multiple chunks: a later chunk's failure does not cause an earlier, already-committed chunk to be re-flushed", () => {
+    // Simulates a real account's first-ever sync with a big accumulated
+    // events history -- large enough to span more than one 400-item
+    // Firestore batch, unlike the tiny preview test accounts which only
+    // ever produced a single chunk. flushQueue commits + clears one
+    // chunk's queue slice at a time (see studlin-app.jsx), so a failure
+    // partway through must leave only the UNFLUSHED remainder queued.
+    const bigQueue = S.computeSyncQueueAfterWrite(
+      {},
+      [{ id: "chunk1-item", title: "Already committed to Firestore" }],
+      [],
+      { "chunk1-item": 1000 }
+    );
+    const fullQueue = S.computeSyncQueueAfterWrite(
+      bigQueue,
+      [{ id: "chunk2-item", title: "Never got sent -- network dropped" }],
+      [],
+      { "chunk2-item": 2000 }
+    );
+    // Chunk 1 commits successfully; its slice is cleared immediately.
+    const chunk1Slice = { "chunk1-item": fullQueue["chunk1-item"] };
+    const afterChunk1 = S.queueAfterFlushSuccess(chunk1Slice, fullQueue);
+    // Chunk 2's batch.commit() throws (simulated) -- flushQueue never
+    // reaches its own clear step for chunk 2, so it must still be queued.
+    assert.deepEqual(Object.keys(afterChunk1), ["chunk2-item"]);
+    assert.equal(afterChunk1["chunk2-item"].body.title, "Never got sent -- network dropped");
+
+    // The next retry only needs to re-attempt what's actually still queued.
+    const retryOps = S.computeFlushOps(afterChunk1);
+    assert.equal(retryOps.length, 1);
+    assert.equal(retryOps[0].id, "chunk2-item");
+  });
 });
