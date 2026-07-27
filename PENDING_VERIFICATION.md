@@ -34,7 +34,7 @@ Also found, as a side effect, **6 orphaned `profiles` docs** with no matching Au
 
 **Self-heal status:** unconfirmed for the 8 real-looking accounts. The one account manually verified (the founder's real account) required a manual completion of onboarding Step 3 after being bounced there — it did not silently repair itself without that action. Whether the app's bounce-to-onboarding logic fires automatically for a different account on next login has not been tested with any of the 8.
 
-## chatRooms/messages update allowlist — PARTIALLY VERIFIED live (2026-07-27)
+## chatRooms/messages update allowlist — VERIFIED live (2026-07-27), fix confirmed complete
 
 **Where:** `firestore.rules`, the `chatRooms/{roomId}/messages/{messageId}` `allow update` rule.
 
@@ -42,7 +42,9 @@ Also found, as a side effect, **6 orphaned `profiles` docs** with no matching Au
 
 **Propose → accept: VERIFIED PASS.** Real two-account test (test1 → test2, both logged in live) against production, confirmed directly in Firestore (not UI): `chatRooms/dm_Nh4g0CLKu6SqlWVN3riK9Wl5Nh73_mN0iaCMaxLXxESRxX6pOpxsjTxP2/messages/hbvD9GEhNTngdP5dKRpd` shows `status: "confirmed"`, `proposedBy` set to test1, `responses` map with both UIDs correctly `"accepted"`, and a real `studySessionId` assigned. The write genuinely committed — this is not swallowed-error optimistic UI.
 
-**Propose → decline: not yet tested.** Still needs a second proposal + an explicit Decline from test2, verified the same way (Firestore doc, not UI state).
+**Propose → decline: VERIFIED PASS.** Second proposal from test1, declined by test2. Confirmed directly in Firestore: `chatRooms/dm_Nh4g0CLKu6SqlWVN3riK9Wl5Nh73_mN0iaCMaxLXxESRxX6pOpxsjTxP2/messages/42gwCUBd2RvlfJyKiWkU` shows `status: "declined"`, `responses: {test1: "accepted" (implicit proposer), test2: "declined"}`. Write committed correctly.
+
+**Conclusion: this item is closed.** Both negotiation paths verified against production Firestore, not just UI state. Safe to remove from future pending-verification passes.
 
 ## users/{uid} write rule errors (doesn't cleanly deny) on a true first-time create
 
