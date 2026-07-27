@@ -651,7 +651,15 @@ const StatNum = ({label,value,sub,accent,style={}}) => (
 
 // ─── PERSISTENCE + MONETIZATION HELPERS ──────────────────────────────────────
 const lsGet=(k,d)=>{try{const v=localStorage.getItem("studlin-"+k);return v===null?d:JSON.parse(v);}catch(e){return d;}};
-const lsSet=(k,v)=>{try{localStorage.setItem("studlin-"+k,JSON.stringify(v));}catch(e){}};
+// onEventsWrite is filled in once DataStore is defined further down this
+// file (see "DataStore: events Firestore sync"). It's a plain hook
+// variable rather than calling DataStore directly so lsSet keeps working
+// even before that point in the script has run, and so every one of the
+// ~85 existing lsSet("events",...) call sites needs zero changes -- the
+// Firestore mirroring is injected transparently at this single choke
+// point instead.
+let onEventsWrite=null;
+const lsSet=(k,v)=>{try{localStorage.setItem("studlin-"+k,JSON.stringify(v));}catch(e){}if(k==="events"&&onEventsWrite)onEventsWrite(v);};
 // A fire-and-forget write failing used to just vanish — no record anywhere,
 // for us or the student. This is the one place that decides "does a caught
 // error get reported," so a silent .catch(()=>{}) can become
@@ -3242,6 +3250,323 @@ function ensureSchoolInDirectory(name,type){
   if(!slug)return;
   try{fsdb().collection('schools').doc(slug).set({name:name.trim(),nameLower:name.trim().toLowerCase(),type,createdAt:new Date().toISOString()}).catch(()=>{});}catch(e){}
 }
+// ─── DataStore: events Firestore sync (personal-content migration step 1) ──
+// SCOPE: only `events` is wired up here. firestore.rules already has
+// matching owner-only rules deployed for notes/decks/essays/lectures/
+// timerLogs/practiceExams too (see users/{uid} comment in firestore.rules),
+// but those aren't touched by this change -- each is its own separate step.
+//
+// THE GOTCHA THIS CODE EXISTS TO AVOID: every other Firestore write in
+// this file stores updatedAt as `new Date().toISOString()` -- a STRING
+// (see upsertProfile, declineSharedProject, ensureSchoolInDirectory,
+// above). The events/notes/etc rule instead requires
+// `request.resource.data.updatedAt is timestamp`, which only a real
+// Firestore Timestamp satisfies -- a plain string fails that check. The
+// Firestore SDK auto-converts a native `Date` object to a Timestamp on
+// write, so the fix is simply to never call .toISOString() here and pass
+// `new Date()` as-is. Copying this file's own established
+// .toISOString() convention into this module would silently break every
+// event sync (write rejected, swallowed by the same style of empty
+// .catch(()=>{}) that has already caused this exact class of bug once
+// before in this codebase -- see PENDING_VERIFICATION.md's chatRooms
+// entry). tests/firestore-rules.test.js has a regression case asserting
+// a string updatedAt is rejected, specifically to guard this.
+//
+// Local delete semantics are hard-delete-by-array-filter everywhere
+// (~85 lsSet("events",...) call sites throughout this file) -- no
+// tombstone concept exists locally. The events rule forbids delete
+// entirely (delete: if false); DataStore bridges this by diffing on
+// every write via computePushDiff (see datastore-events-sync.js): ids
+// that vanish from the local array become a Firestore
+// update{deletedAt} instead of a delete or a local hard removal.
+// Nothing about local behavior changes -- the array is filtered exactly
+// as it always was.
+//
+// Sync is a one-time pull-and-merge on sign-in (hydrateOnAuth), not a
+// live listener -- real-time cross-device sync while both are open
+// simultaneously is a larger, separate concern deliberately deferred to
+// a future step.
+//
+// Conflict rule is real newest-updatedAt-wins, not "local always wins":
+// eventsUpdatedAt (a separate localStorage map, {id: epoch ms}) records
+// when THIS device last actually changed each item's content -- stamped
+// by onLocalWrite below, independent of whether/when the Firestore push
+// itself succeeds. hydrateOnAuth compares that against each remote doc's
+// real Firestore updatedAt and keeps whichever is newer; when local has
+// NO timestamp on record at all, remote wins by default (no signal to
+// justify favoring local -- see mergeRemoteIntoLocal's own comment in
+// datastore-events-sync.js). A tie favors local. A delete made on another
+// device (Firestore doc has deletedAt) propagates into a still-present
+// local item the same way -- unless local has a newer edit than the
+// delete, in which case local's edit wins and un-deletes it (see
+// mergeRemoteIntoLocal in datastore-events-sync.js for the actual
+// comparison, and flushQueue's explicit deletedAt clear below for why an
+// upsert after a delete needs to say so, not just omit the field).
+//
+// Writes are queued durably, not just debounced in memory: every local
+// write persists pending upserts/deletes to the "studlin-syncQueue"
+// localStorage key (see datastore-events-sync.js's computeSyncQueueAfterWrite)
+// SYNCHRONOUSLY, before the 800ms debounce below even starts. An
+// in-memory-only debounce meant closing a tab right after an edit
+// silently lost it -- a student's default behavior, not an edge case.
+// The queue is flushed on: the debounce timer (normal case), auth-ready
+// (hydrateOnAuth, which doubles as "on boot" for a signed-in user in this
+// app's startup flow -- there's no earlier point a Firestore write could
+// happen anyway), and the browser's 'online' event (reconnect). A failed
+// flush retries with capped exponential backoff (2s, 4s, 8s... capped at
+// 5 minutes, reset on success) rather than being dropped.
+const DataStore=(()=>{
+  const S=(typeof window!=="undefined"&&window.StudlinEventsSync)||null;
+  let syncedSigs={}; // {id: sig} -- what DataStore believes is already in Firestore
+  // {id: sig} -- what this device last locally SAW (used only to detect
+  // "did the content actually change" for stamping eventsUpdatedAt).
+  // Deliberately separate from syncedSigs above: that one only advances
+  // after a successful Firestore commit (async, can lag or fail);
+  // lastSeenSigs advances synchronously on every local write regardless
+  // of network, because the local-edit timestamp needs to be honest even
+  // offline or before the debounced push has had a chance to run.
+  let lastSeenSigs={};
+  let pushTimer=null;
+  let retryTimer=null;
+  let flushing=false;
+  let backoffMs=0;
+  const BASE_BACKOFF_MS=2000;
+  const MAX_BACKOFF_MS=5*60*1000; // capped at 5 minutes
+  let hydrating=false;
+  let hydratedForUid=null;
+
+  // Seed lastSeenSigs from whatever's already in localStorage at script
+  // load, so app-boot re-writes of the events array (several existing
+  // functions re-save it on load/rebalance) aren't mistaken for a fresh
+  // local edit and given a false "just now" timestamp before the user
+  // has touched anything this session.
+  try{
+    for(const ev of lsGet("events",[])){
+      if(ev&&S&&S.isSyncableId(ev.id))lastSeenSigs[ev.id]=S.sigOf(ev);
+    }
+  }catch(e){}
+
+  const currentUid=()=>{try{return firebase.auth().currentUser?.uid||null;}catch(e){return null;}};
+
+  function reportSyncStatus(uid,patch){
+    try{fsdb().collection('users').doc(uid).collection('_sync').doc('status').set(patch,{merge:true}).catch(()=>{});}catch(e){}
+  }
+
+  // Firestore batches cap at 500 writes -- chunk defensively even though
+  // a student's event list realistically never gets close to that.
+  function chunk(arr,size){const out=[];for(let i=0;i<arr.length;i+=size)out.push(arr.slice(i,i+size));return out;}
+
+  function scheduleRetry(){
+    if(typeof setTimeout==="undefined")return;
+    if(retryTimer)clearTimeout(retryTimer);
+    // Doesn't distinguish error types -- a real rules rejection retries
+    // forever, same as a transient network hiccup. _sync/status.eventsLastError
+    // is what makes a persistent failure discoverable; smarter retry
+    // classification is out of scope for step 1.
+    backoffMs=backoffMs===0?BASE_BACKOFF_MS:Math.min(backoffMs*2,MAX_BACKOFF_MS);
+    retryTimer=setTimeout(flushQueue,backoffMs);
+  }
+
+  // Reads the durable queue fresh from localStorage every time (no
+  // separate in-memory copy to fall out of sync with what onLocalWrite
+  // persisted) and attempts to commit every pending op. Safe to call
+  // repeatedly/concurrently -- `flushing` guards against the debounce
+  // timer, a retry, and the 'online' listener all firing at once.
+  async function flushQueue(){
+    if(!S||flushing)return;
+    const uid=currentUid();
+    if(!uid)return; // nothing to flush without a signed-in user -- hydrateOnAuth flushes again once one exists
+    const queueAtStart=lsGet("syncQueue",{});
+    const ops=S.computeFlushOps(queueAtStart);
+    if(ops.length===0){backoffMs=0;return;}
+    flushing=true;
+    const col=fsdb().collection('users').doc(uid).collection('events');
+    try{
+      let failure=null;
+      // Chunked at 400 (Firestore's batch cap is 500). A first sync for a
+      // real account with months of accumulated events can genuinely span
+      // MULTIPLE chunks -- the tiny preview test accounts never exercised
+      // that, only ever producing a single chunk. Bookkeeping (syncedSigs,
+      // the persisted queue) is updated per-chunk, immediately after that
+      // chunk's own commit succeeds, specifically so a failure on a LATER
+      // chunk doesn't cause an EARLIER, already-committed chunk to be
+      // redundantly re-sent on the next retry -- harmless (upserts are
+      // idempotent) but wasteful, and only matters once a sync is large
+      // enough to need more than one chunk.
+      for(const group of chunk(ops,400)){
+        const batch=fsdb().batch();
+        group.forEach(op=>{
+          const ts=new Date(op.ms); // the REAL edit moment, stamped when it happened -- not now, whenever the network finally sends it
+          if(op.type==="delete"){batch.update(col.doc(op.id),{deletedAt:ts,updatedAt:ts});return;}
+          // deletedAt explicitly cleared (not just omitted) -- {merge:true}
+          // only ever adds/overwrites fields it's given, it never unsets an
+          // absent one. Without this, an upsert that supersedes another
+          // device's delete (mergeRemoteIntoLocal's undelete case) would push
+          // new content up but leave the doc's deletedAt=true untouched.
+          batch.set(col.doc(op.id),Object.assign({},op.body,{updatedAt:ts,deletedAt:firebase.firestore.FieldValue.delete()}),{merge:true});
+        });
+        try{
+          await batch.commit();
+        }catch(err){
+          failure=err;
+          break; // stop attempting further chunks this pass -- already-committed chunks are already recorded below, nothing about them needs retrying
+        }
+        const nextSigs=Object.assign({},syncedSigs);
+        const chunkQueueSlice={};
+        group.forEach(op=>{
+          chunkQueueSlice[op.id]=queueAtStart[op.id];
+          if(op.type==="delete")delete nextSigs[op.id];
+          else nextSigs[op.id]=S.sigOf(Object.assign({},op.body,{id:op.id}));
+        });
+        syncedSigs=nextSigs;
+        // Only drops entries that are still exactly what THIS chunk just
+        // flushed -- a newer edit could have queued again for the same id
+        // while this chunk's network round trip was in flight (see
+        // queueAfterFlushSuccess's own comment in datastore-events-sync.js).
+        lsSet("syncQueue",S.queueAfterFlushSuccess(chunkQueueSlice,lsGet("syncQueue",{})));
+      }
+      if(failure){
+        // Never throws back into lsSet's caller -- a Firestore hiccup must
+        // not block the local write that already succeeded, and any
+        // not-yet-flushed queue entries are left untouched so nothing here
+        // is lost, only retried.
+        reportSyncStatus(uid,{eventsLastError:String((failure&&failure.message)||failure),eventsLastErrorAt:new Date()});
+        scheduleRetry();
+      }else{
+        backoffMs=0;
+        reportSyncStatus(uid,{eventsLastSyncedAt:new Date(),eventsLastError:null});
+      }
+    }finally{
+      flushing=false;
+    }
+  }
+
+  // Reconnect trigger -- capped-backoff retries eventually reach 5
+  // minutes, which would otherwise leave a long-offline student's edits
+  // sitting unsent for a while after their connection actually comes back.
+  if(typeof window!=="undefined"&&window.addEventListener){
+    window.addEventListener('online',()=>{backoffMs=0;flushQueue();});
+  }
+
+  function onLocalWrite(events){
+    // Guards out entirely when there's no StudlinEventsSync global (no
+    // <script> tag loaded it -- e.g. other bundles/entry points, or the
+    // Node test harness's bare vm sandbox, which has no `window` and no
+    // `setTimeout`). Every one of the ~85 existing lsSet("events",...)
+    // call sites -- several already exercised by tests/scheduling.test.js
+    // and tests/cal-import.test.js via the harness's vm sandbox -- must
+    // keep working identically with zero Firestore/DataStore involvement
+    // in that environment.
+    if(!S||typeof setTimeout==="undefined")return;
+
+    // Stamp eventsUpdatedAt for anything whose content actually changed
+    // since we last saw it -- this is the ONLY source of truth
+    // hydrateOnAuth has for "did local change this more recently than
+    // remote." Runs synchronously, independent of the debounced Firestore
+    // push below, so it's correct even if the tab closes before that
+    // push ever fires.
+    const prevMap=lsGet("eventsUpdatedAt",{});
+    const nextMap=Object.assign({},prevMap);
+    let mapChanged=false;
+    const liveIds=new Set();
+    for(const ev of events){
+      if(!ev||!S.isSyncableId(ev.id))continue;
+      liveIds.add(ev.id);
+      const sig=S.sigOf(ev);
+      if(lastSeenSigs[ev.id]!==sig){nextMap[ev.id]=Date.now();mapChanged=true;}
+      lastSeenSigs[ev.id]=sig;
+    }
+    for(const id in lastSeenSigs){
+      if(!liveIds.has(id)){nextMap[id]=Date.now();mapChanged=true;delete lastSeenSigs[id];}
+    }
+    if(mapChanged)lsSet("eventsUpdatedAt",nextMap); // "eventsUpdatedAt" =/= "events" -- does not recurse back into onLocalWrite
+
+    // Durable queue write -- synchronous, happens BEFORE the debounced
+    // flush below even schedules, so a tab closed a millisecond later
+    // still has the edit recorded in "studlin-syncQueue" and picks up
+    // right where it left off on next boot/auth-ready/reconnect. This is
+    // what actually fixes "student closes the tab right after editing" --
+    // the debounce alone never could, no matter how short it was.
+    const {upserts,deletedIds}=S.computePushDiff(syncedSigs,events);
+    if(upserts.length>0||deletedIds.length>0){
+      const msById=mapChanged?nextMap:prevMap;
+      lsSet("syncQueue",S.computeSyncQueueAfterWrite(lsGet("syncQueue",{}),upserts,deletedIds,msById));
+    }
+
+    if(pushTimer)clearTimeout(pushTimer);
+    // Debounced -- several of the ~85 write call sites fire more than once
+    // in quick succession for a single user action (e.g. reschedule
+    // helpers that call lsSet twice), so this coalesces bursts into one
+    // Firestore round trip instead of one per intermediate write. Purely
+    // an optimization now: the durable queue write above already
+    // happened synchronously, so this delay can only ever delay when the
+    // edit is sent, never lose it.
+    pushTimer=setTimeout(flushQueue,800);
+  }
+
+  async function hydrateOnAuth(){
+    if(!S)return;
+    const uid=currentUid();
+    if(!uid||hydrating||hydratedForUid===uid)return;
+    hydrating=true;
+    try{
+      // Flush anything queued from a previous offline session first (this
+      // IS "flush on boot" for a signed-in user -- there's no earlier
+      // point in this app's startup flow a Firestore write could happen),
+      // so Firestore reflects this device's own pending edits before the
+      // pull below reads it back.
+      await flushQueue();
+      const snap=await fsdb().collection('users').doc(uid).collection('events').get();
+      const remote=[];
+      const remoteDeletedIds=[];
+      const remoteUpdatedAtMs={};
+      snap.forEach(doc=>{
+        const d=doc.data();
+        const ts=d.updatedAt&&typeof d.updatedAt.toMillis==="function"?d.updatedAt.toMillis():undefined;
+        if(ts!==undefined)remoteUpdatedAtMs[doc.id]=ts;
+        if(d.deletedAt){remoteDeletedIds.push(doc.id);return;}
+        const {updatedAt,deletedAt,...rest}=d;
+        remote.push(Object.assign({},rest,{id:doc.id}));
+      });
+      const localUpdatedAtMs=lsGet("eventsUpdatedAt",{});
+      const {merged,adoptedFromRemote}=S.mergeRemoteIntoLocal(lsGet("events",[]),remote,remoteDeletedIds,localUpdatedAtMs,remoteUpdatedAtMs);
+
+      // Re-seed bookkeeping to reflect the ACTUAL merged content, not "now"
+      // -- otherwise the lsSet below would route through onLocalWrite and
+      // mistake every remote-adopted id for a brand-new local edit,
+      // stamping it "just now" and quietly making local look authoritative
+      // for it on the very next hydrate.
+      const nextLocalMap={};
+      const nextSyncedSigs={};
+      lastSeenSigs={};
+      for(const ev of merged){
+        lastSeenSigs[ev.id]=S.sigOf(ev);
+        nextLocalMap[ev.id]=adoptedFromRemote.has(ev.id)&&remoteUpdatedAtMs[ev.id]!==undefined
+          ?remoteUpdatedAtMs[ev.id]
+          :(localUpdatedAtMs[ev.id]!==undefined?localUpdatedAtMs[ev.id]:Date.now());
+        // syncedSigs reflects "what Firestore currently has" -- always the
+        // REMOTE content's signature when remote has this id at all, even
+        // if local ends up winning the merge, so a subsequent pushDiff
+        // correctly detects the local/remote mismatch and pushes the
+        // newer local edit up instead of treating it as already in sync.
+      }
+      remote.forEach(ev=>{nextSyncedSigs[ev.id]=S.sigOf(ev);});
+      lsSet("eventsUpdatedAt",nextLocalMap);
+      syncedSigs=nextSyncedSigs;
+      lsSet("events",merged);
+      hydratedForUid=uid;
+    }catch(e){
+      // Leaves hydratedForUid unset so a transient failure (offline,
+      // Firestore hiccup) can retry on the next auth-state tick rather
+      // than permanently skipping sync for the rest of the session.
+    }finally{
+      hydrating=false;
+    }
+  }
+
+  return {events:{onLocalWrite,hydrateOnAuth}};
+})();
+onEventsWrite=(events)=>DataStore.events.onLocalWrite(events);
 const dayKey=(d)=>{const x=d||new Date();return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");};
 function daysOverdue(ev){if(!ev.deadline)return 0;if(ev.date<=ev.deadline)return 0;const d1=new Date(ev.date),d2=new Date(ev.deadline);return Math.ceil((d1-d2)/86400000);}
 function daysUntilDeadline(ev){if(!ev.deadline)return null;const d1=new Date(ev.deadline),d2=new Date(dayKey());return Math.ceil((d1-d2)/86400000);}
@@ -19889,6 +20214,7 @@ function AuthGate(){
       }
       if(u&&(!isPasswordAccount(u)||u.emailVerified)){
         const profilePromise=fetchUserProfile();upsertProfile();
+        DataStore.events.hydrateOnAuth();
         // "onboarded" otherwise lives only in this browser's localStorage —
         // if it's not already set here, wait for the profile fetch (which
         // reconciles it against the account's own record) before mounting
