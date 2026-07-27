@@ -142,3 +142,75 @@ describe("mergeRemoteIntoLocal", () => {
     assert.equal(merged.length, 0);
   });
 });
+
+describe("durable offline write queue", () => {
+  // The scenario this whole queue exists for: an in-memory-only debounce
+  // before the Firestore push would lose an edit if the tab closed before
+  // it fired -- a student's default behavior right after finishing an
+  // edit, not an edge case. These tests simulate exactly that: build the
+  // queue the way onLocalWrite does, round-trip it through JSON (proving
+  // it survives real localStorage persistence across a reload, which is
+  // literally serialize-to-string then parse-back-out), then confirm a
+  // flush attempt against the "reopened" queue produces the correct
+  // Firestore-bound operation.
+
+  test("edit -> immediate tab close (simulated) -> reopen -> the write is still queued and flushes", () => {
+    const edited = { id: "a1", title: "Problem Set 3", date: "2026-07-28" };
+    // "edit": compute the diff the same way onLocalWrite does.
+    const { upserts, deletedIds } = S.computePushDiff({}, [edited]);
+    const queueAfterEdit = S.computeSyncQueueAfterWrite({}, upserts, deletedIds, { a1: 1690000000000 });
+
+    // "tab close": nothing further happens -- onLocalWrite already
+    // persisted queueAfterEdit synchronously, so this is the last state
+    // localStorage ever saw before the tab went away.
+
+    // "reopen": a fresh JSON round-trip is exactly what reading
+    // localStorage back out on a new page load does.
+    const queueAfterReopen = JSON.parse(JSON.stringify(queueAfterEdit));
+
+    // "flushes": the reopened queue still produces the correct op.
+    const ops = S.computeFlushOps(queueAfterReopen);
+    assert.equal(ops.length, 1);
+    assert.equal(ops[0].id, "a1");
+    assert.equal(ops[0].type, "upsert");
+    assert.deepEqual(ops[0].body, { title: "Problem Set 3", date: "2026-07-28" });
+    assert.equal(ops[0].ms, 1690000000000); // the real edit time, not whenever the flush eventually runs
+
+    // A successful flush clears exactly this entry.
+    const afterFlush = S.queueAfterFlushSuccess(queueAfterReopen, queueAfterReopen);
+    assert.deepEqual(afterFlush, {});
+  });
+
+  test("a delete survives the same close/reopen cycle", () => {
+    const queueAfterEdit = S.computeSyncQueueAfterWrite({}, [], ["a1"], { a1: 1690000000000 });
+    const queueAfterReopen = JSON.parse(JSON.stringify(queueAfterEdit));
+    const ops = S.computeFlushOps(queueAfterReopen);
+    assert.equal(ops.length, 1);
+    assert.equal(ops[0].type, "delete");
+    assert.equal(ops[0].ms, 1690000000000);
+  });
+
+  test("re-editing the same id before a flush replaces the queued entry instead of piling up", () => {
+    const first = S.computeSyncQueueAfterWrite({}, [{ id: "a1", title: "First draft" }], [], { a1: 1000 });
+    const second = S.computeSyncQueueAfterWrite(first, [{ id: "a1", title: "Second draft" }], [], { a1: 2000 });
+    assert.equal(Object.keys(second).length, 1);
+    assert.equal(second.a1.body.title, "Second draft");
+    assert.equal(second.a1.ms, 2000);
+  });
+
+  test("a newer edit queued while a flush's network round trip is in flight is not wiped by that flush's success", () => {
+    const queueAtFlushStart = S.computeSyncQueueAfterWrite({}, [{ id: "a1", title: "Being flushed right now" }], [], { a1: 1000 });
+    // While that batch.commit() is still in flight, the user edits again --
+    // onLocalWrite persists a new queue entry for the same id.
+    const queueDuringFlight = S.computeSyncQueueAfterWrite(queueAtFlushStart, [{ id: "a1", title: "Edited again mid-flush" }], [], { a1: 2000 });
+    // The in-flight flush now succeeds and tries to clear what IT sent.
+    const afterFlush = S.queueAfterFlushSuccess(queueAtFlushStart, queueDuringFlight);
+    // The newer edit must survive -- it was never actually sent.
+    assert.equal(afterFlush.a1.body.title, "Edited again mid-flush");
+    assert.equal(afterFlush.a1.ms, 2000);
+  });
+
+  test("computeFlushOps on an empty queue is a no-op", () => {
+    assert.deepEqual(S.computeFlushOps({}), []);
+  });
+});

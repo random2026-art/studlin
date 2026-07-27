@@ -130,7 +130,65 @@
     return { merged: Array.from(byId.values()), adoptedFromRemote };
   }
 
-  const api = { isSyncableId, sigOf, computePushDiff, mergeRemoteIntoLocal };
+  // ── Durable offline write queue ──────────────────────────────────────
+  // An in-memory-only debounce before the Firestore push meant closing a
+  // tab right after an edit silently lost it -- a student's default
+  // behavior, not an edge case. These three functions compute the queue
+  // that studlin-app.jsx's DataStore persists to the "studlin-syncQueue"
+  // localStorage key (via the existing lsGet/lsSet("syncQueue",...),
+  // which prefixes with "studlin-" the same as every other key) on every
+  // local write, synchronously, before the debounced network flush even
+  // starts -- so the queue already has the edit recorded if the tab
+  // closes a millisecond later. Keyed by event id, so re-editing the same
+  // id before a flush just replaces the queued entry instead of piling up
+  // duplicates.
+
+  // ms: the REAL moment the edit happened (from eventsUpdatedAt, stamped
+  // by onLocalWrite), not whenever the network finally sends it -- a
+  // queue flushed hours later after being offline must not look "newer"
+  // than a genuinely newer edit made on another device in the meantime.
+  function computeSyncQueueAfterWrite(existingQueue, upserts, deletedIds, msById) {
+    const next = Object.assign({}, existingQueue || {});
+    (upserts || []).forEach((ev) => {
+      const { id, ...body } = ev;
+      next[id] = { type: "upsert", body, ms: msById[id] };
+    });
+    (deletedIds || []).forEach((id) => {
+      next[id] = { type: "delete", ms: msById[id] };
+    });
+    return next;
+  }
+
+  // Flattens the queue into the operations a flush needs to perform.
+  // Pure -- the actual Firestore batch/collection/auth calls live in
+  // studlin-app.jsx, this just says WHAT to do.
+  function computeFlushOps(queue) {
+    return Object.keys(queue || {}).map((id) => Object.assign({ id }, queue[id]));
+  }
+
+  // After a successful flush, drops only the entries that are still
+  // exactly what was flushed (compares `ms`) -- a newer edit could have
+  // queued again for the same id while the network round trip for the
+  // OLD value was in flight, and that entry must survive a blanket
+  // "clear everything we just sent" instead of being silently dropped
+  // along with it.
+  function queueAfterFlushSuccess(queueAtFlushStart, currentQueue) {
+    const next = Object.assign({}, currentQueue || {});
+    for (const id in queueAtFlushStart || {}) {
+      if (next[id] && next[id].ms === queueAtFlushStart[id].ms) delete next[id];
+    }
+    return next;
+  }
+
+  const api = {
+    isSyncableId,
+    sigOf,
+    computePushDiff,
+    mergeRemoteIntoLocal,
+    computeSyncQueueAfterWrite,
+    computeFlushOps,
+    queueAfterFlushSuccess,
+  };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.StudlinEventsSync = api;
 })(typeof window !== "undefined" ? window : globalThis);

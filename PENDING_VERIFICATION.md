@@ -46,6 +46,24 @@ Also found, as a side effect, **6 orphaned `profiles` docs** with no matching Au
 
 **Conclusion: this item is closed.** Both negotiation paths verified against production Firestore, not just UI state. Safe to remove from future pending-verification passes.
 
+## events sync (DataStore, branch firestore-step1-events): no "synced" UI feedback
+
+**Where:** `studlin-app.jsx`'s `DataStore` object (events -> Firestore sync).
+
+**What's missing:** sync (hydrate on sign-in, background push/flush) runs completely silently. The only observability is the `users/{uid}/_sync/status` doc (`eventsLastSyncedAt`/`eventsLastError`), which isn't surfaced anywhere in the UI. This is arguably a gap against this project's own CLAUDE.md guardrail that successful async actions (sent, saved, synced) get a toast/confirmation, not silence.
+
+**Verification needed before launch:** add a toast or similar confirmation when a sync/flush actually completes (and probably a discreet indicator on failure, given `_sync/status` already tracks `eventsLastError`). Deliberately not built yet — out of scope for the step-1 migration itself; scoped as its own follow-up.
+
+## events sync (DataStore): cross-device delete propagation and the durable offline queue — implemented + unit-tested, not yet verified against a real two-device/offline scenario
+
+**Where:** `studlin-app.jsx`'s `DataStore` object + `datastore-events-sync.js` (`mergeRemoteIntoLocal`, the `studlin-syncQueue` offline write queue).
+
+**What's implemented:** a delete made on one device now propagates to remove a still-present item on another device (unless that device has a genuinely newer edit, in which case its edit wins and un-deletes it) — this was a real gap in the first version of this migration, fixed after review caught it. Writes are also queued durably to `localStorage["studlin-syncQueue"]` on every edit, synchronously, before the debounced network push starts, so a tab closed immediately after an edit doesn't lose it; the queue flushes on auth-ready, the browser's `online` event, and a capped-backoff retry (2s doubling to 5min) on failure.
+
+**Why this isn't marked fully done:** both are covered by unit tests against synthetic inputs (`tests/events-sync.test.js` — merge/delete-propagation cases, and a simulated edit -> JSON round-trip ("tab close/reopen") -> flush case for the queue), but neither has been exercised against a real two-device scenario or a real offline/reconnect cycle in an actual browser. Same category of risk as the chatRooms allowlist entry above: logic that's correct on paper needs a real run before it's trusted.
+
+**Verification needed before launch:** (1) two real signed-in devices/browsers, edit the same event on both while one is offline, confirm the newest edit wins and the loser doesn't silently reappear; (2) delete an event on device A, confirm it disappears from device B on next hydrate; (3) edit an event, kill the tab/close the browser immediately, reopen, confirm the edit reaches Firestore without further action.
+
 ## users/{uid} write rule errors (doesn't cleanly deny) on a true first-time create
 
 **Where:** `firestore.rules`, the `users/{userId}` `allow write` rule (existing, not touched by the step-0 migration work).
