@@ -3597,10 +3597,24 @@ const DataStore={
   // Same as decks -- note ids are plain String(Date.now()), no special
   // prefix (confirmed by grep of every `newNote={id:...}` site).
   notes:createCollectionSync({localKey:"notes",firestoreCollection:"notes",queueKey:"notesSyncQueue",updatedAtKey:"notesUpdatedAt",errorPrefix:"notes",isSyncable:(id)=>typeof id==="string"&&id.length>0}),
+  // practiceExam ids are String(Date.now()+Math.random()*1000) -- same
+  // plain-string check, no special prefix.
+  practiceExams:createCollectionSync({localKey:"practiceExams",firestoreCollection:"practiceExams",queueKey:"practiceExamsSyncQueue",updatedAtKey:"practiceExamsUpdatedAt",errorPrefix:"practiceExams",isSyncable:(id)=>typeof id==="string"&&id.length>0}),
+  // "timerLogs" as a Firestore collection name (matching the rules deployed
+  // since step 0) but the LOCAL key is "sessions" -- that's the real
+  // localStorage key logSession has always written to; "timerLogs" never
+  // existed as an actual feature/key anywhere in this file. ids were
+  // retrofitted onto logSession's entries for this step (see its own
+  // comment) -- historical entries logged before that change have no id
+  // and are simply excluded from sync by isSyncable below, staying
+  // local-only rather than being backfilled.
+  timerLogs:createCollectionSync({localKey:"sessions",firestoreCollection:"timerLogs",queueKey:"timerLogsSyncQueue",updatedAtKey:"timerLogsUpdatedAt",errorPrefix:"timerLogs",isSyncable:(id)=>typeof id==="string"&&id.length>0}),
 };
 syncWriteHooks.events=(items)=>DataStore.events.onLocalWrite(items);
 syncWriteHooks.decks=(items)=>DataStore.decks.onLocalWrite(items);
 syncWriteHooks.notes=(items)=>DataStore.notes.onLocalWrite(items);
+syncWriteHooks.practiceExams=(items)=>DataStore.practiceExams.onLocalWrite(items);
+syncWriteHooks.sessions=(items)=>DataStore.timerLogs.onLocalWrite(items);
 const dayKey=(d)=>{const x=d||new Date();return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");};
 function daysOverdue(ev){if(!ev.deadline)return 0;if(ev.date<=ev.deadline)return 0;const d1=new Date(ev.date),d2=new Date(ev.deadline);return Math.ceil((d1-d2)/86400000);}
 function daysUntilDeadline(ev){if(!ev.deadline)return null;const d1=new Date(ev.deadline),d2=new Date(dayKey());return Math.ceil((d1-d2)/86400000);}
@@ -3659,7 +3673,13 @@ function streakCellColor(lvl){
   if(!lvl)return T.mode==="light"?"rgba(8,12,40,0.06)":"rgba(255,255,255,0.06)";
   return [null,T.lime+"40",T.lime+"80",T.limeDk,T.forest][lvl];
 }
-function logSession(mins,mode){const s=lsGet("sessions",[]);s.push({d:dayKey(),m:mins,t:Date.now(),mode:mode||"Focus"});lsSet("sessions",s);upsertProfile();}
+// id retrofitted here for step 4 of the Firestore migration (DataStore.timerLogs
+// -- see createCollectionSync) -- entries logged before this change have no id
+// and are simply excluded from sync by the generic isSyncable check (stay
+// local-only forever, never uploaded), rather than backfilling one onto
+// historical data. None of this file's 6 read sites for "sessions" reference
+// .id at all (confirmed by grep), so adding it here is a pure addition.
+function logSession(mins,mode){const s=lsGet("sessions",[]);s.push({id:String(Date.now())+"-"+Math.random().toString(36).slice(2,7),d:dayKey(),m:mins,t:Date.now(),mode:mode||"Focus"});lsSet("sessions",s);upsertProfile();}
 // Lightweight in-progress-session record, so a Lock-In session survives
 // the tab losing focus, the machine sleeping, or the timer widget getting
 // closed before it naturally finishes — none of which currently leave any
@@ -20251,6 +20271,8 @@ function AuthGate(){
         DataStore.events.hydrateOnAuth();
         DataStore.decks.hydrateOnAuth();
         DataStore.notes.hydrateOnAuth();
+        DataStore.practiceExams.hydrateOnAuth();
+        DataStore.timerLogs.hydrateOnAuth();
         // "onboarded" otherwise lives only in this browser's localStorage —
         // if it's not already set here, wait for the profile fetch (which
         // reconciles it against the account's own record) before mounting
