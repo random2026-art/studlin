@@ -2,7 +2,15 @@
 
 Known/suspected issues deliberately deferred rather than fixed blind — each needs a specific verification step before launch, not just a code read. Remove an item once it's actually been tested and resolved (or promote it to a real fix if verification shows it's broken).
 
-## Rules deploy status: LIVE as of 2026-07-27
+## Spaced repetition is not real card-level scheduling -- copy overclaims it
+
+**Where:** `studlin-app.jsx`'s `Flashcards` page header (fixed on `fix/prep-decks-clipping-and-copy`, was "Study with spaced repetition"), and separately `index.html`'s comparison table ("Active recall and spaced repetition built into every deck" -- NOT fixed, out of scope for that branch).
+
+**What's actually real today:** manual "Study now" flip-card self-review, plus, if a deck is linked to an exam, AI-proposed *review sessions* scheduled on the calendar before that exam date (`computeReviewDates`/`computeReviewOffsets`, shipped and verified end-to-end per an earlier session). This is session-level scheduling -- when to sit down and review a deck -- not true spaced repetition, which tracks each individual CARD's own difficulty/recall history and computes a per-card next-review interval (SM-2/Anki-style). No such per-card interval tracking exists anywhere in this codebase.
+
+**No prior tracked item found for this** -- checked memory and this file; the only related note was CLAUDE.md/AGENTS.md listing "Spaced repetition" as an aspirational product-vision bullet, not a tracked gap.
+
+**Verification needed before launch:** either build real per-card interval scheduling, or stop describing the review-session feature as "spaced repetition" anywhere it's user-facing (the app header is fixed; `index.html`'s comparison-table line still needs the same treatment).
 
 The full contents of this branch's `firestore.rules` (commit 5f36610) were manually pasted into the Firebase Console and published on 2026-07-27. Live rules now match the committed file. See `project_firestore_rules_undeployed` in Claude's memory for the prior stale-rules history this closes out.
 

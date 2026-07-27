@@ -7009,7 +7009,7 @@ function Flashcards() {
 
   return (
     <div>
-      <PH title="Flashcards" sub="Study with spaced repetition" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New deck")}</Btn>} />
+      <PH title="Flashcards" sub="Study now, or schedule reviews before an exam" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New deck")}</Btn>} />
       {showExamLinkTip&&(
         <div style={{display:"flex",alignItems:"center",gap:12,background:T.lime+"0d",border:`1px solid ${T.lime}33`,borderRadius:12,padding:"12px 16px",marginBottom:16}}>
           <span style={{fontSize:18,flexShrink:0}}>🎯</span>
