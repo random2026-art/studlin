@@ -1740,6 +1740,24 @@ function logSuggestionDecision(kind,action,context){
   log.push({kind,action,context:context||{},t:Date.now()});
   lsSet("suggestionLog",log);
 }
+// Catch Me Up's PostHog instrumentation (Part 4) -- the first custom
+// events captured anywhere in this app; posthog.init() already runs in
+// studlin-web-app.html but nothing had ever called posthog.capture until
+// this feature. "The number that matters: of users who miss blocks, what
+// fraction come back and rebuild vs. disappear" needs, at minimum,
+// missed_blocks_detected/recovery_banner_shown/rebuild_confirmed (or
+// _cancelled) all captured with a shared, joinable identifier -- every
+// call here is deliberately a plain object of primitives, nothing that
+// needs PII scrubbing. Guarded for environments where the script tag
+// failed to load (ad blockers, offline) rather than throwing and taking
+// out whatever caller triggered it.
+function logCatchUpEvent(eventName,props){
+  try{
+    if(typeof posthog!=="undefined"&&posthog&&typeof posthog.capture==="function"){
+      posthog.capture("catch_me_up_"+eventName,props||{});
+    }
+  }catch(e){}
+}
 // Where a session sits in its exam's own spaced-review curve -- e.g.
 // "session 2 of 4, 6 days out" -- the context an exam-prep suggestion's
 // logged decision needs to later check whether accepting/dismissing a
@@ -2300,6 +2318,8 @@ function fmtPlacementReason(reason,timeStr){
   if(reason.type==="dayFullDeadline")return reason.fullDay+" was full. Moved before its "+reason.deadlineDay+" deadline.";
   if(reason.type==="dayFull")return "You had no free time "+reason.fullDay+".";
   if(reason.type==="deadlineDriven")return "Moved before its "+reason.deadlineDay+" deadline.";
+  if(reason.type==="deferred")return "You chose to push this to next week.";
+  if(reason.type==="manualOverride")return "You picked this time yourself.";
   return "";
 }
 // A Tier 0 move's reasoning was already computed by findTier0Slot's own
@@ -12063,7 +12083,7 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
 
-function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent}) {
+function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending}) {
   // Compact, fixed per-hour scale (held constant across the agenda-collapse
   // toggle) so several hours are visible at a glance, like Google Calendar.
   const WK_PX_HR = 48;
@@ -12329,7 +12349,10 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                       style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:5,padding:"2px 5px 2px 8px",cursor:isRoutine?(editRoutineMode?"pointer":"default"):"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isDone?0.6:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{}),...(isSelected?{outline:`2px solid ${T.lime}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.lime}22`}:{})}}>
                       {/* Subject marker -- see comment above kindStyle */}
                       <div style={{position:"absolute",left:0,top:0,bottom:0,width:3,background:subjectColor,borderRadius:"5px 0 0 5px"}} />
-                      {over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:"0 0 0 1.5px rgba(255,255,255,0.9)",zIndex:1}} />}
+                      {/* Suppressed while a Catch Me Up rebuild is pending -- the
+                          one recovery banner is the single source of "you're
+                          behind" now, not a per-item red dot competing with it. */}
+                      {!catchUpPending&&over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:"0 0 0 1.5px rgba(255,255,255,0.9)",zIndex:1}} />}
                       <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                       {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isWarningKind?tokens.color.warning:tokens.color.textSecondary,marginTop:1}}>{fmtTime(ev.time)}{dur ? " · "+dur+"m" : ""}</div>}
                       {isRoutine&&editRoutineMode&&hoveredRoutineId===ev.routineId&&(
@@ -13483,7 +13506,7 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
 // one). The container just scrolls, same as any normal calendar, landing
 // near the current time or the first real event on open.
 const DAY_PLANNER_PX_PER_HR=64;
-function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, markDone, uncrossDone, prefs, setSelDay}) {
+function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending}) {
   const scrollRef=useRef(null);
   const [dayPreviewOpen,setDayPreviewOpen]=useState(false);
   const stepDay=(n)=>{const d=new Date(selDay+"T12:00:00");d.setDate(d.getDate()+n);setSelDay(dayKey(d));};
@@ -13555,7 +13578,7 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
                   onClick={()=>{isDone?uncrossDone(ev.id):markDone(ev.id);}}
                   title="Click to toggle done, double-click to edit"
                   style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:6,padding:"4px 8px",cursor:"pointer",overflow:"hidden",zIndex:3,opacity:isDone?0.6:1,boxSizing:"border-box",...kindStyle}}>
-                  {over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:`0 0 0 1.5px ${isExam?T.ink:"#fff"}`,zIndex:1}} />}
+                  {!catchUpPending&&over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:`0 0 0 1.5px ${isExam?T.ink:"#fff"}`,zIndex:1}} />}
                   <div style={{fontSize:11.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:isDone?"line-through":"none"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                   {heightPx>34&&<div style={{fontSize:9.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:2}}>{fmtTime(ev.time)}{dur?" · "+dur+"m":""}</div>}
                 </div>
@@ -13565,7 +13588,7 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
         </div>
       </div>
     </Card>
-    <DayPreviewModal open={dayPreviewOpen} onClose={()=>setDayPreviewOpen(false)} dayEvents={dayEvents} selDay={selDay} dayLabel={niceDayLabel} colorOf={colorOf} fmtTime={fmtTime} />
+    <DayPreviewModal open={dayPreviewOpen} onClose={()=>setDayPreviewOpen(false)} dayEvents={dayEvents} selDay={selDay} dayLabel={niceDayLabel} colorOf={colorOf} fmtTime={fmtTime} catchUpPending={catchUpPending} />
     </>
   );
 }
@@ -13579,7 +13602,7 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
 // DayPlanner) and colorOf (so a class's color here always matches its
 // color everywhere else in the app -- never a fresh palette).
 const DAY_PREVIEW_ICON_BY_KIND={"class":Icon.cal,"study block":Icon.brain,"exam":Icon.zap,"deadline":Icon.file,"reminder":Icon.clock};
-function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime}){
+function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime,catchUpPending}){
   if(!open)return null;
   const visibleEvs=(dayEvents||[]).filter(ev=>ev.kind!=="free period"&&ev.time);
   const starts=visibleEvs.map(ev=>{const p=ev.time.split(":").map(Number);return p[0]*60+p[1];});
@@ -14405,7 +14428,7 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
   </>);
 }
 
-function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,setDetailEventId,registerSetEvents,onTaskCompleted}={}){
+function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,setDetailEventId,registerSetEvents,onTaskCompleted,catchUpPending}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.muted},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   const colorOf=(sub)=>{if(!sub||sub==="None"||sub==="")return T.muted;const x=userSubjects.find(s=>s.label===sub);return x?x.color:T.lime;};
@@ -15772,7 +15795,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
                       const isRoutine=!!ev.isRoutine;
                       const dimmedByRoutineMode=editRoutineMode&&!isRoutine;
                       return <div key={j} style={{fontSize:9,fontWeight:600,color:tagColor,background:tagColor+(isExam?"22":"16"),border:isRoutine&&editRoutineMode?`1px solid ${T.lime}`:isExam?`1px solid ${tagColor}`:"none",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%",display:"flex",alignItems:"center",gap:3,opacity:dimmedByRoutineMode?0.3:1}}>
-                        {over>0&&<span title={over+"d overdue"} style={{width:5,height:5,borderRadius:"50%",background:T.red,flexShrink:0}} />}
+                        {!catchUpPending&&over>0&&<span title={over+"d overdue"} style={{width:5,height:5,borderRadius:"50%",background:T.red,flexShrink:0}} />}
                         {ev.priority!=null&&priorityTierOf(ev)>=4&&<span style={{width:5,height:5,borderRadius:"50%",background:PRIORITY_COLORS[priorityTierOf(ev)],flexShrink:0}} />}
                         {ev.userPinned&&<span style={{flexShrink:0,fontSize:7}} title="Pinned, won't be auto-rescheduled">📌</span>}
                         {ev.movedByStudlin&&<span style={{flexShrink:0,fontSize:7}} title={"Studlin moved this from "+fmtMovedFrom(ev.movedFrom)+"."+fmtMovedReasonSuffix(ev)}>↻</span>}
@@ -15792,10 +15815,10 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
         <WeeklyPlanner events={events} setEvents={setEvents} moveEvent={moveEvent} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openNew={openNew} openEdit={openEdit}
           routines={routines} editRoutineMode={editRoutineMode} hoveredRoutineId={hoveredRoutineId} setHoveredRoutineId={setHoveredRoutineId}
           onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
-          selDay={selDay} setSelDay={setSelDay} onDeleteEvent={deleteEventWithUndo} />
+          selDay={selDay} setSelDay={setSelDay} onDeleteEvent={deleteEventWithUndo} catchUpPending={catchUpPending} />
       )}
       {calView==="daily"&&(
-        <DayPlanner dayEvents={dayEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} />
+        <DayPlanner dayEvents={dayEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} />
       )}
     </div>
       {calTourStep>=0&&(
@@ -16320,7 +16343,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
                           {ev.subject && ev.time ? " · " : ""}
                           {ev.time ? fmtTime(ev.time) : ""}
                           {ev.duration ? " · " + ev.duration + "m" : ""}
-                          {over>0&&<span style={{color:T.red,fontWeight:600}}> · {over}d overdue</span>}
+                          {!catchUpPending&&over>0&&<span style={{color:T.red,fontWeight:600}}> · {over}d overdue</span>}
                         </div>
                       </div>
                       <div style={{display:"flex",gap:4,flexShrink:0}}>
@@ -20563,33 +20586,49 @@ function App() {
     setRecoveredSession(null);
   };
   const recoverDiscard=()=>{clearTimerCheckpoint();setRecoveredSession(null);};
-  // Tier 1 of the rescheduling engine — detects yesterday-or-earlier
-  // pending tasks and prompts (a dismissible banner, not a blocking modal)
-  // rather than moving them silently; the actual move only happens once
-  // the student clicks "Roll over".
-  const [rolloverPending,setRolloverPending]=useState([]);
-  const [rolloverToast,setRolloverToast]=useState("");
-  // Same dismissible-banner idiom as rolloverPending above — a RECENT run
-  // of misses in one hour bucket (see detectStrugglingBucket), not just
-  // the all-time reliability aggregate, surfaced once a day via the same
-  // gate. {strugglingBucket,suggestedBucket,...} or null.
+  // Catch Me Up -- ONE recovery surface, replacing what used to be three
+  // (Tier 0's auto-move banner, Tier 1's rollover panel, and an insight
+  // nudge could all fire on the same app-open) plus a fourth found during
+  // review (examPrepSuggestion). Below the 2-item trigger, Tier 0 still
+  // silently relocates exactly as it always did -- no banner at all now,
+  // not even for a single moved item (see the mount effect below).
+  // catchUpBanner holds nothing but the count until "Rebuild my week" is
+  // tapped; the actual proposal is computed lazily then, not on every
+  // mount, via computeCatchUpPlan.
+  const [catchUpBanner,setCatchUpBanner]=useState(null); // {count} | null
+  const [catchUpPlan,setCatchUpPlan]=useState(null); // {moves,unplaceable} | null
+  const [catchUpPreviewOpen,setCatchUpPreviewOpen]=useState(false);
+  // Per-item edits made in the preview before confirming, keyed by event
+  // id -- {skip:true} leaves it exactly where it was, {defer:true} is
+  // "Not this week", {date,time} is a manual override from "Move it
+  // myself". Editing is entirely optional; an empty object is the default
+  // one-tap-accept path (Part 3's core design constraint).
+  const [catchUpOverrides,setCatchUpOverrides]=useState({});
+  // The last confirmed rebuild's actual applied moves, so "Undo" can
+  // revert every one of them via undoTier0Move -- same per-item mechanism
+  // a single Tier 0 move already used, just looped over a whole batch.
+  const [catchUpLastConfirmed,setCatchUpLastConfirmed]=useState(null);
+  // Which single move row has its optional actions expanded -- progressive
+  // disclosure inside the preview itself (only one item's Move-it-myself/
+  // Skip/Not-this-week controls show at once), transient UI state that
+  // doesn't need to survive beyond the modal being open.
+  const [catchUpExpandedId,setCatchUpExpandedId]=useState(null);
+  // Same dismissible-banner idiom as above — a RECENT run of misses in one
+  // hour bucket (see detectStrugglingBucket), not just the all-time
+  // reliability aggregate, surfaced once a day via the same gate.
+  // {strugglingBucket,suggestedBucket,...} or null. Never set while
+  // catchUpBanner is pending -- queued to Dashboard instead (mount effect).
   const [strugglingBucketOffer,setStrugglingBucketOffer]=useState(null);
   // Same idiom again, this time for detectPeakHourInsight — an all-time,
   // well-sampled gap between the declared peak bucket and a better-
   // performing one, not a recent miss streak. {currentBucket,suggestedBucket,...} or null.
   const [peakInsightOffer,setPeakInsightOffer]=useState(null);
-  // Same "dismissible banner, not a blocking modal" idiom as rolloverPending
-  // above, for pending tasks whose deadline has already passed — these used
-  // to get wiped from storage the moment the daily gate ran, with no toast,
-  // no undo, and no way to know it happened. Now nothing is deleted until
+  // Same "dismissible banner, not a blocking modal" idiom as above, for
+  // pending tasks whose deadline has already passed — these used to get
+  // wiped from storage the moment the daily gate ran, with no toast, no
+  // undo, and no way to know it happened. Now nothing is deleted until
   // the student explicitly picks "Clear them" on the banner below.
   const [expiredPending,setExpiredPending]=useState([]);
-  // Tier 0 — automatic reflow. Unlike Tier 1, this moves eligible missed
-  // tasks with no click required; tier0Batch is only the after-the-fact
-  // summary the student can see/undo, never a proposal awaiting approval.
-  const [tier0Batch,setTier0Batch]=useState([]);
-  const getTier0SeenIds=()=>new Set(lsGet("tier0BannerSeenIds",[]));
-  const markTier0BannerSeen=(ids)=>{const seen=getTier0SeenIds();ids.forEach(id=>seen.add(id));lsSet("tier0BannerSeenIds",Array.from(seen));};
   // Result of reconcileFixedEventConflicts when new external fixed time
   // lands (work-schedule scan, calendar import, Google sync) -- kept
   // separate from tier0Batch on purpose (see surfaceReconcileResult):
@@ -20706,6 +20745,17 @@ function App() {
     if(shouldOfferProjectCheckIn(task,events))setProjectCheckInTaskId(taskId);
     else if(task.kind==="study block")setExamCheckIn(task);
   };
+  // Queues an insight-style nudge to storage instead of showing it live
+  // while a Catch Me Up recovery banner is pending, per Part 2's "insight
+  // nudges never render while recovery is pending" rule -- covers
+  // strugglingBucketOffer/peakInsightOffer (mount effect below) and
+  // examPrepSuggestion (submitExamCheckIn below), which can each fire
+  // independently and would otherwise recreate the exact multi-prompt
+  // problem Catch Me Up exists to fix. Write-only for now: nothing reads
+  // this yet since Dashboard/Today isn't converted on this branch.
+  const queueInsightNudge=(kind,payload)=>{
+    lsSet("queuedInsightNudges",[...lsGet("queuedInsightNudges",[]),{kind,payload,queuedAt:Date.now()}]);
+  };
   const submitExamCheckIn=(rating)=>{
     if(!examCheckIn)return;
     // Always upgrades this session's own completionLog row with the
@@ -20724,7 +20774,10 @@ function App() {
     const nextEvents=events.map(e=>e.id===examEvent.id?updatedExam:e);
     lsSet("events",nextEvents);
     const suggestion=evaluateExamPrepAdjustment(updatedExam,nextEvents,getSchedulePreferences());
-    if(suggestion)setExamPrepSuggestion(suggestion);
+    if(suggestion){
+      if(catchUpBanner)queueInsightNudge("examPrep",suggestion);
+      else setExamPrepSuggestion(suggestion);
+    }
   };
   // Shared by accept/dismiss below -- interval position (session N of M,
   // days-to-exam) is the field the interval-tolerance constraint on Tier 0
@@ -20764,41 +20817,114 @@ function App() {
     setExamPrepSuggestion(null);
   };
   const fmtRolloverClock=(t)=>{if(!t)return"";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+ap;};
-  // Preview of exactly where each pending task would land — computed once
-  // per rolloverPending change (not re-derived on every render) so what the
-  // student sees in the banner and what "Roll over" actually commits are
-  // always the same batch of slots, never silently recomputed between them.
-  const rolloverPreview=useMemo(()=>{
-    if(rolloverPending.length===0)return[];
-    const today=dayKey();
+  // Opens the rebuild preview -- computes the plan once, lazily, only when
+  // the student actually taps "Rebuild my week" (not on every mount, and
+  // not while the banner is merely sitting there unread). Fresh read from
+  // storage since Tier 0's own commit loop was deliberately skipped while
+  // recovery was pending, so nothing about any missed item has moved yet.
+  const openCatchUpPreview=()=>{
+    const events=lsGet("events",[]);
     const routines=getWeeklyRoutine();
     const prefs=getSchedulePreferences();
-    let working=lsGet("events",[]);
-    const preview=[];
-    rolloverPending.forEach(ev=>{
-      const slot=findLegalSlotOrNull(working,routines,prefs,today,prefs.workStartTime,ev.duration||30,ev.deadline||null);
-      // No legal slot today (e.g. it'd land past its own deadline) -- leave
-      // it out of the preview entirely so "Roll over" can't commit it either;
-      // it stays in rolloverPending, still visibly overdue, instead of
-      // silently landing on top of something or past its own deadline.
-      if(!slot)return;
-      working=working.map(e=>e.id===ev.id?{...e,date:slot.date,time:slot.time}:e);
-      preview.push({id:ev.id,title:ev.title,slot});
-    });
-    return preview;
-  },[rolloverPending]);
-  const applyRollover=()=>{
-    if(rolloverPreview.length===0)return;
-    const all=lsGet("events",[]);
-    const working=all.map(e=>{
-      const p=rolloverPreview.find(x=>x.id===e.id);
-      return p?{...e,date:p.slot.date,time:p.slot.time}:e;
-    });
-    lsSet("events",working);
-    setRolloverToast(rolloverPreview.length+" overdue task"+(rolloverPreview.length!==1?"s":"")+" moved to today.");
-    setTimeout(()=>setRolloverToast(""),3200);
-    setRolloverPending(rolloverPending.filter(ev=>!rolloverPreview.some(p=>p.id===ev.id)));
+    const plan=computeCatchUpPlan(events,routines,prefs,dayKey(),null);
+    setCatchUpPlan(plan);
+    setCatchUpOverrides({});
+    setCatchUpExpandedId(null);
+    setCatchUpPreviewOpen(true);
+    logCatchUpEvent("rebuild_previewed",{moveCount:plan.moves.length,unplaceableCount:plan.unplaceable.length});
   };
+  const closeCatchUpPreview=()=>{
+    setCatchUpPreviewOpen(false);
+    setCatchUpPlan(null);
+    setCatchUpOverrides({});
+    setCatchUpExpandedId(null);
+    logCatchUpEvent("rebuild_cancelled",{});
+  };
+  // Per-item edits -- all optional, never required (Part 3's core design
+  // constraint: one tap accepts everything as proposed). Each just
+  // records an override; nothing commits until confirmCatchUpRebuild.
+  const skipCatchUpItem=(id)=>setCatchUpOverrides(o=>({...o,[id]:{skip:true}}));
+  const deferCatchUpItem=(id)=>setCatchUpOverrides(o=>({...o,[id]:{defer:true}}));
+  const moveCatchUpItemMyself=(id,date,time)=>setCatchUpOverrides(o=>({...o,[id]:{date,time}}));
+  const clearCatchUpOverride=(id)=>setCatchUpOverrides(o=>{const next={...o};delete next[id];return next;});
+  // Applies the confirmed plan in one shot -- per item: skip leaves it
+  // exactly where it was (still overdue, untouched by this rebuild);
+  // defer ("Not this week") pushes it out 7 days with no overdue framing;
+  // a manual override ("Move it myself") lands wherever the student
+  // picked instead of the proposed slot; everything else lands at the
+  // plan's own proposed slot. Every actually-moved item gets the same
+  // movedByStudlin/movedFrom stamp a single Tier 0 move already used, so
+  // undoCatchUpRebuild can revert each one via the existing undoTier0Move
+  // -- a rebuild reuses that mechanism rather than inventing a new one.
+  const confirmCatchUpRebuild=()=>{
+    if(!catchUpPlan)return;
+    const events=lsGet("events",[]);
+    const today=dayKey();
+    const applied=[];
+    let next=events.map(ev=>{
+      const move=catchUpPlan.moves.find(m=>m.id===ev.id);
+      if(!move)return ev;
+      const override=catchUpOverrides[ev.id];
+      if(override&&override.skip)return ev;
+      if(override&&override.defer){
+        const d=new Date(today+"T12:00:00");d.setDate(d.getDate()+7);
+        const to={date:dayKey(d),time:ev.time};
+        applied.push({id:ev.id,from:move.from,to});
+        return {...ev,date:to.date,time:to.time,movedByStudlin:true,movedFrom:move.from,movedAt:Date.now(),movedReason:{type:"deferred"}};
+      }
+      const manual=override&&override.date&&override.time;
+      const to=manual?{date:override.date,time:override.time}:move.to;
+      applied.push({id:ev.id,from:move.from,to});
+      return {...ev,date:to.date,time:to.time,movedByStudlin:true,movedFrom:move.from,movedAt:Date.now(),movedReason:manual?{type:"manualOverride"}:(move.reason||null)};
+    });
+    // Compression side effects (a sibling dropped or shortened to make
+    // room) only apply for moves that weren't skipped.
+    catchUpPlan.moves.forEach(m=>{
+      const override=catchUpOverrides[m.id];
+      if(override&&override.skip)return;
+      if(m.droppedId)next=next.filter(e=>e.id!==m.droppedId);
+      if(m.shortenedId){
+        const shortEv=events.find(e=>e.id===m.shortenedId);
+        if(shortEv)next=next.map(e=>e.id===m.shortenedId?{...e,duration:Math.max(15,Math.round((shortEv.duration||30)*0.75/5)*5)}:e);
+      }
+    });
+    lsSet("events",next);
+    setCatchUpLastConfirmed(applied);
+    setCatchUpBanner(null);
+    setCatchUpPreviewOpen(false);
+    setCatchUpPlan(null);
+    setCatchUpExpandedId(null);
+    const edited=Object.keys(catchUpOverrides).length>0;
+    setCatchUpOverrides({});
+    setDashToast(applied.length+" thing"+(applied.length!==1?"s":"")+" rebuilt.");
+    setTimeout(()=>setDashToast(""),3200);
+    logCatchUpEvent("rebuild_confirmed",{moveCount:applied.length,edited});
+  };
+  const undoCatchUpRebuild=()=>{
+    if(!catchUpLastConfirmed||catchUpLastConfirmed.length===0)return;
+    let blockedCount=0;
+    catchUpLastConfirmed.forEach(m=>{
+      const result=undoTier0Move(m.id);
+      if(result.blocked)blockedCount++;
+    });
+    logCatchUpEvent("rebuild_undone",{count:catchUpLastConfirmed.length,blockedCount});
+    setCatchUpLastConfirmed(null);
+    setDashToast(blockedCount>0?blockedCount+" couldn't be undone — something else is using that time now.":"Rebuild undone.");
+    setTimeout(()=>setDashToast(""),3200);
+  };
+  // One honest sentence at the top of the preview when the rebuilt plan is
+  // tight or something genuinely didn't fit -- never silently overloads a
+  // day. Null (nothing shown) when the plan is comfortable.
+  const catchUpHonesty=(()=>{
+    if(!catchUpPlan)return null;
+    if(catchUpPlan.unplaceable.length>0){
+      return catchUpPlan.unplaceable.length+" thing"+(catchUpPlan.unplaceable.length!==1?"s":"")+" couldn't fit this week — consider dropping \""+catchUpPlan.unplaceable[0].title+"\".";
+    }
+    if(catchUpPlan.moves.some(m=>m.droppedId||m.shortenedId)){
+      return "This works, but it's tight — a couple of exam-prep sessions were shortened or dropped to make room.";
+    }
+    return null;
+  })();
   const clearExpiredPending=()=>{
     if(expiredPending.length===0)return;
     const all=lsGet("events",[]);
@@ -21330,11 +21456,10 @@ function App() {
     // Ask before permanently clearing a pending task whose deadline has
     // already passed, instead of silently deleting it the moment this gate
     // runs (it used to wipe these out with no toast, no undo, and no record
-    // it ever happened). isTier0Missed (deadline<todayKey check) and the
-    // rollover filter below already independently ignore an expired-deadline
-    // pending item on their own, so leaving it in `working` for now is
-    // safe — it just stays visible until the student decides via the
-    // banner rendered near rolloverPending's own.
+    // it ever happened). isTier0Missed and computeCatchUpMissedItems below
+    // already independently ignore an expired-deadline pending item on
+    // their own, so leaving it in `working` for now is safe — it just
+    // stays visible until the student decides via its own banner.
     const expired=evs.filter(ev=>ev.status==="pending"&&ev.deadline&&ev.deadline<today);
     if(expired.length>0)setExpiredPending(expired);
     // Completion-reliability signal — logged regardless of tier0Enabled so
@@ -21358,25 +21483,45 @@ function App() {
       });
       lsSet("missedLoggedKeys",Array.from(missedLoggedKeys));
     }
+    // Catch Me Up's trigger: the SAME unified missed-item set Tier 0/Tier 1
+    // used to compute separately, counted once, up front. Below 2 items,
+    // everything below behaves exactly as it always did (Tier 0 commits
+    // silently) except NO banner shows at all now, not even for a single
+    // moved item -- "no interruption for a single missed block" per the
+    // design brief. At 2+, Tier 0's immediate-commit loop is skipped
+    // entirely: nothing about a missed item changes until the student
+    // taps "Rebuild my week" and confirms the preview (Part 3). The
+    // insight nudges below are gated on the same count so they can't fire
+    // on top of (or right after dismissing) the recovery banner.
+    const missedItems=computeCatchUpMissedItems(evs,today);
+    const recoveryPending=missedItems.length>=2;
     // Proactive nudge — a RECENT run of misses in one bucket, checked right
     // after the log write above so today's data (if any landed here) is
     // already included. Independent of tier0Enabled below: this is about
     // the student's own declared preference, not whether Tier 0 itself is on.
     const strugglingBucket=detectStrugglingBucket(getSchedulePreferences());
-    if(strugglingBucket)setStrugglingBucketOffer(strugglingBucket);
+    if(strugglingBucket){
+      if(recoveryPending)queueInsightNudge("strugglingBucket",strugglingBucket);
+      else setStrugglingBucketOffer(strugglingBucket);
+    }
     // Same once-a-day gate, for the complementary all-time signal. Both
     // banners share the same fixed bottom-left corner, so only surface
     // this one on a day the struggling-bucket nudge isn't already using
     // it — one nudge at a time, not a stack fighting for the same spot.
     const peakInsight=strugglingBucket?null:detectPeakHourInsight(getSchedulePreferences());
-    if(peakInsight)setPeakInsightOffer(peakInsight);
+    if(peakInsight){
+      if(recoveryPending)queueInsightNudge("peakInsight",peakInsight);
+      else setPeakInsightOffer(peakInsight);
+    }
     // Tier 0 — the trigger is silent (no click needed to move an eligible
     // missed task), but the result never is: every move gets recorded into
-    // movedBatch so the banner below and the per-task badge can always show
-    // the student what changed and offer a one-tap undo.
+    // movedBatch so the per-task undo icon can always show what changed.
+    // Skipped entirely once recoveryPending: holding everything uncommitted
+    // until the rebuild preview is confirmed is the whole point of Catch
+    // Me Up Part 3 ("does NOT apply immediately").
     let working=evs;
     const movedBatch=[];
-    if(lsGet("tier0Enabled",true)){
+    if(!recoveryPending&&lsGet("tier0Enabled",true)){
       const routines=getWeeklyRoutine();
       const prefs=getSchedulePreferences();
       const tomorrowKey=(()=>{const d=new Date(today+"T12:00:00");d.setDate(d.getDate()+1);return dayKey(d);})();
@@ -21388,7 +21533,7 @@ function App() {
         // stamp as the primary move (see findSlotWithEviction), but only
         // the primary move below ever used to get logged into movedBatch —
         // diffing against this snapshot surfaces evictions into the same
-        // banner/undo batch instead of them moving with zero visibility.
+        // undo mechanism instead of them moving with zero visibility.
         const beforeSnapshot=new Map(working.map(e=>[e.id,{date:e.date,time:e.time}]));
         // A review/prep session whose linked exam or assignment
         // (dueEventId) is due TODAY at a time that's already passed gets
@@ -21454,28 +21599,24 @@ function App() {
     const habitEvents=materializeHabitsForDate(today,working);
     if(habitEvents.length)working=working.concat(habitEvents);
     if(working!==evs)lsSet("events",working);
-    if(movedBatch.length>0){
-      const seen=getTier0SeenIds();
-      const unseen=movedBatch.filter(m=>!seen.has(m.id));
-      if(unseen.length>0)setTier0Batch(unseen);
+    // Part 4 instrumentation -- "the number that matters: of users who
+    // miss blocks, what fraction come back and rebuild vs. disappear"
+    // needs the denominator captured here regardless of whether the 2-item
+    // banner threshold is met, not just the numerator further down.
+    if(missedItems.length>0){
+      logCatchUpEvent("missed_blocks_detected",{count:missedItems.length});
+      logCatchUpEvent("user_returned_after_missing_blocks",{count:missedItems.length});
     }
-    // Detect yesterday-or-earlier pending tasks and prompt — the actual
-    // move (via the same conflict-aware gap-finder AI-arrange/extension-
-    // scheduling use, instead of the old naive back-to-back stacking) only
-    // runs when the student clicks "Roll over" on the prompt below. Tasks
-    // Tier 0 already handled above are excluded — Tier 1 is now only the
-    // fallback for tasks Tier 0 couldn't legally place.
-    const movedIds=new Set(movedBatch.map(m=>m.id));
-    // Checklist items are plain to-dos with no inherent time (see the
-    // Checklist card comment in Dashboard) — same exclusion isTier0Missed
-    // already applies above, so a rollover from yesterday never assigns
-    // them a time slot the way a real study block/exam gets. isFixedItem
-    // is the same "never move" predicate isTier0Missed uses -- this used
-    // to have no kind exclusion at all, so a stale pending exam/class
-    // could be offered (and actually relocated on confirm) by "Roll
-    // over," the same bug class Tier 0 was already immune to.
-    const od=working.filter(ev=>ev.status==="pending"&&!ev.checklist&&!isFixedItem(ev)&&ev.date<today&&!(ev.deadline&&ev.deadline<today)&&!movedIds.has(ev.id));
-    if(od.length>0)setRolloverPending(od);
+    // recoveryPending is the ONLY thing that decides whether the banner
+    // shows -- movedBatch is empty whenever it's true (the loop above was
+    // skipped), so there's nothing left to reconcile against a "seen ids"
+    // set the way the old tier0Batch banner needed. Every one of
+    // missedItems is still exactly as missed as it was; the banner names
+    // the count, "Rebuild my week" computes the actual plan on tap.
+    if(recoveryPending){
+      setCatchUpBanner({count:missedItems.length});
+      logCatchUpEvent("recovery_banner_shown",{count:missedItems.length});
+    }
   },[]);
   const navSections=[
     {label:"Home",items:[
@@ -21663,7 +21804,7 @@ function App() {
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
           {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} onTaskCompleted={handleTaskCompleted} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} />:
-           active==="calendar"?<CalendarTab onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} />:
+           active==="calendar"?<CalendarTab onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} />:
            active==="notes"?<Notes setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="lectures"?<Lectures setActive={setActive} setPricingOpen={setPricingOpen} />:
@@ -21902,32 +22043,83 @@ function App() {
         </div>
       )}
 
-      {tier0Batch.length>0&&(
-        <div style={{position:"fixed",top:76,left:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
-          <div style={{fontSize:13,color:T.white,marginBottom:10}}>
-            <strong style={{color:T.lime}}>{tier0Batch.length} task{tier0Batch.length!==1?"s":""}</strong> auto-moved by Studlin — you missed the original time:
+      {/* Catch Me Up -- the ONE recovery surface (Part 2). Accent tint,
+          never red, never a shame badge -- this replaces what used to be
+          up to four independent panels (Tier 0's auto-move banner, Tier
+          1's rollover panel, an insight nudge, and examPrepSuggestion)
+          all potentially firing on the same app-open. Below the 2-item
+          trigger there's nothing here at all -- Tier 0 still relocates a
+          single missed block silently, same as always, no interruption. */}
+      {catchUpBanner&&(()=>{
+        const tokens=StudlinTokens(T);
+        return (
+          <div style={{position:"fixed",top:76,left:"50%",transform:"translateX(-50%)",zIndex:999,width:"min(480px, calc(100vw - 40px))",padding:"16px 20px",borderRadius:tokens.radius.card,background:tokens.color.accentSubtle,border:`1px solid ${tokens.color.accent}55`,boxShadow:"0 8px 24px rgba(0,0,0,0.25)",animation:"studlinPop 0.2s ease",display:"flex",alignItems:"center",gap:16}}>
+            <div style={{flex:1,fontSize:tokens.type.size.itemTitle,color:tokens.color.textPrimary}}>
+              {catchUpBanner.count} thing{catchUpBanner.count!==1?"s":""} from yesterday didn't get done.
+            </div>
+            <Btn onClick={openCatchUpPreview} style={{flexShrink:0}}>Rebuild my week</Btn>
           </div>
-          <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12,maxHeight:160,overflowY:"auto"}}>
-            {tier0Batch.map(m=>(
-              <div key={m.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,fontSize:12,padding:"6px 9px",background:T.card2,borderRadius:8}}>
-                <span style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.title}</span>
-                <span style={{color:T.muted,flexShrink:0,fontFamily:T.mono,fontSize:11}}>→ {m.to.date===dayKey()?"Today":m.to.date} {fmtRolloverClock(m.to.time)}</span>
-                <button onClick={()=>{
-                  const result=undoTier0Move(m.id);
-                  if(result.blocked){
-                    setRolloverToast("Can't undo \""+m.title+"\" — something else is already using that time.");
-                    setTimeout(()=>setRolloverToast(""),3200);
-                    return;
-                  }
-                  markTier0BannerSeen([m.id]);
-                  setTier0Batch(b=>b.filter(x=>x.id!==m.id));
-                }} style={{background:"none",border:"none",color:T.lime,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",flexShrink:0,padding:0}}>Undo</button>
-              </div>
-            ))}
+        );
+      })()}
+      {/* Rebuild preview -- Part 3. Does NOT apply immediately; one tap
+          ("Looks good") accepts everything exactly as proposed, or any
+          item can be expanded for optional Move-it-myself/Skip/Not-this-
+          week controls. Editing is available, never demanded. */}
+      <Modal open={catchUpPreviewOpen} onClose={closeCatchUpPreview} title="Rebuild your week"
+        sub={catchUpPlan?(catchUpPlan.moves.length+" thing"+(catchUpPlan.moves.length!==1?"s":"")+" moved."+(catchUpHonesty?" "+catchUpHonesty:"")):""}
+        width={640}
+        footer={<>
+          <div style={{flex:1,fontSize:11.5,color:T.muted}}>Nothing changes until you accept.</div>
+          <Btn variant="subtle" onClick={closeCatchUpPreview}>Cancel</Btn>
+          <Btn onClick={confirmCatchUpRebuild}>Looks good</Btn>
+        </>}>
+        {catchUpPlan&&(
+          <div style={{display:"flex",flexDirection:"column",maxHeight:420,overflowY:"auto"}}>
+            {catchUpPlan.moves.map(m=>{
+              const override=catchUpOverrides[m.id]||{};
+              const expanded=catchUpExpandedId===m.id;
+              const effectiveTo=override.date&&override.time?{date:override.date,time:override.time}:m.to;
+              const statusLine=override.skip
+                ?"Won't move — left where it was."
+                :override.defer
+                  ?"Deferred to next week."
+                  :override.date&&override.time
+                    ?"You picked this time."
+                    :fmtPlacementReason(m.reason,m.to.time);
+              return (
+                <div key={m.id} style={{padding:"12px 4px",borderBottom:`1px solid ${T.border}`}}>
+                  <div onClick={()=>setCatchUpExpandedId(id=>id===m.id?null:m.id)} style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,cursor:"pointer"}}>
+                    <div style={{minWidth:0}}>
+                      <div style={{fontSize:14,fontWeight:600,color:T.text}}>{m.title}</div>
+                      {statusLine&&<div style={{fontSize:12,color:T.muted,marginTop:2}}>{statusLine}</div>}
+                    </div>
+                    {!override.skip&&(
+                      <div style={{flexShrink:0,fontSize:12,color:T.muted,textAlign:"right",whiteSpace:"nowrap"}}>
+                        {m.from.date===dayKey()?"Today":dayOfWeekLabel(m.from.date).slice(0,3)} {fmtRolloverClock(m.from.time)} → {effectiveTo.date===dayKey()?"Today":dayOfWeekLabel(effectiveTo.date).slice(0,3)} {fmtRolloverClock(effectiveTo.time)}
+                      </div>
+                    )}
+                  </div>
+                  {expanded&&(
+                    <div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap"}}>
+                      <BtnSm variant="ghost" onClick={()=>setCatchUpExpandedId("moving-"+m.id)}>Move it myself</BtnSm>
+                      <BtnSm variant="ghost" onClick={()=>{skipCatchUpItem(m.id);setCatchUpExpandedId(null);}}>Skip</BtnSm>
+                      <BtnSm variant="ghost" onClick={()=>{deferCatchUpItem(m.id);setCatchUpExpandedId(null);}}>Not this week</BtnSm>
+                      {(override.skip||override.defer||override.date)&&<BtnSm variant="ghost" onClick={()=>{clearCatchUpOverride(m.id);setCatchUpExpandedId(null);}}>Undo edit</BtnSm>}
+                    </div>
+                  )}
+                  {catchUpExpandedId==="moving-"+m.id&&(
+                    <div style={{display:"flex",gap:8,marginTop:10,alignItems:"center",flexWrap:"wrap"}}>
+                      <Input type="date" min={dayKey()} value={effectiveTo.date} onChange={e=>moveCatchUpItemMyself(m.id,e.target.value,effectiveTo.time)} style={{width:150}} />
+                      <TimeInput value={effectiveTo.time} onChange={t=>moveCatchUpItemMyself(m.id,effectiveTo.date,t)} />
+                      <BtnSm onClick={()=>setCatchUpExpandedId(null)}>Save</BtnSm>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
-          <Btn variant="ghost" onClick={()=>{markTier0BannerSeen(tier0Batch.map(m=>m.id));setTier0Batch([]);}} style={{padding:"7px 14px",fontSize:12,width:"100%",justifyContent:"center"}}>Dismiss</Btn>
-        </div>
-      )}
+        )}
+      </Modal>
       {scheduleChangeAlerts.length>0&&(()=>{
         const movedCount=scheduleChangeAlerts.filter(a=>a.kind==="moved").length;
         const attnCount=scheduleChangeAlerts.filter(a=>a.kind==="attention").length;
@@ -21949,8 +22141,8 @@ function App() {
                 <button onClick={()=>{
                   const result=undoTier0Move(a.id);
                   if(result.blocked){
-                    setRolloverToast("Can't undo \""+a.title+"\" — something else is already using that time.");
-                    setTimeout(()=>setRolloverToast(""),3200);
+                    setDashToast("Can't undo \""+a.title+"\" — something else is already using that time.");
+                    setTimeout(()=>setDashToast(""),3200);
                     return;
                   }
                   setScheduleChangeAlerts(b=>b.filter((x,xi)=>xi!==i));
@@ -22044,25 +22236,6 @@ function App() {
           </div>
         </div>
       )}
-      {rolloverPending.length>0&&(
-        <div style={{position:"fixed",top:76,right:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
-          <div style={{fontSize:13,color:T.white,marginBottom:10}}>
-            <strong style={{color:T.amber}}>{rolloverPending.length} unfinished task{rolloverPending.length!==1?"s":""}</strong> from yesterday — here's where they'd go:
-          </div>
-          <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12,maxHeight:160,overflowY:"auto"}}>
-            {rolloverPreview.map(p=>(
-              <div key={p.id} style={{display:"flex",justifyContent:"space-between",gap:10,fontSize:12,padding:"6px 9px",background:T.card2,borderRadius:8}}>
-                <span style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.title}</span>
-                <span style={{color:T.muted,flexShrink:0,fontFamily:T.mono}}>{p.slot.date===dayKey()?"Today":p.slot.date} {fmtRolloverClock(p.slot.time)}</span>
-              </div>
-            ))}
-          </div>
-          <div style={{display:"flex",gap:8}}>
-            <Btn onClick={applyRollover} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Roll over</Btn>
-            <Btn variant="ghost" onClick={()=>setRolloverPending([])} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Dismiss</Btn>
-          </div>
-        </div>
-      )}
       {strugglingBucketOffer&&(
         <div style={{position:"fixed",bottom:20,left:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           <div style={{fontSize:13,color:T.white,marginBottom:10,lineHeight:1.5}}>
@@ -22099,11 +22272,6 @@ function App() {
             <Btn variant="danger" onClick={clearExpiredPending} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Clear them</Btn>
             <Btn variant="ghost" onClick={()=>setExpiredPending([])} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Keep them</Btn>
           </div>
-        </div>
-      )}
-      {rolloverToast&&(
-        <div style={{position:"fixed",top:76,right:20,zIndex:999,padding:"11px 18px",borderRadius:10,background:T.teal,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
-          {rolloverToast}
         </div>
       )}
       {headsUpEvent&&(
