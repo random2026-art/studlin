@@ -5860,6 +5860,11 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   const [prepMaterialsOpen,setPrepMaterialsOpen]=useState(false);
   const [expandedSessionId,setExpandedSessionId]=useState(null);
   const [examSearch,setExamSearch]=useState("");
+  // Part A: exam list rows expand one at a time (Study now/View plan),
+  // defaulting to the nearest exam without requiring a click -- undefined
+  // means "use the default (nearest)"; once the student taps any row this
+  // becomes an explicit id (or null, fully collapsed).
+  const [expandedListExamId,setExpandedListExamId]=useState(undefined);
   // Study/Edit/Send/Add Deck used to hard-navigate to the standalone
   // Flashcards page (setActive("flashcards")), fully unmounting Studlin Prep
   // and leaving no way back except clicking a different sidebar item --
@@ -6414,36 +6419,74 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
             {visibleExams.length===0&&(
               <div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"14px 0"}}>No exams match "{examSearch.trim()}".</div>
             )}
-            {visibleExams.map(ex=>{
-              const readiness=computeExamReadiness(ex,lsGet("events",[]),dayKey());
-              const deck=allDecks.find(d=>deckLinkedToExam(d,ex.id));
-              const pes=allPracticeExams.filter(p=>p.examEventId===ex.id);
-              const stateColor=readiness?.state==="behind"||readiness?.state==="at-risk"?T.red:readiness?.state==="on-track"?T.lime:T.muted;
-              return(
-                <div key={ex.id} onClick={()=>{
-                  setSelectedExamId(ex.id);
-                  // sourceMaterials/referenceLinks (arrays) are the current
-                  // shape -- sourceMaterial/referenceLink (singular strings)
-                  // are what an exam committed before this became a list
-                  // still carries, so those stay as the fallback rather than
-                  // silently losing material a student already added.
-                  setFileTexts(ex.sourceMaterials&&ex.sourceMaterials.length>0?ex.sourceMaterials:(ex.sourceMaterial?[{name:"From your syllabus",text:ex.sourceMaterial}]:[]));
-                  setGenMsg("");
-                  setMaterialLinks(ex.referenceLinks&&ex.referenceLinks.length>0?normalizeLinks(ex.referenceLinks):(ex.referenceLink?[{label:"",url:ex.referenceLink}]:[]));
-                  setLinkDraft("");setLinkLabelDraft("");
-                  setPasteMode(false);setPasteText("");
-                  setSessionCountDraft(defaultSessionCountFor(ex.examWeight));
-                  setMaterialAddOpen(false);setMoreGenOptionsOpen(false);
-                  setPrepMaterialsOpen(false);setExpandedSessionId(null);
-                }} style={{padding:"14px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,cursor:"pointer",display:"flex",alignItems:"center",gap:14}}>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:14,fontWeight:700,color:T.white}}>{ex.title}</div>
-                    <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{ex.subject} · {ex.date}{deck?" · deck linked":""}{pes.length>0?" · "+pes.length+" practice exam"+(pes.length!==1?"s":""):""}</div>
+            {(()=>{
+              // undefined = default to nearest exam (visibleExams[0]) with
+              // no click needed; otherwise whatever the student last tapped
+              // (an explicit id, or null if they collapsed it).
+              const effectiveExpandedId=expandedListExamId===undefined?(visibleExams[0]&&visibleExams[0].id):expandedListExamId;
+              const viewPlan=(ex)=>{
+                setSelectedExamId(ex.id);
+                // sourceMaterials/referenceLinks (arrays) are the current
+                // shape -- sourceMaterial/referenceLink (singular strings)
+                // are what an exam committed before this became a list
+                // still carries, so those stay as the fallback rather than
+                // silently losing material a student already added.
+                setFileTexts(ex.sourceMaterials&&ex.sourceMaterials.length>0?ex.sourceMaterials:(ex.sourceMaterial?[{name:"From your syllabus",text:ex.sourceMaterial}]:[]));
+                setGenMsg("");
+                setMaterialLinks(ex.referenceLinks&&ex.referenceLinks.length>0?normalizeLinks(ex.referenceLinks):(ex.referenceLink?[{label:"",url:ex.referenceLink}]:[]));
+                setLinkDraft("");setLinkLabelDraft("");
+                setPasteMode(false);setPasteText("");
+                setSessionCountDraft(defaultSessionCountFor(ex.examWeight));
+                setMaterialAddOpen(false);setMoreGenOptionsOpen(false);
+                setPrepMaterialsOpen(false);setExpandedSessionId(null);
+              };
+              // Jump straight into the most obvious next action: the linked
+              // deck if one exists, else the next pending session via the
+              // same Lock-In Timer bridge the detail timeline's own Start
+              // button uses, else just open the plan -- nothing to jump
+              // straight into yet.
+              const studyNow=(ex)=>{
+                const deck=allDecks.find(d=>deckLinkedToExam(d,ex.id));
+                if(deck){lsSet("openDeckId",deck.id);lsSet("openDeckAction","study");setFlashcardsOverlay(true);return;}
+                const nextSession=lsGet("events",[]).filter(e=>e.dueEventId===ex.id&&e.status!=="done").sort((a,b)=>a.date<b.date?-1:1)[0];
+                if(nextSession&&window._setTimerTask){window._setTimerTask(nextSession);return;}
+                viewPlan(ex);
+              };
+              return visibleExams.map(ex=>{
+                const deck=allDecks.find(d=>deckLinkedToExam(d,ex.id));
+                const examSessionsForEx=lsGet("events",[]).filter(e=>e.dueEventId===ex.id);
+                const pendingSessionsForEx=examSessionsForEx.filter(e=>e.status!=="done");
+                const cardsDueForEx=deck?(deck.cards||[]).filter(c=>!c.dueAt||c.dueAt<=Date.now()).length:0;
+                const today=dayKey();
+                const daysUntil=Math.round((new Date(ex.date+"T12:00:00")-new Date(today+"T12:00:00"))/86400000);
+                const daysLabel=daysUntil<=0?"today":daysUntil===1?"1 day":daysUntil+" days";
+                const metaParts=[ex.subject];
+                if(examSessionsForEx.length===0)metaParts.push("no study plan yet");
+                else{
+                  metaParts.push(pendingSessionsForEx.length+" session"+(pendingSessionsForEx.length!==1?"s":"")+" left");
+                  if(deck)metaParts.push(cardsDueForEx+" card"+(cardsDueForEx!==1?"s":"")+" due");
+                }
+                const isExpanded=effectiveExpandedId===ex.id;
+                return(
+                <div key={ex.id} onClick={()=>setExpandedListExamId(effectiveExpandedId===ex.id?null:ex.id)}
+                  style={{padding:"14px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,cursor:"pointer"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:14}}>
+                    <div style={{fontSize:22,fontWeight:800,color:T.white,flexShrink:0,letterSpacing:"-0.01em"}}>{daysLabel}</div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:14,fontWeight:700,color:T.white}}>{ex.title}</div>
+                      <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{metaParts.join(" · ")}</div>
+                    </div>
                   </div>
-                  {readiness&&<span style={{fontSize:10.5,fontWeight:700,color:stateColor,background:stateColor+"14",border:`1px solid ${stateColor}44`,borderRadius:99,padding:"4px 10px",flexShrink:0}}>{readiness.state.toUpperCase().replace("-"," ")}</span>}
+                  {isExpanded&&(
+                    <div style={{display:"flex",gap:8,marginTop:12}}>
+                      <BtnSm onClick={(e)=>{e.stopPropagation();studyNow(ex);}}>Study now</BtnSm>
+                      <BtnSm variant="ghost" onClick={(e)=>{e.stopPropagation();viewPlan(ex);}}>View plan</BtnSm>
+                    </div>
+                  )}
                 </div>
-              );
-            })}
+                );
+              });
+            })()}
           </div>
       )}
 
