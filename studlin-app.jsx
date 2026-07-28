@@ -1934,6 +1934,130 @@ function findReliableSlotFor(events,routines,prefs,desiredDate,desiredTime,durat
   }
   return {date:win.date,time:win.time,reason};
 }
+// ── Catch Me Up ──────────────────────────────────────────────────────────
+// Unified "missed, needs rescheduling" predicate -- supersedes the old
+// split between Tier 0 (auto-move) and Tier 1 (rollover prompt): both were
+// ultimately the same underlying set of items (pending, not fixed, dated
+// before today), just placed via two disconnected fallback strategies.
+// Same shape as isTier0Missed minus its !ev.time requirement, so a
+// timeless overdue task is still included the way the old Tier 1 filter
+// (and thus this replacement for it) always did.
+function computeCatchUpMissedItems(events,today){
+  return events.filter(ev=>
+    ev.status==="pending"&&
+    !ev.checklist&&
+    !isFixedItem(ev)&&
+    !(ev.kind==="deadline"&&!ev.duration)&&
+    ev.date<today&&
+    !(ev.deadline&&ev.deadline<today)
+  );
+}
+const CATCHUP_EXAM_URGENT_DAYS=7; // an exam this close or closer makes its prep sessions time-sensitive
+function dayOfWeekLabel(dateKey){return new Date(dateKey+"T12:00:00").toLocaleDateString("en-US",{weekday:"long"});}
+function ordinalDay(dateKey){
+  const day=+dateKey.split("-")[2];
+  const suffix=(day%10===1&&day!==11)?"st":(day%10===2&&day!==12)?"nd":(day%10===3&&day!==13)?"rd":"th";
+  return "the "+day+suffix;
+}
+// Composes an honest, specific reason for one Catch Me Up move -- never
+// generic filler, per the design brief. Priority order (first match
+// wins): an exam-linked prep session close to its exam explains itself in
+// interval-preservation terms (how many sessions remain before it);
+// far-out from its exam, it explains that there's slack instead; a day
+// that was genuinely full (dayHasRoomFor) combined with a real deadline
+// gets a compound reason; either alone gets its own single-clause one;
+// otherwise no reason is claimed rather than inventing one.
+function catchUpReasonFor(ev,newDate,working,routines,prefs,today){
+  if(ev.isExamPrepSession&&ev.dueEventId){
+    const exam=working.find(e=>e.id===ev.dueEventId);
+    if(exam){
+      const daysUntil=Math.round((new Date(exam.date+"T12:00:00")-new Date(newDate+"T12:00:00"))/86400000);
+      if(daysUntil>=0&&daysUntil<=CATCHUP_EXAM_URGENT_DAYS){
+        const remaining=working.filter(e=>e.dueEventId===exam.id&&e.isExamPrepSession&&e.status==="pending").length;
+        return {type:"intervalPreserve",examTitle:exam.title,examDay:dayOfWeekLabel(exam.date),sessionsRemaining:remaining};
+      }
+      return {type:"examSlack",examTitle:exam.title,examDateOrdinal:ordinalDay(exam.date)};
+    }
+  }
+  const dur=ev.duration||30;
+  const dayFull=!dayHasRoomFor(working,routines,prefs,today,dur,ev.time||prefs.workStartTime);
+  if(dayFull&&ev.deadline)return {type:"dayFullDeadline",fullDay:dayOfWeekLabel(today),deadlineDay:dayOfWeekLabel(ev.deadline)};
+  if(dayFull)return {type:"dayFull",fullDay:dayOfWeekLabel(today)};
+  if(ev.deadline)return {type:"deadlineDriven",deadlineDay:dayOfWeekLabel(ev.deadline)};
+  return null;
+}
+// Only engages once plain placement has already failed for an exam-linked
+// prep session -- never preemptively shortens or drops anything that
+// would have fit as-is (Catch Me Up's "preserve total study minutes where
+// possible" rule). Compresses session COUNT before session LENGTH: first
+// tries dropping the single remaining prep session farthest from the exam
+// (least time-sensitive for spaced review), then retries placement; only
+// if that's still not enough does it shorten the closest remaining
+// session's duration by 25% and retry. Never proposes a slot on or after
+// the exam's own date either way. `difficulty` is accepted but unused --
+// no exam-difficulty calibration exists yet (lands with the study-plan
+// opt-in work) -- so a future caller can pass a real value here and
+// change how aggressively this compresses without this function's shape
+// changing.
+function compressExamPrepForRoom(ev,working,routines,prefs,today,difficulty){
+  if(!(ev.isExamPrepSession&&ev.dueEventId))return null;
+  const exam=working.find(e=>e.id===ev.dueEventId);
+  if(!exam)return null;
+  const siblings=working.filter(e=>e.dueEventId===exam.id&&e.isExamPrepSession&&e.status==="pending"&&e.id!==ev.id).sort((a,b)=>a.date<b.date?-1:1);
+  if(siblings.length===0)return null;
+  // Farthest-from-exam sibling dropped first (compress count).
+  const dropCandidate=siblings[0];
+  let attempt=working.filter(e=>e.id!==dropCandidate.id);
+  let slot=findLegalSlotOrNull(attempt,routines,prefs,today,ev.time||prefs.workStartTime,ev.duration||30,exam.date);
+  if(slot)return {working:attempt,slot,droppedId:dropCandidate.id,shortenedId:null};
+  // Compress length next -- shorten the sibling closest to the exam
+  // (still keeping it, just leaner) rather than dropping a second one.
+  const shortenCandidate=siblings[siblings.length-1];
+  const shorterDuration=Math.max(15,Math.round((shortenCandidate.duration||30)*0.75/5)*5);
+  attempt=working.map(e=>e.id===shortenCandidate.id?{...e,duration:shorterDuration}:e);
+  slot=findLegalSlotOrNull(attempt,routines,prefs,today,ev.time||prefs.workStartTime,ev.duration||30,exam.date);
+  if(slot)return {working:attempt,slot,droppedId:null,shortenedId:shortenCandidate.id};
+  return null;
+}
+// The engine behind "Rebuild my week" -- computes one coherent, NOT-YET-
+// COMMITTED proposal for every currently missed item. Tries findTier0Slot
+// first (reliability-aware), falls back to findLegalSlotOrNull (the same
+// two-strategy hierarchy Tier 0/Tier 1 used separately before), and falls
+// back once more to compressExamPrepForRoom before giving up on an item
+// entirely. Never mutates events -- the caller (the preview UI) decides
+// whether/when to actually commit the result.
+function computeCatchUpPlan(events,routines,prefs,today,difficulty){
+  const missed=computeCatchUpMissedItems(events,today);
+  let working=events;
+  const moves=[];
+  const unplaceable=[];
+  missed.forEach(ev=>{
+    const t0=findTier0Slot({...ev},working,routines,prefs,today);
+    if(t0){
+      working=t0.events.map(e=>e.id===ev.id?{...e,date:t0.placement.date,time:t0.placement.time}:e);
+      moves.push({id:ev.id,title:ev.title,kind:ev.kind,from:{date:ev.date,time:ev.time},to:t0.placement,
+        reason:t0.reason||catchUpReasonFor(ev,t0.placement.date,working,routines,prefs,today)});
+      return;
+    }
+    const legal=findLegalSlotOrNull(working,routines,prefs,today,ev.time||prefs.workStartTime,ev.duration||30,ev.deadline||null);
+    if(legal){
+      working=working.map(e=>e.id===ev.id?{...e,date:legal.date,time:legal.time}:e);
+      moves.push({id:ev.id,title:ev.title,kind:ev.kind,from:{date:ev.date,time:ev.time},to:legal,
+        reason:catchUpReasonFor(ev,legal.date,working,routines,prefs,today)});
+      return;
+    }
+    const compressed=compressExamPrepForRoom(ev,working,routines,prefs,today,difficulty);
+    if(compressed){
+      working=compressed.working.map(e=>e.id===ev.id?{...e,date:compressed.slot.date,time:compressed.slot.time}:e);
+      moves.push({id:ev.id,title:ev.title,kind:ev.kind,from:{date:ev.date,time:ev.time},to:compressed.slot,
+        reason:catchUpReasonFor(ev,compressed.slot.date,working,routines,prefs,today),
+        droppedId:compressed.droppedId,shortenedId:compressed.shortenedId});
+      return;
+    }
+    unplaceable.push({id:ev.id,title:ev.title,kind:ev.kind});
+  });
+  return {moves,unplaceable};
+}
 // Restores a Tier0-moved task to its pre-move {date,time} and strips the
 // marker fields. The original slot was always legal at move time, but not
 // necessarily still free now — another Tier 0 move, a manual add, or an
@@ -2168,6 +2292,14 @@ function fmtPlacementReason(reason,timeStr){
   // banner copy: nothing here was ever missed, it got bumped by something
   // new that landed on top of it.
   if(reason.type==="displaced")return "Moved to make room for "+reason.causedByTitle+".";
+  // Catch Me Up's rebuild-preview reason types (catchUpReasonFor) --
+  // deliberately specific to the actual scheduling decision, never
+  // generic filler.
+  if(reason.type==="intervalPreserve")return reason.examTitle+" is "+reason.examDay+" — moved up to keep "+reason.sessionsRemaining+" session"+(reason.sessionsRemaining!==1?"s":"")+" before it.";
+  if(reason.type==="examSlack")return reason.examTitle+" isn't until "+reason.examDateOrdinal+" — this one can wait.";
+  if(reason.type==="dayFullDeadline")return reason.fullDay+" was full. Moved before its "+reason.deadlineDay+" deadline.";
+  if(reason.type==="dayFull")return "You had no free time "+reason.fullDay+".";
+  if(reason.type==="deadlineDriven")return "Moved before its "+reason.deadlineDay+" deadline.";
   return "";
 }
 // A Tier 0 move's reasoning was already computed by findTier0Slot's own

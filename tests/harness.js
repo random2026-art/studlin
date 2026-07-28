@@ -105,7 +105,9 @@ function loadStudlinModule(options) {
     "isLeadInFixed","isFixedItem","commitSyllabusEvents","buildSyllabusEventBatch",
     "buildPendingSchedulePreview","proposeProjectPhases","proposeOutline","proposeSessionFocuses",
     "attachSessionFocusesToSyllabusExams",
-    "isPhaseDecompositionCandidate","finalizeExtractedText","MATERIAL_TEXT_CAP"];
+    "isPhaseDecompositionCandidate","finalizeExtractedText","MATERIAL_TEXT_CAP",
+    "computeCatchUpMissedItems","computeCatchUpPlan","catchUpReasonFor",
+    "compressExamPrepForRoom","dayOfWeekLabel","ordinalDay","CATCHUP_EXAM_URGENT_DAYS"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }
