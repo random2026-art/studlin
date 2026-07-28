@@ -174,3 +174,41 @@ describe("logCatchUpEvent", () => {
     assert.doesNotThrow(() => logCatchUpEvent("rebuild_confirmed", { moveCount: 3 }));
   });
 });
+
+describe("computeCatchUpPlan never hits findFixedEventSlot's midnight-scan fallback", () => {
+  // findFixedEventSlot's fallback (see slot-finders-characterization.test.js)
+  // scans from midnight and can return an absurd time like 00:00 -- real
+  // concern for a rebuild preview, since a proposed 3am study session would
+  // look broken and kill trust in the feature. Confirmed by code reading
+  // that computeCatchUpPlan's call graph (findTier0Slot -> findSlotWithEviction
+  // -> findLegalSlotOrNull -> findOpenSlotFor, plus its own direct
+  // findLegalSlotOrNull/compressExamPrepForRoom fallbacks) never calls
+  // findFixedEventSlot at all -- that function has exactly one caller
+  // anywhere in the file (computePausePlan's move_event, an unrelated
+  // "Studlin Reschedule" flow for relocating a single fixed event by
+  // explicit request). This test backs that reading with a real run: pack
+  // every day solid for three weeks with no deadline forcing a give-up, and
+  // confirm the engine never proposes a pre-dawn time -- either it finds a
+  // legal daytime slot, or (more likely here) gives up and reports the item
+  // unplaceable rather than fabricating a bad one.
+  test("a fully-booked 3-week window with no deadline never proposes an off-hours time", () => {
+    const { computeCatchUpPlan } = loadStudlinModule({ now: "2026-07-20T08:00:00" });
+    const blockers = [];
+    for (let i = 0; i < 25; i++) {
+      const d = new Date("2026-07-20T12:00:00");
+      d.setDate(d.getDate() + i);
+      const dk = d.toISOString().slice(0, 10);
+      blockers.push(studyBlock({ id: "blocker-" + i, date: dk, time: "00:00", duration: 1440 }));
+    }
+    const missed = studyBlock({ id: "missed-1", date: "2026-07-19", time: "10:00", duration: 30 });
+    const plan = computeCatchUpPlan([...blockers, missed], [], DEFAULT_PREFS, "2026-07-20");
+    const move = plan.moves.find((m) => m.id === "missed-1");
+    if (move) {
+      const mins = +move.to.time.split(":")[0] * 60 + +move.to.time.split(":")[1];
+      const workStartMins = 9 * 60;
+      assert.ok(mins >= workStartMins, "must never propose a pre-work-hours time like the midnight fallback would (" + move.to.time + ")");
+    } else {
+      assert.ok(plan.unplaceable.some((u) => u.id === "missed-1"), "expected the item to be reported unplaceable rather than given a bad slot");
+    }
+  });
+});

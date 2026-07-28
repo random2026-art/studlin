@@ -36,13 +36,13 @@ Open issues tracked in one place instead of memory. Remove an item once it's fix
 
 ## 4. App-open can fire three stacked popups after missed blocks
 
-**Status:** Confirmed real via code read. Deliberately not fixed piecemeal — folded into the Catch Me Up work.
+**Status:** Fixed on `feat/catch-me-up` (unmerged — nothing merges until Today and Prep are also converted, per explicit instruction). Visually unverified on preview so far.
 
-**Where:** `studlin-app.jsx`, the dashboard's floating-panel state: `tier0Batch` (auto-moved tasks, top-left), `rolloverPending` (Tier 1 yesterday's-tasks prompt, top-right), and `strugglingBucketOffer`/`peakInsightOffer` (peak-hour insight nudges, bottom-left).
+**Where:** `studlin-app.jsx`, the dashboard's floating-panel state: `tier0Batch` (auto-moved tasks, top-left), `rolloverPending` (Tier 1 yesterday's-tasks prompt, top-right), and `strugglingBucketOffer`/`peakInsightOffer` (peak-hour insight nudges, bottom-left) — plus a fourth, `examPrepSuggestion` (bottom-right), found during the Catch Me Up review and not in the original bug description.
 
-**Root cause:** the two insight nudges (`strugglingBucketOffer`/`peakInsightOffer`) already have explicit mutual exclusion — the code picks at most one of those two per load ("one nudge at a time, not a stack fighting for the same spot"). But that exclusion doesn't extend to `tier0Batch` or `rolloverPending`, which are set independently in the same daily-gate pass. A day with both an auto-moved task and an overdue-from-yesterday task and a ready insight nudge shows all three panels at once — different corners of the screen, so they don't overlap pixel-for-pixel, but it's three simultaneous asks on one app open, which is the "stacked popups" complaint.
+**Root cause:** the two insight nudges (`strugglingBucketOffer`/`peakInsightOffer`) already had explicit mutual exclusion, but that never extended to `tier0Batch`, `rolloverPending`, or `examPrepSuggestion`, which could each fire independently on the same load.
 
-**Decision:** not a targeted fix. This gets solved properly as part of Catch Me Up, where Tier 0 and Tier 1 merge into a single recovery banner and insight nudges move off app-open entirely. No standalone patch (staggering, capping panel count, etc.) until that work happens.
+**Fix:** `tier0Batch`/`rolloverPending` replaced with one `catchUpBanner` (2+ missed items triggers it; below that, Tier 0 still relocates silently with no banner at all now, not even for one item). `strugglingBucketOffer`/`peakInsightOffer`/`examPrepSuggestion` are now queued to storage (`queuedInsightNudges`) instead of rendering whenever recovery is pending — see item #8 below, since nothing reads that queue yet.
 
 ## 5. Integrations panel can show a stuck "Syncing…" state
 
@@ -61,3 +61,21 @@ Open issues tracked in one place instead of memory. Remove an item once it's fix
 **Status:** Resolved. Deleted from Vercel.
 
 Grepped the entire repo for `OPENAI_API_KEY` and case-insensitively for `openai` — zero matches, in `api/*.js` or anywhere else. Nothing read it, so removing it from Vercel's environment variables was safe.
+
+## 7. findFixedEventSlot's midnight-scan fallback — verified NOT reachable from Catch Me Up
+
+**Status:** Closed. Verified by code reading and a real test, not just inference.
+
+**Where:** `studlin-app.jsx`, `findFixedEventSlot` (its fallback scans from midnight and returns the first open 15-min slot anywhere in the day — see `tests/slot-finders-characterization.test.js`).
+
+**Why this was worth checking:** if the rebuild preview could propose a 3am study session because of this fallback, it would look broken and undermine trust in the whole feature.
+
+**Finding:** `findFixedEventSlot` has exactly one caller anywhere in the file — `computePausePlan`'s `move_event` intent, the unrelated "Studlin Reschedule" (Tier 3) flow for relocating a single fixed event by explicit request. `computeCatchUpPlan`'s entire call graph (`findTier0Slot` → `findSlotWithEviction` → `findLegalSlotOrNull` → `findOpenSlotFor`, plus its own direct `findLegalSlotOrNull`/`compressExamPrepForRoom` fallbacks) never touches it. `findLegalSlotOrNull` also independently re-validates any candidate slot against real work hours and conflicts before accepting it, so even `findOpenSlotFor`'s own (much milder) raw-fallback behavior can't slip through as a bad proposal — it becomes `null` (reported unplaceable) instead. Backed by a real test (`tests/catch-me-up.test.js`): a 25-day fully-booked window with no deadline never produces an off-hours time.
+
+## 8. queuedInsightNudges is write-only — needs a read side when Dashboard/Today is built
+
+**Status:** Open, expected, tracked so it isn't forgotten.
+
+**Where:** `studlin-app.jsx`, `queueInsightNudge` (App()) writes to `localStorage["studlin-queuedInsightNudges"]` whenever a `strugglingBucketOffer`/`peakInsightOffer`/`examPrepSuggestion` would have fired while a Catch Me Up recovery banner is pending. Verified this is genuine `localStorage.setItem` persistence (via `lsSet`/`lsGet`, the app's standard wrapper) — it survives reloads/new sessions on the same device, it is not lost. It is not synced to Firestore (no `syncWriteHooks` entry registered for this key), so it's local-only, which is fine for its purpose.
+
+**What's missing:** nothing reads this queue yet. Insight nudges that get deferred this way are captured but currently never shown to the student anywhere — they just accumulate in storage. This is expected and intentional for now (Dashboard/Today isn't converted on this branch), but needs a real read side — surfacing the queued nudges somewhere reasonable (Dashboard, once it exists) and clearing them once shown — or they'll silently pile up forever with no user-facing effect.
