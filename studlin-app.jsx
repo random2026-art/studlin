@@ -11922,7 +11922,7 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
 
-function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, isAgendaCollapsed, onDeleteEvent}) {
+function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent}) {
   // Compact, fixed per-hour scale (held constant across the agenda-collapse
   // toggle) so several hours are visible at a glance, like Google Calendar.
   const WK_PX_HR = 48;
@@ -12021,19 +12021,13 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
 
   const handleDragEnd = () => { setWkDragId(null); setWkDragDeadline(null); setWkDragOverDay(null); setWkDropTime(null); };
 
-  const rangeLabel = weekDays[0].toLocaleDateString("en-US",{month:"short",day:"numeric"}) + " – " + weekDays[6].toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
   const DAY_NAMES = ["MON","TUE","WED","THU","FRI","SAT","SUN"];
 
+  // No internal header here anymore -- date range + prev/next/"today" now
+  // live once, in CalendarTab's own toolbar above every view (Month/Week/
+  // Day alike), rather than duplicated inside each grid component.
   return (
     <Card style={{padding:0,overflow:"hidden"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 16px",borderBottom:`1px solid ${T.border}`}}>
-        <span style={{fontSize:14,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>{rangeLabel}</span>
-        <div style={{display:"flex",gap:6}}>
-          <BtnSm variant="ghost" onClick={()=>setWeekOffset(o=>o-1)}>←</BtnSm>
-          <BtnSm variant="ghost" onClick={()=>setWeekOffset(0)}>This week</BtnSm>
-          <BtnSm variant="ghost" onClick={()=>setWeekOffset(o=>o+1)}>→</BtnSm>
-        </div>
-      </div>
       <div style={{display:"grid",gridTemplateColumns:"52px repeat(7,1fr)",borderBottom:`1px solid ${T.border}`,background:T.card}}>
         <div style={{height:48}} />
         {weekDays.map((d, i) => {
@@ -12063,7 +12057,10 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
           );
         })}
       </div>
-      <div ref={weekScrollRef} style={{display:"flex",overflowY:"auto",maxHeight:isAgendaCollapsed?"calc(100vh - 200px)":"calc(100vh - 260px)"}} onDragEnd={handleDragEnd}>
+      {/* Fixed estimate for the chrome above this grid (global top bar + the
+          slim Calendar toolbar) now that there's no more agenda-collapse
+          state to branch on -- this page never has an agenda panel. */}
+      <div ref={weekScrollRef} style={{display:"flex",overflowY:"auto",maxHeight:"calc(100vh - 170px)"}} onDragEnd={handleDragEnd}>
         <div style={{width:52,flexShrink:0,background:T.card,borderRight:`1px solid ${T.border}`,zIndex:2}}>
           {Array.from({length:24}, (_, h) => (
             <div key={h} style={{height:WK_PX_HR,display:"flex",alignItems:"flex-start",justifyContent:"flex-end",paddingRight:8,paddingTop:3,borderTop:`1px solid ${T.border}`,boxSizing:"border-box"}}>
@@ -13474,154 +13471,6 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
   );
 }
 
-// The "Today"/selected-day + Upcoming agenda column — shared by Monthly and
-// Weekly views so the collapsible panel behaves identically in both.
-// A busy day shouldn't force the whole sidebar to scroll just to reach
-// "Upcoming" below it — cap the visible list and let the student expand it
-// on demand instead. Collapses back to capped every time the selected day
-// changes, so switching days never leaves a stale "expanded" list behind.
-const AGENDA_DAY_CAP=5;
-function AgendaColumn({selDay, dayEvents, upcoming, relDay, niceDate, fmtTime, colorOf, openNew, openEdit, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, routines, openRoutineEdit, deleteRoutineItem, onSkipOneOccurrence, markDone, uncrossDone, removeEvent, setSelDay, setYm, dragId, setDragId, openReschedule, setEvents, allEvents}) {
-  const [showAllToday,setShowAllToday]=useState(false);
-  useEffect(()=>{setShowAllToday(false);},[selDay]);
-  const hiddenCount=Math.max(0,dayEvents.length-AGENDA_DAY_CAP);
-  const visibleDayEvents=showAllToday?dayEvents:dayEvents.slice(0,AGENDA_DAY_CAP);
-  return (
-    <div style={{display:"flex",flexDirection:"column",gap:14}}>
-      <Card style={{padding:16}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-          <div>
-            <div style={{fontSize:13,fontWeight:700,color:T.white}}>{relDay(selDay)}</div>
-            <div style={{fontSize:10.5,color:T.muted,marginTop:1}}>{niceDate(selDay)}</div>
-          </div>
-          <BtnSm variant="subtle" onClick={()=>openNew(selDay)}>+ Add</BtnSm>
-        </div>
-        {dayEvents.length===0
-          ?<div style={{fontSize:12,color:T.muted,padding:"14px 0 6px",textAlign:"center"}}>Nothing scheduled</div>
-          :visibleDayEvents.map(ev=>{
-            const over=daysOverdue(ev);
-            const isDone=ev.status==="done";
-            // Subject color always wins -- this row already has its own
-            // explicit "Nd overdue" red text label below, so overdue never
-            // needed to also flatten the row's own subject-color identity.
-            const color=colorOf(ev.subject);
-            const isStudy=ev.kind==="study block";
-            const isExam=ev.kind==="exam";
-            const isRoutine=!!ev.isRoutine;
-            // Study blocks: solid subject-color container. Exams: dark canvas
-            // with a thick glowing subject-color border + an explicit tag.
-            // Classes (and everything else): the original thin left strip.
-            const rowStyle=isStudy
-              ? {background:color,borderRadius:9,padding:"9px 12px",marginBottom:6}
-              : isExam
-                ? {background:T.ink,border:`2px solid ${color}`,boxShadow:`0 0 12px -2px ${color}`,borderRadius:9,padding:"9px 12px",marginBottom:6}
-                : {borderBottom:"1px solid "+T.border,padding:"9px 0"};
-            const titleColor=isStudy?T.ink:isExam?T.cream:(isDone?T.muted:T.white);
-            const subColor=isStudy?"rgba(14,31,24,0.65)":isExam?color:T.muted;
-            const badgeBg=isStudy?"rgba(14,31,24,0.14)":isExam?color+"22":T.card2;
-            const dimmedByRoutineMode=editRoutineMode&&!isRoutine;
-            const highlightedByRoutineMode=editRoutineMode&&isRoutine;
-            // "Am I actually going to be ready?" — only for exams, and only
-            // once there's something to report (a fresh exam with nothing
-            // linked yet stays quiet rather than showing an empty/alarming
-            // pill for something the student hasn't started organizing).
-            const readiness=isExam&&allEvents?computeExamReadiness(ev,allEvents):null;
-            const readinessColor=readiness&&(readiness.state==="on-track"?T.lime:readiness.state==="behind"?T.amber:readiness.state==="at-risk"?T.red:null);
-            return(
-            <div key={ev.id} draggable={!isRoutine} onDragStart={()=>{if(!isRoutine)setDragId(ev.id);}}
-              onMouseEnter={()=>isRoutine&&setHoveredRoutineId(ev.routineId)} onMouseLeave={()=>isRoutine&&setHoveredRoutineId(null)}
-              onClick={()=>{if(editRoutineMode&&isRoutine){const rule=routines.find(r=>r.id===ev.routineId);if(rule)openRoutineEdit(rule);}}}
-              style={{position:"relative",display:"flex",gap:10,alignItems:"flex-start",opacity:dimmedByRoutineMode?0.3:(isDone?0.5:1),cursor:isRoutine?(editRoutineMode?"pointer":"default"):"grab",...rowStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:2}:{})}}>
-              {!isStudy&&!isExam&&<div style={{width:3,alignSelf:"stretch",borderRadius:2,background:color,flexShrink:0}} />}
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{display:"flex",alignItems:"center",gap:6,minWidth:0}}>
-                  {ev.priority!=null&&<span style={{width:7,height:7,borderRadius:"50%",background:PRIORITY_COLORS[priorityTierOf(ev)],flexShrink:0}} />}
-                  {isExam&&<span style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:9.5,fontWeight:800,letterSpacing:"0.04em",color,background:color+"1E",border:`1px solid ${color}55`,borderRadius:5,padding:"1px 6px",flexShrink:0}}><span style={{width:4,height:4,borderRadius:"50%",background:color,flexShrink:0}} />EXAM</span>}
-                  {readinessColor&&<span title={readiness.sentence} style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.02em",color:readinessColor,background:readinessColor+"1E",border:`1px solid ${readinessColor}55`,borderRadius:5,padding:"1px 6px",flexShrink:0}}>{readiness.state==="on-track"?"ON TRACK":readiness.state==="behind"?"BEHIND":"AT RISK"}</span>}
-                  {isRoutine&&<span style={{fontSize:9,fontWeight:800,letterSpacing:"0.04em",color,background:color+"14",border:`1px solid ${color}44`,borderRadius:5,padding:"1px 6px",flexShrink:0}}>WEEKLY</span>}
-                  {ev.movedByStudlin&&<span onClick={(e)=>{e.stopPropagation();setEvents(undoTier0Move(ev.id).events);}} title={"Studlin moved this from "+fmtMovedFrom(ev.movedFrom)+"."+fmtMovedReasonSuffix(ev)+" Click to undo."} style={{fontSize:10,flexShrink:0,cursor:"pointer"}}>↻</span>}
-                  <span style={{fontSize:12.5,fontWeight:600,color:titleColor,lineHeight:1.35,textDecoration:isDone?"line-through":"none",minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",display:"block"}} title={ev.title}>{ev.title}</span>
-                </div>
-                <div style={{fontSize:11,color:subColor,marginTop:2,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-                  <span>{fmtTime(ev.time)}</span>
-                  {ev.duration&&<span style={{background:badgeBg,padding:"1px 6px",borderRadius:4,fontSize:10,fontWeight:600,color:titleColor}}>{ev.duration>=60?Math.floor(ev.duration/60)+"h"+(ev.duration%60?" "+ev.duration%60+"m":""):ev.duration+"m"}</span>}
-                  <span>{ev.subject}</span>
-                  {over>0&&<span style={{color:T.red,fontWeight:600}}>{over}d overdue</span>}
-                </div>
-              </div>
-              {!isRoutine&&(
-                <div style={{display:"flex",gap:4,flexShrink:0,alignItems:"center"}}>
-                  {!isDone&&isTimerEligible(ev)&&<BtnSm onClick={()=>{if(window._setTimerTask)window._setTimerTask(ev);}} style={{flexShrink:0,boxShadow:`0 2px 10px -3px ${T.lime}88`}}>Begin</BtnSm>}
-                  {!isDone&&(ev.kind==="exam"||ev.kind==="class"||ev.kind==="reminder")&&<button onClick={()=>openEdit(ev)} title="View details" style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Details</button>}
-                  {!isDone&&(ev.kind==="reminder"||(ev.duration&&(ev.kind==="study block"||ev.kind==="deadline")))&&<button onClick={()=>openReschedule(ev)} title="Reschedule" style={{width:24,height:24,borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer",flexShrink:0,padding:0}}>{Icon.refresh}</button>}
-                  {!isDone&&<button onClick={()=>markDone(ev.id)} title="Mark done" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",display:"flex"}}>{Icon.check}</button>}
-                  {isDone&&<button onClick={()=>uncrossDone(ev.id)} title="Reopen" style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font,flexShrink:0,display:"flex",alignItems:"center",gap:4}}>{Icon.refresh} Reopen</button>}
-                  <button onClick={()=>removeEvent(ev.id)} title="Delete" style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,padding:2}}>×</button>
-                </div>
-              )}
-              {isRoutine&&!editRoutineMode&&(
-                <button onClick={(e)=>{e.stopPropagation();onSkipOneOccurrence(ev);}} title="Skip this one — every other week stays"
-                  style={{border:"none",background:"transparent",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,padding:2,flexShrink:0}}>×</button>
-              )}
-              {isRoutine&&editRoutineMode&&hoveredRoutineId===ev.routineId&&(
-                <button onClick={(e)=>{e.stopPropagation();deleteRoutineItem(ev.routineId);setHoveredRoutineId(null);}} title="Delete this routine block (every week)"
-                  style={{position:"absolute",top:-8,right:-8,width:22,height:22,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.red,fontSize:13,lineHeight:1,cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 4px 10px -2px rgba(0,0,0,0.4)"}}>×</button>
-              )}
-            </div>
-          );})}
-        {hiddenCount>0&&(
-          <button onClick={()=>setShowAllToday(s=>!s)} style={{width:"100%",textAlign:"center",padding:"8px 0 2px",background:"none",border:"none",color:T.muted,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>
-            {showAllToday?"Show less":"Show "+hiddenCount+" more"}
-          </button>
-        )}
-      </Card>
-      <div>
-        <div style={{fontSize:12,fontWeight:600,color:T.muted,letterSpacing:"0.05em",textTransform:"uppercase",marginBottom:10}}>Upcoming</div>
-        {upcoming.length===0&&<Card style={{padding:14,fontSize:12,color:T.muted,textAlign:"center"}}>No upcoming events</Card>}
-        {upcoming.map(ev=>{
-          const dl=daysUntilDeadline(ev);
-          const over=daysOverdue(ev);
-          return(
-          <Card key={ev.id} onClick={()=>{setSelDay(ev.date);const p=ev.date.split("-");setYm({y:+p[0],m:+p[1]-1});}} style={{borderLeft:"2px solid "+colorOf(ev.subject),marginBottom:8,cursor:"pointer",padding:14}}>
-            <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
-              <div style={{fontSize:11,color:T.muted}}>{relDay(ev.date)}</div>
-              <Badge color={colorOf(ev.subject)}>{ev.subject}</Badge>
-            </div>
-            <div style={{display:"flex",alignItems:"center",gap:6}}>
-              {ev.priority!=null&&<span style={{width:6,height:6,borderRadius:"50%",background:PRIORITY_COLORS[priorityTierOf(ev)]}} />}
-              <span style={{fontSize:13,fontWeight:600,color:T.white}}>{ev.title}</span>
-            </div>
-            <div style={{fontSize:11,color:T.muted,marginTop:4,display:"flex",gap:8}}>
-              <span>{fmtTime(ev.time)}</span>
-              {ev.duration&&<span>{ev.duration}m</span>}
-              {dl!==null&&dl>=0&&dl<=3&&<span style={{color:dl===0?T.red:T.amber,fontWeight:600}}>Due {dl===0?"today":"in "+dl+"d"}</span>}
-              {over>0&&<span style={{color:T.red,fontWeight:600}}>{over}d overdue</span>}
-            </div>
-          </Card>
-        );})}
-      </div>
-    </div>
-  );
-}
-
-// Collapsible wrapper: places `left` (the month grid or weekly planner) next
-// to a shared AgendaColumn, with a chevron toggle pinned to the seam that
-// smoothly collapses the panel to width:0 rather than unmounting it.
-function CollapsibleAgendaLayout({isAgendaCollapsed, setIsAgendaCollapsed, children, agendaProps}) {
-  return (
-    <div style={{display:"flex",gap:isAgendaCollapsed?8:16,position:"relative",alignItems:"flex-start"}}>
-      <div style={{flex:1,minWidth:0}}>{children}</div>
-      <div style={{width:isAgendaCollapsed?0:300,flexShrink:0,opacity:isAgendaCollapsed?0:1,overflow:"hidden",pointerEvents:isAgendaCollapsed?"none":"auto",transition:"width 0.28s cubic-bezier(.2,.85,.3,1), opacity 0.2s ease"}}>
-        <div style={{width:300}}><AgendaColumn {...agendaProps} /></div>
-      </div>
-      <button onClick={()=>setIsAgendaCollapsed(c=>!c)} title={isAgendaCollapsed?"Show agenda":"Hide agenda"}
-        style={{width:26,height:26,marginTop:8,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.muted,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0,boxShadow:"0 4px 10px -2px rgba(0,0,0,0.35)"}}>
-        <span style={{display:"inline-flex",transform:isAgendaCollapsed?"rotate(90deg)":"rotate(-90deg)",transition:"transform 0.22s ease"}}>{Icon.chevDown}</span>
-      </button>
-    </div>
-  );
-}
-
 // Ongoing routine management dashboard (as opposed to RoutineWizardModal,
 // which is only the first-run setup flow). Lists every locked recurring
 // block with Edit/Delete, plus an inline expandable "+ Add Recurring
@@ -14752,11 +14601,11 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
   // Sticky across tab switches — CalendarTab fully remounts every time the
   // user navigates away and back (key={active} at the App level), so plain
   // useState would silently reset this to "monthly" every time.
-  const [calView,setCalViewState]=useState(()=>lsGet("calView","monthly"));
+  // Defaults to Week for anyone who's never touched this preference --
+  // existing users who already picked a view keep it.
+  const [calView,setCalViewState]=useState(()=>lsGet("calView","weekly"));
   const setCalView=(v)=>{setCalViewState(v);lsSet("calView",v);};
   const [weekOffset,setWeekOffset]=useState(0);
-  // Collapsible right-hand agenda column — shared across Monthly and Weekly.
-  const [isAgendaCollapsed,setIsAgendaCollapsed]=useState(false);
   // Monthly grid double-click used to just open "add a task" -- the same
   // gesture most calendar apps use to expand into a full day view, and the
   // one thing double-clicking a day couldn't do here was show you
@@ -14906,11 +14755,9 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
   const todayK=dayKey();
   const fmtTime=(t)=>{const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
   const niceDate=(k)=>{const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});};
-  const relDay=(k)=>{if(k===todayK)return "Today";const t=new Date();t.setDate(t.getDate()+1);if(k===dayKey(t))return "Tomorrow";const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{month:"short",day:"numeric"});};
-  const upcoming=events.filter(ev=>!ev.checklist&&ev.date>=todayK).sort((a,b)=>a.date===b.date?(a.time<b.time?-1:1):(a.date<b.date?-1:1)).slice(0,6);
   // Computed straight from `events`/routines for `selDay` (rather than the
-  // month-grid-scoped `byDay`) so the agenda column stays correct even when
-  // `selDay` falls in a week outside the visible month grid (Weekly view).
+  // month-grid-scoped `byDay`) so this stays correct even when `selDay`
+  // falls in a week outside the visible month grid (Weekly view).
   // Checklist items are excluded everywhere here — they deliberately have no
   // calendar presence, only a Dashboard checklist entry.
   const dayEvents=events.filter(ev=>!ev.checklist&&ev.date===selDay).concat(getRoutineOccurrencesForDate(selDay).filter(o=>o.kind!=="free period")).sort((a,b)=>a.time<b.time?-1:1);
@@ -15510,9 +15357,9 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
   const toSliderVal=(v,def)=>{const n=v!=null?v:def;return n>10?n:n*100;};
   // Routes to the shared App-level EventDetailModal instead of this
   // component's own (now-unused) local edit modal -- same function name/
-  // signature kept so every existing caller (WeeklyPlanner/DayPlanner/
-  // AgendaColumn all already receive `openEdit` as a prop, plus the
-  // day-detail modal's own Edit button below) needs zero changes.
+  // signature kept so every existing caller (WeeklyPlanner/DayPlanner
+  // already receive `openEdit` as a prop, plus the day-detail modal's own
+  // Edit button below) needs zero changes.
   const openEdit=(ev)=>setDetailEventId(ev.id);
 
   // ── Tier 3: Global Emergency "Studlin Reschedule" ──────────────────────────
@@ -15616,6 +15463,19 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
   const isProjectKind=evKind==="project";
   const isChecklistMode=evKind==="assignment"&&asChecklist;
   const manualMode=isTaskKind&&!isChecklistMode&&taskMode==="manual";
+  // Steps selDay by n whole days -- the toolbar's prev/next needs this for
+  // the Day view, mirroring what nav()/setWeekOffset already do for
+  // Month/Week.
+  const stepSelDay=(n)=>{const d=new Date(selDay+"T00:00:00");d.setDate(d.getDate()+n);setSelDay(dayKey(d));};
+  // Mirrors WeeklyPlanner's own internal weekDays calc -- duplicated here
+  // (rather than threading a new prop back out of it) since it's cheap and
+  // self-contained, just to render the range label in the toolbar above it.
+  const weekRangeLabel=(()=>{
+    const d=new Date();const day=d.getDay();const diff=day===0?-6:1-day;
+    d.setDate(d.getDate()+diff+weekOffset*7);d.setHours(0,0,0,0);
+    const end=new Date(d);end.setDate(end.getDate()+6);
+    return d.toLocaleDateString("en-US",{month:"short",day:"numeric"})+" – "+end.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+  })();
   return (
     <>
     {/* Main content — this is data-page's direct child, so it's the element
@@ -15626,81 +15486,82 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
         this div instead of nested inside it, so it centers against the real
         viewport regardless of scroll position or animation state. */}
     <div>
-      <PH title="Studlin Calendar" sub={monthNames[ym.m]+" "+ym.y} action={<div style={{display:"flex",gap:8}}>
-        <span ref={rescheduleBtnRef} style={{display:"inline-flex"}}><Btn variant="ghost" onClick={()=>{setPauseOpen(true);setPauseError("");setPausePreview(null);}}><span style={{color:T.red}}>Studlin Reschedule</span></Btn></span>
-        <Btn variant="ghost" onClick={()=>{resetForm();setBrainDumpOpen(true);}}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.sparkles,"Brain dump")}</Btn>
-        <div style={{position:"relative"}}>
-          <Btn variant={editRoutineMode?"lime":"ghost"} onClick={()=>setToolsMenuOpen(o=>!o)}>Tools</Btn>
-          {toolsMenuOpen&&(<>
-            <div onClick={()=>setToolsMenuOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
-            <div style={{position:"absolute",top:"calc(100% + 6px)",right:0,width:220,background:T.card,border:`1px solid ${T.border}`,borderRadius:12,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
-              {[
-                {icon:Icon.zap,label:"Balance my week",sub:"Rebalance an overloaded week",onClick:()=>{setToolsMenuOpen(false);openWeekBalance();}},
-                {icon:Icon.file,label:"Scan syllabus",sub:"Upload a doc, AI extracts dates",onClick:()=>{setToolsMenuOpen(false);setQuickScanOpen(true);}},
-                {icon:Icon.cal,label:"Routine",sub:"Manage your weekly schedule",onClick:()=>{setToolsMenuOpen(false);setRoutineCenterOpen(true);}},
-                {icon:Icon.check,label:"Can I go?",sub:"See if free time now is safe",onClick:()=>{setToolsMenuOpen(false);setTimeOffResult(null);setTimeOffOpen(true);}},
-              ].map(item=>(
-                <div key={item.label} onClick={item.onClick} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 14px",cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                  <span style={{width:16,color:T.muted,display:"flex",marginTop:2}}>{item.icon}</span>
-                  <div>
-                    <div style={{fontSize:12.5,fontWeight:600,color:T.text}}>{item.label}</div>
-                    <div style={{fontSize:11,color:T.muted,marginTop:1}}>{item.sub}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </>)}
+      {/* Slim toolbar replaces the old page header + separate view-switcher
+          row (ui/tokens-and-calendar Part 2). Date range + prev/next on the
+          left; Day/Week/Month switcher, a "..." overflow for the less-
+          frequent tools, and a single "+" on the right. Reschedule/Brain
+          dump/Balance my week/Scan syllabus/Routine/Can I go? all used to
+          be separate top-level buttons -- consolidated into the overflow
+          menu (reusing the same toolsMenuOpen dropdown pattern) so the
+          toolbar itself stays to the handful of things used on every visit. */}
+      <div style={{display:"flex",alignItems:"center",gap:10,minHeight:40,marginBottom:16}}>
+        <div style={{display:"flex",alignItems:"center",gap:4}}>
+          <button onClick={()=>calView==="monthly"?nav(-1):calView==="weekly"?setWeekOffset(o=>o-1):stepSelDay(-1)} style={{width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:13}}>‹</button>
+          <span onClick={()=>{if(calView==="monthly"){setYm({y:now.getFullYear(),m:now.getMonth()});setSelDay(todayK);}else if(calView==="weekly"){setWeekOffset(0);}else{setSelDay(todayK);}}} title="Jump to today" style={{fontSize:15,fontWeight:500,color:T.text,padding:"0 6px",cursor:"pointer",userSelect:"none",whiteSpace:"nowrap"}}>
+            {calView==="monthly"?monthNames[ym.m]+" "+ym.y:calView==="weekly"?weekRangeLabel:niceDate(selDay)}
+          </span>
+          <button onClick={()=>calView==="monthly"?nav(1):calView==="weekly"?setWeekOffset(o=>o+1):stepSelDay(1)} style={{width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:13}}>›</button>
         </div>
-        <div style={{position:"relative"}} ref={addTaskBtnRef}>
-          <Btn onClick={()=>setAddMenuOpen(o=>!o)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"Add task")}</Btn>
-          {addMenuOpen&&(<>
-            <div onClick={()=>setAddMenuOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
-            <div style={{position:"absolute",top:"calc(100% + 6px)",right:0,width:230,background:T.card,border:`1px solid ${T.border}`,borderRadius:12,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
-              {[
-                {icon:Icon.zap,label:"AI schedule",sub:"One task, Studlin finds the time",onClick:()=>{setAddMenuOpen(false);openNewAI(selDay);}},
-                {icon:Icon.cal,label:"Manual placement",sub:"One task, you pick the time",onClick:()=>{setAddMenuOpen(false);openNewManual(selDay);}},
-              ].map(item=>(
-                <div key={item.label} onClick={item.onClick} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 14px",cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                  <span style={{width:16,color:T.muted,display:"flex",marginTop:2}}>{item.icon}</span>
-                  <div>
-                    <div style={{fontSize:12.5,fontWeight:600,color:T.text}}>{item.label}</div>
-                    <div style={{fontSize:11,color:T.muted,marginTop:1}}>{item.sub}</div>
+        <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
+          <div style={{display:"flex",gap:2,background:T.card2,padding:2,borderRadius:4}}>
+            {[{id:"daily",label:"Day"},{id:"weekly",label:"Week"},{id:"monthly",label:"Month"}].map(v=>(
+              <button key={v.id} onClick={()=>setCalView(v.id)} style={{padding:"5px 12px",borderRadius:4,fontSize:13,fontWeight:calView===v.id?500:400,cursor:"pointer",background:calView===v.id?T.card:"transparent",color:calView===v.id?T.text:T.muted,border:"none",fontFamily:T.font,transition:"all 0.15s"}}>{v.label}</button>
+            ))}
+          </div>
+          <div style={{position:"relative"}} ref={rescheduleBtnRef}>
+            <button onClick={()=>setToolsMenuOpen(o=>!o)} title="More tools" style={{width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",background:editRoutineMode?T.lime+"18":"transparent",border:`1px solid ${editRoutineMode?T.lime+"55":T.border}`,borderRadius:4,color:editRoutineMode?T.lime:T.muted,cursor:"pointer",fontSize:15,lineHeight:1}}>⋯</button>
+            {toolsMenuOpen&&(<>
+              <div onClick={()=>setToolsMenuOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
+              <div style={{position:"absolute",top:"calc(100% + 6px)",right:0,width:220,background:T.card,border:`1px solid ${T.border}`,borderRadius:6,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
+                {[
+                  {icon:Icon.zap,label:"Balance my week",sub:"Rebalance an overloaded week",onClick:()=>{setToolsMenuOpen(false);openWeekBalance();}},
+                  {icon:Icon.file,label:"Scan syllabus",sub:"Upload a doc, AI extracts dates",onClick:()=>{setToolsMenuOpen(false);setQuickScanOpen(true);}},
+                  {icon:Icon.cal,label:"Routine",sub:"Manage your weekly schedule",onClick:()=>{setToolsMenuOpen(false);setRoutineCenterOpen(true);}},
+                  {icon:Icon.check,label:"Can I go?",sub:"See if free time now is safe",onClick:()=>{setToolsMenuOpen(false);setTimeOffResult(null);setTimeOffOpen(true);}},
+                  {icon:Icon.sparkles,label:"Brain dump",sub:"Tell Studlin everything at once",onClick:()=>{setToolsMenuOpen(false);resetForm();setBrainDumpOpen(true);}},
+                  {icon:Icon.refresh,label:"Studlin Reschedule",sub:"Emergency: push back today's plan",onClick:()=>{setToolsMenuOpen(false);setPauseOpen(true);setPauseError("");setPausePreview(null);},danger:true},
+                ].map(item=>(
+                  <div key={item.label} onClick={item.onClick} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 14px",cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    <span style={{width:16,color:item.danger?T.red:T.muted,display:"flex",marginTop:2}}>{item.icon}</span>
+                    <div>
+                      <div style={{fontSize:12.5,fontWeight:600,color:item.danger?T.red:T.text}}>{item.label}</div>
+                      <div style={{fontSize:11,color:T.muted,marginTop:1}}>{item.sub}</div>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          </>)}
+                ))}
+              </div>
+            </>)}
+          </div>
+          <div style={{position:"relative"}} ref={addTaskBtnRef}>
+            <button onClick={()=>setAddMenuOpen(o=>!o)} title="Add" style={{width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",background:T.lime,border:"none",borderRadius:4,color:T.ink,cursor:"pointer"}}>{Icon.plus}</button>
+            {addMenuOpen&&(<>
+              <div onClick={()=>setAddMenuOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
+              <div style={{position:"absolute",top:"calc(100% + 6px)",right:0,width:230,background:T.card,border:`1px solid ${T.border}`,borderRadius:6,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
+                {[
+                  {icon:Icon.zap,label:"AI schedule",sub:"One task, Studlin finds the time",onClick:()=>{setAddMenuOpen(false);openNewAI(selDay);}},
+                  {icon:Icon.cal,label:"Manual placement",sub:"One task, you pick the time",onClick:()=>{setAddMenuOpen(false);openNewManual(selDay);}},
+                ].map(item=>(
+                  <div key={item.label} onClick={item.onClick} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 14px",cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    <span style={{width:16,color:T.muted,display:"flex",marginTop:2}}>{item.icon}</span>
+                    <div>
+                      <div style={{fontSize:12.5,fontWeight:600,color:T.text}}>{item.label}</div>
+                      <div style={{fontSize:11,color:T.muted,marginTop:1}}>{item.sub}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>)}
+          </div>
         </div>
-      </div>} />
+      </div>
       {editRoutineMode&&(
-        <div style={{display:"flex",alignItems:"center",gap:12,padding:"9px 14px",background:T.lime+"10",border:`1px solid ${T.lime}33`,borderRadius:10,marginBottom:14,fontSize:12.5,color:T.text}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,padding:"9px 14px",background:T.lime+"10",border:`1px solid ${T.lime}33`,borderRadius:6,marginBottom:14,fontSize:12.5,color:T.text}}>
           <span style={{flex:1}}>Editing your Weekly Routine. One-off tasks are dimmed. Click a routine block to edit it, or hover and tap × to delete it everywhere it repeats.</span>
           <BtnSm variant="subtle" onClick={()=>{setEditRoutineMode(false);setHoveredRoutineId(null);}}>Done</BtnSm>
         </div>
       )}
-      <div style={{display:"flex",gap:6,marginBottom:20}}>
-        {["monthly","weekly","daily"].map(v=>(
-          <button key={v} onClick={()=>setCalView(v)} style={{padding:"6px 14px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",background:calView===v?T.lime+"14":"transparent",color:calView===v?T.lime:T.muted,border:`1px solid ${calView===v?T.lime+"44":T.border}`,fontFamily:T.font,transition:"all 0.15s",textTransform:"capitalize"}}>{v}</button>
-        ))}
-      </div>
-      {calView==="monthly"&&(<CollapsibleAgendaLayout isAgendaCollapsed={isAgendaCollapsed} setIsAgendaCollapsed={setIsAgendaCollapsed}
-        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,onSkipOneOccurrence:skipOneOccurrence,markDone,uncrossDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask,setEvents,allEvents:events}}>
+      {calView==="monthly"&&(
         <Card style={{padding:16}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,padding:"4px 6px"}}>
-            <div style={{display:"flex",gap:8,alignItems:"center"}}>
-              <select value={ym.m} onChange={e=>setYm(c=>({...c,m:+e.target.value}))} style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 10px",color:T.white,fontSize:15,fontWeight:700,fontFamily:T.font,outline:"none",cursor:"pointer",letterSpacing:"-0.01em"}}>
-                {monthNames.map((mn,i)=><option key={i} value={i}>{mn}</option>)}
-              </select>
-              <select value={ym.y} onChange={e=>setYm(c=>({...c,y:+e.target.value}))} style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 10px",color:T.muted,fontSize:15,fontFamily:T.font,outline:"none",cursor:"pointer"}}>
-                {Array.from({length:31},(_,i)=>2015+i).map(y=><option key={y} value={y}>{y}</option>)}
-              </select>
-            </div>
-            <div style={{display:"flex",gap:6}}>
-              <BtnSm variant="ghost" onClick={()=>nav(-1)}>←</BtnSm>
-              <BtnSm variant="ghost" onClick={()=>{setYm({y:now.getFullYear(),m:now.getMonth()});setSelDay(todayK);}}>Today</BtnSm>
-              <BtnSm variant="ghost" onClick={()=>nav(1)}>→</BtnSm>
-            </div>
-          </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
             {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((d,i)=><div key={i} style={{fontSize:10,fontWeight:600,color:T.muted,textAlign:"center",padding:"6px 0",letterSpacing:"0.05em"}}>{d}</div>)}
             {cells.map((c,i)=>{
@@ -15739,18 +15600,16 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
           </div>
           <div style={{fontSize:10.5,color:T.faint,marginTop:10,paddingLeft:6}}>Click a day to see its schedule · double-click for the full day view · + to add a task · drag tasks between days</div>
         </Card>
-      </CollapsibleAgendaLayout>)}
-      {calView==="weekly"&&(<CollapsibleAgendaLayout isAgendaCollapsed={isAgendaCollapsed} setIsAgendaCollapsed={setIsAgendaCollapsed}
-        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,onSkipOneOccurrence:skipOneOccurrence,markDone,uncrossDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask,setEvents,allEvents:events}}>
+      )}
+      {calView==="weekly"&&(
         <WeeklyPlanner events={events} setEvents={setEvents} moveEvent={moveEvent} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openNew={openNew} openEdit={openEdit}
           routines={routines} editRoutineMode={editRoutineMode} hoveredRoutineId={hoveredRoutineId} setHoveredRoutineId={setHoveredRoutineId}
           onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
-          selDay={selDay} setSelDay={setSelDay} isAgendaCollapsed={isAgendaCollapsed} onDeleteEvent={deleteEventWithUndo} />
-      </CollapsibleAgendaLayout>)}
-      {calView==="daily"&&(<CollapsibleAgendaLayout isAgendaCollapsed={isAgendaCollapsed} setIsAgendaCollapsed={setIsAgendaCollapsed}
-        agendaProps={{selDay,dayEvents,upcoming,relDay,niceDate,fmtTime,colorOf,openNew,openEdit,editRoutineMode,hoveredRoutineId,setHoveredRoutineId,routines,openRoutineEdit,deleteRoutineItem,onSkipOneOccurrence:skipOneOccurrence,markDone,uncrossDone,removeEvent,setSelDay,setYm,dragId,setDragId,openReschedule:setRescheduleTask,setEvents,allEvents:events}}>
+          selDay={selDay} setSelDay={setSelDay} onDeleteEvent={deleteEventWithUndo} />
+      )}
+      {calView==="daily"&&(
         <DayPlanner dayEvents={dayEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} />
-      </CollapsibleAgendaLayout>)}
+      )}
     </div>
       {calTourStep>=0&&(
         <TourStep {...CAL_TOUR_STEPS[calTourStep]} step={calTourStep} total={CAL_TOUR_STEPS.length}
