@@ -1687,38 +1687,37 @@ function dismissStrugglingBucket(bucketId){
   dismissed[bucketId]=Date.now();
   lsSet("strugglingBucketDismissed",dismissed);
 }
-// Surfaces it when the student's own real completion history disagrees
-// with what they declared as their peak-focus bucket at onboarding —
-// distinct from detectStrugglingBucket above, which reacts to a RECENT run
-// of misses in any one bucket regardless of whether it's declared.  This
-// one only fires when there's a genuine, well-sampled (>=TIER0_MIN_BUCKET_
-// SAMPLE) all-time gap between what's declared and what the data actually
-// shows, so "Studlin learned your best hours" (the onboarding/marketing
-// claim) becomes something that can actually happen, not just a per-
-// placement reason shown once and forgotten.
+// Surfaces it purely from the student's own real completion history — no
+// declared peak-focus bucket needed. Onboarding used to ask for one and
+// this compared against it; that question was cut (setup burden with no
+// near-term payoff — declaring a preference before any completion history
+// exists can't be corrected against anything yet). Now it just finds the
+// weakest and strongest well-sampled (>=TIER0_MIN_BUCKET_SAMPLE) in-window
+// buckets straight from the data and reports the gap descriptively, so
+// "Studlin learned your best hours" becomes something that can actually
+// happen from the first few weeks of real use, not something the student
+// has to seed by guessing first.
 const PEAK_INSIGHT_MARGIN=0.15; // meaningfully better, not just noise
 const PEAK_INSIGHT_COOLDOWN_MS=14*86400000;
 function detectPeakHourInsight(prefs){
-  const declared=prefs.peakHourBuckets||[];
-  if(declared.length===0)return null; // nothing declared yet to correct
+  const declared=prefs.peakHourBuckets||[]; // may still be empty forever now -- only ever populated by accepting a suggestion below
   const dismissed=lsGet("peakInsightDismissed",{});
   const now=Date.now();
   const winStart=timeToMinutes(prefs.workStartTime);
   const winEnd=timeToMinutes(prefs.workEndTime);
-  // Only compare against declared buckets that already have enough real
-  // data to be a fair baseline — a declared bucket with no data yet isn't
-  // "beaten," it's just unmeasured.
-  const declaredRates=declared.map(id=>({id,rate:getBucketReliability(id)})).filter(d=>d.rate!==null);
-  if(declaredRates.length===0)return null;
-  const weakestDeclared=declaredRates.reduce((min,d)=>d.rate<min.rate?d:min,declaredRates[0]);
-  const candidates=TIER0_HOUR_BUCKETS
-    .filter(b=>!declared.includes(b.id)&&b.startMin<winEnd&&b.endMin>winStart)
+  const sampled=TIER0_HOUR_BUCKETS
+    .filter(b=>b.startMin<winEnd&&b.endMin>winStart)
     .map(b=>({id:b.id,rate:getBucketReliability(b.id)}))
-    .filter(c=>c.rate!==null&&!(dismissed[c.id]&&now-dismissed[c.id]<PEAK_INSIGHT_COOLDOWN_MS))
-    .filter(c=>c.rate-weakestDeclared.rate>=PEAK_INSIGHT_MARGIN)
+    .filter(c=>c.rate!==null);
+  if(sampled.length<2)return null; // need at least two real data points to have a gap at all
+  const weakest=sampled.reduce((min,d)=>d.rate<min.rate?d:min,sampled[0]);
+  const candidates=sampled
+    .filter(c=>c.id!==weakest.id&&!declared.includes(c.id))
+    .filter(c=>!(dismissed[c.id]&&now-dismissed[c.id]<PEAK_INSIGHT_COOLDOWN_MS))
+    .filter(c=>c.rate-weakest.rate>=PEAK_INSIGHT_MARGIN)
     .sort((a,c)=>c.rate-a.rate);
   if(candidates.length===0)return null;
-  return {currentBucket:weakestDeclared.id,currentPct:weakestDeclared.rate,suggestedBucket:candidates[0].id,suggestedPct:candidates[0].rate};
+  return {currentBucket:weakest.id,currentPct:weakest.rate,suggestedBucket:candidates[0].id,suggestedPct:candidates[0].rate};
 }
 function dismissPeakHourInsight(bucketId){
   const dismissed=lsGet("peakInsightDismissed",{});
@@ -13544,9 +13543,8 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
   const [workEnd,setWorkEnd]=useState("18:00");
   // This step is the one titled "Preferred Focus Windows" — the name
   // promises peak-hour preference, not just a work-hours range, so it
-  // needs the same picker ScheduleSettingsPanel uses. Also the one other
-  // place (besides InitWizard, onboarding-only) a student can declare or
-  // fix this later via "Manage Routine".
+  // needs the same picker ScheduleSettingsPanel uses. Also reachable later
+  // via "Manage Routine" if a student wants to declare or fix this.
   const [peakBuckets,setPeakBuckets]=useState([]);
   const togglePeakBucket=(id)=>setPeakBuckets(prev=>prev.includes(id)?prev.filter(b=>b!==id):[...prev,id]);
 
@@ -18597,10 +18595,10 @@ function Profile({setActive,seriousMode=false}={}) {
     setPrefSaved(true);
     setTimeout(()=>setPrefSaved(false),2200);
 
-    // Sync to the account's actual server record too, mirroring
-    // InitWizard's save — without this, a status/school change made here
-    // only ever persisted to this one browser and silently never followed
-    // the student to another device or a reinstalled PWA.
+    // Sync to the account's actual server record too -- without this, a
+    // status/school change made here only ever persisted to this one
+    // browser and silently never followed the student to another device
+    // or a reinstalled PWA.
     const u=firebase.auth().currentUser;
     if(u){
       fsdb().collection('users').doc(u.uid).set({
@@ -20124,189 +20122,6 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
 }
 
 // ─── INIT WIZARD ─────────────────────────────────────────────────────────────
-function InitWizard({onComplete}){
-  const prefs = getSchedulePreferences();
-  const prof = getProfile();
-  const [step, setStep] = useState(0);
-  const [status, setStatus] = useState(prof.status||"");
-  const [affiliation, setAffiliation] = useState(prof.affiliation||prof.school||"");
-  const [peakBuckets, setPeakBuckets] = useState(prefs.peakHourBuckets||[]);
-  const togglePeakBucket=(id)=>setPeakBuckets(b=>b.includes(id)?b.filter(x=>x!==id):[...b,id]);
-  const [difficulty, setDifficulty] = useState(prefs.difficultyPreference||"balanced");
-
-  const affiliationLabel = status==="highschool" ? "School name" : status==="college" ? "University name" : "Affiliation";
-  const affiliationPlaceholder = status==="highschool" ? "e.g. Lincoln High School" : status==="college" ? "e.g. UCLA, NYU..." : "Your school or company";
-
-  const save = () => {
-    // peakHourBuckets is a local-only preference everywhere else in the app
-    // (ScheduleSettingsPanel's identical chip picker never syncs it to
-    // Firestore either) — matching that instead of inventing a new synced
-    // field here.
-    const updatedPrefs = {...prefs, peakHourBuckets:peakBuckets, difficultyPreference:difficulty};
-    setSchedulePreferences(updatedPrefs);
-    const updatedProf = {...getProfile(), status, affiliation, school:affiliation};
-    lsSet("profile", updatedProf);
-    lsSet("onboarded", true);
-
-    // Live write to the authenticated user's own Firestore document (allowed
-    // directly from the client — firestore.rules restricts this write to
-    // exactly these onboarding fields, nothing private like credits/plan).
-    const u=firebase.auth().currentUser;
-    if(u){
-      fsdb().collection('users').doc(u.uid).set({
-        status, affiliation, school:affiliation,
-        difficultyPreference:difficulty,
-        onboarded:true,
-        updatedAt:new Date().toISOString(),
-      },{merge:true}).catch(()=>{});
-      upsertProfile({status, school:affiliation});
-    }
-
-    // Fire welcome email — best-effort, non-blocking
-    authFetch("/api/notify", {
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({type:"welcome", name:updatedProf.name||"", email:updatedProf.email||""})
-    }).catch(()=>{});
-    onComplete();
-  };
-
-  const skip = () => {
-    lsSet("onboarded", true);
-    const u=firebase.auth().currentUser;
-    if(u){
-      fsdb().collection('users').doc(u.uid).set({onboarded:true,updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});
-      upsertProfile();
-    }
-    onComplete();
-  };
-
-  const STEPS = [
-    {key:"status"},
-    {key:"peak"},
-    {key:"difficulty"},
-  ];
-  const isLast = step === STEPS.length - 1;
-
-  const next = () => {
-    if (isLast) { save(); return; }
-    setStep(s => s + 1);
-  };
-
-  const bg = "#FAF6EC";
-  const forest = "#14342A";
-  const lime = "#9EC83D";
-  const ink = "#0E1F18";
-  const muted = "rgba(14,31,24,0.5)";
-  const border = "rgba(14,31,24,0.18)";
-  const card = "#ffffff";
-
-  const ChipOpt = ({value, active, onClick, children}) => (
-    <button type="button" onClick={onClick} style={{padding:"12px 20px",borderRadius:10,fontSize:13,fontWeight:active?700:500,cursor:"pointer",border:`2px solid ${active?lime:border}`,background:active?lime+"18":"transparent",color:active?ink:muted,fontFamily:`"Geist",system-ui,sans-serif`,transition:"all 0.15s",textAlign:"center",minWidth:120}}>
-      {children}
-    </button>
-  );
-
-  return (
-    <div style={{height:"100vh",overflowY:"auto",background:bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 16px",fontFamily:`"Geist",system-ui,sans-serif`}}>
-      {/* Logo */}
-      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:40}}>
-        <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#14342A,#0E1F18)",display:"grid",placeItems:"center",boxShadow:"0 0 16px 4px rgba(158,200,61,0.35)"}}>
-            <div style={{width:11,height:11,borderRadius:"50%",background:"radial-gradient(circle at 35% 35%, #CBDF92, #9EC83D)",boxShadow:"0 0 10px 3px rgba(158,200,61,0.6)"}} />
-          </div>
-        <span style={{fontSize:22,fontWeight:700,color:ink,letterSpacing:"-0.02em"}}>Studlin</span>
-      </div>
-
-      {/* Card */}
-      <div style={{width:"100%",maxWidth:520,background:card,borderRadius:20,padding:"36px 40px",border:`1.5px solid ${border}`,boxShadow:"0 24px 60px -24px rgba(14,31,24,0.18)"}}>
-        {/* Pre-question header (shown on all steps) */}
-        <div style={{background:"rgba(158,200,61,0.10)",border:`1px solid ${lime}44`,borderRadius:10,padding:"10px 14px",marginBottom:28,fontSize:12.5,color:ink,lineHeight:1.5,fontWeight:500}}>
-          The following questions are used to customize and train your calendar scheduling algorithm.
-        </div>
-
-        {/* Progress dots */}
-        <div style={{display:"flex",gap:6,marginBottom:28}}>
-          {STEPS.map((_,i) => (
-            <div key={i} style={{height:4,flex:1,borderRadius:99,background:i<=step?lime:"rgba(14,31,24,0.12)",transition:"background 0.3s"}} />
-          ))}
-        </div>
-
-        {/* Step content */}
-        {step===0 && (
-          <div>
-            <div style={{fontSize:20,fontWeight:700,color:ink,marginBottom:6,letterSpacing:"-0.01em"}}>What best describes you?</div>
-            <div style={{fontSize:13,color:muted,marginBottom:24}}>This helps us tailor deadlines, schedules, and peer matching.</div>
-            <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:20}}>
-              <ChipOpt value="highschool" active={status==="highschool"} onClick={()=>setStatus("highschool")}>High School</ChipOpt>
-              <ChipOpt value="college" active={status==="college"} onClick={()=>setStatus("college")}>College</ChipOpt>
-            </div>
-            {status && (
-              <div style={{marginTop:4}}>
-                <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:muted,marginBottom:8}}>{affiliationLabel}</label>
-                <SchoolSelect value={affiliation} onChange={setAffiliation} onCommit={name=>ensureSchoolInDirectory(name,status)} placeholder={affiliationPlaceholder} theme={{bg:"#F0EBE0",border,text:ink,muted}} statusFilter={status} />
-                <div style={{fontSize:11,color:muted,marginTop:6}}>Helps us match you with classmates.</div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {step===1 && (
-          <div>
-            <div style={{fontSize:20,fontWeight:700,color:ink,marginBottom:6,letterSpacing:"-0.01em"}}>When are you most productive?</div>
-            <div style={{fontSize:13,color:muted,marginBottom:24}}>Studlin schedules harder tasks around these hours. Leave blank and it'll learn your best hours from how you actually study.</div>
-            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-              {TIER0_HOUR_BUCKETS.map(b=>(
-                <button key={b.id} type="button" onClick={()=>togglePeakBucket(b.id)} style={{padding:"12px 16px",borderRadius:10,fontSize:13,fontWeight:peakBuckets.includes(b.id)?700:500,cursor:"pointer",border:`2px solid ${peakBuckets.includes(b.id)?lime:border}`,background:peakBuckets.includes(b.id)?lime+"18":"transparent",color:peakBuckets.includes(b.id)?ink:muted,fontFamily:`"Geist",system-ui,sans-serif`,transition:"all 0.15s",textAlign:"left"}}>
-                  <div>{PEAK_BUCKET_LABELS[b.id]}</div>
-                  <div style={{fontSize:11,opacity:0.75,marginTop:2}}>{fmtClock12(minutesToTime(b.startMin))}–{fmtClock12(minutesToTime(b.endMin))}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {step===2 && (
-          <div>
-            <div style={{fontSize:20,fontWeight:700,color:ink,marginBottom:6,letterSpacing:"-0.01em"}}>How do you like to tackle tasks?</div>
-            <div style={{fontSize:13,color:muted,marginBottom:24}}>Studlin will order your schedule accordingly.</div>
-            <div style={{display:"flex",flexDirection:"column",gap:10}}>
-              {[
-                {v:"easyFirst",l:"Easy first",d:"Build momentum with quick wins before harder tasks."},
-                {v:"balanced",l:"Balanced",d:"Mix easy and hard tasks naturally throughout the day."},
-                {v:"hardFirst",l:"Hard first",d:"Tackle demanding work during peak focus, then coast."},
-              ].map(opt=>(
-                <button key={opt.v} type="button" onClick={()=>setDifficulty(opt.v)} style={{padding:"14px 16px",borderRadius:10,border:`2px solid ${difficulty===opt.v?lime:border}`,background:difficulty===opt.v?lime+"14":"transparent",color:ink,textAlign:"left",cursor:"pointer",fontFamily:`"Geist",system-ui,sans-serif`,transition:"all 0.15s"}}>
-                  <div style={{fontSize:13.5,fontWeight:difficulty===opt.v?700:600,color:difficulty===opt.v?ink:ink}}>{opt.l}</div>
-                  <div style={{fontSize:12,color:muted,marginTop:3}}>{opt.d}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Actions */}
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:32}}>
-          <button onClick={skip} style={{fontSize:13,color:muted,background:"none",border:"none",cursor:"pointer",fontFamily:`"Geist",system-ui,sans-serif`,fontWeight:500,padding:"8px 0"}}>
-            Skip all
-          </button>
-          <div style={{display:"flex",gap:10,alignItems:"center"}}>
-            {step > 0 && (
-              <button onClick={()=>setStep(s=>s-1)} style={{padding:"11px 22px",borderRadius:99,border:`1.5px solid ${border}`,background:"transparent",color:ink,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:`"Geist",system-ui,sans-serif`}}>
-                Back
-              </button>
-            )}
-            <button onClick={next} style={{padding:"11px 28px",borderRadius:99,border:"none",background:lime,color:ink,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:`"Geist",system-ui,sans-serif`}}>
-              {isLast ? "Finish" : (step===0&&!status ? "Skip" : "Continue")}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div style={{marginTop:20,fontSize:12,color:muted}}>All questions are optional. You can update these in Settings anytime.</div>
-    </div>
-  );
-}
-
 // ─── AUTH SCREEN — minimal gate, links to designed pages ────────────────────
 function AuthScreen(){
   return(
@@ -20623,6 +20438,28 @@ function App() {
     return ()=>clearInterval(id);
   },[timerTask]);
   const [onboarded,setOnboarded]=useState(()=>!!lsGet("onboarded",false));
+  // InitWizard used to ask status/peak-hours/difficulty here before a new
+  // student could get into the app. All three questions were cut: status
+  // is asked properly, once, by ClassSetupWizard (asking it here too was a
+  // dead duplicate -- this component's own answer was never read for
+  // anything but this screen's own label text); peak hours and difficulty
+  // are inferred/defaulted and still available in Settings for anyone who
+  // wants to set them explicitly. Nothing left to ask, so a first-time
+  // student goes straight into the app -- this just keeps the one real
+  // side effect InitWizard's "skip" path had (marking onboarded, firing
+  // the welcome email) without ever blocking on a screen for it.
+  useEffect(()=>{
+    if(onboarded)return;
+    lsSet("onboarded",true);
+    const u=firebase.auth().currentUser;
+    if(u){
+      fsdb().collection('users').doc(u.uid).set({onboarded:true,updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});
+      upsertProfile();
+      const prof=getProfile();
+      authFetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"welcome",name:prof.name||"",email:prof.email||""})}).catch(()=>{});
+    }
+    setOnboarded(true);
+  },[onboarded]);
   // A desktop push notification's deep link (see api/notify.js sendPush and
   // service-worker.js) lands here as /network?dm=<uid> or /network?group=
   // <roomId> — consumed once (and stripped from the URL) so FriendsChat can
@@ -21808,7 +21645,6 @@ function App() {
   const pages={prep:StudlinPrep,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile,lectures:Lectures,feedback:FeedbackPage};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
-  if (!onboarded) return <InitWizard onComplete={()=>{setOnboarded(true);}} />;
   const sidebarText=isLight?"#F6F1E6":T.text;
   const sidebarMuted=isLight?"rgba(246,241,230,0.55)":T.muted;
   const sidebarFaint=isLight?"rgba(246,241,230,0.35)":T.faint;

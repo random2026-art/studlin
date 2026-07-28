@@ -1379,7 +1379,7 @@ describe("detectStrugglingBucket (proactive miss-pattern nudge)", () => {
   });
 });
 
-describe("detectPeakHourInsight (all-time gap between declared peak and actual reliability)", () => {
+describe("detectPeakHourInsight (all-time gap between two real, well-sampled buckets -- no declared baseline required)", () => {
   function seedLog(m, bucket, doneCount, missedCount) {
     const log = JSON.parse(m.localStorage.getItem("studlin-completionLog") || "[]");
     for (let i = 0; i < missedCount; i++) log.push({ bucket, outcome: "missed", t: Date.now() - i * 3600000 });
@@ -1387,32 +1387,32 @@ describe("detectPeakHourInsight (all-time gap between declared peak and actual r
     m.localStorage.setItem("studlin-completionLog", JSON.stringify(log));
   }
 
-  test("returns null when nothing is declared -- nothing to correct", () => {
+  test("returns null with only one well-sampled bucket -- nothing to compare it against", () => {
     const m = loadStudlinModule();
-    seedLog(m, "morning", 1, 7);
-    seedLog(m, "afternoon", 7, 1);
+    seedLog(m, "morning", 7, 1);
     assert.equal(m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: [] }), null);
   });
 
-  test("returns null when the declared bucket has no data yet -- not a fair baseline", () => {
+  test("returns null when a bucket has real data but not enough samples to be a fair baseline", () => {
     const m = loadStudlinModule();
-    seedLog(m, "afternoon", 8, 0); // only the non-declared bucket has data
-    assert.equal(m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: ["morning"] }), null);
+    seedLog(m, "afternoon", 8, 0);
+    seedLog(m, "morning", 1, 1); // only 2 samples, well under TIER0_MIN_BUCKET_SAMPLE
+    assert.equal(m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: [] }), null);
   });
 
   test("returns null when the gap is real but below the meaningful-difference margin", () => {
     const m = loadStudlinModule();
     seedLog(m, "morning", 6, 2); // 75%
     seedLog(m, "afternoon", 7, 1); // 87.5% -- only a 12.5pt gap, under the 15pt bar
-    assert.equal(m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: ["morning"] }), null);
+    assert.equal(m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: [] }), null);
   });
 
-  test("suggests switching when a non-declared bucket meaningfully beats the declared one", () => {
+  test("suggests switching to whichever well-sampled bucket meaningfully beats the weakest one -- no declaration needed", () => {
     const m = loadStudlinModule();
     seedLog(m, "morning", 3, 5); // 37.5%
     seedLog(m, "afternoon", 7, 1); // 87.5%
-    const result = m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: ["morning"] });
-    assert.ok(result, "a 50pt gap should surface a suggestion");
+    const result = m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: [] });
+    assert.ok(result, "a 50pt gap should surface a suggestion straight from real data");
     assert.equal(result.currentBucket, "morning");
     assert.equal(result.suggestedBucket, "afternoon");
     assert.equal(Math.round(result.currentPct * 100), 38);
@@ -1423,15 +1423,23 @@ describe("detectPeakHourInsight (all-time gap between declared peak and actual r
     const m = loadStudlinModule();
     seedLog(m, "morning", 0, 8); // 0%
     seedLog(m, "evening", 8, 0); // 100%, but 18:00-22:00 barely overlaps the default 09:00-18:00 window
-    const result = m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: ["morning"] });
+    const result = m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: [] });
     assert.equal(result, null, "evening isn't reachable under the default work window, so there's nothing legal to suggest");
+  });
+
+  test("a bucket already adopted as the declared peak (from a prior accepted suggestion) is never re-suggested to itself", () => {
+    const m = loadStudlinModule();
+    seedLog(m, "morning", 3, 5); // 37.5%
+    seedLog(m, "afternoon", 7, 1); // 87.5% -- already declared, so nothing left to suggest switching to
+    const result = m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: ["afternoon"] });
+    assert.equal(result, null);
   });
 
   test("dismissPeakHourInsight suppresses re-suggesting the same bucket right after", () => {
     const m = loadStudlinModule();
     seedLog(m, "morning", 3, 5);
     seedLog(m, "afternoon", 7, 1);
-    const prefs = { ...DEFAULT_PREFS, peakHourBuckets: ["morning"] };
+    const prefs = { ...DEFAULT_PREFS, peakHourBuckets: [] };
     const first = m.detectPeakHourInsight(prefs);
     assert.ok(first, "should suggest before dismissal");
     m.dismissPeakHourInsight(first.suggestedBucket);
