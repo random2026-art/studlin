@@ -2053,21 +2053,21 @@ function computeCatchUpPlan(events,routines,prefs,today,difficulty){
     const t0=findTier0Slot({...ev},working,routines,prefs,today);
     if(t0){
       working=t0.events.map(e=>e.id===ev.id?{...e,date:t0.placement.date,time:t0.placement.time}:e);
-      moves.push({id:ev.id,title:ev.title,kind:ev.kind,from:{date:ev.date,time:ev.time},to:t0.placement,
+      moves.push({id:ev.id,title:ev.title,kind:ev.kind,duration:ev.duration||30,deadline:ev.deadline||null,from:{date:ev.date,time:ev.time},to:t0.placement,
         reason:t0.reason||catchUpReasonFor(ev,t0.placement.date,working,routines,prefs,today)});
       return;
     }
     const legal=findLegalSlotOrNull(working,routines,prefs,today,ev.time||prefs.workStartTime,ev.duration||30,ev.deadline||null);
     if(legal){
       working=working.map(e=>e.id===ev.id?{...e,date:legal.date,time:legal.time}:e);
-      moves.push({id:ev.id,title:ev.title,kind:ev.kind,from:{date:ev.date,time:ev.time},to:legal,
+      moves.push({id:ev.id,title:ev.title,kind:ev.kind,duration:ev.duration||30,deadline:ev.deadline||null,from:{date:ev.date,time:ev.time},to:legal,
         reason:catchUpReasonFor(ev,legal.date,working,routines,prefs,today)});
       return;
     }
     const compressed=compressExamPrepForRoom(ev,working,routines,prefs,today,difficulty);
     if(compressed){
       working=compressed.working.map(e=>e.id===ev.id?{...e,date:compressed.slot.date,time:compressed.slot.time}:e);
-      moves.push({id:ev.id,title:ev.title,kind:ev.kind,from:{date:ev.date,time:ev.time},to:compressed.slot,
+      moves.push({id:ev.id,title:ev.title,kind:ev.kind,duration:ev.duration||30,deadline:ev.deadline||null,from:{date:ev.date,time:ev.time},to:compressed.slot,
         reason:catchUpReasonFor(ev,compressed.slot.date,working,routines,prefs,today),
         droppedId:compressed.droppedId,shortenedId:compressed.shortenedId});
       return;
@@ -20613,6 +20613,13 @@ function App() {
   // Skip/Not-this-week controls show at once), transient UI state that
   // doesn't need to survive beyond the modal being open.
   const [catchUpExpandedId,setCatchUpExpandedId]=useState(null);
+  // Inline conflict error for the "Move it myself" form -- set on Save,
+  // cleared whenever the date/time inputs change again. catchUpMoveDraft
+  // holds the in-progress {date,time} being typed, separate from
+  // catchUpOverrides, so a half-edited value never silently commits
+  // without going through saveCatchUpMove's validation.
+  const [catchUpMoveError,setCatchUpMoveError]=useState("");
+  const [catchUpMoveDraft,setCatchUpMoveDraft]=useState(null);
   // Same dismissible-banner idiom as above — a RECENT run of misses in one
   // hour bucket (see detectStrugglingBucket), not just the all-time
   // reliability aggregate, surfaced once a day via the same gate.
@@ -20830,6 +20837,8 @@ function App() {
     setCatchUpPlan(plan);
     setCatchUpOverrides({});
     setCatchUpExpandedId(null);
+    setCatchUpMoveDraft(null);
+    setCatchUpMoveError("");
     setCatchUpPreviewOpen(true);
     logCatchUpEvent("rebuild_previewed",{moveCount:plan.moves.length,unplaceableCount:plan.unplaceable.length});
   };
@@ -20838,6 +20847,8 @@ function App() {
     setCatchUpPlan(null);
     setCatchUpOverrides({});
     setCatchUpExpandedId(null);
+    setCatchUpMoveDraft(null);
+    setCatchUpMoveError("");
     logCatchUpEvent("rebuild_cancelled",{});
   };
   // Per-item edits -- all optional, never required (Part 3's core design
@@ -20845,8 +20856,35 @@ function App() {
   // records an override; nothing commits until confirmCatchUpRebuild.
   const skipCatchUpItem=(id)=>setCatchUpOverrides(o=>({...o,[id]:{skip:true}}));
   const deferCatchUpItem=(id)=>setCatchUpOverrides(o=>({...o,[id]:{defer:true}}));
-  const moveCatchUpItemMyself=(id,date,time)=>setCatchUpOverrides(o=>({...o,[id]:{date,time}}));
   const clearCatchUpOverride=(id)=>setCatchUpOverrides(o=>{const next={...o};delete next[id];return next;});
+  // "Move it myself" -- the draft date/time live here (not in
+  // catchUpOverrides directly) until Save actually validates them, so a
+  // half-typed date never silently commits. Re-runs the same interval-
+  // overlap check every other conflict-aware placement in this file
+  // trusts (computeOccupiedIntervals) against the item's real duration,
+  // excluding the item's own current slot -- a chosen time that collides
+  // with something else is rejected with an inline error, never silently
+  // accepted (Catch Me Up's "re-runs conflict checking" requirement).
+  const saveCatchUpMove=(m,date,time)=>{
+    const events=lsGet("events",[]).filter(e=>e.id!==m.id);
+    const routines=getWeeklyRoutine();
+    const prefs=getSchedulePreferences();
+    if(m.deadline&&date>m.deadline){
+      setCatchUpMoveError("That's after its "+dayOfWeekLabel(m.deadline)+" deadline.");
+      return;
+    }
+    const occupied=computeOccupiedIntervals(events,routines,prefs,date);
+    const tMins=timeToMinutes(time);
+    const conflict=occupied.some(o=>!(tMins+m.duration<=o.start||tMins>=o.end));
+    if(conflict){
+      setCatchUpMoveError("That time conflicts with something else that day.");
+      return;
+    }
+    setCatchUpOverrides(o=>({...o,[m.id]:{date,time}}));
+    setCatchUpMoveError("");
+    setCatchUpExpandedId(null);
+    setCatchUpMoveDraft(null);
+  };
   // Applies the confirmed plan in one shot -- per item: skip leaves it
   // exactly where it was (still overdue, untouched by this rebuild);
   // defer ("Not this week") pushes it out 7 days with no overdue framing;
@@ -20894,6 +20932,8 @@ function App() {
     setCatchUpPreviewOpen(false);
     setCatchUpPlan(null);
     setCatchUpExpandedId(null);
+    setCatchUpMoveDraft(null);
+    setCatchUpMoveError("");
     const edited=Object.keys(catchUpOverrides).length>0;
     setCatchUpOverrides({});
     setDashToast(applied.length+" thing"+(applied.length!==1?"s":"")+" rebuilt.");
@@ -22101,17 +22141,21 @@ function App() {
                   </div>
                   {expanded&&(
                     <div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap"}}>
-                      <BtnSm variant="ghost" onClick={()=>setCatchUpExpandedId("moving-"+m.id)}>Move it myself</BtnSm>
+                      <BtnSm variant="ghost" onClick={()=>{setCatchUpMoveDraft({date:effectiveTo.date,time:effectiveTo.time});setCatchUpMoveError("");setCatchUpExpandedId("moving-"+m.id);}}>Move it myself</BtnSm>
                       <BtnSm variant="ghost" onClick={()=>{skipCatchUpItem(m.id);setCatchUpExpandedId(null);}}>Skip</BtnSm>
                       <BtnSm variant="ghost" onClick={()=>{deferCatchUpItem(m.id);setCatchUpExpandedId(null);}}>Not this week</BtnSm>
                       {(override.skip||override.defer||override.date)&&<BtnSm variant="ghost" onClick={()=>{clearCatchUpOverride(m.id);setCatchUpExpandedId(null);}}>Undo edit</BtnSm>}
                     </div>
                   )}
-                  {catchUpExpandedId==="moving-"+m.id&&(
-                    <div style={{display:"flex",gap:8,marginTop:10,alignItems:"center",flexWrap:"wrap"}}>
-                      <Input type="date" min={dayKey()} value={effectiveTo.date} onChange={e=>moveCatchUpItemMyself(m.id,e.target.value,effectiveTo.time)} style={{width:150}} />
-                      <TimeInput value={effectiveTo.time} onChange={t=>moveCatchUpItemMyself(m.id,effectiveTo.date,t)} />
-                      <BtnSm onClick={()=>setCatchUpExpandedId(null)}>Save</BtnSm>
+                  {catchUpExpandedId==="moving-"+m.id&&catchUpMoveDraft&&(
+                    <div>
+                      <div style={{display:"flex",gap:8,marginTop:10,alignItems:"center",flexWrap:"wrap"}}>
+                        <Input type="date" min={dayKey()} value={catchUpMoveDraft.date} onChange={e=>{setCatchUpMoveDraft(d=>({...d,date:e.target.value}));setCatchUpMoveError("");}} style={{width:150}} />
+                        <TimeInput value={catchUpMoveDraft.time} onChange={t=>{setCatchUpMoveDraft(d=>({...d,time:t}));setCatchUpMoveError("");}} />
+                        <BtnSm onClick={()=>saveCatchUpMove(m,catchUpMoveDraft.date,catchUpMoveDraft.time)}>Save</BtnSm>
+                        <BtnSm variant="ghost" onClick={()=>{setCatchUpExpandedId(null);setCatchUpMoveDraft(null);setCatchUpMoveError("");}}>Cancel</BtnSm>
+                      </div>
+                      {catchUpMoveError&&<div style={{fontSize:11.5,color:T.red,marginTop:6}}>{catchUpMoveError}</div>}
                     </div>
                   )}
                 </div>
