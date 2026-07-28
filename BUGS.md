@@ -4,7 +4,7 @@ Open issues tracked in one place instead of memory. Remove an item once it's fix
 
 ## 1. Prep overlay clipping (Decks/Study)
 
-**Status:** Fixed, unmerged. Branch `fix/prep-decks-clipping-and-copy`. Pending visual check on preview.
+**Status:** Fixed and merged to main. Visually verified on preview.
 
 **Where:** `studlin-app.jsx`, `StudlinPrep`'s `flashcardsOverlay` render block.
 
@@ -16,7 +16,7 @@ Open issues tracked in one place instead of memory. Remove an item once it's fix
 
 ## 2. Phantom flashcard on failed AI generation
 
-**Status:** Fixed, unmerged. Same branch as #1. Pending visual check on preview.
+**Status:** Fixed and merged to main. Visually verified on preview.
 
 **Where:** `studlin-app.jsx`, `Flashcards`'s `createDeck`.
 
@@ -28,7 +28,7 @@ Open issues tracked in one place instead of memory. Remove an item once it's fix
 
 ## 3. "Study with spaced repetition" overclaims the feature
 
-**Status:** Fixed, unmerged. Same branch as #1 and #2. Not a new item — already addressed, just flagging its status matches the other two.
+**Status:** Fixed and merged to main (app copy). `index.html`'s comparison table still overclaims — separate, unscheduled fix.
 
 **Where:** `studlin-app.jsx`'s `Flashcards` page header (was "Study with spaced repetition", now "Study now, or schedule reviews before an exam"). `index.html`'s comparison table still has the same overclaim ("Active recall and spaced repetition built into every deck") — not touched, out of scope for that branch.
 
@@ -36,17 +36,17 @@ Open issues tracked in one place instead of memory. Remove an item once it's fix
 
 ## 4. App-open can fire three stacked popups after missed blocks
 
-**Status:** Confirmed real via code read. Not fixed.
+**Status:** Confirmed real via code read. Deliberately not fixed piecemeal — folded into the Catch Me Up work.
 
 **Where:** `studlin-app.jsx`, the dashboard's floating-panel state: `tier0Batch` (auto-moved tasks, top-left), `rolloverPending` (Tier 1 yesterday's-tasks prompt, top-right), and `strugglingBucketOffer`/`peakInsightOffer` (peak-hour insight nudges, bottom-left).
 
 **Root cause:** the two insight nudges (`strugglingBucketOffer`/`peakInsightOffer`) already have explicit mutual exclusion — the code picks at most one of those two per load ("one nudge at a time, not a stack fighting for the same spot"). But that exclusion doesn't extend to `tier0Batch` or `rolloverPending`, which are set independently in the same daily-gate pass. A day with both an auto-moved task and an overdue-from-yesterday task and a ready insight nudge shows all three panels at once — different corners of the screen, so they don't overlap pixel-for-pixel, but it's three simultaneous asks on one app open, which is the "stacked popups" complaint.
 
-**Needs a decision:** sequence them (show one, then the next on dismiss) or accept simultaneous-but-separate-corners as fine and just soften it (stagger the entrance animation, cap total panels shown at once, etc).
+**Decision:** not a targeted fix. This gets solved properly as part of Catch Me Up, where Tier 0 and Tier 1 merge into a single recovery banner and insight nudges move off app-open entirely. No standalone patch (staggering, capping panel count, etc.) until that work happens.
 
 ## 5. Integrations panel can show a stuck "Syncing…" state
 
-**Status:** Partially fixed already; one real gap remains.
+**Status:** Partially fixed already. Remaining gap logged as a pre-launch polish item, not scheduled now.
 
 **Where:** `studlin-app.jsx`, `SettingsTab`'s Google Calendar integration (`requestGoogleSync`/`connectGoogle`/`syncGoogleNow`) and `connectGoogleCalendar()` (module scope).
 
@@ -58,6 +58,6 @@ Open issues tracked in one place instead of memory. Remove an item once it's fix
 
 ## 6. OPENAI_API_KEY — unreferenced anywhere in the codebase
 
-**Status:** Confirmed dead. Safe to delete from Vercel.
+**Status:** Resolved. Deleted from Vercel.
 
-Grepped the entire repo for `OPENAI_API_KEY` and case-insensitively for `openai` — zero matches, in `api/*.js` or anywhere else. Nothing reads it. Not currently wired to anything, so removing it from Vercel's environment variables is safe.
+Grepped the entire repo for `OPENAI_API_KEY` and case-insensitively for `openai` — zero matches, in `api/*.js` or anywhere else. Nothing read it, so removing it from Vercel's environment variables was safe.
