@@ -7802,7 +7802,14 @@ function Notes({setActive=()=>{}}){
     recordSyllabusScan();
     setScanningDates(false);
     if(found.length>0){
-      setSyllabusReview({noteId:notes[sel].id,tag:notes[sel].tag,sourceText:plain,priorScanCount:priorSyllabusScanCount(notes[sel].tag,notes[sel].id),items:found.map((d,i)=>({id:"si-"+i,...d,include:true,attackBlock:d.kind==="deadline",proposeSessions:d.kind==="exam",sessionCount:defaultSessionCountFor(d.examWeight),difficulty:500,moreOpen:false}))});
+      // proposeSessions defaults false regardless of kind -- exam creation
+      // places the exam only now (Studlin Prep's "Build study plan" is the
+      // opt-in action, or the close-to-exam prompt), matching what Add-
+      // Task/Edit-Task already defaulted to. This path used to default true
+      // for exams specifically, the one real inconsistency that made "auto-
+      // generates at creation" true in practice even though the manual form
+      // was already opt-in.
+      setSyllabusReview({noteId:notes[sel].id,tag:notes[sel].tag,sourceText:plain,priorScanCount:priorSyllabusScanCount(notes[sel].tag,notes[sel].id),items:found.map((d,i)=>({id:"si-"+i,...d,include:true,attackBlock:d.kind==="deadline",proposeSessions:false,sessionCount:defaultSessionCountFor(d.examWeight),difficulty:500,moreOpen:false}))});
     }else{
       setSyllabusToast("No dates found in this note");
       setTimeout(()=>setSyllabusToast(""),3200);
@@ -8009,7 +8016,8 @@ function Notes({setActive=()=>{}}){
     setSel(0);
     setPopover(null);
     if(syllabusItems!==null){
-      setSyllabusReview({noteId:newNote.id,tag,sourceText:fileText,priorScanCount:priorSyllabusScanCount(tag,newNote.id),items:syllabusItems.map((d,i)=>({id:"si-"+i,...d,include:true,attackBlock:d.kind==="deadline",proposeSessions:d.kind==="exam",sessionCount:defaultSessionCountFor(d.examWeight),difficulty:500,moreOpen:false}))});
+      // See the identical comment on the other setSyllabusReview call above.
+      setSyllabusReview({noteId:newNote.id,tag,sourceText:fileText,priorScanCount:priorSyllabusScanCount(tag,newNote.id),items:syllabusItems.map((d,i)=>({id:"si-"+i,...d,include:true,attackBlock:d.kind==="deadline",proposeSessions:false,sessionCount:defaultSessionCountFor(d.examWeight),difficulty:500,moreOpen:false}))});
     }
   };
 
@@ -8299,7 +8307,7 @@ function Notes({setActive=()=>{}}){
                     {!it.noDate&&<Input type="date" value={it.date} onChange={ev=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,date:ev.target.value}:x)}))} style={{width:150}} />}
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                    <SelectChip options={[{value:"deadline",label:"To-Do"},{value:"exam",label:"Exam"}]} value={it.kind} onChange={v=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v,attackBlock:v==="deadline",proposeSessions:v==="exam",sessionCount:x.sessionCount||defaultSessionCountFor()}:x)}))} />
+                    <SelectChip options={[{value:"deadline",label:"To-Do"},{value:"exam",label:"Exam"}]} value={it.kind} onChange={v=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v,attackBlock:v==="deadline",proposeSessions:false,sessionCount:x.sessionCount||defaultSessionCountFor()}:x)}))} />
                     {it.confidence==="low"&&!it.noDate&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>Low confidence, double-check</span>}
                     <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:T.muted,cursor:"pointer"}}>
                       <input type="checkbox" checked={!!it.noDate} onChange={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,noDate:!x.noDate}:x)}))} />
@@ -8309,12 +8317,6 @@ function Notes({setActive=()=>{}}){
                       <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:T.muted,cursor:"pointer"}}>
                         <input type="checkbox" checked={!!it.attackBlock} onChange={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,attackBlock:!x.attackBlock}:x)}))} />
                         Needs prep time, schedule an Attack Block
-                      </label>
-                    )}
-                    {!it.noDate&&it.kind==="exam"&&(
-                      <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:T.muted,cursor:"pointer"}}>
-                        <input type="checkbox" checked={!!it.proposeSessions} onChange={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,proposeSessions:!x.proposeSessions}:x)}))} />
-                        Schedule study sessions leading up to this
                       </label>
                     )}
                   </div>
@@ -8370,27 +8372,6 @@ function Notes({setActive=()=>{}}){
                       )}
                     </div>
                   )}
-                  {!it.noDate&&it.kind==="exam"&&it.proposeSessions&&(()=>{
-                    const dates=computeReviewDates(it.date,dayKey(),it.sessionCount||4);
-                    return (
-                      <div style={{marginTop:6}}>
-                        <div style={{display:"flex",alignItems:"center",gap:10}}>
-                          <NumField min={1} max={6} fallback={4} value={it.sessionCount||4} onChange={v=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,sessionCount:v}:x)}))} style={{width:52}} />
-                          <span style={{fontSize:11,color:T.muted}}>{dates.length===0?"Too close to the exam to fit a session":dates.length+" session"+(dates.length!==1?"s":"")+": "+dates.join(", ")}</span>
-                        </div>
-                        {it.moreOpen ? (
-                          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6}}>
-                            <span style={{fontSize:10.5,color:T.muted}}>Easy</span>
-                            <input type="range" min={0} max={1000} value={it.difficulty??500} onChange={ev=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,difficulty:+ev.target.value}:x)}))} style={{flex:1,accentColor:T.lime,height:5,borderRadius:3,cursor:"pointer"}} />
-                            <span style={{fontSize:10.5,color:T.muted}}>Hard</span>
-                            <button type="button" onClick={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,moreOpen:false}:x)}))} title="Collapse" style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,padding:0,flexShrink:0}}>×</button>
-                          </div>
-                        ) : (
-                          <button type="button" onClick={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,moreOpen:true}:x)}))} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,marginTop:6,textDecoration:"underline"}}>+ How hard is this for you?</button>
-                        )}
-                      </div>
-                    );
-                  })()}
                 </div>
               </div>
             </div>
@@ -12834,7 +12815,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
           include:!isPast,
           noDate:false,
           attackBlock:kind!=="exam",
-          proposeSessions:kind==="exam",
+          proposeSessions:false,
           sessionCount:defaultSessionCountFor(d.examWeight),
           examWeight:d.examWeight,
           confidence:d.confidence,
@@ -13142,7 +13123,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
                             {!it.noDate&&<Input type="date" value={it.date} onChange={e=>setItem(i,{date:e.target.value})} style={{width:140}} />}
                           </div>
                           <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                            <SelectChip size="sm" options={ITEM_KIND_OPTIONS} value={it.kind} onChange={v=>setItem(i,{kind:v,attackBlock:v!=="exam",proposeSessions:v==="exam",sessionCount:it.sessionCount||defaultSessionCountFor()})} />
+                            <SelectChip size="sm" options={ITEM_KIND_OPTIONS} value={it.kind} onChange={v=>setItem(i,{kind:v,attackBlock:v!=="exam",proposeSessions:false,sessionCount:it.sessionCount||defaultSessionCountFor()})} />
                             {it.confidence==="low"&&!it.noDate&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>Double-check</span>}
                             <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:T.muted,cursor:"pointer"}}>
                               <input type="checkbox" checked={!!it.noDate} onChange={()=>setItem(i,{noDate:!it.noDate})} />
@@ -13199,34 +13180,26 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
                 return (
                   <div key={it.id} style={{padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,marginBottom:8}}>
                     <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:8}}>{it.title||"Untitled"}</div>
-                    {it.kind==="exam"?(<>
-                      <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,color:T.muted,cursor:"pointer",marginBottom:6}}>
-                        <input type="checkbox" checked={!!it.proposeSessions} onChange={()=>setItem(i,{proposeSessions:!it.proposeSessions})} />
-                        Schedule study sessions
-                      </label>
-                      {it.proposeSessions&&(()=>{
-                        const dates=computeReviewDates(it.date,dayKey(),it.sessionCount||4);
-                        return (
-                          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-                            <NumField min={1} max={6} fallback={4} value={it.sessionCount||4} onChange={v=>setItem(i,{sessionCount:v})} style={{width:48}} />
-                            <span style={{fontSize:10.5,color:T.muted}}>{dates.length===0?"Too close to the exam to fit a session":dates.length+" session"+(dates.length!==1?"s":"")+": "+dates.join(", ")}</span>
-                          </div>
-                        );
-                      })()}
-                    </>):(
+                    {it.kind==="exam"?(
+                      // No session-scheduling here -- exam creation places
+                      // the exam only. Build a real study plan (with the
+                      // one-question calibration) from the exam itself in
+                      // Studlin Prep once you're ready.
+                      <div style={{fontSize:11,color:T.muted}}>Build a study plan for this from Studlin Prep once you're ready.</div>
+                    ):(<>
                       <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,color:T.muted,cursor:"pointer",marginBottom:6}}>
                         <input type="checkbox" checked={!!it.attackBlock} onChange={()=>setItem(i,{attackBlock:!it.attackBlock})} />
                         Schedule an Attack Block
                       </label>
-                    )}
-                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:showPhases&&(it.kind==="exam"||it.attackBlock)?8:0}}>
-                      <span style={{fontSize:10.5,color:T.muted}}>Easy</span>
-                      <input type="range" min={0} max={1000} value={it.difficulty??500} onChange={e=>setItem(i,{difficulty:+e.target.value})} style={{flex:1,accentColor:T.lime,height:5,borderRadius:3,cursor:"pointer"}} />
-                      <span style={{fontSize:10.5,color:T.muted}}>Hard</span>
-                    </div>
-                    {it.kind!=="exam"&&it.attackBlock&&showPhases&&(
-                      <PhasesOutlineEditor item={it} onChange={patch=>setItem(i,patch)} subject={review.subjectName} />
-                    )}
+                      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:showPhases&&it.attackBlock?8:0}}>
+                        <span style={{fontSize:10.5,color:T.muted}}>Easy</span>
+                        <input type="range" min={0} max={1000} value={it.difficulty??500} onChange={e=>setItem(i,{difficulty:+e.target.value})} style={{flex:1,accentColor:T.lime,height:5,borderRadius:3,cursor:"pointer"}} />
+                        <span style={{fontSize:10.5,color:T.muted}}>Hard</span>
+                      </div>
+                      {it.attackBlock&&showPhases&&(
+                        <PhasesOutlineEditor item={it} onChange={patch=>setItem(i,patch)} subject={review.subjectName} />
+                      )}
+                    </>)}
                   </div>
                 );
               })}
@@ -15203,7 +15176,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
       // actually described, "just this one" is the opt-out, not the default.
       const recurringDays=(kind==="event"&&it.recurring&&Array.isArray(it.recurring.days))?it.recurring.days.filter(d=>WEEKDAY_ABBR_TO_JS_DOW[d]!==undefined):[];
       const recurring=(recurringDays.length>0&&it.recurring.until&&it.dueDate)?{days:recurringDays,until:it.recurring.until}:null;
-      return {id:"bd-"+i,title:it.title,kind,durationMin:it.durationMin||30,dueDate:it.dueDate||"",dueTime:it.dueTime||"",needsDuration:!!it.needsDuration,attackBlock:!!it.needsDuration,proposeSessions:it.kind==="exam",sessionCount:defaultSessionCountFor(it.examWeight),examWeight:it.examWeight||"major",difficulty:500,moreOpen:false,clarify,recurring,recurringExpandAll:!!recurring,immediate:!!it.immediate,chained:!!it.chained,include:true,
+      return {id:"bd-"+i,title:it.title,kind,durationMin:it.durationMin||30,dueDate:it.dueDate||"",dueTime:it.dueTime||"",needsDuration:!!it.needsDuration,attackBlock:!!it.needsDuration,proposeSessions:false,sessionCount:defaultSessionCountFor(it.examWeight),examWeight:it.examWeight||"major",difficulty:500,moreOpen:false,clarify,recurring,recurringExpandAll:!!recurring,immediate:!!it.immediate,chained:!!it.chained,include:true,
         // Project-only fields -- same shape PhasesOutlineEditor/syllabus
         // review already use, harmless no-ops for every other kind.
         detail:"",detailOpen:false,phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false};
@@ -16155,7 +16128,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
                     <Input value={it.title} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,title:ev.target.value}:x)}))} style={{flex:1}} />
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                    <SelectChip options={[{value:"study",label:"Study Session"},{value:"todo",label:"To-Do"},{value:"event",label:"Event"},{value:"exam",label:"Exam"},{value:"project",label:"Project"},{value:"reminder",label:"Reminder"}]} value={it.kind} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v,proposeSessions:v==="exam",sessionCount:x.sessionCount||4}:x)}))} />
+                    <SelectChip options={[{value:"study",label:"Study Session"},{value:"todo",label:"To-Do"},{value:"event",label:"Event"},{value:"exam",label:"Exam"},{value:"project",label:"Project"},{value:"reminder",label:"Reminder"}]} value={it.kind} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v,proposeSessions:false,sessionCount:x.sessionCount||4}:x)}))} />
                     {it.kind==="project"&&(
                       <Input type="date" value={it.dueDate} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,dueDate:ev.target.value}:x)}))} style={{width:138}} />
                     )}
@@ -16214,32 +16187,12 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
                     );
                   })()}
                   {it.kind==="exam"&&(
-                    <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:T.muted,cursor:"pointer",marginTop:6}}>
-                      <input type="checkbox" checked={!!it.proposeSessions} onChange={()=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,proposeSessions:!x.proposeSessions}:x)}))} />
-                      Schedule study sessions leading up to this
-                    </label>
+                    // No session-scheduling here -- exam creation places the
+                    // exam only. Build a real study plan (with the one-
+                    // question calibration) from the exam itself in Studlin
+                    // Prep once you're ready.
+                    <div style={{fontSize:11,color:T.muted,marginTop:6}}>Build a study plan for this from Studlin Prep once you're ready.</div>
                   )}
-                  {it.kind==="exam"&&it.proposeSessions&&it.dueDate&&(()=>{
-                    const dates=computeReviewDates(it.dueDate,dayKey(),it.sessionCount||4);
-                    return (
-                      <div style={{marginTop:6}}>
-                        <div style={{display:"flex",alignItems:"center",gap:10}}>
-                          <NumField min={1} max={6} fallback={4} value={it.sessionCount||4} onChange={v=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,sessionCount:v}:x)}))} style={{width:52}} />
-                          <span style={{fontSize:11,color:T.muted}}>{dates.length===0?"Too close to the exam to fit a session":dates.length+" session"+(dates.length!==1?"s":"")+": "+dates.join(", ")}</span>
-                        </div>
-                        {it.moreOpen ? (
-                          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6}}>
-                            <span style={{fontSize:10.5,color:T.muted}}>Easy</span>
-                            <input type="range" min={0} max={1000} value={it.difficulty??500} onChange={ev=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,difficulty:+ev.target.value}:x)}))} style={{flex:1,accentColor:T.lime,height:5,borderRadius:3,cursor:"pointer"}} />
-                            <span style={{fontSize:10.5,color:T.muted}}>Hard</span>
-                            <button type="button" onClick={()=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,moreOpen:false}:x)}))} title="Collapse" style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,padding:0,flexShrink:0}}>×</button>
-                          </div>
-                        ) : (
-                          <button type="button" onClick={()=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,moreOpen:true}:x)}))} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,marginTop:6,textDecoration:"underline"}}>+ How hard is this for you?</button>
-                        )}
-                      </div>
-                    );
-                  })()}
                   {/* Same "describe it, Studlin suggests phases/a checklist"
                       flow Add Task and the syllabus review already use for
                       Project -- kept collapsed-by-default look here too
