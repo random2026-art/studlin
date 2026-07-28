@@ -6793,14 +6793,28 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
       </Modal>
 
       <UpgradeModal open={!!upgradeModal} feature={upgradeModal?upgradeModal.feature:""} detail={upgradeModal?upgradeModal.detail:""} onClose={()=>setUpgradeModal(null)} onUpgraded={()=>setUpgradeModal(null)} />
-      {flashcardsOverlay&&(
+      {/* Portaled straight to <body> -- this is `position:fixed`, and
+          [data-page] (the tab-content wrapper this component renders
+          inside of) has a CSS `animation` targeting `transform`, which per
+          spec makes it a containing block for any `position:fixed`
+          descendant left in place, not just while the animation is
+          actively running. With `inset:0`, that means "fill [data-page]'s
+          own box" instead of "fill the real viewport" -- everything past
+          wherever [data-page]'s bottom edge happens to fall (tab pills,
+          the deck grid, the study view, all of it, at a fixed height
+          regardless of content) gets silently clipped with no scroll to
+          reveal it, since inset:0 already claims to fill its containing
+          block exactly. Same class of bug the tour callout above this
+          component already works around the same way -- see its own
+          comment for the fuller explanation. */}
+      {flashcardsOverlay&&ReactDOM.createPortal((
         <div style={{position:"fixed",inset:0,zIndex:900,background:T.bg,overflowY:"auto"}}>
           <div style={{position:"sticky",top:0,zIndex:2,background:T.bg,borderBottom:`1px solid ${T.border}`,padding:"12px 32px"}}>
             <button onClick={()=>setFlashcardsOverlay(false)} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontWeight:600,fontFamily:T.font,cursor:"pointer",padding:"6px 0",display:"flex",alignItems:"center",gap:6}}>← Back to Studlin Prep</button>
           </div>
           <div style={{padding:"24px 32px"}}><Flashcards /></div>
         </div>
-      )}
+      ), document.body)}
     </div>
   );
 }
@@ -6819,6 +6833,7 @@ function Flashcards() {
   const [dName,setDName]=useState("");
   const [dSource,setDSource]=useState("manual");
   const [aiLoading,setAiLoading]=useState(false);
+  const [createDeckError,setCreateDeckError]=useState("");
   const [fileTexts,setFileTexts]=useState([]); // [{name,text}] — one entry per uploaded file, so more than one can contribute to the same deck
   const fileRef=useRef(null);
   const [cardCount,setCardCount]=useState(10);
@@ -6918,22 +6933,32 @@ function Flashcards() {
     return cards;
   };
 
+  // Every early return here is a genuine failure (no input given, or AI
+  // generation came back empty) -- none of them should create a deck.
+  // Earlier this substituted a placeholder card ("No file loaded", "No
+  // cards were generated", etc.) and created the deck anyway, so a failed
+  // generation (e.g. a missing API key) silently produced a real deck with
+  // one fake card in it. Inline error + no deck matches the CLAUDE.md rule
+  // that validation failures render as inline text, not silent fallbacks.
   const createDeck=async()=>{
+    setCreateDeckError("");
     const name=dName.trim()||"New deck";
     let cards=[];
-    if(dSource==="manual"){cards=[...draft];}
+    if(dSource==="manual"){
+      if(draft.length===0){setCreateDeckError("Add at least one card first.");return;}
+      cards=[...draft];
+    }
     else if(dSource==="file"){
-      if(fileTexts.length===0){cards=[{q:"No file loaded",a:"Upload a PDF, DOCX, or text file first"}];}
-      else{
-        const combined=fileTexts.map(f=>"--- "+f.name+" ---\n"+f.text).join("\n\n");
-        cards=await aiGenCards(combined,"document/notes",cardCount);
-      }
+      if(fileTexts.length===0){setCreateDeckError("Upload a file first.");return;}
+      const combined=fileTexts.map(f=>"--- "+f.name+" ---\n"+f.text).join("\n\n");
+      cards=await aiGenCards(combined,"document/notes",cardCount);
+      if(cards.length===0){setCreateDeckError("Card generation failed. Try again, or build the deck manually instead.");return;}
     }
     else if(dSource==="record"){
-      if(!recText){cards=[{q:"No audio recorded",a:"Record a lecture first"}];}
-      else{cards=await aiGenCards("Lecture transcription:\n\n"+recText,"lecture transcription",cardCount);}
+      if(!recText){setCreateDeckError("Record a lecture first.");return;}
+      cards=await aiGenCards("Lecture transcription:\n\n"+recText,"lecture transcription",cardCount);
+      if(cards.length===0){setCreateDeckError("Card generation failed. Try again, or build the deck manually instead.");return;}
     }
-    if(cards.length===0){cards=[{q:"No cards were generated",a:"Try again with more content"}];}
     const nd={id:String(Date.now()),name:name,count:cards.length,done:0,color:T.lime,cards:cards,examEventId:null};
     const next=[nd,...deckList];setDeckList(next);lsSet("decks",next);
     setNewOpen(false);setDName("");setDraft([]);setFileTexts([]);stopRec();setRecText("");setDSource("manual");setCardCount(10);
@@ -7063,7 +7088,7 @@ function Flashcards() {
 
   return (
     <div>
-      <PH title="Flashcards" sub="Study with spaced repetition" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New deck")}</Btn>} />
+      <PH title="Flashcards" sub="Study now, or schedule reviews before an exam" action={<Btn onClick={()=>setNewOpen(true)}>{React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.plus,"New deck")}</Btn>} />
       {showExamLinkTip&&(
         <div style={{display:"flex",alignItems:"center",gap:12,background:T.lime+"0d",border:`1px solid ${T.lime}33`,borderRadius:12,padding:"12px 16px",marginBottom:16}}>
           <span style={{fontSize:18,flexShrink:0}}>🎯</span>
@@ -7174,13 +7199,13 @@ function Flashcards() {
         </div>
         <BtnSm variant="subtle" onClick={addEditCard} style={{marginTop:10}}>{Icon.plus} Add card</BtnSm>
       </Modal>
-      <Modal open={newOpen} onClose={()=>{setNewOpen(false);stopRec();}} title="Create a flashcard deck" sub="Build manually, from a file, or recorded lecture." width={580}
-        footer={<><Btn variant="subtle" onClick={()=>{setNewOpen(false);stopRec();}}>Cancel</Btn><Btn onClick={createDeck} disabled={aiLoading}>{aiLoading?"Generating cards...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.layers,"Create deck")}</Btn></>}>
+      <Modal open={newOpen} onClose={()=>{setNewOpen(false);stopRec();setCreateDeckError("");}} title="Create a flashcard deck" sub="Build manually, from a file, or recorded lecture." width={580}
+        footer={<><Btn variant="subtle" onClick={()=>{setNewOpen(false);stopRec();setCreateDeckError("");}}>Cancel</Btn><Btn onClick={createDeck} disabled={aiLoading}>{aiLoading?"Generating cards...":React.createElement("span",{style:{display:"flex",alignItems:"center",gap:6}},Icon.layers,"Create deck")}</Btn></>}>
         <Field label="Deck name"><Input placeholder="e.g. Bio chapter 4 cards" value={dName} onChange={e=>setDName(e.target.value)} autoFocus /></Field>
         <Field label="Source">
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
             {[{id:"manual",label:"Build manually",desc:"Type Q&A cards yourself",icon:Icon.pen},{id:"file",label:"From file",desc:"AI generates cards from your PDF or notes",icon:Icon.file},{id:"record",label:"From lecture",desc:"AI generates cards from recorded audio",icon:MicIcon}].map(o=>(
-              <button key={o.id} type="button" onClick={()=>setDSource(o.id)} style={{padding:12,borderRadius:10,border:"1px solid "+(dSource===o.id?T.lime+"66":T.border),background:dSource===o.id?T.lime+"10":T.card2,color:T.text,cursor:"pointer",textAlign:"left",fontFamily:T.font}}>
+              <button key={o.id} type="button" onClick={()=>{setDSource(o.id);setCreateDeckError("");}} style={{padding:12,borderRadius:10,border:"1px solid "+(dSource===o.id?T.lime+"66":T.border),background:dSource===o.id?T.lime+"10":T.card2,color:T.text,cursor:"pointer",textAlign:"left",fontFamily:T.font}}>
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}><span style={{color:dSource===o.id?T.lime:T.muted,display:"flex"}}>{o.icon}</span><span style={{fontSize:12.5,fontWeight:600}}>{o.label}</span></div>
                 <div style={{fontSize:11,color:T.muted}}>{o.desc}</div>
               </button>
@@ -7234,6 +7259,7 @@ function Flashcards() {
             </div>
           </Field>
         )}
+        {createDeckError&&<div style={{fontSize:12,color:T.red,marginTop:4}}>{createDeckError}</div>}
       </Modal>
       <Pills tabs={["study","decks"]} active={tab} onChange={setTab} />
       {tab==="study"&&(
