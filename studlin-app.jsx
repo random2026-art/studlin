@@ -5925,6 +5925,14 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   // helper, so Prep needs its own too, same lookup Notes already uses.
   const userSubjects=getSubjects();
   const colorOf=(tg)=>{const s=userSubjects.find(x=>x.label===tg);return s?s.color:T.lime;};
+  // Same component-local convention as colorOf above -- CalendarTab has its
+  // own niceDate too. Short month (vs CalendarTab's long form) since this
+  // feeds a single-line meta row that's already tight on space.
+  const niceDate=(k)=>{const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"});};
+  // App() has its own fmtRolloverClock -- the session timeline (Part B)
+  // needs the same "h:mmAM/PM" formatting for session/exam times and had
+  // no local copy of its own.
+  const fmtRolloverClock=(t)=>{if(!t)return"";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+ap;};
 
   // Reads fresh from storage rather than relying on selectedExam/fileTexts
   // (the old detail view's state) -- this modal needs to work whether it's
@@ -6468,16 +6476,16 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                 const isExpanded=effectiveExpandedId===ex.id;
                 return(
                 <div key={ex.id} onClick={()=>setExpandedListExamId(effectiveExpandedId===ex.id?null:ex.id)}
-                  style={{padding:"14px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,cursor:"pointer"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:14}}>
-                    <div style={{fontSize:22,fontWeight:800,color:T.white,flexShrink:0,letterSpacing:"-0.01em"}}>{daysLabel}</div>
+                  style={{padding:"10px 14px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,cursor:"pointer"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:12}}>
+                    <div style={{fontSize:22,fontWeight:800,color:T.white,flexShrink:0,letterSpacing:"-0.01em",lineHeight:1}}>{daysLabel}</div>
                     <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:14,fontWeight:700,color:T.white}}>{ex.title}</div>
-                      <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{metaParts.join(" · ")}</div>
+                      <div style={{fontSize:14,fontWeight:700,color:T.white,lineHeight:1.3}}>{ex.title}</div>
+                      <div style={{fontSize:11.5,color:T.muted,marginTop:1,lineHeight:1.3}}>{metaParts.join(" · ")}</div>
                     </div>
                   </div>
                   {isExpanded&&(
-                    <div style={{display:"flex",gap:8,marginTop:12}}>
+                    <div style={{display:"flex",gap:8,marginTop:10}}>
                       <BtnSm onClick={(e)=>{e.stopPropagation();studyNow(ex);}}>Study now</BtnSm>
                       <BtnSm variant="ghost" onClick={(e)=>{e.stopPropagation();viewPlan(ex);}}>View plan</BtnSm>
                     </div>
