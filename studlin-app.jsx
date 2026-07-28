@@ -5207,7 +5207,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
 }
 
 // ─── NAV ICONS MAP ────────────────────────────────────────────────────────────
-const navIcon = {dashboard:Icon.grid,prep:Icon.brain,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.users,lectures:Icon.mic,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,feedback:Icon.heart,settings:Icon.settings,profile:Icon.user};
+const navIcon = {today:Icon.check,dashboard:Icon.grid,prep:Icon.brain,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.users,lectures:Icon.mic,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,feedback:Icon.heart,settings:Icon.settings,profile:Icon.user};
 
 // ─── AI CHAT (removed -- see Phase 2 of the Magic-Calendar plan; Studlin AI
 // is no longer a standalone chat surface, AI now shows up embedded in the
@@ -18933,21 +18933,11 @@ function StreakDetailModal({open,onClose,streak}){
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleTask, dashToast, setDashToast, setDetailEventId, onTaskCompleted}) {
+function Dashboard({setActive, seriousMode=false, dashToast, setDashToast, setDetailEventId, onTaskCompleted}) {
   const realStats=sessionStats();
   const realStreak=Math.max(1,getStreak());
   const lvl=levelInfo();
   const [,forcePlan]=useState(0);
-  const plan=todaysPlan();
-  // A single real session can now expand into several display rows (see
-  // chunkTasksWithBreaks) -- "X/Y done" should still mean "X of Y real
-  // sessions," not "X of Y rows," so only count each session's primary row
-  // (never a break, never a continuation chunk past the first).
-  const isPlanPrimaryRow=t=>!t.isBreak&&!(t.isChunk&&t.chunkIndex>0);
-  const planCountable=plan.filter(isPlanPrimaryRow);
-  const planDoneCount=planCountable.filter(t=>t.done).length;
-  const subjColor={Chemistry:T.red,"English IV":T.purple,Biology:T.teal,Calculus:T.blue,Spanish:T.amber,History:T.muted};
-  const scOf=(s)=>subjColor[s]||T.lime;
   const fmtClock=(t)=>{if(!t)return"";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+ap;};
   const prof=getProfile();
   const firstName=(prof.name||"there").split(" ")[0];
@@ -19342,70 +19332,13 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {overrunToast}</div>
       )}
 
-      {/* ROW 2: Today's plan + Checklist (Ask Studlin/aichat card removed
-          along with the standalone Studlin AI tab -- see Phase 2 of the
-          Magic-Calendar plan). Comes before Your Classes -- "what do I do
-          right now" leads on a calendar app's dashboard, a browsable
-          everything-assigned reference comes after. */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
-        {/* Today's plan */}
-        <div style={{background:T.card,borderRadius:22,padding:24,display:"flex",flexDirection:"column"}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8,flexWrap:"wrap"}}>
-            <span style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:T.text}}>Today's plan</span>
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.1em",padding:"4px 9px",borderRadius:99,background:T.card2,color:T.muted,fontWeight:600}}>{planDoneCount} / {planCountable.length} DONE</span>
-              <button onClick={()=>setActive("calendar")} style={{fontSize:12,color:T.muted,display:"inline-flex",alignItems:"center",gap:3,cursor:"pointer",background:"none",border:"none",fontFamily:T.font,fontWeight:500}}>Calendar <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
-            </div>
-          </div>
-          {plan.length>0&&<div style={{height:3,background:T.card2,borderRadius:99,marginBottom:14,overflow:"hidden"}}><div style={{height:"100%",width:Math.round(planDoneCount/Math.max(planCountable.length,1)*100)+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}} /></div>}
-          {plan.length===0
-            ?<div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 8px",textAlign:"center"}}>
-              <div style={{fontSize:13,color:T.muted,marginBottom:18,lineHeight:1.6}}>Nothing scheduled for today. Add events to your calendar and they appear here automatically.</div>
-              <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
-                <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"10px 20px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Add a task</button>
-                <button onClick={()=>{lsSet("pendingBrainDump",true);setActive("calendar");}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"10px 20px",background:"transparent",color:T.text,border:`1px solid ${T.border}`,borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Brain dump everything</button>
-              </div>
-            </div>
-            :plan.map((t)=>{
-              const c=scOf(t.subject);
-              // A chunk past the first, or a "Break" row, is a display-only
-              // continuation of the real session above it -- its id doesn't
-              // point at a real events[] entry (see chunkTasksWithBreaks),
-              // so it renders as a plain, non-clickable sub-row instead of
-              // reusing the checkbox/Reschedule affordances that need a
-              // real id to act on.
-              if(!isPlanPrimaryRow(t)){
-                return(
-                  <div key={t.id} style={{display:"flex",alignItems:"center",gap:12,padding:"7px 14px 7px 34px",marginBottom:8,opacity:0.55}}>
-                    <span style={{fontSize:12,color:t.done?T.faint:T.muted,textDecoration:t.done?"line-through":"none",fontStyle:t.isBreak?"italic":"normal"}}>{t.title}</span>
-                    <span style={{flex:1}} />
-                    <span style={{fontFamily:T.mono,fontSize:10,color:T.faint}}>{fmtClock(t.time)}</span>
-                  </div>
-                );
-              }
-              return(
-                <div key={t.id} onClick={()=>{if(t.done)uncrossEventDone(t.id);else{markEventDone(t.id);onTaskCompleted&&onTaskCompleted(t.id);}forcePlan(x=>x+1);}} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer",background:T.card2}}>
-                  <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${t.done?T.text:T.border}`,background:t.done?T.text:"transparent",flex:"none",display:"grid",placeItems:"center"}}>
-                    {t.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
-                  </div>
-                  <div style={{flex:1,minWidth:0}}>
-                    <span style={{fontSize:13.5,color:t.done?T.faint:T.text,textDecoration:t.done?"line-through":"none",fontWeight:500}}>{t.title}</span>
-                    <div style={{fontSize:11,color:T.muted,marginTop:1}}>{t.subject}{t.kind?" · "+t.kind:""}</div>
-                  </div>
-                  <span style={{fontFamily:T.mono,fontSize:10,color:T.faint}}>{fmtClock(t.time)}</span>
-                  {!t.done&&t.duration&&(t.kind==="study block"||t.kind==="deadline")&&(
-                    <button onClick={(e)=>{e.stopPropagation();setRescheduleTask(t.isChunk?{...t,duration:t.fullDuration}:t);}} style={{flexShrink:0,padding:"3px 7px",borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Reschedule</button>
-                  )}
-                </div>
-              );
-            })}
-        </div>
-
-        {/* Checklist — plain to-dos with no inherent duration/time (e.g.
-            "send AP scores to college"). Deliberately kept out of the
-            calendar/Today's-plan entirely; this is the only place they live.
-            Restored here after briefly being removed — replaces "Jump back
-            in", which just duplicated what the sidebar nav already does. */}
+      {/* ROW 2: Checklist. Today's plan (the actual "what do I do right
+          now" task list + Begin) moved out entirely -- that's Today's job
+          now (ui/today-home), and two screens both answering that question
+          was exactly the confusion being removed. Checklist stays: it's
+          plain to-dos with no inherent duration/time, deliberately kept out
+          of both Calendar and Today. */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr",gap:16}}>
         <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -19658,6 +19591,184 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
       </div>
     )}
     </>
+  );
+}
+
+// ─── TODAY ────────────────────────────────────────────────────────────────────
+// The app's new landing page (ui/today-home) -- "what do I do right now"
+// answered in one screen, one thing expanded at a time. This is the core
+// loop: tapping Start on a study block that already has a linked deck with
+// cards opens those cards INSIDE the expanded row (see the inline
+// mini-study-loop below) instead of sending the student to Studlin Prep.
+// Deliberately a fresh, small, self-contained flip/rate loop rather than
+// reusing Flashcards' own study tab -- that component bundles deck
+// creation/recording/AI-generation state together with its study view, and
+// pulling just the study loop out would be a real refactor of a component
+// this doesn't own. Same cosmetic rating behavior as Flashcards' own study
+// tab today (Missed/Hard/Good/Mastered just advance to the next card --
+// see BUGS.md #3, nothing reads these back into scheduling anywhere yet).
+function Today({setActive, setDetailEventId, onTaskCompleted}) {
+  const [,forceUpdate]=useState(0);
+  const plan=todaysPlan();
+  const isPlanPrimaryRow=t=>!t.isBreak&&!(t.isChunk&&t.chunkIndex>0);
+  const rows=plan.filter(isPlanPrimaryRow);
+  const pendingRows=rows.filter(t=>!t.done);
+  const doneRows=rows.filter(t=>t.done);
+  const [showDone,setShowDone]=useState(false);
+  const [expandedId,setExpandedId]=useState(null);
+  const [inlineStudyId,setInlineStudyId]=useState(null); // event id currently showing the inline flashcard loop
+  const [studyIdx,setStudyIdx]=useState(0);
+  const [studyFlipped,setStudyFlipped]=useState(false);
+  const subjColor={Chemistry:T.red,"English IV":T.purple,Biology:T.teal,Calculus:T.blue,Spanish:T.amber,History:T.muted};
+  const scOf=(s)=>subjColor[s]||T.lime;
+  const fmtClock=(t)=>{if(!t)return"";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+ap;};
+  const endTimeOf=(t)=>{if(!t.time||!t.duration)return null;const mins=timeToMinutes(t.time)+t.duration;return fmtClock(minutesToTime(mins));};
+  const todayLabel=new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});
+
+  const deckForStudyBlock=(t)=>{
+    if(t.kind!=="study block"||!t.dueEventId)return null;
+    const decks=lsGet("decks",[]);
+    return decks.find(d=>deckLinkedToExam(d,t.dueEventId)&&d.cards&&d.cards.length>0)||null;
+  };
+
+  const startTask=(t)=>{
+    const deck=deckForStudyBlock(t);
+    if(deck){
+      setInlineStudyId(t.id);
+      setStudyIdx(0);
+      setStudyFlipped(false);
+      return;
+    }
+    if(window._setTimerTask)window._setTimerTask(t);
+  };
+
+  const moveLaterToday=(t)=>{
+    const events=lsGet("events",[]);
+    const nowMins=(()=>{const n=new Date();return n.getHours()*60+n.getMinutes();})();
+    const slot=findLaterTodaySlot(t,events,getWeeklyRoutine(),getSchedulePreferences(),dayKey(),nowMins);
+    if(!slot)return;
+    lsSet("events",events.map(e=>e.id===t.id?{...e,date:slot.date,time:slot.time}:e));
+    setExpandedId(null);
+    forceUpdate(x=>x+1);
+  };
+  const moveNotToday=(t)=>{
+    const events=lsGet("events",[]);
+    const slot=findNotTodaySlot(t,events,getWeeklyRoutine(),getSchedulePreferences(),dayKey());
+    if(!slot)return;
+    lsSet("events",events.map(e=>e.id===t.id?{...e,date:slot.date,time:slot.time}:e));
+    setExpandedId(null);
+    forceUpdate(x=>x+1);
+  };
+
+  const toggleDone=(t)=>{
+    if(t.done)uncrossEventDone(t.id);
+    else{markEventDone(t.id);onTaskCompleted&&onTaskCompleted(t.id);}
+    if(inlineStudyId===t.id)setInlineStudyId(null);
+    setExpandedId(null);
+    forceUpdate(x=>x+1);
+  };
+
+  const InlineStudyLoop=({t})=>{
+    const deck=deckForStudyBlock(t);
+    if(!deck)return null;
+    const card=deck.cards[studyIdx];
+    return (
+      <div style={{marginTop:10}}>
+        <div style={{fontSize:11,color:T.muted,marginBottom:8}}>{deck.name} · Card {studyIdx+1} of {deck.cards.length}</div>
+        <div onClick={()=>setStudyFlipped(f=>!f)} style={{cursor:"pointer",userSelect:"none"}}>
+          {!studyFlipped
+            ?<div style={{minHeight:120,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textAlign:"center",padding:20,background:T.card2,borderRadius:12}}>
+              <div style={{fontSize:14,fontWeight:600,color:T.text,lineHeight:1.5,marginBottom:8}}>{card?card.q:"No question"}</div>
+              <div style={{fontSize:10.5,color:T.faint,letterSpacing:"0.03em"}}>TAP TO REVEAL</div>
+            </div>
+            :<div style={{minHeight:120,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textAlign:"center",padding:20,background:T.lime,borderRadius:12}}>
+              <div style={{fontSize:13.5,fontWeight:600,color:T.ink,lineHeight:1.5,marginBottom:6}}>{card?card.a:"No answer"}</div>
+              <div style={{fontSize:10.5,color:T.ink,opacity:0.6}}>RATE YOUR RECALL</div>
+            </div>}
+        </div>
+        <div style={{display:"flex",gap:6,marginTop:10}}>
+          {studyFlipped
+            ?[["Missed",T.red],["Hard",T.amber],["Good",T.teal],["Mastered",T.lime]].map(([l,c])=>(
+              <button key={l} onClick={()=>{setStudyFlipped(false);setStudyIdx(i=>(i+1)%deck.cards.length);}} style={{flex:1,padding:"7px 0",borderRadius:7,background:c+"14",color:c,border:`1px solid ${c}33`,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:T.font}}>{l}</button>
+            ))
+            :<BtnSm onClick={()=>setStudyFlipped(true)} style={{flex:1,justifyContent:"center"}}>Reveal answer</BtnSm>}
+        </div>
+        <div style={{display:"flex",gap:10,marginTop:10}}>
+          <button onClick={()=>setInlineStudyId(null)} style={{background:"none",border:"none",color:T.muted,fontSize:11.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>Stop studying</button>
+          <button onClick={()=>{if(window._setTimerTask)window._setTimerTask(t);}} style={{background:"none",border:"none",color:T.muted,fontSize:11.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>Start Lock-In Timer instead</button>
+          <button onClick={()=>toggleDone(t)} style={{background:"none",border:"none",color:T.lime,fontSize:11.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",marginLeft:"auto"}}>Mark done</button>
+        </div>
+      </div>
+    );
+  };
+
+  const Row=({t})=>{
+    const isExpanded=expandedId===t.id;
+    const canMove=isReorderableTask(t);
+    const end=endTimeOf(t);
+    return (
+      <div style={{borderRadius:14,border:`1px solid ${T.border}`,marginBottom:8,overflow:"hidden",background:isExpanded?T.card2:T.card}}>
+        <div onClick={()=>{setExpandedId(isExpanded?null:t.id);if(inlineStudyId&&inlineStudyId!==t.id)setInlineStudyId(null);}} style={{display:"flex",alignItems:"center",gap:12,padding:"13px 16px",cursor:"pointer"}}>
+          <div onClick={(e)=>{e.stopPropagation();toggleDone(t);}} style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${T.border}`,flexShrink:0,cursor:"pointer"}} />
+          <div style={{fontFamily:T.mono,fontSize:10.5,color:T.faint,flexShrink:0,minWidth:70}}>{fmtClock(t.time)}{end?"–"+end:""}</div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:13.5,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.kind==="exam"?"EXAM · ":""}{t.title}</div>
+            {!isExpanded&&<div style={{fontSize:11,color:T.muted,marginTop:1}}>{t.subject}{t.kind?" · "+t.kind:""}</div>}
+          </div>
+          <span style={{width:8,height:8,borderRadius:"50%",background:scOf(t.subject),flexShrink:0}} />
+        </div>
+        {isExpanded&&(
+          <div style={{padding:"0 16px 14px 48px"}}>
+            {inlineStudyId===t.id
+              ?<InlineStudyLoop t={t} />
+              :(<>
+                <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>{t.subject}{t.kind?" · "+t.kind:""}{t.duration?" · "+t.duration+"m":""}</div>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  <BtnSm onClick={()=>startTask(t)}>Start</BtnSm>
+                  {canMove&&<BtnSm variant="ghost" onClick={()=>moveLaterToday(t)}>Later today</BtnSm>}
+                  {canMove&&<BtnSm variant="ghost" onClick={()=>moveNotToday(t)}>Not today</BtnSm>}
+                </div>
+              </>)}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16,paddingBottom:40,maxWidth:640}}>
+      <div>
+        <div style={{fontFamily:T.hand,fontSize:26,fontWeight:700,color:T.text}}>{todayLabel}</div>
+      </div>
+      {rows.length===0?(
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,padding:"32px 20px",textAlign:"center"}}>
+          <div style={{fontSize:13,color:T.muted,marginBottom:18,lineHeight:1.6}}>Nothing scheduled for today. Add a task and it shows up here.</div>
+          <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"10px 20px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Add a task</button>
+        </div>
+      ):(<>
+        {pendingRows.map(t=><Row key={t.id} t={t} />)}
+        {doneRows.length>0&&(
+          <div>
+            <button onClick={()=>setShowDone(s=>!s)} style={{background:"none",border:"none",color:T.muted,fontSize:11.5,fontWeight:600,fontFamily:T.font,cursor:"pointer",padding:"4px 0",display:"flex",alignItems:"center",gap:5}}>
+              {doneRows.length} done <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{transform:showDone?"rotate(180deg)":"none"}}><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            {showDone&&(
+              <div style={{marginTop:8}}>
+                {doneRows.map(t=>(
+                  <div key={t.id} onClick={()=>toggleDone(t)} style={{display:"flex",alignItems:"center",gap:12,padding:"9px 16px",cursor:"pointer",opacity:0.55}}>
+                    <div style={{width:18,height:18,borderRadius:"50%",background:T.text,flexShrink:0,display:"grid",placeItems:"center"}}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
+                    <div style={{fontSize:12.5,color:T.faint,textDecoration:"line-through"}}>{t.title}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        <div style={{fontSize:12,color:T.muted,marginTop:8}}>
+          {pendingRows.length===0?"Everything today is done.":pendingRows.length+" left · "+doneRows.length+" of "+rows.length+" done today."}
+        </div>
+      </>)}
+    </div>
   );
 }
 
@@ -20602,10 +20713,10 @@ function App() {
     const pending=lsGet("pendingTour",null);
     if(pending){try{localStorage.removeItem("studlin-pendingTour");}catch(e){}return pending;}
     // First-ever load for this account has no stored tab yet — land on
-    // Calendar, the app's home tab. Every tab switch persists
-    // "studlin-active-tab" below, so this branch only ever fires once per
-    // account.
-    return localStorage.getItem("studlin-active-tab")||"calendar";
+    // Today, the app's new landing page (ui/today-home; used to be
+    // Calendar). Every tab switch persists "studlin-active-tab" below, so
+    // this branch only ever fires once per account.
+    return localStorage.getItem("studlin-active-tab")||"today";
   });
   const [theme,setThemeState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-theme"))||"light");
   const [accent,setAccentState]=useState(()=>{
@@ -21144,16 +21255,14 @@ function App() {
   };
   const [creditsOpen,setCreditsOpen]=useState(false);
   const [pricingOpen,setPricingOpen]=useState(false);
-  // Dashboard's "Reschedule" confirm + its toast — lifted up from Dashboard
-  // itself: [data-page]'s own entrance animation makes it a containing
-  // block for any position:fixed descendant anywhere inside it, so a
-  // modal opened from Dashboard would render relative to the scrolled
-  // [data-page] box instead of the real viewport. Rendering it as a true
-  // sibling of [data-page] fixes that.
-  const [rescheduleTask,setRescheduleTask]=useState(null);
+  // Dashboard's toast -- lifted up from Dashboard itself: [data-page]'s own
+  // entrance animation makes it a containing block for any position:fixed
+  // descendant anywhere inside it, so a toast rendered from Dashboard would
+  // sit relative to the scrolled [data-page] box instead of the real
+  // viewport. Rendering it as a true sibling of [data-page] fixes that.
   const [dashToast,setDashToast]=useState("");
   // EventDetailModal -- same true-sibling-of-[data-page] treatment as
-  // rescheduleTask above, and for the same reason: it's how Dashboard
+  // dashToast above, and for the same reason: it's how Dashboard
   // reaches the same full detail/edit surface Calendar's grid already
   // has, since Dashboard holds no events state of its own to feed a
   // Calendar-local modal. CalendarTab uses this same modal/state too
@@ -21731,22 +21840,24 @@ function App() {
       logCatchUpEvent("recovery_banner_shown",{count:missedItems.length});
     }
   },[]);
+  // Four-item primary nav (ui/today-home) -- Today, Calendar, Prep,
+  // Dashboard are the app's four pillars now; everything else (Network,
+  // Feedback) is secondary. Settings/Profile dropped from here entirely --
+  // both are already one tap away from the avatar menu at the bottom of
+  // the rail (ui/chrome-and-density), so keeping them here too would just
+  // be a second, redundant path to the same place.
   const navSections=[
-    {label:"Home",items:[
-      {id:"dashboard",label:"Dashboard"},
+    {label:"",items:[
+      {id:"today",label:"Today"},
       {id:"calendar",label:"Calendar"},
-    ]},
-    {label:"Tools",items:[
       {id:"prep",label:"Studlin Prep"},
-      {id:"friends",label:"Studlin Network",badge:String(unreadCount||"")},
-    ]},
-    {label:"Account",items:[
-      {id:"feedback",label:"Feedback"},
-      {id:"settings",label:"Settings"},
-      {id:"profile",label:"Profile"},
+      {id:"dashboard",label:"Dashboard"},
     ]},
   ];
-  const bottomItems=[];
+  const bottomItems=[
+    {id:"friends",label:"Studlin Network",badge:String(unreadCount||"")},
+    {id:"feedback",label:"Feedback"},
+  ];
   const pages={prep:StudlinPrep,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile,lectures:Lectures,feedback:FeedbackPage};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
@@ -21790,7 +21901,7 @@ function App() {
         </div>
         {navSections.map(sec=>(
           <div key={sec.label}>
-            {navExpanded&&<div style={{fontSize:9,fontWeight:700,letterSpacing:"0.1em",color:sidebarFaint,textTransform:"uppercase",padding:"0 6px",margin:"14px 0 5px"}}>{sec.label}</div>}
+            {navExpanded&&sec.label&&<div style={{fontSize:9,fontWeight:700,letterSpacing:"0.1em",color:sidebarFaint,textTransform:"uppercase",padding:"0 6px",margin:"14px 0 5px"}}>{sec.label}</div>}
             {!navExpanded&&<div style={{height:1,background:sidebarBorder,margin:"14px 4px 10px"}} />}
             {sec.items.map(item=><NavItem key={item.id} item={item} />)}
           </div>
@@ -21894,7 +22005,8 @@ function App() {
             container instead of the real viewport. Clearing it once done
             keeps the entrance animation but stops that side effect. */}
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
-          {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} onTaskCompleted={handleTaskCompleted} />:
+          {active==="today"?<Today setActive={setActive} setDetailEventId={setDetailEventId} onTaskCompleted={handleTaskCompleted} />:
+           active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} onTaskCompleted={handleTaskCompleted} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} />:
            active==="calendar"?<CalendarTab onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} />:
            active==="notes"?<Notes setActive={setActive} />:
@@ -21906,15 +22018,8 @@ function App() {
         </div>
       </div>
 
-      {/* DASHBOARD RESCHEDULE CONFIRM + TOAST — true sibling of [data-page],
-          see the state declaration above for why. */}
-      {rescheduleTask&&(
-        <RescheduleModal task={rescheduleTask} events={lsGet("events",[])} onClose={()=>setRescheduleTask(null)} commit={(next,evictedCount)=>{
-          lsSet("events",next);
-          setDashToast(evictedCount>0?`Task rescheduled — ${evictedCount} other${evictedCount!==1?"s":""} shifted to make room.`:"Task rescheduled.");
-          setTimeout(()=>setDashToast(""),2800);
-        }} />
-      )}
+      {/* DASHBOARD TOAST — true sibling of [data-page], see the state
+          declaration above for why. */}
       {dashToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:1001,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {dashToast}</div>
       )}
