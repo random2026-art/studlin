@@ -11929,12 +11929,26 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
   const wkColRefs = useRef({});
   const weekScrollRef = useRef(null);
   const [wkDragId, setWkDragId] = useState(null);
-  // Click a block to select it (Google-Calendar-style), Backspace/Delete
-  // to remove it. Guarded against firing while the student is typing
+  // Resolves the design-tokens.js semantic names against the live theme
+  // object -- following whatever light/dark + accent the user actually has
+  // set, per the ui/tokens-and-calendar Part 1 correction. Cheap to
+  // recompute every render since T is mutated in place, not replaced.
+  const tokens = StudlinTokens(T);
+  // Click a block to select it (Google-Calendar-style) and open a popover
+  // with its actions (see popoverAnchor below) -- no more always-on pin/
+  // undo icons at rest, per the "no permanent actions" tokens rule.
+  // Backspace/Delete on the selected block still works even with the
+  // popover closed. Guarded against firing while the student is typing
   // anywhere else on the page (a title field, a note, etc.) — otherwise a
   // plain Backspace keystroke elsewhere on the screen could silently
   // delete whatever happened to still be selected in the grid behind it.
   const [selectedEventId, setSelectedEventId] = useState(null);
+  // {id, rect} of the block whose popover is open, or null. rect is the
+  // clicked block's own getBoundingClientRect(), captured once on click --
+  // portaled to document.body per the established [data-page] containing-
+  // block gotcha (position:fixed elsewhere in this file).
+  const [popoverAnchor, setPopoverAnchor] = useState(null);
+  const closePopover = () => { setPopoverAnchor(null); setSelectedEventId(null); };
   useEffect(()=>{
     if(!selectedEventId)return;
     const handler=(e)=>{
@@ -12095,7 +12109,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                 ref={el => { wkColRefs.current[dk] = el; }}
                 onDragOver={e=>handleDragOver(e,dk)}
                 onDrop={e=>handleDrop(e,dk)}
-                onClick={()=>setSelectedEventId(null)}>
+                onClick={closePopover}>
                 {/* School Hours background mask (High School accounts only,
                     Mon–Fri) — free periods "punch through" it via
                     subtractIntervals, so those windows show the normal clear
@@ -12133,24 +12147,25 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   const heightPx = computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, WK_PX_HR);
                   const isDone = ev.status === "done";
                   const over = daysOverdue(ev);
-                  // Overdue used to fully replace the subject color with flat
-                  // red here -- technically correct, but it meant the one
-                  // moment a block most needs to say "which class is this"
-                  // (it's late, the student is triaging) is exactly when it
-                  // stopped saying that. Subject color now always wins; a
-                  // small red dot (below) carries the overdue signal instead.
-                  const color = colorOf(ev.subject);
+                  // Subject color used to BE the block's fill. Now it's a
+                  // marker on top of a kind-based fill instead (a 3px left
+                  // edge) -- "which class is this" stays answerable at a
+                  // glance without competing with the kind-based color
+                  // language that now carries the dominant read. See
+                  // design-tokens.js's usage rules.
+                  const subjectColor = colorOf(ev.subject);
                   const isStudy = ev.kind === "study block";
                   const isExam = ev.kind === "exam";
+                  const isWarningKind = isExam || ev.kind === "deadline";
                   const isRoutine = !!ev.isRoutine;
-                  // Study blocks: solid subject-color fill. Exams: dark canvas with a
-                  // thick glowing subject-color border. Everything else (class,
-                  // deadline, reminder): the original thin left-accent strip.
+                  // Fill is kind-based only: neutral for fixed items (class,
+                  // busy block, reminder, everything else), accent for study/
+                  // work blocks, warning tint for exams/deadlines themselves.
                   const kindStyle = isStudy
-                    ? {background:color,borderLeft:"none",color:T.ink}
-                    : isExam
-                      ? {background:T.ink,border:`2px solid ${color}`,borderLeft:`2px solid ${color}`,boxShadow:`0 0 10px -1px ${color}, inset 0 0 10px ${color}22`,color:T.cream}
-                      : {background:color+"1E",borderLeft:`3px solid ${color}`,color};
+                    ? {background:tokens.color.accent,color:T.ink}
+                    : isWarningKind
+                      ? {background:tokens.color.warningSubtle,border:`1px solid ${tokens.color.warning}`,color:tokens.color.warning}
+                      : {background:tokens.color.surfaceSunken,color:tokens.color.textPrimary};
                   const dimmedByRoutineMode = editRoutineMode && !isRoutine;
                   const highlightedByRoutineMode = editRoutineMode && isRoutine;
                   const isSelected = !isRoutine && selectedEventId === ev.id;
@@ -12159,30 +12174,23 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   return (
                     <div key={ev.id}
                       draggable={!isRoutine}
-                      onDragStart={()=>{ if(!isRoutine){setWkDragId(ev.id); setWkDragDeadline(ev.deadline||null);} }}
+                      onDragStart={()=>{ if(!isRoutine){setWkDragId(ev.id); setWkDragDeadline(ev.deadline||null);closePopover();} }}
                       onDoubleClick={()=>{ if(!isRoutine)openEdit(ev); }}
-                      onClick={(e)=>{ if(isRoutine){ if(editRoutineMode&&onEditRoutine)onEditRoutine(ev.routineId); return; } e.stopPropagation(); setSelectedEventId(id=>id===ev.id?null:ev.id); }}
+                      onClick={(e)=>{
+                        if(isRoutine){ if(editRoutineMode&&onEditRoutine)onEditRoutine(ev.routineId); return; }
+                        e.stopPropagation();
+                        if(selectedEventId===ev.id){closePopover();}
+                        else{setSelectedEventId(ev.id);setPopoverAnchor({id:ev.id,rect:e.currentTarget.getBoundingClientRect()});}
+                      }}
                       onMouseEnter={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(ev.routineId); }}
                       onMouseLeave={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(null); }}
-                      title={isRoutine?"Repeats weekly":"Click to select (Backspace to delete) · Double-click to edit · Drag to reschedule"}
-                      style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:5,padding:"2px 5px",cursor:isRoutine?(editRoutineMode?"pointer":"default"):"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isDone?0.6:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{}),...(isSelected?{outline:`2px solid ${T.lime}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.lime}22`}:{})}}>
-                      {over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:`0 0 0 1.5px ${isExam?T.ink:"#fff"}`,zIndex:1}} />}
+                      title={isRoutine?"Repeats weekly":"Click for actions (Backspace to delete) · Double-click to edit · Drag to reschedule"}
+                      style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:5,padding:"2px 5px 2px 8px",cursor:isRoutine?(editRoutineMode?"pointer":"default"):"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isDone?0.6:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{}),...(isSelected?{outline:`2px solid ${T.lime}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.lime}22`}:{})}}>
+                      {/* Subject marker -- see comment above kindStyle */}
+                      <div style={{position:"absolute",left:0,top:0,bottom:0,width:3,background:subjectColor,borderRadius:"5px 0 0 5px"}} />
+                      {over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:"0 0 0 1.5px rgba(255,255,255,0.9)",zIndex:1}} />}
                       <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"EXAM · ":""}{ev.title}</div>
-                      {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:1}}>{fmtTime(ev.time)}{dur ? " · "+dur+"m" : ""}</div>}
-                      {ev.userPinned && !isRoutine && (
-                        <div onClick={(e)=>{e.stopPropagation();const next=events.map(x=>x.id===ev.id?{...x,userPinned:false}:x);setEvents(next);lsSet("events",next);}}
-                          title="Pinned. Studlin won't move this. Click to let it auto-schedule again."
-                          style={{position:"absolute",top:2,right:2,width:13,height:13,borderRadius:"50%",background:"rgba(0,0,0,0.28)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",zIndex:1}}>
-                          <span style={{fontSize:8,lineHeight:1}}>📌</span>
-                        </div>
-                      )}
-                      {ev.movedByStudlin && !isRoutine && (
-                        <div onClick={(e)=>{e.stopPropagation();setEvents(undoTier0Move(ev.id).events);}}
-                          title={"Studlin moved this from "+fmtMovedFrom(ev.movedFrom)+"."+fmtMovedReasonSuffix(ev)+" Click to undo."}
-                          style={{position:"absolute",top:2,left:2,width:13,height:13,borderRadius:"50%",background:"rgba(0,0,0,0.28)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",zIndex:1}}>
-                          <span style={{fontSize:8,lineHeight:1}}>↻</span>
-                        </div>
-                      )}
+                      {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isWarningKind?tokens.color.warning:tokens.color.textSecondary,marginTop:1}}>{fmtTime(ev.time)}{dur ? " · "+dur+"m" : ""}</div>}
                       {isRoutine&&editRoutineMode&&hoveredRoutineId===ev.routineId&&(
                         <button onClick={(e)=>{e.stopPropagation();if(onDeleteRoutine)onDeleteRoutine(ev.routineId);if(setHoveredRoutineId)setHoveredRoutineId(null);}} title="Delete this routine block (every week)"
                           style={{position:"absolute",top:-8,right:-8,width:18,height:18,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.red,fontSize:11,lineHeight:1,cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 4px 10px -2px rgba(0,0,0,0.4)"}}>×</button>
@@ -12196,6 +12204,36 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
           })}
         </div>
       </div>
+      {/* Block popover -- portaled to document.body (same [data-page]
+          containing-block gotcha as elsewhere in this file: this Card sits
+          inside a scrolling ancestor, so a plain position:fixed child here
+          would clip against that ancestor's box instead of the real
+          viewport). Pin/unpin and undo-move, previously always-on corner
+          icons on the block itself, now only exist here. */}
+      {popoverAnchor && (()=>{
+        const ev = events.find(e=>e.id===popoverAnchor.id);
+        if(!ev) return null;
+        const rect = popoverAnchor.rect;
+        const top = Math.min(rect.bottom+6, window.innerHeight-180);
+        const left = Math.min(Math.max(8,rect.left), window.innerWidth-216);
+        const itemStyle = {display:"block",width:"100%",textAlign:"left",padding:"9px 14px",background:"none",border:"none",cursor:"pointer",fontSize:12.5,fontWeight:500,fontFamily:T.font,color:T.text};
+        return ReactDOM.createPortal((
+          <>
+            <div onClick={closePopover} style={{position:"fixed",inset:0,zIndex:998}} />
+            <div style={{position:"fixed",top,left,width:208,background:T.card,border:`1px solid ${T.border}`,borderRadius:6,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:999,overflow:"hidden",animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)"}}>
+              <div style={{padding:"9px 14px",borderBottom:`1px solid ${T.border}`,fontSize:12.5,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</div>
+              <button onClick={()=>{closePopover();openEdit(ev);}} style={itemStyle} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>Edit</button>
+              {ev.userPinned&&(
+                <button onClick={()=>{const next=events.map(x=>x.id===ev.id?{...x,userPinned:false}:x);setEvents(next);lsSet("events",next);closePopover();}} style={itemStyle} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>Unpin</button>
+              )}
+              {ev.movedByStudlin&&(
+                <button onClick={()=>{setEvents(undoTier0Move(ev.id).events);closePopover();}} title={"Studlin moved this from "+fmtMovedFrom(ev.movedFrom)+"."+fmtMovedReasonSuffix(ev)} style={itemStyle} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>Undo move</button>
+              )}
+              <button onClick={()=>{closePopover();if(onDeleteEvent)onDeleteEvent(ev);}} style={{...itemStyle,color:T.red,borderTop:`1px solid ${T.border}`}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>Delete</button>
+            </div>
+          </>
+        ), document.body);
+      })()}
     </Card>
   );
 }
