@@ -108,7 +108,7 @@ function loadStudlinModule(options) {
     "isPhaseDecompositionCandidate","finalizeExtractedText","MATERIAL_TEXT_CAP",
     "computeCatchUpMissedItems","computeCatchUpPlan","catchUpReasonFor",
     "compressExamPrepForRoom","dayOfWeekLabel","ordinalDay","CATCHUP_EXAM_URGENT_DAYS",
-    "logCatchUpEvent"];
+    "logCatchUpEvent","computeStudyPlanParams","materialVolumeBonus","STUDY_PLAN_CONFIDENCE_LEVELS"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }

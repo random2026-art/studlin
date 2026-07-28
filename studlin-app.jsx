@@ -3911,6 +3911,45 @@ function computeReviewDates(examDateKey,todayKey,desiredCount){
 // A pop quiz doesn't deserve the same 4-session buildup as a final — lighter
 // default, still fully student-adjustable via the count stepper either way.
 const defaultSessionCountFor=(examWeight)=>examWeight==="quiz"?2:4;
+// ── Study plan calibration (Prep redesign Part C) ───────────────────────
+// The one confidence question -- "How confident are you on this material?"
+// -- scales the plan built from the SAME curve/slot-finder every other
+// exam-prep path already uses (computeReviewOffsets/buildExamSessionEvents/
+// findReliableSlotFor); this is a trigger + parameter change, not a new
+// engine. Every tunable constant lives here, in one place, per the design
+// brief. difficultyValue is the same 0-1000 "Easy...Hard" scale the app's
+// existing difficulty slider already uses (500 neutral) -- shaky reads as
+// harder-for-the-student, so it maps to the higher end. This is also the
+// exact value threaded into compressExamPrepForRoom's difficulty parameter
+// (Catch Me Up), previously always null/unused.
+const STUDY_PLAN_CONFIDENCE_LEVELS={
+  shaky:{sessionMultiplier:1.5,durationMultiplier:1.25,difficultyValue:750},
+  okay: {sessionMultiplier:1,  durationMultiplier:1,   difficultyValue:500},
+  solid:{sessionMultiplier:0.6,durationMultiplier:0.8, difficultyValue:250},
+};
+// Material volume nudges session count up modestly for a lot of material,
+// never down for a little -- confidence is the primary lever, material
+// volume a secondary one. Thresholds are rough (character count), capped
+// by computeReviewOffsets' own 6-session ceiling regardless.
+function materialVolumeBonus(materialCharCount){
+  if(!materialCharCount)return 0;
+  if(materialCharCount>20000)return 1;
+  if(materialCharCount>8000)return 0.5;
+  return 0;
+}
+// Returns {sessionCount, sessionDuration, difficultyValue} for a study
+// plan -- session count and total minutes (via per-session duration) both
+// scale from confidenceLevel, days remaining is already respected by
+// computeReviewOffsets' own daysUntil cap (nothing here needs to duplicate
+// that), and materialCharCount gives a small nudge for a lot of attached
+// material. confidenceLevel must be "shaky"|"okay"|"solid".
+function computeStudyPlanParams(examWeight,baseDuration,confidenceLevel,materialCharCount){
+  const level=STUDY_PLAN_CONFIDENCE_LEVELS[confidenceLevel]||STUDY_PLAN_CONFIDENCE_LEVELS.okay;
+  const base=defaultSessionCountFor(examWeight)+materialVolumeBonus(materialCharCount);
+  const sessionCount=Math.max(1,Math.min(6,Math.round(base*level.sessionMultiplier)));
+  const sessionDuration=Math.max(15,Math.round((baseDuration||25)*level.durationMultiplier/5)*5);
+  return {sessionCount,sessionDuration,difficultyValue:level.difficultyValue};
+}
 function suggestDurationFor(subject,kind){
   const events=lsGet("events",[]).filter(e=>e.status==="done"&&e.timeSpent&&e.subject===subject&&e.kind===kind);
   if(events.length===0)return null;
@@ -5790,6 +5829,19 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   // stale count over from whichever exam was open last.
   const [sessionCountDraft,setSessionCountDraft]=useState(4);
   const [sessionScheduleLoading,setSessionScheduleLoading]=useState(false);
+  // ── Build study plan (Prep redesign Part C) ── the opt-in trigger that
+  // replaces auto-generation at exam creation. buildPlanExamId is the exam
+  // this modal is open for; buildPlanStep walks choice (no material yet) ->
+  // material (optional upload, only reached if they choose to add some) ->
+  // confidence (the one question) -> preview (adjustable, nothing commits
+  // until Confirm). buildPlanGeneric marks the "just block out time"
+  // path, which skips the confidence question entirely -- asking "how
+  // confident are you on this material" makes no sense with no material.
+  const [buildPlanExamId,setBuildPlanExamId]=useState(null);
+  const [buildPlanStep,setBuildPlanStep]=useState("choice");
+  const [buildPlanGeneric,setBuildPlanGeneric]=useState(false);
+  const [buildPlanPreview,setBuildPlanPreview]=useState(null); // {sessionCount,sessionDuration,difficultyValue,dates}
+  const [buildPlanLoading,setBuildPlanLoading]=useState(false);
   // Progressive disclosure for the exam-detail view -- everything used to
   // render at once (upload/paste/notes/links, three generate buttons, the
   // full editable session list) regardless of whether the student had
@@ -5800,7 +5852,13 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   // real option, so there's no reason to hide it behind a click.
   const [materialAddOpen,setMaterialAddOpen]=useState(false);
   const [moreGenOptionsOpen,setMoreGenOptionsOpen]=useState(false);
-  const [sessionsExpanded,setSessionsExpanded]=useState(false);
+  // Part B (exam detail timeline) -- materialsOpen collapses everything
+  // that isn't "what do I do next" (material, flashcards, practice exams)
+  // below the timeline; expandedSessionId controls which single timeline
+  // row (if any) shows its inline Move editor, one at a time, same
+  // progressive-disclosure convention as the exam list (Part A).
+  const [prepMaterialsOpen,setPrepMaterialsOpen]=useState(false);
+  const [expandedSessionId,setExpandedSessionId]=useState(null);
   const [examSearch,setExamSearch]=useState("");
   // Study/Edit/Send/Add Deck used to hard-navigate to the standalone
   // Flashcards page (setActive("flashcards")), fully unmounting Studlin Prep
@@ -5863,6 +5921,88 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   // helper, so Prep needs its own too, same lookup Notes already uses.
   const userSubjects=getSubjects();
   const colorOf=(tg)=>{const s=userSubjects.find(x=>x.label===tg);return s?s.color:T.lime;};
+
+  // Reads fresh from storage rather than relying on selectedExam/fileTexts
+  // (the old detail view's state) -- this modal needs to work whether it's
+  // opened from the exam list or the detail view, so it's fully
+  // self-sufficient rather than assuming a particular exam is "selected".
+  const buildPlanExam=buildPlanExamId?lsGet("events",[]).find(e=>e.id===buildPlanExamId):null;
+  const buildPlanMaterialText=buildPlanExam?(
+    buildPlanExam.sourceMaterials&&buildPlanExam.sourceMaterials.length>0
+      ?buildPlanExam.sourceMaterials.map(f=>f.text).join("\n\n")
+      :(buildPlanExam.sourceMaterial||"")
+  ):"";
+  const openBuildPlan=(exam)=>{
+    const hasMaterial=(exam.sourceMaterials&&exam.sourceMaterials.length>0)||(exam.referenceLinks&&exam.referenceLinks.length>0)||!!exam.sourceMaterial;
+    // Syncs the shared material-editing state to THIS exam, same
+    // convention the exam list row's own onClick already uses for the old
+    // detail view -- fileTexts/materialLinks are "whichever exam is being
+    // worked on right now" everywhere in this component.
+    setFileTexts(exam.sourceMaterials&&exam.sourceMaterials.length>0?exam.sourceMaterials:(exam.sourceMaterial?[{name:"From your syllabus",text:exam.sourceMaterial}]:[]));
+    setMaterialLinks(exam.referenceLinks&&exam.referenceLinks.length>0?normalizeLinks(exam.referenceLinks):(exam.referenceLink?[{label:"",url:exam.referenceLink}]:[]));
+    setPasteMode(false);setPasteText("");
+    setBuildPlanExamId(exam.id);
+    setBuildPlanGeneric(false);
+    setBuildPlanPreview(null);
+    setBuildPlanStep(hasMaterial?"confidence":"choice");
+  };
+  const closeBuildPlan=()=>{
+    setBuildPlanExamId(null);setBuildPlanStep("choice");setBuildPlanGeneric(false);setBuildPlanPreview(null);
+  };
+  // Persists whatever material the student added in the modal's own
+  // upload step back onto the exam event itself -- an already-existing
+  // gap this modal doesn't want to inherit: uploading material for an
+  // exam that already exists never wrote sourceMaterials back onto it
+  // anywhere else in this file either (only used in-memory for that one
+  // generation call), so it was silently lost on the next visit. Logged
+  // in BUGS.md; fixed here since this modal is new code anyway.
+  const persistBuildPlanMaterial=()=>{
+    if(!buildPlanExam)return;
+    lsSet("events",lsGet("events",[]).map(e=>e.id===buildPlanExam.id?{...e,sourceMaterials:fileTexts,referenceLinks:materialLinks}:e));
+  };
+  const startGenericPlan=()=>{
+    if(!buildPlanExam)return;
+    setBuildPlanGeneric(true);
+    const baseDuration=suggestDurationFor(buildPlanExam.subject,"study block")||25;
+    const params=computeStudyPlanParams(buildPlanExam.examWeight,baseDuration,"okay",0);
+    const dates=computeReviewDates(buildPlanExam.date,dayKey(),params.sessionCount);
+    setBuildPlanPreview({sessionCount:params.sessionCount,sessionDuration:params.sessionDuration,difficultyValue:params.difficultyValue,dates});
+    setBuildPlanStep("preview");
+  };
+  const chooseConfidence=(level)=>{
+    if(!buildPlanExam)return;
+    persistBuildPlanMaterial();
+    const baseDuration=suggestDurationFor(buildPlanExam.subject,"study block")||25;
+    const params=computeStudyPlanParams(buildPlanExam.examWeight,baseDuration,level,buildPlanMaterialText.length);
+    const dates=computeReviewDates(buildPlanExam.date,dayKey(),params.sessionCount);
+    setBuildPlanPreview({sessionCount:params.sessionCount,sessionDuration:params.sessionDuration,difficultyValue:params.difficultyValue,dates});
+    setBuildPlanStep("preview");
+  };
+  const adjustBuildPlanCount=(count)=>{
+    if(!buildPlanExam)return;
+    setBuildPlanPreview(p=>p?{...p,sessionCount:count,dates:computeReviewDates(buildPlanExam.date,dayKey(),count)}:p);
+  };
+  const commitBuildPlan=async()=>{
+    if(!buildPlanExam||!buildPlanPreview)return;
+    setBuildPlanLoading(true);
+    const events=removeGenericExamPrepSessions(lsGet("events",[]),buildPlanExam.id);
+    const sessions=buildExamSessionEvents(buildPlanExam.title,buildPlanExam.date,buildPlanExam.subject,buildPlanPreview.sessionCount,"prep-"+buildPlanExam.id+"-"+Date.now(),events,getWeeklyRoutine(),getSchedulePreferences(),{dueEventId:buildPlanExam.id},buildPlanPreview.difficultyValue,buildPlanPreview.sessionDuration);
+    let finalSessions;
+    if(buildPlanGeneric){
+      // Honest, clearly-labeled generic sessions -- no fabricated "what to
+      // study" line since there's no material to ground one in (grounded-
+      // or-nothing, same principle proposeSessionFocuses' other callers
+      // already follow), plus the required nudge that material unlocks more.
+      finalSessions=sessions.map(s=>({...s,notes:"General review — no material attached yet. Add material anytime to unlock real flashcards for this exam.",isGenericStudyPlan:true}));
+    }else{
+      const focuses=buildPlanMaterialText.trim()?await proposeSessionFocuses(buildPlanExam.title,buildPlanMaterialText,sessions.length,buildPlanExam.subject):null;
+      finalSessions=focuses?sessions.map((s,i)=>focuses[i]?{...s,notes:focuses[i]}:s):sessions;
+    }
+    lsSet("events",events.concat(finalSessions));
+    setBuildPlanLoading(false);
+    closeBuildPlan();
+    refresh();
+  };
 
   const exams=upcomingExams();
   const visibleExams=examSearch.trim()
@@ -6293,7 +6433,8 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                   setLinkDraft("");setLinkLabelDraft("");
                   setPasteMode(false);setPasteText("");
                   setSessionCountDraft(defaultSessionCountFor(ex.examWeight));
-                  setMaterialAddOpen(false);setMoreGenOptionsOpen(false);setSessionsExpanded(false);
+                  setMaterialAddOpen(false);setMoreGenOptionsOpen(false);
+                  setPrepMaterialsOpen(false);setExpandedSessionId(null);
                 }} style={{padding:"14px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,cursor:"pointer",display:"flex",alignItems:"center",gap:14}}>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:14,fontWeight:700,color:T.white}}>{ex.title}</div>
@@ -6411,35 +6552,100 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
         };
         const patchSession=(id,patch)=>{lsSet("events",lsGet("events",[]).map(e=>e.id===id?{...e,...patch}:e));refresh();};
         const deleteSession=(id)=>{lsSet("events",lsGet("events",[]).filter(e=>e.id!==id));refresh();};
+        // Part B: the mental model is a countdown to test day, so this is a
+        // vertical timeline, not four disconnected cards behind checkmark
+        // pills. Exam name + countdown is the only large text on the page;
+        // everything else answers "what do I do next," or it's collapsed
+        // below under Materials & study kit.
+        const today=dayKey();
+        const daysUntil=Math.round((new Date(selectedExam.date+"T12:00:00")-new Date(today+"T12:00:00"))/86400000);
+        const countdownLabel=daysUntil<0?"already passed":daysUntil===0?"today":daysUntil===1?"in 1 day":"in "+daysUntil+" days";
+        const pendingSessions=examSessions.filter(s=>s.status!=="done");
+        const nextSession=pendingSessions[0]||null;
+        const cardsDue=deck?(deck.cards||[]).filter(c=>!c.dueAt||c.dueAt<=Date.now()).length:0;
+        const metaParts=[selectedExam.subject,niceDate(selectedExam.date)];
+        if(examSessions.length===0)metaParts.push("no study plan yet");
+        else{
+          metaParts.push(pendingSessions.length+" session"+(pendingSessions.length!==1?"s":"")+" left");
+          if(deck)metaParts.push(cardsDue+" card"+(cardsDue!==1?"s":"")+" due");
+        }
         return(
           <div>
             <button onClick={()=>setSelectedExamId(null)} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:14,display:"flex",alignItems:"center",gap:4}}>← All exams</button>
-            <Card style={{padding:20,marginBottom:16}}>
-              <div style={{fontSize:18,fontWeight:700,color:T.white,marginBottom:4}}>{selectedExam.title}</div>
-              <div style={{fontSize:12,color:T.muted,marginBottom:12}}>{selectedExam.subject} · {selectedExam.date}</div>
-              {readiness&&<div style={{fontSize:12.5,color:T.text,lineHeight:1.5,background:T.card2,borderRadius:8,padding:"10px 12px"}}>{readiness.sentence}</div>}
-            </Card>
+            <div style={{fontSize:24,fontWeight:800,color:T.white,letterSpacing:"-0.01em",marginBottom:4,lineHeight:1.2}}>{selectedExam.title} · {countdownLabel}</div>
+            <div style={{fontSize:12.5,color:T.muted,marginBottom:14}}>{metaParts.join(" · ")}</div>
+            {readiness&&<div style={{fontSize:13,color:T.text,lineHeight:1.5,marginBottom:20}}>{readiness.sentence}</div>}
 
-            {/* A jump-to strip so the 4 sections below read as one flow
-                ("here's where you are across this exam") instead of 4
-                disconnected cards you have to scroll past to orient
-                yourself -- purely a navigation/status aid, doesn't hide or
-                change any of the sections' own content or logic. */}
-            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:16}}>
-              {[
-                {id:"prep-sec-material",label:"Material",done:fileTexts.length>0||materialLinks.length>0},
-                {id:"prep-sec-sessions",label:"Study Sessions",done:examSessions.length>0},
-                {id:"prep-sec-flashcards",label:"Flashcards",done:!!deck},
-                {id:"prep-sec-pe",label:"Practice Exam",done:pes.length>0},
-              ].map(s=>(
-                <button key={s.id} type="button" onClick={()=>document.getElementById(s.id)?.scrollIntoView({behavior:"smooth",block:"start"})}
-                  style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:99,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,background:s.done?T.lime+"14":T.card2,color:s.done?T.lime:T.muted,border:`1px solid ${s.done?T.lime+"44":T.border}`}}>
-                  {s.done?"✓":"○"} {s.label}
-                </button>
-              ))}
-            </div>
+            {/* ── Session timeline -- the page's center of gravity. Only the
+                next actionable session expands with Start/Move, same
+                one-at-a-time progressive disclosure as the exam list. ── */}
+            {examSessions.length===0?(
+              <Card style={{padding:"28px 20px",textAlign:"center",marginBottom:24}}>
+                <div style={{fontSize:13,color:T.muted,marginBottom:16}}>No study plan yet.</div>
+                <Btn onClick={()=>openBuildPlan(selectedExam)}>Build study plan</Btn>
+              </Card>
+            ):(
+              <div style={{marginBottom:24}}>
+                {examSessions.map(s=>{
+                  const isDone=s.status==="done";
+                  const isMissed=!isDone&&s.date<today;
+                  const isNext=nextSession&&s.id===nextSession.id;
+                  const isExpanded=expandedSessionId===s.id;
+                  const statusLabel=isDone?"Done":isMissed?"Missed":null;
+                  return (
+                    <div key={s.id} style={{padding:"12px 2px",borderBottom:`1px solid ${T.border}`,opacity:isDone?0.55:1}}>
+                      <div onClick={()=>!isDone&&setExpandedSessionId(id=>id===s.id?null:s.id)} style={{display:"flex",justifyContent:"space-between",gap:12,cursor:isDone?"default":"pointer"}}>
+                        <div style={{minWidth:0}}>
+                          <div style={{fontSize:10.5,color:T.faint,fontFamily:T.mono,textTransform:"uppercase",letterSpacing:"0.04em"}}>{dayOfWeekLabel(s.date).slice(0,3)} {s.date.slice(5).replace("-","/")}</div>
+                          <div style={{fontSize:14,fontWeight:600,color:T.text,textDecoration:isDone?"line-through":"none",marginTop:2}}>{s.title}</div>
+                          {s.notes&&<div style={{fontSize:11.5,color:T.muted,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.notes}</div>}
+                        </div>
+                        <div style={{fontSize:11.5,color:statusLabel==="Missed"?T.red:T.muted,textAlign:"right",flexShrink:0,whiteSpace:"nowrap"}}>
+                          {statusLabel||((s.duration||25)+"min · "+fmtRolloverClock(s.time))}
+                        </div>
+                      </div>
+                      {(isNext||isExpanded)&&!isDone&&(
+                        isExpanded?(
+                          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginTop:10}}>
+                            <Input type="date" value={s.date} onChange={e=>patchSession(s.id,{date:e.target.value})} style={{width:130}} />
+                            <TimeInput value={s.time} onChange={v=>patchSession(s.id,{time:v})} />
+                            <NumField min={5} max={240} fallback={25} value={s.duration||25} onChange={v=>patchSession(s.id,{duration:v})} style={{width:56}} />
+                            <span style={{fontSize:10.5,color:T.muted}}>min</span>
+                            <button onClick={()=>{deleteSession(s.id);setExpandedSessionId(null);}} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline"}}>Delete</button>
+                            <button onClick={()=>setExpandedSessionId(null)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline"}}>Done</button>
+                          </div>
+                        ):(
+                          <div style={{display:"flex",gap:8,marginTop:10}}>
+                            <BtnSm onClick={(e)=>{e.stopPropagation();if(window._setTimerTask)window._setTimerTask(s);}}>Start</BtnSm>
+                            <BtnSm variant="ghost" onClick={(e)=>{e.stopPropagation();setExpandedSessionId(s.id);}}>Move</BtnSm>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  );
+                })}
+                <div style={{padding:"12px 2px",display:"flex",justifyContent:"space-between",gap:12}}>
+                  <div style={{fontSize:14,fontWeight:700,color:T.amber}}>{selectedExam.title}</div>
+                  <div style={{fontSize:11.5,color:T.amber,fontFamily:T.mono,flexShrink:0}}>{dayOfWeekLabel(selectedExam.date).slice(0,3)} {selectedExam.date.slice(5).replace("-","/")}{selectedExam.time?" · "+fmtRolloverClock(selectedExam.time):""}</div>
+                </div>
+                {hasUnfocusedGenericSessions&&(
+                  <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
+                    <BtnSm variant="subtle" onClick={addFocusToExisting} disabled={sessionScheduleLoading}>{sessionScheduleLoading?"Reading your material…":"Add study focus from your material"}</BtnSm>
+                    <div style={{fontSize:10.5,color:T.faint,marginTop:4}}>Give your existing sessions a specific "what to study" line, grounded in the material below.</div>
+                  </div>
+                )}
+                <button type="button" onClick={addOneSession} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,marginTop:10,textDecoration:"underline"}}>+ Add a session</button>
+              </div>
+            )}
 
-            <div id="prep-sec-material" />
+            {/* ── Materials & study kit -- collapsed below the timeline.
+                Same upload/generate functionality as before, just no
+                longer competing for equal visual weight with "what do I
+                do next." ── */}
+            <button type="button" onClick={()=>setPrepMaterialsOpen(o=>!o)} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",color:T.muted,fontSize:12.5,fontWeight:600,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:prepMaterialsOpen?14:0}}>
+              Materials &amp; study kit {prepMaterialsOpen?"︿":"﹀"}
+            </button>
+            {prepMaterialsOpen&&(<>
             <Card style={{padding:20,marginBottom:16}}>
               <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Add study material</div>
               {(fileTexts.length>0||materialLinks.length>0)&&(
@@ -6523,74 +6729,15 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                   )}
                 </div>
               )}
-            </Card>
-
-            <div id="prep-sec-sessions" />
-            <Card style={{padding:20,marginBottom:16}}>
-              <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Study Sessions</div>
-              {examSessions.length===0?(
-                <>
-                  <div style={{fontSize:12,color:T.muted,marginBottom:10}}>No study sessions scheduled yet.</div>
-                  <div style={{display:"flex",alignItems:"center",gap:8}}>
-                    <NumField min={1} max={6} fallback={4} value={sessionCountDraft} onChange={setSessionCountDraft} style={{width:48}} />
-                    <Btn onClick={()=>scheduleGenericSessions(sessionCountDraft)} disabled={sessionScheduleLoading}>{sessionScheduleLoading?"Scheduling…":"Schedule sessions for me"}</Btn>
-                  </div>
-                </>
-              ):(()=>{
-                const doneCount=examSessions.filter(s=>s.status==="done").length;
-                const nextPending=examSessions.find(s=>s.status!=="done");
-                return (
-                <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
-                    <div style={{fontSize:12.5,color:T.text}}>
-                      {examSessions.length} session{examSessions.length!==1?"s":""}{doneCount>0?" · "+doneCount+" done":""}{nextPending?" · next "+nextPending.date:""}
-                    </div>
-                    <BtnSm variant="subtle" onClick={()=>setSessionsExpanded(x=>!x)}>{sessionsExpanded?"Hide":"Manage sessions"}</BtnSm>
-                  </div>
-                  {sessionsExpanded&&(<>
-                  {examSessions.map(s=>{
-                    const isDone=s.status==="done";
-                    return (
-                      <div key={s.id} style={{padding:"10px 12px",borderRadius:8,background:T.card2,opacity:isDone?0.55:1}}>
-                        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:isDone?0:8}}>
-                          <div style={{fontSize:12.5,fontWeight:600,color:T.text,textDecoration:isDone?"line-through":"none"}}>{s.title}</div>
-                          {!isDone&&<button onClick={()=>deleteSession(s.id)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0}}>×</button>}
-                        </div>
-                        {isDone?(
-                          <div style={{fontSize:11,color:T.muted}}>{s.date} · done</div>
-                        ):(
-                          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-                            <Input type="date" value={s.date} onChange={e=>patchSession(s.id,{date:e.target.value})} style={{width:130}} />
-                            <TimeInput value={s.time} onChange={v=>patchSession(s.id,{time:v})} />
-                            <NumField min={5} max={240} fallback={25} value={s.duration||25} onChange={v=>patchSession(s.id,{duration:v})} style={{width:56}} />
-                            <span style={{fontSize:10.5,color:T.muted}}>min</span>
-                          </div>
-                        )}
-                        {s.notes&&<div style={{fontSize:11,color:T.muted,marginTop:6}}>{s.notes}</div>}
-                      </div>
-                    );
-                  })}
-                  <button type="button" onClick={addOneSession} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add a session</button>
-                  {hasUnfocusedGenericSessions&&(
-                    <div style={{marginTop:6,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
-                      <BtnSm variant="subtle" onClick={addFocusToExisting} disabled={sessionScheduleLoading}>{sessionScheduleLoading?"Reading your material…":"Add study focus from your material"}</BtnSm>
-                      <div style={{fontSize:10.5,color:T.faint,marginTop:4}}>Give your existing sessions a specific "what to study" line, grounded in the material above.</div>
-                    </div>
-                  )}
-                  {hasGenericSessions&&(
-                    <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6,paddingTop:10,borderTop:`1px solid ${T.border}`,flexWrap:"wrap"}}>
-                      <NumField min={1} max={6} fallback={4} value={sessionCountDraft} onChange={setSessionCountDraft} style={{width:48}} />
-                      <BtnSm variant="subtle" onClick={()=>scheduleGenericSessions(sessionCountDraft)} disabled={sessionScheduleLoading}>{sessionScheduleLoading?"Scheduling…":"Redo the plan"}</BtnSm>
-                      <span style={{fontSize:10.5,color:T.faint}}>Replaces Studlin's own sessions with a fresh plan for this count — review and practice-exam sessions are kept.</span>
-                    </div>
-                  )}
-                  </>)}
+              {hasGenericSessions&&(
+                <div style={{display:"flex",alignItems:"center",gap:8,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`,flexWrap:"wrap"}}>
+                  <NumField min={1} max={6} fallback={4} value={sessionCountDraft} onChange={setSessionCountDraft} style={{width:48}} />
+                  <BtnSm variant="subtle" onClick={()=>scheduleGenericSessions(sessionCountDraft)} disabled={sessionScheduleLoading}>{sessionScheduleLoading?"Scheduling…":"Redo the plan"}</BtnSm>
+                  <span style={{fontSize:10.5,color:T.faint}}>Replaces Studlin's own sessions with a fresh plan for this count — review and practice-exam sessions are kept.</span>
                 </div>
-                );
-              })()}
+              )}
             </Card>
 
-            <div id="prep-sec-flashcards" />
             <Card style={{padding:20,marginBottom:16}}>
               <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Flashcards</div>
               {!deck?<div style={{fontSize:12,color:T.muted}}>No deck yet — generate one from material above.</div>:(
@@ -6606,7 +6753,6 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
               )}
             </Card>
 
-            <div id="prep-sec-pe" />
             <Card style={{padding:20}}>
               <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Practice Exams</div>
               {pes.length===0?<div style={{fontSize:12,color:T.muted}}>No practice exams yet — generate one from material above.</div>:(
@@ -6630,6 +6776,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                 </div>
               )}
             </Card>
+            </>)}
           </div>
         );
       })()}
@@ -6706,6 +6853,89 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
             })}
         </div>
       )}
+
+      {/* ── Build study plan -- Prep redesign Part C. The opt-in trigger
+          replacing auto-generation at exam creation: exactly one question
+          when material exists ("how confident are you"), a one-tap choice
+          when it doesn't (add material for a real plan, or just block out
+          study time). Preview is always adjustable; nothing commits until
+          Confirm. ── */}
+      <Modal open={!!buildPlanExamId} onClose={closeBuildPlan} title="Build study plan" sub={buildPlanExam?buildPlanExam.title:""} width={520}
+        footer={buildPlanStep==="preview"?<><Btn variant="subtle" onClick={closeBuildPlan}>Cancel</Btn><Btn onClick={commitBuildPlan} disabled={buildPlanLoading}>{buildPlanLoading?"Building…":"Confirm plan"}</Btn></>:<Btn variant="subtle" onClick={closeBuildPlan}>Cancel</Btn>}>
+        {buildPlanExam&&buildPlanStep==="choice"&&(
+          <div>
+            <div style={{fontSize:13,color:T.text,lineHeight:1.6,marginBottom:18}}>
+              Add material and I'll build a real plan with flashcards, or I can just block out study time for now.
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              <Btn onClick={()=>setBuildPlanStep("material")} style={{width:"100%",justifyContent:"center"}}>Add material</Btn>
+              <Btn variant="ghost" onClick={startGenericPlan} style={{width:"100%",justifyContent:"center"}}>Just block out study time</Btn>
+            </div>
+          </div>
+        )}
+        {buildPlanExam&&buildPlanStep==="material"&&(
+          <div>
+            <input type="file" ref={fileInputRef} onChange={handlePrepFile} accept=".txt,.md,.pdf,.docx" style={{display:"none"}} multiple />
+            <div onClick={()=>fileInputRef.current&&fileInputRef.current.click()} style={{border:`1px dashed ${T.borderHover}`,borderRadius:10,padding:18,textAlign:"center",background:T.card2,cursor:"pointer",marginBottom:10}}>
+              <div style={{fontSize:12.5,color:T.text,fontWeight:500}}>Click to upload: PDF, DOCX, or TXT</div>
+            </div>
+            <button type="button" onClick={()=>setPasteMode(m=>!m)} style={{width:"100%",textAlign:"center",padding:"9px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,marginBottom:pasteMode?10:14}}>{pasteMode?"Upload a file instead":"Or paste text instead"}</button>
+            {pasteMode&&(
+              <div style={{marginBottom:14}}>
+                <textarea value={pasteText} onChange={e=>setPasteText(e.target.value)} placeholder="Paste your notes or material here" rows={5}
+                  style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
+                <Btn onClick={()=>{setFileTexts(prev=>[...prev,{name:"Pasted text",...finalizeExtractedText(pasteText)}]);setPasteText("");setPasteMode(false);}} disabled={!pasteText.trim()} style={{marginTop:10,width:"100%",justifyContent:"center",opacity:pasteText.trim()?1:0.45}}>Add pasted text</Btn>
+              </div>
+            )}
+            {fileTexts.length>0&&(
+              <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:14}}>
+                {fileTexts.map(f=>(
+                  <div key={f.name} style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card2,borderRadius:8,gap:8}}>
+                    <div style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{f.name}</div>
+                    <button onClick={()=>removePrepFile(f.name)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0}}>×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <Btn onClick={()=>{persistBuildPlanMaterial();setBuildPlanStep("confidence");}} disabled={fileTexts.length===0&&materialLinks.length===0} style={{width:"100%",justifyContent:"center"}}>Continue</Btn>
+          </div>
+        )}
+        {buildPlanExam&&buildPlanStep==="confidence"&&(
+          <div>
+            <div style={{fontSize:13,color:T.text,marginBottom:18}}>How confident are you on this material?</div>
+            <div style={{display:"flex",gap:8}}>
+              {["shaky","okay","solid"].map(level=>(
+                <Btn key={level} variant="ghost" onClick={()=>chooseConfidence(level)} style={{flex:1,justifyContent:"center",textTransform:"capitalize"}}>{level}</Btn>
+              ))}
+            </div>
+          </div>
+        )}
+        {buildPlanExam&&buildPlanStep==="preview"&&buildPlanPreview&&(
+          <div>
+            {buildPlanGeneric&&(
+              <div style={{fontSize:12,color:T.muted,background:T.card2,borderRadius:8,padding:"10px 12px",marginBottom:14,lineHeight:1.5}}>
+                No material yet, so these are general review blocks, not focused sessions. Add material anytime to unlock real flashcards for this exam.
+              </div>
+            )}
+            {buildPlanPreview.dates.length===0?(
+              <div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"14px 0",marginBottom:14}}>Too close to the exam to fit a session.</div>
+            ):(
+              <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:16}}>
+                {buildPlanPreview.dates.map((d,i)=>(
+                  <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:12.5,padding:"8px 10px",background:T.card2,borderRadius:8}}>
+                    <span style={{color:T.text}}>Session {i+1}</span>
+                    <span style={{color:T.muted,fontFamily:T.mono,fontSize:11.5}}>{d} · {buildPlanPreview.sessionDuration}min</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <span style={{fontSize:12,color:T.muted}}>Sessions:</span>
+              <NumField min={1} max={6} fallback={4} value={buildPlanPreview.sessionCount} onChange={adjustBuildPlanCount} style={{width:52}} />
+            </div>
+          </div>
+        )}
+      </Modal>
 
       {/* ── Create a standalone practice exam -- same file-or-paste pattern as
           exam material above, not the deck modal's 4-source system, since
@@ -9740,15 +9970,20 @@ function computeExamReadiness(examEvent,events,todayKey){
   const lastRating=log[log.length-1]||null;
   const dayWord=daysUntil+" day"+(daysUntil!==1?"s":"");
   let base;
+  // Calm and factual, never shame-based -- these three used to read like
+  // "You've missed 1 review session and the exam is in 0 days. Worth
+  // catching up," almost verbatim the example the Prep redesign brief
+  // named as exactly what NOT to write. State the fact, skip the guilt
+  // ("you've missed," "only," "worth catching up").
   if(overdueMissed>0){
     base={state:"behind",
-      sentence:"You've missed "+overdueMissed+" review session"+(overdueMissed!==1?"s":"")+" for this, and the exam is in "+dayWord+". Worth catching up."};
+      sentence:overdueMissed+" review session"+(overdueMissed!==1?"s":"")+" still to go before the exam in "+dayWord+"."};
   }else if(lastRating==="shaky"&&daysUntil<=EXAM_READINESS_SOON_DAYS){
     base={state:"at-risk",
-      sentence:"Your last session on this didn't click, and the exam is in "+dayWord+". Worth extra review."};
+      sentence:"Last session on this didn't quite click, and the exam is in "+dayWord+"."};
   }else if(completionRate<EXAM_READINESS_LOW_COMPLETION&&daysUntil<=EXAM_READINESS_SOON_DAYS+2){
     base={state:"behind",
-      sentence:"Only "+done+" of "+total+" review sessions done with "+dayWord+" left."};
+      sentence:done+" of "+total+" review sessions done, "+dayWord+" left."};
   }else if(completionRate>=EXAM_READINESS_HIGH_COMPLETION){
     base={state:"on-track",
       sentence:(lastRating==="solid"?"On track and feeling solid — ":"On track — ")+done+"/"+total+" review sessions done."};
@@ -9775,9 +10010,12 @@ function computeExamReadiness(examEvent,events,todayKey){
 // here the way Attack Blocks get one — that curve already refuses to
 // propose anything for the too-far-out portion of the timeline on its own.
 // Caller merges the returned events into its own working array/lsSet.
-function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,working,routines,prefs,extraFields,difficulty){
+function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,working,routines,prefs,extraFields,difficulty,durationOverride){
   const dates=computeReviewDates(examDate,dayKey(),count);
-  const duration=suggestDurationFor(subject,"study block")||25;
+  // durationOverride lets the study-plan calibration (Prep redesign Part C)
+  // scale minutes per session by confidence level -- every existing caller
+  // omits it and keeps today's suggestDurationFor-or-25 behavior unchanged.
+  const duration=durationOverride||suggestDurationFor(subject,"study block")||25;
   let localWorking=working;
   const built=[];
   dates.forEach((date,si)=>{
