@@ -167,3 +167,10 @@ describe("compressExamPrepForRoom", () => {
     assert.equal(result, null);
   });
 });
+
+describe("logCatchUpEvent", () => {
+  test("is a safe no-op when posthog isn't loaded (ad blockers, offline) -- never throws", () => {
+    const { logCatchUpEvent } = loadStudlinModule();
+    assert.doesNotThrow(() => logCatchUpEvent("rebuild_confirmed", { moveCount: 3 }));
+  });
+});
