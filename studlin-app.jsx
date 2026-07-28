@@ -14874,8 +14874,16 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
     // opts.userPinned marks tasks whose time the user typed in directly
     // (Add Task / split sessions) so rebalanceDay leaves them alone —
     // distinct from algorithm-chosen times (Brain Dump, AI Arrange, Group
-    // Sync), which stay free to be reshuffled.
-    const tasksToAdd=(opts&&opts.userPinned)?newTasks.map(function(t){return {...t,userPinned:true};}):newTasks;
+    // Sync), which stay free to be reshuffled. isExamPrepSession items are
+    // explicitly excluded even when the batch is pinned: the exam-with-
+    // sessions path in saveManual passes the user-typed exam PLUS
+    // algorithm-placed prep sessions through in one commitTasks call, and
+    // the sessions' times were never typed by the student -- they came
+    // from buildExamSessionEvents' own placement logic, same as Brain
+    // Dump/AI Arrange output. Pinning them made them invisible to Tier 0's
+    // missed-block engine (found during Catch Me Up review -- BUGS.md-
+    // adjacent, the app couldn't relocate its own generated sessions).
+    const tasksToAdd=(opts&&opts.userPinned)?newTasks.map(function(t){return t.isExamPrepSession?t:{...t,userPinned:true};}):newTasks;
     const datesAffected=new Set(tasksToAdd.map(function(t){return t.date;}).filter(Boolean));
     let next=events.concat(tasksToAdd);
     datesAffected.forEach(function(dk){next=rebalanceDay(dk,next,routines,prefs);});
