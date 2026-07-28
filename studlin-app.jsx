@@ -20798,8 +20798,16 @@ function App() {
     setPeakInsightOffer(null);
   };
   const [scheduleSettingsOpen,setScheduleSettingsOpen]=useState(false);
-  const [navCollapsed,setNavCollapsed]=useState(()=>lsGet("navCollapsed",false));
+  // Defaults to collapsed (icon rail) for anyone who's never touched this
+  // preference -- existing users who already expanded/collapsed it
+  // explicitly keep whatever they chose. navHovering is separate and never
+  // persisted: hovering a pinned-collapsed rail temporarily shows the full
+  // rail without changing the pin itself, same relationship as a
+  // Mac/Windows auto-hidden dock.
+  const [navCollapsed,setNavCollapsed]=useState(()=>lsGet("navCollapsed",true));
   const toggleNavCollapsed=()=>{setNavCollapsed(v=>{lsSet("navCollapsed",!v);return !v;});};
+  const [navHovering,setNavHovering]=useState(false);
+  const navExpanded=!navCollapsed||navHovering;
   // A gentle heads-up a few minutes before a scheduled study block/deadline
   // starts — the "I knew I had to be locked in at that time" cue a mental
   // notepad gives you for free, which a calendar you have to remember to
@@ -21436,8 +21444,6 @@ function App() {
   ];
   const bottomItems=[];
   const pages={prep:StudlinPrep,writestudio:WriteStudio,flashcards:Flashcards,notes:Notes,calendar:CalendarTab,friends:FriendsChat,solve:Solve,profile:Profile,lectures:Lectures,feedback:FeedbackPage};
-  const labelOf={dashboard:"Dashboard",prep:"Studlin Prep",writestudio:"Writing Suite",flashcards:"Flashcards",notes:"Notes",calendar:"Calendar",friends:"Studlin Network",settings:"Settings",profile:"Profile",solve:"Solve",lectures:"Lectures",feedback:"Feedback"};
-  const sectionOf={dashboard:"Home",prep:"Tools",writestudio:"Tools",flashcards:"Tools",notes:"Tools",calendar:"Home",friends:"Tools",lectures:"Tools",feedback:"Account",solve:"Tools",settings:"Account",profile:"Account"};
   const ActivePage=pages[active];
   const isLight=T.mode==="light";
   if (!onboarded) return <InitWizard onComplete={()=>{setOnboarded(true);}} />;
@@ -21449,19 +21455,23 @@ function App() {
   const NavItem=({item})=>{
     const act=active===item.id;
     return (
-      <div onClick={()=>setActive(item.id)} title={navCollapsed?item.label:undefined} style={{display:"flex",alignItems:"center",gap:10,padding:navCollapsed?"9px 0":"9px 11px",justifyContent:navCollapsed?"center":"flex-start",borderRadius:9,cursor:"pointer",fontSize:12.5,background:act?(isLight?"rgba(246,241,230,0.95)":`linear-gradient(100deg, ${T.lime}1c, ${T.lime}08)`):"transparent",color:act?(isLight?T.ink:T.lime):sidebarMuted,fontWeight:act?600:400,marginBottom:2,border:`1px solid ${act?(isLight?"transparent":T.lime+"30"):"transparent"}`,boxShadow:act&&!isLight?`0 4px 14px -8px ${T.lime}70`:"none",transition:"all 0.18s cubic-bezier(.2,.8,.2,1)"}}>
+      <div onClick={()=>setActive(item.id)} title={navExpanded?undefined:item.label} style={{display:"flex",alignItems:"center",gap:10,padding:navExpanded?"9px 11px":"9px 0",justifyContent:navExpanded?"flex-start":"center",borderRadius:9,cursor:"pointer",fontSize:12.5,background:act?(isLight?"rgba(246,241,230,0.95)":`linear-gradient(100deg, ${T.lime}1c, ${T.lime}08)`):"transparent",color:act?(isLight?T.ink:T.lime):sidebarMuted,fontWeight:act?600:400,marginBottom:2,border:`1px solid ${act?(isLight?"transparent":T.lime+"30"):"transparent"}`,boxShadow:act&&!isLight?`0 4px 14px -8px ${T.lime}70`:"none",transition:"all 0.18s cubic-bezier(.2,.8,.2,1)"}}>
         <span style={{width:16,height:16,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:act?(isLight?T.ink:T.lime):sidebarFaint}}>{navIcon[item.id]}</span>
-        {!navCollapsed&&<span style={{flex:1,letterSpacing:"0.01em",whiteSpace:"nowrap"}}>{item.label}</span>}
-        {!navCollapsed&&item.badge&&<span style={{background:T.lime+(act?"":"18"),color:act?T.ink:T.lime,fontSize:9,fontWeight:700,padding:"2px 6px",borderRadius:4,letterSpacing:"0.03em"}}>{item.badge}</span>}
+        {navExpanded&&<span style={{flex:1,letterSpacing:"0.01em",whiteSpace:"nowrap"}}>{item.label}</span>}
+        {navExpanded&&item.badge&&<span style={{background:T.lime+(act?"":"18"),color:act?T.ink:T.lime,fontSize:9,fontWeight:700,padding:"2px 6px",borderRadius:4,letterSpacing:"0.03em"}}>{item.badge}</span>}
       </div>
     );
   };
   return (
     <div style={{display:"flex",height:"100vh",overflow:"hidden",background:isLight?T.bg:`radial-gradient(1200px 600px at 78% -8%, ${T.glow}, transparent 60%), ${T.bg}`,fontFamily:T.font,color:T.text}}>
-      {/* SIDEBAR */}
-      <div style={{width:navCollapsed?68:230,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #18241D 0%, #0D120F00 60%)",backgroundColor:isLight?T.surface:T.surface,display:"flex",flexDirection:"column",padding:navCollapsed?"20px 10px":"20px 12px",borderRight:`1px solid ${isLight?"transparent":T.border}`,overflowY:"auto",overflowX:"hidden",transition:"width 0.22s cubic-bezier(.2,.8,.2,1), padding 0.22s cubic-bezier(.2,.8,.2,1)"}}>
-        <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 6px",marginBottom:20,justifyContent:navCollapsed?"center":"space-between"}}>
-          {!navCollapsed&&(
+      {/* SIDEBAR -- collapses to a ~48px icon rail by default (navCollapsed),
+          expands on hover (navHovering, transient/never persisted) without
+          disturbing the pinned preference. Clicking the toggle button below
+          changes the pin itself, so it stays keyed to navCollapsed rather
+          than navExpanded. */}
+      <div onMouseEnter={()=>setNavHovering(true)} onMouseLeave={()=>setNavHovering(false)} style={{width:navExpanded?230:48,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #18241D 0%, #0D120F00 60%)",backgroundColor:isLight?T.surface:T.surface,display:"flex",flexDirection:"column",padding:navExpanded?"20px 12px":"16px 6px",borderRight:`1px solid ${isLight?"transparent":T.border}`,overflowY:"auto",overflowX:"hidden",transition:"width 0.22s cubic-bezier(.2,.8,.2,1), padding 0.22s cubic-bezier(.2,.8,.2,1)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 6px",marginBottom:20,justifyContent:navExpanded?"space-between":"center"}}>
+          {navExpanded&&(
             <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
               <div style={{width:28,height:28,background:T.lime,borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                 <span style={{fontSize:15,fontWeight:800,color:T.ink,fontFamily:T.font}}>S</span>
@@ -21469,7 +21479,7 @@ function App() {
               <span style={{fontSize:16,fontWeight:700,color:sidebarText,letterSpacing:"-0.02em",fontFamily:T.font,whiteSpace:"nowrap"}}>Studlin</span>
             </div>
           )}
-          <button onClick={toggleNavCollapsed} title={navCollapsed?"Expand sidebar":"Collapse sidebar"} style={{width:28,height:28,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${sidebarBorder}`,borderRadius:7,color:sidebarMuted,cursor:"pointer",padding:0}}>
+          <button onClick={toggleNavCollapsed} title={navCollapsed?"Keep sidebar expanded":"Collapse sidebar"} style={{width:28,height:28,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${sidebarBorder}`,borderRadius:7,color:sidebarMuted,cursor:"pointer",padding:0}}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{transform:navCollapsed?"rotate(180deg)":"none",transition:"transform 0.22s"}}>
               <polyline points="11 17 6 12 11 7" /><polyline points="18 17 13 12 18 7" />
             </svg>
@@ -21477,8 +21487,8 @@ function App() {
         </div>
         {navSections.map(sec=>(
           <div key={sec.label}>
-            {!navCollapsed&&<div style={{fontSize:9,fontWeight:700,letterSpacing:"0.1em",color:sidebarFaint,textTransform:"uppercase",padding:"0 6px",margin:"14px 0 5px"}}>{sec.label}</div>}
-            {navCollapsed&&<div style={{height:1,background:sidebarBorder,margin:"14px 4px 10px"}} />}
+            {navExpanded&&<div style={{fontSize:9,fontWeight:700,letterSpacing:"0.1em",color:sidebarFaint,textTransform:"uppercase",padding:"0 6px",margin:"14px 0 5px"}}>{sec.label}</div>}
+            {!navExpanded&&<div style={{height:1,background:sidebarBorder,margin:"14px 4px 10px"}} />}
             {sec.items.map(item=><NavItem key={item.id} item={item} />)}
           </div>
         ))}
@@ -21498,7 +21508,7 @@ function App() {
           // opens (same instinct as Duolingo keeping its flame in the
           // persistent header rather than burying it in a profile tab).
           const streak=Math.max(1,getStreak());
-          if(navCollapsed){return(
+          if(!navExpanded){return(
           <div style={{marginTop:"auto",borderTop:`1px solid ${sidebarBorder}`,paddingTop:10,display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
             <div onClick={()=>setActive("profile")} title={getUserName()} style={{cursor:"pointer",position:"relative"}}>
               <Av initials={getUserInitials()} color={T.lime} size={32} />
@@ -21532,9 +21542,8 @@ function App() {
       <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",background:T.bg}}>
         {/* TOP BAR */}
         <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 28px",borderBottom:`1px solid ${T.border}`,background:T.bg,position:"sticky",top:0,zIndex:10,flexShrink:0}}>
-          <div style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,flexShrink:0}}>
-            {sectionOf[active]} · <span style={{color:T.text,fontWeight:600}}>{labelOf[active]}</span>
-          </div>
+          {/* HOME · CALENDAR-style breadcrumb removed (ui/tokens-and-calendar) --
+              global chrome, cut app-wide rather than special-cased per page. */}
           {/* Streak — moved here from the Dashboard greeting strip, which is
               gone entirely now (full ranking/focus-stat detail lives in
               Profile). marginLeft:auto replaces the old search bar's job of
