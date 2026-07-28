@@ -8192,30 +8192,6 @@ function Notes({setActive=()=>{}}){
     }catch(e){return regexScanDeadlines(text);}
   };
 
-  // Fires the phase-name proposal (see proposeProjectPhases) for one review
-  // item and writes the result back onto it. phases:[] (not null) after a
-  // resolved call specifically means "AI looked and found nothing concrete
-  // to ground phases in" — the review UI shows a different message for
-  // that than for "hasn't been asked yet" (phases still undefined).
-  const suggestPhasesFor=async(itemId)=>{
-    setSyllabusReview(r=>r&&({...r,items:r.items.map(x=>x.id===itemId?{...x,phasesLoading:true}:x)}));
-    const it=(syllabusReview?.items||[]).find(x=>x.id===itemId);
-    if(!it)return;
-    const names=await proposeProjectPhases(it.title,it.detail||"",syllabusReview.tag);
-    setSyllabusReview(r=>r&&({...r,items:r.items.map(x=>x.id===itemId?{...x,phasesLoading:false,phases:names||[]}:x)}));
-  };
-  // Same shape as suggestPhasesFor, for the finer-grained checklist
-  // (Friction & Control Pass) -- independent of phases, not nested inside
-  // them: v1 keeps outline as one flat checklist per Attack Block item
-  // rather than solving per-phase outline scoping in the same pass.
-  const suggestOutlineFor=async(itemId)=>{
-    setSyllabusReview(r=>r&&({...r,items:r.items.map(x=>x.id===itemId?{...x,outlineLoading:true}:x)}));
-    const it=(syllabusReview?.items||[]).find(x=>x.id===itemId);
-    if(!it)return;
-    const items=await proposeOutline(it.title,it.detail||"",syllabusReview.tag);
-    setSyllabusReview(r=>r&&({...r,items:r.items.map(x=>x.id===itemId?{...x,outlineLoading:false,outline:items||[]}:x)}));
-  };
-
   // "Continue to Canvas" — creates note and enters canvas immediately
   const continueToCanvas=async()=>{
     const tag=newTag==="Other"&&customTag.trim()?customTag.trim():newTag;
@@ -8598,52 +8574,6 @@ function Notes({setActive=()=>{}}){
                   )}
                   {it.detail&&(
                     <div style={{fontSize:11.5,color:T.muted,marginTop:6,lineHeight:1.4}}>{it.detail}</div>
-                  )}
-                  {!it.noDate&&it.kind==="deadline"&&it.attackBlock&&isPhaseDecompositionCandidate(it.estimatedHours,it.date,dayKey())&&(
-                    <div style={{marginTop:8}}>
-                      {it.phases===undefined?(
-                        <button type="button" disabled={!!it.phasesLoading} onClick={()=>suggestPhasesFor(it.id)} style={{background:"none",border:`1px dashed ${T.borderHover}`,borderRadius:6,color:T.muted,fontSize:11,fontFamily:T.font,cursor:it.phasesLoading?"default":"pointer",padding:"5px 10px",opacity:it.phasesLoading?0.6:1}}>
-                          {it.phasesLoading?"Thinking through phases…":"This looks big. Break it into phases?"}
-                        </button>
-                      ):it.phases.length===0?(
-                        <div style={{fontSize:11,color:T.muted}}>Not enough detail here to break into phases. Add detail above, or leave it as one Attack Block.</div>
-                      ):(
-                        <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                          <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Phases: only the first gets scheduled now</div>
-                          {it.phases.map((ph,pi)=>(
-                            <div key={pi} style={{display:"flex",alignItems:"center",gap:6}}>
-                              <span style={{fontSize:10,color:T.faint,width:14,flexShrink:0,fontFamily:T.mono}}>{pi+1}</span>
-                              <Input value={ph} onChange={ev=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,phases:x.phases.map((p,ppi)=>ppi===pi?ev.target.value:p)}:x)}))} style={{flex:1,fontSize:12,padding:"5px 8px"}} />
-                              <button type="button" onClick={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,phases:x.phases.filter((_,ppi)=>ppi!==pi)}:x)}))} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,lineHeight:1,padding:2,flexShrink:0}}>×</button>
-                            </div>
-                          ))}
-                          <button type="button" onClick={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,phases:[...x.phases,""]}:x)}))} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add phase</button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {!it.noDate&&it.kind==="deadline"&&it.attackBlock&&isPhaseDecompositionCandidate(it.estimatedHours,it.date,dayKey())&&(
-                    <div style={{marginTop:8}}>
-                      {it.outline===undefined?(
-                        <button type="button" disabled={!!it.outlineLoading} onClick={()=>suggestOutlineFor(it.id)} style={{background:"none",border:`1px dashed ${T.borderHover}`,borderRadius:6,color:T.muted,fontSize:11,fontFamily:T.font,cursor:it.outlineLoading?"default":"pointer",padding:"5px 10px",opacity:it.outlineLoading?0.6:1}}>
-                          {it.outlineLoading?"Drafting a checklist…":"Add a step-by-step checklist?"}
-                        </button>
-                      ):it.outline.length===0?(
-                        <div style={{fontSize:11,color:T.muted}}>Not enough detail here for a checklist. Add detail above, or skip it.</div>
-                      ):(
-                        <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                          <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Checklist</div>
-                          {it.outline.map((step,si)=>(
-                            <div key={si} style={{display:"flex",alignItems:"center",gap:6}}>
-                              <span style={{fontSize:10,color:T.faint,width:14,flexShrink:0,fontFamily:T.mono}}>{si+1}</span>
-                              <Input value={step} onChange={ev=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,outline:x.outline.map((s,ssi)=>ssi===si?ev.target.value:s)}:x)}))} style={{flex:1,fontSize:12,padding:"5px 8px"}} />
-                              <button type="button" onClick={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,outline:x.outline.filter((_,ssi)=>ssi!==si)}:x)}))} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,lineHeight:1,padding:2,flexShrink:0}}>×</button>
-                            </div>
-                          ))}
-                          <button type="button" onClick={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,outline:[...x.outline,""]}:x)}))} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add step</button>
-                        </div>
-                      )}
-                    </div>
                   )}
                 </div>
               </div>
@@ -12995,7 +12925,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
   // Each entry: {id,name,color,meetingTimes:[...],items:[...],sourceText}.
   const [pendingClasses,setPendingClasses]=useState([]);
   const [addMode,setAddMode]=useState(null); // null (list) | choose | scan | review | hsSchedule | hsReview
-  const [reviewSub,setReviewSub]=useState("items"); // items | smarten | sessions -- sub-steps inside addMode==="review"
+  const [reviewSub,setReviewSub]=useState("items"); // items | sessions -- sub-steps inside addMode==="review"
   const [editingPendingId,setEditingPendingId]=useState(null); // set when the review screen is editing an already-staged class rather than building a new one
   const [scanning,setScanning]=useState(false);
   // Fallback for syllabi that don't extract cleanly from a file (a scanned
@@ -13371,7 +13301,6 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
             const meetingItemsForBuilder=review.meetingTimes.map(mt=>({id:mt.id,title:review.subjectName||"Class",kind:"class",days:mt.days,startTime:mt.startTime,duration:mt.duration}));
             const setItem=(i,patch)=>setReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,...patch}:x)}));
             const addManualItem=()=>setReview(r=>({...r,items:[...r.items,{id:"cd-manual-"+Date.now(),title:"",date:dayKey(),kind:"assignment",include:true,noDate:false,attackBlock:true,proposeSessions:false,sessionCount:4,detail:"",detailOpen:false,estimatedHours:null,difficulty:500,phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false,materialFiles:[],materialLinks:[],materialOpen:false,linkDraft:"",linkLabelDraft:"",pasteMaterialMode:false,pasteMaterialText:""}]}));
-            const includedExamCount=review.items.filter(it=>it.include&&it.kind==="exam").length;
             const cancelReview=()=>{setReview(null);setEditingPendingId(null);setReviewSub("items");setAddMode(null);};
             const ITEM_KIND_OPTIONS=[{value:"assignment",label:"Assignment"},{value:"exam",label:"Exam"},{value:"project",label:"Project"}];
 
@@ -13426,9 +13355,6 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
                                 {it.detail?"See detail":"+ Add detail"}
                               </button>
                             )}
-                            {it.kind==="project"&&it.include&&!(it.detail&&it.detail.trim())&&(
-                              <div style={{fontSize:11,color:T.red,marginTop:4}}>Add detail above so Studlin can suggest real phases, not a generic template.</div>
-                            )}
                           </div>
                         </div>
                       </div>
@@ -13440,24 +13366,12 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
               <button type="button" onClick={cancelReview} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:8}}>{editingPendingId?"← Cancel":"← Cancel, don't stage this class"}</button>
             </>);
 
-            if(reviewSub==="smarten")return(<>
-              <TitleSub title="Add study material? (optional)" sub="For any exam here — upload files, paste notes, or drop a link. Skip it if you're not ready or don't have it yet; you can always add it later in Studlin Prep." />
-              {includedExamCount===0?(
-                <div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"20px 0"}}>No exams in this class yet — nothing to add material for.</div>
-              ):review.items.map((it,i)=>{
-                if(!it.include||it.kind!=="exam")return null;
-                return <MaterialEditor key={it.id} item={it} onChange={patch=>setItem(i,patch)} label={it.title||"Untitled exam"} idPrefix={it.id} />;
-              })}
-              <button type="button" onClick={()=>setReviewSub("items")} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0,marginTop:4}}>← Back</button>
-            </>);
-
             if(reviewSub==="sessions")return(<>
-              <TitleSub title="Sessions & outlines" sub="Exams get spaced study sessions counting down to the date. Projects can be broken into phases. Edit anything, including duration and difficulty." />
+              <TitleSub title="Sessions" sub="Exams get spaced study sessions counting down to the date, built from Studlin Prep once you're ready. Assignments and projects can get an Attack Block." />
               {review.items.filter(it=>it.include&&!it.noDate).length===0?(
                 <div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"20px 0"}}>Nothing dated to plan yet.</div>
               ):review.items.map((it,i)=>{
                 if(!it.include||it.noDate)return null;
-                const showPhases=it.kind==="project"||isPhaseDecompositionCandidate(it.estimatedHours,it.date,dayKey());
                 return (
                   <div key={it.id} style={{padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,marginBottom:8}}>
                     <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:8}}>{it.title||"Untitled"}</div>
@@ -13467,24 +13381,16 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
                       // one-question calibration) from the exam itself in
                       // Studlin Prep once you're ready.
                       <div style={{fontSize:11,color:T.muted}}>Build a study plan for this from Studlin Prep once you're ready.</div>
-                    ):(<>
-                      <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,color:T.muted,cursor:"pointer",marginBottom:6}}>
+                    ):(
+                      <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,color:T.muted,cursor:"pointer"}}>
                         <input type="checkbox" checked={!!it.attackBlock} onChange={()=>setItem(i,{attackBlock:!it.attackBlock})} />
                         Schedule an Attack Block
                       </label>
-                      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:showPhases&&it.attackBlock?8:0}}>
-                        <span style={{fontSize:10.5,color:T.muted}}>Easy</span>
-                        <input type="range" min={0} max={1000} value={it.difficulty??500} onChange={e=>setItem(i,{difficulty:+e.target.value})} style={{flex:1,accentColor:T.lime,height:5,borderRadius:3,cursor:"pointer"}} />
-                        <span style={{fontSize:10.5,color:T.muted}}>Hard</span>
-                      </div>
-                      {it.attackBlock&&showPhases&&(
-                        <PhasesOutlineEditor item={it} onChange={patch=>setItem(i,patch)} subject={review.subjectName} />
-                      )}
-                    </>)}
+                    )}
                   </div>
                 );
               })}
-              <button type="button" onClick={()=>setReviewSub(includedExamCount>0?"smarten":"items")} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0,marginTop:4}}>← Back</button>
+              <button type="button" onClick={()=>setReviewSub("items")} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0,marginTop:4}}>← Back</button>
             </>);
           })()}
 
@@ -13602,10 +13508,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
               <Btn onClick={()=>quickScan?setStep("finalReview"):setStep("activities")}>{pendingClasses.length>0?"Done adding classes":"Skip, I'll add classes later"}</Btn>
             )}
             {step==="classes"&&addMode==="review"&&reviewSub==="items"&&(
-              <Btn onClick={()=>setReviewSub(review.items.filter(it=>it.include&&it.kind==="exam").length>0?"smarten":"sessions")} disabled={!review.subjectName.trim()} style={{opacity:review.subjectName.trim()?1:0.45}}>Continue</Btn>
-            )}
-            {step==="classes"&&addMode==="review"&&reviewSub==="smarten"&&(
-              <Btn onClick={()=>setReviewSub("sessions")}>Continue</Btn>
+              <Btn onClick={()=>setReviewSub("sessions")} disabled={!review.subjectName.trim()} style={{opacity:review.subjectName.trim()?1:0.45}}>Continue</Btn>
             )}
             {step==="classes"&&addMode==="review"&&reviewSub==="sessions"&&(
               <Btn onClick={finishReviewingClass}>{editingPendingId?"Save changes":"Done"}</Btn>
@@ -16474,11 +16377,9 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
                     // Prep once you're ready.
                     <div style={{fontSize:11,color:T.muted,marginTop:6}}>Build a study plan for this from Studlin Prep once you're ready.</div>
                   )}
-                  {/* Same "describe it, Studlin suggests phases/a checklist"
-                      flow Add Task and the syllabus review already use for
-                      Project -- kept collapsed-by-default look here too
-                      (detailOpen) so a student not adding a project never
-                      sees anything different from before this existed. */}
+                  {/* Free-text detail only -- phase/checklist suggestions
+                      were pulled from every import/scan path (Additions #1),
+                      Add Task/Edit Task still offer them for manual entry. */}
                   {it.kind==="project"&&(
                     <div style={{marginTop:8}}>
                       {it.detailOpen?(
@@ -16492,10 +16393,6 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
                           {it.detail?"See detail":"+ Add detail"}
                         </button>
                       )}
-                      {it.include&&!(it.detail&&it.detail.trim())&&(
-                        <div style={{fontSize:11,color:T.red,marginTop:4}}>Add detail above so Studlin can suggest real phases, not a generic template.</div>
-                      )}
-                      <PhasesOutlineEditor item={it} onChange={patch=>setBrainDumpReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,...patch}:x)}))} subject="" />
                     </div>
                   )}
                 </div>
