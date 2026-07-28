@@ -102,7 +102,7 @@ function loadStudlinModule(options) {
     "findLaterTodaySlot","findNotTodaySlot",
     "advancedSchedulePlanner","todaysPlan","chunkTasksWithBreaks",
     "isReorderableTask","calculateTaskPriority","detectConflicts",
-    "isLeadInFixed","commitSyllabusEvents","buildSyllabusEventBatch",
+    "isLeadInFixed","isFixedItem","commitSyllabusEvents","buildSyllabusEventBatch",
     "buildPendingSchedulePreview","proposeProjectPhases","proposeOutline","proposeSessionFocuses",
     "attachSessionFocusesToSyllabusExams",
     "isPhaseDecompositionCandidate","finalizeExtractedText","MATERIAL_TEXT_CAP"];

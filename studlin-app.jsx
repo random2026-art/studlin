@@ -1469,6 +1469,17 @@ function isCoopStudySession(ev){return !!(ev&&ev.studySessionId);}
 // buffer there but not in findOpenSlotFor/findLegalSlotOrNull/dayHasRoomFor/
 // computeOccupiedIntervals, silently disagreeing about the same slot.
 function isLeadInFixed(e){return TIER0_FIXED_KINDS.has(e.kind)||isCoopStudySession(e);}
+// Canonical "this item can never be automatically relocated" check --
+// isLeadInFixed's own union (TIER0_FIXED_KINDS: exam/class/busy block/
+// reminder, plus co-op sessions) union'd with truly user-pinned items.
+// Shared by isTier0Missed below AND Tier 1's rollover filter (App(), see
+// the "8 things from yesterday" recovery flow) so the two engines can't
+// disagree about what's safe to move -- they used to diverge, and Tier
+// 1's own filter had no kind exclusion at all, meaning a stale pending
+// exam/class could actually get relocated by "Roll over" (found during
+// Catch Me Up review; findLegalSlotOrNull, what actually executes that
+// move, has no kind-awareness of its own to catch it either).
+function isFixedItem(ev){return isLeadInFixed(ev)||!!ev.userPinned;}
 // Canonical "is this task eligible to be reshuffled/reordered" check --
 // shared by rebalanceDay (real calendar reshuffling) and Today's Plan
 // (display-only reordering/chunking) so the two can never define
@@ -1483,9 +1494,7 @@ function isTier0Missed(ev,todayKey){
   if(ev.status!=="pending")return false;
   if(ev.checklist)return false;
   if(!ev.time)return false;
-  if(ev.userPinned)return false;
-  if(TIER0_FIXED_KINDS.has(ev.kind))return false;
-  if(isCoopStudySession(ev))return false;
+  if(isFixedItem(ev))return false;
   // A syllabus-scanned due-date marker (kind:"deadline", duration:null) is
   // currently also caught by the deadline<todayKey check below, since its
   // deadline is always set equal to its own date — but that's an implicit
@@ -21328,8 +21337,12 @@ function App() {
     // Checklist items are plain to-dos with no inherent time (see the
     // Checklist card comment in Dashboard) — same exclusion isTier0Missed
     // already applies above, so a rollover from yesterday never assigns
-    // them a time slot the way a real study block/exam gets.
-    const od=working.filter(ev=>ev.status==="pending"&&!ev.checklist&&ev.date<today&&!(ev.deadline&&ev.deadline<today)&&!movedIds.has(ev.id));
+    // them a time slot the way a real study block/exam gets. isFixedItem
+    // is the same "never move" predicate isTier0Missed uses -- this used
+    // to have no kind exclusion at all, so a stale pending exam/class
+    // could be offered (and actually relocated on confirm) by "Roll
+    // over," the same bug class Tier 0 was already immune to.
+    const od=working.filter(ev=>ev.status==="pending"&&!ev.checklist&&!isFixedItem(ev)&&ev.date<today&&!(ev.deadline&&ev.deadline<today)&&!movedIds.has(ev.id));
     if(od.length>0)setRolloverPending(od);
   },[]);
   const navSections=[
