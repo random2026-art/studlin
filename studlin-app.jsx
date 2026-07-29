@@ -4290,6 +4290,16 @@ function suggestDurationFor(subject,kind){
 function upcomingExams(){
   return lsGet("events",[]).filter(e=>e.kind==="exam"&&e.date>=dayKey()).sort((a,b)=>a.date.localeCompare(b.date));
 }
+// Same "deadline kind, not a checklist sub-item, still pending" query
+// Dashboard's masterAssignments/masterProjects already use -- pulled out
+// here too so Studlin Prep's own Assignments/Projects tables (Phase 9)
+// can reuse it without duplicating the filter logic a second time.
+function upcomingAssignments(){
+  return lsGet("events",[]).filter(e=>e.kind==="deadline"&&!e.checklist&&!isProjectMarker(e)&&e.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
+}
+function upcomingProjects(){
+  return lsGet("events",[]).filter(e=>e.kind==="deadline"&&!e.checklist&&isProjectMarker(e)&&e.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
+}
 // Storage-only half of linking a deck to an exam -- callers that keep
 // their own local mirror of "decks" in React state (Flashcards) are
 // responsible for updating that mirror with the returned array after
@@ -6756,8 +6766,8 @@ function StudlinPrep({setActive=()=>{}}={}){
     <div>
       <PH title="Studlin Prep" sub="Attach material once. Get flashcards and a practice exam, scheduled to test day." action={
         <div style={{display:"flex",gap:6}}>
-          {["exams","flashcards","practiceExams"].map(v=>(
-            <button key={v} onClick={()=>{setTab(v);setSelectedExamId(null);}} style={{padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",background:tab===v?T.lime+"14":"transparent",color:tab===v?T.lime:T.muted,border:`1px solid ${tab===v?T.lime+"44":T.border}`,fontFamily:T.font}}>{v==="exams"?"Exams":v==="flashcards"?"Flashcards":"Practice Exams"}</button>
+          {["exams","assignments","projects","flashcards","practiceExams"].map(v=>(
+            <button key={v} onClick={()=>{setTab(v);setSelectedExamId(null);}} style={{padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",background:tab===v?T.lime+"14":"transparent",color:tab===v?T.lime:T.muted,border:`1px solid ${tab===v?T.lime+"44":T.border}`,fontFamily:T.font}}>{v==="exams"?"Exams":v==="assignments"?"Assignments":v==="projects"?"Projects":v==="flashcards"?"Flashcards":"Practice Exams"}</button>
           ))}
         </div>
       } />
@@ -6869,6 +6879,100 @@ function StudlinPrep({setActive=()=>{}}={}){
             })()
       )}
 
+      {/* Assignments/Projects tables (Phase 9 follow-up) -- Assignments
+          was removed from Prep earlier this session since it duplicated
+          Dashboard's "Your Classes" list exactly; brought back now in the
+          same dense table shape as Exams above, reusing patchExam/
+          bucketOf/BUCKET_VALS from that block (they only depend on the
+          event id + priority/difficulty fields, not anything exam-
+          specific, so nothing new was needed there). Status column
+          reflects each type's own real progress concept instead of
+          reusing "sessions" verbatim -- Attack Block count for an
+          assignment, checklist completion for a project -- rather than
+          forcing both through the exam's study-session shape. */}
+      {tab==="assignments"&&(()=>{
+        const assignments=upcomingAssignments();
+        const gridCols="minmax(140px,1.8fr) 100px 120px 70px 80px 80px 150px";
+        const cellSelStyle={width:"100%",background:"transparent",border:"none",color:T.text,fontSize:10.5,fontFamily:T.font,outline:"none",cursor:"pointer",padding:"2px 0"};
+        return assignments.length===0
+          ?<Card style={{padding:"32px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted}}>No upcoming assignments.</div></Card>
+          :(
+            <div style={{overflowX:"auto",border:`1px solid ${T.border}`,borderRadius:8}}>
+              <div style={{minWidth:700}}>
+                <div style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,background:T.card2}}>
+                  {["Name","Class","Due","Days","Urgency","Difficulty","Attack Blocks"].map(h=>(
+                    <div key={h} style={{fontSize:9,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>{h}</div>
+                  ))}
+                </div>
+                {assignments.map(a=>{
+                  const today=dayKey();
+                  const daysUntil=a.date?Math.round((new Date(a.date+"T12:00:00")-new Date(today+"T12:00:00"))/86400000):null;
+                  const daysLabel=daysUntil==null?"—":daysUntil<=0?"Today":daysUntil+"d";
+                  const chainId=(lsGet("events",[]).find(e=>e.dueEventId===a.id&&e.attackChainId)||{}).attackChainId||null;
+                  const pending=chainId?lsGet("events",[]).filter(e=>e.attackChainId===chainId&&e.status!=="done"):[];
+                  const statusLabel=pending.length===0?"no blocks yet":pending.length+" block"+(pending.length!==1?"s":"")+" scheduled";
+                  return (
+                    <div key={a.id} style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,alignItems:"center"}}>
+                      <div onClick={()=>setDetailEventId(a.id)} style={{fontSize:11.5,fontWeight:600,color:T.white,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={a.title}>{a.title}</div>
+                      <div style={{fontSize:10.5,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.subject||"—"}</div>
+                      <input type="date" value={a.date||""} onChange={e=>patchExam(a.id,{date:e.target.value})} style={{...cellSelStyle,colorScheme:"dark"}} />
+                      <div style={{fontSize:10.5,color:daysUntil!=null&&daysUntil<=1?T.red:T.muted}}>{daysLabel}</div>
+                      <select value={bucketOf(a.priority)} onChange={e=>patchExam(a.id,{priority:BUCKET_VALS[e.target.value]})} style={cellSelStyle}>
+                        <option value="low">Low</option><option value="medium">Med</option><option value="high">High</option>
+                      </select>
+                      <select value={bucketOf(a.difficulty)} onChange={e=>patchExam(a.id,{difficulty:BUCKET_VALS[e.target.value]})} style={cellSelStyle}>
+                        <option value="low">Easy</option><option value="medium">Med</option><option value="high">Hard</option>
+                      </select>
+                      <div onClick={()=>setDetailEventId(a.id)} style={{fontSize:10.5,color:T.muted,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title="Click to open">{statusLabel}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+      })()}
+
+      {tab==="projects"&&(()=>{
+        const projects=upcomingProjects();
+        const gridCols="minmax(140px,1.8fr) 100px 120px 70px 80px 80px 150px";
+        const cellSelStyle={width:"100%",background:"transparent",border:"none",color:T.text,fontSize:10.5,fontFamily:T.font,outline:"none",cursor:"pointer",padding:"2px 0"};
+        return projects.length===0
+          ?<Card style={{padding:"32px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted}}>No upcoming projects.</div></Card>
+          :(
+            <div style={{overflowX:"auto",border:`1px solid ${T.border}`,borderRadius:8}}>
+              <div style={{minWidth:700}}>
+                <div style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,background:T.card2}}>
+                  {["Name","Class","Due","Days","Urgency","Difficulty","Checklist"].map(h=>(
+                    <div key={h} style={{fontSize:9,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>{h}</div>
+                  ))}
+                </div>
+                {projects.map(p=>{
+                  const today=dayKey();
+                  const daysUntil=p.date?Math.round((new Date(p.date+"T12:00:00")-new Date(today+"T12:00:00"))/86400000):null;
+                  const daysLabel=daysUntil==null?"—":daysUntil<=0?"Today":daysUntil+"d";
+                  const hasPhases=p.phases&&p.phases.length>0;
+                  const steps=hasPhases?p.phases:(p.outline||[]);
+                  const doneCount=hasPhases?steps.filter(s=>s.status==="done").length:steps.filter(s=>s.done).length;
+                  return (
+                    <div key={p.id} style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,alignItems:"center"}}>
+                      <div onClick={()=>setDetailEventId(p.id)} style={{fontSize:11.5,fontWeight:600,color:T.white,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={p.title}>{p.title}</div>
+                      <div style={{fontSize:10.5,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.subject||"—"}</div>
+                      <input type="date" value={p.date||""} onChange={e=>patchExam(p.id,{date:e.target.value})} style={{...cellSelStyle,colorScheme:"dark"}} />
+                      <div style={{fontSize:10.5,color:daysUntil!=null&&daysUntil<=1?T.red:T.muted}}>{daysLabel}</div>
+                      <select value={bucketOf(p.priority)} onChange={e=>patchExam(p.id,{priority:BUCKET_VALS[e.target.value]})} style={cellSelStyle}>
+                        <option value="low">Low</option><option value="medium">Med</option><option value="high">High</option>
+                      </select>
+                      <select value={bucketOf(p.difficulty)} onChange={e=>patchExam(p.id,{difficulty:BUCKET_VALS[e.target.value]})} style={cellSelStyle}>
+                        <option value="low">Easy</option><option value="medium">Med</option><option value="high">Hard</option>
+                      </select>
+                      <div onClick={()=>setDetailEventId(p.id)} style={{fontSize:10.5,color:T.muted,cursor:"pointer"}} title="Click to open">{steps.length===0?"no checklist yet":doneCount+"/"+steps.length+" steps"}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+      })()}
 
       {tab==="exams"&&selectedExam&&(()=>{
         const readiness=computeExamReadiness(selectedExam,lsGet("events",[]),dayKey());
@@ -15557,49 +15661,52 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
     });
   };
 
-  // 2026-07-29: small anchored popover next to the actual drop point,
-  // not a full-screen centered modal -- same portal+fixed-position
-  // pattern WeeklyPlanner's own event-click popover already uses
-  // (popoverAnchor), reused here instead of inventing a second one.
-  // Falls back to a reasonable default position if no drop point was
-  // captured (shouldn't happen via the drag-drop path, but keeps this
-  // component safe to open from anywhere).
-  const POPOVER_WIDTH=300;
+  // 2026-07-29: anchored popover that opens right next to the block that
+  // was just dropped -- not centered on the drop point (which floated it
+  // away from the thing it's actually about) and not a full-screen
+  // modal. Same portal+fixed-position pattern WeeklyPlanner's own
+  // event-click popover already uses (popoverAnchor). Width and left/top
+  // math both tuned to match Shovel's own reference (101410/173401) --
+  // its popover sits with its left edge starting almost right at the
+  // drop point (a few px overlap into the block), roughly level with the
+  // block's top edge, not centered on or pushed below the cursor.
+  const POPOVER_WIDTH=440;
   const x=anchorX!=null?anchorX:window.innerWidth/2;
   const y=anchorY!=null?anchorY:window.innerHeight/2;
-  const left=Math.min(Math.max(8,x-POPOVER_WIDTH/2),window.innerWidth-POPOVER_WIDTH-8);
-  const top=Math.min(y+10,window.innerHeight-40);
+  const left=Math.min(Math.max(8,x-10),window.innerWidth-POPOVER_WIDTH-8);
+  const top=Math.min(Math.max(8,y-24),window.innerHeight-40);
   return ReactDOM.createPortal((
     <>
       <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:998}} />
       <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top,left,width:POPOVER_WIDTH,maxHeight:"calc(100vh - "+top+"px - 16px)",overflowY:"auto",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:999,animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)"}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 12px",borderBottom:`1px solid ${T.border}`}}>
-          <div style={{fontSize:13,fontWeight:700,color:T.white}}>New event</div>
-          <button type="button" onClick={onClose} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,lineHeight:1,padding:0}}>×</button>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 16px",borderBottom:`1px solid ${T.border}`}}>
+          <div style={{fontSize:14.5,fontWeight:700,color:T.white}}>New event</div>
+          <button type="button" onClick={onClose} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:17,lineHeight:1,padding:0}}>×</button>
         </div>
-        {/* Tightened vertical rhythm throughout (gap 10->6, padding 12->9,
-            commute fields no longer routed through Field's own baked-in
-            14px marginBottom) -- the labeled DateField/TimeField boxes
-            above are individually compact, but stacking ~9 of them at the
-            old spacing added up to a popover taller than a typical drop
-            point leaves room for, forcing a scroll. */}
-        <div style={{padding:"9px 12px",display:"flex",flexDirection:"column",gap:6}}>
-          <Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Event title" style={{fontSize:13,fontWeight:600}} autoFocus />
-          <DateField label="Date" value={date} onChange={setDate} />
-          {!allDay&&(
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6,padding:"7px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,boxSizing:"border-box"}}>
-              <div style={{display:"flex",alignItems:"center",gap:6,minWidth:0}}>
-                <TimeInput value={startTime} onChange={setStartTime} bare />
-                <span style={{color:T.muted,fontSize:12,flexShrink:0}}>–</span>
-                <TimeInput value={endTime} onChange={setEndTime} bare />
+        {/* Sized to match Shovel's own reference proportions (173401) now
+            that POPOVER_WIDTH is 440 not 300 -- text and row padding both
+            scaled up a step from the first compact pass, since the extra
+            width was making the earlier tight spacing look sparse rather
+            than dense. */}
+        <div style={{padding:"12px 16px",display:"flex",flexDirection:"column",gap:8}}>
+          <Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Event title" style={{fontSize:14.5,fontWeight:600,padding:"9px 12px"}} autoFocus />
+          <div style={{display:"flex",gap:8}}>
+            <DateField label="Date" value={date} onChange={setDate} />
+            {!allDay&&(
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6,padding:"8px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,boxSizing:"border-box",flexShrink:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:6,minWidth:0}}>
+                  <TimeInput value={startTime} onChange={setStartTime} bare />
+                  <span style={{color:T.muted,fontSize:12,flexShrink:0}}>–</span>
+                  <TimeInput value={endTime} onChange={setEndTime} bare />
+                </div>
+                <span style={{color:T.muted,flexShrink:0,display:"flex"}}>{ClockIcon}</span>
               </div>
-              <span style={{color:T.muted,flexShrink:0,display:"flex"}}>{ClockIcon}</span>
-            </div>
-          )}
-          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,color:T.muted,cursor:"pointer"}}>
+            )}
+          </div>
+          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12.5,color:T.muted,cursor:"pointer"}}>
             <input type="checkbox" checked={allDay} onChange={e=>setAllDay(e.target.checked)} /> All day
           </label>
-          <select value={repeat} onChange={e=>setRepeat(e.target.value)} style={{...wizardSelectStyle,padding:"7px 8px"}}>
+          <select value={repeat} onChange={e=>setRepeat(e.target.value)} style={{...wizardSelectStyle,padding:"8px 10px",fontSize:13}}>
             <option value="none">Does not repeat</option>
             <option value="weekly">Repeats weekly</option>
             <option value="selected">On selected days</option>
@@ -15609,21 +15716,30 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
               {ROUTINE_DOW.map((d,i)=><button key={i} type="button" onClick={()=>toggleRepeatDay(i)} style={wizardChipStyle(repeatDays.includes(i))}>{d}</button>)}
             </div>
           )}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-            <Input type="number" min={0} value={commuteBefore} onChange={e=>setCommuteBefore(Math.max(0,+e.target.value||0))} placeholder="Commute before" style={{fontSize:11.5,padding:"7px 9px"}} />
-            <Input type="number" min={0} value={commuteAfter} onChange={e=>setCommuteAfter(Math.max(0,+e.target.value||0))} placeholder="Commute after" style={{fontSize:11.5,padding:"7px 9px"}} />
+          {/* Inline label+pill row, matching Shovel's own plain-text
+              "Commute before: 00h 00m   Commute after: 00h 00m" layout
+              (173401) instead of two stacked bordered inputs. */}
+          <div style={{display:"flex",alignItems:"center",gap:14,fontSize:12.5,color:T.muted,flexWrap:"wrap"}}>
+            <span style={{display:"flex",alignItems:"center",gap:6}}>Commute before:
+              <input type="number" min={0} value={commuteBefore} onChange={e=>setCommuteBefore(Math.max(0,+e.target.value||0))}
+                style={{width:52,background:T.card2,border:`1px solid ${T.border}`,borderRadius:6,padding:"3px 6px",color:T.text,fontSize:12,fontFamily:T.font,outline:"none"}} /> min
+            </span>
+            <span style={{display:"flex",alignItems:"center",gap:6}}>Commute after:
+              <input type="number" min={0} value={commuteAfter} onChange={e=>setCommuteAfter(Math.max(0,+e.target.value||0))}
+                style={{width:52,background:T.card2,border:`1px solid ${T.border}`,borderRadius:6,padding:"3px 6px",color:T.text,fontSize:12,fontFamily:T.font,outline:"none"}} /> min
+            </span>
           </div>
-          <Input value={location} onChange={e=>setLocation(e.target.value)} placeholder="Location (optional)" style={{padding:"7px 9px"}} />
-          <div onClick={()=>setMovable(m=>!m)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer",padding:"7px 10px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2}}>
-            <div style={{fontSize:12,fontWeight:600,color:T.text}}>{movable?"Free":"Fixed"}</div>
-            <div style={{width:32,height:18,borderRadius:9,background:movable?T.lime:T.faint,position:"relative",transition:"background 0.2s",flexShrink:0}}>
-              <div style={{width:14,height:14,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:movable?16:2,transition:"left 0.2s"}} />
+          <Input value={location} onChange={e=>setLocation(e.target.value)} placeholder="Location (Zoom link, Home, Classroom...)" style={{padding:"8px 12px",fontSize:13}} />
+          <div onClick={()=>setMovable(m=>!m)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer",padding:"8px 12px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2}}>
+            <div style={{fontSize:13,fontWeight:600,color:T.text}}>{movable?"Free":"Fixed"}</div>
+            <div style={{width:34,height:19,borderRadius:9.5,background:movable?T.lime:T.faint,position:"relative",transition:"background 0.2s",flexShrink:0}}>
+              <div style={{width:15,height:15,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:movable?17:2,transition:"left 0.2s"}} />
             </div>
           </div>
         </div>
-        <div style={{display:"flex",gap:8,justifyContent:"flex-end",padding:"9px 12px",borderTop:`1px solid ${T.border}`}}>
-          <Btn variant="subtle" onClick={onClose} style={{padding:"6px 13px",fontSize:12}}>Cancel</Btn>
-          <Btn onClick={create} disabled={invalid} style={{padding:"6px 13px",fontSize:12}}>Create</Btn>
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end",padding:"11px 16px",borderTop:`1px solid ${T.border}`}}>
+          <Btn variant="subtle" onClick={onClose} style={{padding:"7px 16px",fontSize:13}}>Cancel</Btn>
+          <Btn onClick={create} disabled={invalid} style={{padding:"7px 16px",fontSize:13}}>Create</Btn>
         </div>
       </div>
     </>
@@ -17206,18 +17322,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     <div style={{display:"flex",alignItems:"flex-start"}}>
       {/* Courses/Activities sidebar (Phase 5, Shovel-inspired) -- own
           collapse state, independent of the global icon rail's. */}
-      <div style={{flexShrink:0,display:"flex"}}>
+      <div style={{flexShrink:0,display:"flex",position:"relative",height:"calc(100vh - 150px)"}}>
         {!calSidebarCollapsed&&(
-        <div style={{width:196,paddingRight:14,marginRight:10,borderRight:`1px solid ${T.border}`,maxHeight:"calc(100vh - 160px)",overflowY:"auto"}}>
+        <div style={{width:196,paddingRight:20,maxHeight:"100%",overflowY:"auto"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-            <div style={{display:"flex",alignItems:"center",gap:6}}>
-              {/* Shovel-style inline collapse control -- a plain "‹", no
-                  separate margined strip taking up its own layout width
-                  (that strip was the actual cause of the reported gap
-                  between this sidebar and the calendar grid). */}
-              <button type="button" onClick={toggleCalSidebarCollapsed} title="Hide courses & activities" style={{background:"none",border:"none",color:T.faint,fontSize:13,fontFamily:T.font,cursor:"pointer",padding:0,lineHeight:1}}>‹</button>
-              <span style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Courses</span>
-            </div>
+            <span style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Courses</span>
             <button type="button" onClick={()=>setQuickScanOpen(true)} style={{background:"none",border:"none",color:T.lime,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0}}>+ Add new</button>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:18}}>
@@ -17288,12 +17397,17 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           </div>
         </div>
         )}
-        {calSidebarCollapsed&&(
-          <button type="button" onClick={toggleCalSidebarCollapsed} title="Show courses & activities"
-            style={{background:"none",border:"none",color:T.faint,fontSize:13,fontFamily:T.font,cursor:"pointer",padding:"4px 10px 4px 0",flexShrink:0,alignSelf:"flex-start"}}>›</button>
-        )}
+        {/* Full-height divider with a subtle shadow (173547) -- previously
+            the border lived on the scrollable content div itself, so it
+            only ran as tall as the content, not the full panel. The
+            collapse toggle straddles this line directly, matching
+            Shovel's own placement, instead of sitting inside the
+            content's padding. */}
+        <div style={{position:"absolute",top:0,bottom:0,right:calSidebarCollapsed?0:14,width:1,background:T.border,boxShadow:`1px 0 3px rgba(0,0,0,0.12)`}} />
+        <button type="button" onClick={toggleCalSidebarCollapsed} title={calSidebarCollapsed?"Show courses & activities":"Hide courses & activities"}
+          style={{position:"absolute",top:16,right:(calSidebarCollapsed?0:14)-9,width:18,height:18,borderRadius:"50%",background:T.card,border:`1px solid ${T.border}`,color:T.faint,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 1px 3px rgba(0,0,0,0.2)"}}>{calSidebarCollapsed?"›":"‹"}</button>
       </div>
-    <div style={{flex:1,minWidth:0}}>
+    <div style={{flex:1,minWidth:0,paddingLeft:14}}>
       {/* Slim toolbar replaces the old page header + separate view-switcher
           row (ui/tokens-and-calendar Part 2). Date range + prev/next on the
           left; Day/Week/Month switcher, a "..." overflow for the less-
@@ -17302,22 +17416,25 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           be separate top-level buttons -- consolidated into the overflow
           menu (reusing the same toolsMenuOpen dropdown pattern) so the
           toolbar itself stays to the handful of things used on every visit. */}
-      <div style={{display:"flex",alignItems:"center",gap:10,minHeight:40,marginBottom:16}}>
-        <div style={{display:"flex",alignItems:"center",gap:4}}>
-          <button onClick={()=>calView==="monthly"?nav(-1):calView==="weekly"?setWeekOffset(o=>o-1):stepSelDay(-1)} style={{width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:13}}>‹</button>
-          <span onClick={()=>{if(calView==="monthly"){setYm({y:now.getFullYear(),m:now.getMonth()});setSelDay(todayK);}else if(calView==="weekly"){setWeekOffset(0);}else{setSelDay(todayK);}}} title="Jump to today" style={{fontSize:15,fontWeight:500,color:T.text,padding:"0 6px",cursor:"pointer",userSelect:"none",whiteSpace:"nowrap"}}>
+      {/* Shrunk from the original pass -- Shovel keeps this whole row
+          noticeably smaller (173547) so the grid itself starts higher up
+          the page instead of the toolbar eating vertical space. */}
+      <div style={{display:"flex",alignItems:"center",gap:8,minHeight:30,marginBottom:10}}>
+        <div style={{display:"flex",alignItems:"center",gap:3}}>
+          <button onClick={()=>calView==="monthly"?nav(-1):calView==="weekly"?setWeekOffset(o=>o-1):stepSelDay(-1)} style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11}}>‹</button>
+          <span onClick={()=>{if(calView==="monthly"){setYm({y:now.getFullYear(),m:now.getMonth()});setSelDay(todayK);}else if(calView==="weekly"){setWeekOffset(0);}else{setSelDay(todayK);}}} title="Jump to today" style={{fontSize:13,fontWeight:500,color:T.text,padding:"0 5px",cursor:"pointer",userSelect:"none",whiteSpace:"nowrap"}}>
             {calView==="monthly"?monthNames[ym.m]+" "+ym.y:calView==="weekly"?weekRangeLabel:niceDate(selDay)}
           </span>
-          <button onClick={()=>calView==="monthly"?nav(1):calView==="weekly"?setWeekOffset(o=>o+1):stepSelDay(1)} style={{width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:13}}>›</button>
+          <button onClick={()=>calView==="monthly"?nav(1):calView==="weekly"?setWeekOffset(o=>o+1):stepSelDay(1)} style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11}}>›</button>
         </div>
-        <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
+        <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:6}}>
           <div style={{display:"flex",gap:2,background:T.card2,padding:2,borderRadius:4}}>
             {[{id:"daily",label:"Day"},{id:"weekly",label:"Week"},{id:"monthly",label:"Month"}].map(v=>(
-              <button key={v.id} onClick={()=>setCalView(v.id)} style={{padding:"5px 12px",borderRadius:4,fontSize:13,fontWeight:calView===v.id?500:400,cursor:"pointer",background:calView===v.id?T.card:"transparent",color:calView===v.id?T.text:T.muted,border:"none",fontFamily:T.font,transition:"all 0.15s"}}>{v.label}</button>
+              <button key={v.id} onClick={()=>setCalView(v.id)} style={{padding:"3px 9px",borderRadius:4,fontSize:11.5,fontWeight:calView===v.id?500:400,cursor:"pointer",background:calView===v.id?T.card:"transparent",color:calView===v.id?T.text:T.muted,border:"none",fontFamily:T.font,transition:"all 0.15s"}}>{v.label}</button>
             ))}
           </div>
           <div style={{position:"relative"}} ref={rescheduleBtnRef}>
-            <button onClick={()=>setToolsMenuOpen(o=>!o)} title="More tools" style={{width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",background:editRoutineMode?T.lime+"18":"transparent",border:`1px solid ${editRoutineMode?T.lime+"55":T.border}`,borderRadius:4,color:editRoutineMode?T.lime:T.muted,cursor:"pointer",fontSize:15,lineHeight:1}}>⋯</button>
+            <button onClick={()=>setToolsMenuOpen(o=>!o)} title="More tools" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:editRoutineMode?T.lime+"18":"transparent",border:`1px solid ${editRoutineMode?T.lime+"55":T.border}`,borderRadius:4,color:editRoutineMode?T.lime:T.muted,cursor:"pointer",fontSize:13,lineHeight:1}}>⋯</button>
             {toolsMenuOpen&&(<>
               <div onClick={()=>setToolsMenuOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
               <div style={{position:"absolute",top:"calc(100% + 6px)",right:0,width:220,background:T.card,border:`1px solid ${T.border}`,borderRadius:6,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
@@ -17341,7 +17458,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
             </>)}
           </div>
           <div style={{position:"relative"}} ref={addTaskBtnRef}>
-            <button onClick={()=>setAddMenuOpen(o=>!o)} title="Add" style={{width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",background:T.lime,border:"none",borderRadius:4,color:T.ink,cursor:"pointer"}}>{Icon.plus}</button>
+            <button onClick={()=>setAddMenuOpen(o=>!o)} title="Add" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:T.lime,border:"none",borderRadius:4,color:T.ink,cursor:"pointer"}}>{Icon.plus}</button>
             {addMenuOpen&&(<>
               <div onClick={()=>setAddMenuOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
               <div style={{position:"absolute",top:"calc(100% + 6px)",right:0,width:230,background:T.card,border:`1px solid ${T.border}`,borderRadius:6,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
@@ -17432,9 +17549,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           own header (matching Shovel exactly) instead of a separate
           margined strip -- that strip was the actual cause of the
           reported gap between this column and the calendar grid. */}
-      <div style={{flexShrink:0,display:"flex"}}>
+      <div style={{flexShrink:0,display:"flex",position:"relative",height:"calc(100vh - 150px)"}}>
+        {/* Full-height divider with a subtle shadow (173547), independent
+            of the content's own scroll height -- same fix as the left
+            sidebar's divider above. */}
+        <div style={{position:"absolute",top:0,bottom:0,left:calRightColCollapsed?0:14,width:1,background:T.border,boxShadow:`-1px 0 3px rgba(0,0,0,0.12)`}} />
         {!calRightColCollapsed&&(
-        <div style={{width:220,marginLeft:14,borderLeft:`1px solid ${T.border}`,paddingLeft:14,maxHeight:"calc(100vh - 160px)",overflowY:"auto"}}>
+        <div style={{width:220,marginLeft:34,maxHeight:"100%",overflowY:"auto"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
             <span style={{fontSize:12.5,fontWeight:700,color:T.white}}>{selectedCourse?selectedCourse.label:"Upcoming"}</span>
             <button type="button" onClick={toggleCalRightColCollapsed} style={{background:"none",border:"none",color:T.lime,fontSize:11,fontWeight:600,fontFamily:T.font,cursor:"pointer",padding:0}}>Close ›</button>
@@ -17468,7 +17589,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         )}
         {calRightColCollapsed&&(
           <button type="button" onClick={toggleCalRightColCollapsed} title="Show upcoming"
-            style={{background:"none",border:"none",color:T.faint,fontSize:13,fontFamily:T.font,cursor:"pointer",padding:"4px 0 4px 10px",flexShrink:0,alignSelf:"flex-start"}}>‹</button>
+            style={{position:"absolute",top:16,left:-9,width:18,height:18,borderRadius:"50%",background:T.card,border:`1px solid ${T.border}`,color:T.faint,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 1px 3px rgba(0,0,0,0.2)"}}>‹</button>
         )}
       </div>
     </div>
