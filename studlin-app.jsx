@@ -5935,7 +5935,7 @@ async function extractFileText(file){
 // elsewhere (generateFlashcardsFromText/generateQuizFromText,
 // linkDeckToExamStorage, buildSpacedSessionPreviews, computeExamReadiness)
 // instead of inventing a parallel system.
-function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
+function StudlinPrep({setActive=()=>{}}={}){
   const [tab,setTab]=useState("exams"); // exams | flashcards | practiceExams
   // One-shot deep-link handoff -- same pattern openNoteId already uses
   // elsewhere: a caller (Dashboard's Exams master
@@ -5981,10 +5981,18 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   // Part B (exam detail timeline) -- materialsOpen collapses everything
   // that isn't "what do I do next" (material, flashcards, practice exams)
   // below the timeline; expandedSessionId controls which single timeline
-  // row (if any) shows its inline Move editor, one at a time, same
-  // progressive-disclosure convention as the exam list (Part A).
+  // row (if any) shows its action controls (Start/Move), one at a time,
+  // same progressive-disclosure convention as the exam list (Part A).
+  // editingSessionId is a level deeper -- reached only by clicking "Move"
+  // on whichever row is expanded -- and shows that row's date/time/
+  // duration form instead of Start/Move. Split into two pieces of state
+  // (Phase 3 cleanup) because collapsing them into one used to mean any
+  // row other than the auto-shown "next" one skipped Start entirely and
+  // went straight to the edit form the moment it was clicked -- there was
+  // no way to start a session that wasn't the algorithm's chosen "next".
   const [prepMaterialsOpen,setPrepMaterialsOpen]=useState(false);
   const [expandedSessionId,setExpandedSessionId]=useState(null);
+  const [editingSessionId,setEditingSessionId]=useState(null);
   const [examSearch,setExamSearch]=useState("");
   // Part A: exam list rows expand one at a time (Study now/View plan),
   // defaulting to the nearest exam without requiring a click -- undefined
@@ -6156,11 +6164,6 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   const allDecks=lsGet("decks",[]);
   const allPracticeExams=lsGet("practiceExams",[]);
   const selectedExam=selectedExamId?lsGet("events",[]).find(e=>e.id===selectedExamId):null;
-  // Same split Dashboard's "Your Classes" uses (isProjectMarker, module
-  // scope) so a project shows up here exactly when it would show up there --
-  // no separate classification to drift out of sync with.
-  const prepAssignments=lsGet("events",[]).filter(ev=>ev.kind==="deadline"&&!ev.checklist&&!isProjectMarker(ev)&&ev.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
-  const prepProjects=lsGet("events",[]).filter(ev=>ev.kind==="deadline"&&isProjectMarker(ev)&&ev.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
 
   // ── Material upload -- one text pool per open hub, shared by both the
   // flashcard and practice-exam generators, so nothing gets uploaded twice. ──
@@ -6538,8 +6541,8 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     <div>
       <PH title="Studlin Prep" sub="Attach material once. Get flashcards and a practice exam, scheduled to test day." action={
         <div style={{display:"flex",gap:6}}>
-          {["exams","assignments","flashcards","practiceExams"].map(v=>(
-            <button key={v} onClick={()=>{setTab(v);setSelectedExamId(null);}} style={{padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",background:tab===v?T.lime+"14":"transparent",color:tab===v?T.lime:T.muted,border:`1px solid ${tab===v?T.lime+"44":T.border}`,fontFamily:T.font}}>{v==="exams"?"Exams":v==="assignments"?"Assignments":v==="flashcards"?"Flashcards":"Practice Exams"}</button>
+          {["exams","flashcards","practiceExams"].map(v=>(
+            <button key={v} onClick={()=>{setTab(v);setSelectedExamId(null);}} style={{padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",background:tab===v?T.lime+"14":"transparent",color:tab===v?T.lime:T.muted,border:`1px solid ${tab===v?T.lime+"44":T.border}`,fontFamily:T.font}}>{v==="exams"?"Exams":v==="flashcards"?"Flashcards":"Practice Exams"}</button>
           ))}
         </div>
       } />
@@ -6627,47 +6630,6 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
           </div>
       )}
 
-      {tab==="assignments"&&(
-        <div style={{display:"flex",flexDirection:"column",gap:20}}>
-          <div>
-            <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Assignments</div>
-            {prepAssignments.length===0
-              ?<Card style={{padding:"24px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted}}>No assignments yet — add one from your calendar.</div></Card>
-              :<div style={{display:"flex",flexDirection:"column",gap:8}}>
-                {prepAssignments.map(a=>(
-                  <div key={a.id} style={{padding:"12px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,display:"flex",alignItems:"center",gap:14}}>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:13.5,fontWeight:600,color:T.white}}>{a.title}</div>
-                      <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{a.subject}{a.date?" · due "+a.date:""}</div>
-                    </div>
-                    <BtnSm variant="subtle" onClick={()=>setDetailEventId(a.id)}>{Icon.pen} Edit</BtnSm>
-                  </div>
-                ))}
-              </div>}
-          </div>
-          <div>
-            <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Projects</div>
-            {prepProjects.length===0
-              ?<Card style={{padding:"24px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted}}>No projects yet.</div></Card>
-              :<div style={{display:"flex",flexDirection:"column",gap:8}}>
-                {prepProjects.map(p=>{
-                  const hasPhases=p.phases&&p.phases.length>0;
-                  const steps=hasPhases?p.phases:(p.outline||[]);
-                  const doneCount=hasPhases?steps.filter(s=>s.status==="done").length:steps.filter(s=>s.done).length;
-                  return(
-                    <div key={p.id} style={{padding:"12px 16px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,display:"flex",alignItems:"center",gap:14}}>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:13.5,fontWeight:600,color:T.white}}>{p.title}</div>
-                        <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{p.subject}{p.date?" · due "+p.date:""} · {doneCount}/{steps.length} {hasPhases?"phases":"steps"}</div>
-                      </div>
-                      <BtnSm variant="subtle" onClick={()=>setDetailEventId(p.id)}>{Icon.pen} Edit</BtnSm>
-                    </div>
-                  );
-                })}
-              </div>}
-          </div>
-        </div>
-      )}
 
       {tab==="exams"&&selectedExam&&(()=>{
         const readiness=computeExamReadiness(selectedExam,lsGet("events",[]),dayKey());
@@ -6771,10 +6733,12 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                   const isMissed=!isDone&&s.date<today;
                   const isNext=nextSession&&s.id===nextSession.id;
                   const isExpanded=expandedSessionId===s.id;
+                  const isEditing=editingSessionId===s.id;
                   const statusLabel=isDone?"Done":isMissed?"Missed":null;
+                  const closeSession=()=>{setExpandedSessionId(null);setEditingSessionId(null);};
                   return (
                     <div key={s.id} style={{padding:"12px 2px",borderBottom:`1px solid ${T.border}`,opacity:isDone?0.55:1}}>
-                      <div onClick={()=>!isDone&&setExpandedSessionId(id=>id===s.id?null:s.id)} style={{display:"flex",justifyContent:"space-between",gap:12,cursor:isDone?"default":"pointer"}}>
+                      <div onClick={()=>{if(isDone)return;setExpandedSessionId(id=>id===s.id?null:s.id);setEditingSessionId(null);}} style={{display:"flex",justifyContent:"space-between",gap:12,cursor:isDone?"default":"pointer"}}>
                         <div style={{minWidth:0}}>
                           <div style={{fontSize:10.5,color:T.faint,fontFamily:T.mono,textTransform:"uppercase",letterSpacing:"0.04em"}}>{dayOfWeekLabel(s.date).slice(0,3)} {s.date.slice(5).replace("-","/")}</div>
                           <div style={{fontSize:14,fontWeight:600,color:T.text,textDecoration:isDone?"line-through":"none",marginTop:2}}>{s.title}</div>
@@ -6784,20 +6748,27 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                           {statusLabel||((s.duration||25)+"min · "+fmtRolloverClock(s.time))}
                         </div>
                       </div>
+                      {/* Any row that's expanded (clicked) or auto-shown as
+                          "next" surfaces Start+Move first -- Move is what
+                          drills into the date/time/duration editor below,
+                          not clicking the row itself. Previously these two
+                          states were the same piece of state, which meant
+                          every session except whichever one was "next" had
+                          no way to reach Start at all, only the editor. */}
                       {(isNext||isExpanded)&&!isDone&&(
-                        isExpanded?(
+                        isEditing?(
                           <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginTop:10}}>
                             <Input type="date" value={s.date} onChange={e=>patchSession(s.id,{date:e.target.value})} style={{width:130}} />
                             <TimeInput value={s.time} onChange={v=>patchSession(s.id,{time:v})} />
                             <NumField min={5} max={240} fallback={25} value={s.duration||25} onChange={v=>patchSession(s.id,{duration:v})} style={{width:56}} />
                             <span style={{fontSize:10.5,color:T.muted}}>min</span>
-                            <button onClick={()=>{deleteSession(s.id);setExpandedSessionId(null);}} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline"}}>Delete</button>
-                            <button onClick={()=>setExpandedSessionId(null)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline"}}>Done</button>
+                            <button onClick={()=>{deleteSession(s.id);closeSession();}} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline"}}>Delete</button>
+                            <button onClick={closeSession} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline"}}>Done</button>
                           </div>
                         ):(
                           <div style={{display:"flex",gap:8,marginTop:10}}>
                             <BtnSm onClick={(e)=>{e.stopPropagation();if(window._setTimerTask)window._setTimerTask(s);}}>Start</BtnSm>
-                            <BtnSm variant="ghost" onClick={(e)=>{e.stopPropagation();setExpandedSessionId(s.id);}}>Move</BtnSm>
+                            <BtnSm variant="ghost" onClick={(e)=>{e.stopPropagation();setEditingSessionId(s.id);}}>Move</BtnSm>
                           </div>
                         )
                       )}
@@ -6828,6 +6799,13 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
             {prepMaterialsOpen&&(<>
             <Card style={{padding:20,marginBottom:16}}>
               <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Add study material</div>
+              {/* Phase 3 cleanup: this card used to stack five distinct
+                  jobs (manage material, add material, generate everything,
+                  generate one thing, regenerate session count) with almost
+                  no visual separation. Split into "Your material" (list +
+                  add) and "Generate" (below) with a real divider between
+                  them instead of one undifferentiated block. */}
+              <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Your material</div>
               {(fileTexts.length>0||materialLinks.length>0)&&(
                 <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>
                   {fileTexts.map(f=>(
@@ -6888,34 +6866,37 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                   <button type="button" onClick={()=>setMaterialAddOpen(false)} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:14,textDecoration:"underline"}}>Done adding material</button>
                 )}
               </>)}
-              <div style={{marginBottom:10}}>
-                <Btn onClick={buildStudyKit} disabled={!materialText.trim()||kitLoading||genLoading!==null}>{kitLoading?"Building…":"Build my study kit"}</Btn>
-                <div style={{fontSize:10.5,color:T.muted,marginTop:6}}>Flashcards, a practice exam, and review sessions counting down to test day.</div>
-              </div>
-              {!moreGenOptionsOpen&&!genMsg?(
-                <button type="button" onClick={()=>setMoreGenOptionsOpen(true)} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>More options</button>
-              ):(
-                <div>
-                  <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:genMsg?6:0}}>
-                    <span style={{fontSize:10.5,color:T.faint}}>or just one:</span>
-                    <BtnSm variant="subtle" onClick={genDeckForExam} disabled={!materialText.trim()||genLoading!==null||kitLoading}>{genLoading==="cards"?"Generating…":"Flashcards only"}</BtnSm>
-                    <BtnSm variant="subtle" onClick={genPracticeExamForExam} disabled={!materialText.trim()||genLoading!==null||kitLoading}>{genLoading==="quiz"?"Generating…":"Practice exam only"}</BtnSm>
-                  </div>
-                  {genMsg&&(
-                    <div style={{display:"flex",alignItems:"center",gap:10}}>
-                      <span style={{fontSize:11.5,color:genMsg.startsWith("✓")?T.teal:T.red}}>{genMsg}</span>
-                      <button type="button" onClick={()=>{setGenMsg("");setMoreGenOptionsOpen(false);}} style={{background:"none",border:"none",color:T.faint,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>Hide</button>
+              <div style={{borderTop:`1px solid ${T.border}`,marginTop:14,paddingTop:14}}>
+                <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:10}}>Generate</div>
+                <div style={{marginBottom:10}}>
+                  <Btn onClick={buildStudyKit} disabled={!materialText.trim()||kitLoading||genLoading!==null}>{kitLoading?"Building…":"Build my study kit"}</Btn>
+                  <div style={{fontSize:10.5,color:T.muted,marginTop:6}}>Flashcards, a practice exam, and review sessions counting down to test day.</div>
+                </div>
+                {!moreGenOptionsOpen&&!genMsg?(
+                  <button type="button" onClick={()=>setMoreGenOptionsOpen(true)} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>More options</button>
+                ):(
+                  <div>
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:genMsg?6:0}}>
+                      <span style={{fontSize:10.5,color:T.faint}}>or just one:</span>
+                      <BtnSm variant="subtle" onClick={genDeckForExam} disabled={!materialText.trim()||genLoading!==null||kitLoading}>{genLoading==="cards"?"Generating…":"Flashcards only"}</BtnSm>
+                      <BtnSm variant="subtle" onClick={genPracticeExamForExam} disabled={!materialText.trim()||genLoading!==null||kitLoading}>{genLoading==="quiz"?"Generating…":"Practice exam only"}</BtnSm>
                     </div>
-                  )}
-                </div>
-              )}
-              {hasGenericSessions&&(
-                <div style={{display:"flex",alignItems:"center",gap:8,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`,flexWrap:"wrap"}}>
-                  <NumField min={1} max={6} fallback={4} value={sessionCountDraft} onChange={setSessionCountDraft} style={{width:48}} />
-                  <BtnSm variant="subtle" onClick={()=>scheduleGenericSessions(sessionCountDraft)} disabled={sessionScheduleLoading}>{sessionScheduleLoading?"Scheduling…":"Redo the plan"}</BtnSm>
-                  <span style={{fontSize:10.5,color:T.faint}}>Replaces Studlin's own sessions with a fresh plan for this count — review and practice-exam sessions are kept.</span>
-                </div>
-              )}
+                    {genMsg&&(
+                      <div style={{display:"flex",alignItems:"center",gap:10}}>
+                        <span style={{fontSize:11.5,color:genMsg.startsWith("✓")?T.teal:T.red}}>{genMsg}</span>
+                        <button type="button" onClick={()=>{setGenMsg("");setMoreGenOptionsOpen(false);}} style={{background:"none",border:"none",color:T.faint,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>Hide</button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {hasGenericSessions&&(
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`,flexWrap:"wrap"}}>
+                    <NumField min={1} max={6} fallback={4} value={sessionCountDraft} onChange={setSessionCountDraft} style={{width:48}} />
+                    <BtnSm variant="subtle" onClick={()=>scheduleGenericSessions(sessionCountDraft)} disabled={sessionScheduleLoading}>{sessionScheduleLoading?"Scheduling…":"Redo the plan"}</BtnSm>
+                    <span style={{fontSize:10.5,color:T.faint}}>Replaces Studlin's own sessions with a fresh plan for this count — review and practice-exam sessions are kept.</span>
+                  </div>
+                )}
+              </div>
             </Card>
 
             <Card style={{padding:20,marginBottom:16}}>
@@ -22046,7 +22027,7 @@ function App() {
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="lectures"?<Lectures setActive={setActive} setPricingOpen={setPricingOpen} />:
            active==="profile"?<Profile setActive={setActive} seriousMode={seriousMode} />:
-           active==="prep"?<StudlinPrep setActive={setActive} setDetailEventId={setDetailEventId} />:
+           active==="prep"?<StudlinPrep setActive={setActive} />:
            ActivePage?<ActivePage />:null}
         </div>
       </div>
