@@ -14150,7 +14150,11 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
                   </div>
                 );
               })}
-              <button type="button" onClick={()=>setStep("window")} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0,marginTop:8}}>← Back</button>
+              {/* 2026-07-29: was setStep("window") -- "window" no longer
+                  exists as its own step since it merged into "awake";
+                  this pointed at a dead step (blank content, no matching
+                  render) since that change. */}
+              <button type="button" onClick={()=>setStep("calendarSync")} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0,marginTop:8}}>← Back</button>
             </>);
           })()}
 
@@ -14562,7 +14566,13 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
               <div style={{width:10,height:10,borderRadius:"50%",background:r.kind==="class"?colorOf(r.courseId||r.subject):(r.color||T.muted),flexShrink:0}} />
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:13,fontWeight:600,color:T.white}}>{r.title}</div>
-                <div style={{fontSize:11,color:T.muted,marginTop:2}}>{formatDays(r.days)} · {r.kind==="habit"?"Anytime ("+(r.duration||30)+" min)":fmtTime(r.startTime)+" – "+fmtTime(minutesToTime(timeToMinutes(r.startTime)+(r.duration||30)))}</div>
+                {/* 2026-07-29 crash fix: a roster-added course/activity has
+                    no startTime until it's dragged onto the calendar to
+                    schedule it (see RosterList) -- fmtTime has no null
+                    guard, so calling it unconditionally here crashed the
+                    whole app (ErrorBoundary) the moment this modal
+                    rendered one. */}
+                <div style={{fontSize:11,color:T.muted,marginTop:2}}>{formatDays(r.days)} · {r.kind==="habit"?"Anytime ("+(r.duration||30)+" min)":!r.startTime?"Not scheduled yet — drag it onto your calendar":fmtTime(r.startTime)+" – "+fmtTime(minutesToTime(timeToMinutes(r.startTime)+(r.duration||30)))}</div>
               </div>
               <BtnSm variant="subtle" onClick={()=>onEditRoutine(r)}>Edit</BtnSm>
               <BtnSm variant="danger" onClick={()=>onDeleteRoutine(r.id)}>Delete</BtnSm>
@@ -16097,7 +16107,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       .forEach(ev=>{(byDay[ev.date]=byDay[ev.date]||[]).push(ev);});
   }
   const todayK=dayKey();
-  const fmtTime=(t)=>{const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
+  // 2026-07-29 crash fix: unscheduled routines (added via RosterList,
+  // Phase 8's onboarding roster) can legitimately have startTime:null
+  // until dragged onto the calendar -- this had no null guard, so any
+  // consumer calling it on one crashed the whole app. Defensive at the
+  // source now, on top of the specific call site that actually crashed.
+  const fmtTime=(t)=>{if(!t)return "—";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
   const niceDate=(k)=>{const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});};
   // Computed straight from `events`/routines for `selDay` (rather than the
   // month-grid-scoped `byDay`) so this stays correct even when `selDay`
