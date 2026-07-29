@@ -329,6 +329,28 @@ const Prog = ({pct,color=T.lime,height=4}) => <div style={{height,background:T.c
 
 const Divider = ({style={}}) => <div style={{height:"1px",background:T.border,...style}} />;
 
+// Phase 9a: first-time explainer for the Attack Block toggle -- shown
+// above it in both places it appears (Add Task, Edit Task's retroactive
+// toggle) until dismissed once, ever, anywhere. Attack Block has never
+// had any explanatory copy beyond a single line of subtext, and the user
+// specifically wants a first-time student to understand *why* it's smart
+// (it calibrates duration estimates that feed the scheduler), not just
+// that it exists.
+const ATTACK_BLOCK_EXPLAINER_SEEN_KEY = "attackBlockExplainerSeen";
+const AttackBlockExplainer = () => {
+  const [dismissed, setDismissed] = useState(() => lsGet(ATTACK_BLOCK_EXPLAINER_SEEN_KEY, false));
+  if (dismissed) return null;
+  return (
+    <div style={{background:T.lime+"14",border:`1px solid ${T.lime}33`,borderRadius:6,padding:"10px 12px",marginBottom:10,display:"flex",gap:10,alignItems:"flex-start"}}>
+      <div style={{flex:1,fontSize:11.5,color:T.text,lineHeight:1.5}}>
+        <strong>Attack Block</strong> runs a short trial session first, before committing to a full study plan. How long it actually takes you feeds directly into Studlin's scheduling — so the more you use it, the better Studlin gets at planning your work.
+      </div>
+      <button type="button" onClick={()=>{lsSet(ATTACK_BLOCK_EXPLAINER_SEEN_KEY,true);setDismissed(true);}}
+        style={{flexShrink:0,background:"none",border:"none",color:T.lime,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font,padding:0,whiteSpace:"nowrap"}}>Got it</button>
+    </div>
+  );
+};
+
 const Label = ({children}) => <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.muted,marginBottom:6}}>{children}</div>;
 
 const Av = ({initials,color=T.lime,size=36,picUrl}) => {
@@ -6076,6 +6098,9 @@ function StudlinPrep({setActive=()=>{}}={}){
   // stale count over from whichever exam was open last.
   const [sessionCountDraft,setSessionCountDraft]=useState(4);
   const [sessionScheduleLoading,setSessionScheduleLoading]=useState(false);
+  // Phase 9b: hover-expand on the behind/on-track pill (see the exam
+  // detail view below) -- explains why, not just the status.
+  const [readinessExpanded,setReadinessExpanded]=useState(false);
   // ── Build study plan (Prep redesign Part C) ── the opt-in trigger that
   // replaces auto-generation at exam creation. buildPlanExamId is the exam
   // this modal is open for; buildPlanStep walks choice (no material yet) ->
@@ -6837,7 +6862,36 @@ function StudlinPrep({setActive=()=>{}}={}){
             <button onClick={()=>setSelectedExamId(null)} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,marginBottom:14,display:"flex",alignItems:"center",gap:4}}>← All exams</button>
             <div style={{fontSize:24,fontWeight:800,color:T.white,letterSpacing:"-0.01em",marginBottom:4,lineHeight:1.2}}>{selectedExam.title} · {countdownLabel}</div>
             <div style={{fontSize:12.5,color:T.muted,marginBottom:14}}>{metaParts.join(" · ")}</div>
-            {readiness&&<div style={{fontSize:13,color:T.text,lineHeight:1.5,marginBottom:20}}>{readiness.sentence}</div>}
+            {readiness&&(()=>{
+              // Phase 9b: ported from Dashboard's renderExamItem pill
+              // (same computeExamReadiness, same color mapping) -- Prep's
+              // own exam page had this status only as plain text before,
+              // never a scannable pill, and never a "why" beyond the one-
+              // line sentence. The suggestion below is new: computed here,
+              // not added to computeExamReadiness's own return shape,
+              // since that function is shared with Dashboard and other
+              // callers that don't need it.
+              const stateColor=readiness.state==="behind"||readiness.state==="at-risk"?T.red:readiness.state==="on-track"?T.lime:T.muted;
+              const suggestion=readiness.state==="behind"
+                ?"Catching up: start your next session today, or ask Studlin to fit extra time before the exam if there genuinely isn't enough room left."
+                :readiness.state==="at-risk"
+                  ?"Worth an extra review session before the exam, or revisiting whatever didn't click last time."
+                  :readiness.state==="no-data"
+                    ?"Build a study kit below to get review sessions started."
+                    :null;
+              return (
+                <div style={{marginBottom:20}}>
+                  <span onMouseEnter={()=>setReadinessExpanded(true)} onMouseLeave={()=>setReadinessExpanded(false)}
+                    style={{display:"inline-flex",fontSize:11,fontWeight:700,color:stateColor,background:stateColor+"14",border:`1px solid ${stateColor}44`,borderRadius:6,padding:"4px 10px",cursor:"default"}}>
+                    {readiness.state.toUpperCase().replace("-"," ")}
+                  </span>
+                  <div style={{fontSize:13,color:T.text,lineHeight:1.5,marginTop:8}}>{readiness.sentence}</div>
+                  {readinessExpanded&&suggestion&&(
+                    <div style={{marginTop:6,padding:"10px 12px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,fontSize:12,color:T.muted,lineHeight:1.5}}>{suggestion}</div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* ── Session timeline -- the page's center of gravity. Only the
                 next actionable session expands with Start/Move, same
@@ -12839,6 +12893,13 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
             <div onClick={closePopover} style={{position:"fixed",inset:0,zIndex:998}} />
             <div style={{position:"fixed",top,left,width:208,background:T.card,border:`1px solid ${T.border}`,borderRadius:6,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:999,overflow:"hidden",animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)"}}>
               <div style={{padding:"9px 14px",borderBottom:`1px solid ${T.border}`,fontSize:12.5,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</div>
+              {/* Phase 10a: same window._setTimerTask/isTimerEligible bridge
+                  the day-detail popover's Begin button already uses --
+                  no new timer plumbing, just adding this button to the one
+                  other place a real event's actions are surfaced. */}
+              {ev.status!=="done"&&isTimerEligible(ev)&&(
+                <button onClick={()=>{closePopover();if(window._setTimerTask)window._setTimerTask(ev);}} style={itemStyle} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>Begin</button>
+              )}
               <button onClick={()=>{closePopover();openEdit(ev);}} style={itemStyle} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>Edit</button>
               {ev.userPinned&&(
                 <button onClick={()=>{const next=events.map(x=>x.id===ev.id?{...x,userPinned:false}:x);setEvents(next);lsSet("events",next);closePopover();}} style={itemStyle} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>Unpin</button>
@@ -14876,7 +14937,15 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
 
   return (<>
     <Modal open={true} onClose={onClose} title="Edit task" sub="Update this task's details." width={580}
-      footer={<><Btn variant="subtle" onClick={onClose}>Cancel</Btn><Btn onClick={save} disabled={!title.trim()} style={{opacity:title.trim()?1:0.45}}>Save changes</Btn></>}>
+      footer={<>
+        <Btn variant="subtle" onClick={onClose}>Cancel</Btn>
+        {/* Phase 10a: same window._setTimerTask/isTimerEligible bridge
+            every other Begin button in the app already uses. */}
+        {ev.status!=="done"&&isTimerEligible(ev)&&(
+          <Btn variant="subtle" onClick={()=>{if(window._setTimerTask)window._setTimerTask(ev);onClose();}}>Begin</Btn>
+        )}
+        <Btn onClick={save} disabled={!title.trim()} style={{opacity:title.trim()?1:0.45}}>Save changes</Btn>
+      </>}>
       <Field label="Title"><Input value={title} onChange={e=>setTitle(e.target.value)} autoFocus /></Field>
       {/* Labels only, values unchanged -- Add Task now says "Assignment/
           Activity" instead of "study block/busy block", so this matched
@@ -14972,7 +15041,8 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
             :<BtnSm variant="subtle" onClick={openCollabPicker}>+ Add collaborators</BtnSm>}
         </div>
       )}
-      {canAddAttackBlock&&(
+      {canAddAttackBlock&&(<>
+        <AttackBlockExplainer />
         <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14}}>
           <div onClick={()=>setAddAttackBlock(a=>!a)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
             <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Start an Attack Block for this</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>A short probe session, scheduled the moment you save. Studlin figures out the rest.</div></div>
@@ -14987,7 +15057,7 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
             )}
           </>)}
         </div>
-      )}
+      </>)}
       {kind==="exam"&&(<>
         <Field label="Study material (optional)" hint="Upload files, paste notes, or drop a link — you can always add more later in Studlin Prep.">
           <MaterialEditor item={examPlan} onChange={patch=>setExamPlan(m=>({...m,...patch}))} label={title.trim()||"Untitled exam"} idPrefix={"edittask-"+ev.id} />
@@ -17122,7 +17192,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           </Field>
         )}
 
-        {isTaskKind&&!isChecklistMode&&!evSplitEnabled&&(
+        {isTaskKind&&!isChecklistMode&&!evSplitEnabled&&(<>
+          <AttackBlockExplainer />
           <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14}}>
             <div onClick={()=>setEvAttackBlock(a=>!a)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
               <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>I don't know how long this takes</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Start with a short probe session. Studlin figures out the rest.</div></div>
@@ -17134,7 +17205,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
               </div>
             )}
           </div>
-        )}
+        </>)}
 
         {isTaskKind&&!isChecklistMode&&taskMode==="ai"&&(
           evMoreOpen ? (
