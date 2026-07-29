@@ -683,6 +683,19 @@ const reportError=(context)=>(e)=>{
 // their output is never affected by these style settings.
 const getAiPrefs=()=>({verbosity:lsGet("pref-verb","Balanced"),tutorStyle:lsGet("pref-tutorStyle","Socratic")});
 const SUBJECT_COLORS=["#D9806B","#7BACDF","#A691DB","#5FCBA8","#DCA64A","#7880A8","#3ECF8E","#FF8A80","#81C784","#CE93D8"];
+// Three lightness tiers of the same 10-hue family SUBJECT_COLORS already
+// established -- not a palette redesign, just lighter/darker versions of
+// the existing hues so a color picked from any tier still reads as
+// belonging to the same visual system. Bright reuses SUBJECT_COLORS
+// verbatim (same array reference), so new-class default color assignment
+// (ClassSetupWizard's nextColor, the HS-scan bulk flow, Settings' "+ Add")
+// is completely unaffected by this -- it's still cycling through exactly
+// what it always has.
+const COLOR_PRESET_TIERS={
+  Pastel:["#EFC0B2","#B8D6F0","#D2C3EC","#A8E2D0","#F0D397","#B7BBD9","#A0EBC7","#FFC2BC","#B8DFBA","#E6C0EC"],
+  Bright:SUBJECT_COLORS,
+  Dark:["#A85A42","#3D6D9E","#6B4F96","#2E8C6B","#A67A2E","#4A5178","#1E9C6B","#C65C52","#4F8F52","#9C5FA0"],
+};
 // Ships empty — forcing six unrelated pre-filled classes (Chemistry, Biology...)
 // on every new user added noise before they'd even decided what to track.
 // Users add their own as they go.
@@ -797,22 +810,61 @@ const SchoolSelect=({value,onChange,placeholder,theme,statusFilter,onCommit})=>{
   );
 };
 
-// Single swatch button that opens a color grid on click, instead of showing
+// Single swatch button that opens a color picker on click, instead of showing
 // every option inline at once — picking a color closes the dropdown, and the
 // caller is expected to tint the subject's own row with it (see subjectRowStyle)
-// so the color choice reads immediately without a separate legend.
+// so the color choice reads immediately without a separate legend. Popover
+// offers Pastel/Bright/Dark preset tabs (three lightness tiers of the same
+// hue family, see COLOR_PRESET_TIERS) plus a custom hex entry backed by a
+// native <input type="color"> for anyone who wants an exact color the
+// presets don't cover.
 const ColorSelect=({value,onChange})=>{
   const [open,setOpen]=useState(false);
+  // Opens on whichever tier the current value actually belongs to, so
+  // reopening the picker on an already-set color lands on the right tab
+  // instead of always resetting to Bright.
+  const [tier,setTier]=useState(()=>Object.keys(COLOR_PRESET_TIERS).find(t=>COLOR_PRESET_TIERS[t].includes(value))||"Bright");
+  const containerRef=useRef(null);
+  const nativeColorRef=useRef(null);
+  // Closes only once focus actually leaves the whole popover. A plain
+  // onBlur-with-timeout on just the trigger button used to be enough
+  // because every interactive element inside it (a swatch div, not
+  // natively focusable) immediately closed the popover itself on click --
+  // but the new hex text field needs to hold focus across several
+  // keystrokes without the popover slamming shut underneath it, so this
+  // checks (after a tick, once the new focus target has settled) whether
+  // focus landed somewhere still inside this container before closing.
+  const handleBlur=()=>{
+    setTimeout(()=>{
+      if(containerRef.current&&!containerRef.current.contains(document.activeElement))setOpen(false);
+    },0);
+  };
   return (
-    <div style={{position:"relative",flexShrink:0}}>
-      <button type="button" onClick={()=>setOpen(o=>!o)} onBlur={()=>setTimeout(()=>setOpen(false),150)}
+    <div ref={containerRef} onBlur={handleBlur} style={{position:"relative",flexShrink:0}}>
+      <button type="button" onClick={()=>setOpen(o=>!o)}
         title="Choose a color" style={{width:26,height:26,borderRadius:"50%",background:value,border:`2px solid ${T.white}30`,cursor:"pointer",padding:0,flexShrink:0}} />
       {open&&(
-        <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,zIndex:30,background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:10,display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,boxShadow:"0 12px 28px -12px rgba(0,0,0,0.5)"}}>
-          {SUBJECT_COLORS.map(c=>(
-            <div key={c} onMouseDown={e=>e.preventDefault()} onClick={()=>{onChange(c);setOpen(false);}} title={c}
-              style={{width:20,height:20,borderRadius:"50%",background:c,cursor:"pointer",border:value===c?`2.5px solid ${T.white}`:"2px solid transparent",boxSizing:"border-box",transform:value===c?"scale(1.15)":"scale(1)",transition:"transform 0.12s"}} />
-          ))}
+        <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,zIndex:30,background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:10,width:190,boxShadow:"0 12px 28px -12px rgba(0,0,0,0.5)"}}>
+          <div style={{display:"flex",gap:4,marginBottom:8}}>
+            {Object.keys(COLOR_PRESET_TIERS).map(t=>(
+              <button key={t} type="button" onClick={()=>setTier(t)}
+                style={{flex:1,padding:"4px 0",borderRadius:6,fontSize:10.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,border:"none",background:tier===t?T.lime+"1E":"transparent",color:tier===t?T.lime:T.muted}}>{t}</button>
+            ))}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,marginBottom:8}}>
+            {COLOR_PRESET_TIERS[tier].map(c=>(
+              <div key={c} onClick={()=>{onChange(c);setOpen(false);}} title={c}
+                style={{width:20,height:20,borderRadius:"50%",background:c,cursor:"pointer",border:value===c?`2.5px solid ${T.white}`:"2px solid transparent",boxSizing:"border-box",transform:value===c?"scale(1.15)":"scale(1)",transition:"transform 0.12s"}} />
+            ))}
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:6,paddingTop:8,borderTop:`1px solid ${T.border}`,position:"relative"}}>
+            <div onClick={()=>nativeColorRef.current&&nativeColorRef.current.click()} title="Custom color"
+              style={{width:18,height:18,borderRadius:"50%",background:"conic-gradient(red,yellow,lime,cyan,blue,magenta,red)",cursor:"pointer",flexShrink:0,border:`1px solid ${T.white}30`}} />
+            <input ref={nativeColorRef} type="color" tabIndex={-1} value={/^#[0-9a-fA-F]{6}$/.test(value)?value:"#888888"} onChange={e=>onChange(e.target.value)}
+              style={{position:"absolute",width:1,height:1,opacity:0,pointerEvents:"none"}} />
+            <input value={value} onChange={e=>onChange(e.target.value)} placeholder="#RRGGBB"
+              style={{flex:1,minWidth:0,background:T.card2,border:`1px solid ${T.border}`,borderRadius:6,padding:"4px 6px",color:T.text,fontSize:11,fontFamily:T.mono,outline:"none"}} />
+          </div>
         </div>
       )}
     </div>
@@ -1095,6 +1147,7 @@ function expandRoutineOccurrences(routines,startDateKey,endDateKey){
         duration:r.duration||30,
         kind:ROUTINE_KIND_TO_EVENT_KIND[r.kind]||"class",
         subject:r.subject||"",
+        color:r.color||null,
         status:"pending",
         isRoutine:true,
       });
@@ -1276,7 +1329,7 @@ function materializeHabitsForDate(dateKey,workingEvents){
     if(alreadyDone.has(r.id))return;
     const time=findHabitSlotForToday(working,routinesNow,prefsNow,dateKey,r.duration||30);
     if(!time)return; // no room today — skip gracefully, never rolls to tomorrow
-    const ev={id:"habit-"+r.id+"-"+dateKey,title:r.title,date:dateKey,time,subject:r.subject||"",kind:"study block",notes:"",priority:5,difficulty:5,deadline:null,duration:r.duration||30,status:"pending",timeSpent:0,completedAt:null,routineId:r.id};
+    const ev={id:"habit-"+r.id+"-"+dateKey,title:r.title,date:dateKey,time,subject:r.subject||"",color:r.color||null,kind:"study block",notes:"",priority:5,difficulty:5,deadline:null,duration:r.duration||30,status:"pending",timeSpent:0,completedAt:null,routineId:r.id};
     created.push(ev);
     working=working.concat([ev]);
   });
@@ -12503,7 +12556,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                 <div style={{display:"flex",flexDirection:"column",gap:2,marginTop:5,textAlign:"left",minWidth:0}}>
                   {duePills.slice(0,2).map((ev,j)=>{
                     const isExam=ev.kind==="exam";
-                    const tagColor=colorOf(ev.subject);
+                    const tagColor=ev.color||colorOf(ev.courseId||ev.subject);
                     return (
                       <div key={j} onClick={(e)=>{e.stopPropagation();openEdit(ev);}} title={ev.title} style={{fontSize:9,fontWeight:600,color:tagColor,background:tagColor+(isExam?"22":"16"),border:isExam?`1px solid ${tagColor}`:"none",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",cursor:"pointer",maxWidth:"100%",boxSizing:"border-box"}}>
                         {ev.title}
@@ -12599,7 +12652,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   // glance without competing with the kind-based color
                   // language that now carries the dominant read. See
                   // design-tokens.js's usage rules.
-                  const subjectColor = colorOf(ev.subject);
+                  const subjectColor = ev.color||colorOf(ev.courseId||ev.subject);
                   const isStudy = ev.kind === "study block";
                   const isExam = ev.kind === "exam";
                   const isWarningKind = isExam || ev.kind === "deadline";
@@ -13812,7 +13865,7 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
               const over=daysOverdue(ev);
               // Subject color always wins now -- see the matching comment in
               // WeeklyPlanner. Overdue is a small red dot, not a full recolor.
-              const color=colorOf(ev.subject);
+              const color=ev.color||colorOf(ev.courseId||ev.subject);
               const isStudy=ev.kind==="study block";
               const isExam=ev.kind==="exam";
               const kindStyle=isStudy
@@ -13902,7 +13955,7 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
               const dur=ev.duration||30;
               const nextInCol=dayLaidOut.filter(o=>o.col===col&&o.start>start).sort((a,b)=>a.start-b.start)[0];
               const heightPx=computeEventBlockHeightPx(dur,nextInCol?nextInCol.start-start:null,pxPerHr);
-              const color=colorOf(ev.subject);
+              const color=ev.color||colorOf(ev.courseId||ev.subject);
               const leftPct=(col/totalCols)*100;
               const widthPct=100/totalCols;
               return(
@@ -13928,12 +13981,22 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
 // Activity" form — reuses the same fields/components as the existing "Edit
 // routine block" modal for visual consistency.
 function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRoutine, onDeleteRoutine, onAddRoutine, onEditOnCalendar}) {
+  // Component-local, same convention as StudlinPrep/Notes/CalendarTab's own
+  // colorOf -- id match preferred (courseId, once a routine/course carries
+  // one), label fallback otherwise.
+  const userSubjects=getSubjects();
+  const colorOf=(tg)=>{const s=userSubjects.find(x=>x.id===tg||x.label===tg);return s?s.color:T.muted;};
   const [addingRoutine,setAddingRoutine]=useState(false);
   const [title,setTitle]=useState("");
   const [kind,setKind]=useState("class");
   const [days,setDays]=useState([]);
   const [startTime,setStartTime]=useState("15:30");
   const [duration,setDuration]=useState(60);
+  // Only meaningful for non-class kinds -- a Class routine already inherits
+  // its linked subject's color via colorOf, so a second, separate color
+  // choice there would be redundant. Only busy/free/habit ("Activities")
+  // have no color of their own today.
+  const [color,setColor]=useState(SUBJECT_COLORS[0]);
   // Self-contained: reads/writes schoolTerm storage directly rather than
   // threading it through CalendarTab's already-large props/state surface —
   // it's a standalone settings pair (see getSchoolTerm/saveSchoolTerm,
@@ -13944,13 +14007,13 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
   const setTermStart=(v)=>{setTermStartState(v);saveTerm(v,termEnd);};
   const setTermEnd=(v)=>{setTermEndState(v);saveTerm(termStart,v);};
   useEffect(()=>{ if(!open)setAddingRoutine(false); },[open]);
-  const resetForm=()=>{setTitle("");setKind("class");setDays([]);setStartTime("15:30");setDuration(60);};
+  const resetForm=()=>{setTitle("");setKind("class");setDays([]);setStartTime("15:30");setDuration(60);setColor(SUBJECT_COLORS[0]);};
   const toggleDay=(i)=>setDays(d=>d.includes(i)?d.filter(x=>x!==i):[...d,i]);
   const isFree=kind==="free";
   const isHabit=kind==="habit";
   const submitAdd=()=>{
     if((!isFree&&!title.trim())||days.length===0)return;
-    onAddRoutine({title:isFree?(title.trim()||"Free Period"):title.trim(),kind,days:[...days],startTime:isHabit?null:startTime,duration});
+    onAddRoutine({title:isFree?(title.trim()||"Free Period"):title.trim(),kind,days:[...days],startTime:isHabit?null:startTime,duration,...(kind!=="class"?{color}:{})});
     resetForm();
     setAddingRoutine(false);
   };
@@ -13969,6 +14032,7 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
         <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
           {routines.map(r=>(
             <div key={r.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,background:T.card2}}>
+              <div style={{width:10,height:10,borderRadius:"50%",background:r.kind==="class"?colorOf(r.courseId||r.subject):(r.color||T.muted),flexShrink:0}} />
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:13,fontWeight:600,color:T.white}}>{r.title}</div>
                 <div style={{fontSize:11,color:T.muted,marginTop:2}}>{formatDays(r.days)} · {r.kind==="habit"?"Anytime ("+(r.duration||30)+" min)":fmtTime(r.startTime)+" – "+fmtTime(minutesToTime(timeToMinutes(r.startTime)+(r.duration||30)))}</div>
@@ -13996,6 +14060,7 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
           <div style={{border:`1px solid ${T.border}`,borderRadius:10,padding:14}}>
             {!isFree&&<Field label="Name"><Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="e.g. Track Practice" autoFocus /></Field>}
             <Field label="Type"><SelectChip options={[{value:"class",label:"Class"},{value:"busy",label:"Activity"},{value:"free",label:"Free Period"},{value:"habit",label:"Habit"}]} value={kind} onChange={setKind} /></Field>
+            {kind!=="class"&&<Field label="Color"><ColorSelect value={color} onChange={setColor} /></Field>}
             {isHabit&&<div style={{fontSize:11.5,color:T.muted,marginTop:-6,marginBottom:14}}>No fixed time — Studlin fits it in wherever there's room each day.</div>}
             <Field label="Repeats on" hint={days.length===0?"Pick at least one day":undefined}>
               <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
@@ -16047,7 +16112,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
                   <div style={{display:"flex",flexDirection:"column",gap:2,marginTop:3,minWidth:0}}>
                     {evs.slice(0,2).map((ev,j)=>{
                       const over=daysOverdue(ev);
-                      const tagColor=colorOf(ev.subject);
+                      const tagColor=ev.color||colorOf(ev.courseId||ev.subject);
                       const isExam=ev.kind==="exam";
                       const isRoutine=!!ev.isRoutine;
                       const dimmedByRoutineMode=editRoutineMode&&!isRoutine;
@@ -16554,7 +16619,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
                 {detailEvs.map(ev => {
                   const isDone = ev.status === "done";
                   const over = daysOverdue(ev);
-                  const color = colorOf(ev.subject);
+                  const color = ev.color||colorOf(ev.courseId||ev.subject);
                   const isExam = ev.kind === "exam";
                   const canBegin = !isDone && isTimerEligible(ev);
                   const canReslot = !isDone && !ev.checklist && ev.time && ev.duration && !TIER0_FIXED_KINDS.has(ev.kind);

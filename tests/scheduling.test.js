@@ -643,6 +643,37 @@ describe("school term awareness (class routines suppressed outside term dates)",
   });
 });
 
+describe("per-routine color passthrough (Phase 2: course color picker)", () => {
+  const dow = (new Date("2026-07-20T12:00:00").getDay() + 6) % 7;
+
+  test("a routine with an explicit color produces an occurrence carrying that same color", () => {
+    const m = loadStudlinModule();
+    const routine = { id: "r-gym", title: "Gym", kind: "busy", days: [dow], startTime: "17:00", duration: 60, subject: "", color: "#3D6D9E" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([routine]));
+    const occurrences = m.getRoutineOccurrencesForDate("2026-07-20");
+    assert.equal(occurrences.length, 1);
+    assert.equal(occurrences[0].color, "#3D6D9E");
+  });
+
+  test("a routine with no color produces an occurrence with color null, not some placeholder", () => {
+    const m = loadStudlinModule();
+    const routine = { id: "r-chem", title: "Chemistry", kind: "class", days: [dow], startTime: "08:00", duration: 50, subject: "Chemistry" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([routine]));
+    const occurrences = m.getRoutineOccurrencesForDate("2026-07-20");
+    assert.equal(occurrences.length, 1);
+    assert.equal(occurrences[0].color, null);
+  });
+
+  test("a habit's materialized event carries its routine's color the same way", () => {
+    const m = loadStudlinModule();
+    const routine = { id: "r-run", title: "Run", kind: "habit", days: [dow], duration: 30, subject: "", color: "#2E8C6B" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([routine]));
+    const created = m.materializeHabitsForDate("2026-07-20", []);
+    assert.equal(created.length, 1);
+    assert.equal(created[0].color, "#2E8C6B");
+  });
+});
+
 describe("findFixedEventSlot (regression: silently double-booked a fixed event when the short search horizon ran out)", () => {
   test("still lands on a genuinely free day when the desired day, and many days after it, are fully booked", () => {
     const m = loadStudlinModule();
