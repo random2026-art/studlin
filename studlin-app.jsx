@@ -551,17 +551,34 @@ const fmtDateShort = (v) => { if(!v) return ""; const p=v.split("-"); return new
 // so clicking anywhere opens the real OS/browser date picker -- same
 // invisible-overlay trick already used for the essay editor's color input,
 // not a custom calendar widget built from scratch.
-const DateField = ({label, value, onChange, min}) => (
-  <div style={{position:"relative",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"7px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,boxSizing:"border-box",cursor:"pointer"}}>
-    <div style={{minWidth:0}}>
-      {label && <div style={{fontSize:10,fontWeight:600,color:T.muted,marginBottom:2}}>{label}</div>}
-      <div style={{fontSize:14,fontWeight:600,color:value?T.text:T.faint,whiteSpace:"nowrap"}}>{value?fmtDateShort(value):"Select date"}</div>
+const DateField = ({label, value, onChange, min}) => {
+  const inputRef = useRef(null);
+  // Clicking anywhere in this box used to just focus the invisible native
+  // input without opening its picker -- Chrome only opens a date input's
+  // dropdown when the click lands on the browser's own tiny calendar-icon
+  // hit-target inside it, and that target is invisible/mispositioned here
+  // since the real input is opacity:0. showPicker() opens it
+  // programmatically regardless of where in the box was clicked. Falls
+  // back to focus() on browsers without showPicker() support (not yet
+  // universal) -- still better than nothing, and never throws.
+  const openPicker = () => {
+    const el = inputRef.current;
+    if (!el) return;
+    if (typeof el.showPicker === "function") { try { el.showPicker(); } catch (e) { el.focus(); } }
+    else el.focus();
+  };
+  return (
+    <div onClick={openPicker} style={{position:"relative",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"7px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,boxSizing:"border-box",cursor:"pointer"}}>
+      <div style={{minWidth:0}}>
+        {label && <div style={{fontSize:10,fontWeight:600,color:T.muted,marginBottom:2}}>{label}</div>}
+        <div style={{fontSize:14,fontWeight:600,color:T.text,whiteSpace:"nowrap",minHeight:17}}>{value?fmtDateShort(value):""}</div>
+      </div>
+      <span style={{color:T.muted,flexShrink:0,display:"flex"}}>{CalendarIcon}</span>
+      <input ref={inputRef} type="date" value={value||""} min={min} onChange={e=>onChange(e.target.value)}
+        style={{position:"absolute",inset:0,width:"100%",height:"100%",opacity:0,cursor:"pointer",border:"none",padding:0,margin:0,boxSizing:"border-box"}} />
     </div>
-    <span style={{color:T.muted,flexShrink:0,display:"flex"}}>{CalendarIcon}</span>
-    <input type="date" value={value||""} min={min} onChange={e=>onChange(e.target.value)}
-      style={{position:"absolute",inset:0,width:"100%",height:"100%",opacity:0,cursor:"pointer",border:"none",padding:0,margin:0,boxSizing:"border-box"}} />
-  </div>
-);
+  );
+};
 // Same box chrome as DateField, wrapping TimeInput's "bare" mode (three
 // borderless selects that read as one compact string) plus a clock icon.
 const TimeField = ({label, value, onChange, lockedRanges}) => (
@@ -13682,6 +13699,13 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
   const [schoolStart,setSchoolStart]=useState("08:00");
   const [schoolEnd,setSchoolEnd]=useState("15:00");
   const [justAdded,setJustAdded]=useState("");
+  // Real inline connect for the calendarSync step -- same module-level,
+  // popup-based (not page-navigation) connectGoogleCalendar() Settings
+  // itself calls, initialized from whatever's already in storage so a
+  // student who connected earlier (e.g. via the old cal-onboard promo, or
+  // Settings itself) sees "Connected" here instead of the button again.
+  const [wizGoogleLinked,setWizGoogleLinked]=useState(()=>lsGet("cal-google",false));
+  const [wizGoogleSyncing,setWizGoogleSyncing]=useState(false);
   const fileInputRef=useRef(null);
   const hsFileInputRef=useRef(null);
   const [activities,setActivities]=useState([]);
@@ -13700,7 +13724,22 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
     const idx=WIZARD_STEP_ORDER.indexOf(step);
     return idx>0?WIZARD_STEP_ORDER[idx-1]:null;
   })();
-  const goBack=()=>{if(prevWizardStep)setStep(prevWizardStep);};
+  // classes' own addMode sub-navigation ("choose"/"scan"/"hsSchedule")
+  // used to render its own separate inline "← Back" link inside each
+  // step's content instead of using the shared footer one -- looked like
+  // Back lived "inside" the screen rather than next to Skip all
+  // (2026-07-29 fix). Folded into the same goBack the footer button
+  // already calls: stepping addMode back one level takes priority over
+  // the top-level WIZARD_STEP_ORDER jump when inside one of these three
+  // sub-steps. "review"/"hsReview" are deliberately NOT included here --
+  // those use their own "Cancel" action (discards a scan/entry in
+  // progress), a different, higher-stakes semantic than a plain Back.
+  const goBack=()=>{
+    if(step==="classes"&&(addMode==="scan"||addMode==="hsSchedule")){setAddMode("choose");return;}
+    if(step==="classes"&&addMode==="choose"){setAddMode(null);return;}
+    if(prevWizardStep)setStep(prevWizardStep);
+  };
+  const canGoBack=(step==="classes"&&(addMode==="scan"||addMode==="hsSchedule"||addMode==="choose"))||!!prevWizardStep;
 
   useEffect(()=>{
     if(!open)return;
@@ -14030,7 +14069,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
   );
 
   return (
-    <div style={{position:"fixed",inset:0,zIndex:300,background:"rgba(8,12,10,0.82)",backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px"}}>
+    <div style={{position:"fixed",inset:0,zIndex:300,background:"rgba(8,12,10,0.97)",backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px",overflowY:"auto"}}>
       <div style={{width:"100%",maxWidth:620,maxHeight:"88vh",display:"flex",flexDirection:"column",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease"}}>
         <WizardStepper step={step} />
         <div style={{padding:"28px 32px 0",overflowY:"auto",flex:1,minHeight:0}}>
@@ -14135,10 +14174,16 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
           {step==="classes"&&addMode==="choose"&&(<>
             <TitleSub title="How do you want to add it?" />
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
-              <button type="button" onClick={()=>{setScanError("");setPasteMode(false);setPasteText("");setAddMode("scan");}} style={classSetupChoiceStyle}>
-                <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Scan a syllabus</div>
-                <div style={{fontSize:12,color:T.muted}}>Upload a file or photo — Studlin reads the class name, meeting time, and deadlines.</div>
-              </button>
+              {/* HS students use the whole-schedule upload below instead --
+                  a per-class syllabus doesn't map to how a school day
+                  actually works for them (periods, not standalone
+                  syllabi), so this option is college-only. */}
+              {status!=="highschool"&&(
+                <button type="button" onClick={()=>{setScanError("");setPasteMode(false);setPasteText("");setAddMode("scan");}} style={classSetupChoiceStyle}>
+                  <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Scan a syllabus</div>
+                  <div style={{fontSize:12,color:T.muted}}>Upload a file or photo — Studlin reads the class name, meeting time, and deadlines.</div>
+                </button>
+              )}
               <button type="button" onClick={startManual} style={classSetupChoiceStyle}>
                 <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Enter manually</div>
                 <div style={{fontSize:12,color:T.muted}}>Type in the class name and when it meets yourself.</div>
@@ -14150,7 +14195,6 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
                 </button>
               )}
             </div>
-            <button type="button" onClick={()=>setAddMode(null)} style={{marginTop:16,background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0}}>← Back</button>
           </>)}
 
           {step==="classes"&&addMode==="scan"&&(<>
@@ -14172,14 +14216,13 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
                 {pasteMode?"Upload a file instead":"File didn't work? Paste the text instead"}
               </button>
             )}
-            <button type="button" onClick={()=>setAddMode("choose")} style={{marginTop:16,background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0}}>← Back</button>
           </>)}
 
           {step==="classes"&&addMode==="hsSchedule"&&(<>
             <TitleSub title="Upload your class schedule" sub="A photo, or paste the text, of your period-by-period schedule. Studlin turns each period into a class, color-coded by time -- and works out your free periods from your school hours below." />
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:20}}>
-              <Field label="School starts"><TimeInput value={schoolStart} onChange={setSchoolStart} /></Field>
-              <Field label="School ends"><TimeInput value={schoolEnd} onChange={setSchoolEnd} /></Field>
+              <TimeField label="School starts" value={schoolStart} onChange={setSchoolStart} />
+              <TimeField label="School ends" value={schoolEnd} onChange={setSchoolEnd} />
             </div>
             {scanning
               ? <div style={{padding:"40px 0",textAlign:"center",color:T.muted,fontSize:13}}>Reading your schedule…</div>
@@ -14198,7 +14241,6 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
                 {hsPasteMode?"Upload a photo instead":"No photo? Paste the text instead"}
               </button>
             )}
-            <button type="button" onClick={()=>setAddMode("choose")} style={{marginTop:16,background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0}}>← Back</button>
           </>)}
 
           {step==="classes"&&addMode==="hsReview"&&hsReview&&(<>
@@ -14386,17 +14428,34 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
 
           {step==="calendarSync"&&(<>
             <TitleSub title="Connect a calendar" sub="Optional. You can do this anytime from Settings." />
-            {/* Bug fix: this used to navigate straight to Settings
-                (setActive("settings")), which unmounts CalendarTab -- and
-                everything in this wizard's local state along with it. A
-                student lost their entire onboarding progress to this.
-                Connecting a calendar is a real, separate flow (OAuth
-                popup) that isn't safe to trigger mid-wizard without more
-                care than tonight allows, so this step is informational
-                only for now -- the actual connection happens after
-                onboarding finishes, from Settings, same as it already
-                works for every other path into that flow. */}
-            <div style={{padding:"14px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,fontSize:12.5,textAlign:"center"}}>You'll find "Connect calendar" in Settings once you're set up.</div>
+            {/* Real inline connect, not just informational text -- the
+                earlier version of this step navigated straight to
+                Settings (setActive("settings")), which unmounted
+                CalendarTab and wiped this whole wizard's progress (a real
+                bug a student hit). connectGoogleCalendar() itself is
+                popup-based (ux_mode:"popup") and never navigates the page
+                away, so it's safe to call directly from here -- same
+                real, server-backed function Settings and the old
+                cal-onboard promo screen both already use, not a second
+                implementation. */}
+            <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",borderRadius:8,border:`1px solid ${wizGoogleLinked?T.teal+"44":T.border}`,background:T.card2}}>
+              <div style={{width:32,height:32,borderRadius:8,background:"rgba(66,133,244,0.10)",border:"1px solid rgba(66,133,244,0.22)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+              </div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:600,color:T.text}}>Google Calendar</div>
+                <div style={{fontSize:11,color:wizGoogleLinked?T.teal:(wizGoogleSyncing?T.amber:T.muted),marginTop:1}}>{wizGoogleSyncing?"Connecting…":wizGoogleLinked?"Connected":"Read-only · your events, no editing"}</div>
+              </div>
+              {wizGoogleLinked
+                ?<div style={{display:"flex",alignItems:"center",gap:6,color:T.teal,fontSize:12,fontWeight:600,flexShrink:0}}>{Icon.check} Connected</div>
+                :<BtnSm variant="lime" style={{flexShrink:0,opacity:wizGoogleSyncing?0.55:1}} onClick={async()=>{
+                    setWizGoogleSyncing(true);
+                    const result=await connectGoogleCalendar();
+                    setWizGoogleSyncing(false);
+                    if(result.success)setWizGoogleLinked(true);
+                  }}>{wizGoogleSyncing?"Connecting…":"Connect"}</BtnSm>
+              }
+            </div>
           </>)}
 
           {step==="finalReview"&&(()=>{
@@ -14480,10 +14539,12 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
 
         <div style={{padding:"18px 32px",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
           <div style={{display:"flex",alignItems:"center",gap:16}}>
-            {/* Real Back navigation (2026-07-29 fix) -- only at the top of
-                a step; "classes" with an addMode open already has its own
-                correct back links for that sub-navigation. */}
-            {prevWizardStep&&(step!=="classes"||addMode===null)&&(
+            {/* Real Back navigation (2026-07-29 fix, unified 2026-07-29
+                later the same day) -- now the single Back control for
+                every step including classes' own addMode sub-navigation,
+                always living next to Skip all instead of scattered as
+                separate inline links inside each screen's own content. */}
+            {canGoBack&&(
               <button type="button" onClick={goBack} style={{fontSize:12.5,color:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>← Back</button>
             )}
             <button type="button" onClick={onSkip} style={{fontSize:12.5,color:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>Skip all</button>
@@ -15662,51 +15723,42 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
   };
 
   // 2026-07-29: anchored popover that opens right next to the block that
-  // was just dropped -- not centered on the drop point (which floated it
-  // away from the thing it's actually about) and not a full-screen
-  // modal. Same portal+fixed-position pattern WeeklyPlanner's own
-  // event-click popover already uses (popoverAnchor). Width and left/top
-  // math both tuned to match Shovel's own reference (101410/173401) --
-  // its popover sits with its left edge starting almost right at the
-  // drop point (a few px overlap into the block), roughly level with the
-  // block's top edge, not centered on or pushed below the cursor.
-  const POPOVER_WIDTH=440;
+  // was just dropped, sized relative to THIS calendar's own column width
+  // rather than Shovel's absolute reference pixels (which come from a
+  // wider viewport/different grid proportions) -- 440px card was
+  // dwarfing the actual drop target instead of sitting beside it.
+  const POPOVER_WIDTH=360;
   const x=anchorX!=null?anchorX:window.innerWidth/2;
   const y=anchorY!=null?anchorY:window.innerHeight/2;
-  const left=Math.min(Math.max(8,x-10),window.innerWidth-POPOVER_WIDTH-8);
+  const left=Math.min(Math.max(8,x+4),window.innerWidth-POPOVER_WIDTH-8);
   const top=Math.min(Math.max(8,y-24),window.innerHeight-40);
   return ReactDOM.createPortal((
     <>
       <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:998}} />
       <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top,left,width:POPOVER_WIDTH,maxHeight:"calc(100vh - "+top+"px - 16px)",overflowY:"auto",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:999,animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)"}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 16px",borderBottom:`1px solid ${T.border}`}}>
-          <div style={{fontSize:14.5,fontWeight:700,color:T.white}}>New event</div>
-          <button type="button" onClick={onClose} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:17,lineHeight:1,padding:0}}>×</button>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 12px",borderBottom:`1px solid ${T.border}`}}>
+          <div style={{fontSize:13,fontWeight:700,color:T.white}}>New event</div>
+          <button type="button" onClick={onClose} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,lineHeight:1,padding:0}}>×</button>
         </div>
-        {/* Sized to match Shovel's own reference proportions (173401) now
-            that POPOVER_WIDTH is 440 not 300 -- text and row padding both
-            scaled up a step from the first compact pass, since the extra
-            width was making the earlier tight spacing look sparse rather
-            than dense. */}
-        <div style={{padding:"12px 16px",display:"flex",flexDirection:"column",gap:8}}>
-          <Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Event title" style={{fontSize:14.5,fontWeight:600,padding:"9px 12px"}} autoFocus />
-          <div style={{display:"flex",gap:8}}>
+        <div style={{padding:"10px 12px",display:"flex",flexDirection:"column",gap:6}}>
+          <Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Event title" style={{fontSize:13,fontWeight:600,padding:"7px 10px"}} autoFocus />
+          <div style={{display:"flex",gap:6}}>
             <DateField label="Date" value={date} onChange={setDate} />
             {!allDay&&(
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6,padding:"8px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,boxSizing:"border-box",flexShrink:0}}>
-                <div style={{display:"flex",alignItems:"center",gap:6,minWidth:0}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:5,padding:"7px 10px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,boxSizing:"border-box",flexShrink:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:5,minWidth:0}}>
                   <TimeInput value={startTime} onChange={setStartTime} bare />
-                  <span style={{color:T.muted,fontSize:12,flexShrink:0}}>–</span>
+                  <span style={{color:T.muted,fontSize:11,flexShrink:0}}>–</span>
                   <TimeInput value={endTime} onChange={setEndTime} bare />
                 </div>
                 <span style={{color:T.muted,flexShrink:0,display:"flex"}}>{ClockIcon}</span>
               </div>
             )}
           </div>
-          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12.5,color:T.muted,cursor:"pointer"}}>
+          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,color:T.muted,cursor:"pointer"}}>
             <input type="checkbox" checked={allDay} onChange={e=>setAllDay(e.target.checked)} /> All day
           </label>
-          <select value={repeat} onChange={e=>setRepeat(e.target.value)} style={{...wizardSelectStyle,padding:"8px 10px",fontSize:13}}>
+          <select value={repeat} onChange={e=>setRepeat(e.target.value)} style={{...wizardSelectStyle,padding:"6px 8px",fontSize:12}}>
             <option value="none">Does not repeat</option>
             <option value="weekly">Repeats weekly</option>
             <option value="selected">On selected days</option>
@@ -15719,27 +15771,27 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
           {/* Inline label+pill row, matching Shovel's own plain-text
               "Commute before: 00h 00m   Commute after: 00h 00m" layout
               (173401) instead of two stacked bordered inputs. */}
-          <div style={{display:"flex",alignItems:"center",gap:14,fontSize:12.5,color:T.muted,flexWrap:"wrap"}}>
-            <span style={{display:"flex",alignItems:"center",gap:6}}>Commute before:
+          <div style={{display:"flex",alignItems:"center",gap:10,fontSize:11,color:T.muted,flexWrap:"wrap"}}>
+            <span style={{display:"flex",alignItems:"center",gap:5}}>Commute before:
               <input type="number" min={0} value={commuteBefore} onChange={e=>setCommuteBefore(Math.max(0,+e.target.value||0))}
-                style={{width:52,background:T.card2,border:`1px solid ${T.border}`,borderRadius:6,padding:"3px 6px",color:T.text,fontSize:12,fontFamily:T.font,outline:"none"}} /> min
+                style={{width:42,background:T.card2,border:`1px solid ${T.border}`,borderRadius:5,padding:"2px 5px",color:T.text,fontSize:11,fontFamily:T.font,outline:"none"}} /> min
             </span>
-            <span style={{display:"flex",alignItems:"center",gap:6}}>Commute after:
+            <span style={{display:"flex",alignItems:"center",gap:5}}>after:
               <input type="number" min={0} value={commuteAfter} onChange={e=>setCommuteAfter(Math.max(0,+e.target.value||0))}
-                style={{width:52,background:T.card2,border:`1px solid ${T.border}`,borderRadius:6,padding:"3px 6px",color:T.text,fontSize:12,fontFamily:T.font,outline:"none"}} /> min
+                style={{width:42,background:T.card2,border:`1px solid ${T.border}`,borderRadius:5,padding:"2px 5px",color:T.text,fontSize:11,fontFamily:T.font,outline:"none"}} /> min
             </span>
           </div>
-          <Input value={location} onChange={e=>setLocation(e.target.value)} placeholder="Location (Zoom link, Home, Classroom...)" style={{padding:"8px 12px",fontSize:13}} />
-          <div onClick={()=>setMovable(m=>!m)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer",padding:"8px 12px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2}}>
-            <div style={{fontSize:13,fontWeight:600,color:T.text}}>{movable?"Free":"Fixed"}</div>
-            <div style={{width:34,height:19,borderRadius:9.5,background:movable?T.lime:T.faint,position:"relative",transition:"background 0.2s",flexShrink:0}}>
-              <div style={{width:15,height:15,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:movable?17:2,transition:"left 0.2s"}} />
+          <Input value={location} onChange={e=>setLocation(e.target.value)} placeholder="Location (optional)" style={{padding:"7px 10px",fontSize:12}} />
+          <div onClick={()=>setMovable(m=>!m)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer",padding:"7px 10px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2}}>
+            <div style={{fontSize:12,fontWeight:600,color:T.text}}>{movable?"Free":"Fixed"}</div>
+            <div style={{width:32,height:18,borderRadius:9,background:movable?T.lime:T.faint,position:"relative",transition:"background 0.2s",flexShrink:0}}>
+              <div style={{width:14,height:14,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:movable?16:2,transition:"left 0.2s"}} />
             </div>
           </div>
         </div>
-        <div style={{display:"flex",gap:8,justifyContent:"flex-end",padding:"11px 16px",borderTop:`1px solid ${T.border}`}}>
-          <Btn variant="subtle" onClick={onClose} style={{padding:"7px 16px",fontSize:13}}>Cancel</Btn>
-          <Btn onClick={create} disabled={invalid} style={{padding:"7px 16px",fontSize:13}}>Create</Btn>
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end",padding:"9px 12px",borderTop:`1px solid ${T.border}`}}>
+          <Btn variant="subtle" onClick={onClose} style={{padding:"6px 13px",fontSize:12}}>Cancel</Btn>
+          <Btn onClick={create} disabled={invalid} style={{padding:"6px 13px",fontSize:12}}>Create</Btn>
         </div>
       </div>
     </>
