@@ -689,6 +689,13 @@ const SUBJECT_COLORS=["#D9806B","#7BACDF","#A691DB","#5FCBA8","#DCA64A","#7880A8
 const DEFAULT_SUBJECTS=[];
 const getSubjects=()=>lsGet("user-subjects",DEFAULT_SUBJECTS);
 const saveSubjects=(s)=>lsSet("user-subjects",s);
+// Resolves a course's real id from its label -- the label is still what
+// every dropdown/form actually carries (SUBJ options, free-typed "Other"
+// text), so this is the one place that turns "whatever string the user
+// picked or typed" into a stable id, or null when it doesn't match a real
+// course (e.g. free-typed text). Returning null is the signal that nothing
+// should be stamped, not an error.
+const courseIdForLabel=(label)=>{const s=getSubjects().find(x=>x.label===label);return s?s.id:null;};
 
 // ─── SCHOOL DIRECTORY (mock, for the searchable school picker) ──────────────
 // Mock list of selectable schools, each tagged with its type so SchoolSelect
@@ -924,6 +931,73 @@ function backfillClassRoutineSubjects(){
   });
   if(changed)saveWeeklyRoutine(next);
   lsSet("classRoutineSubjectsBackfilled",true);
+}
+// Same one-time, purely-additive idiom as backfillClassRoutineSubjects
+// above, for the newer courseId field: fills courseId on any routine or
+// event that already carries a real course's subject label but predates
+// courseId ever being stamped at creation time. Never overwrites an
+// existing courseId (including one that's explicitly null from a
+// free-typed/no-course label), only fills a genuinely missing field, and
+// only ever runs once.
+function backfillCourseIds(){
+  if(lsGet("courseIdsBackfilled",false))return;
+  const subjects=getSubjects();
+  const labelToId=(label)=>{const s=subjects.find(x=>x.label===label);return s?s.id:null;};
+  const routines=getWeeklyRoutine();
+  let routinesChanged=false;
+  const nextRoutines=routines.map(r=>{
+    if(!r.subject||r.courseId)return r;
+    const id=labelToId(r.subject);
+    if(!id)return r;
+    routinesChanged=true;
+    return {...r,courseId:id};
+  });
+  if(routinesChanged)saveWeeklyRoutine(nextRoutines);
+  const events=lsGet("events",[]);
+  let eventsChanged=false;
+  const nextEvents=events.map(e=>{
+    if(!e.subject||e.courseId)return e;
+    const id=labelToId(e.subject);
+    if(!id)return e;
+    eventsChanged=true;
+    return {...e,courseId:id};
+  });
+  if(eventsChanged)lsSet("events",nextEvents);
+  lsSet("courseIdsBackfilled",true);
+}
+// Deletes a course and everything linked to it -- its recurring class-time
+// routine rows, and every event carrying this courseId (or, for data that
+// predates the courseId migration, matching by label instead, same
+// id-preferred/label-fallback convention as everywhere else in this
+// migration). Pure data operation, no React/UI here: finds, removes,
+// persists, and returns exactly what was removed so a caller can offer a
+// real Undo -- the same batch-snapshot idea CalendarTab's own
+// deleteEventWithUndo already uses for a single event, generalized to many.
+// Returns null if courseId doesn't resolve to a real subject (nothing to do).
+function deleteCourseWithCascade(courseId){
+  const subjects=getSubjects();
+  const subject=subjects.find(s=>s.id===courseId);
+  if(!subject)return null;
+  const matches=(item)=>item.courseId===courseId||item.subject===subject.label;
+  const routines=getWeeklyRoutine();
+  const removedRoutines=routines.filter(matches);
+  const keptRoutines=routines.filter(r=>!matches(r));
+  const events=lsGet("events",[]);
+  const removedEvents=events.filter(matches);
+  const keptEvents=events.filter(e=>!matches(e));
+  saveSubjects(subjects.filter(s=>s.id!==courseId));
+  saveWeeklyRoutine(keptRoutines);
+  lsSet("events",keptEvents);
+  return {subject,routines:removedRoutines,events:removedEvents};
+}
+// Restores exactly what deleteCourseWithCascade removed, from its returned
+// snapshot -- re-inserts the subject, its routines, and its events in the
+// same shape they were in right before deletion.
+function undoCourseDelete(snapshot){
+  if(!snapshot)return;
+  saveSubjects([...getSubjects(),snapshot.subject]);
+  saveWeeklyRoutine([...getWeeklyRoutine(),...snapshot.routines]);
+  lsSet("events",[...lsGet("events",[]),...snapshot.events]);
 }
 // One-off exceptions to an otherwise-recurring routine rule ("skip today's
 // class") — keyed by date so a lookup during expansion is O(1), value is
@@ -2930,7 +3004,7 @@ function startPhaseAwareAttackChain(fields,phases,events,routines,prefs,desiredD
 function buildAssignmentAttackBlockPair(markerId,fields,phases,events,routines,prefs,desiredDate,desiredTime){
   const marker={
     id:markerId,title:fields.title,date:fields.deadline||desiredDate,time:"23:59",
-    subject:fields.subject||"",notes:fields.notes||"",kind:"deadline",
+    subject:fields.subject||"",courseId:fields.courseId||null,notes:fields.notes||"",kind:"deadline",
     priority:fields.priority??500,difficulty:fields.difficulty??500,
     deadline:fields.deadline||null,duration:null,status:"pending",timeSpent:0,completedAt:null,
     ...(phases.length>0?{phases:phases.map((name,pi)=>({name,status:pi===0?"active":"pending"}))}:{}),
@@ -5924,7 +5998,10 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   // CalendarTab, Flashcards each define their own) -- not a module-level
   // helper, so Prep needs its own too, same lookup Notes already uses.
   const userSubjects=getSubjects();
-  const colorOf=(tg)=>{const s=userSubjects.find(x=>x.label===tg);return s?s.color:T.lime;};
+  // Accepts either a real course id or a label -- callers with a courseId
+  // handy (post-migration data) get an id match; everything else still
+  // resolves the same way it always has via label.
+  const colorOf=(tg)=>{const s=userSubjects.find(x=>x.id===tg||x.label===tg);return s?s.color:T.lime;};
   // Same component-local convention as colorOf above -- CalendarTab has its
   // own niceDate too. Short month (vs CalendarTab's long form) since this
   // feeds a single-line meta row that's already tight on space.
@@ -7787,7 +7864,10 @@ function Notes({setActive=()=>{}}){
   // Dynamic class sync from user subjects
   const userSubjects=getSubjects();
   const tagOptions=[...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
-  const colorOf=(tg)=>{const s=userSubjects.find(x=>x.label===tg);return s?s.color:T.lime;};
+  // Accepts either a real course id or a label -- callers with a courseId
+  // handy (post-migration data) get an id match; everything else still
+  // resolves the same way it always has via label.
+  const colorOf=(tg)=>{const s=userSubjects.find(x=>x.id===tg||x.label===tg);return s?s.color:T.lime;};
 
   const [notes,setNotes]=useState(()=>{const n=lsGet("notes",null);return(n&&Array.isArray(n))?n.filter(x=>x&&x.title):[];});
   const [sel,setSel]=useState(null);
@@ -10218,7 +10298,7 @@ function planBrainDumpTasks(items,events,routines,prefs){
 // already treats "material" as a list of named {name,text} entries (see
 // its own fileTexts state) -- sourceMaterials on the real event is exactly
 // that same shape, so nothing downstream needs its own separate merge logic.
-function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routines,prefs){
+function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routines,prefs,courseId){
   const today=dayKey();
   // One computation per item, reused by both the marker-building pass below
   // and the immediate-scheduling pass after it, so the two can never
@@ -10336,18 +10416,24 @@ function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routin
     const sessions=buildExamSessionEvents(it.title,it.date,tag,it.sessionCount||4,"examrev-"+noteId+"-"+i,working,routines,prefs,{noteId,dueEventId:markerEvents[i].id},it.difficulty);
     examSessionEvents=examSessionEvents.concat(sessions);working=working.concat(sessions);
   });
-  return {markerEvents,attackEvents,examSessionEvents};
+  // Stamped on every produced event as a final pass (rather than threading
+  // courseId into startPhaseAwareAttackChain/buildExamSessionEvents
+  // themselves, which have plenty of other, non-course-linked callers) --
+  // only when a real courseId was actually passed in, so existing callers
+  // that never pass one see zero diff in their output.
+  const withCourseId=(list)=>courseId?list.map(e=>({...e,courseId})):list;
+  return {markerEvents:withCourseId(markerEvents),attackEvents:withCourseId(attackEvents),examSessionEvents:withCourseId(examSessionEvents)};
 }
 // sourceMaterial is optional -- the raw scanned text (syllabus, notes),
 // when the caller has it -- attached to exam-kind markers only, so Studlin
 // Prep can pre-seed material for that exam instead of the student having to
 // re-upload the same content that was already just read once. Omit it and
 // nothing changes for any existing caller.
-function commitSyllabusEvents(noteId,tag,items,sourceMaterial){
+function commitSyllabusEvents(noteId,tag,items,sourceMaterial,courseId){
   const existing=lsGet("events",[]);
   const routines=getWeeklyRoutine();
   const prefs=getSchedulePreferences();
-  const {markerEvents,attackEvents,examSessionEvents}=buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routines,prefs);
+  const {markerEvents,attackEvents,examSessionEvents}=buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routines,prefs,courseId);
   lsSet("events",existing.concat(markerEvents,attackEvents,examSessionEvents));
   return markerEvents.concat(attackEvents,examSessionEvents);
 }
@@ -13141,7 +13227,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
     saveSubjects([...getSubjects(),...newSubjects]);
     const routineItems=valid.map((p,i)=>{
       const dur=Math.max(15,timeToMinutes(p.endTime)-timeToMinutes(p.startTime));
-      return {id:"rt-"+Date.now()+"-"+i,title:p.subjectName.trim(),kind:"class",subject:p.subjectName.trim(),days:p.days,startTime:p.startTime,duration:dur};
+      return {id:"rt-"+Date.now()+"-"+i,title:p.subjectName.trim(),kind:"class",subject:p.subjectName.trim(),courseId:newSubjects[i].id,days:p.days,startTime:p.startTime,duration:dur};
     });
     saveWeeklyRoutine([...getWeeklyRoutine(),...routineItems]);
     // Whole-schedule photo import has no deadlines to review, so there's
@@ -13173,7 +13259,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
     let routine=getWeeklyRoutine();
     withIds.forEach(cls=>{
       subjects=[...subjects,{id:cls.subjId,label:cls.name,color:cls.color}];
-      const routineItems=(cls.meetingTimes||[]).filter(mt=>mt.days.length>0).map(mt=>({id:"rt-"+Date.now()+"-"+Math.round(Math.random()*1000),title:cls.name,kind:"class",subject:cls.name,days:mt.days,startTime:mt.startTime,duration:mt.duration}));
+      const routineItems=(cls.meetingTimes||[]).filter(mt=>mt.days.length>0).map(mt=>({id:"rt-"+Date.now()+"-"+Math.round(Math.random()*1000),title:cls.name,kind:"class",subject:cls.name,courseId:cls.subjId,days:mt.days,startTime:mt.startTime,duration:mt.duration}));
       routine=[...routine,...routineItems];
     });
     saveSubjects(subjects);
@@ -13181,7 +13267,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
     withIds.forEach(cls=>{
       const included=(cls.items||[]).filter(it=>it.include&&it.title.trim());
       if(included.length>0){
-        commitSyllabusEvents("wiz-"+cls.subjId,cls.name,included,cls.sourceText);
+        commitSyllabusEvents("wiz-"+cls.subjId,cls.name,included,cls.sourceText,cls.subjId);
         attachSessionFocusesToSyllabusExams("wiz-"+cls.subjId,cls.name,included);
       }
     });
@@ -14355,12 +14441,12 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
       const phases=isPhaseCandidate?(projectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
       const outline=isPhaseCandidate?normalizeOutlineDraft(projectPlan.outline):[];
       const desiredDate=date&&date>=dayKey()?date:dayKey();
-      attackPair=buildAssignmentAttackBlockPair(ev.id,{title:title.trim(),subject,notes,deadline:deadline||null,priority,difficulty,probeMins:attackProbeMins,outline},phases,allEvents,routines,prefs,desiredDate,prefs.workStartTime);
+      attackPair=buildAssignmentAttackBlockPair(ev.id,{title:title.trim(),subject,courseId:courseIdForLabel(subject),notes,deadline:deadline||null,priority,difficulty,probeMins:attackProbeMins,outline},phases,allEvents,routines,prefs,desiredDate,prefs.workStartTime);
     }
     const updated=allEvents.map(e=>{
       if(e.id!==ev.id)return e;
       if(attackPair)return attackPair.marker;
-      const merged={...e,title:title.trim(),date,time,duration,deadline:deadline||null,priority,difficulty,subject,kind,notes,checklist:asChecklist,...(timeChanged?{userPinned:true}:{}),
+      const merged={...e,title:title.trim(),date,time,duration,deadline:deadline||null,priority,difficulty,subject,courseId:courseIdForLabel(subject),kind,notes,checklist:asChecklist,...(timeChanged?{userPinned:true}:{}),
         ...(kind==="exam"?{sourceMaterials:examPlan.materialFiles,referenceLinks:examPlan.materialLinks}:{}),
         ...(droppedProject?{phases:undefined,outline:undefined}:{}),
         ...(requiresProjectDetail&&newProjPhases.length>0?{phases:newProjPhases.map((name,pi)=>({name,status:pi===0?"active":"pending"}))}:{}),
@@ -14594,7 +14680,10 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
 function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,setDetailEventId,registerSetEvents,onTaskCompleted,catchUpPending}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.muted},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
-  const colorOf=(sub)=>{if(!sub||sub==="None"||sub==="")return T.muted;const x=userSubjects.find(s=>s.label===sub);return x?x.color:T.lime;};
+  // Accepts either a real course id or a label, same as StudlinPrep/Notes'
+  // colorOf -- id match preferred when the caller has one, label fallback
+  // otherwise.
+  const colorOf=(sub)=>{if(!sub||sub==="None"||sub==="")return T.muted;const x=userSubjects.find(s=>s.id===sub||s.label===sub);return x?x.color:T.lime;};
   // A genuinely fresh account — never touched Subjects or Routine, and
   // hasn't seen the new tour either. Deliberately excludes "cal-onboard-done"
   // (the old Google Calendar prompt's flag): App() stamps that one itself
@@ -14719,7 +14808,12 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
     mk(3,"09:00","Macbeth essay · first draft","English IV","deadline"),
     mk(5,"10:00","Calculus test · Derivatives","Calculus","exam"),
   ];
-  const [events,setEvents]=useState(()=>{const ev=lsGet("events",null);return(ev&&Array.isArray(ev))?ev.filter(e=>!e.id.startsWith("seed-")):[];});
+  // backfillCourseIds runs here (rather than alongside the older
+  // backfillClassRoutineSubjects below, next to `routines`) so it applies
+  // to whatever `events` gets read into React state a few lines down --
+  // the routines useState initializer runs after this one, which would be
+  // too late for events already captured into state above it.
+  const [events,setEvents]=useState(()=>{backfillCourseIds();const ev=lsGet("events",null);return(ev&&Array.isArray(ev))?ev.filter(e=>!e.id.startsWith("seed-")):[];});
   // Hands setEvents up to App so a commit made through the shared
   // App-level EventDetailModal (see its own comment) can update this
   // component's live state too, not just localStorage -- otherwise the
@@ -15093,7 +15187,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
   const closeRoutineEdit=()=>setRoutineEditItem(null);
   const saveRoutineEdit=()=>{
     if(!routineEditItem||!riTitle.trim()||riDays.length===0)return;
-    persistRoutines(routines.map(r=>r.id===routineEditItem.id?{...r,title:riTitle.trim(),kind:riKind,days:riDays,startTime:riKind==="habit"?null:riStartTime,duration:riDuration,subject:riSubject==="None"?"":riSubject}:r));
+    persistRoutines(routines.map(r=>r.id===routineEditItem.id?{...r,title:riTitle.trim(),kind:riKind,days:riDays,startTime:riKind==="habit"?null:riStartTime,duration:riDuration,subject:riSubject==="None"?"":riSubject,courseId:riSubject==="None"?null:courseIdForLabel(riSubject)}:r));
     closeRoutineEdit();
   };
   const deleteRoutineEdit=()=>{
@@ -15191,7 +15285,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
     const projectPhases=evKind==="project"&&evProjectPlan.phases?evProjectPlan.phases.map(p=>p.trim()).filter(Boolean):[];
     const projectOutline=evKind==="project"&&evProjectPlan.outline?normalizeOutlineDraft(evProjectPlan.outline):[];
-    return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,kind:resolveAssignmentKind(),notes:evNotes,priority:evPriority,difficulty:evDifficulty,deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,
+    return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,courseId:courseIdForLabel(subj),kind:resolveAssignmentKind(),notes:evNotes,priority:evPriority,difficulty:evDifficulty,deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,
       ...(projectPhases.length>0?{phases:projectPhases.map((name,pi)=>({name,status:pi===0?"active":"pending"}))}:{}),
       ...(projectOutline.length>0?{outline:projectOutline}:{}),
       ...(splitInfo||{})};
@@ -15409,7 +15503,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
     const d=new Date(evDate+"T00:00:00");
     const dow=(d.getDay()+6)%7;
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
-    const rule={id:String(Date.now()+Math.random()*1000),title:evTitle.trim(),kind:evKind==="class"?"class":"busy",days:[dow],startTime:evTime,duration:evDuration,subject:subj};
+    const rule={id:String(Date.now()+Math.random()*1000),title:evTitle.trim(),kind:evKind==="class"?"class":"busy",days:[dow],startTime:evTime,duration:evDuration,subject:subj,courseId:courseIdForLabel(subj)};
     saveWeeklyRoutine([...getWeeklyRoutine(),rule]);
     resetForm();setSelDay(evDate);
     setToast(true);setTimeout(()=>setToast(false),2200);
@@ -15450,7 +15544,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
       const phases=evKind==="project"?(evProjectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
       const outline=evKind==="project"?normalizeOutlineDraft(evProjectPlan.outline):[];
       const markerId=String(Date.now()+Math.random()*1000);
-      const pair=buildAssignmentAttackBlockPair(markerId,{title:evTitle.trim(),subject:subj,notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins,outline},phases,events,routines,prefs,evDate,evTime);
+      const pair=buildAssignmentAttackBlockPair(markerId,{title:evTitle.trim(),subject:subj,courseId:courseIdForLabel(subj),notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins,outline},phases,events,routines,prefs,evDate,evTime);
       if(!pair){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
       commitTasks([pair.marker,pair.task]);
       return;
@@ -15552,7 +15646,7 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
       const phases=evKind==="project"?(evProjectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
       const outline=evKind==="project"?normalizeOutlineDraft(evProjectPlan.outline):[];
       const markerId=String(Date.now()+Math.random()*1000);
-      const pair=buildAssignmentAttackBlockPair(markerId,{title:evTitle.trim(),subject:subj,notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins,outline},phases,events,routines,prefs,desiredStartDate,windowStartTime);
+      const pair=buildAssignmentAttackBlockPair(markerId,{title:evTitle.trim(),subject:subj,courseId:courseIdForLabel(subj),notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins,outline},phases,events,routines,prefs,desiredStartDate,windowStartTime);
       setAiLoading(false);
       if(!pair){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
       commitTasks([pair.marker,pair.task]);
@@ -17950,6 +18044,51 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const [mgmtSaved,setMgmtSaved]=useState(false);
   const [confirmClearSubjs,setConfirmClearSubjs]=useState(false);
   const saveMgmtSubjs=()=>{const valid=mgmtSubjs.filter(s=>s.label.trim());saveSubjects(valid);lsSet("subjects-configured",true);setMgmtSaved(true);setTimeout(()=>setMgmtSaved(false),2500);};
+  // Deleting a real, already-saved course now cascades (see
+  // deleteCourseWithCascade) -- its class-time routine and every linked
+  // assignment/exam/study session go with it, so it needs the CLAUDE.md
+  // confirm-before-delete step this row never had before (when Remove only
+  // dropped a color/label). A brand-new row the user just added and hasn't
+  // saved yet has nothing real behind it, so removing that one stays a
+  // plain, unconfirmed local-state edit exactly like before.
+  const [confirmRemoveSubjId,setConfirmRemoveSubjId]=useState(null);
+  const [courseDeleteSnapshots,setCourseDeleteSnapshots]=useState(null);
+  const [courseDeleteToast,setCourseDeleteToast]=useState("");
+  const countLinkedForSubject=(sub)=>{
+    const matches=(item)=>item.courseId===sub.id||item.subject===sub.label;
+    return getWeeklyRoutine().filter(matches).length+lsGet("events",[]).filter(matches).length;
+  };
+  const announceCourseDelete=(snapshots)=>{
+    const kept=snapshots.filter(Boolean);
+    if(kept.length===0)return;
+    const totalLinked=kept.reduce((n,s)=>n+s.routines.length+s.events.length,0);
+    const label=kept.length===1?`"${kept[0].subject.label}"`:kept.length+" subjects";
+    setCourseDeleteSnapshots(kept);
+    setCourseDeleteToast(`Deleted ${label} and ${totalLinked} linked item${totalLinked!==1?"s":""}`);
+    setTimeout(()=>{setCourseDeleteToast("");setCourseDeleteSnapshots(null);},5000);
+  };
+  const removeSubjectRow=(sub)=>{
+    if(!getSubjects().some(s=>s.id===sub.id)){setMgmtSubjs(s=>s.filter(x=>x.id!==sub.id));return;}
+    setConfirmRemoveSubjId(sub.id);
+  };
+  const confirmRemoveSubject=(sub)=>{
+    const snapshot=deleteCourseWithCascade(sub.id);
+    setMgmtSubjs(s=>s.filter(x=>x.id!==sub.id));
+    setConfirmRemoveSubjId(null);
+    announceCourseDelete([snapshot]);
+  };
+  const clearAllSubjects=()=>{
+    const snapshots=getSubjects().map(s=>deleteCourseWithCascade(s.id));
+    setMgmtSubjs([]);
+    setConfirmClearSubjs(false);
+    announceCourseDelete(snapshots);
+  };
+  const undoCourseDeletes=()=>{
+    if(!courseDeleteSnapshots)return;
+    courseDeleteSnapshots.forEach(undoCourseDelete);
+    setMgmtSubjs(getSubjects().map(s=>({...s})));
+    setCourseDeleteSnapshots(null);setCourseDeleteToast("");
+  };
 
   return (
     <div>
@@ -18192,17 +18331,25 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               )}
               {mgmtSubjs.map((sub,i)=>(
                 <div key={sub.id||i} style={{...subjectRowStyle(sub.color),marginBottom:10}}>
-                  <ColorSelect value={sub.color} onChange={c=>setMgmtSubjs(s=>s.map((x,j)=>j===i?{...x,color:c}:x))} />
-                  <input value={sub.label} onChange={e=>setMgmtSubjs(s=>s.map((x,j)=>j===i?{...x,label:e.target.value}:x))} placeholder="Subject name..." style={{flex:1,background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"7px 10px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none"}} />
-                  <button onClick={()=>setMgmtSubjs(s=>s.filter((_,j)=>j!==i))} style={{background:"none",border:`1px solid ${T.border}`,color:T.muted,cursor:"pointer",borderRadius:6,padding:"4px 10px",fontSize:12,fontFamily:T.font}}>Remove</button>
+                  {confirmRemoveSubjId===sub.id?(
+                    <div style={{display:"flex",alignItems:"center",gap:10,flex:1}}>
+                      <span style={{fontSize:12.5,color:T.text,flex:1}}>Delete "{sub.label}" and its {countLinkedForSubject(sub)} linked item{countLinkedForSubject(sub)!==1?"s":""} (class times, assignments, exams)?</span>
+                      <Btn variant="danger" onClick={()=>confirmRemoveSubject(sub)}>Delete</Btn>
+                      <Btn variant="subtle" onClick={()=>setConfirmRemoveSubjId(null)}>Cancel</Btn>
+                    </div>
+                  ):(<>
+                    <ColorSelect value={sub.color} onChange={c=>setMgmtSubjs(s=>s.map((x,j)=>j===i?{...x,color:c}:x))} />
+                    <input value={sub.label} onChange={e=>setMgmtSubjs(s=>s.map((x,j)=>j===i?{...x,label:e.target.value}:x))} placeholder="Subject name..." style={{flex:1,background:T.card2,border:`1px solid ${T.border}`,borderRadius:7,padding:"7px 10px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none"}} />
+                    <button onClick={()=>removeSubjectRow(sub)} style={{background:"none",border:`1px solid ${T.border}`,color:T.muted,cursor:"pointer",borderRadius:6,padding:"4px 10px",fontSize:12,fontFamily:T.font}}>Remove</button>
+                  </>)}
                 </div>
               ))}
-              <div style={{display:"flex",gap:10,marginTop:16,alignItems:"center"}}>
+              <div style={{display:"flex",gap:10,marginTop:16,alignItems:"center",flexWrap:"wrap"}}>
                 <Btn onClick={saveMgmtSubjs}>Save changes</Btn>
                 {mgmtSubjs.length>0&&(confirmClearSubjs?(
                   <>
-                    <span style={{fontSize:12,color:T.muted}}>Remove all {mgmtSubjs.length} subject{mgmtSubjs.length!==1?"s":""}?</span>
-                    <Btn variant="danger" onClick={()=>{setMgmtSubjs([]);saveSubjects([]);setConfirmClearSubjs(false);}}>Yes, clear</Btn>
+                    <span style={{fontSize:12,color:T.muted}}>Delete all {mgmtSubjs.length} subject{mgmtSubjs.length!==1?"s":""} and everything linked to them?</span>
+                    <Btn variant="danger" onClick={clearAllSubjects}>Yes, delete all</Btn>
                     <Btn variant="subtle" onClick={()=>setConfirmClearSubjs(false)}>Cancel</Btn>
                   </>
                 ):(
@@ -18210,6 +18357,12 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 ))}
                 {mgmtSaved&&<span style={{fontSize:12,color:T.lime,fontWeight:600}}>✓ Saved</span>}
               </div>
+              {courseDeleteToast&&(
+                <div style={{display:"flex",alignItems:"center",gap:10,marginTop:10,padding:"9px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8}}>
+                  <span style={{fontSize:12,color:T.text,flex:1}}>{courseDeleteToast}</span>
+                  <button onClick={undoCourseDeletes} style={{background:"none",border:"none",color:T.lime,cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:T.font,textDecoration:"underline"}}>Undo</button>
+                </div>
+              )}
             </Card>
           </>)}
 
@@ -19387,11 +19540,15 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
         {selectedClassId!=="all"&&(()=>{
           const subj=yourClassesSubjects.find(s=>s.id===selectedClassId);
           if(!subj)return null;
-          const meetings=getWeeklyRoutine().filter(r=>r.kind==="class"&&r.title===subj.label);
-          const cA=masterAssignments.filter(a=>a.subject===subj.label);
-          const cP=masterProjects.filter(p=>p.subject===subj.label);
-          const cE=masterExams.filter(e=>e.subject===subj.label);
-          const cN=masterNoDate.filter(n=>n.subject===subj.label);
+          // courseId match preferred, label fallback for data predating the
+          // courseId migration (also fixes a pre-existing bug here: this
+          // used to match a routine's title instead of its subject).
+          const inThisCourse=(item)=>item.courseId===subj.id||item.subject===subj.label;
+          const meetings=getWeeklyRoutine().filter(r=>r.kind==="class"&&inThisCourse(r));
+          const cA=masterAssignments.filter(inThisCourse);
+          const cP=masterProjects.filter(inThisCourse);
+          const cE=masterExams.filter(inThisCourse);
+          const cN=masterNoDate.filter(inThisCourse);
           const totalCount=cA.length+cP.length+cE.length+cN.length;
           return (
             <div>
