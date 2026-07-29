@@ -6191,11 +6191,10 @@ function StudlinPrep({setActive=()=>{}}={}){
   const [expandedSessionId,setExpandedSessionId]=useState(null);
   const [editingSessionId,setEditingSessionId]=useState(null);
   const [examSearch,setExamSearch]=useState("");
-  // Part A: exam list rows expand one at a time (Study now/View plan),
-  // defaulting to the nearest exam without requiring a click -- undefined
-  // means "use the default (nearest)"; once the student taps any row this
-  // becomes an explicit id (or null, fully collapsed).
-  const [expandedListExamId,setExpandedListExamId]=useState(undefined);
+  // Phase 9: category/class filter folds into the same table as the
+  // search box, rather than being a separate feature -- "" means every
+  // class.
+  const [examClassFilter,setExamClassFilter]=useState("");
   // Study/Edit/Send/Add Deck used to hard-navigate to the standalone
   // Flashcards page (setActive("flashcards")), fully unmounting Studlin Prep
   // and leaving no way back except clicking a different sidebar item --
@@ -6352,15 +6351,34 @@ function StudlinPrep({setActive=()=>{}}={}){
   };
 
   const exams=upcomingExams();
-  const visibleExams=examSearch.trim()
-    ?exams.filter(ex=>{
-      const q=examSearch.trim().toLowerCase();
-      return (ex.title||"").toLowerCase().includes(q)||(ex.subject||"").toLowerCase().includes(q);
-    })
-    :exams;
+  const examClasses=[...new Set(exams.map(ex=>ex.subject).filter(Boolean))];
+  const visibleExams=exams.filter(ex=>{
+    if(examClassFilter&&ex.subject!==examClassFilter)return false;
+    if(!examSearch.trim())return true;
+    const q=examSearch.trim().toLowerCase();
+    return (ex.title||"").toLowerCase().includes(q)||(ex.subject||"").toLowerCase().includes(q);
+  });
   const allDecks=lsGet("decks",[]);
   const allPracticeExams=lsGet("practiceExams",[]);
   const selectedExam=selectedExamId?lsGet("events",[]).find(e=>e.id===selectedExamId):null;
+  // Phase 9 table view: patch a single field on one exam in place, same
+  // read-mutate-lsSet-refresh convention every other mutation in this
+  // component already follows (see commitBuildPlan above) -- no separate
+  // React state mirror of `events` exists here, storage is the source of
+  // truth and `refresh()` (forceTick) is what makes the new value show.
+  const patchExam=(examId,patch)=>{
+    const all=lsGet("events",[]);
+    lsSet("events",all.map(e=>e.id===examId?{...e,...patch}:e));
+    refresh();
+  };
+  // Bucketed edit for priority("urgency")/difficulty -- both already exist
+  // as a 0-1000 raw scale (see normalizeTaskVal's own comment on the two
+  // legacy scales in play), so editing here just snaps to one of three
+  // representative values rather than trying to preserve an exact number a
+  // slider elsewhere might have set -- consistent with this being a dense
+  // table cell, not the full Edit Task form.
+  const BUCKET_VALS={low:200,medium:500,high:800};
+  const bucketOf=(raw)=>{ const v=raw==null?500:raw; return v<=333?"low":v<=666?"medium":"high"; };
 
   // ── Material upload -- one text pool per open hub, shared by both the
   // flashcard and practice-exam generators, so nothing gets uploaded twice. ──
@@ -6749,18 +6767,7 @@ function StudlinPrep({setActive=()=>{}}={}){
           ?<Card style={{padding:"32px 20px",textAlign:"center"}}>
             <div style={{fontSize:13,color:T.muted,marginBottom:14}}>No upcoming exams yet — add one from your calendar to start building material for it.</div>
           </Card>
-          :<div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {exams.length>3&&(
-              <Input placeholder="Search your exams…" value={examSearch} onChange={e=>setExamSearch(e.target.value)} style={{marginBottom:2}} />
-            )}
-            {visibleExams.length===0&&(
-              <div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"14px 0"}}>No exams match "{examSearch.trim()}".</div>
-            )}
-            {(()=>{
-              // undefined = default to nearest exam (visibleExams[0]) with
-              // no click needed; otherwise whatever the student last tapped
-              // (an explicit id, or null if they collapsed it).
-              const effectiveExpandedId=expandedListExamId===undefined?(visibleExams[0]&&visibleExams[0].id):expandedListExamId;
+          :(()=>{
               const viewPlan=(ex)=>{
                 setSelectedExamId(ex.id);
                 // sourceMaterials/referenceLinks (arrays) are the current
@@ -6777,54 +6784,89 @@ function StudlinPrep({setActive=()=>{}}={}){
                 setMaterialAddOpen(false);setMoreGenOptionsOpen(false);
                 setPrepMaterialsOpen(false);setExpandedSessionId(null);
               };
-              // Jump straight into the most obvious next action: the linked
-              // deck if one exists, else the next pending session via the
-              // same Lock-In Timer bridge the detail timeline's own Start
-              // button uses, else just open the plan -- nothing to jump
-              // straight into yet.
-              const studyNow=(ex)=>{
-                const deck=allDecks.find(d=>deckLinkedToExam(d,ex.id));
-                if(deck){lsSet("openDeckId",deck.id);lsSet("openDeckAction","study");setFlashcardsOverlay(true);return;}
-                const nextSession=lsGet("events",[]).filter(e=>e.dueEventId===ex.id&&e.status!=="done").sort((a,b)=>a.date<b.date?-1:1)[0];
-                if(nextSession&&window._setTimerTask){window._setTimerTask(nextSession);return;}
-                viewPlan(ex);
-              };
-              return visibleExams.map(ex=>{
-                const deck=allDecks.find(d=>deckLinkedToExam(d,ex.id));
-                const examSessionsForEx=lsGet("events",[]).filter(e=>e.dueEventId===ex.id);
-                const pendingSessionsForEx=examSessionsForEx.filter(e=>e.status!=="done");
-                const cardsDueForEx=deck?(deck.cards||[]).filter(c=>!c.dueAt||c.dueAt<=Date.now()).length:0;
-                const today=dayKey();
-                const daysUntil=Math.round((new Date(ex.date+"T12:00:00")-new Date(today+"T12:00:00"))/86400000);
-                const daysLabel=daysUntil<=0?"today":daysUntil===1?"1 day":daysUntil+" days";
-                const metaParts=[ex.subject];
-                if(examSessionsForEx.length===0)metaParts.push("no study plan yet");
-                else{
-                  metaParts.push(pendingSessionsForEx.length+" session"+(pendingSessionsForEx.length!==1?"s":"")+" left");
-                  if(deck)metaParts.push(cardsDueForEx+" card"+(cardsDueForEx!==1?"s":"")+" due");
-                }
-                const isExpanded=effectiveExpandedId===ex.id;
-                return(
-                <div key={ex.id} onClick={()=>setExpandedListExamId(effectiveExpandedId===ex.id?null:ex.id)}
-                  style={{padding:"10px 14px",borderRadius:12,border:`1px solid ${T.border}`,background:T.card,cursor:"pointer"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:12}}>
-                    <div style={{fontSize:22,fontWeight:800,color:T.white,flexShrink:0,letterSpacing:"-0.01em",lineHeight:1}}>{daysLabel}</div>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:14,fontWeight:700,color:T.white,lineHeight:1.3}}>{ex.title}</div>
-                      <div style={{fontSize:11.5,color:T.muted,marginTop:1,lineHeight:1.3}}>{metaParts.join(" · ")}</div>
-                    </div>
-                  </div>
-                  {isExpanded&&(
-                    <div style={{display:"flex",gap:8,marginTop:10}}>
-                      <BtnSm onClick={(e)=>{e.stopPropagation();studyNow(ex);}}>Study now</BtnSm>
-                      <BtnSm variant="ghost" onClick={(e)=>{e.stopPropagation();viewPlan(ex);}}>View plan</BtnSm>
-                    </div>
+              // Phase 9: spreadsheet-style table replacing the old "11 days"
+              // anchored list -- one row per exam, every column besides
+              // name/sessions independently editable right in the cell (a
+              // native select/date input, no separate edit-mode click
+              // needed). Clicking the name is the only thing that navigates
+              // into the exam detail page below (unchanged/not rebuilt).
+              const cellSelStyle={width:"100%",background:"transparent",border:"none",color:T.text,fontSize:10.5,fontFamily:T.font,outline:"none",cursor:"pointer",padding:"2px 0"};
+              const gridCols="minmax(120px,1.6fr) 84px 64px 68px 104px 56px 70px 70px 120px";
+              return (
+              <div>
+                <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+                  <Input placeholder="Search your exams…" value={examSearch} onChange={e=>setExamSearch(e.target.value)} style={{flex:1,minWidth:160}} />
+                  {examClasses.length>1&&(
+                    <select value={examClassFilter} onChange={e=>setExamClassFilter(e.target.value)} style={{...wizardSelectStyle,width:150}}>
+                      <option value="">All classes</option>
+                      {examClasses.map(c=><option key={c} value={c}>{c}</option>)}
+                    </select>
                   )}
                 </div>
-                );
-              });
-            })()}
-          </div>
+                {visibleExams.length===0&&(
+                  <div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"14px 0"}}>No exams match your search.</div>
+                )}
+                {visibleExams.length>0&&(
+                <div style={{overflowX:"auto",border:`1px solid ${T.border}`,borderRadius:8}}>
+                  <div style={{minWidth:760}}>
+                    <div style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,background:T.card2}}>
+                      {["Name","Class","Type","Flex","Due","Days","Urgency","Difficulty","Sessions"].map((h,i)=>(
+                        <div key={h+i} style={{fontSize:9,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>{h}</div>
+                      ))}
+                    </div>
+                    {visibleExams.map(ex=>{
+                      const examSessionsForEx=lsGet("events",[]).filter(e=>e.dueEventId===ex.id);
+                      const pendingSessionsForEx=examSessionsForEx.filter(e=>e.status!=="done");
+                      const today=dayKey();
+                      const daysUntil=Math.round((new Date(ex.date+"T12:00:00")-new Date(today+"T12:00:00"))/86400000);
+                      const daysLabel=daysUntil<=0?"Today":daysUntil+"d";
+                      const sessionsLabel=examSessionsForEx.length===0?"no plan yet":pendingSessionsForEx.length+" left";
+                      const isFlexible=ex.sessionsMovable!==false;
+                      return (
+                        <div key={ex.id} style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,alignItems:"center"}}>
+                          <div onClick={()=>viewPlan(ex)} style={{fontSize:11.5,fontWeight:600,color:T.white,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={ex.title}>{ex.title}</div>
+                          <div style={{fontSize:10.5,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ex.subject||"—"}</div>
+                          <select value={ex.examWeight||"major"} onChange={e=>patchExam(ex.id,{examWeight:e.target.value})} style={cellSelStyle}>
+                            <option value="quiz">Quiz</option>
+                            <option value="major">Major</option>
+                          </select>
+                          {/* sessionsMovable (new field, Phase 9): whether Studlin
+                              can auto-shuffle THIS exam's already-scheduled study
+                              sessions. Distinct from Phase 7's routine-level
+                              `movable` field (that one governs whether a whole
+                              recurring block like gym class can be relocated) --
+                              deliberately a different field name so the two never
+                              get confused in code or copy. Unset/undefined reads
+                              as Flexible (the pre-existing default behavior),
+                              matching this file's additive-field convention. */}
+                          <select value={isFlexible?"flexible":"rigid"} onChange={e=>patchExam(ex.id,{sessionsMovable:e.target.value==="flexible"})} style={cellSelStyle}>
+                            <option value="flexible">Flex</option>
+                            <option value="rigid">Rigid</option>
+                          </select>
+                          <input type="date" value={ex.date} onChange={e=>patchExam(ex.id,{date:e.target.value})} style={{...cellSelStyle,colorScheme:"dark"}} />
+                          <div style={{fontSize:10.5,color:daysUntil<=1?T.red:T.muted}}>{daysLabel}</div>
+                          <select value={bucketOf(ex.priority)} onChange={e=>patchExam(ex.id,{priority:BUCKET_VALS[e.target.value]})} style={cellSelStyle}>
+                            <option value="low">Low</option>
+                            <option value="medium">Med</option>
+                            <option value="high">High</option>
+                          </select>
+                          <select value={bucketOf(ex.difficulty)} onChange={e=>patchExam(ex.id,{difficulty:BUCKET_VALS[e.target.value]})} style={cellSelStyle}>
+                            <option value="low">Easy</option>
+                            <option value="medium">Med</option>
+                            <option value="high">Hard</option>
+                          </select>
+                          <div onClick={()=>viewPlan(ex)} style={{fontSize:10.5,color:T.muted,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title="Click to open the study plan">
+                            {sessionsLabel}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                )}
+              </div>
+              );
+            })()
       )}
 
 
