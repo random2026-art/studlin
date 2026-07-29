@@ -574,17 +574,17 @@ const TimeInput = ({value,onChange,style,lockedRanges}) => {
     const mins=hh*60;
     return lockedRanges.some(r=>mins>=r.start&&mins<r.end);
   };
-  const selStyle={flex:1,minWidth:0,padding:"10px 8px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,color:T.text,fontSize:13.5,fontFamily:T.font,outline:"none",cursor:"pointer",boxSizing:"border-box"};
+  const selStyle={width:32,flexShrink:0,padding:"4px 1px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:5,color:T.text,fontSize:12,fontFamily:T.font,outline:"none",cursor:"pointer",boxSizing:"border-box",textAlign:"center"};
   return (
-    <div style={{display:"flex",flexDirection:"row",gap:6,alignItems:"center",...(style||{})}}>
+    <div style={{display:"flex",flexDirection:"row",gap:2,alignItems:"center",flexShrink:0,...(style||{})}}>
       <select value={h} onChange={e=>commit(+e.target.value,m,ap)} style={selStyle}>
         {TIME_HOURS_12.map(x=><option key={x} value={x} disabled={isHourLocked(x)}>{x}{isHourLocked(x)?" (school)":""}</option>)}
       </select>
-      <span style={{color:T.muted,flexShrink:0}}>:</span>
+      <span style={{color:T.muted,flexShrink:0,fontSize:11}}>:</span>
       <select value={m} onChange={e=>commit(h,+e.target.value,ap)} style={selStyle}>
         {TIME_MINUTES_5.map(x=><option key={x} value={x}>{String(x).padStart(2,"0")}</option>)}
       </select>
-      <select value={ap} onChange={e=>commit(h,m,e.target.value)} style={selStyle}>
+      <select value={ap} onChange={e=>commit(h,m,e.target.value)} style={{...selStyle,width:40}}>
         <option value="AM">AM</option>
         <option value="PM">PM</option>
       </select>
@@ -12642,6 +12642,65 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
   // from wkDragId (a real, single event) since dropping this needs to ask
   // "just this one, or every week" instead of silently moving one event.
   const [wkDragRoutineOccurrence, setWkDragRoutineOccurrence] = useState(null); // {routineId,fromDate}|null
+  // Drag-to-resize: grab the top or bottom edge of a real (non-routine)
+  // block to change its start/duration in place, like Shovel and Google
+  // Calendar. Uses plain mousedown/mousemove/mouseup rather than HTML5
+  // drag (which has no continuous-position feedback), so it's independent
+  // of the drag-drop-between-days machinery above. Routine occurrences are
+  // deliberately excluded -- resizing one would need the same "just this
+  // one / every week" confirm flow drag-move already uses
+  // (onDropRoutineOccurrence), which only carries a target date/time
+  // today, not a duration; extending that is its own follow-up.
+  const wkResizeInfo = useRef(null); // {id,edge,startClientY,origStartMin,origDuration}|null, stable for one drag
+  const [wkResize, setWkResize] = useState(null); // {id,edge,liveStartMin,liveDuration}|null, render-facing
+  const eventsRef = useRef(events);
+  eventsRef.current = events;
+  useEffect(()=>{
+    if(!wkResize)return;
+    const MIN_DUR = 15;
+    const onMove=(e)=>{
+      const info = wkResizeInfo.current;
+      if(!info)return;
+      const deltaMin = Math.round((e.clientY - info.startClientY) / (WK_PX_HR / 60) / 5) * 5;
+      if(info.edge==="bottom"){
+        const liveDuration = Math.max(MIN_DUR, info.origDuration + deltaMin);
+        setWkResize({id:info.id, edge:info.edge, liveStartMin:info.origStartMin, liveDuration});
+      }else{
+        const maxStart = info.origStartMin + info.origDuration - MIN_DUR;
+        const liveStartMin = Math.max(0, Math.min(maxStart, info.origStartMin + deltaMin));
+        const liveDuration = info.origStartMin + info.origDuration - liveStartMin;
+        setWkResize({id:info.id, edge:info.edge, liveStartMin, liveDuration});
+      }
+    };
+    const onUp=()=>{
+      const info = wkResizeInfo.current;
+      setWkResize(prev=>{
+        if(info && prev){
+          const startMin = prev.liveStartMin!=null ? prev.liveStartMin : info.origStartMin;
+          const duration = prev.liveDuration!=null ? prev.liveDuration : info.origDuration;
+          if(startMin!==info.origStartMin || duration!==info.origDuration){
+            const newTime = String(Math.floor(startMin/60)).padStart(2,"0")+":"+String(startMin%60).padStart(2,"0");
+            const next = eventsRef.current.map(x=>x.id===info.id?{...x,time:newTime,duration}:x);
+            setEvents(next); lsSet("events", next);
+          }
+        }
+        return null;
+      });
+      wkResizeInfo.current = null;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return ()=>{ document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); };
+  },[wkResize && wkResize.id, setEvents]);
+  const startWkResize=(ev,edge,e,startMin,duration)=>{
+    e.stopPropagation(); e.preventDefault();
+    wkResizeInfo.current={id:ev.id, edge, startClientY:e.clientY, origStartMin:startMin, origDuration:duration};
+    setWkResize({id:ev.id, edge, liveStartMin:null, liveDuration:null});
+    document.body.style.cursor = "ns-resize";
+    document.body.style.userSelect = "none";
+  };
 
   const weekDays = (() => {
     const d = new Date();
@@ -12799,15 +12858,23 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                 {(() => { const dayLaidOut = layoutDayEvents(visibleEvs); return dayLaidOut.map(({ev, col, totalCols, start}) => {
                   const timeParts = ev.time.split(":").map(Number);
                   const hh = timeParts[0]; const mm = timeParts[1];
-                  const topPx = (hh * 60 + mm) * (WK_PX_HR / 60);
+                  const origStartMin = hh * 60 + mm;
                   const dur = ev.duration || 30;
+                  const isRoutine = !!ev.isRoutine;
+                  const isResizing = !isRoutine && wkResize && wkResize.id===ev.id;
+                  const effStartMin = isResizing && wkResize.liveStartMin!=null ? wkResize.liveStartMin : origStartMin;
+                  const effDuration = isResizing && wkResize.liveDuration!=null ? wkResize.liveDuration : dur;
+                  const topPx = effStartMin * (WK_PX_HR / 60);
                   // See computeEventBlockHeightPx -- the 22px minimum-visibility
                   // floor for a short block used to be able to visually bleed
                   // into whatever's stacked right after it in the same
                   // sub-column, even when layoutDayEvents already correctly
-                  // treated them as non-overlapping in real time.
+                  // treated them as non-overlapping in real time. Skipped while
+                  // actively resizing -- the live height should track the drag
+                  // exactly, not get clamped against a neighbor that hasn't
+                  // moved yet.
                   const nextInCol = dayLaidOut.filter(o => o.col === col && o.start > start).sort((a, b) => a.start - b.start)[0];
-                  const heightPx = computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, WK_PX_HR);
+                  const heightPx = isResizing ? Math.max(22, effDuration * (WK_PX_HR / 60)) : computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, WK_PX_HR);
                   const isDone = ev.status === "done";
                   const over = daysOverdue(ev);
                   // Subject color used to BE the block's fill. Now it's a
@@ -12820,7 +12887,6 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   const isStudy = ev.kind === "study block";
                   const isExam = ev.kind === "exam";
                   const isWarningKind = isExam || ev.kind === "deadline";
-                  const isRoutine = !!ev.isRoutine;
                   // Fill is kind-based only: neutral for fixed items (class,
                   // busy block, reminder, everything else), accent for study/
                   // work blocks, warning tint for exams/deadlines themselves.
@@ -12856,7 +12922,25 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                           behind" now, not a per-item red dot competing with it. */}
                       {!catchUpPending&&over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:"0 0 0 1.5px rgba(255,255,255,0.9)",zIndex:1}} />}
                       <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"EXAM · ":""}{ev.title}</div>
-                      {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isWarningKind?tokens.color.warning:tokens.color.textSecondary,marginTop:1}}>{fmtTime(ev.time)}{dur ? " · "+dur+"m" : ""}</div>}
+                      {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isWarningKind?tokens.color.warning:tokens.color.textSecondary,marginTop:1}}>{fmtTime(String(Math.floor(effStartMin/60)).padStart(2,"0")+":"+String(effStartMin%60).padStart(2,"0"))}{effDuration ? " · "+effDuration+"m" : ""}</div>}
+                      {/* Drag-to-resize edge handles -- real events only (see
+                          wkResize's own comment for why routines are excluded).
+                          draggable={false} stops the parent block's native
+                          HTML5 drag from starting when the grab begins here,
+                          so it doesn't fight with the custom mouse-tracking
+                          resize below. */}
+                      {!isRoutine && (
+                        <div draggable={false}
+                          onMouseDown={(e)=>startWkResize(ev,"top",e,origStartMin,dur)}
+                          onClick={(e)=>e.stopPropagation()}
+                          style={{position:"absolute",top:-2,left:0,right:0,height:6,cursor:"ns-resize",zIndex:4}} />
+                      )}
+                      {!isRoutine && (
+                        <div draggable={false}
+                          onMouseDown={(e)=>startWkResize(ev,"bottom",e,origStartMin,dur)}
+                          onClick={(e)=>e.stopPropagation()}
+                          style={{position:"absolute",bottom:-2,left:0,right:0,height:6,cursor:"ns-resize",zIndex:4}} />
+                      )}
                       {isRoutine&&editRoutineMode&&hoveredRoutineId===ev.routineId&&(
                         <button onClick={(e)=>{e.stopPropagation();if(onDeleteRoutine)onDeleteRoutine(ev.routineId);if(setHoveredRoutineId)setHoveredRoutineId(null);}} title="Delete this routine block (every week)"
                           style={{position:"absolute",top:-8,right:-8,width:18,height:18,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.red,fontSize:11,lineHeight:1,cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 4px 10px -2px rgba(0,0,0,0.4)"}}>×</button>
@@ -15365,12 +15449,14 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
         </div>
         <div style={{padding:"12px 14px",display:"flex",flexDirection:"column",gap:10}}>
           <Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Event title" style={{fontSize:13,fontWeight:600}} autoFocus />
-          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-            <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{...wizardSelectStyle,flex:1,minWidth:0}} />
-            {!allDay&&<TimeInput value={startTime} onChange={setStartTime} />}
-            {!allDay&&<span style={{color:T.muted,fontSize:12}}>–</span>}
-            {!allDay&&<TimeInput value={endTime} onChange={setEndTime} />}
-          </div>
+          <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{...wizardSelectStyle,width:"100%",boxSizing:"border-box"}} />
+          {!allDay&&(
+            <div style={{display:"flex",gap:6,alignItems:"center"}}>
+              <TimeInput value={startTime} onChange={setStartTime} />
+              <span style={{color:T.muted,fontSize:12,flexShrink:0}}>–</span>
+              <TimeInput value={endTime} onChange={setEndTime} />
+            </div>
+          )}
           <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,color:T.muted,cursor:"pointer"}}>
             <input type="checkbox" checked={allDay} onChange={e=>setAllDay(e.target.checked)} /> All day
           </label>
