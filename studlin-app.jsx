@@ -312,7 +312,7 @@ async function createGoogleDoc(essay) {
 
 // ─── SHARED PRIMITIVES ────────────────────────────────────────────────────────
 const Btn = ({children,onClick,style={},variant="lime",disabled=false}) => {
-  const base = {display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",borderRadius:7,fontSize:12,fontWeight:600,cursor:disabled?"not-allowed":"pointer",border:"none",fontFamily:T.font,letterSpacing:"0.01em",transition:"opacity 0.15s"};
+  const base = {display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",borderRadius:6,fontSize:12,fontWeight:600,cursor:disabled?"not-allowed":"pointer",border:"none",fontFamily:T.font,letterSpacing:"0.01em",transition:"opacity 0.15s"};
   const variants = {
     lime:{background:T.lime,color:T.bg},
     ghost:{background:"transparent",color:T.muted,border:`1px solid ${T.border}`},
@@ -338,7 +338,7 @@ const Av = ({initials,color=T.lime,size=36,picUrl}) => {
 };
 
 const Card = ({children,style={},onClick}) => (
-  <div data-card onClick={onClick} style={{background:T.card,borderRadius:10,padding:20,border:`1px solid ${T.border}`,cursor:onClick?"pointer":"default",...style}}>{children}</div>
+  <div data-card onClick={onClick} style={{background:T.card,borderRadius:6,padding:20,border:`1px solid ${T.border}`,cursor:onClick?"pointer":"default",...style}}>{children}</div>
 );
 
 // ─── MODAL ────────────────────────────────────────────────────────────────────
@@ -346,7 +346,7 @@ const Modal = ({open, onClose, title, sub, children, footer, width=540}) => {
   if (!open) return null;
   return (
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
-      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:width,maxHeight:"90vh",background:T.card,borderRadius:16,border:`1px solid ${T.border}`,overflow:"hidden",display:"flex",flexDirection:"column",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)",boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)"}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:width,maxHeight:"90vh",background:T.card,borderRadius:8,border:`1px solid ${T.border}`,overflow:"hidden",display:"flex",flexDirection:"column",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)",boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)"}}>
         <div style={{padding:"20px 22px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"flex-start",gap:12}}>
           <div style={{flex:1}}>
             <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>{title}</div>
@@ -870,7 +870,7 @@ const ColorSelect=({value,onChange})=>{
     </div>
   );
 };
-const subjectRowStyle=(color)=>({display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:10,background:color+"14",border:`1px solid ${color}33`,borderLeft:`3px solid ${color}`});
+const subjectRowStyle=(color)=>({display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:6,background:color+"1f",border:`1px solid ${color}40`,borderLeft:`3px solid ${color}`});
 
 // ─── INSTITUTIONAL LIVE-DEMO CLASS ENGINE ────────────────────────────────────
 // Pitch/demo material for university and high-school conversations — wired to
