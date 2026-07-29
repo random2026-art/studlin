@@ -12688,7 +12688,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
     e.preventDefault();
     const time = wkDropTime || '09:00';
     if (sidebarDragChip && onDropSidebarChip) {
-      onDropSidebarChip(dk, time);
+      onDropSidebarChip(dk, time, {x:e.clientX,y:e.clientY});
     } else if (wkDragRoutineOccurrence && onDropRoutineOccurrence) {
       onDropRoutineOccurrence(wkDragRoutineOccurrence.routineId, wkDragRoutineOccurrence.fromDate, dk, time);
     } else if (wkDragId) {
@@ -13039,6 +13039,42 @@ function WizardCollegeBuilder({items,addItem,removeItem,defaultTitle}){
   );
 }
 
+// RosterList (2026-07-29): a flat, named-and-colored list -- drag handle,
+// color dot, name, delete, "+ Add another" -- for places that just need a
+// simple roster, not a full days/time/duration configuration form.
+// Reordering is cosmetic only. Caller controls the shape of a freshly-
+// added row via makeNewItem (RosterList itself only ever touches
+// title/color on existing rows).
+function RosterList({items,setItems,makeNewItem,addLabel}){
+  const [dragIdx,setDragIdx]=useState(null);
+  const addRow=()=>setItems(prev=>[...prev,makeNewItem(prev.length)]);
+  const updateRow=(id,patch)=>setItems(prev=>prev.map(r=>r.id===id?{...r,...patch}:r));
+  const removeRow=(id)=>setItems(prev=>prev.filter(r=>r.id!==id));
+  const reorder=(fromIdx,toIdx)=>setItems(prev=>{
+    const next=prev.slice();
+    const [moved]=next.splice(fromIdx,1);
+    next.splice(toIdx,0,moved);
+    return next;
+  });
+  return (
+    <div>
+      <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12}}>
+        {items.map((r,i)=>(
+          <div key={r.id} draggable onDragStart={()=>setDragIdx(i)} onDragOver={e=>e.preventDefault()}
+            onDrop={()=>{if(dragIdx!==null&&dragIdx!==i)reorder(dragIdx,i);setDragIdx(null);}}
+            style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2}}>
+            <span title="Drag to reorder" style={{cursor:"grab",color:T.faint,fontSize:13,lineHeight:1,userSelect:"none"}}>⠿</span>
+            <ColorSelect value={r.color} onChange={c=>updateRow(r.id,{color:c})} />
+            <Input value={r.title} onChange={e=>updateRow(r.id,{title:e.target.value})} placeholder="Name" style={{flex:1}} />
+            <button type="button" onClick={()=>removeRow(r.id)} title="Remove" style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:16,padding:"0 2px"}}>×</button>
+          </div>
+        ))}
+      </div>
+      <button type="button" onClick={addRow} style={{background:"none",border:"none",color:T.lime,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0}}>+ Add another{addLabel?" "+addLabel:""}</button>
+    </div>
+  );
+}
+
 const classSetupChoiceStyle={width:"100%",textAlign:"left",padding:"14px 16px",borderRadius:12,border:`1.5px solid ${T.border}`,background:T.card2,color:T.text,cursor:"pointer",fontFamily:T.font};
 
 // Shared by Class Setup Wizard's exam review step, Add Task, and Edit
@@ -13234,12 +13270,19 @@ function PhasesOutlineEditor({item,onChange,subject}){
 // commitSyllabusEvents helpers everywhere else in the app already uses —
 // the caller (CalendarTab) re-syncs its own React state from localStorage
 // once onFinish fires, same as subjOnboardOpen's old "Save my classes" did.
+// Full top-level step sequence, in order -- used for real Back navigation
+// (live-preview review 2026-07-29: the wizard only ever had "Skip all",
+// no way to revisit an earlier step, including switching HS<->college
+// after already picking one). Doesn't include addMode's own sub-steps
+// inside "classes" (scan/review/hsSchedule/hsReview) -- those already have
+// their own correct "<- Back" links returning to addMode=null/"choose".
+const WIZARD_STEP_ORDER=["timezone","term","holidays","awake","status","classes","activities","calendarSync","finalReview"];
 // Phase 8: the 6 named steps a fresh account walks through, shown as a
 // top progress stepper. "status" (HS/college fork) isn't its own labeled
 // step -- Shovel doesn't show one either -- it's the entry to "Courses",
-// same as "classes" itself. calendarSync/window/finalReview come after
-// the 6 named steps but aren't part of the stepper, matching how "window"
-// already wasn't a named step before this phase.
+// same as "classes" itself. calendarSync/finalReview come after the 6
+// named steps but aren't part of the stepper (same as "window" wasn't,
+// before it got merged into "awake").
 const WIZARD_STEPPER=[
   {key:"timezone",label:"Timezone"},
   {key:"term",label:"End of Term"},
@@ -13269,7 +13312,7 @@ const WizardStepper=({step})=>{
   );
 };
 
-function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,setActive}){
+function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
   const [step,setStep]=useState("status"); // timezone | term | holidays | awake | status | classes | activities | calendarSync | window | finalReview
   const [status,setStatus]=useState(initialStatus||"");
   // Classes fully reviewed this session, staged -- nothing in here touches
@@ -13295,8 +13338,19 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,setActiv
   const [pasteText,setPasteText]=useState("");
   const [scanError,setScanError]=useState("");
   const [review,setReview]=useState(null); // {subjectName,color,meetingTimes:[],items:[],sourceText}
+  // 2026-07-29 declutter fix: the "When does it meet?" meeting-time
+  // builder used to always show its full form, even for a manually-typed
+  // class with nothing in it yet -- competing for attention with the name
+  // field right above it. Now it starts collapsed to a single line unless
+  // there's already something to show (a syllabus scan that found real
+  // meeting times) or the student explicitly asks to add one.
+  const [meetingTimeExpandedManually,setMeetingTimeExpandedManually]=useState(false);
   const [hsReview,setHsReview]=useState(null); // [{id,subjectName,color,startTime,endTime,days}]
   const [hsFreeReview,setHsFreeReview]=useState([]); // [{id,title,days,startTime,duration}] -- derived, editable (remove-only) before commit
+  // 2026-07-29: which hsReview row's day/time is being edited inline
+  // (double-click, matching the same convention pendingClasses already
+  // uses) -- null means every row shows static text.
+  const [editingHsTimeId,setEditingHsTimeId]=useState(null);
   // Kept separate from pasteMode/pasteText (the syllabus-scan step's own
   // paste fallback) so switching between the two staged flows can't leak
   // stale pasted text across them.
@@ -13316,6 +13370,14 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,setActiv
   const togglePeakBucket=(id)=>setPeakBuckets(prev=>prev.includes(id)?prev.filter(b=>b!==id):[...prev,id]);
 
   const persistPending=(next)=>{setPendingClasses(next);lsSet("classSetupPending",next);};
+  // Real Back navigation (2026-07-29 fix) -- null in quickScan mode (that
+  // session intentionally starts mid-flow with no earlier step to return
+  // to) and on the very first step of a normal session.
+  const prevWizardStep=quickScan?null:(()=>{
+    const idx=WIZARD_STEP_ORDER.indexOf(step);
+    return idx>0?WIZARD_STEP_ORDER[idx-1]:null;
+  })();
+  const goBack=()=>{if(prevWizardStep)setStep(prevWizardStep);};
 
   useEffect(()=>{
     if(!open)return;
@@ -13382,6 +13444,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,setActiv
     setEditingPendingId(null);
     setReviewSub("items");
     setAddMode("review");
+    setMeetingTimeExpandedManually(false);
   };
 
   // Double-click (or the pencil icon) on a class already staged this session
@@ -13394,6 +13457,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,setActiv
     setEditingPendingId(cls.id);
     setReviewSub("items");
     setAddMode("review");
+    setMeetingTimeExpandedManually(false);
   };
 
   const buildReviewFromExtraction=(result,sourceText)=>{
@@ -13431,6 +13495,9 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,setActiv
     setEditingPendingId(null);
     setReviewSub("items");
     setAddMode("review");
+    // Auto-expand when the scan already found real meeting times -- no
+    // reason to hide data Studlin already correctly extracted.
+    setMeetingTimeExpandedManually((result.meetingTimes||[]).length>0);
   };
 
   const IMAGE_EXT_MEDIA_TYPES={png:"image/png",jpg:"image/jpeg",jpeg:"image/jpeg",webp:"image/webp",gif:"image/gif"};
@@ -13492,8 +13559,9 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,setActiv
       startTime:p.startTime||"08:00",endTime:p.endTime||"08:45",
       days:Array.isArray(p.days)&&p.days.length>0?p.days:[0,1,2,3,4],
     }));
-    setHsReview(normalized.map((p,i)=>({id:"hs-"+i,subjectName:p.subjectName||("Period "+(i+1)),color:SUBJECT_COLORS[i%SUBJECT_COLORS.length],startTime:p.startTime,endTime:p.endTime,days:p.days})));
+    setHsReview(normalized.map((p,i)=>({id:"hs-"+i,subjectName:p.subjectName||("Period "+(i+1)),color:SUBJECT_COLORS[i%SUBJECT_COLORS.length],startTime:p.startTime,endTime:p.endTime,days:p.days,isFree:false})));
     setHsFreeReview(deriveFreePeriodsFromPeriods(normalized,schoolStart,schoolEnd));
+    setEditingHsTimeId(null);
     setAddMode("hsReview");
   };
 
@@ -13544,7 +13612,12 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,setActiv
 
   const commitHsSchedule=()=>{
     if(!hsReview||hsReview.length===0)return;
-    const valid=hsReview.filter(p=>p.subjectName.trim());
+    // 2026-07-29: a row explicitly marked Free Period (the AI extracted it
+    // as a "period" but it's genuinely unscheduled time, e.g. a real free
+    // period or study hall on the bell schedule) commits as a free-period
+    // routine instead of a fake class+subject.
+    const valid=hsReview.filter(p=>p.subjectName.trim()&&!p.isFree);
+    const freeFromClasses=hsReview.filter(p=>p.subjectName.trim()&&p.isFree);
     const newSubjects=valid.map(p=>({id:"subj-"+Date.now()+"-"+Math.round(Math.random()*1000),label:p.subjectName.trim(),color:p.color}));
     saveSubjects([...getSubjects(),...newSubjects]);
     const routineItems=valid.map((p,i)=>{
@@ -13555,8 +13628,10 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,setActiv
     // uses (:12754), so these plug straight into the existing scheduling
     // engine's free-period handling with no new logic. hsFreeReview may
     // have been trimmed down by the student on the review screen (remove-
-    // only), so this saves whatever's left, including nothing.
-    const freeItems=hsFreeReview.map(f=>({id:f.id,title:f.title,kind:"free",days:f.days,startTime:f.startTime,duration:f.duration}));
+    // only), so this saves whatever's left, including nothing. Rows
+    // manually flagged Free Period (freeFromClasses) join the same list.
+    const freeItems=hsFreeReview.map(f=>({id:f.id,title:f.title,kind:"free",days:f.days,startTime:f.startTime,duration:f.duration}))
+      .concat(freeFromClasses.map((p,i)=>({id:"free-manual-"+Date.now()+"-"+i,title:p.subjectName.trim(),kind:"free",days:p.days,startTime:p.startTime,duration:Math.max(15,timeToMinutes(p.endTime)-timeToMinutes(p.startTime))})));
     saveWeeklyRoutine([...getWeeklyRoutine(),...routineItems,...freeItems]);
     if(schoolStart&&schoolEnd)saveHsSchoolHours({start:schoolStart,end:schoolEnd});
     if(status)saveProfile({...getProfile(),status});
@@ -13677,10 +13752,34 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,setActiv
           </>)}
 
           {step==="awake"&&(<>
-            <TitleSub title="When are you usually awake?" sub="Distinct from when you like to study -- this is just your day's real bounds, so Studlin never plans anything while you're asleep." />
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <TitleSub title="When are you awake, and when do you like to study?" />
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:20}}>
               <Field label="Wake up"><TimeInput value={wakeTime} onChange={setWakeTime} /></Field>
               <Field label="Sleep"><TimeInput value={sleepTime} onChange={setSleepTime} /></Field>
+            </div>
+            {/* Merged with the old standalone "Preferred Focus Windows"
+                step -- it used to sit unstepped, after Activities, asking
+                a question close enough to Awake time that it felt like a
+                leftover screen tacked onto the end. One screen now: your
+                day's real bounds, then when within that you prefer to
+                study. */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <Field label="Preferred study start"><TimeInput value={workStart} onChange={setWorkStart} /></Field>
+              <Field label="Preferred study end"><TimeInput value={workEnd} onChange={setWorkEnd} /></Field>
+            </div>
+            {windowInvalid&&<div style={{fontSize:11.5,color:T.red,marginTop:8}}>End time must be after start time.</div>}
+            <div style={{marginTop:20}}>
+              <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>
+                Peak Focus Hours <span style={{textTransform:"none",fontWeight:400,color:T.faint}}>(optional)</span>
+              </label>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {TIER0_HOUR_BUCKETS.map(b=>(
+                  <button key={b.id} type="button" onClick={()=>togglePeakBucket(b.id)} style={peakChipStyle(peakBuckets.includes(b.id))}>
+                    {PEAK_BUCKET_LABELS[b.id]}
+                    <span style={{opacity:0.7,marginLeft:4}}>{fmtClock12(minutesToTime(b.startMin))}–{fmtClock12(minutesToTime(b.endMin))}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           </>)}
 
@@ -13782,13 +13881,38 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,setActiv
           {step==="classes"&&addMode==="hsReview"&&hsReview&&(<>
             <TitleSub title="Review your schedule" sub="Check the class names and colors, then add them all at once." />
             <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
-              {hsReview.map((p,i)=>(
-                <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 10px",borderRadius:10,border:`1px solid ${T.border}`}}>
-                  <ColorSelect value={p.color} onChange={c=>setHsReview(r=>r.map((x,xi)=>xi===i?{...x,color:c}:x))} />
-                  <Input value={p.subjectName} onChange={e=>setHsReview(r=>r.map((x,xi)=>xi===i?{...x,subjectName:e.target.value}:x))} style={{flex:1}} />
-                  <div style={{fontSize:11,color:T.muted,whiteSpace:"nowrap"}}>{p.days.map(d=>ROUTINE_DOW[d]).join("")} · {fmtClock12(p.startTime)}–{fmtClock12(p.endTime)}</div>
-                </div>
-              ))}
+              {hsReview.map((p,i)=>{
+                const isEditingTime=editingHsTimeId===p.id;
+                const toggleDay=(d)=>setHsReview(r=>r.map((x,xi)=>xi===i?{...x,days:x.days.includes(d)?x.days.filter(y=>y!==d):[...x.days,d]}:x));
+                return (
+                  <div key={p.id} style={{padding:"9px 10px",borderRadius:10,border:`1px solid ${T.border}`}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <ColorSelect value={p.color} onChange={c=>setHsReview(r=>r.map((x,xi)=>xi===i?{...x,color:c}:x))} />
+                      <Input value={p.subjectName} onChange={e=>setHsReview(r=>r.map((x,xi)=>xi===i?{...x,subjectName:e.target.value}:x))} style={{flex:1}} disabled={p.isFree} />
+                      {!isEditingTime&&(
+                        <div onDoubleClick={()=>setEditingHsTimeId(p.id)} title="Double-click to edit" style={{fontSize:11,color:T.muted,whiteSpace:"nowrap",cursor:"pointer"}}>{p.days.map(d=>ROUTINE_DOW[d]).join("")} · {fmtClock12(p.startTime)}–{fmtClock12(p.endTime)}</div>
+                      )}
+                    </div>
+                    <div style={{display:"flex",gap:6,marginTop:8}}>
+                      <button type="button" onClick={()=>setHsReview(r=>r.map((x,xi)=>xi===i?{...x,isFree:false}:x))} style={wizardChipStyle(!p.isFree)}>Class</button>
+                      <button type="button" onClick={()=>setHsReview(r=>r.map((x,xi)=>xi===i?{...x,isFree:true}:x))} style={wizardChipStyle(!!p.isFree)}>Free Period</button>
+                    </div>
+                    {isEditingTime&&(
+                      <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+                        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
+                          {ROUTINE_DOW.map((d,di)=><button key={di} type="button" onClick={()=>toggleDay(di)} style={wizardChipStyle(p.days.includes(di))}>{d}</button>)}
+                        </div>
+                        <div style={{display:"flex",gap:8,alignItems:"center",justifyContent:"flex-end"}}>
+                          <TimeInput value={p.startTime} onChange={t=>setHsReview(r=>r.map((x,xi)=>xi===i?{...x,startTime:t}:x))} />
+                          <span style={{color:T.muted,fontSize:12}}>–</span>
+                          <TimeInput value={p.endTime} onChange={t=>setHsReview(r=>r.map((x,xi)=>xi===i?{...x,endTime:t}:x))} />
+                          <Btn variant="subtle" onClick={()=>setEditingHsTimeId(null)}>Done</Btn>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
             {hsFreeReview.length>0&&(<>
               <div style={{fontSize:11.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Free time (worked out from your school hours)</div>
@@ -13827,9 +13951,19 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,setActiv
                 </div>
               </Field>
               <div style={{marginTop:16,marginBottom:16}}>
-                <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:2}}>When does it meet?</div>
-                <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>Optional — skip this if it's not a class with fixed meeting times.</div>
-                <WizardCollegeBuilder items={meetingItemsForBuilder} addItem={addMeetingTime} removeItem={removeMeetingTime} defaultTitle={review.subjectName||"Class"} />
+                {/* Collapsed by default for a manual entry with nothing
+                    extracted yet -- meeting time isn't required during
+                    setup anymore, it can be set later by dragging the
+                    class onto the calendar. Auto-expands (and stays
+                    expanded) the moment there's a real meeting time to
+                    show, e.g. from a syllabus scan. */}
+                {!meetingTimeExpandedManually&&review.meetingTimes.length===0?(
+                  <button type="button" onClick={()=>setMeetingTimeExpandedManually(true)}
+                    style={{width:"100%",padding:"10px 12px",borderRadius:6,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,textAlign:"left"}}>+ Add a meeting time (optional — or set this later by dragging the class onto your calendar)</button>
+                ):(<>
+                  <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:8}}>When does it meet?</div>
+                  <WizardCollegeBuilder items={meetingItemsForBuilder} addItem={addMeetingTime} removeItem={removeMeetingTime} defaultTitle={review.subjectName||"Class"} />
+                </>)}
               </div>
               <div style={{marginBottom:8}}>
                 <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:2}}>Assignments, exams &amp; projects</div>
@@ -13909,44 +14043,37 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,setActiv
           })()}
 
           {step==="activities"&&(<>
-            <TitleSub title="Anything else that repeats every week?" sub="Work shifts, practice, clubs — Studlin will build the rest of your schedule around these too. Optional." />
+            <TitleSub title="Anything else that repeats every week?" sub="Work shifts, practice, clubs, routines. Set exactly when later by dragging it onto your calendar." />
+            {/* 2026-07-29: WizardCollegeBuilder (configure days/time/
+                duration before it's even added) replaced with RosterList
+                -- Shovel's actual Activities screen is just a named,
+                colored list (100716/100803), no scheduling controls at
+                all. Matches the same "roster now, drag to schedule later"
+                model manual course entry now uses. */}
             {activities.length===0&&(
               <button type="button" onClick={()=>setActivities([
-                {id:"act-"+Date.now()+"-1",title:"Morning Routine",kind:"busy",days:[0,1,2,3,4],startTime:"07:00",duration:45},
-                {id:"act-"+Date.now()+"-2",title:"Lunch",kind:"busy",days:[0,1,2,3,4],startTime:"12:00",duration:45},
-                {id:"act-"+Date.now()+"-3",title:"Dinner",kind:"busy",days:[0,1,2,3,4,5,6],startTime:"18:30",duration:45},
+                {id:"act-"+Date.now()+"-1",title:"Morning Routine",color:SUBJECT_COLORS[0],kind:"busy",days:[],startTime:null,duration:null},
+                {id:"act-"+Date.now()+"-2",title:"Lunch",color:SUBJECT_COLORS[1],kind:"busy",days:[],startTime:null,duration:null},
+                {id:"act-"+Date.now()+"-3",title:"Dinner",color:SUBJECT_COLORS[2],kind:"busy",days:[],startTime:null,duration:null},
               ])} style={{width:"100%",padding:"12px",borderRadius:6,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.text,cursor:"pointer",fontFamily:T.font,fontSize:13,fontWeight:600,marginBottom:18}}>Start with default activities</button>
             )}
-            <WizardCollegeBuilder items={activities} addItem={(item)=>setActivities(a=>[...a,{id:"act-"+Date.now()+"-"+Math.random(),...item}])} removeItem={(id)=>setActivities(a=>a.filter(x=>x.id!==id))} />
+            <RosterList items={activities} setItems={setActivities} addLabel="Activity"
+              makeNewItem={(i)=>({id:"act-"+Date.now()+"-"+i,title:"",color:SUBJECT_COLORS[i%SUBJECT_COLORS.length],kind:"busy",days:[],startTime:null,duration:null})} />
           </>)}
 
           {step==="calendarSync"&&(<>
-            <TitleSub title="Connect a calendar" sub="Bring in Google Calendar or another calendar so Studlin can see what's already on it. Optional -- you can always do this later from Settings." />
-            <button type="button" onClick={()=>{setStep("window");if(setActive)setActive("settings");}}
-              style={{width:"100%",padding:"14px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.text,cursor:"pointer",fontFamily:T.font,fontSize:13,fontWeight:600,marginBottom:10}}>Connect Google Calendar</button>
-            <div style={{fontSize:11.5,color:T.faint,textAlign:"center"}}>Opens Settings, where the connection lives today.</div>
-          </>)}
-
-          {step==="window"&&(<>
-            <TitleSub title="Preferred Focus Windows" sub="When do you typically prefer to study?" />
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-              <Field label="Preferred study start"><TimeInput value={workStart} onChange={setWorkStart} /></Field>
-              <Field label="Preferred study end"><TimeInput value={workEnd} onChange={setWorkEnd} /></Field>
-            </div>
-            {windowInvalid&&<div style={{fontSize:11.5,color:T.red,marginTop:8}}>End time must be after start time.</div>}
-            <div style={{marginTop:20}}>
-              <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>
-                Peak Focus Hours <span style={{textTransform:"none",fontWeight:400,color:T.faint}}>(optional)</span>
-              </label>
-              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                {TIER0_HOUR_BUCKETS.map(b=>(
-                  <button key={b.id} type="button" onClick={()=>togglePeakBucket(b.id)} style={peakChipStyle(peakBuckets.includes(b.id))}>
-                    {PEAK_BUCKET_LABELS[b.id]}
-                    <span style={{opacity:0.7,marginLeft:4}}>{fmtClock12(minutesToTime(b.startMin))}–{fmtClock12(minutesToTime(b.endMin))}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
+            <TitleSub title="Connect a calendar" sub="Optional. You can do this anytime from Settings." />
+            {/* Bug fix: this used to navigate straight to Settings
+                (setActive("settings")), which unmounts CalendarTab -- and
+                everything in this wizard's local state along with it. A
+                student lost their entire onboarding progress to this.
+                Connecting a calendar is a real, separate flow (OAuth
+                popup) that isn't safe to trigger mid-wizard without more
+                care than tonight allows, so this step is informational
+                only for now -- the actual connection happens after
+                onboarding finishes, from Settings, same as it already
+                works for every other path into that flow. */}
+            <div style={{padding:"14px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,fontSize:12.5,textAlign:"center"}}>You'll find "Connect calendar" in Settings once you're set up.</div>
           </>)}
 
           {step==="finalReview"&&(()=>{
@@ -14030,7 +14157,15 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,setActiv
         </div>
 
         <div style={{padding:"18px 32px",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
-          <button type="button" onClick={onSkip} style={{fontSize:12.5,color:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>Skip all</button>
+          <div style={{display:"flex",alignItems:"center",gap:16}}>
+            {/* Real Back navigation (2026-07-29 fix) -- only at the top of
+                a step; "classes" with an addMode open already has its own
+                correct back links for that sub-navigation. */}
+            {prevWizardStep&&(step!=="classes"||addMode===null)&&(
+              <button type="button" onClick={goBack} style={{fontSize:12.5,color:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>← Back</button>
+            )}
+            <button type="button" onClick={onSkip} style={{fontSize:12.5,color:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>Skip all</button>
+          </div>
           <div style={{display:"flex",gap:10}}>
             {step==="timezone"&&(<Btn onClick={()=>setStep("term")}>Continue</Btn>)}
             {step==="term"&&(<>
@@ -14041,7 +14176,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,setActiv
               <Btn variant="subtle" onClick={()=>setStep("awake")}>Skip</Btn>
               <Btn onClick={()=>setStep("awake")}>Continue</Btn>
             </>)}
-            {step==="awake"&&(<Btn onClick={()=>setStep("status")}>Continue</Btn>)}
+            {step==="awake"&&(<Btn onClick={()=>setStep("status")} disabled={windowInvalid} style={{opacity:windowInvalid?0.45:1}}>Continue</Btn>)}
             {step==="classes"&&addMode===null&&(
               <Btn onClick={()=>quickScan?setStep("finalReview"):setStep("activities")}>{pendingClasses.length>0?"Done adding classes":"Skip, I'll add classes later"}</Btn>
             )}
@@ -14055,12 +14190,8 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,setActiv
               <Btn variant="subtle" onClick={()=>setStep("calendarSync")}>Skip</Btn>
               <Btn onClick={()=>setStep("calendarSync")}>Continue</Btn>
             </>)}
-            {step==="calendarSync"&&(<>
-              <Btn variant="subtle" onClick={()=>setStep("window")}>Skip</Btn>
-              <Btn onClick={()=>setStep("window")}>Continue</Btn>
-            </>)}
-            {step==="window"&&(
-              <Btn onClick={()=>setStep("finalReview")} disabled={windowInvalid} style={{opacity:windowInvalid?0.45:1}}>Continue</Btn>
+            {step==="calendarSync"&&(
+              <Btn onClick={()=>setStep("finalReview")}>Continue</Btn>
             )}
             {step==="finalReview"&&(
               <Btn onClick={commitAllToCalendar} disabled={pendingClasses.length===0} style={{opacity:pendingClasses.length===0?0.45:1}}>Add to Calendar</Btn>
@@ -15155,7 +15286,7 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
 // or one-off EVENT (a class meeting, an activity), not a task with a due
 // date. Presentation-only: the caller supplies onCreate and owns the
 // actual commit (CalendarTab already has routines/events in scope).
-function NewEventModal({open,initialTitle,initialDate,initialStartTime,onClose,onCreate}){
+function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,anchorY,onClose,onCreate}){
   const [title,setTitle]=useState("");
   const [date,setDate]=useState("");
   const [startTime,setStartTime]=useState("09:00");
@@ -15166,7 +15297,6 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,onClose,o
   const [commuteBefore,setCommuteBefore]=useState(0);
   const [commuteAfter,setCommuteAfter]=useState(0);
   const [location,setLocation]=useState("");
-  const [notes,setNotes]=useState("");
   const [movable,setMovable]=useState(false); // Fixed by default; toggle on = Free
 
   useEffect(()=>{
@@ -15185,7 +15315,7 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,onClose,o
     const jsDay=new Date(d+"T12:00:00").getDay();
     setRepeatDays([jsDay===0?6:jsDay-1]);
     setCommuteBefore(0);setCommuteAfter(0);
-    setLocation("");setNotes("");setMovable(false);
+    setLocation("");setMovable(false);
   },[open,initialTitle,initialDate,initialStartTime]);
 
   if(!open)return null;
@@ -15199,58 +15329,70 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,onClose,o
       repeat,
       repeatDays:repeat==="none"?[]:repeatDays,
       commuteBefore,commuteAfter,
-      location:location.trim(),notes:notes.trim(),movable,
+      location:location.trim(),movable,
     });
   };
 
-  return (
-    <Modal open={open} onClose={onClose} title="New event" width={440} footer={
-      <div style={{display:"flex",gap:10,justifyContent:"flex-end",padding:"14px 22px",borderTop:`1px solid ${T.border}`}}>
-        <Btn variant="subtle" onClick={onClose}>Cancel</Btn>
-        <Btn onClick={create} disabled={invalid}>Create</Btn>
-      </div>
-    }>
-      <div style={{padding:"18px 22px",display:"flex",flexDirection:"column",gap:14}}>
-        <Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Event title" style={{fontSize:14,fontWeight:600}} />
-        <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
-          <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={wizardSelectStyle} />
-          {!allDay&&<TimeInput value={startTime} onChange={setStartTime} />}
-          {!allDay&&<span style={{color:T.muted,fontSize:12}}>–</span>}
-          {!allDay&&<TimeInput value={endTime} onChange={setEndTime} />}
+  // 2026-07-29: small anchored popover next to the actual drop point,
+  // not a full-screen centered modal -- same portal+fixed-position
+  // pattern WeeklyPlanner's own event-click popover already uses
+  // (popoverAnchor), reused here instead of inventing a second one.
+  // Falls back to a reasonable default position if no drop point was
+  // captured (shouldn't happen via the drag-drop path, but keeps this
+  // component safe to open from anywhere).
+  const POPOVER_WIDTH=300;
+  const x=anchorX!=null?anchorX:window.innerWidth/2;
+  const y=anchorY!=null?anchorY:window.innerHeight/2;
+  const left=Math.min(Math.max(8,x-POPOVER_WIDTH/2),window.innerWidth-POPOVER_WIDTH-8);
+  const top=Math.min(y+10,window.innerHeight-40);
+  return ReactDOM.createPortal((
+    <>
+      <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:998}} />
+      <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top,left,width:POPOVER_WIDTH,maxHeight:"calc(100vh - "+top+"px - 16px)",overflowY:"auto",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:999,animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 14px",borderBottom:`1px solid ${T.border}`}}>
+          <div style={{fontSize:13,fontWeight:700,color:T.white}}>New event</div>
+          <button type="button" onClick={onClose} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,lineHeight:1,padding:0}}>×</button>
         </div>
-        <label style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:T.muted,cursor:"pointer"}}>
-          <input type="checkbox" checked={allDay} onChange={e=>setAllDay(e.target.checked)} /> All day
-        </label>
-        <Field label="Repeat">
+        <div style={{padding:"12px 14px",display:"flex",flexDirection:"column",gap:10}}>
+          <Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Event title" style={{fontSize:13,fontWeight:600}} autoFocus />
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+            <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{...wizardSelectStyle,flex:1,minWidth:0}} />
+            {!allDay&&<TimeInput value={startTime} onChange={setStartTime} />}
+            {!allDay&&<span style={{color:T.muted,fontSize:12}}>–</span>}
+            {!allDay&&<TimeInput value={endTime} onChange={setEndTime} />}
+          </div>
+          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,color:T.muted,cursor:"pointer"}}>
+            <input type="checkbox" checked={allDay} onChange={e=>setAllDay(e.target.checked)} /> All day
+          </label>
           <select value={repeat} onChange={e=>setRepeat(e.target.value)} style={wizardSelectStyle}>
             <option value="none">Does not repeat</option>
             <option value="weekly">Repeats weekly</option>
             <option value="selected">On selected days</option>
           </select>
-        </Field>
-        {repeat==="selected"&&(
-          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-            {ROUTINE_DOW.map((d,i)=><button key={i} type="button" onClick={()=>toggleRepeatDay(i)} style={wizardChipStyle(repeatDays.includes(i))}>{d}</button>)}
+          {repeat==="selected"&&(
+            <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+              {ROUTINE_DOW.map((d,i)=><button key={i} type="button" onClick={()=>toggleRepeatDay(i)} style={wizardChipStyle(repeatDays.includes(i))}>{d}</button>)}
+            </div>
+          )}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <Field label="Commute before"><Input type="number" min={0} value={commuteBefore} onChange={e=>setCommuteBefore(Math.max(0,+e.target.value||0))} placeholder="0 min" /></Field>
+            <Field label="Commute after"><Input type="number" min={0} value={commuteAfter} onChange={e=>setCommuteAfter(Math.max(0,+e.target.value||0))} placeholder="0 min" /></Field>
           </div>
-        )}
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <Field label="Commute before"><Input type="number" min={0} value={commuteBefore} onChange={e=>setCommuteBefore(Math.max(0,+e.target.value||0))} placeholder="0 min" /></Field>
-          <Field label="Commute after"><Input type="number" min={0} value={commuteAfter} onChange={e=>setCommuteAfter(Math.max(0,+e.target.value||0))} placeholder="0 min" /></Field>
+          <Input value={location} onChange={e=>setLocation(e.target.value)} placeholder="Location (optional)" />
+          <div onClick={()=>setMovable(m=>!m)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer",padding:"8px 10px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2}}>
+            <div style={{fontSize:12,fontWeight:600,color:T.text}}>{movable?"Free":"Fixed"}</div>
+            <div style={{width:32,height:18,borderRadius:9,background:movable?T.lime:T.faint,position:"relative",transition:"background 0.2s",flexShrink:0}}>
+              <div style={{width:14,height:14,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:movable?16:2,transition:"left 0.2s"}} />
+            </div>
+          </div>
         </div>
-        <Input value={location} onChange={e=>setLocation(e.target.value)} placeholder="Location (optional)" />
-        <Textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Notes (optional)" rows={2} style={{minHeight:0}} />
-        <div onClick={()=>setMovable(m=>!m)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer",padding:"10px 12px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2}}>
-          <div>
-            <div style={{fontSize:13,fontWeight:600,color:T.text}}>{movable?"Free":"Fixed"}</div>
-            <div style={{fontSize:11,color:T.muted,marginTop:2}}>{movable?"Studlin can move this if it needs the room.":"This never moves automatically."}</div>
-          </div>
-          <div style={{width:36,height:20,borderRadius:10,background:movable?T.lime:T.faint,position:"relative",transition:"background 0.2s",flexShrink:0}}>
-            <div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:movable?18:2,transition:"left 0.2s"}} />
-          </div>
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end",padding:"10px 14px",borderTop:`1px solid ${T.border}`}}>
+          <Btn variant="subtle" onClick={onClose} style={{padding:"7px 14px",fontSize:12}}>Cancel</Btn>
+          <Btn onClick={create} disabled={invalid} style={{padding:"7px 14px",fontSize:12}}>Create</Btn>
         </div>
       </div>
-    </Modal>
-  );
+    </>
+  ), document.body);
 }
 
 function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,setDetailEventId,registerSetEvents,onTaskCompleted,catchUpPending}={}){
@@ -15273,7 +15415,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // student hits Create in that modal.
   const [sidebarDragChip,setSidebarDragChip]=useState(null); // {title,color,movable}|null
   const [newEventOpen,setNewEventOpen]=useState(false);
-  const [newEventPrefill,setNewEventPrefill]=useState({title:"",date:"",startTime:""});
+  const [newEventPrefill,setNewEventPrefill]=useState({title:"",date:"",startTime:"",chipKind:null,courseId:null,routineId:null});
   // Phase 7e: set when a routine occurrence was just dropped somewhere new,
   // waiting on the student to pick "just this one" or "every week".
   const [routineDropPending,setRoutineDropPending]=useState(null); // {routineId,fromDate,toDate,toTime}|null
@@ -15863,18 +16005,42 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // is internal to that component and would need its own prop-threaded
   // pixel-to-time mapping to support this too, deferred as a fast-follow
   // rather than guessed at blind without a live drag to test against.
-  const openNewEventForDrop=(chip,dateKey,startTime)=>{
-    setNewEventPrefill({title:(chip&&chip.title)||"",date:dateKey,startTime:startTime||"09:00"});
+  const openNewEventForDrop=(chip,dateKey,startTime,anchorPoint)=>{
+    // 2026-07-29: carry the chip's identity through so commit can tell a
+    // course drop (always creates a new class-kind meeting block -- a
+    // course can have several, lecture + lab) from an activity drop
+    // (always UPDATES that one already-real routine in place -- every
+    // activity chip in the sidebar already corresponds to a saved
+    // routine row; dropping it again was silently creating a duplicate
+    // second routine with the same name before this fix). anchorPoint
+    // ({x,y}, the actual drop position) lets the New Event popover open
+    // right next to where the student dropped it, not centered on the
+    // whole screen.
+    setNewEventPrefill({title:(chip&&chip.title)||"",date:dateKey,startTime:startTime||"09:00",
+      chipKind:(chip&&chip.kind)||null,courseId:(chip&&chip.courseId)||null,routineId:(chip&&chip.routineId)||null,
+      anchorX:(anchorPoint&&anchorPoint.x)||null,anchorY:(anchorPoint&&anchorPoint.y)||null});
     setNewEventOpen(true);
   };
   const commitNewEvent=(payload)=>{
     const {title,date,startTime,endTime,allDay,repeat,repeatDays,commuteBefore,commuteAfter,location,notes,movable}=payload;
     const duration=allDay?null:Math.max(5,timeToMinutes(endTime)-timeToMinutes(startTime));
     const common={commuteBefore:commuteBefore||undefined,commuteAfter:commuteAfter||undefined,location:location||undefined,notes:notes||undefined,movable};
-    if(repeat==="none"){
-      commitTasks([{id:"ev-"+Date.now()+"-"+Math.round(Math.random()*1000),title,date,time:allDay?null:startTime,duration,kind:"busy block",status:"pending",...common}]);
+    const {chipKind,courseId,routineId}=newEventPrefill;
+    if(chipKind==="activity"&&routineId){
+      // Update the existing unscheduled (or already-scheduled) routine in
+      // place instead of creating a second one. "Does not repeat" doesn't
+      // really apply to updating a recurring routine -- fall back to just
+      // the dropped day, same as picking "weekly" for that one day.
+      const days=repeat==="none"?[(()=>{const d=new Date(date+"T12:00:00").getDay();return d===0?6:d-1;})()]:repeatDays;
+      persistRoutines(routines.map(r=>r.id===routineId?{...r,days,startTime,duration:duration||r.duration||60,...common}:r));
+    }else if(repeat==="none"){
+      const isCourse=chipKind==="course"&&courseId;
+      commitTasks([{id:"ev-"+Date.now()+"-"+Math.round(Math.random()*1000),title,date,time:allDay?null:startTime,duration,
+        kind:isCourse?"class":"busy block",status:"pending",...(isCourse?{courseId,subject:title}:{}),...common}]);
     }else{
-      persistRoutines([...routines,{id:"rt-"+Date.now()+"-"+Math.round(Math.random()*1000),title,kind:"busy",days:repeatDays,startTime,duration:duration||60,...common}]);
+      const isCourse=chipKind==="course"&&courseId;
+      persistRoutines([...routines,{id:"rt-"+Date.now()+"-"+Math.round(Math.random()*1000),title,kind:isCourse?"class":"busy",
+        days:repeatDays,startTime,duration:duration||60,...(isCourse?{courseId,subject:title}:{}),...common}]);
     }
     setNewEventOpen(false);
     setSidebarDragChip(null);
@@ -16734,6 +16900,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
               const isRenaming=renamingCourseId===sub.id;
               const isConfirmingDelete=confirmDeleteCourseId===sub.id;
               const linkedCount=isConfirmingDelete?countLinkedForCourse(sub):0;
+              // 2026-07-29: a course added via the onboarding roster (or
+              // manual add) has no meeting time yet -- dashed border +
+              // hint nudges toward the drag that actually schedules it.
+              const isUnscheduled=!routines.some(r=>r.kind==="class"&&r.courseId===sub.id&&r.days&&r.days.length>0);
               return (
                 <div key={sub.id} style={{position:"relative"}}>
                   {isConfirmingDelete?(
@@ -16751,9 +16921,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
                       style={{width:"100%",boxSizing:"border-box",...subjectRowStyle(sub.color),border:`1px solid ${sub.color}66`,color:T.text,fontSize:12,fontFamily:T.font,outline:"none"}} />
                   ):(
                     <div onClick={()=>setSelectedCourseId(isSelected?null:sub.id)}
-                      draggable onDragStart={()=>setSidebarDragChip({title:sub.label,color:sub.color,movable:false})} onDragEnd={()=>setSidebarDragChip(null)}
-                      style={{...subjectRowStyle(sub.color),cursor:"pointer",justifyContent:"space-between",outline:isSelected?`2px solid ${sub.color}`:"none",outlineOffset:1}}>
+                      draggable onDragStart={()=>setSidebarDragChip({title:sub.label,color:sub.color,movable:false,kind:"course",courseId:sub.id})} onDragEnd={()=>setSidebarDragChip(null)}
+                      style={{...subjectRowStyle(sub.color),cursor:"pointer",justifyContent:"space-between",outline:isSelected?`2px solid ${sub.color}`:"none",outlineOffset:1,...(isUnscheduled?{border:`1px dashed ${sub.color}66`}:{})}}>
                       <span style={{fontSize:12,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{sub.label}</span>
+                      {isUnscheduled&&<span title="Drag onto the calendar to set when it meets" style={{fontSize:9,color:T.faint,flexShrink:0,marginRight:4}}>not scheduled</span>}
                       <button type="button" onClick={(e)=>{e.stopPropagation();setCourseMenuOpenId(courseMenuOpenId===sub.id?null:sub.id);}}
                         style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:"0 0 0 6px",fontSize:14,lineHeight:1,flexShrink:0}}>⋯</button>
                     </div>
@@ -16776,13 +16947,17 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:6}}>
             {routines.filter(r=>r.kind!=="class").length===0&&<div style={{fontSize:11,color:T.faint,padding:"4px 0"}}>No activities yet.</div>}
-            {routines.filter(r=>r.kind!=="class").map(r=>(
-              <div key={r.id} onClick={()=>openRoutineEdit(r)}
-                draggable onDragStart={()=>setSidebarDragChip({title:r.title,color:r.color||T.muted,movable:false})} onDragEnd={()=>setSidebarDragChip(null)}
-                style={{...subjectRowStyle(r.color||T.muted),cursor:"pointer"}}>
-                <span style={{fontSize:12,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.title}</span>
-              </div>
-            ))}
+            {routines.filter(r=>r.kind!=="class").map(r=>{
+              const isUnscheduled=!r.days||r.days.length===0;
+              return (
+                <div key={r.id} onClick={()=>openRoutineEdit(r)}
+                  draggable onDragStart={()=>setSidebarDragChip({title:r.title,color:r.color||T.muted,movable:false,kind:"activity",routineId:r.id})} onDragEnd={()=>setSidebarDragChip(null)}
+                  style={{...subjectRowStyle(r.color||T.muted),cursor:"pointer",...(isUnscheduled?{border:`1px dashed ${(r.color||T.muted)}66`}:{})}}>
+                  <span style={{fontSize:12,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{r.title}</span>
+                  {isUnscheduled&&<span title="Drag onto the calendar to set when it repeats" style={{fontSize:9,color:T.faint,flexShrink:0}}>not scheduled</span>}
+                </div>
+              );
+            })}
           </div>
         </div>
         )}
@@ -16874,7 +17049,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
               const isSel=c.key===selDay;
               return (
                 <div key={i} onClick={()=>{setSelDay(c.key);}} onDoubleClick={()=>setDayDetailKey(c.key)}
-                  onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(sidebarDragChip){openNewEventForDrop(sidebarDragChip,c.key,"09:00");setSidebarDragChip(null);}else if(dragId){moveEvent(dragId,c.key);setDragId(null);}}}
+                  onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(sidebarDragChip){openNewEventForDrop(sidebarDragChip,c.key,"09:00",{x:e.clientX,y:e.clientY});setSidebarDragChip(null);}else if(dragId){moveEvent(dragId,c.key);setDragId(null);}}}
                   style={{position:"relative",minHeight:64,minWidth:0,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.card2:"transparent",border:"1px solid "+(isSel?T.lime+"55":"transparent"),transition:"all 0.12s",opacity:c.out?0.35:1}}>
                   <div style={{display:"flex",justifyContent:"flex-start"}}>
                     <span style={{width:22,height:22,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:isToday?700:500,background:isToday?T.lime:"transparent",color:isToday?T.ink:c.out?T.faint:T.text}}>{c.d}</span>
@@ -16913,7 +17088,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           routines={routines} editRoutineMode={editRoutineMode} hoveredRoutineId={hoveredRoutineId} setHoveredRoutineId={setHoveredRoutineId}
           onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
           selDay={selDay} setSelDay={setSelDay} onDeleteEvent={deleteEventWithUndo} catchUpPending={catchUpPending}
-          sidebarDragChip={sidebarDragChip} onDropSidebarChip={(dk,time)=>{openNewEventForDrop(sidebarDragChip,dk,time);setSidebarDragChip(null);}}
+          sidebarDragChip={sidebarDragChip} onDropSidebarChip={(dk,time,anchorPoint)=>{openNewEventForDrop(sidebarDragChip,dk,time,anchorPoint);setSidebarDragChip(null);}}
           onDropRoutineOccurrence={onDropRoutineOccurrence} />
       )}
       {calView==="daily"&&(
@@ -16954,9 +17129,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         <TourStep {...CAL_TOUR_STEPS[calTourStep]} step={calTourStep} total={CAL_TOUR_STEPS.length}
           isLast={calTourStep===CAL_TOUR_STEPS.length-1} onNext={advanceCalTour} onSkip={skipCalTour} />
       )}
-      <ClassSetupWizard open={classSetupOpen} initialStatus={getProfile().status} onFinish={finishClassSetup} onSkip={skipClassSetup} setActive={setActive} />
-      <ClassSetupWizard open={quickScanOpen} quickScan initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>setQuickScanOpen(false)} setActive={setActive} />
+      <ClassSetupWizard open={classSetupOpen} initialStatus={getProfile().status} onFinish={finishClassSetup} onSkip={skipClassSetup} />
+      <ClassSetupWizard open={quickScanOpen} quickScan initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>setQuickScanOpen(false)} />
       <NewEventModal open={newEventOpen} initialTitle={newEventPrefill.title} initialDate={newEventPrefill.date} initialStartTime={newEventPrefill.startTime}
+        anchorX={newEventPrefill.anchorX} anchorY={newEventPrefill.anchorY}
         onClose={()=>setNewEventOpen(false)} onCreate={commitNewEvent} />
       {/* Phase 7e: dropped a routine occurrence somewhere new -- ask scope
           before touching anything. "Just this one" only offered when the
