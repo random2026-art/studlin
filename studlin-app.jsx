@@ -1088,6 +1088,19 @@ const saveSchoolTerm=(t)=>lsSet("schoolTerm",t);
 // subtractIntervals. Not read by the scheduling engine itself.
 const getHsSchoolHours=()=>lsGet("hsSchoolHours",null);
 const saveHsSchoolHours=(t)=>lsSet("hsSchoolHours",t);
+// Phase 8: black-out date ranges the term pauses (spring break, etc.) --
+// [{start,end,label}], collected during onboarding. Not consulted by the
+// scheduling engine yet (same "opt-in, additive" spirit as getSchoolTerm
+// when it first shipped) -- this phase just captures and shows them.
+const getHolidays=()=>lsGet("holidays",[]);
+const saveHolidays=(h)=>lsSet("holidays",h);
+// Phase 8: a student's actual wake/sleep hours, genuinely distinct from
+// workStartTime/workEndTime (schedulePrefs) which is a STUDY-hours
+// preference, not "when am I awake at all" -- today those get conflated
+// (a HS student's workStart defaults to right after school lets out, an
+// implicit stand-in for "awake"). {wakeTime,sleepTime}|null.
+const getWakeSleep=()=>lsGet("wakeSleep",null);
+const saveWakeSleep=(w)=>lsSet("wakeSleep",w);
 // A list of {id,url,label,sourceType,lastSyncedAt} for calendars/work
 // schedules the student has imported via /api/cal-proxy (.ics feeds).
 const getImportedCalendars=()=>lsGet("importedCalendars",[]);
@@ -13165,13 +13178,56 @@ function PhasesOutlineEditor({item,onChange,subject}){
 // commitSyllabusEvents helpers everywhere else in the app already uses —
 // the caller (CalendarTab) re-syncs its own React state from localStorage
 // once onFinish fires, same as subjOnboardOpen's old "Save my classes" did.
-function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
-  const [step,setStep]=useState("status"); // status | classes | activities | window | finalReview
+// Phase 8: the 6 named steps a fresh account walks through, shown as a
+// top progress stepper. "status" (HS/college fork) isn't its own labeled
+// step -- Shovel doesn't show one either -- it's the entry to "Courses",
+// same as "classes" itself. calendarSync/window/finalReview come after
+// the 6 named steps but aren't part of the stepper, matching how "window"
+// already wasn't a named step before this phase.
+const WIZARD_STEPPER=[
+  {key:"timezone",label:"Timezone"},
+  {key:"term",label:"End of Term"},
+  {key:"holidays",label:"Holidays"},
+  {key:"awake",label:"Awake time"},
+  {key:"status",label:"Courses"},
+  {key:"classes",label:"Courses"},
+  {key:"activities",label:"Activities"},
+];
+const WizardStepper=({step})=>{
+  const idx=WIZARD_STEPPER.findIndex(s=>s.key===step);
+  if(idx<0)return null;
+  // Collapse the two "Courses"-labeled entries (status+classes) into one
+  // dot for progress purposes, so the stepper reads as 6 steps, not 7.
+  const labels=[];
+  WIZARD_STEPPER.forEach(s=>{if(labels[labels.length-1]?.label!==s.label)labels.push(s);});
+  const activeLabelIdx=labels.findIndex(s=>s.label===WIZARD_STEPPER[idx].label);
+  return (
+    <div style={{display:"flex",gap:16,padding:"20px 32px 0"}}>
+      {labels.map((s,i)=>(
+        <div key={s.key} style={{flex:1}}>
+          <div style={{fontSize:11,fontWeight:600,color:i<=activeLabelIdx?T.text:T.faint,marginBottom:6,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.label}</div>
+          <div style={{height:2,borderRadius:2,background:i<=activeLabelIdx?T.lime:T.border}} />
+        </div>
+      ))}
+    </div>
+  );
+};
+
+function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,setActive}){
+  const [step,setStep]=useState("status"); // timezone | term | holidays | awake | status | classes | activities | calendarSync | window | finalReview
   const [status,setStatus]=useState(initialStatus||"");
   // Classes fully reviewed this session, staged -- nothing in here touches
   // the real calendar until "Add to Calendar" on the final review step.
   // Each entry: {id,name,color,meetingTimes:[...],items:[...],sourceText}.
   const [pendingClasses,setPendingClasses]=useState([]);
+  // Phase 8: the 4 new steps ahead of "status".
+  const [timezone,setTimezone]=useState("");
+  const [termStart,setTermStart]=useState("");
+  const [termEnd,setTermEnd]=useState("");
+  const [holidays,setHolidays]=useState([]); // [{id,start,end,label}]
+  const [holidayDraft,setHolidayDraft]=useState({start:"",end:"",label:""});
+  const [wakeTime,setWakeTime]=useState("07:00");
+  const [sleepTime,setSleepTime]=useState("23:00");
   const [addMode,setAddMode]=useState(null); // null (list) | choose | scan | review | hsSchedule | hsReview
   const [reviewSub,setReviewSub]=useState("items"); // items | sessions -- sub-steps inside addMode==="review"
   const [editingPendingId,setEditingPendingId]=useState(null); // set when the review screen is editing an already-staged class rather than building a new one
@@ -13208,7 +13264,21 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
   useEffect(()=>{
     if(!open)return;
     setStatus(initialStatus||"");
-    setStep(quickScan?"classes":(initialStatus?"classes":"status"));
+    // quickScan (Import syllabus from a course's 3-dot menu) and a
+    // returning user with an already-known status both skip straight to
+    // "classes", same shortcut this wizard already had -- the 4 new
+    // Phase 8 steps ahead of "status" are only for a brand-new account's
+    // very first full pass.
+    setStep(quickScan?"classes":(initialStatus?"classes":"timezone"));
+    setTimezone(detectTz());
+    const term=getSchoolTerm();
+    setTermStart((term&&term.start)||"");
+    setTermEnd((term&&term.end)||"");
+    setHolidays(getHolidays());
+    setHolidayDraft({start:"",end:"",label:""});
+    const wakeSleep=getWakeSleep();
+    setWakeTime((wakeSleep&&wakeSleep.wakeTime)||"07:00");
+    setSleepTime((wakeSleep&&wakeSleep.sleepTime)||"23:00");
     // A half-finished multi-class review (closed the wizard, refreshed the
     // page, came back) is safely recoverable -- nothing in it was ever
     // written to the real calendar, so there's no stale-real-state risk,
@@ -13483,6 +13553,16 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
     // never actually written to the real profile, so Settings' own
     // StatusChip (:19049) would show blank even after finishing here.
     if(status)saveProfile({...getProfile(),status});
+    // Phase 8: the 3 new preamble steps that actually persist something
+    // (Timezone doesn't -- getProfile() always recomputes tz live via
+    // detectTz() on every read, by design, so it auto-updates if a
+    // student travels instead of going stale; that step is read-only
+    // information, not a setting, so there's nothing to save here). All
+    // 3 below quietly no-op if a returning user skipped straight to
+    // "classes" and never touched them.
+    if(termStart&&termEnd)saveSchoolTerm({start:termStart,end:termEnd});
+    saveHolidays(holidays);
+    saveWakeSleep({wakeTime,sleepTime});
     lsSet("classSetupPending",[]);
     setPendingClasses([]);
     onFinish();
@@ -13497,8 +13577,56 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
 
   return (
     <div style={{position:"fixed",inset:0,zIndex:300,background:"rgba(8,12,10,0.82)",backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px"}}>
-      <div style={{width:"100%",maxWidth:620,maxHeight:"88vh",display:"flex",flexDirection:"column",background:T.card,border:`1px solid ${T.border}`,borderRadius:20,boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease"}}>
+      <div style={{width:"100%",maxWidth:620,maxHeight:"88vh",display:"flex",flexDirection:"column",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease"}}>
+        <WizardStepper step={step} />
         <div style={{padding:"28px 32px 0",overflowY:"auto",flex:1,minHeight:0}}>
+
+          {step==="timezone"&&(<>
+            <TitleSub title="Your timezone" sub="Detected automatically from your device, and kept up to date if you travel -- nothing to set here." />
+            <div style={{...subjectRowStyle(T.lime),justifyContent:"center",padding:"16px 12px"}}>
+              <span style={{fontSize:14,fontWeight:600,color:T.text}}>{timezone||detectTz()}</span>
+            </div>
+          </>)}
+
+          {step==="term"&&(<>
+            <TitleSub title="When does this term run?" sub="Studlin stops expecting your classes outside these dates -- summer, before the term starts. You can always change this later in Settings." />
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <Field label="Term starts"><input type="date" value={termStart} onChange={e=>setTermStart(e.target.value)} style={wizardSelectStyle} /></Field>
+              <Field label="Term ends"><input type="date" value={termEnd} onChange={e=>setTermEnd(e.target.value)} style={wizardSelectStyle} /></Field>
+            </div>
+          </>)}
+
+          {step==="holidays"&&(<>
+            <TitleSub title="Any breaks this term?" sub="Spring break, a long weekend -- Studlin won't plan study sessions during these. Optional." />
+            {holidays.length>0&&(
+              <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
+                {holidays.map(h=>(
+                  <div key={h.id} style={{...subjectRowStyle(T.muted),justifyContent:"space-between"}}>
+                    <span style={{fontSize:12.5,color:T.text,fontWeight:600}}>{h.label||"Break"}</span>
+                    <span style={{fontSize:11,color:T.muted}}>{h.start} – {h.end}</span>
+                    <button type="button" onClick={()=>setHolidays(hs=>hs.filter(x=>x.id!==h.id))} title="Remove" style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:15,padding:"0 2px"}}>×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+              <Input value={holidayDraft.label} onChange={e=>setHolidayDraft(d=>({...d,label:e.target.value}))} placeholder="e.g. Spring Break" />
+              <div style={{display:"flex",gap:8}}>
+                <input type="date" value={holidayDraft.start} onChange={e=>setHolidayDraft(d=>({...d,start:e.target.value}))} style={{...wizardSelectStyle,flex:1}} />
+                <input type="date" value={holidayDraft.end} onChange={e=>setHolidayDraft(d=>({...d,end:e.target.value}))} style={{...wizardSelectStyle,flex:1}} />
+              </div>
+            </div>
+            <button type="button" disabled={!holidayDraft.start||!holidayDraft.end} onClick={()=>{setHolidays(hs=>[...hs,{id:"hol-"+Date.now(),...holidayDraft}]);setHolidayDraft({start:"",end:"",label:""});}}
+              style={{width:"100%",padding:"12px",borderRadius:6,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.text,cursor:holidayDraft.start&&holidayDraft.end?"pointer":"not-allowed",fontFamily:T.font,fontSize:13,fontWeight:600,opacity:holidayDraft.start&&holidayDraft.end?1:0.45}}>+ Add a break</button>
+          </>)}
+
+          {step==="awake"&&(<>
+            <TitleSub title="When are you usually awake?" sub="Distinct from when you like to study -- this is just your day's real bounds, so Studlin never plans anything while you're asleep." />
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <Field label="Wake up"><TimeInput value={wakeTime} onChange={setWakeTime} /></Field>
+              <Field label="Sleep"><TimeInput value={sleepTime} onChange={setSleepTime} /></Field>
+            </div>
+          </>)}
 
           {step==="status"&&(<>
             <TitleSub title="What best describes you?" sub="Studlin builds your week differently for school hours vs. a college schedule." />
@@ -13726,7 +13854,21 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
 
           {step==="activities"&&(<>
             <TitleSub title="Anything else that repeats every week?" sub="Work shifts, practice, clubs — Studlin will build the rest of your schedule around these too. Optional." />
+            {activities.length===0&&(
+              <button type="button" onClick={()=>setActivities([
+                {id:"act-"+Date.now()+"-1",title:"Morning Routine",kind:"busy",days:[0,1,2,3,4],startTime:"07:00",duration:45},
+                {id:"act-"+Date.now()+"-2",title:"Lunch",kind:"busy",days:[0,1,2,3,4],startTime:"12:00",duration:45},
+                {id:"act-"+Date.now()+"-3",title:"Dinner",kind:"busy",days:[0,1,2,3,4,5,6],startTime:"18:30",duration:45},
+              ])} style={{width:"100%",padding:"12px",borderRadius:6,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.text,cursor:"pointer",fontFamily:T.font,fontSize:13,fontWeight:600,marginBottom:18}}>Start with default activities</button>
+            )}
             <WizardCollegeBuilder items={activities} addItem={(item)=>setActivities(a=>[...a,{id:"act-"+Date.now()+"-"+Math.random(),...item}])} removeItem={(id)=>setActivities(a=>a.filter(x=>x.id!==id))} />
+          </>)}
+
+          {step==="calendarSync"&&(<>
+            <TitleSub title="Connect a calendar" sub="Bring in Google Calendar or another calendar so Studlin can see what's already on it. Optional -- you can always do this later from Settings." />
+            <button type="button" onClick={()=>{setStep("window");if(setActive)setActive("settings");}}
+              style={{width:"100%",padding:"14px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:T.text,cursor:"pointer",fontFamily:T.font,fontSize:13,fontWeight:600,marginBottom:10}}>Connect Google Calendar</button>
+            <div style={{fontSize:11.5,color:T.faint,textAlign:"center"}}>Opens Settings, where the connection lives today.</div>
           </>)}
 
           {step==="window"&&(<>
@@ -13834,6 +13976,16 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
         <div style={{padding:"18px 32px",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
           <button type="button" onClick={onSkip} style={{fontSize:12.5,color:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>Skip all</button>
           <div style={{display:"flex",gap:10}}>
+            {step==="timezone"&&(<Btn onClick={()=>setStep("term")}>Continue</Btn>)}
+            {step==="term"&&(<>
+              <Btn variant="subtle" onClick={()=>setStep("holidays")}>Skip</Btn>
+              <Btn onClick={()=>setStep("holidays")}>Continue</Btn>
+            </>)}
+            {step==="holidays"&&(<>
+              <Btn variant="subtle" onClick={()=>setStep("awake")}>Skip</Btn>
+              <Btn onClick={()=>setStep("awake")}>Continue</Btn>
+            </>)}
+            {step==="awake"&&(<Btn onClick={()=>setStep("status")}>Continue</Btn>)}
             {step==="classes"&&addMode===null&&(
               <Btn onClick={()=>quickScan?setStep("finalReview"):setStep("activities")}>{pendingClasses.length>0?"Done adding classes":"Skip, I'll add classes later"}</Btn>
             )}
@@ -13844,6 +13996,10 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
               <Btn onClick={finishReviewingClass}>{editingPendingId?"Save changes":"Done"}</Btn>
             )}
             {step==="activities"&&(<>
+              <Btn variant="subtle" onClick={()=>setStep("calendarSync")}>Skip</Btn>
+              <Btn onClick={()=>setStep("calendarSync")}>Continue</Btn>
+            </>)}
+            {step==="calendarSync"&&(<>
               <Btn variant="subtle" onClick={()=>setStep("window")}>Skip</Btn>
               <Btn onClick={()=>setStep("window")}>Continue</Btn>
             </>)}
@@ -16730,8 +16886,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         <TourStep {...CAL_TOUR_STEPS[calTourStep]} step={calTourStep} total={CAL_TOUR_STEPS.length}
           isLast={calTourStep===CAL_TOUR_STEPS.length-1} onNext={advanceCalTour} onSkip={skipCalTour} />
       )}
-      <ClassSetupWizard open={classSetupOpen} initialStatus={getProfile().status} onFinish={finishClassSetup} onSkip={skipClassSetup} />
-      <ClassSetupWizard open={quickScanOpen} quickScan initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>setQuickScanOpen(false)} />
+      <ClassSetupWizard open={classSetupOpen} initialStatus={getProfile().status} onFinish={finishClassSetup} onSkip={skipClassSetup} setActive={setActive} />
+      <ClassSetupWizard open={quickScanOpen} quickScan initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>setQuickScanOpen(false)} setActive={setActive} />
       <NewEventModal open={newEventOpen} initialTitle={newEventPrefill.title} initialDate={newEventPrefill.date} initialStartTime={newEventPrefill.startTime}
         onClose={()=>setNewEventOpen(false)} onCreate={commitNewEvent} />
       {/* Phase 7e: dropped a routine occurrence somewhere new -- ask scope
