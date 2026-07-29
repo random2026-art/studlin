@@ -112,7 +112,8 @@ function loadStudlinModule(options) {
     "getSubjects","saveSubjects","courseIdForLabel","backfillCourseIds",
     "deleteCourseWithCascade","undoCourseDelete",
     "deriveFreePeriodsFromPeriods","getHsSchoolHours","saveHsSchoolHours",
-    "subtractIntervals"];
+    "subtractIntervals","effectiveLeadIn","effectiveTrailOut","isLeadInFixed",
+    "getRoutineOverrides","saveRoutineOverrides","expandRoutineOccurrences"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }

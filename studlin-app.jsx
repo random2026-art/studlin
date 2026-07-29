@@ -1057,6 +1057,21 @@ function undoCourseDelete(snapshot){
 // is untouched, so every other week is unaffected. Written by "Studlin
 // Reschedule"'s skip_class intent (see computePausePlan/confirmPausePlan).
 const getRoutineSkips=()=>lsGet("routineSkips",{});
+// Phase 7e: "just this occurrence" edits to an otherwise-recurring routine
+// (drag one Tuesday's Geology block to a new time without touching every
+// other Tuesday). Keyed the same way getRoutineSkips is -- {routineId:
+// {dateKey:{startTime,duration}}} -- consulted by expandRoutineOccurrences
+// below when materializing that one date. The rule itself is untouched,
+// so every other occurrence keeps the rule's own startTime/duration.
+// Deliberately scoped to a same-day retime/resize, not a cross-day move --
+// an occurrence's very existence on a given date comes from the rule's
+// `days` pattern, so relocating a single occurrence to a genuinely
+// different date would need a second, separate "one-off extra occurrence"
+// mechanism this doesn't attempt (the UI only offers "just this one" when
+// the drop lands on the same date it started on -- see CalendarTab's
+// onDropRoutineOccurrence).
+const getRoutineOverrides=()=>lsGet("routineOverrides",{});
+const saveRoutineOverrides=(o)=>lsSet("routineOverrides",o);
 // The current school term's date range, {start,end} (both "YYYY-MM-DD")
 // or null if never set — opt-in, so a student who hasn't configured this
 // sees no change from today's always-on behavior. Governs only
@@ -1127,6 +1142,7 @@ function expandRoutineOccurrences(routines,startDateKey,endDateKey){
   if(!routines||routines.length===0)return out;
   const skips=getRoutineSkips();
   const term=getSchoolTerm();
+  const overrides=getRoutineOverrides();
   const start=new Date(startDateKey+"T00:00:00");
   const end=new Date(endDateKey+"T00:00:00");
   for(let d=new Date(start);d<=end;d.setDate(d.getDate()+1)){
@@ -1146,18 +1162,23 @@ function expandRoutineOccurrences(routines,startDateKey,endDateKey){
       // configured means nothing changes.
       if(r.kind==="class"&&term&&(dk<term.start||dk>term.end))return;
       if(skippedToday.includes(r.id))return;
+      // Phase 7e: a "just this occurrence" retime/resize overrides only
+      // this one date's time/duration -- every other occurrence of the
+      // same rule keeps r.startTime/r.duration untouched.
+      const override=overrides[r.id]&&overrides[r.id][dk];
       out.push({
         id:"routine-"+r.id+"-"+dk,
         routineId:r.id,
         title:r.title,
         date:dk,
-        time:r.startTime,
-        duration:r.duration||30,
+        time:override?override.startTime:r.startTime,
+        duration:override?override.duration:(r.duration||30),
         kind:ROUTINE_KIND_TO_EVENT_KIND[r.kind]||"class",
         subject:r.subject||"",
         color:r.color||null,
         status:"pending",
         isRoutine:true,
+        overridden:!!override,
       });
     });
   }
@@ -1222,7 +1243,7 @@ const CATCHUP_BUFFER_MINS=120;
 function computeOccupiedIntervals(events,routines,prefs,dateKey){
   return events.filter(e=>e.date===dateKey&&e.time)
     .concat(expandRoutineOccurrences(routines,dateKey,dateKey).filter(o=>o.kind!=="free period"))
-    .map(e=>({start:timeToMinutes(e.time)-(isLeadInFixed(e)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
+    .map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)}));
 }
 // Privacy-scoped payload for the opt-in shared free/busy feature (Studlin
 // Match, see findSharedStudyWindow in ChatDrawer) — busy TIME intervals
@@ -1366,7 +1387,7 @@ function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,
     // after it rather than allowing zero-gap back-to-back placement.
     const occupied=events.filter(e=>e.date===dk&&e.time)
       .concat(expandRoutineOccurrences(routines,dk,dk).filter(o=>o.kind!=="free period"))
-      .map(e=>({start:timeToMinutes(e.time)-(isLeadInFixed(e)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
+      .map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)}));
     let scanStart=dayOffset===0?Math.max(prefStartMins,timeToMinutes(desiredTime)):prefStartMins;
     if(dk===todayKey)scanStart=Math.max(scanStart,nowFloorMins);
     if(scanStart+duration>prefEndMins){
@@ -1422,7 +1443,7 @@ function findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,durat
   if(tMins<winStart||tMins+duration>effectiveEnd)return null;
   const occupied=events.filter(e=>e.date===slot.date&&e.time)
     .concat(expandRoutineOccurrences(routines,slot.date,slot.date).filter(o=>o.kind!=="free period"))
-    .map(e=>({start:timeToMinutes(e.time)-(isLeadInFixed(e)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
+    .map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)}));
   const conflict=occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end));
   return conflict?null:slot;
 }
@@ -1446,7 +1467,7 @@ function dayHasRoomFor(events,routines,prefs,dateKey,duration,desiredTime){
   const prefEndMins=dateKey===dayKey()?Math.min(1440,dayWindow.end+CATCHUP_BUFFER_MINS):dayWindow.end;
   const occupied=events.filter(e=>e.date===dateKey&&e.time)
     .concat(expandRoutineOccurrences(routines,dateKey,dateKey).filter(o=>o.kind!=="free period"))
-    .map(e=>({start:timeToMinutes(e.time)-(isLeadInFixed(e)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
+    .map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)}));
   for(let t=prefStartMins;t+duration<=prefEndMins;t+=15){
     if(!occupied.some(o=>!(t+duration<=o.start||t>=o.end)))return true;
   }
@@ -1603,7 +1624,27 @@ function isCoopStudySession(ev){return !!(ev&&ev.studySessionId);}
 // had its own local copy of this union, so co-op sessions got a lead-in
 // buffer there but not in findOpenSlotFor/findLegalSlotOrNull/dayHasRoomFor/
 // computeOccupiedIntervals, silently disagreeing about the same slot.
-function isLeadInFixed(e){return TIER0_FIXED_KINDS.has(e.kind)||isCoopStudySession(e);}
+// Phase 7b: a student can explicitly mark an otherwise-fixed-kind item
+// (class/busy block/exam/reminder) as movable via the Free/Fixed toggle
+// (New Event modal, Phase 7c) -- e.movable===true overrides the kind-based
+// default. Deliberately NOT an override for co-op sessions: those are
+// fixed for a structural reason (desyncing from other participants'
+// calendars, see isCoopStudySession above), not a personal preference, so
+// there's no toggle for it and none should exist.
+function isLeadInFixed(e){return (TIER0_FIXED_KINDS.has(e.kind)&&!e.movable)||isCoopStudySession(e);}
+// Extracted from the "start:...-(isLeadInFixed(e)?LEAD_IN_BUFFER_MINS:0)"
+// formula repeated at every occupied-interval builder in this file
+// (Phase 7a). Layers a student-set, per-event `commuteBefore` (minutes,
+// set via the New Event modal, Phase 7c) on top of the existing global
+// fixed-kind lead-in -- additive, so any event with no `commuteBefore` set
+// (i.e. every event that existed before this field existed) behaves
+// exactly as it did before this function existed.
+function effectiveLeadIn(e){return (isLeadInFixed(e)?LEAD_IN_BUFFER_MINS:0)+(e.commuteBefore||0);}
+// Extracted from the "+computeBreathingRoom(e.duration||30)" trailing-
+// buffer term, same reasoning as effectiveLeadIn above -- layers a
+// student-set, per-event `commuteAfter` on top of the existing proportional
+// breathing-room cushion, additive/backward-compatible the same way.
+function effectiveTrailOut(e){return computeBreathingRoom(e.duration||30)+(e.commuteAfter||0);}
 // Canonical "this item can never be automatically relocated" check --
 // isLeadInFixed's own union (TIER0_FIXED_KINDS: exam/class/busy block/
 // reminder, plus co-op sessions) union'd with truly user-pinned items.
@@ -2227,7 +2268,7 @@ function undoTier0Move(taskId){
   const tMins=timeToMinutes(time);
   const occupied=events.filter(e=>e.id!==taskId&&e.date===date&&e.time)
     .concat(expandRoutineOccurrences(getWeeklyRoutine(),date,date).filter(o=>o.kind!=="free period"))
-    .map(e=>({start:timeToMinutes(e.time)-(isLeadInFixed(e)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}));
+    .map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)}));
   if(occupied.some(o=>!(tMins+durationMins<=o.start||tMins>=o.end)))return {events,blocked:true};
   const next=events.map(e=>{
     if(e.id!==taskId)return e;
@@ -2276,7 +2317,7 @@ function reconcileFixedEventConflicts(newFixedEvents){
   const needsAttention=[];
   let working=existing.slice();
   timed.forEach(nf=>{
-    working.filter(e=>(TIER0_FIXED_KINDS.has(e.kind)||isCoopStudySession(e))&&e.time).forEach(e=>{
+    working.filter(e=>isLeadInFixed(e)&&e.time).forEach(e=>{
       if(overlaps(nf,e))needsAttention.push({newEvent:nf,conflictsWith:e});
     });
     working=working.map(e=>{
@@ -4509,11 +4550,11 @@ function rebalanceDay(dateKey,allEvents,routines,prefs){
   const rest=allEvents.filter(function(e){return !isFlexPending(e);});
 
   const occupiedBase=rest.filter(function(e){return e.date===dateKey&&e.time;}).map(function(e){
-    return{start:timeToMinutes(e.time)-(isFixed(e)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)};
+    return{start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)};
   });
   expandRoutineOccurrences(routines||[],dateKey,dateKey)
     .filter(function(r){return r.kind!=="free period";})
-    .forEach(function(r){occupiedBase.push({start:timeToMinutes(r.time)-(isFixed(r)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(r.time)+(r.duration||30)+computeBreathingRoom(r.duration||30)});});
+    .forEach(function(r){occupiedBase.push({start:timeToMinutes(r.time)-effectiveLeadIn(r),end:timeToMinutes(r.time)+(r.duration||30)+effectiveTrailOut(r)});});
 
   // With only one flexible task, there's nothing to reorder relative to —
   // leave it exactly where it is unless it's actually colliding with
@@ -4594,11 +4635,13 @@ function computeWeekBalancePlan(events,routines,prefs,startDateKey){
     const d=new Date(startDateKey+"T12:00:00");d.setDate(d.getDate()+i);
     days.push(dayKey(d));
   }
-  const isFixed=e=>TIER0_FIXED_KINDS.has(e.kind)||isCoopStudySession(e);
   // Same flexible-task definition rebalanceDay uses (isFlexPending above),
   // plus userPinned excluded the same way — a student who explicitly
   // pinned a task gets to keep it exactly where they put it, even here.
-  const isFlex=e=>!isFixed(e)&&!e.checklist&&e.status==="pending"&&e.time&&e.duration&&!e.userPinned;
+  // Routed through the shared isLeadInFixed (Phase 7b) instead of its own
+  // local copy of the same TIER0_FIXED_KINDS||isCoopStudySession formula,
+  // so a movable:true override on a fixed-kind item is respected here too.
+  const isFlex=e=>!isLeadInFixed(e)&&!e.checklist&&e.status==="pending"&&e.time&&e.duration&&!e.userPinned;
   const minutesFor=(dk,pool)=>pool.filter(e=>e.date===dk&&isFlex(e)).reduce((sum,e)=>sum+(e.duration||0),0);
 
   const before={};
@@ -5045,8 +5088,8 @@ function advancedSchedulePlanner(baseEvents){
   // events AND already-timed flexible tasks both have to block a timeless
   // item from landing on top of them.
   const occupiedSlots=[
-    ...hardEvents.map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)})),
-    ...flexibleTimed.map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)})),
+    ...hardEvents.map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)})),
+    ...flexibleTimed.map(e=>({start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)})),
     ...shieldOccurrences.map(r=>({start:timeToMinutes(r.time),end:timeToMinutes(r.time)+(r.duration||30)})),
   ];
 
@@ -12467,7 +12510,7 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
 
-function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending}) {
+function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence}) {
   // Compact, fixed per-hour scale (held constant across the agenda-collapse
   // toggle) so several hours are visible at a glance, like Google Calendar.
   const WK_PX_HR = 48;
@@ -12526,6 +12569,12 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
   const [wkDragDeadline, setWkDragDeadline] = useState(null);
   const [wkDragOverDay, setWkDragOverDay] = useState(null);
   const [wkDropTime, setWkDropTime] = useState(null);
+  // Phase 7e: dragging one occurrence of a recurring routine block (only
+  // possible in editRoutineMode -- ordinary browsing stays click-only,
+  // same gate the existing onClick->onEditRoutine already uses). Separate
+  // from wkDragId (a real, single event) since dropping this needs to ask
+  // "just this one, or every week" instead of silently moving one event.
+  const [wkDragRoutineOccurrence, setWkDragRoutineOccurrence] = useState(null); // {routineId,fromDate}|null
 
   const weekDays = (() => {
     const d = new Date();
@@ -12570,15 +12619,22 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
 
   const handleDrop = (e, dk) => {
     e.preventDefault();
-    if (!wkDragId) return;
     const time = wkDropTime || '09:00';
-    // Routed through the same guarded moveEvent the Monthly grid uses, so
-    // the deadline Hard Wall (Tier 2) has one enforcement point, not two.
-    moveEvent(wkDragId, dk, time);
-    setWkDragId(null); setWkDragDeadline(null); setWkDragOverDay(null); setWkDropTime(null);
+    if (sidebarDragChip && onDropSidebarChip) {
+      onDropSidebarChip(dk, time);
+    } else if (wkDragRoutineOccurrence && onDropRoutineOccurrence) {
+      onDropRoutineOccurrence(wkDragRoutineOccurrence.routineId, wkDragRoutineOccurrence.fromDate, dk, time);
+    } else if (wkDragId) {
+      // Routed through the same guarded moveEvent the Monthly grid uses, so
+      // the deadline Hard Wall (Tier 2) has one enforcement point, not two.
+      moveEvent(wkDragId, dk, time);
+    } else {
+      return;
+    }
+    setWkDragId(null); setWkDragDeadline(null); setWkDragOverDay(null); setWkDropTime(null); setWkDragRoutineOccurrence(null);
   };
 
-  const handleDragEnd = () => { setWkDragId(null); setWkDragDeadline(null); setWkDragOverDay(null); setWkDropTime(null); };
+  const handleDragEnd = () => { setWkDragId(null); setWkDragDeadline(null); setWkDragOverDay(null); setWkDropTime(null); setWkDragRoutineOccurrence(null); };
 
   const DAY_NAMES = ["MON","TUE","WED","THU","FRI","SAT","SUN"];
 
@@ -12718,8 +12774,8 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   const widthPct = 100 / totalCols;
                   return (
                     <div key={ev.id}
-                      draggable={!isRoutine}
-                      onDragStart={()=>{ if(!isRoutine){setWkDragId(ev.id); setWkDragDeadline(ev.deadline||null);closePopover();} }}
+                      draggable={!isRoutine || editRoutineMode}
+                      onDragStart={()=>{ if(!isRoutine){setWkDragId(ev.id); setWkDragDeadline(ev.deadline||null);closePopover();} else if(editRoutineMode){setWkDragRoutineOccurrence({routineId:ev.routineId,fromDate:ev.date});} }}
                       onDoubleClick={()=>{ if(!isRoutine)openEdit(ev); }}
                       onClick={(e)=>{
                         if(isRoutine){ if(editRoutineMode&&onEditRoutine)onEditRoutine(ev.routineId); return; }
@@ -14870,6 +14926,112 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
   </>);
 }
 
+// New Event modal (Phase 7c) -- opened when a course/activity chip from
+// the Calendar sidebar is dropped onto the grid (Phase 7d), prefilled
+// with the dropped time. Deliberately a new, simpler modal rather than
+// extending the existing "New task" modal (checklist/assignment-shaped,
+// subject/difficulty/attack-block fields) -- this one is for a recurring
+// or one-off EVENT (a class meeting, an activity), not a task with a due
+// date. Presentation-only: the caller supplies onCreate and owns the
+// actual commit (CalendarTab already has routines/events in scope).
+function NewEventModal({open,initialTitle,initialDate,initialStartTime,onClose,onCreate}){
+  const [title,setTitle]=useState("");
+  const [date,setDate]=useState("");
+  const [startTime,setStartTime]=useState("09:00");
+  const [endTime,setEndTime]=useState("10:00");
+  const [allDay,setAllDay]=useState(false);
+  const [repeat,setRepeat]=useState("none"); // none | weekly | selected
+  const [repeatDays,setRepeatDays]=useState([]);
+  const [commuteBefore,setCommuteBefore]=useState(0);
+  const [commuteAfter,setCommuteAfter]=useState(0);
+  const [location,setLocation]=useState("");
+  const [notes,setNotes]=useState("");
+  const [movable,setMovable]=useState(false); // Fixed by default; toggle on = Free
+
+  useEffect(()=>{
+    if(!open)return;
+    setTitle(initialTitle||"");
+    const d=initialDate||dayKey();
+    setDate(d);
+    const st=initialStartTime||"09:00";
+    setStartTime(st);
+    setEndTime(minutesToTime(timeToMinutes(st)+60));
+    setAllDay(false);
+    setRepeat("none");
+    // Weekday of the dropped date, pre-checked as a head start if the
+    // student switches to "On selected days" -- ROUTINE_DOW is Mon-first
+    // (0=Mon..6=Sun), JS's own Date#getDay() is Sun-first (0=Sun..6=Sat).
+    const jsDay=new Date(d+"T12:00:00").getDay();
+    setRepeatDays([jsDay===0?6:jsDay-1]);
+    setCommuteBefore(0);setCommuteAfter(0);
+    setLocation("");setNotes("");setMovable(false);
+  },[open,initialTitle,initialDate,initialStartTime]);
+
+  if(!open)return null;
+  const toggleRepeatDay=(i)=>setRepeatDays(d=>d.includes(i)?d.filter(x=>x!==i):[...d,i]);
+  const invalid=!title.trim()||(!allDay&&timeToMinutes(endTime)<=timeToMinutes(startTime))||(repeat==="selected"&&repeatDays.length===0);
+
+  const create=()=>{
+    if(invalid)return;
+    onCreate({
+      title:title.trim(),date,startTime,endTime,allDay,
+      repeat,
+      repeatDays:repeat==="none"?[]:repeatDays,
+      commuteBefore,commuteAfter,
+      location:location.trim(),notes:notes.trim(),movable,
+    });
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="New event" width={440} footer={
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end",padding:"14px 22px",borderTop:`1px solid ${T.border}`}}>
+        <Btn variant="subtle" onClick={onClose}>Cancel</Btn>
+        <Btn onClick={create} disabled={invalid}>Create</Btn>
+      </div>
+    }>
+      <div style={{padding:"18px 22px",display:"flex",flexDirection:"column",gap:14}}>
+        <Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Event title" style={{fontSize:14,fontWeight:600}} />
+        <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+          <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={wizardSelectStyle} />
+          {!allDay&&<TimeInput value={startTime} onChange={setStartTime} />}
+          {!allDay&&<span style={{color:T.muted,fontSize:12}}>–</span>}
+          {!allDay&&<TimeInput value={endTime} onChange={setEndTime} />}
+        </div>
+        <label style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:T.muted,cursor:"pointer"}}>
+          <input type="checkbox" checked={allDay} onChange={e=>setAllDay(e.target.checked)} /> All day
+        </label>
+        <Field label="Repeat">
+          <select value={repeat} onChange={e=>setRepeat(e.target.value)} style={wizardSelectStyle}>
+            <option value="none">Does not repeat</option>
+            <option value="weekly">Repeats weekly</option>
+            <option value="selected">On selected days</option>
+          </select>
+        </Field>
+        {repeat==="selected"&&(
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            {ROUTINE_DOW.map((d,i)=><button key={i} type="button" onClick={()=>toggleRepeatDay(i)} style={wizardChipStyle(repeatDays.includes(i))}>{d}</button>)}
+          </div>
+        )}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Field label="Commute before"><Input type="number" min={0} value={commuteBefore} onChange={e=>setCommuteBefore(Math.max(0,+e.target.value||0))} placeholder="0 min" /></Field>
+          <Field label="Commute after"><Input type="number" min={0} value={commuteAfter} onChange={e=>setCommuteAfter(Math.max(0,+e.target.value||0))} placeholder="0 min" /></Field>
+        </div>
+        <Input value={location} onChange={e=>setLocation(e.target.value)} placeholder="Location (optional)" />
+        <Textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Notes (optional)" rows={2} style={{minHeight:0}} />
+        <div onClick={()=>setMovable(m=>!m)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer",padding:"10px 12px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2}}>
+          <div>
+            <div style={{fontSize:13,fontWeight:600,color:T.text}}>{movable?"Free":"Fixed"}</div>
+            <div style={{fontSize:11,color:T.muted,marginTop:2}}>{movable?"Studlin can move this if it needs the room.":"This never moves automatically."}</div>
+          </div>
+          <div style={{width:36,height:20,borderRadius:10,background:movable?T.lime:T.faint,position:"relative",transition:"background 0.2s",flexShrink:0}}>
+            <div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:movable?18:2,transition:"left 0.2s"}} />
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,setDetailEventId,registerSetEvents,onTaskCompleted,catchUpPending}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.muted},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
@@ -14883,6 +15045,17 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   const toggleCalSidebarCollapsed=()=>setCalSidebarCollapsedState(v=>{lsSet("calSidebarCollapsed",!v);return !v;});
   const [calRightColCollapsed,setCalRightColCollapsedState]=useState(()=>lsGet("calRightColCollapsed",false));
   const toggleCalRightColCollapsed=()=>setCalRightColCollapsedState(v=>{lsSet("calRightColCollapsed",!v);return !v;});
+  // ── Phase 7d: drag a course/activity chip from the sidebar onto the
+  // calendar to set/create its meeting time. Separate from `dragId` above
+  // (that's for moving an EXISTING event between days) -- this carries
+  // just enough to prefill NewEventModal, nothing commits until the
+  // student hits Create in that modal.
+  const [sidebarDragChip,setSidebarDragChip]=useState(null); // {title,color,movable}|null
+  const [newEventOpen,setNewEventOpen]=useState(false);
+  const [newEventPrefill,setNewEventPrefill]=useState({title:"",date:"",startTime:""});
+  // Phase 7e: set when a routine occurrence was just dropped somewhere new,
+  // waiting on the student to pick "just this one" or "every week".
+  const [routineDropPending,setRoutineDropPending]=useState(null); // {routineId,fromDate,toDate,toTime}|null
   // Drives the right-hand column (5e): null = "upcoming across everything",
   // a course id = filtered to just that course.
   const [selectedCourseId,setSelectedCourseId]=useState(null);
@@ -15328,7 +15501,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       // this used to omit "reminder", meaning a point-in-time nudge could
       // get silently relocated here even though Tier 0 would never touch
       // one.
-      if(TIER0_FIXED_KINDS.has(ev.kind)||isCoopStudySession(ev))return ev;
+      if(isLeadInFixed(ev))return ev;
       if(ev.date>horizonEnd)return ev;
       const duration=ev.duration||30;
       const tMins=timeToMinutes(ev.time);
@@ -15461,6 +15634,64 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     if(label&&label!==sub.label)saveSubjects(getSubjects().map(s=>s.id===sub.id?{...s,label}:s));
     setUserSubjectsState(getSubjects());
     setRenamingCourseId(null);
+  };
+  // ── Phase 7d: sidebar chip -> New Event modal ──
+  // Dropping a course/activity chip opens NewEventModal prefilled with the
+  // dropped time; nothing commits until Create. Month-view drop target
+  // only for now (date-level precision) -- WeeklyPlanner's own drag state
+  // is internal to that component and would need its own prop-threaded
+  // pixel-to-time mapping to support this too, deferred as a fast-follow
+  // rather than guessed at blind without a live drag to test against.
+  const openNewEventForDrop=(chip,dateKey,startTime)=>{
+    setNewEventPrefill({title:(chip&&chip.title)||"",date:dateKey,startTime:startTime||"09:00"});
+    setNewEventOpen(true);
+  };
+  const commitNewEvent=(payload)=>{
+    const {title,date,startTime,endTime,allDay,repeat,repeatDays,commuteBefore,commuteAfter,location,notes,movable}=payload;
+    const duration=allDay?null:Math.max(5,timeToMinutes(endTime)-timeToMinutes(startTime));
+    const common={commuteBefore:commuteBefore||undefined,commuteAfter:commuteAfter||undefined,location:location||undefined,notes:notes||undefined,movable};
+    if(repeat==="none"){
+      commitTasks([{id:"ev-"+Date.now()+"-"+Math.round(Math.random()*1000),title,date,time:allDay?null:startTime,duration,kind:"busy block",status:"pending",...common}]);
+    }else{
+      persistRoutines([...routines,{id:"rt-"+Date.now()+"-"+Math.round(Math.random()*1000),title,kind:"busy",days:repeatDays,startTime,duration:duration||60,...common}]);
+    }
+    setNewEventOpen(false);
+    setSidebarDragChip(null);
+  };
+  // ── Phase 7e: recurring per-occurrence edit-scope ──
+  const onDropRoutineOccurrence=(routineId,fromDate,toDate,toTime)=>{
+    setRoutineDropPending({routineId,fromDate,toDate,toTime});
+  };
+  const applyRoutineDropScope=(scope)=>{
+    if(!routineDropPending)return;
+    const {routineId,fromDate,toDate,toTime}=routineDropPending;
+    const rule=routines.find(r=>r.id===routineId);
+    if(!rule){setRoutineDropPending(null);return;}
+    if(scope==="always"){
+      // Whole-rule edit: shift the time everywhere, and if the drop also
+      // landed on a different weekday, swap that weekday into r.days so
+      // the series moves to the new day going forward.
+      const fromDow=(new Date(fromDate+"T12:00:00").getDay()+6)%7;
+      const toDow=(new Date(toDate+"T12:00:00").getDay()+6)%7;
+      const newDays=fromDow===toDow?rule.days:Array.from(new Set(rule.days.filter(d=>d!==fromDow).concat([toDow]))).sort((a,b)=>a-b);
+      persistRoutines(routines.map(r=>r.id===routineId?{...r,days:newDays,startTime:toTime}:r));
+    }else{
+      // "Just this one" -- same-day only (see getRoutineOverrides' own
+      // comment for why a cross-day single-occurrence move isn't
+      // representable yet); the confirm modal only offers this option
+      // when fromDate===toDate, so this branch can trust that.
+      const overrides=getRoutineOverrides();
+      const forRoutine={...(overrides[routineId]||{})};
+      forRoutine[toDate]={startTime:toTime,duration:rule.duration||30};
+      saveRoutineOverrides({...overrides,[routineId]:forRoutine});
+      // routineOverrides lives in its own localStorage key, not in
+      // `routines` React state -- expandRoutineOccurrences reads the
+      // override fresh from storage every call, so a new array reference
+      // (same rules, unchanged) is enough to force the re-render that
+      // picks it up, without actually touching the rule itself.
+      setRoutinesState([...routines]);
+    }
+    setRoutineDropPending(null);
   };
   const monthNames=["January","February","March","April","May","June","July","August","September","October","November","December"];
   const lead=(new Date(ym.y,ym.m,1).getDay()+6)%7;
@@ -15786,9 +16017,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   const resolveManualSlot=(date,time,duration)=>{
     if(evKind==="exam"||evKind==="class"||evKind==="busy block")return {date,time};
     const occupied=events.filter(e=>e.date===date&&e.time)
-      .map(e=>({start:timeToMinutes(e.time)-(isLeadInFixed(e)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)}))
+      .map(e=>({start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)}))
       .concat(expandRoutineOccurrences(routines,date,date).filter(o=>o.kind!=="free period")
-        .map(o=>({start:timeToMinutes(o.time)-(TIER0_FIXED_KINDS.has(o.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(o.time)+(o.duration||30)+computeBreathingRoom(o.duration||30)})));
+        .map(o=>({start:timeToMinutes(o.time)-(TIER0_FIXED_KINDS.has(o.kind)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(o.time)+(o.duration||30)+effectiveTrailOut(o)})));
     const tMins=timeToMinutes(time);
     const conflict=occupied.some(o=>!(tMins+duration<=o.start||tMins>=o.end));
     return conflict?findReliableSlotFor(events,routines,getSchedulePreferences(),date,time,duration,undefined,evDifficulty):{date,time,reason:null};
@@ -16039,10 +16270,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       // existing nearest-open-slot search below relocates around both
       // uniformly, instead of a separate reject-and-explain path.
       const occupied=events.filter(e=>e.id!==id&&e.date===newDate&&e.time&&e.kind!=="free period").map(e=>({
-        start:timeToMinutes(e.time)-(isLeadInFixed(e)?LEAD_IN_BUFFER_MINS:0),end:timeToMinutes(e.time)+(e.duration||30)+computeBreathingRoom(e.duration||30)
+        start:timeToMinutes(e.time)-effectiveLeadIn(e),end:timeToMinutes(e.time)+(e.duration||30)+effectiveTrailOut(e)
       })).concat(expandRoutineOccurrences(routines,newDate,newDate).filter(o=>o.kind!=="free period").map(o=>({
         start:timeToMinutes(o.time)-(TIER0_FIXED_KINDS.has(o.kind)?LEAD_IN_BUFFER_MINS:0),
-        end:timeToMinutes(o.time)+(o.duration||30)+computeBreathingRoom(o.duration||30)
+        end:timeToMinutes(o.time)+(o.duration||30)+effectiveTrailOut(o)
       })));
       const checkMins=timeToMinutes(checkTime);
       const collides=occupied.some(o=>!(checkMins+dur<=o.start||checkMins>=o.end));
@@ -16299,6 +16530,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
                       style={{width:"100%",boxSizing:"border-box",...subjectRowStyle(sub.color),border:`1px solid ${sub.color}66`,color:T.text,fontSize:12,fontFamily:T.font,outline:"none"}} />
                   ):(
                     <div onClick={()=>setSelectedCourseId(isSelected?null:sub.id)}
+                      draggable onDragStart={()=>setSidebarDragChip({title:sub.label,color:sub.color,movable:false})} onDragEnd={()=>setSidebarDragChip(null)}
                       style={{...subjectRowStyle(sub.color),cursor:"pointer",justifyContent:"space-between",outline:isSelected?`2px solid ${sub.color}`:"none",outlineOffset:1}}>
                       <span style={{fontSize:12,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{sub.label}</span>
                       <button type="button" onClick={(e)=>{e.stopPropagation();setCourseMenuOpenId(courseMenuOpenId===sub.id?null:sub.id);}}
@@ -16324,7 +16556,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           <div style={{display:"flex",flexDirection:"column",gap:6}}>
             {routines.filter(r=>r.kind!=="class").length===0&&<div style={{fontSize:11,color:T.faint,padding:"4px 0"}}>No activities yet.</div>}
             {routines.filter(r=>r.kind!=="class").map(r=>(
-              <div key={r.id} onClick={()=>openRoutineEdit(r)} style={{...subjectRowStyle(r.color||T.muted),cursor:"pointer"}}>
+              <div key={r.id} onClick={()=>openRoutineEdit(r)}
+                draggable onDragStart={()=>setSidebarDragChip({title:r.title,color:r.color||T.muted,movable:false})} onDragEnd={()=>setSidebarDragChip(null)}
+                style={{...subjectRowStyle(r.color||T.muted),cursor:"pointer"}}>
                 <span style={{fontSize:12,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.title}</span>
               </div>
             ))}
@@ -16419,7 +16653,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
               const isSel=c.key===selDay;
               return (
                 <div key={i} onClick={()=>{setSelDay(c.key);}} onDoubleClick={()=>setDayDetailKey(c.key)}
-                  onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(dragId){moveEvent(dragId,c.key);setDragId(null);}}}
+                  onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(sidebarDragChip){openNewEventForDrop(sidebarDragChip,c.key,"09:00");setSidebarDragChip(null);}else if(dragId){moveEvent(dragId,c.key);setDragId(null);}}}
                   style={{position:"relative",minHeight:64,minWidth:0,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.card2:"transparent",border:"1px solid "+(isSel?T.lime+"55":"transparent"),transition:"all 0.12s",opacity:c.out?0.35:1}}>
                   <div style={{display:"flex",justifyContent:"flex-start"}}>
                     <span style={{width:22,height:22,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:isToday?700:500,background:isToday?T.lime:"transparent",color:isToday?T.ink:c.out?T.faint:T.text}}>{c.d}</span>
@@ -16454,7 +16688,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         <WeeklyPlanner events={events} setEvents={setEvents} moveEvent={moveEvent} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openNew={openNew} openEdit={openEdit}
           routines={routines} editRoutineMode={editRoutineMode} hoveredRoutineId={hoveredRoutineId} setHoveredRoutineId={setHoveredRoutineId}
           onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
-          selDay={selDay} setSelDay={setSelDay} onDeleteEvent={deleteEventWithUndo} catchUpPending={catchUpPending} />
+          selDay={selDay} setSelDay={setSelDay} onDeleteEvent={deleteEventWithUndo} catchUpPending={catchUpPending}
+          sidebarDragChip={sidebarDragChip} onDropSidebarChip={(dk,time)=>{openNewEventForDrop(sidebarDragChip,dk,time);setSidebarDragChip(null);}}
+          onDropRoutineOccurrence={onDropRoutineOccurrence} />
       )}
       {calView==="daily"&&(
         <DayPlanner dayEvents={dayEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} />
@@ -16496,6 +16732,29 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       )}
       <ClassSetupWizard open={classSetupOpen} initialStatus={getProfile().status} onFinish={finishClassSetup} onSkip={skipClassSetup} />
       <ClassSetupWizard open={quickScanOpen} quickScan initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>setQuickScanOpen(false)} />
+      <NewEventModal open={newEventOpen} initialTitle={newEventPrefill.title} initialDate={newEventPrefill.date} initialStartTime={newEventPrefill.startTime}
+        onClose={()=>setNewEventOpen(false)} onCreate={commitNewEvent} />
+      {/* Phase 7e: dropped a routine occurrence somewhere new -- ask scope
+          before touching anything. "Just this one" only offered when the
+          drop landed on the same date it started on (see
+          getRoutineOverrides' comment for why a cross-day single-
+          occurrence move isn't representable yet). */}
+      <Modal open={!!routineDropPending} onClose={()=>setRoutineDropPending(null)} title="Apply this change to..." width={380}
+        footer={
+          <div style={{display:"flex",gap:10,justifyContent:"flex-end",padding:"14px 22px",borderTop:`1px solid ${T.border}`}}>
+            <Btn variant="subtle" onClick={()=>setRoutineDropPending(null)}>Cancel</Btn>
+            {routineDropPending&&routineDropPending.fromDate===routineDropPending.toDate&&(
+              <Btn variant="subtle" onClick={()=>applyRoutineDropScope("once")}>Just this one</Btn>
+            )}
+            <Btn onClick={()=>applyRoutineDropScope("always")}>Every week</Btn>
+          </div>
+        }>
+        <div style={{padding:"18px 22px",fontSize:13,color:T.muted,lineHeight:1.5}}>
+          {routineDropPending&&routineDropPending.fromDate!==routineDropPending.toDate
+            ? "Moving this to a different day changes it every week it repeats -- a single occurrence can only be retimed on its own day, not relocated."
+            : "This repeats every week. Change just this one occurrence, or every week going forward?"}
+        </div>
+      </Modal>
       {/* ── "Can I go?" -- a pure dry-run, nothing here ever
           writes to the calendar. See checkTimeOffImpact's own comment for
           why: it's the exact same "compute, don't commit" approach the
@@ -16969,7 +17228,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
                   const color = ev.color||colorOf(ev.courseId||ev.subject);
                   const isExam = ev.kind === "exam";
                   const canBegin = !isDone && isTimerEligible(ev);
-                  const canReslot = !isDone && !ev.checklist && ev.time && ev.duration && !TIER0_FIXED_KINDS.has(ev.kind);
+                  // Routed through isLeadInFixed (Phase 7b) instead of a bare
+                  // kind check -- a latent gap this closes: a co-op study
+                  // session's own `kind` is ordinarily "study block" (not in
+                  // TIER0_FIXED_KINDS), so the old check let its Later/Not
+                  // today reslot buttons show even though co-op sessions are
+                  // documented as fixed everywhere else movability is decided.
+                  const canReslot = !isDone && !ev.checklist && ev.time && ev.duration && !isLeadInFixed(ev);
                   return (
                     <div key={ev.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",background:T.card2,borderRadius:10,border:`1px solid ${T.border}`,opacity:isDone?0.55:1}}>
                       {!ev.checklist && ev.time && (
