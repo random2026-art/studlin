@@ -1143,6 +1143,16 @@ const saveRoutineOverrides=(o)=>lsSet("routineOverrides",o);
 // isn't necessarily tied to the school calendar the way a class is.
 const getSchoolTerm=()=>lsGet("schoolTerm",null);
 const saveSchoolTerm=(t)=>lsSet("schoolTerm",t);
+// Calendar zoom (pixels per hour) -- Phase 10b, user-driven, not auto-fit
+// (auto-fit was tried before and deliberately removed, see
+// computeDayViewScale's own retirement comment, for shrinking blocks down
+// to illegibility on a packed day). Shared between WeeklyPlanner's own
+// drag handle and DayPlanner, which just reads whatever was last set so
+// switching Week/Day view keeps a consistent feel without a second handle.
+const CAL_ZOOM_MIN=28, CAL_ZOOM_MAX=90, CAL_ZOOM_DEFAULT=48;
+const clampCalZoom=(px)=>Math.max(CAL_ZOOM_MIN,Math.min(CAL_ZOOM_MAX,px));
+const getCalZoom=()=>clampCalZoom(lsGet("calZoomPxPerHr",CAL_ZOOM_DEFAULT));
+const saveCalZoom=(px)=>lsSet("calZoomPxPerHr",clampCalZoom(px));
 // A high-schooler's daily school-day bounds, {start,end} (both "HH:MM") or
 // null if never set. Distinct from getSchoolTerm above (that's the date
 // RANGE the term runs; this is the daily TIME window school occupies) --
@@ -12619,9 +12629,43 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
 }
 
 function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence}) {
-  // Compact, fixed per-hour scale (held constant across the agenda-collapse
-  // toggle) so several hours are visible at a glance, like Google Calendar.
-  const WK_PX_HR = 48;
+  // Phase 10b: user-driven zoom (drag handle below), replacing the old
+  // fixed constant. Persisted via getCalZoom/saveCalZoom so it's
+  // remembered across visits and shared with DayPlanner. Deliberately not
+  // auto-fit -- see computeDayViewScale's own retirement comment for why
+  // that was tried and removed (shrinks blocks to illegibility on a
+  // packed day). Init from storage once; live-updates while dragging via
+  // wkZoomDragging below so the grid visibly rescales as you drag, not
+  // just on release.
+  const [WK_PX_HR, setWkPxHr] = useState(()=>getCalZoom());
+  const wkZoomDrag = useRef(null); // {startClientY,startPxHr}|null
+  const [wkZoomDragging, setWkZoomDragging] = useState(false);
+  useEffect(()=>{
+    if(!wkZoomDragging)return;
+    const onMove=(e)=>{
+      const info=wkZoomDrag.current;
+      if(!info)return;
+      const next=clampCalZoom(info.startPxHr+(e.clientY-info.startClientY)*0.5);
+      setWkPxHr(next);
+    };
+    const onUp=()=>{
+      setWkPxHr(px=>{ saveCalZoom(px); return px; });
+      wkZoomDrag.current=null;
+      setWkZoomDragging(false);
+      document.body.style.cursor="";
+      document.body.style.userSelect="";
+    };
+    document.addEventListener("mousemove",onMove);
+    document.addEventListener("mouseup",onUp);
+    return ()=>{ document.removeEventListener("mousemove",onMove); document.removeEventListener("mouseup",onUp); };
+  },[wkZoomDragging]);
+  const startWkZoomDrag=(e)=>{
+    e.preventDefault();
+    wkZoomDrag.current={startClientY:e.clientY,startPxHr:WK_PX_HR};
+    setWkZoomDragging(true);
+    document.body.style.cursor="ns-resize";
+    document.body.style.userSelect="none";
+  };
   const wkColRefs = useRef({});
   const weekScrollRef = useRef(null);
   const [wkDragId, setWkDragId] = useState(null);
@@ -12838,7 +12882,15 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
           slim Calendar toolbar) now that there's no more agenda-collapse
           state to branch on -- this page never has an agenda panel. */}
       <div ref={weekScrollRef} style={{display:"flex",overflowY:"auto",maxHeight:"calc(100vh - 170px)"}} onDragEnd={handleDragEnd}>
-        <div style={{width:52,flexShrink:0,background:T.card,borderRight:`1px solid ${T.border}`,zIndex:2}}>
+        <div style={{width:52,flexShrink:0,background:T.card,borderRight:`1px solid ${T.border}`,zIndex:2,position:"relative"}}>
+          {/* Phase 10b: user-driven zoom handle -- thin line + circular grip
+              on the time-axis edge, matching Shovel's own (101410). Drag
+              vertically to rescale WK_PX_HR; sticky so it stays reachable
+              regardless of scroll position. */}
+          <div onMouseDown={startWkZoomDrag} title="Drag to zoom"
+            style={{position:"sticky",top:8,left:0,right:-1,height:0,zIndex:7,display:"flex",justifyContent:"flex-end",cursor:"ns-resize"}}>
+            <div style={{width:18,height:18,borderRadius:"50%",background:T.lime,border:`2px solid ${T.card}`,marginRight:-9,boxShadow:"0 2px 6px rgba(0,0,0,0.35)"}} />
+          </div>
           {Array.from({length:24}, (_, h) => (
             <div key={h} style={{height:WK_PX_HR,display:"flex",alignItems:"flex-start",justifyContent:"flex-end",paddingRight:8,paddingTop:3,borderTop:`1px solid ${T.border}`,boxSizing:"border-box"}}>
               <span style={{fontSize:9,color:T.muted,whiteSpace:"nowrap"}}>{h===0?"12 AM":h<12?h+" AM":h===12?"12 PM":(h-12)+" PM"}</span>
@@ -15548,6 +15600,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   const toggleCalSidebarCollapsed=()=>setCalSidebarCollapsedState(v=>{lsSet("calSidebarCollapsed",!v);return !v;});
   const [calRightColCollapsed,setCalRightColCollapsedState]=useState(()=>lsGet("calRightColCollapsed",false));
   const toggleCalRightColCollapsed=()=>setCalRightColCollapsedState(v=>{lsSet("calRightColCollapsed",!v);return !v;});
+  // Phase 10b: Shovel's right column also shows two collapsible sections
+  // above the due-date groups -- "Recently created" and "Overdue (N)"
+  // (101410 reference). Collapsed by default (matches the reference
+  // screenshot), session-only state -- not worth persisting across visits
+  // like the column's own show/hide toggle above.
+  const [recentlyCreatedOpen,setRecentlyCreatedOpen]=useState(false);
+  const [overdueSectionOpen,setOverdueSectionOpen]=useState(false);
   // ── Phase 7d: drag a course/activity chip from the sidebar onto the
   // calendar to set/create its meeting time. Separate from `dragId` above
   // (that's for moving an EXISTING event between days) -- this carries
@@ -17006,15 +17065,32 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     if(days>1&&days<7)return dayOfWeekLabel(dateKey);
     return new Date(dateKey+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"});
   };
+  // Overdue items get pulled into their own collapsible section below
+  // (matching Shovel's separate "Overdue (N)" row) instead of showing as
+  // just another "Due:" group inline with the future ones.
+  const sidebarOverdueItems=sidebarUpcomingItems.filter(item=>item.date<todayK);
   const sidebarUpcomingGroups=(()=>{
     const groups=[];
-    sidebarUpcomingItems.forEach(item=>{
+    sidebarUpcomingItems.filter(item=>item.date>=todayK).forEach(item=>{
       const label=dueDateLabel(item.date);
       const last=groups[groups.length-1];
       if(last&&last.label===label)last.items.push(item);
       else groups.push({label,items:[item]});
     });
     return groups;
+  })();
+  // "Recently created" -- newest few events by creation order. The id
+  // already encodes a real timestamp ("ev-"+Date.now()+"-"+rand, see every
+  // event-creation call site in this file), so no new field is needed --
+  // just parse it back out and sort. Falls back to 0 (sorts last) for the
+  // rare id shape that doesn't match, rather than throwing.
+  const idTimestamp=(id)=>{ const m=/-(\d{10,})-/.exec(id)||/-(\d{10,})$/.exec(id); return m?+m[1]:0; };
+  const sidebarRecentItems=(()=>{
+    const matches=selectedCourse?(item)=>item.courseId===selectedCourse.id||item.subject===selectedCourse.label:()=>true;
+    return events
+      .filter(e=>!e.checklist&&matches(e))
+      .sort((a,b)=>idTimestamp(b.id)-idTimestamp(a.id))
+      .slice(0,5);
   })();
   return (
     <>
@@ -17251,7 +17327,41 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         {!calRightColCollapsed&&(
         <div style={{width:220,marginLeft:14,borderLeft:`1px solid ${T.border}`,paddingLeft:14,maxHeight:"calc(100vh - 160px)",overflowY:"auto"}}>
           <div style={{fontSize:12.5,fontWeight:700,color:T.white,marginBottom:10}}>{selectedCourse?selectedCourse.label:"Upcoming"}</div>
-          {sidebarUpcomingItems.length===0&&<div style={{fontSize:11.5,color:T.faint}}>Nothing upcoming.</div>}
+          {sidebarRecentItems.length>0&&(
+            <div style={{marginBottom:10,borderBottom:`1px solid ${T.border}`,paddingBottom:10}}>
+              <button type="button" onClick={()=>setRecentlyCreatedOpen(v=>!v)} style={{display:"flex",alignItems:"center",gap:5,width:"100%",background:"none",border:"none",cursor:"pointer",padding:0,fontFamily:T.font}}>
+                <span style={{fontSize:9,color:T.faint,transform:recentlyCreatedOpen?"rotate(90deg)":"none",transition:"transform 0.15s"}}>›</span>
+                <span style={{fontSize:11,fontWeight:600,color:T.text}}>Recently created</span>
+              </button>
+              {recentlyCreatedOpen&&sidebarRecentItems.map(item=>{
+                const tagColor=item.color||colorOf(item.courseId||item.subject);
+                return (
+                  <div key={item.id} onClick={()=>setDetailEventId(item.id)} style={{padding:"8px 0 8px 8px",marginTop:6,borderLeft:`2px solid ${tagColor}`,cursor:"pointer"}}>
+                    <div style={{fontSize:11,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.title}</div>
+                    <div style={{fontSize:10,color:T.muted,marginTop:2}}>{item.subject?item.subject+" · ":""}{item.time?fmtTime(item.time):"All day"}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {sidebarOverdueItems.length>0&&(
+            <div style={{marginBottom:14,borderBottom:`1px solid ${T.border}`,paddingBottom:10}}>
+              <button type="button" onClick={()=>setOverdueSectionOpen(v=>!v)} style={{display:"flex",alignItems:"center",gap:5,width:"100%",background:"none",border:"none",cursor:"pointer",padding:0,fontFamily:T.font}}>
+                <span style={{fontSize:9,color:T.red,transform:overdueSectionOpen?"rotate(90deg)":"none",transition:"transform 0.15s"}}>›</span>
+                <span style={{fontSize:11,fontWeight:600,color:T.red}}>Overdue ({sidebarOverdueItems.length})</span>
+              </button>
+              {overdueSectionOpen&&sidebarOverdueItems.map(item=>{
+                const tagColor=item.color||colorOf(item.courseId||item.subject);
+                return (
+                  <div key={item.id} onClick={()=>setDetailEventId(item.id)} style={{padding:"8px 0 8px 8px",marginTop:6,borderLeft:`2px solid ${tagColor}`,cursor:"pointer"}}>
+                    <div style={{fontSize:11,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.title}</div>
+                    <div style={{fontSize:10,color:T.muted,marginTop:2}}>{item.subject?item.subject+" · ":""}{item.time?fmtTime(item.time):"All day"}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {sidebarUpcomingItems.length===0&&sidebarRecentItems.length===0&&<div style={{fontSize:11.5,color:T.faint}}>Nothing upcoming.</div>}
           {sidebarUpcomingGroups.map(group=>(
             <div key={group.label} style={{marginBottom:14}}>
               <div style={{fontSize:10,fontWeight:700,color:group.label==="Overdue"?T.red:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Due: {group.label}</div>
