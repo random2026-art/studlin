@@ -12721,18 +12721,13 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
             <div key={i} onClick={()=>{if(setSelDay)setSelDay(dk);}} style={{textAlign:"center",padding:"7px 4px 9px",borderLeft:`1px solid ${T.border}`,cursor:setSelDay?"pointer":"default",background:isSel?T.card2:"transparent",minWidth:0}}>
               <div style={{fontSize:9,fontWeight:700,letterSpacing:"0.1em",color:T.muted,marginBottom:4}}>{DAY_NAMES[i]}</div>
               <div onDoubleClick={(e)=>{e.stopPropagation();openNew(dk);}} style={{width:28,height:28,borderRadius:"50%",background:isToday?T.lime:"transparent",color:isToday?T.ink:T.white,fontSize:13,fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>{d.getDate()}</div>
+              {/* Phase 10b: a compact "N due" bar instead of listing each
+                  due-marker title, matching the monthly grid's same
+                  change and Shovel's own header row. */}
               {duePills.length>0&&(
-                <div style={{display:"flex",flexDirection:"column",gap:2,marginTop:5,textAlign:"left",minWidth:0}}>
-                  {duePills.slice(0,2).map((ev,j)=>{
-                    const isExam=ev.kind==="exam";
-                    const tagColor=ev.color||colorOf(ev.courseId||ev.subject);
-                    return (
-                      <div key={j} onClick={(e)=>{e.stopPropagation();openEdit(ev);}} title={ev.title} style={{fontSize:9,fontWeight:600,color:tagColor,background:tagColor+(isExam?"22":"16"),border:isExam?`1px solid ${tagColor}`:"none",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",cursor:"pointer",maxWidth:"100%",boxSizing:"border-box"}}>
-                        {ev.title}
-                      </div>
-                    );
-                  })}
-                  {duePills.length>2&&<div style={{fontSize:8.5,color:T.muted}}>+{duePills.length-2} more</div>}
+                <div onClick={(e)=>{e.stopPropagation();if(setSelDay)setSelDay(dk);}}
+                  style={{marginTop:5,fontSize:9,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}33`,borderRadius:4,padding:"2px 6px",cursor:"pointer",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                  {duePills.length} due
                 </div>
               )}
             </div>
@@ -16886,23 +16881,26 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
                   </div>
                   {isSel && <button type="button" onClick={(e)=>{e.stopPropagation();openNew(c.key);}} title="Add a task on this day"
                     style={{position:"absolute",top:4,right:4,width:16,height:16,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.muted,fontSize:11,lineHeight:1,cursor:"pointer",display:"grid",placeItems:"center",padding:0}}>+</button>}
-                  <div style={{display:"flex",flexDirection:"column",gap:2,marginTop:3,minWidth:0}}>
-                    {evs.slice(0,2).map((ev,j)=>{
-                      const over=daysOverdue(ev);
-                      const tagColor=ev.color||colorOf(ev.courseId||ev.subject);
-                      const isExam=ev.kind==="exam";
-                      const isRoutine=!!ev.isRoutine;
-                      const dimmedByRoutineMode=editRoutineMode&&!isRoutine;
-                      return <div key={j} style={{fontSize:9,fontWeight:600,color:tagColor,background:tagColor+(isExam?"22":"16"),border:isRoutine&&editRoutineMode?`1px solid ${T.lime}`:isExam?`1px solid ${tagColor}`:"none",borderRadius:4,padding:"2px 5px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%",display:"flex",alignItems:"center",gap:3,opacity:dimmedByRoutineMode?0.3:1}}>
-                        {!catchUpPending&&over>0&&<span title={over+"d overdue"} style={{width:5,height:5,borderRadius:"50%",background:T.red,flexShrink:0}} />}
-                        {ev.priority!=null&&priorityTierOf(ev)>=4&&<span style={{width:5,height:5,borderRadius:"50%",background:PRIORITY_COLORS[priorityTierOf(ev)],flexShrink:0}} />}
-                        {ev.userPinned&&<span style={{flexShrink:0,fontSize:7}} title="Pinned, won't be auto-rescheduled">📌</span>}
-                        {ev.movedByStudlin&&<span style={{flexShrink:0,fontSize:7}} title={"Studlin moved this from "+fmtMovedFrom(ev.movedFrom)+"."+fmtMovedReasonSuffix(ev)}>↻</span>}
-                        {ev.title}
-                      </div>;
-                    })}
-                    {evs.length>2&&<div style={{fontSize:9,color:T.muted,paddingLeft:5}}>+{evs.length-2} more</div>}
-                  </div>
+                  {/* Phase 10b: a single compact "N tasks due" bar instead
+                      of listing individual event chips -- matches Shovel's
+                      day-cell header exactly, and directly addresses the
+                      "Tue's oversized exam block eats the whole cell"
+                      complaint. Any overdue/high-priority item in the day
+                      still shows as a colored bar (red for overdue, else
+                      the day's own accent), so the at-a-glance urgency
+                      signal isn't lost, just condensed into one line.
+                      Clicking it jumps straight to the day detail, same
+                      destination double-click already reaches. */}
+                  {evs.length>0&&(()=>{
+                    const anyOverdue=!catchUpPending&&evs.some(ev=>daysOverdue(ev)>0);
+                    const barColor=anyOverdue?T.red:T.lime;
+                    return (
+                      <div onClick={e=>{e.stopPropagation();setDayDetailKey(c.key);}}
+                        style={{marginTop:4,fontSize:9.5,fontWeight:700,color:barColor,background:barColor+"18",border:`1px solid ${barColor}33`,borderRadius:4,padding:"3px 6px",cursor:"pointer",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                        {evs.length} task{evs.length!==1?"s":""} due
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })}
