@@ -541,6 +541,38 @@ const Input = (props) => (
 const Textarea = (props) => (
   <textarea {...props} style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",color:T.text,fontSize:13.5,fontFamily:T.font,outline:"none",resize:"vertical",minHeight:90,boxSizing:"border-box",...(props.style||{})}} />
 );
+const CalendarIcon = <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>;
+const ClockIcon = <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>;
+const fmtDateShort = (v) => { if(!v) return ""; const p=v.split("-"); return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}); };
+// Shovel-style labeled box: small caption label top-left, the value itself
+// larger below it, an icon on the right -- one compact single-line field
+// instead of a separate label-above-input pair. The real native date input
+// sits invisibly on top of the whole box (opacity 0, absolute, full size)
+// so clicking anywhere opens the real OS/browser date picker -- same
+// invisible-overlay trick already used for the essay editor's color input,
+// not a custom calendar widget built from scratch.
+const DateField = ({label, value, onChange, min}) => (
+  <div style={{position:"relative",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"9px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,boxSizing:"border-box",cursor:"pointer"}}>
+    <div style={{minWidth:0}}>
+      {label && <div style={{fontSize:10,fontWeight:600,color:T.muted,marginBottom:2}}>{label}</div>}
+      <div style={{fontSize:14,fontWeight:600,color:value?T.text:T.faint,whiteSpace:"nowrap"}}>{value?fmtDateShort(value):"Select date"}</div>
+    </div>
+    <span style={{color:T.muted,flexShrink:0,display:"flex"}}>{CalendarIcon}</span>
+    <input type="date" value={value||""} min={min} onChange={e=>onChange(e.target.value)}
+      style={{position:"absolute",inset:0,width:"100%",height:"100%",opacity:0,cursor:"pointer",border:"none",padding:0,margin:0,boxSizing:"border-box"}} />
+  </div>
+);
+// Same box chrome as DateField, wrapping TimeInput's "bare" mode (three
+// borderless selects that read as one compact string) plus a clock icon.
+const TimeField = ({label, value, onChange, lockedRanges}) => (
+  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"9px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,boxSizing:"border-box"}}>
+    <div style={{minWidth:0}}>
+      {label && <div style={{fontSize:10,fontWeight:600,color:T.muted,marginBottom:2}}>{label}</div>}
+      <TimeInput value={value} onChange={onChange} lockedRanges={lockedRanges} bare />
+    </div>
+    <span style={{color:T.muted,flexShrink:0,display:"flex"}}>{ClockIcon}</span>
+  </div>
+);
 // Custom Hour / Minute / AM-PM dropdown trio — mobile-friendly native
 // <select> controls, no typing required. Same 24h "HH:MM" value/onChange
 // contract as before, so every call site is unaffected.
@@ -551,7 +583,7 @@ const TIME_MINUTES_5=Array.from({length:12},(_,i)=>i*5);
 // grayed out — recomputed against the currently-selected AM/PM so flipping
 // it updates which hours are locked. Fully backward compatible: every
 // existing call site simply doesn't pass it and behaves exactly as before.
-const TimeInput = ({value,onChange,style,lockedRanges}) => {
+const TimeInput = ({value,onChange,style,lockedRanges,bare}) => {
   let h=9,m=0,ap="AM";
   if(value){
     const [hStr,mStr]=value.split(":");
@@ -574,17 +606,26 @@ const TimeInput = ({value,onChange,style,lockedRanges}) => {
     const mins=hh*60;
     return lockedRanges.some(r=>mins>=r.start&&mins<r.end);
   };
-  const selStyle={width:32,flexShrink:0,padding:"4px 1px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:5,color:T.text,fontSize:12,fontFamily:T.font,outline:"none",cursor:"pointer",boxSizing:"border-box",textAlign:"center"};
+  // "bare" mode drops the border/background/padding from each select so
+  // the trio reads as one continuous string ("8:00 AM") instead of three
+  // boxed dropdowns -- used inside TimeField/the New Event popover's own
+  // bordered box, which already supplies the chrome, so double-boxing
+  // would look wrong. Still three real, independently clickable <select>s
+  // underneath either way.
+  const selStyle=bare
+    ?{width:"auto",flexShrink:0,padding:0,background:"transparent",border:"none",color:T.text,fontSize:14,fontWeight:600,fontFamily:T.font,outline:"none",cursor:"pointer",appearance:"none",WebkitAppearance:"none",MozAppearance:"none"}
+    :{width:32,flexShrink:0,padding:"4px 1px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:5,color:T.text,fontSize:12,fontFamily:T.font,outline:"none",cursor:"pointer",boxSizing:"border-box",textAlign:"center"};
+  const apStyle=bare?selStyle:{...selStyle,width:40};
   return (
-    <div style={{display:"flex",flexDirection:"row",gap:2,alignItems:"center",flexShrink:0,...(style||{})}}>
+    <div style={{display:"flex",flexDirection:"row",gap:bare?1:2,alignItems:"center",flexShrink:0,...(style||{})}}>
       <select value={h} onChange={e=>commit(+e.target.value,m,ap)} style={selStyle}>
         {TIME_HOURS_12.map(x=><option key={x} value={x} disabled={isHourLocked(x)}>{x}{isHourLocked(x)?" (school)":""}</option>)}
       </select>
-      <span style={{color:T.muted,flexShrink:0,fontSize:11}}>:</span>
+      <span style={{color:T.muted,flexShrink:0,fontSize:bare?14:11,fontWeight:bare?600:400}}>:</span>
       <select value={m} onChange={e=>commit(h,+e.target.value,ap)} style={selStyle}>
         {TIME_MINUTES_5.map(x=><option key={x} value={x}>{String(x).padStart(2,"0")}</option>)}
       </select>
-      <select value={ap} onChange={e=>commit(h,m,e.target.value)} style={{...selStyle,width:40}}>
+      <select value={ap} onChange={e=>commit(h,m,e.target.value)} style={apStyle}>
         <option value="AM">AM</option>
         <option value="PM">PM</option>
       </select>
@@ -13806,8 +13847,8 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
           {step==="term"&&(<>
             <TitleSub title="When does this term run?" sub="Studlin stops expecting your classes outside these dates -- summer, before the term starts. You can always change this later in Settings." />
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-              <Field label="Term starts"><input type="date" value={termStart} onChange={e=>setTermStart(e.target.value)} style={wizardSelectStyle} /></Field>
-              <Field label="Term ends"><input type="date" value={termEnd} onChange={e=>setTermEnd(e.target.value)} style={wizardSelectStyle} /></Field>
+              <DateField label="Term starts" value={termStart} onChange={setTermStart} />
+              <DateField label="Term ends" value={termEnd} onChange={setTermEnd} />
             </div>
           </>)}
 
@@ -13824,11 +13865,11 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
                 ))}
               </div>
             )}
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:10}}>
               <Input value={holidayDraft.label} onChange={e=>setHolidayDraft(d=>({...d,label:e.target.value}))} placeholder="e.g. Spring Break" />
-              <div style={{display:"flex",gap:8}}>
-                <input type="date" value={holidayDraft.start} onChange={e=>setHolidayDraft(d=>({...d,start:e.target.value}))} style={{...wizardSelectStyle,flex:1}} />
-                <input type="date" value={holidayDraft.end} onChange={e=>setHolidayDraft(d=>({...d,end:e.target.value}))} style={{...wizardSelectStyle,flex:1}} />
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <DateField label="Starts" value={holidayDraft.start} onChange={v=>setHolidayDraft(d=>({...d,start:v}))} />
+                <DateField label="Ends" value={holidayDraft.end} onChange={v=>setHolidayDraft(d=>({...d,end:v}))} />
               </div>
             </div>
             <button type="button" disabled={!holidayDraft.start||!holidayDraft.end} onClick={()=>{setHolidays(hs=>[...hs,{id:"hol-"+Date.now(),...holidayDraft}]);setHolidayDraft({start:"",end:"",label:""});}}
@@ -13838,8 +13879,8 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
           {step==="awake"&&(<>
             <TitleSub title="When are you awake, and when do you like to study?" />
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:20}}>
-              <Field label="Wake up"><TimeInput value={wakeTime} onChange={setWakeTime} /></Field>
-              <Field label="Sleep"><TimeInput value={sleepTime} onChange={setSleepTime} /></Field>
+              <TimeField label="Wake up" value={wakeTime} onChange={setWakeTime} />
+              <TimeField label="Sleep" value={sleepTime} onChange={setSleepTime} />
             </div>
             {/* Merged with the old standalone "Preferred Focus Windows"
                 step -- it used to sit unstepped, after Activities, asking
@@ -13848,8 +13889,8 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
                 day's real bounds, then when within that you prefer to
                 study. */}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-              <Field label="Preferred study start"><TimeInput value={workStart} onChange={setWorkStart} /></Field>
-              <Field label="Preferred study end"><TimeInput value={workEnd} onChange={setWorkEnd} /></Field>
+              <TimeField label="Study start" value={workStart} onChange={setWorkStart} />
+              <TimeField label="Study end" value={workEnd} onChange={setWorkEnd} />
             </div>
             {windowInvalid&&<div style={{fontSize:11.5,color:T.red,marginTop:8}}>End time must be after start time.</div>}
             <div style={{marginTop:20}}>
@@ -14671,8 +14712,8 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
         <div style={{fontSize:12,fontWeight:700,color:T.white,marginBottom:2}}>Term dates</div>
         <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>Outside these dates — summer, before the term starts — Studlin stops expecting your classes. Everything else on your routine still applies.</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <Field label="School starts"><Input type="date" value={termStart} onChange={e=>setTermStart(e.target.value)} /></Field>
-          <Field label="School ends"><Input type="date" value={termEnd} onChange={e=>setTermEnd(e.target.value)} /></Field>
+          <DateField label="School starts" value={termStart} onChange={setTermStart} />
+          <DateField label="School ends" value={termEnd} onChange={setTermEnd} />
         </div>
       </div>
       {!addingRoutine
@@ -15449,12 +15490,15 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
         </div>
         <div style={{padding:"12px 14px",display:"flex",flexDirection:"column",gap:10}}>
           <Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Event title" style={{fontSize:13,fontWeight:600}} autoFocus />
-          <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{...wizardSelectStyle,width:"100%",boxSizing:"border-box"}} />
+          <DateField label="Date" value={date} onChange={setDate} />
           {!allDay&&(
-            <div style={{display:"flex",gap:6,alignItems:"center"}}>
-              <TimeInput value={startTime} onChange={setStartTime} />
-              <span style={{color:T.muted,fontSize:12,flexShrink:0}}>–</span>
-              <TimeInput value={endTime} onChange={setEndTime} />
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6,padding:"9px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,boxSizing:"border-box"}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,minWidth:0}}>
+                <TimeInput value={startTime} onChange={setStartTime} bare />
+                <span style={{color:T.muted,fontSize:12,flexShrink:0}}>–</span>
+                <TimeInput value={endTime} onChange={setEndTime} bare />
+              </div>
+              <span style={{color:T.muted,flexShrink:0,display:"flex"}}>{ClockIcon}</span>
             </div>
           )}
           <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,color:T.muted,cursor:"pointer"}}>
