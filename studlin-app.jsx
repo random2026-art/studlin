@@ -20709,11 +20709,11 @@ function App() {
     if(pendingChatTarget)return "friends";
     const pending=lsGet("pendingTour",null);
     if(pending){try{localStorage.removeItem("studlin-pendingTour");}catch(e){}return pending;}
-    // First-ever load for this account has no stored tab yet — land on
-    // Calendar, the app's home tab. Every tab switch persists
-    // "studlin-active-tab" below, so this branch only ever fires once per
-    // account.
-    return localStorage.getItem("studlin-active-tab")||"calendar";
+    // Calendar is home — every fresh page load lands here regardless of
+    // whichever tab was open last (still tracked live in `active` during
+    // the session via the "studlin-active-tab" effect below; just no
+    // longer consulted as the starting point on a new load).
+    return "calendar";
   });
   const [theme,setThemeState]=useState(()=>(typeof localStorage!=="undefined" && localStorage.getItem("studlin-theme"))||"light");
   const [accent,setAccentState]=useState(()=>{
