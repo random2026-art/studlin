@@ -1065,6 +1065,14 @@ const getRoutineSkips=()=>lsGet("routineSkips",{});
 // isn't necessarily tied to the school calendar the way a class is.
 const getSchoolTerm=()=>lsGet("schoolTerm",null);
 const saveSchoolTerm=(t)=>lsSet("schoolTerm",t);
+// A high-schooler's daily school-day bounds, {start,end} (both "HH:MM") or
+// null if never set. Distinct from getSchoolTerm above (that's the date
+// RANGE the term runs; this is the daily TIME window school occupies) --
+// set once during ClassSetupWizard's HS whole-schedule import (Phase 9),
+// used there to derive free-period gaps between extracted classes via
+// subtractIntervals. Not read by the scheduling engine itself.
+const getHsSchoolHours=()=>lsGet("hsSchoolHours",null);
+const saveHsSchoolHours=(t)=>lsSet("hsSchoolHours",t);
 // A list of {id,url,label,sourceType,lastSyncedAt} for calendars/work
 // schedules the student has imported via /api/cal-proxy (.ics feeds).
 const getImportedCalendars=()=>lsGet("importedCalendars",[]);
@@ -2964,6 +2972,29 @@ async function extractHsScheduleFromImage(base64Data,mediaType){
     return{periods:(parsed&&Array.isArray(parsed.periods))?parsed.periods:[],error:null};
   }catch(e){return{periods:[],error:"Couldn't read that image. Try again."};}
 }
+// Text sibling of extractHsScheduleFromImage above -- same {"periods":[...]}
+// contract, for a student who pastes their weekly schedule (a school portal
+// page, a typed-out list) instead of photographing it. Truncates to 30,000
+// chars, matching extractClassSyllabusText's convention (:2921) for the same
+// reason (keep the prompt bounded regardless of how much gets pasted).
+async function extractHsScheduleFromText(text){
+  if(!text||!text.trim())return{periods:[],error:null};
+  try{
+    const prompt="This is pasted text describing a high school class schedule -- a table or list of periods, each with a class name and the time it meets (it may include other content too, ignore anything irrelevant). "+
+      "Extract every period you can find. For each return: \"subjectName\" (the class name as shown, e.g. \"English IV\", \"AP Biology\"), "+
+      "\"startTime\" and \"endTime\" (24-hour \"HH:MM\"), "+
+      "\"days\" (which weekdays this period happens, 0=Monday..6=Sunday -- if the schedule doesn't say otherwise, assume every school day it's shown applies to, most commonly Monday-Friday so [0,1,2,3,4]). "+
+      "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
+      "{\"periods\":[{\"subjectName\":\"English IV\",\"startTime\":\"08:00\",\"endTime\":\"08:45\",\"days\":[0,1,2,3,4]}]}. "+
+      "If you can't find any periods at all, respond with {\"periods\":[]}.\n\n"+text.slice(0,30000);
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+    const data=await res.json();
+    if(!res.ok)return{periods:[],error:data.error||"Couldn't read that text. Try again."};
+    const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
+    const parsed=JSON.parse(raw);
+    return{periods:(parsed&&Array.isArray(parsed.periods))?parsed.periods:[],error:null};
+  }catch(e){return{periods:[],error:"Couldn't read that text. Try again."};}
+}
 // Work shift schedule -- deliberately dated shifts, not a recurring weekly
 // pattern like the class scan above: shift schedules from apps like When I
 // Work/Homebase/7shifts (or a manager's handwritten/printed sheet) commonly
@@ -3340,6 +3371,40 @@ function subtractIntervals(base,holes){
     });
   });
   return segments.filter(s=>s.end>s.start);
+}
+// Free time is derived, not AI-extracted -- the model (extractHsScheduleFromImage/
+// extractHsScheduleFromText) only has to find classes; free periods fall out
+// mechanically from "school hours minus classes", via the same subtractIntervals
+// gap primitive above (built for the WeeklyPlanner School Hours tint, reused
+// here for the exact same shape of problem). periods: [{startTime,endTime,days}].
+// schoolStart/schoolEnd: "HH:MM". Returns rows shaped like a routine builder's
+// output ({id,title,days,startTime,duration}), ready to save with kind:"free"
+// (the same routine kind WizardHsBuilder already uses, :12754) -- minimum 20
+// minutes so back-to-back passing periods don't spam a "free period" gap.
+const FREE_PERIOD_MIN_MINS=20;
+function deriveFreePeriodsFromPeriods(periods,schoolStart,schoolEnd){
+  if(!schoolStart||!schoolEnd)return [];
+  const schoolWindow={start:timeToMinutes(schoolStart),end:timeToMinutes(schoolEnd)};
+  if(schoolWindow.end<=schoolWindow.start)return [];
+  const days=new Set();
+  (periods||[]).forEach(p=>(p.days||[]).forEach(d=>days.add(d)));
+  const gapsByKey=new Map(); // "start-end" -> {start,end,days:Set}
+  Array.from(days).sort((a,b)=>a-b).forEach(day=>{
+    const occupied=(periods||[]).filter(p=>(p.days||[]).includes(day))
+      .map(p=>({start:timeToMinutes(p.startTime),end:timeToMinutes(p.endTime)}))
+      .sort((a,b)=>a.start-b.start);
+    subtractIntervals(schoolWindow,occupied).forEach(gap=>{
+      if(gap.end-gap.start<FREE_PERIOD_MIN_MINS)return;
+      const key=gap.start+"-"+gap.end;
+      if(!gapsByKey.has(key))gapsByKey.set(key,{start:gap.start,end:gap.end,days:new Set()});
+      gapsByKey.get(key).days.add(day);
+    });
+  });
+  return Array.from(gapsByKey.values()).map((g,i)=>({
+    id:"free-"+Date.now()+"-"+i,title:"Free Period",
+    days:Array.from(g.days).sort((a,b)=>a-b),
+    startTime:minutesToTime(g.start),duration:g.end-g.start,
+  }));
 }
 const prioLabel=(v)=>{const p=v/10;return p<=20?"Low":p<=40?"Low–Medium":p<=60?"Medium":p<=80?"High":"Urgent";};
 const diffLabel=(v)=>{const p=v/10;return p<=20?"Very Easy":p<=40?"Easy":p<=60?"Medium":p<=80?"Hard":"Very Hard";};
@@ -13063,6 +13128,14 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
   const [scanError,setScanError]=useState("");
   const [review,setReview]=useState(null); // {subjectName,color,meetingTimes:[],items:[],sourceText}
   const [hsReview,setHsReview]=useState(null); // [{id,subjectName,color,startTime,endTime,days}]
+  const [hsFreeReview,setHsFreeReview]=useState([]); // [{id,title,days,startTime,duration}] -- derived, editable (remove-only) before commit
+  // Kept separate from pasteMode/pasteText (the syllabus-scan step's own
+  // paste fallback) so switching between the two staged flows can't leak
+  // stale pasted text across them.
+  const [hsPasteMode,setHsPasteMode]=useState(false);
+  const [hsPasteText,setHsPasteText]=useState("");
+  const [schoolStart,setSchoolStart]=useState("08:00");
+  const [schoolEnd,setSchoolEnd]=useState("15:00");
   const [justAdded,setJustAdded]=useState("");
   const fileInputRef=useRef(null);
   const hsFileInputRef=useRef(null);
@@ -13094,6 +13167,12 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
     setPasteText("");
     setReview(null);
     setHsReview(null);
+    setHsFreeReview([]);
+    setHsPasteMode(false);
+    setHsPasteText("");
+    const savedHours=getHsSchoolHours();
+    setSchoolStart((savedHours&&savedHours.start)||"08:00");
+    setSchoolEnd((savedHours&&savedHours.end)||"15:00");
     setActivities([]);
     setExpandedClassId(null);
     setExpandedItemId(null);
@@ -13220,6 +13299,22 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
     finally{setScanning(false);}
   };
 
+  // Shared by both HS extraction entry points (photo and paste-text) so the
+  // review-row shaping and free-period derivation are written once. Also
+  // computes hsFreeReview from schoolStart/schoolEnd (Phase 9) -- purely
+  // additive, an empty result here (no school hours set, or no gaps found)
+  // just means the "Free time" section on the review screen stays empty.
+  const buildHsReviewFromPeriods=(periods)=>{
+    const normalized=periods.map(p=>({
+      subjectName:p.subjectName||"",
+      startTime:p.startTime||"08:00",endTime:p.endTime||"08:45",
+      days:Array.isArray(p.days)&&p.days.length>0?p.days:[0,1,2,3,4],
+    }));
+    setHsReview(normalized.map((p,i)=>({id:"hs-"+i,subjectName:p.subjectName||("Period "+(i+1)),color:SUBJECT_COLORS[i%SUBJECT_COLORS.length],startTime:p.startTime,endTime:p.endTime,days:p.days})));
+    setHsFreeReview(deriveFreePeriodsFromPeriods(normalized,schoolStart,schoolEnd));
+    setAddMode("hsReview");
+  };
+
   const handleHsScheduleFile=async(e)=>{
     const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
     const ext=file.name.split(".").pop().toLowerCase();
@@ -13231,9 +13326,20 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
       const result=await extractHsScheduleFromImage(base64,IMAGE_EXT_MEDIA_TYPES[ext]);
       if(result.error){setScanError(result.error);return;}
       if(result.periods.length===0){setScanError("Couldn't make out any periods in that image. Try a clearer photo, or add classes manually.");return;}
-      setHsReview(result.periods.map((p,i)=>({id:"hs-"+i,subjectName:p.subjectName||("Period "+(i+1)),color:SUBJECT_COLORS[i%SUBJECT_COLORS.length],startTime:p.startTime||"08:00",endTime:p.endTime||"08:45",days:Array.isArray(p.days)&&p.days.length>0?p.days:[0,1,2,3,4]})));
-      setAddMode("hsReview");
+      buildHsReviewFromPeriods(result.periods);
     }catch(err){setScanError("Couldn't read that image: "+err.message);}
+    finally{setScanning(false);}
+  };
+
+  const handleHsPasteScan=async()=>{
+    if(!hsPasteText.trim())return;
+    setScanning(true);setScanError("");
+    try{
+      const result=await extractHsScheduleFromText(hsPasteText);
+      if(result.error){setScanError(result.error);return;}
+      if(result.periods.length===0){setScanError("Couldn't find any periods in that text. Try adding more detail, or add classes manually.");return;}
+      buildHsReviewFromPeriods(result.periods);
+    }catch(err){setScanError("Couldn't read that text: "+err.message);}
     finally{setScanning(false);}
   };
 
@@ -13263,12 +13369,21 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
       const dur=Math.max(15,timeToMinutes(p.endTime)-timeToMinutes(p.startTime));
       return {id:"rt-"+Date.now()+"-"+i,title:p.subjectName.trim(),kind:"class",subject:p.subjectName.trim(),courseId:newSubjects[i].id,days:p.days,startTime:p.startTime,duration:dur};
     });
-    saveWeeklyRoutine([...getWeeklyRoutine(),...routineItems]);
-    // Whole-schedule photo import has no deadlines to review, so there's
-    // nothing to stage -- it commits immediately, same as it always has.
+    // Free periods, kind:"free" -- same routine kind WizardHsBuilder already
+    // uses (:12754), so these plug straight into the existing scheduling
+    // engine's free-period handling with no new logic. hsFreeReview may
+    // have been trimmed down by the student on the review screen (remove-
+    // only), so this saves whatever's left, including nothing.
+    const freeItems=hsFreeReview.map(f=>({id:f.id,title:f.title,kind:"free",days:f.days,startTime:f.startTime,duration:f.duration}));
+    saveWeeklyRoutine([...getWeeklyRoutine(),...routineItems,...freeItems]);
+    if(schoolStart&&schoolEnd)saveHsSchoolHours({start:schoolStart,end:schoolEnd});
+    if(status)saveProfile({...getProfile(),status});
+    // Whole-schedule photo/paste import has no deadlines to review, so
+    // there's nothing to stage -- it commits immediately, same as it always has.
     setJustAdded(valid.length+" classes");
     setTimeout(()=>setJustAdded(""),3000);
     setHsReview(null);
+    setHsFreeReview([]);
     setAddMode(null);
   };
 
@@ -13307,6 +13422,11 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
     });
     if(activities.length>0)saveWeeklyRoutine([...getWeeklyRoutine(),...activities]);
     setSchedulePreferences({...getSchedulePreferences(),workStartTime:workStart,workEndTime:workEnd,peakHourBuckets:peakBuckets});
+    // Latent bug fix (Phase 9d): `status` was a purely local UI branch
+    // before this -- chosen at the very first step of this wizard, then
+    // never actually written to the real profile, so Settings' own
+    // StatusChip (:19049) would show blank even after finishing here.
+    if(status)saveProfile({...getProfile(),status});
     lsSet("classSetupPending",[]);
     setPendingClasses([]);
     onFinish();
@@ -13394,13 +13514,28 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
           </>)}
 
           {step==="classes"&&addMode==="hsSchedule"&&(<>
-            <TitleSub title="Upload your class schedule" sub="A photo or screenshot of your period-by-period schedule. Studlin turns each period into a class, color-coded by time." />
+            <TitleSub title="Upload your class schedule" sub="A photo, or paste the text, of your period-by-period schedule. Studlin turns each period into a class, color-coded by time -- and works out your free periods from your school hours below." />
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:20}}>
+              <Field label="School starts"><TimeInput value={schoolStart} onChange={setSchoolStart} /></Field>
+              <Field label="School ends"><TimeInput value={schoolEnd} onChange={setSchoolEnd} /></Field>
+            </div>
             {scanning
               ? <div style={{padding:"40px 0",textAlign:"center",color:T.muted,fontSize:13}}>Reading your schedule…</div>
-              : <button type="button" onClick={()=>hsFileInputRef.current&&hsFileInputRef.current.click()} style={{width:"100%",padding:"32px",borderRadius:12,border:`1.5px dashed ${T.borderHover}`,background:T.card2,color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:13,textAlign:"center"}}>Tap to choose a photo</button>
+              : hsPasteMode ? (
+                <div>
+                  <textarea value={hsPasteText} onChange={e=>setHsPasteText(e.target.value)} placeholder="Paste your weekly schedule here" rows={8}
+                    style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
+                  <Btn onClick={handleHsPasteScan} disabled={!hsPasteText.trim()} style={{marginTop:10,width:"100%",justifyContent:"center",opacity:hsPasteText.trim()?1:0.45}}>Scan this text</Btn>
+                </div>
+              ) : <button type="button" onClick={()=>hsFileInputRef.current&&hsFileInputRef.current.click()} style={{width:"100%",padding:"32px",borderRadius:12,border:`1.5px dashed ${T.borderHover}`,background:T.card2,color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:13,textAlign:"center"}}>Tap to choose a photo</button>
             }
             <input ref={hsFileInputRef} type="file" accept=".png,.jpg,.jpeg,.webp,.gif" style={{display:"none"}} onChange={handleHsScheduleFile} />
             {scanError&&<div style={{fontSize:12,color:T.red,marginTop:10}}>{scanError}</div>}
+            {!scanning&&(
+              <button type="button" onClick={()=>{setHsPasteMode(m=>!m);setScanError("");}} style={{marginTop:12,background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>
+                {hsPasteMode?"Upload a photo instead":"No photo? Paste the text instead"}
+              </button>
+            )}
             <button type="button" onClick={()=>setAddMode("choose")} style={{marginTop:16,background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0}}>← Back</button>
           </>)}
 
@@ -13415,9 +13550,21 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
                 </div>
               ))}
             </div>
+            {hsFreeReview.length>0&&(<>
+              <div style={{fontSize:11.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Free time (worked out from your school hours)</div>
+              <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
+                {hsFreeReview.map(f=>(
+                  <div key={f.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 10px",borderRadius:10,border:`1px solid ${T.border}`}}>
+                    <div style={{flex:1,fontSize:13,color:T.text}}>{f.title}</div>
+                    <div style={{fontSize:11,color:T.muted,whiteSpace:"nowrap"}}>{f.days.map(d=>ROUTINE_DOW[d]).join("")} · {fmtClock12(f.startTime)}–{fmtClock12(minutesToTime(timeToMinutes(f.startTime)+f.duration))}</div>
+                    <button type="button" onClick={()=>setHsFreeReview(r=>r.filter(x=>x.id!==f.id))} title="Remove" style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:"2px 6px"}}>×</button>
+                  </div>
+                ))}
+              </div>
+            </>)}
             <div style={{display:"flex",gap:10}}>
               <Btn onClick={commitHsSchedule}>Add all {hsReview.length} classes</Btn>
-              <Btn variant="subtle" onClick={()=>{setHsReview(null);setAddMode("choose");}}>Cancel</Btn>
+              <Btn variant="subtle" onClick={()=>{setHsReview(null);setHsFreeReview([]);setAddMode("choose");}}>Cancel</Btn>
             </div>
           </>)}
 
@@ -14734,6 +14881,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // Own collapse state, independent of the global icon rail's.
   const [calSidebarCollapsed,setCalSidebarCollapsedState]=useState(()=>lsGet("calSidebarCollapsed",false));
   const toggleCalSidebarCollapsed=()=>setCalSidebarCollapsedState(v=>{lsSet("calSidebarCollapsed",!v);return !v;});
+  const [calRightColCollapsed,setCalRightColCollapsedState]=useState(()=>lsGet("calRightColCollapsed",false));
+  const toggleCalRightColCollapsed=()=>setCalRightColCollapsedState(v=>{lsSet("calRightColCollapsed",!v);return !v;});
   // Drives the right-hand column (5e): null = "upcoming across everything",
   // a course id = filtered to just that course.
   const [selectedCourseId,setSelectedCourseId]=useState(null);
@@ -16070,10 +16219,39 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   const selectedCourse=selectedCourseId?userSubjects.find(s=>s.id===selectedCourseId):null;
   const sidebarUpcomingItems=(()=>{
     const matches=selectedCourse?(item)=>item.courseId===selectedCourse.id||item.subject===selectedCourse.label:()=>true;
+    // Same "what's actually due" definition Dashboard's masterAssignments/
+    // masterProjects/masterExams already use (studlin-app.jsx:19307-19309):
+    // deadline-kind items (assignments + projects, no date floor so an
+    // overdue-but-still-pending item keeps showing, arguably the most
+    // important thing to surface) plus exam-kind items that haven't
+    // happened yet. !e.checklist excludes a project's own sub-checklist
+    // rows, which aren't top-level due items themselves.
     return events
-      .filter(e=>e.status!=="done"&&e.date&&(e.kind==="exam"||e.kind==="deadline")&&matches(e))
+      .filter(e=>e.status!=="done"&&e.date&&!e.checklist&&matches(e)&&(e.kind==="deadline"||(e.kind==="exam"&&e.date>=todayK)))
       .sort((a,b)=>a.date===b.date?(a.time||"").localeCompare(b.time||""):a.date.localeCompare(b.date))
       .slice(0,20);
+  })();
+  // "Due: Tomorrow" / "Due: Monday" style grouping (Shovel's right column
+  // groups by relative due date instead of a flat list) -- items are
+  // already date-sorted above, so grouping by consecutive matching label
+  // is enough, no separate sort-by-group-key pass needed.
+  const dueDateLabel=(dateKey)=>{
+    if(dateKey<todayK)return "Overdue";
+    if(dateKey===todayK)return "Today";
+    const days=Math.round((new Date(dateKey+"T12:00:00")-new Date(todayK+"T12:00:00"))/86400000);
+    if(days===1)return "Tomorrow";
+    if(days>1&&days<7)return dayOfWeekLabel(dateKey);
+    return new Date(dateKey+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"});
+  };
+  const sidebarUpcomingGroups=(()=>{
+    const groups=[];
+    sidebarUpcomingItems.forEach(item=>{
+      const label=dueDateLabel(item.date);
+      const last=groups[groups.length-1];
+      if(last&&last.label===label)last.items.push(item);
+      else groups.push({label,items:[item]});
+    });
+    return groups;
   })();
   return (
     <>
@@ -16284,16 +16462,32 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     </div>
       {/* Right-hand column (Phase 5e) -- upcoming across everything by
           default, re-filtered to the selected course's items on a chip
-          click (selectedCourse/sidebarUpcomingItems computed above). */}
-      <div style={{width:220,flexShrink:0,marginLeft:14,borderLeft:`1px solid ${T.border}`,paddingLeft:14,maxHeight:"calc(100vh - 160px)",overflowY:"auto"}}>
-        <div style={{fontSize:12.5,fontWeight:700,color:T.white,marginBottom:10}}>{selectedCourse?selectedCourse.label:"Upcoming"}</div>
-        {sidebarUpcomingItems.length===0&&<div style={{fontSize:11.5,color:T.faint}}>Nothing upcoming.</div>}
-        {sidebarUpcomingItems.map(item=>(
-          <div key={item.id} onClick={()=>setDetailEventId(item.id)} style={{padding:"8px 0",borderBottom:`1px solid ${T.border}`,cursor:"pointer"}}>
-            <div style={{fontSize:11,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.title}</div>
-            <div style={{fontSize:10,color:T.muted,marginTop:2}}>{item.subject?item.subject+" · ":""}{item.date}{item.time?" · "+fmtTime(item.time):""}</div>
-          </div>
-        ))}
+          click (selectedCourse/sidebarUpcomingItems computed above), grouped
+          by relative due date ("Due: Tomorrow") the way Shovel's does. Own
+          collapse state, same pattern as the left sidebar's toggle strip. */}
+      <div style={{flexShrink:0,display:"flex"}}>
+        <button type="button" onClick={toggleCalRightColCollapsed} title={calRightColCollapsed?"Show upcoming":"Hide upcoming"}
+          style={{width:16,alignSelf:"stretch",background:"none",border:"none",borderLeft:`1px solid ${T.border}`,color:T.faint,cursor:"pointer",fontSize:11,marginLeft:14,flexShrink:0}}>{calRightColCollapsed?"‹":"›"}</button>
+        {!calRightColCollapsed&&(
+        <div style={{width:220,marginLeft:14,borderLeft:`1px solid ${T.border}`,paddingLeft:14,maxHeight:"calc(100vh - 160px)",overflowY:"auto"}}>
+          <div style={{fontSize:12.5,fontWeight:700,color:T.white,marginBottom:10}}>{selectedCourse?selectedCourse.label:"Upcoming"}</div>
+          {sidebarUpcomingItems.length===0&&<div style={{fontSize:11.5,color:T.faint}}>Nothing upcoming.</div>}
+          {sidebarUpcomingGroups.map(group=>(
+            <div key={group.label} style={{marginBottom:14}}>
+              <div style={{fontSize:10,fontWeight:700,color:group.label==="Overdue"?T.red:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Due: {group.label}</div>
+              {group.items.map(item=>{
+                const tagColor=item.color||colorOf(item.courseId||item.subject);
+                return (
+                  <div key={item.id} onClick={()=>setDetailEventId(item.id)} style={{padding:"8px 0 8px 8px",borderBottom:`1px solid ${T.border}`,borderLeft:`2px solid ${tagColor}`,cursor:"pointer"}}>
+                    <div style={{fontSize:11,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.title}</div>
+                    <div style={{fontSize:10,color:T.muted,marginTop:2}}>{item.subject?item.subject+" · ":""}{item.time?fmtTime(item.time):"All day"}</div>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+        )}
       </div>
     </div>
       {calTourStep>=0&&(

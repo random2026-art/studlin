@@ -110,7 +110,9 @@ function loadStudlinModule(options) {
     "compressExamPrepForRoom","dayOfWeekLabel","ordinalDay","CATCHUP_EXAM_URGENT_DAYS",
     "logCatchUpEvent","computeStudyPlanParams","materialVolumeBonus","STUDY_PLAN_CONFIDENCE_LEVELS",
     "getSubjects","saveSubjects","courseIdForLabel","backfillCourseIds",
-    "deleteCourseWithCascade","undoCourseDelete"];
+    "deleteCourseWithCascade","undoCourseDelete",
+    "deriveFreePeriodsFromPeriods","getHsSchoolHours","saveHsSchoolHours",
+    "subtractIntervals"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }
