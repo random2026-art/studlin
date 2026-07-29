@@ -14723,13 +14723,42 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
   </>);
 }
 
-function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,setDetailEventId,registerSetEvents,onTaskCompleted,catchUpPending}={}){
+function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,setDetailEventId,registerSetEvents,onTaskCompleted,catchUpPending}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.muted},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   // Accepts either a real course id or a label, same as StudlinPrep/Notes'
   // colorOf -- id match preferred when the caller has one, label fallback
   // otherwise.
   const colorOf=(sub)=>{if(!sub||sub==="None"||sub==="")return T.muted;const x=userSubjects.find(s=>s.id===sub||s.label===sub);return x?x.color:T.lime;};
+  // ── Phase 5: Courses/Activities sidebar (Shovel-inspired) ──
+  // Own collapse state, independent of the global icon rail's.
+  const [calSidebarCollapsed,setCalSidebarCollapsedState]=useState(()=>lsGet("calSidebarCollapsed",false));
+  const toggleCalSidebarCollapsed=()=>setCalSidebarCollapsedState(v=>{lsSet("calSidebarCollapsed",!v);return !v;});
+  // Drives the right-hand column (5e): null = "upcoming across everything",
+  // a course id = filtered to just that course.
+  const [selectedCourseId,setSelectedCourseId]=useState(null);
+  // Per-chip interaction state -- only one of these is ever non-null at a
+  // time in practice (menu closes before rename/color/delete opens), kept
+  // separate rather than one combined enum since each has its own draft
+  // data (renameDraft) or is driven by a reusable component (ColorSelect)
+  // that already manages its own open/close internally.
+  const [courseMenuOpenId,setCourseMenuOpenId]=useState(null);
+  const [renamingCourseId,setRenamingCourseId]=useState(null);
+  const [renameDraft,setRenameDraft]=useState("");
+  const [confirmDeleteCourseId,setConfirmDeleteCourseId]=useState(null);
+  // Same cascading-delete-with-undo pattern as Settings' "Subjects & Labels"
+  // (countLinkedForSubject/announceCourseDelete/undoCourseDeletes there) --
+  // ported here rather than shared, matching this file's convention of
+  // per-component local helpers (colorOf, etc.) over cross-component
+  // extraction.
+  const [courseDeleteSnapshots,setCourseDeleteSnapshots]=useState(null);
+  const [courseDeleteToast,setCourseDeleteToast]=useState("");
+  // Handler functions for all of the above live further down (see "Phase 5
+  // sidebar handlers" near persistRoutines) -- they need events/routines
+  // React state and setEvents/persistRoutines in scope to keep this
+  // component's own state in sync after deleteCourseWithCascade/
+  // undoCourseDelete mutate storage directly, and those aren't declared
+  // yet at this point in the component.
   // A genuinely fresh account — never touched Subjects or Routine, and
   // hasn't seen the new tour either. Deliberately excludes "cal-onboard-done"
   // (the old Google Calendar prompt's flag): App() stamps that one itself
@@ -15240,6 +15269,49 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
     if(!routineEditItem)return;
     deleteRoutineItem(routineEditItem.id);
     closeRoutineEdit();
+  };
+  // ── Phase 5 sidebar handlers -- declared here (not up near the state
+  // declarations) so events/routines/setEvents/persistRoutines are already
+  // in scope: deleteCourseWithCascade/undoCourseDelete mutate localStorage
+  // directly (module-level, no React), so every caller here re-syncs this
+  // component's own state from storage afterward, same "resync after an
+  // external mutation" idiom used elsewhere in this component (e.g.
+  // finishClassSetup's setEvents(lsGet("events",[])...) call). ──
+  const resyncAfterCourseChange=()=>{
+    setUserSubjectsState(getSubjects());
+    setRoutinesState(getWeeklyRoutine());
+    setEvents(lsGet("events",[]).filter(e=>!e.id.startsWith("seed-")));
+  };
+  const countLinkedForCourse=(sub)=>{
+    const matches=(item)=>item.courseId===sub.id||item.subject===sub.label;
+    return routines.filter(matches).length+events.filter(matches).length;
+  };
+  const announceCourseDelete=(snapshot)=>{
+    if(!snapshot)return;
+    const totalLinked=snapshot.routines.length+snapshot.events.length;
+    setCourseDeleteSnapshots(snapshot);
+    setCourseDeleteToast(`Deleted "${snapshot.subject.label}" and ${totalLinked} linked item${totalLinked!==1?"s":""}`);
+    setTimeout(()=>{setCourseDeleteToast("");setCourseDeleteSnapshots(null);},5000);
+  };
+  const confirmDeleteCourse=(sub)=>{
+    const snapshot=deleteCourseWithCascade(sub.id);
+    resyncAfterCourseChange();
+    if(selectedCourseId===sub.id)setSelectedCourseId(null);
+    setConfirmDeleteCourseId(null);
+    announceCourseDelete(snapshot);
+  };
+  const undoCourseDeleteInSidebar=()=>{
+    if(!courseDeleteSnapshots)return;
+    undoCourseDelete(courseDeleteSnapshots);
+    resyncAfterCourseChange();
+    setCourseDeleteSnapshots(null);setCourseDeleteToast("");
+  };
+  const startRenameCourse=(sub)=>{setCourseMenuOpenId(null);setRenamingCourseId(sub.id);setRenameDraft(sub.label);};
+  const commitRenameCourse=(sub)=>{
+    const label=renameDraft.trim();
+    if(label&&label!==sub.label)saveSubjects(getSubjects().map(s=>s.id===sub.id?{...s,label}:s));
+    setUserSubjectsState(getSubjects());
+    setRenamingCourseId(null);
   };
   const monthNames=["January","February","March","April","May","June","July","August","September","October","November","December"];
   const lead=(new Date(ym.y,ym.m,1).getDay()+6)%7;
@@ -15989,6 +16061,20 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
     const end=new Date(d);end.setDate(end.getDate()+6);
     return d.toLocaleDateString("en-US",{month:"short",day:"numeric"})+" – "+end.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
   })();
+  // Phase 5 sidebar right column: defaults to "upcoming across everything";
+  // re-filters to just the selected course's items on a chip click. Same
+  // courseId-then-label matching convention as everywhere else since
+  // Phase 1 -- Phase 8 will build an equivalent for Prep's course-grouped
+  // view using the same pattern (no cross-component shared-helper
+  // mechanism in this file, same as colorOf being component-local).
+  const selectedCourse=selectedCourseId?userSubjects.find(s=>s.id===selectedCourseId):null;
+  const sidebarUpcomingItems=(()=>{
+    const matches=selectedCourse?(item)=>item.courseId===selectedCourse.id||item.subject===selectedCourse.label:()=>true;
+    return events
+      .filter(e=>e.status!=="done"&&e.date&&(e.kind==="exam"||e.kind==="deadline")&&matches(e))
+      .sort((a,b)=>a.date===b.date?(a.time||"").localeCompare(b.time||""):a.date.localeCompare(b.date))
+      .slice(0,20);
+  })();
   return (
     <>
     {/* Main content — this is data-page's direct child, so it's the element
@@ -15996,9 +16082,81 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
         animation to. That leaves it a permanent CSS containing block for any
         position:fixed descendant (see the Dashboard modal fix for the same
         bug one level up). Every overlay below is rendered as a sibling of
-        this div instead of nested inside it, so it centers against the real
-        viewport regardless of scroll position or animation state. */}
-    <div>
+        THIS wrapper (not nested inside it), so it centers against the real
+        viewport regardless of scroll position or animation state -- the
+        Phase 5 sidebar/right-column below are new siblings of the original
+        content div, both now inside this one extra flex-row wrapper, but
+        every modal after this block stays flat, exactly as before. */}
+    <div style={{display:"flex",alignItems:"flex-start"}}>
+      {/* Courses/Activities sidebar (Phase 5, Shovel-inspired) -- own
+          collapse state, independent of the global icon rail's. */}
+      <div style={{flexShrink:0,display:"flex"}}>
+        {!calSidebarCollapsed&&(
+        <div style={{width:196,paddingRight:14,marginRight:14,borderRight:`1px solid ${T.border}`,maxHeight:"calc(100vh - 160px)",overflowY:"auto"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+            <span style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Courses</span>
+            <button type="button" onClick={()=>setQuickScanOpen(true)} style={{background:"none",border:"none",color:T.lime,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0}}>+ Add new</button>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:18}}>
+            {userSubjects.length===0&&<div style={{fontSize:11,color:T.faint,padding:"4px 0 8px"}}>No courses yet.</div>}
+            {userSubjects.map(sub=>{
+              const isSelected=selectedCourseId===sub.id;
+              const isRenaming=renamingCourseId===sub.id;
+              const isConfirmingDelete=confirmDeleteCourseId===sub.id;
+              const linkedCount=isConfirmingDelete?countLinkedForCourse(sub):0;
+              return (
+                <div key={sub.id} style={{position:"relative"}}>
+                  {isConfirmingDelete?(
+                    <div style={{padding:"8px 10px",borderRadius:10,border:`1px solid ${T.red}55`,background:T.red+"12"}}>
+                      <div style={{fontSize:10.5,color:T.text,marginBottom:8,lineHeight:1.4}}>Delete "{sub.label}" and its {linkedCount} linked item{linkedCount!==1?"s":""}?</div>
+                      <div style={{display:"flex",gap:6}}>
+                        <button onClick={()=>confirmDeleteCourse(sub)} style={{fontSize:10.5,fontWeight:600,padding:"4px 9px",borderRadius:5,background:T.red,color:"#fff",border:"none",cursor:"pointer",fontFamily:T.font}}>Delete</button>
+                        <button onClick={()=>setConfirmDeleteCourseId(null)} style={{fontSize:10.5,padding:"4px 9px",borderRadius:5,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,cursor:"pointer",fontFamily:T.font}}>Cancel</button>
+                      </div>
+                    </div>
+                  ):isRenaming?(
+                    <input autoFocus value={renameDraft} onChange={e=>setRenameDraft(e.target.value)}
+                      onKeyDown={e=>{if(e.key==="Enter")commitRenameCourse(sub);if(e.key==="Escape")setRenamingCourseId(null);}}
+                      onBlur={()=>commitRenameCourse(sub)}
+                      style={{width:"100%",boxSizing:"border-box",...subjectRowStyle(sub.color),border:`1px solid ${sub.color}66`,color:T.text,fontSize:12,fontFamily:T.font,outline:"none"}} />
+                  ):(
+                    <div onClick={()=>setSelectedCourseId(isSelected?null:sub.id)}
+                      style={{...subjectRowStyle(sub.color),cursor:"pointer",justifyContent:"space-between",outline:isSelected?`2px solid ${sub.color}`:"none",outlineOffset:1}}>
+                      <span style={{fontSize:12,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{sub.label}</span>
+                      <button type="button" onClick={(e)=>{e.stopPropagation();setCourseMenuOpenId(courseMenuOpenId===sub.id?null:sub.id);}}
+                        style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:"0 0 0 6px",fontSize:14,lineHeight:1,flexShrink:0}}>⋯</button>
+                    </div>
+                  )}
+                  {courseMenuOpenId===sub.id&&(
+                    <div onMouseLeave={()=>setCourseMenuOpenId(null)} style={{position:"absolute",top:"100%",right:0,zIndex:40,marginTop:4,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 12px 28px -12px rgba(0,0,0,0.5)",overflow:"hidden",minWidth:150}}>
+                      <button onClick={()=>startRenameCourse(sub)} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Rename</button>
+                      <button onClick={()=>{setCourseMenuOpenId(null);setActive("settings");}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Change color</button>
+                      <button onClick={()=>{setCourseMenuOpenId(null);setQuickScanOpen(true);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Import syllabus</button>
+                      <button onClick={()=>{setCourseMenuOpenId(null);setConfirmDeleteCourseId(sub.id);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.red,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Delete</button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+            <span style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Activities</span>
+            <button type="button" onClick={()=>setRoutineCenterOpen(true)} style={{background:"none",border:"none",color:T.lime,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0}}>+ Add new</button>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {routines.filter(r=>r.kind!=="class").length===0&&<div style={{fontSize:11,color:T.faint,padding:"4px 0"}}>No activities yet.</div>}
+            {routines.filter(r=>r.kind!=="class").map(r=>(
+              <div key={r.id} onClick={()=>openRoutineEdit(r)} style={{...subjectRowStyle(r.color||T.muted),cursor:"pointer"}}>
+                <span style={{fontSize:12,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.title}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        )}
+        <button type="button" onClick={toggleCalSidebarCollapsed} title={calSidebarCollapsed?"Show courses & activities":"Hide courses & activities"}
+          style={{width:16,alignSelf:"stretch",background:"none",border:"none",borderRight:`1px solid ${T.border}`,color:T.faint,cursor:"pointer",fontSize:11,marginRight:14,flexShrink:0}}>{calSidebarCollapsed?"›":"‹"}</button>
+      </div>
+    <div style={{flex:1,minWidth:0}}>
       {/* Slim toolbar replaces the old page header + separate view-switcher
           row (ui/tokens-and-calendar Part 2). Date range + prev/next on the
           left; Day/Week/Month switcher, a "..." overflow for the less-
@@ -16123,6 +16281,20 @@ function CalendarTab({onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,s
       {calView==="daily"&&(
         <DayPlanner dayEvents={dayEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} />
       )}
+    </div>
+      {/* Right-hand column (Phase 5e) -- upcoming across everything by
+          default, re-filtered to the selected course's items on a chip
+          click (selectedCourse/sidebarUpcomingItems computed above). */}
+      <div style={{width:220,flexShrink:0,marginLeft:14,borderLeft:`1px solid ${T.border}`,paddingLeft:14,maxHeight:"calc(100vh - 160px)",overflowY:"auto"}}>
+        <div style={{fontSize:12.5,fontWeight:700,color:T.white,marginBottom:10}}>{selectedCourse?selectedCourse.label:"Upcoming"}</div>
+        {sidebarUpcomingItems.length===0&&<div style={{fontSize:11.5,color:T.faint}}>Nothing upcoming.</div>}
+        {sidebarUpcomingItems.map(item=>(
+          <div key={item.id} onClick={()=>setDetailEventId(item.id)} style={{padding:"8px 0",borderBottom:`1px solid ${T.border}`,cursor:"pointer"}}>
+            <div style={{fontSize:11,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.title}</div>
+            <div style={{fontSize:10,color:T.muted,marginTop:2}}>{item.subject?item.subject+" · ":""}{item.date}{item.time?" · "+fmtTime(item.time):""}</div>
+          </div>
+        ))}
+      </div>
     </div>
       {calTourStep>=0&&(
         <TourStep {...CAL_TOUR_STEPS[calTourStep]} step={calTourStep} total={CAL_TOUR_STEPS.length}
@@ -21191,14 +21363,13 @@ function App() {
   const [scheduleSettingsOpen,setScheduleSettingsOpen]=useState(false);
   // Defaults to collapsed (icon rail) for anyone who's never touched this
   // preference -- existing users who already expanded/collapsed it
-  // explicitly keep whatever they chose. navHovering is separate and never
-  // persisted: hovering a pinned-collapsed rail temporarily shows the full
-  // rail without changing the pin itself, same relationship as a
-  // Mac/Windows auto-hidden dock.
+  // explicitly keep whatever they chose. Used to also expand on hover
+  // (Phase 5: removed -- the global rail is icon-only now regardless of
+  // pointer position; the new Calendar-scoped Courses/Activities sidebar
+  // is where a real second panel belongs, not a hover-reveal of this one).
   const [navCollapsed,setNavCollapsed]=useState(()=>lsGet("navCollapsed",true));
   const toggleNavCollapsed=()=>{setNavCollapsed(v=>{lsSet("navCollapsed",!v);return !v;});};
-  const [navHovering,setNavHovering]=useState(false);
-  const navExpanded=!navCollapsed||navHovering;
+  const navExpanded=!navCollapsed;
   // A gentle heads-up a few minutes before a scheduled study block/deadline
   // starts — the "I knew I had to be locked in at that time" cue a mental
   // notepad gives you for free, which a calendar you have to remember to
@@ -21874,11 +22045,10 @@ function App() {
   return (
     <div style={{display:"flex",height:"100vh",overflow:"hidden",background:isLight?T.bg:`radial-gradient(1200px 600px at 78% -8%, ${T.glow}, transparent 60%), ${T.bg}`,fontFamily:T.font,color:T.text}}>
       {/* SIDEBAR -- collapses to a ~48px icon rail by default (navCollapsed),
-          expands on hover (navHovering, transient/never persisted) without
-          disturbing the pinned preference. Clicking the toggle button below
-          changes the pin itself, so it stays keyed to navCollapsed rather
-          than navExpanded. */}
-      <div onMouseEnter={()=>setNavHovering(true)} onMouseLeave={()=>setNavHovering(false)} style={{width:navExpanded?230:48,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #18241D 0%, #0D120F00 60%)",backgroundColor:isLight?T.surface:T.surface,display:"flex",flexDirection:"column",padding:navExpanded?"20px 12px":"16px 6px",borderRight:`1px solid ${isLight?"transparent":T.border}`,overflowY:"auto",overflowX:"hidden",transition:"width 0.22s cubic-bezier(.2,.8,.2,1), padding 0.22s cubic-bezier(.2,.8,.2,1)"}}>
+          pinned open/closed only by the toggle button below (Phase 5:
+          hover-to-expand removed -- icon-only regardless of pointer
+          position; a real second panel now lives in Calendar instead). */}
+      <div style={{width:navExpanded?230:48,flexShrink:0,background:isLight?T.surface:"linear-gradient(180deg, #18241D 0%, #0D120F00 60%)",backgroundColor:isLight?T.surface:T.surface,display:"flex",flexDirection:"column",padding:navExpanded?"20px 12px":"16px 6px",borderRight:`1px solid ${isLight?"transparent":T.border}`,overflowY:"auto",overflowX:"hidden",transition:"width 0.22s cubic-bezier(.2,.8,.2,1), padding 0.22s cubic-bezier(.2,.8,.2,1)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 6px",marginBottom:20,justifyContent:navExpanded?"space-between":"center"}}>
           {navExpanded&&(
             <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
@@ -22022,7 +22192,7 @@ function App() {
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
           {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} onTaskCompleted={handleTaskCompleted} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} />:
-           active==="calendar"?<CalendarTab onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} />:
+           active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} />:
            active==="notes"?<Notes setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="lectures"?<Lectures setActive={setActive} setPricingOpen={setPricingOpen} />:
