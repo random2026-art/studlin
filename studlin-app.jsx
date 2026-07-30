@@ -14402,7 +14402,14 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // only lost typing to avoid.
     const saved=lsGet("classSetupPending",[]);
     setPendingClasses(Array.isArray(saved)?saved:[]);
-    setAddMode(quickScan?"scan":null);
+    // targetCourseId set -> opened from an existing course's own "Import
+    // syllabus" action, intent is already specific, skip straight to
+    // scan as before. Otherwise (the sidebar's general "+ Add new")
+    // land on "choose" like a first-time add would -- jumping straight
+    // to the single-class scan here meant "Scan my whole schedule" was
+    // never actually reachable from the one entry point students use
+    // most, found live.
+    setAddMode(quickScan?(targetCourseId?"scan":"choose"):null);
     setReviewSub("items");
     setEditingPendingId(null);
     setScanError("");
