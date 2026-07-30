@@ -489,14 +489,14 @@ function PlanCards({ billing, onSelect }) {
         <div key={i} style={{
           background:plan.featured?T.forest:T.card2,
           border:`1.5px solid ${plan.featured?T.lime+"44":T.border}`,
-          borderRadius:18,
-          padding:24,
+          borderRadius:8,
+          padding:22,
           position:"relative",
           display:"flex",flexDirection:"column",
           boxShadow:plan.featured?`0 24px 48px -20px ${T.lime}30`:"none",
         }}>
           {plan.tag && (
-            <div style={{position:"absolute",top:-11,left:18,background:T.lime,color:T.ink,fontFamily:T.mono,fontSize:10,fontWeight:700,letterSpacing:"0.14em",padding:"4px 10px",borderRadius:99}}>{plan.tag}</div>
+            <div style={{position:"absolute",top:-11,left:18,background:T.lime,color:T.ink,fontFamily:T.mono,fontSize:10,fontWeight:700,letterSpacing:"0.14em",padding:"4px 10px",borderRadius:5}}>{plan.tag}</div>
           )}
           <div style={{fontSize:18,fontWeight:700,color:plan.featured?T.cream:T.text,letterSpacing:"-0.02em",marginBottom:4}}>{plan.name}</div>
           <div style={{display:"flex",alignItems:"baseline",gap:5,margin:"8px 0 6px"}}>
@@ -12585,7 +12585,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
     const prog=tierProgressFor(minutesAfter);
     return(
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(10px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-        <div style={{width:"100%",maxWidth:440,background:T.card,borderRadius:22,border:`1px solid ${T.border}`,padding:"36px 32px",textAlign:"center",position:"relative",overflow:"hidden",animation:"studlinPop 0.25s cubic-bezier(.2,.85,.3,1)"}}>
+        <div style={{width:"100%",maxWidth:440,background:T.card,borderRadius:10,border:`1px solid ${T.border}`,padding:"32px 28px",textAlign:"center",position:"relative",overflow:"hidden",animation:"studlinPop 0.25s cubic-bezier(.2,.85,.3,1)"}}>
           {tieredUp&&<div style={{position:"absolute",inset:0,background:`radial-gradient(circle at 50% 15%, ${T.lime}40, transparent 62%)`,pointerEvents:"none"}}/>}
           <div style={{position:"relative"}}>
             <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:T.lime,marginBottom:10}}>Session complete</div>
