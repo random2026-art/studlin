@@ -19720,7 +19720,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
       <div style={{display:"grid",gridTemplateColumns:"200px 1fr",gap:16}}>
         <div>
           {sections.map(s=>(
-            <div key={s.id} onClick={()=>setActive(s.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 11px",borderRadius:7,marginBottom:3,fontSize:12.5,cursor:"pointer",background:active===s.id?T.lime+"10":"transparent",color:active===s.id?T.lime:T.muted,fontWeight:active===s.id?600:400,border:`1px solid ${active===s.id?T.lime+"22":"transparent"}`,transition:"all 0.15s"}}>
+            <div key={s.id} onClick={()=>setActive(s.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:6,marginBottom:3,fontSize:12.5,cursor:"pointer",background:active===s.id?T.lime+"10":"transparent",color:active===s.id?T.lime:T.muted,fontWeight:active===s.id?600:400,border:`1px solid ${active===s.id?T.lime+"22":"transparent"}`,transition:"all 0.15s"}}>
               <span style={{color:active===s.id?T.lime:T.faint,width:14,height:14,display:"flex"}}>{s.icon}</span>
               {s.id}
             </div>
@@ -19742,7 +19742,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   <div style={{fontSize:14,fontWeight:700,color:T.white}}>Sign out</div>
                   <div style={{fontSize:12,color:T.muted,marginTop:2}}>Signed in as {firebase.auth().currentUser?.email}</div>
                 </div>
-                <button onClick={()=>firebase.auth().signOut().then(()=>{window.location.href="/";})} style={{padding:"8px 18px",borderRadius:8,border:"1px solid rgba(248,113,113,0.3)",background:"rgba(248,113,113,0.08)",color:"#f87171",fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Sign out</button>
+                <button onClick={()=>firebase.auth().signOut().then(()=>{window.location.href="/";})} style={{padding:"7px 16px",borderRadius:6,border:"1px solid rgba(248,113,113,0.3)",background:"rgba(248,113,113,0.08)",color:"#f87171",fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Sign out</button>
               </div>
             </Card>
             <Card style={{marginBottom:12}}>
@@ -19803,7 +19803,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>Accent color</div>
               <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
                 {accents.map(a=>(
-                  <button key={a.n} onClick={()=>setAccent(a.n)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 14px",borderRadius:8,border:`1.5px solid ${accent===a.n?a.c:T.border}`,background:accent===a.n?a.c+"15":T.card2,color:T.text,cursor:"pointer",fontFamily:T.font,fontSize:12.5,fontWeight:500}}>
+                  <button key={a.n} onClick={()=>setAccent(a.n)} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 12px",borderRadius:6,border:`1.5px solid ${accent===a.n?a.c:T.border}`,background:accent===a.n?a.c+"15":T.card2,color:T.text,cursor:"pointer",fontFamily:T.font,fontSize:12.5,fontWeight:500}}>
                     <span style={{width:14,height:14,borderRadius:"50%",background:a.c,border:`1px solid ${T.border}`}} />
                     {a.n}
                   </button>
@@ -19834,7 +19834,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 </div>
               </div>
               {sysPushStatus==="denied"&&(
-                <div style={{fontSize:11.5,color:T.amber,background:T.amber+"10",border:`1px solid ${T.amber}22`,borderRadius:7,padding:"9px 12px",lineHeight:1.5,marginTop:10}}>
+                <div style={{fontSize:11.5,color:T.amber,background:T.amber+"10",border:`1px solid ${T.amber}22`,borderRadius:6,padding:"9px 12px",lineHeight:1.5,marginTop:10}}>
                   Notifications are blocked in your browser. Open browser site settings and allow notifications for this site, then refresh.
                 </div>
               )}
@@ -19842,7 +19842,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 <div style={{fontSize:11.5,color:T.muted,lineHeight:1.5,marginTop:10}}>Your browser does not support desktop push notifications.</div>
               )}
               {sysPushStatus==="granted"&&toggles.sysPush&&(
-                <div style={{fontSize:11.5,color:T.teal,background:T.teal+"10",border:`1px solid ${T.teal}22`,borderRadius:7,padding:"9px 12px",lineHeight:1.5,marginTop:10}}>
+                <div style={{fontSize:11.5,color:T.teal,background:T.teal+"10",border:`1px solid ${T.teal}22`,borderRadius:6,padding:"9px 12px",lineHeight:1.5,marginTop:10}}>
                   Active · Studlin will send alerts to your desktop even when this tab is in the background.
                 </div>
               )}
@@ -20830,7 +20830,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
             <div style={{fontSize:13,fontWeight:600,color:T.text}}>{ex.title}</div>
             <div style={{fontSize:11,color:T.muted,marginTop:1}}>{ex.subject} · {ex.date} · {deck?deck.count+" cards":"no deck"}{pes.length>0?" · "+pes.length+" practice exam"+(pes.length!==1?"s":""):""}</div>
           </div>
-          <span onClick={(e)=>{e.stopPropagation();jumpToPrepExam(ex.id);}} style={{fontSize:10,fontWeight:700,color:needsKit?T.lime:stateColor,background:(needsKit?T.lime:stateColor)+"14",border:`1px solid ${needsKit?T.lime:stateColor}44`,borderRadius:99,padding:"3px 9px",flexShrink:0,cursor:"pointer"}}>
+          <span onClick={(e)=>{e.stopPropagation();jumpToPrepExam(ex.id);}} style={{fontSize:10,fontWeight:700,color:needsKit?T.lime:stateColor,background:(needsKit?T.lime:stateColor)+"14",border:`1px solid ${needsKit?T.lime:stateColor}44`,borderRadius:5,padding:"3px 9px",flexShrink:0,cursor:"pointer"}}>
             {needsKit?"Build study kit →":readiness?readiness.state.toUpperCase().replace("-"," "):"Open in Prep →"}
           </span>
         </div>
@@ -20956,7 +20956,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   allSessions.forEach(s=>{minsByDay[s.d]=(minsByDay[s.d]||0)+(s.m||0);});
   // Mono label/eyebrow inside a card
   const Eye=({children,style={}})=>(
-    <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.16em",textTransform:"uppercase",color:T.muted,padding:"4px 8px",border:`1px solid ${T.border}`,borderRadius:99,...style}}>{children}</span>
+    <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.16em",textTransform:"uppercase",color:T.muted,padding:"4px 8px",border:`1px solid ${T.border}`,borderRadius:5,...style}}>{children}</span>
   );
   const Hand=({children,style={}})=>(
     <h3 style={{fontFamily:T.hand,fontSize:30,lineHeight:1,fontWeight:600,margin:0,color:T.white,letterSpacing:"-0.01em",whiteSpace:"nowrap",...style}}>{children}</h3>
@@ -20984,8 +20984,8 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
 
       {/* Needs-attention — Attack Block project running behind its runway */}
       {attackOverrun&&(
-        <div style={{background:T.card,border:`1px solid ${T.red}55`,borderRadius:20,padding:"20px 24px",display:"flex",alignItems:"flex-start",gap:16}}>
-          <div style={{flexShrink:0,width:38,height:38,borderRadius:12,background:T.red+"1A",display:"flex",alignItems:"center",justifyContent:"center"}}>
+        <div style={{background:T.card,border:`1px solid ${T.red}55`,borderRadius:8,padding:"18px 20px",display:"flex",alignItems:"flex-start",gap:16}}>
+          <div style={{flexShrink:0,width:38,height:38,borderRadius:8,background:T.red+"1A",display:"flex",alignItems:"center",justifyContent:"center"}}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={T.red} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
           </div>
           <div style={{flex:1,minWidth:0}}>
@@ -21021,7 +21021,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
         )}
       </Modal>
       {overrunToast&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {overrunToast}</div>
+        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:7,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {overrunToast}</div>
       )}
 
       {/* ROW 2: Today's plan + Checklist (Ask Studlin/aichat card removed
@@ -21031,11 +21031,11 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
           everything-assigned reference comes after. */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
         {/* Today's plan */}
-        <div style={{background:T.card,borderRadius:22,padding:24,display:"flex",flexDirection:"column"}}>
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:20,display:"flex",flexDirection:"column"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8,flexWrap:"wrap"}}>
             <span style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:T.text}}>Today's plan</span>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.1em",padding:"4px 9px",borderRadius:99,background:T.card2,color:T.muted,fontWeight:600}}>{planDoneCount} / {planCountable.length} DONE</span>
+              <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.1em",padding:"4px 9px",borderRadius:5,background:T.card2,color:T.muted,fontWeight:600}}>{planDoneCount} / {planCountable.length} DONE</span>
               <button onClick={()=>setActive("calendar")} style={{fontSize:12,color:T.muted,display:"inline-flex",alignItems:"center",gap:3,cursor:"pointer",background:"none",border:"none",fontFamily:T.font,fontWeight:500}}>Calendar <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
             </div>
           </div>
@@ -21044,8 +21044,8 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
             ?<div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 8px",textAlign:"center"}}>
               <div style={{fontSize:13,color:T.muted,marginBottom:18,lineHeight:1.6}}>Nothing scheduled for today. Add events to your calendar and they appear here automatically.</div>
               <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
-                <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"10px 20px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Add a task</button>
-                <button onClick={()=>{lsSet("pendingBrainDump",true);setActive("calendar");}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"10px 20px",background:"transparent",color:T.text,border:`1px solid ${T.border}`,borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Brain dump everything</button>
+                <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",background:T.lime,color:T.ink,border:"none",borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Add a task</button>
+                <button onClick={()=>{lsSet("pendingBrainDump",true);setActive("calendar");}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",background:"transparent",color:T.text,border:`1px solid ${T.border}`,borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Brain dump everything</button>
               </div>
             </div>
             :plan.map((t)=>{
@@ -21088,11 +21088,11 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
             calendar/Today's-plan entirely; this is the only place they live.
             Restored here after briefly being removed — replaces "Jump back
             in", which just duplicated what the sidebar nav already does. */}
-        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:20}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <span style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:T.text}}>Checklist</span>
-              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:99,color:T.muted}}>{checklistItems.length} OPEN</span>
+              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted}}>{checklistItems.length} OPEN</span>
             </div>
           </div>
           <div style={{display:"flex",gap:8,marginBottom:14}}>
@@ -21115,18 +21115,18 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
       {/* Your Classes — pick a class, see everything tied to it
           (assignments, projects, exams, undated items) in one place.
           "All" keeps the original type-tabbed view across every class. */}
-      <div style={{background:T.card,borderRadius:22,padding:22,border:`1px solid ${T.border}`}}>
+      <div style={{background:T.card,borderRadius:8,padding:20,border:`1px solid ${T.border}`}}>
         <div style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:T.text,marginBottom:14}}>Your Classes</div>
         {yourClassesSubjects.length===0?(
           <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 8px",textAlign:"center"}}>
             <div style={{fontSize:13,color:T.muted,marginBottom:18,lineHeight:1.6}}>No classes yet. Add one and everything for it -- assignments, exams, projects -- shows up here.</div>
-            <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"10px 20px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>+ Add your first class</button>
+            <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",background:T.lime,color:T.ink,border:"none",borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>+ Add your first class</button>
           </div>
         ):(<>
         <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>
-          <button onClick={()=>{setSelectedClassId("all");setExpandedMasterId(null);}} style={{padding:"6px 14px",borderRadius:99,fontSize:11.5,fontWeight:600,cursor:"pointer",background:selectedClassId==="all"?T.lime+"14":"transparent",color:selectedClassId==="all"?T.lime:T.muted,border:`1px solid ${selectedClassId==="all"?T.lime+"44":T.border}`,fontFamily:T.font}}>All</button>
+          <button onClick={()=>{setSelectedClassId("all");setExpandedMasterId(null);}} style={{padding:"6px 12px",borderRadius:6,fontSize:11.5,fontWeight:600,cursor:"pointer",background:selectedClassId==="all"?T.lime+"14":"transparent",color:selectedClassId==="all"?T.lime:T.muted,border:`1px solid ${selectedClassId==="all"?T.lime+"44":T.border}`,fontFamily:T.font}}>All</button>
           {yourClassesSubjects.map(s=>(
-            <button key={s.id} onClick={()=>{setSelectedClassId(s.id);setExpandedMasterId(null);}} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 14px",borderRadius:99,fontSize:11.5,fontWeight:600,cursor:"pointer",background:selectedClassId===s.id?s.color+"18":"transparent",color:selectedClassId===s.id?s.color:T.muted,border:`1px solid ${selectedClassId===s.id?s.color+"55":T.border}`,fontFamily:T.font}}>
+            <button key={s.id} onClick={()=>{setSelectedClassId(s.id);setExpandedMasterId(null);}} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:6,fontSize:11.5,fontWeight:600,cursor:"pointer",background:selectedClassId===s.id?s.color+"18":"transparent",color:selectedClassId===s.id?s.color:T.muted,border:`1px solid ${selectedClassId===s.id?s.color+"55":T.border}`,fontFamily:T.font}}>
               <span style={{width:7,height:7,borderRadius:"50%",background:s.color,flexShrink:0}} />{s.label}
             </button>
           ))}
@@ -21218,11 +21218,11 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
 
       {/* ROW 5: Upcoming + Pick up where you left off */}
       <div style={{display:"grid",gridTemplateColumns:"5fr 7fr",gap:16}}>
-        <div style={{background:T.card,borderRadius:22,padding:22,border:`1px solid ${T.border}`}}>
+        <div style={{background:T.card,borderRadius:8,padding:20,border:`1px solid ${T.border}`}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <span style={{fontFamily:T.hand,fontSize:22,fontWeight:600,color:T.text}}>Upcoming</span>
-              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:99,color:T.muted}}>NEXT 14 DAYS</span>
+              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted}}>NEXT 14 DAYS</span>
             </div>
             <button onClick={()=>setActive("calendar")} style={{fontSize:12,color:T.muted,display:"inline-flex",alignItems:"center",gap:3,cursor:"pointer",background:"none",border:"none",fontFamily:T.font}}>Calendar <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
           </div>
@@ -21238,15 +21238,15 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                   <div style={{fontSize:13,fontWeight:600,color:T.text}}>{ev.t}</div>
                   <div style={{fontSize:11,color:T.muted,marginTop:1}}>{ev.sub}</div>
                 </div>
-                <span style={{fontSize:10.5,fontWeight:700,padding:"4px 9px",borderRadius:99,background:ev.urgent?"rgba(224,48,48,0.10)":T.card2,color:ev.urgent?"#E03030":T.muted,flexShrink:0}}>{ev.cd}</span>
+                <span style={{fontSize:10.5,fontWeight:700,padding:"4px 9px",borderRadius:5,background:ev.urgent?"rgba(224,48,48,0.10)":T.card2,color:ev.urgent?"#E03030":T.muted,flexShrink:0}}>{ev.cd}</span>
               </div>
             ))}
         </div>
-        <div style={{background:T.card,borderRadius:22,padding:22,border:`1px solid ${T.border}`}}>
+        <div style={{background:T.card,borderRadius:8,padding:20,border:`1px solid ${T.border}`}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <span style={{fontFamily:T.hand,fontSize:22,fontWeight:600,color:T.text}}>Pick up where you left off</span>
-              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:99,color:T.muted}}>RECENT</span>
+              <span style={{fontFamily:T.mono,fontSize:9.5,letterSpacing:"0.12em",padding:"3px 8px",border:`1px solid ${T.border}`,borderRadius:5,color:T.muted}}>RECENT</span>
             </div>
           </div>
           {pickUpItems.length===0
@@ -21258,7 +21258,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                   <div key={i} onClick={()=>{
                     if(it.kind==="deck"){lsSet("openDeckId",it.id);setActive("flashcards");}
                     else if(it.kind==="note"){lsSet("openNoteId",it.id);setActive("notes");}
-                  }} style={{background:bgColors[i%4],borderRadius:14,padding:14,cursor:"pointer"}}>
+                  }} style={{background:bgColors[i%4],borderRadius:8,padding:14,cursor:"pointer"}}>
                     <div style={{fontSize:9.5,fontWeight:700,letterSpacing:"0.06em",color:"rgba(8,12,40,0.65)",marginBottom:8}}>{it.subj}</div>
                     <div style={{fontSize:13,fontWeight:700,color:"#0D120F",marginBottom:10,lineHeight:1.3}}>{it.title}</div>
                     <div style={{height:4,background:"rgba(8,12,40,0.15)",borderRadius:99,marginBottom:8,overflow:"hidden"}}><div style={{height:"100%",width:it.pct+"%",background:"#0D120F",borderRadius:99}}/></div>
@@ -21285,7 +21285,7 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
         the reported "have to scroll up to see the reschedule confirm" bug. */}
     {wrappedOpen&&!seriousMode&&(
       <div onClick={dismissWrapped} style={{position:"fixed",inset:0,background:"rgba(8,12,10,0.72)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
-        <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:420,background:T.forest,color:T.cream,borderRadius:22,padding:28,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
+        <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:420,background:T.forest,color:T.cream,borderRadius:10,padding:26,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
           <CardHead title="Weekly Wrapped" label={"WEEK "+weekNo()} light />
           {/* Day-by-day breakdown — used to be its own permanent "This
               week's focus" dashboard card; folded in here instead since
@@ -21336,10 +21336,10 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
             </div>
           )}
           <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:12,marginBottom:20}}>
-            <span style={{fontSize:10.5,padding:"5px 10px",background:"rgba(246,241,230,0.08)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:T.cream,fontWeight:600}}>{realStreak}-day streak</span>
-            {topSubjectThisWeek&&<span style={{fontSize:10.5,padding:"5px 10px",background:"rgba(246,241,230,0.08)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:99,color:T.cream,fontWeight:600}}>{topSubjectThisWeek} focus</span>}
+            <span style={{fontSize:10.5,padding:"5px 10px",background:"rgba(246,241,230,0.08)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:5,color:T.cream,fontWeight:600}}>{realStreak}-day streak</span>
+            {topSubjectThisWeek&&<span style={{fontSize:10.5,padding:"5px 10px",background:"rgba(246,241,230,0.08)",border:"1px solid rgba(246,241,230,0.14)",borderRadius:5,color:T.cream,fontWeight:600}}>{topSubjectThisWeek} focus</span>}
           </div>
-          <button onClick={dismissWrapped} style={{width:"100%",padding:"11px 0",borderRadius:99,background:T.lime,color:T.ink,border:"none",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Done</button>
+          <button onClick={dismissWrapped} style={{width:"100%",padding:"11px 0",borderRadius:6,background:T.lime,color:T.ink,border:"none",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Done</button>
         </div>
       </div>
     )}
