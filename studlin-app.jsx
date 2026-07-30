@@ -6300,6 +6300,49 @@ function StudlinPrep({setActive=()=>{}}={}){
   const [buildPlanHoursTarget,setBuildPlanHoursTarget]=useState("");
   const [buildPlanFocuses,setBuildPlanFocuses]=useState([]);
   const [buildPlanFocusesLoading,setBuildPlanFocusesLoading]=useState(false);
+  // "Create manually" -- the other half of the choice step (Phase 4).
+  // Each row is {text, date, time, duration}: date+time filled in creates
+  // a normally-scheduled session right away (validated the same
+  // findLegalSlotOrNull way any other manual placement in this file is);
+  // left blank creates an unscheduled session -- no date/time at all,
+  // same "exists but not yet placed" convention RosterList-created
+  // courses/activities already use -- which then shows up as a draggable
+  // chip in the right column (see renderSidebarItem in CalendarTab).
+  const [manualSessionRows,setManualSessionRows]=useState([]);
+  const addManualSessionRow=()=>setManualSessionRows(rows=>[...rows,{text:"",date:"",time:"",duration:25}]);
+  const openManualSessions=()=>{
+    setManualSessionRows([{text:"",date:"",time:"",duration:25}]);
+    setBuildPlanStep("manual");
+  };
+  const commitManualSessions=()=>{
+    if(!buildPlanExam)return;
+    const realRows=manualSessionRows.filter(r=>r.text.trim());
+    if(realRows.length===0){closeBuildPlan();return;}
+    const sessionPriority=computeSessionPriority(buildPlanExam,dayKey());
+    const events=lsGet("events",[]);
+    const newSessions=realRows.map((r,i)=>{
+      const base={
+        id:"manual-"+buildPlanExam.id+"-"+Date.now()+"-"+i,
+        title:"Study: "+buildPlanExam.title,date:"",time:"",subject:buildPlanExam.subject,
+        notes:r.text.trim(),kind:"study block",duration:r.duration||25,
+        priority:sessionPriority,difficulty:buildPlanExam.difficulty??500,deadline:buildPlanExam.date,
+        status:"pending",timeSpent:0,completedAt:null,
+        isExamPrepSession:true,dueEventId:buildPlanExam.id,
+      };
+      if(r.date&&r.time){
+        const slot=findLegalSlotOrNull(events,getWeeklyRoutine(),getSchedulePreferences(),r.date,r.time,r.duration||25,buildPlanExam.date);
+        if(slot)return {...base,date:slot.date,time:slot.time};
+        // Couldn't legally place the exact time asked for (conflict or
+        // past the deadline) -- lands unscheduled instead of silently
+        // double-booking or ignoring the deadline, same as this session's
+        // draggable "not scheduled" chip already communicates elsewhere.
+      }
+      return base;
+    });
+    lsSet("events",events.concat(newSessions));
+    closeBuildPlan();
+    refresh();
+  };
   // Progressive disclosure for the exam-detail view -- everything used to
   // render at once (upload/paste/notes/links, three generate buttons, the
   // full editable session list) regardless of whether the student had
@@ -6430,6 +6473,7 @@ function StudlinPrep({setActive=()=>{}}={}){
   const closeBuildPlan=()=>{
     setBuildPlanExamId(null);setBuildPlanStep("choice");setBuildPlanGeneric(false);setBuildPlanPreview(null);
     setBuildPlanGenFlashcards(false);setBuildPlanGenPE(false);setBuildPlanHoursTarget("");setBuildPlanFocuses([]);
+    setManualSessionRows([]);
   };
   // Persists whatever material the student added in the modal's own
   // upload step back onto the exam event itself -- an already-existing
@@ -7429,7 +7473,9 @@ function StudlinPrep({setActive=()=>{}}={}){
       <Modal open={!!buildPlanExamId} onClose={closeBuildPlan}
         title={buildPlanExam&&lsGet("events",[]).some(e=>e.dueEventId===buildPlanExam.id)?"Redo study plan":"Build study plan"}
         sub={buildPlanExam?buildPlanExam.title:""} width={520}
-        footer={buildPlanStep==="preview"?<><Btn variant="subtle" onClick={closeBuildPlan}>Cancel</Btn><Btn onClick={commitBuildPlan} disabled={buildPlanLoading}>{buildPlanLoading?"Building…":"Confirm plan"}</Btn></>:<Btn variant="subtle" onClick={closeBuildPlan}>Cancel</Btn>}>
+        footer={buildPlanStep==="preview"?<><Btn variant="subtle" onClick={closeBuildPlan}>Cancel</Btn><Btn onClick={commitBuildPlan} disabled={buildPlanLoading}>{buildPlanLoading?"Building…":"Confirm plan"}</Btn></>
+          :buildPlanStep==="manual"?<><Btn variant="subtle" onClick={closeBuildPlan}>Cancel</Btn><Btn onClick={commitManualSessions}>Add session{manualSessionRows.filter(r=>r.text.trim()).length!==1?"s":""}</Btn></>
+          :<Btn variant="subtle" onClick={closeBuildPlan}>Cancel</Btn>}>
         {buildPlanExam&&buildPlanStep==="choice"&&(
           <div>
             <div style={{fontSize:13,color:T.text,lineHeight:1.6,marginBottom:18}}>
@@ -7438,7 +7484,36 @@ function StudlinPrep({setActive=()=>{}}={}){
             <div style={{display:"flex",flexDirection:"column",gap:8}}>
               <Btn onClick={()=>setBuildPlanStep("material")} style={{width:"100%",justifyContent:"center"}}>Add material</Btn>
               <Btn variant="ghost" onClick={startGenericPlan} style={{width:"100%",justifyContent:"center"}}>Just block out study time</Btn>
+              <Btn variant="ghost" onClick={openManualSessions} style={{width:"100%",justifyContent:"center"}}>Create manually</Btn>
             </div>
+          </div>
+        )}
+        {buildPlanExam&&buildPlanStep==="manual"&&(
+          <div>
+            <div style={{fontSize:13,color:T.text,lineHeight:1.6,marginBottom:14}}>
+              What do you want to study each session? Fill in a time to schedule it now, or leave it blank -- you'll be able to drag it onto the calendar later.
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:14}}>
+              {manualSessionRows.map((row,i)=>(
+                <div key={i} style={{padding:"10px",background:T.card2,borderRadius:8,display:"flex",flexDirection:"column",gap:8}}>
+                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                    <Input value={row.text} onChange={e=>setManualSessionRows(rows=>rows.map((r,ri)=>ri===i?{...r,text:e.target.value}:r))}
+                      placeholder={"Session "+(i+1)+": what to study"} style={{flex:1,fontSize:12.5}} />
+                    {manualSessionRows.length>1&&(
+                      <button onClick={()=>setManualSessionRows(rows=>rows.filter((_,ri)=>ri!==i))} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1}}>×</button>
+                    )}
+                  </div>
+                  <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                    <Input type="date" value={row.date} onChange={e=>setManualSessionRows(rows=>rows.map((r,ri)=>ri===i?{...r,date:e.target.value}:r))} style={{width:140}} />
+                    <TimeInput value={row.time} onChange={v=>setManualSessionRows(rows=>rows.map((r,ri)=>ri===i?{...r,time:v}:r))} />
+                    <NumField min={5} max={240} fallback={25} value={row.duration} onChange={v=>setManualSessionRows(rows=>rows.map((r,ri)=>ri===i?{...r,duration:v}:r))} style={{width:56}} />
+                    <span style={{fontSize:10.5,color:T.muted}}>min</span>
+                    <span style={{fontSize:10,color:T.faint}}>{row.date&&row.time?"":"leave blank to schedule later"}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button type="button" onClick={addManualSessionRow} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>+ Add another session</button>
           </div>
         )}
         {buildPlanExam&&buildPlanStep==="material"&&(
@@ -12899,7 +12974,7 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
 
-function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, previewEvent}) {
+function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, previewEvent, highlightedSessionId}) {
   // Phase 10b: user-driven zoom (drag handle below), replacing the old
   // fixed constant. Persisted via getCalZoom/saveCalZoom so it's
   // remembered across visits and shared with DayPlanner. Deliberately not
@@ -13310,7 +13385,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                       onMouseEnter={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(ev.routineId); }}
                       onMouseLeave={()=>{ if(isRoutine&&setHoveredRoutineId)setHoveredRoutineId(null); }}
                       title={isRoutine?"Drag to reschedule · Double-click to edit":"Click for actions (Backspace to delete) · Double-click to edit · Drag to reschedule"}
-                      style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:5,padding:"2px 5px 2px 8px",cursor:"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isDone?0.6:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{}),...(isSelected?{outline:`2px solid ${T.lime}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.lime}22`}:{})}}>
+                      style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:5,padding:"2px 5px 2px 8px",cursor:"grab",overflow:"hidden",zIndex:3,opacity:dimmedByRoutineMode?0.3:(isDone?0.6:1),boxSizing:"border-box",userSelect:"none",...kindStyle,...(highlightedByRoutineMode?{outline:`2px solid ${T.lime}`,outlineOffset:1}:{}),...(isSelected?{outline:`2px solid ${T.lime}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.lime}22`}:{}),...(!isRoutine&&highlightedSessionId===ev.id?{outline:`2px solid ${T.amber}`,outlineOffset:1,boxShadow:`0 0 0 4px ${T.amber}33`}:{})}}>
                       {/* Subject marker -- see comment above kindStyle */}
                       <div style={{position:"absolute",left:0,top:0,bottom:0,width:3,background:subjectColor,borderRadius:"5px 0 0 5px"}} />
                       {/* Suppressed while a Catch Me Up rebuild is pending -- the
@@ -15898,7 +15973,7 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
 // or one-off EVENT (a class meeting, an activity), not a task with a due
 // date. Presentation-only: the caller supplies onCreate and owns the
 // actual commit (CalendarTab already has routines/events in scope).
-function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,anchorY,color,onPreviewChange,onClose,onCreate}){
+function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,anchorY,color,hideRepeat,onPreviewChange,onClose,onCreate}){
   const [title,setTitle]=useState("");
   const [date,setDate]=useState("");
   const [startTime,setStartTime]=useState("09:00");
@@ -16020,6 +16095,9 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
           <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,color:T.muted,cursor:"pointer"}}>
             <input type="checkbox" checked={allDay} onChange={e=>setAllDay(e.target.checked)} /> All day
           </label>
+          {/* A single study session recurring weekly the way a class does
+              doesn't make sense -- hidden for session drops (Phase 4). */}
+          {!hideRepeat&&(<>
           <select value={repeat} onChange={e=>setRepeat(e.target.value)} style={{...wizardSelectStyle,padding:"6px 8px",fontSize:12}}>
             <option value="none">Does not repeat</option>
             <option value="weekly">Repeats weekly</option>
@@ -16030,6 +16108,7 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
               {ROUTINE_DOW.map((d,i)=><button key={i} type="button" onClick={()=>toggleRepeatDay(i)} style={wizardChipStyle(repeatDays.includes(i))}>{d}</button>)}
             </div>
           )}
+          </>)}
           {/* Inline label+pill row, matching Shovel's own plain-text
               "Commute before: 00h 00m   Commute after: 00h 00m" layout
               (173401) instead of two stacked bordered inputs. */}
@@ -16097,8 +16176,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // just enough to prefill NewEventModal, nothing commits until the
   // student hits Create in that modal.
   const [sidebarDragChip,setSidebarDragChip]=useState(null); // {title,color,movable}|null
+  // Right-column session rows (Phase 4) -- clicking an already-scheduled
+  // session jumps the grid to it and briefly outlines the block instead of
+  // just sitting there as inert text (see renderSidebarItem's exam branch
+  // + WeeklyPlanner's highlightedSessionId prop below).
+  const [highlightedSessionId,setHighlightedSessionId]=useState(null);
   const [newEventOpen,setNewEventOpen]=useState(false);
-  const [newEventPrefill,setNewEventPrefill]=useState({title:"",date:"",startTime:"",chipKind:null,courseId:null,routineId:null});
+  const [newEventPrefill,setNewEventPrefill]=useState({title:"",date:"",startTime:"",chipKind:null,courseId:null,routineId:null,sessionId:null});
   // Live preview (2026-07-30): the dropped course/activity used to stay
   // invisible on the grid until Create was actually clicked, so there was
   // no way to see where it would actually land while still editing the
@@ -16710,6 +16794,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     // whole screen.
     setNewEventPrefill({title:(chip&&chip.title)||"",date:dateKey,startTime:startTime||"09:00",
       chipKind:(chip&&chip.kind)||null,courseId:(chip&&chip.courseId)||null,routineId:(chip&&chip.routineId)||null,
+      sessionId:(chip&&chip.sessionId)||null,
       color:(chip&&chip.color)||T.lime,
       anchorX:(anchorPoint&&anchorPoint.x)||null,anchorY:(anchorPoint&&anchorPoint.y)||null});
     setNewEventOpen(true);
@@ -16718,8 +16803,16 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     const {title,date,startTime,endTime,allDay,repeat,repeatDays,commuteBefore,commuteAfter,location,notes,movable}=payload;
     const duration=allDay?null:Math.max(5,timeToMinutes(endTime)-timeToMinutes(startTime));
     const common={commuteBefore:commuteBefore||undefined,commuteAfter:commuteAfter||undefined,location:location||undefined,notes:notes||undefined,movable};
-    const {chipKind,courseId,routineId}=newEventPrefill;
-    if(chipKind==="activity"&&routineId){
+    const {chipKind,courseId,routineId,sessionId}=newEventPrefill;
+    if(chipKind==="session"&&sessionId){
+      // A study session already exists (created either by the unified
+      // Generate/Redo study plan flow or the manual session builder,
+      // possibly still unscheduled) -- dragging it just sets when it
+      // happens, exactly the same "patch in place, never duplicate"
+      // reasoning the activity-routine branch below already establishes.
+      lsSet("events",lsGet("events",[]).map(e=>e.id===sessionId?{...e,date,time:startTime,duration:duration||e.duration||25}:e));
+      setEvents(lsGet("events",[]));
+    }else if(chipKind==="activity"&&routineId){
       // Update the existing unscheduled (or already-scheduled) routine in
       // place instead of creating a second one. "Does not repeat" doesn't
       // really apply to updating a recurring routine -- fall back to just
@@ -17647,6 +17740,29 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // a project's full checklist (click again to collapse); double-click
   // still opens the real edit modal. Scoped to this component's own
   // `events` and a single local expand id.
+  // Which whole-week offset (same unit WeeklyPlanner's own weekDays calc
+  // uses) contains a given date -- lets jumpToSession land on the exact
+  // week a session is actually scheduled in, not just today's.
+  const weekOffsetForDate=(dateStr)=>{
+    const now=new Date();const day=now.getDay();const diff=day===0?-6:1-day;
+    const curMonday=new Date(now);curMonday.setDate(curMonday.getDate()+diff);curMonday.setHours(0,0,0,0);
+    const target=new Date(dateStr+"T00:00:00");
+    const tDay=target.getDay();const tDiff=tDay===0?-6:1-tDay;
+    const targetMonday=new Date(target);targetMonday.setDate(targetMonday.getDate()+tDiff);targetMonday.setHours(0,0,0,0);
+    return Math.round((targetMonday-curMonday)/(7*86400000));
+  };
+  // Jumps the grid to an already-scheduled session and briefly outlines
+  // its block (WeeklyPlanner reads highlightedSessionId) -- the actual
+  // "drag it somewhere else" part needs nothing new, every session block
+  // is already draggable directly on the grid once it's visible.
+  const jumpToSession=(s)=>{
+    if(!s.date)return;
+    setCalView("weekly");
+    setWeekOffset(weekOffsetForDate(s.date));
+    setSelDay(s.date);
+    setHighlightedSessionId(s.id);
+    setTimeout(()=>setHighlightedSessionId(id=>id===s.id?null:id),3000);
+  };
   const renderSidebarItem=(item)=>{
     const tagColor=item.color||colorOf(item.courseId||item.subject);
     const isExpanded=expandedSidebarItemId===item.id;
@@ -17656,9 +17772,34 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     if(isExpanded){
       if(isExam){
         const pending=events.filter(e=>e.dueEventId===item.id&&e.status!=="done");
+        // Split by scheduled-or-not (Phase 4): an unscheduled session
+        // becomes a draggable chip, same sidebarDragChip mechanism the
+        // Courses/Activities rows already use, with the identical dashed-
+        // border "not scheduled" treatment. An already-scheduled one jumps
+        // the grid to it on click (see jumpToSession) instead of sitting
+        // there as inert text, plus an inline delete right on the row.
         expandedContent=pending.length===0
           ?<div style={{fontSize:11,color:T.faint}}>No study sessions scheduled yet.</div>
-          :pending.map(s=><div key={s.id} style={{fontSize:11,color:T.text}}>{s.date} {fmtTime(s.time)} — {s.title}</div>);
+          :pending.map(s=>{
+            const isUnscheduled=!s.date||!s.time;
+            if(isUnscheduled){
+              return (
+                <div key={s.id} draggable onDragStart={()=>setSidebarDragChip({title:s.title,color:tagColor,movable:false,kind:"session",sessionId:s.id})} onDragEnd={()=>setSidebarDragChip(null)}
+                  title="Drag onto the calendar to set when to study" style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6,fontSize:11,color:T.text,padding:"4px 6px",borderRadius:5,border:`1px dashed ${tagColor}66`,cursor:"grab"}}>
+                  <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.title}</span>
+                  <span style={{fontSize:9,color:T.faint,flexShrink:0}}>not scheduled</span>
+                </div>
+              );
+            }
+            return (
+              <div key={s.id} onClick={()=>jumpToSession(s)} title="Click to find it on the calendar"
+                style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6,fontSize:11,color:T.text,padding:"4px 6px",borderRadius:5,cursor:"pointer"}}
+                onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.date} {fmtTime(s.time)} — {s.title}</span>
+                <button onClick={(e)=>{e.stopPropagation();deleteEventWithUndo(s);}} title="Delete this session" style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:12,lineHeight:1,flexShrink:0}}>×</button>
+              </div>
+            );
+          });
       }else if(isProject){
         const hasPhases=item.phases&&item.phases.length>0;
         const steps=hasPhases
@@ -17900,7 +18041,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
           selDay={selDay} setSelDay={setSelDay} onDeleteEvent={deleteEventWithUndo} catchUpPending={catchUpPending}
           sidebarDragChip={sidebarDragChip} onDropSidebarChip={(dk,time,anchorPoint)=>{openNewEventForDrop(sidebarDragChip,dk,time,anchorPoint);setSidebarDragChip(null);}}
-          onDropRoutineOccurrence={onDropRoutineOccurrence} previewEvent={previewEvent} />
+          onDropRoutineOccurrence={onDropRoutineOccurrence} previewEvent={previewEvent} highlightedSessionId={highlightedSessionId} />
       )}
       {calView==="daily"&&(
         <DayPlanner dayEvents={dayEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} />
@@ -17966,6 +18107,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       <ClassSetupWizard open={quickScanOpen} quickScan initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>setQuickScanOpen(false)} />
       <NewEventModal open={newEventOpen} initialTitle={newEventPrefill.title} initialDate={newEventPrefill.date} initialStartTime={newEventPrefill.startTime}
         anchorX={newEventPrefill.anchorX} anchorY={newEventPrefill.anchorY} color={newEventPrefill.color}
+        hideRepeat={newEventPrefill.chipKind==="session"}
         onPreviewChange={setPreviewEvent}
         onClose={()=>{setNewEventOpen(false);setPreviewEvent(null);}}
         onCreate={(payload)=>{setPreviewEvent(null);commitNewEvent(payload);}} />
