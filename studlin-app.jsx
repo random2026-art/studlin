@@ -3459,6 +3459,21 @@ function reoptimizeAttackChain(chainId){
   scheduleAttackBlockFollowUp(template,totalMins);
   return true;
 }
+// "Is there realistically enough time left" -- pulled out of what used to
+// be Attack-Block-only math (detectAttackBlockOverruns below) since
+// "sustainable pace vs. what's left before a deadline" isn't actually an
+// Attack-Block-specific concept; computeExamReadiness's new "tight" state
+// reuses this exact formula for ordinary exam study sessions. Zero
+// behavior change to the Attack Block caller -- same finishByD/runwayDays/
+// capacityMins math as before, just named and shared instead of inlined.
+function computeCapacitySlack(pendingMins,deadline,todayKey,finishBufferDays,sustainableWeeklyMins){
+  const today=todayKey||dayKey();
+  const finishByD=new Date(deadline+"T12:00:00");finishByD.setDate(finishByD.getDate()-finishBufferDays);
+  const runwayDays=Math.ceil((finishByD-new Date(today+"T12:00:00"))/86400000);
+  const capacityMins=Math.max(0,runwayDays)*(sustainableWeeklyMins/7);
+  const slackRatio=capacityMins>0?pendingMins/capacityMins:(pendingMins>0?Infinity:0);
+  return {capacityMins:Math.round(capacityMins),runwayDays,slackRatio};
+}
 // Needs-attention detection — a standalone signal, deliberately separate
 // from the ask-mode prep digest above (that's about assignments not yet
 // STARTED; this is about ones already IN PROGRESS whose real pace turned
@@ -3481,11 +3496,9 @@ function detectAttackBlockOverruns(events,todayKey){
   Object.keys(chains).forEach(chainId=>{
     const c=chains[chainId];
     if(c.pendingMins<=0||!c.deadline)return;
-    const finishByD=new Date(c.deadline+"T12:00:00");finishByD.setDate(finishByD.getDate()-ATTACK_BLOCK_FINISH_BUFFER_DAYS);
-    const runwayDays=Math.ceil((finishByD-new Date(today+"T12:00:00"))/86400000);
-    const capacityMins=Math.max(0,runwayDays)*(ATTACK_BLOCK_SUSTAINABLE_WEEKLY_MINS/7);
+    const {capacityMins,runwayDays}=computeCapacitySlack(c.pendingMins,c.deadline,today,ATTACK_BLOCK_FINISH_BUFFER_DAYS,ATTACK_BLOCK_SUSTAINABLE_WEEKLY_MINS);
     if(c.pendingMins>capacityMins){
-      overruns.push({chainId,title:c.title,deadline:c.deadline,pendingMins:c.pendingMins,capacityMins:Math.round(capacityMins),runwayDays});
+      overruns.push({chainId,title:c.title,deadline:c.deadline,pendingMins:c.pendingMins,capacityMins,runwayDays});
     }
   });
   return overruns;
@@ -7160,14 +7173,16 @@ function StudlinPrep({setActive=()=>{}}={}){
               // not added to computeExamReadiness's own return shape,
               // since that function is shared with Dashboard and other
               // callers that don't need it.
-              const stateColor=readiness.state==="behind"||readiness.state==="at-risk"?T.red:readiness.state==="on-track"?T.lime:T.muted;
+              const stateColor=readiness.state==="behind"||readiness.state==="at-risk"?T.red:readiness.state==="on-track"?T.lime:readiness.state==="tight"?T.amber:T.muted;
               const suggestion=readiness.state==="behind"
                 ?"Catching up: start your next session today, or ask Studlin to fit extra time before the exam if there genuinely isn't enough room left."
                 :readiness.state==="at-risk"
                   ?"Worth an extra review session before the exam, or revisiting whatever didn't click last time."
-                  :readiness.state==="no-data"
-                    ?"Build a study kit below to get review sessions started."
-                    :null;
+                  :readiness.state==="tight"
+                    ?"Not behind yet, but there's little slack left before the exam -- worth keeping every remaining session, since there's not much room to lose one."
+                    :readiness.state==="no-data"
+                      ?"Build a study kit below to get review sessions started."
+                      :null;
               // Additive, next to readiness (behind/on-track/etc), not a
               // replacement of it -- the category above answers "is the
               // pace okay" (its own distinct rules), this answers "how
@@ -10530,6 +10545,12 @@ function evaluateExamPrepAdjustment(examEvent,events,prefs){
 const EXAM_READINESS_LOW_COMPLETION=0.5;
 const EXAM_READINESS_HIGH_COMPLETION=0.8;
 const EXAM_READINESS_SOON_DAYS=3;
+// Thin-but-not-overrun: pendingMins is close to (or exceeds) the honest
+// remaining capacity before the exam (see computeCapacitySlack) without
+// yet being a full overrun. "Tight" sits between behind and on-track --
+// nothing missed, not shaky, not critically low completion, but not much
+// room left if something else comes up either.
+const EXAM_READINESS_TIGHT_SLACK_RATIO=0.85;
 function computeExamReadiness(examEvent,events,todayKey){
   if(!examEvent||examEvent.kind!=="exam")return null;
   const today=todayKey||dayKey();
@@ -10566,6 +10587,14 @@ function computeExamReadiness(examEvent,events,todayKey){
   }else if(completionRate<EXAM_READINESS_LOW_COMPLETION&&daysUntil<=EXAM_READINESS_SOON_DAYS+2){
     base={state:"behind",
       sentence:done+" of "+total+" review sessions done, "+dayWord+" left."};
+  }else if((()=>{
+    const pendingMins=sessions.filter(e=>e.status==="pending").reduce((s,e)=>s+(e.duration||0),0);
+    if(pendingMins<=0)return false;
+    const {slackRatio}=computeCapacitySlack(pendingMins,examEvent.date,today,ATTACK_BLOCK_FINISH_BUFFER_DAYS,ATTACK_BLOCK_SUSTAINABLE_WEEKLY_MINS);
+    return slackRatio>=EXAM_READINESS_TIGHT_SLACK_RATIO;
+  })()){
+    base={state:"tight",
+      sentence:done+" of "+total+" review sessions done — cutting it close before the exam in "+dayWord+", not much room left if something else comes up."};
   }else if(completionRate>=EXAM_READINESS_HIGH_COMPLETION){
     base={state:"on-track",
       sentence:(lastRating==="solid"?"On track and feeling solid — ":"On track — ")+done+"/"+total+" review sessions done."};

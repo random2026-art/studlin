@@ -1630,6 +1630,68 @@ describe("computeExamReadiness (fuses days-to-exam + linked review-session compl
     const result = m.computeExamReadiness(exam(), events, TODAY); // default date is 7 days out
     assert.ok(!result.sentence.toLowerCase().includes("no practice quiz"));
   });
+
+  test("'tight' when nothing is overdue/shaky/critically-behind but real capacity slack is thin", () => {
+    const m = loadStudlinModule();
+    // Exam in 2 days, one session done, one 45-min session still pending --
+    // the finish-buffer already eats into what little runway is left, so
+    // realistic capacity for the remaining work is essentially zero.
+    const events = [
+      session({ id: "s1", date: "2026-07-19", status: "done" }),
+      session({ id: "s2", date: "2026-07-21", status: "pending", duration: 45 }),
+    ];
+    const result = m.computeExamReadiness(exam({ date: "2026-07-22" }), events, TODAY);
+    assert.equal(result.state, "tight");
+  });
+
+  test("plenty of runway does not get flagged 'tight' even with pending work left", () => {
+    const m = loadStudlinModule();
+    // Same 1-done/1-pending shape, but the exam is 3 weeks out -- ample
+    // capacity, should read as ordinary on-track, not tight.
+    const events = [
+      session({ id: "s1", date: "2026-07-19", status: "done" }),
+      session({ id: "s2", date: "2026-07-22", status: "pending", duration: 45 }),
+    ];
+    const result = m.computeExamReadiness(exam({ date: "2026-08-10" }), events, TODAY);
+    assert.notEqual(result.state, "tight");
+  });
+
+  test("a session with no duration set contributes zero pending minutes -- never spuriously 'tight'", () => {
+    const m = loadStudlinModule();
+    const events = [
+      session({ id: "s1", date: "2026-07-19", status: "done" }),
+      session({ id: "s2", date: "2026-07-21", status: "pending" }), // no duration field at all
+    ];
+    const result = m.computeExamReadiness(exam({ date: "2026-07-22" }), events, TODAY);
+    assert.notEqual(result.state, "tight");
+  });
+});
+
+describe("computeCapacitySlack (shared 'is there realistically enough time left' math)", () => {
+  test("plentiful runway relative to pending work yields a low slack ratio", () => {
+    const m = loadStudlinModule();
+    const { slackRatio } = m.computeCapacitySlack(30, "2026-09-01", "2026-07-20", 4, 210);
+    assert.ok(slackRatio < 1, "expected slackRatio < 1, got " + slackRatio);
+  });
+
+  test("pending work exceeding capacity yields a slack ratio above 1", () => {
+    const m = loadStudlinModule();
+    const { slackRatio } = m.computeCapacitySlack(1000, "2026-07-25", "2026-07-20", 4, 210);
+    assert.ok(slackRatio > 1, "expected slackRatio > 1, got " + slackRatio);
+  });
+
+  test("zero capacity with real pending work still left returns Infinity, not a divide-by-zero NaN", () => {
+    const m = loadStudlinModule();
+    const { slackRatio, capacityMins } = m.computeCapacitySlack(45, "2026-07-21", "2026-07-20", 4, 210);
+    assert.equal(capacityMins, 0);
+    assert.equal(slackRatio, Infinity);
+  });
+
+  test("zero pending minutes is zero slack regardless of capacity", () => {
+    const m = loadStudlinModule();
+    const { slackRatio } = m.computeCapacitySlack(0, "2026-09-01", "2026-07-20", 4, 210);
+    assert.equal(slackRatio, 0);
+  });
 });
 
 describe("canGenQuiz / recordQuizGen (free-tier practice-quiz limit)", () => {
