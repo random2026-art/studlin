@@ -895,59 +895,83 @@ const SchoolSelect=({value,onChange,placeholder,theme,statusFilter,onCommit})=>{
 // caller is expected to tint the subject's own row with it (see subjectRowStyle)
 // so the color choice reads immediately without a separate legend. Popover
 // offers Pastel/Bright/Dark preset tabs (three lightness tiers of the same
-// hue family, see COLOR_PRESET_TIERS) plus a custom hex entry backed by a
-// native <input type="color"> for anyone who wants an exact color the
-// presets don't cover.
+// hue family, see COLOR_PRESET_TIERS) plus a real custom-color picker (native
+// <input type="color"> -- on Chrome/Windows this already renders as a
+// gradient square + hue slider + hex field, the same shape as Shovel's own
+// in-app custom picker, just via the OS's real dialog instead of a
+// hand-built canvas) for anyone who wants an exact color the presets don't
+// cover.
+//
+// 2026-07-29: rebuilt from a `position:relative` dropdown closed via
+// onBlur+setTimeout to a portal+backdrop popover (same pattern
+// WeeklyPlanner's own event popover and NewEventModal already use)
+// specifically because the old onBlur approach raced against the swatch
+// click's own onChange in some browsers -- a mousedown on a non-focusable
+// swatch div can fire the container's blur (from whatever had focus
+// before, e.g. the hex field) before the click's onChange commits,
+// closing the popover out from under the update. A backdrop click-to-
+// close has no such race. Also switched the hex field from committing on
+// every keystroke (which pushed invalid intermediate strings like "#D"
+// into the real color, silently doing nothing visible since an invalid
+// CSS color is just ignored) to a local draft that only commits a
+// verified #RRGGBB on blur/Enter -- same free-typing-without-fighting-
+// the-caller convention NumField already established elsewhere.
 const ColorSelect=({value,onChange})=>{
   const [open,setOpen]=useState(false);
-  // Opens on whichever tier the current value actually belongs to, so
-  // reopening the picker on an already-set color lands on the right tab
-  // instead of always resetting to Bright.
+  const [anchor,setAnchor]=useState(null); // {top,left}|null, captured on open
   const [tier,setTier]=useState(()=>Object.keys(COLOR_PRESET_TIERS).find(t=>COLOR_PRESET_TIERS[t].includes(value))||"Bright");
-  const containerRef=useRef(null);
+  const [hexDraft,setHexDraft]=useState(value);
+  const [hexFocused,setHexFocused]=useState(false);
+  const triggerRef=useRef(null);
   const nativeColorRef=useRef(null);
-  // Closes only once focus actually leaves the whole popover. A plain
-  // onBlur-with-timeout on just the trigger button used to be enough
-  // because every interactive element inside it (a swatch div, not
-  // natively focusable) immediately closed the popover itself on click --
-  // but the new hex text field needs to hold focus across several
-  // keystrokes without the popover slamming shut underneath it, so this
-  // checks (after a tick, once the new focus target has settled) whether
-  // focus landed somewhere still inside this container before closing.
-  const handleBlur=()=>{
-    setTimeout(()=>{
-      if(containerRef.current&&!containerRef.current.contains(document.activeElement))setOpen(false);
-    },0);
+  useEffect(()=>{ if(!hexFocused)setHexDraft(value); },[value,hexFocused]);
+  const commitHex=()=>{
+    setHexFocused(false);
+    if(/^#[0-9a-fA-F]{6}$/.test(hexDraft))onChange(hexDraft);
+    else setHexDraft(value);
+  };
+  const openPopover=()=>{
+    const r=triggerRef.current&&triggerRef.current.getBoundingClientRect();
+    setAnchor(r?{top:r.bottom+6,left:r.left}:{top:100,left:100});
+    setTier(Object.keys(COLOR_PRESET_TIERS).find(t=>COLOR_PRESET_TIERS[t].includes(value))||"Bright");
+    setOpen(true);
   };
   return (
-    <div ref={containerRef} onBlur={handleBlur} style={{position:"relative",flexShrink:0}}>
-      <button type="button" onClick={()=>setOpen(o=>!o)}
+    <>
+      <button ref={triggerRef} type="button" onClick={openPopover}
         title="Choose a color" style={{width:26,height:26,borderRadius:"50%",background:value,border:`2px solid ${T.white}30`,cursor:"pointer",padding:0,flexShrink:0}} />
-      {open&&(
-        <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,zIndex:30,background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:10,width:190,boxShadow:"0 12px 28px -12px rgba(0,0,0,0.5)"}}>
-          <div style={{display:"flex",gap:4,marginBottom:8}}>
-            {Object.keys(COLOR_PRESET_TIERS).map(t=>(
-              <button key={t} type="button" onClick={()=>setTier(t)}
-                style={{flex:1,padding:"4px 0",borderRadius:6,fontSize:10.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,border:"none",background:tier===t?T.lime+"1E":"transparent",color:tier===t?T.lime:T.muted}}>{t}</button>
-            ))}
+      {open&&anchor&&ReactDOM.createPortal((
+        <>
+          <div onClick={()=>setOpen(false)} style={{position:"fixed",inset:0,zIndex:998}} />
+          <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top:anchor.top,left:anchor.left,zIndex:999,background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:10,width:190,boxShadow:"0 12px 28px -12px rgba(0,0,0,0.5)",animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)"}}>
+            <div style={{display:"flex",gap:4,marginBottom:8}}>
+              {Object.keys(COLOR_PRESET_TIERS).map(t=>(
+                <button key={t} type="button" onClick={()=>setTier(t)}
+                  style={{flex:1,padding:"4px 0",borderRadius:6,fontSize:10.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,border:"none",background:tier===t?T.lime+"1E":"transparent",color:tier===t?T.lime:T.muted}}>{t}</button>
+              ))}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,marginBottom:10}}>
+              {COLOR_PRESET_TIERS[tier].map(c=>(
+                <div key={c} onClick={()=>{onChange(c);setOpen(false);}} title={c}
+                  style={{width:20,height:20,borderRadius:"50%",background:c,cursor:"pointer",border:value===c?`2.5px solid ${T.white}`:"2px solid transparent",boxSizing:"border-box",transform:value===c?"scale(1.15)":"scale(1)",transition:"transform 0.12s"}} />
+              ))}
+            </div>
+            <div style={{paddingTop:8,borderTop:`1px solid ${T.border}`}}>
+              <div style={{fontSize:10,fontWeight:600,color:T.muted,marginBottom:6}}>Choose custom color</div>
+              <div style={{display:"flex",alignItems:"center",gap:6,position:"relative"}}>
+                <div onClick={()=>nativeColorRef.current&&nativeColorRef.current.click()} title="Pick any color"
+                  style={{width:26,height:26,borderRadius:6,background:"conic-gradient(red,yellow,lime,cyan,blue,magenta,red)",cursor:"pointer",flexShrink:0,border:`1px solid ${T.white}30`}} />
+                <input ref={nativeColorRef} type="color" tabIndex={-1} value={/^#[0-9a-fA-F]{6}$/.test(value)?value:"#888888"} onChange={e=>onChange(e.target.value)}
+                  style={{position:"absolute",width:1,height:1,opacity:0,pointerEvents:"none"}} />
+                <input value={hexDraft} onFocus={()=>setHexFocused(true)} onChange={e=>setHexDraft(e.target.value)}
+                  onBlur={commitHex} onKeyDown={e=>{if(e.key==="Enter")commitHex();}} placeholder="#RRGGBB"
+                  style={{flex:1,minWidth:0,background:T.card2,border:`1px solid ${T.border}`,borderRadius:6,padding:"5px 7px",color:T.text,fontSize:11,fontFamily:T.mono,outline:"none"}} />
+              </div>
+            </div>
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,marginBottom:8}}>
-            {COLOR_PRESET_TIERS[tier].map(c=>(
-              <div key={c} onClick={()=>{onChange(c);setOpen(false);}} title={c}
-                style={{width:20,height:20,borderRadius:"50%",background:c,cursor:"pointer",border:value===c?`2.5px solid ${T.white}`:"2px solid transparent",boxSizing:"border-box",transform:value===c?"scale(1.15)":"scale(1)",transition:"transform 0.12s"}} />
-            ))}
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:6,paddingTop:8,borderTop:`1px solid ${T.border}`,position:"relative"}}>
-            <div onClick={()=>nativeColorRef.current&&nativeColorRef.current.click()} title="Custom color"
-              style={{width:18,height:18,borderRadius:"50%",background:"conic-gradient(red,yellow,lime,cyan,blue,magenta,red)",cursor:"pointer",flexShrink:0,border:`1px solid ${T.white}30`}} />
-            <input ref={nativeColorRef} type="color" tabIndex={-1} value={/^#[0-9a-fA-F]{6}$/.test(value)?value:"#888888"} onChange={e=>onChange(e.target.value)}
-              style={{position:"absolute",width:1,height:1,opacity:0,pointerEvents:"none"}} />
-            <input value={value} onChange={e=>onChange(e.target.value)} placeholder="#RRGGBB"
-              style={{flex:1,minWidth:0,background:T.card2,border:`1px solid ${T.border}`,borderRadius:6,padding:"4px 6px",color:T.text,fontSize:11,fontFamily:T.mono,outline:"none"}} />
-          </div>
-        </div>
-      )}
-    </div>
+        </>
+      ), document.body)}
+    </>
   );
 };
 const subjectRowStyle=(color)=>({display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:6,background:color+"1f",border:`1px solid ${color}40`,borderLeft:`3px solid ${color}`});
@@ -14419,7 +14443,9 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
               <button type="button" onClick={()=>setActivities([
                 {id:"act-"+Date.now()+"-1",title:"Morning Routine",color:SUBJECT_COLORS[0],kind:"busy",days:[],startTime:null,duration:null},
                 {id:"act-"+Date.now()+"-2",title:"Lunch",color:SUBJECT_COLORS[1],kind:"busy",days:[],startTime:null,duration:null},
-                {id:"act-"+Date.now()+"-3",title:"Dinner",color:SUBJECT_COLORS[2],kind:"busy",days:[],startTime:null,duration:null},
+                {id:"act-"+Date.now()+"-3",title:"Workout",color:SUBJECT_COLORS[3],kind:"busy",days:[],startTime:null,duration:null},
+                {id:"act-"+Date.now()+"-4",title:"Dinner",color:SUBJECT_COLORS[2],kind:"busy",days:[],startTime:null,duration:null},
+                {id:"act-"+Date.now()+"-5",title:"Me Time",color:SUBJECT_COLORS[4],kind:"busy",days:[],startTime:null,duration:null},
               ])} style={{width:"100%",padding:"12px",borderRadius:6,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.text,cursor:"pointer",fontFamily:T.font,fontSize:13,fontWeight:600,marginBottom:18}}>Start with default activities</button>
             )}
             <RosterList items={activities} setItems={setActivities} addLabel="Activity"
