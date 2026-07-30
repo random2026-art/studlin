@@ -3171,6 +3171,68 @@ async function extractClassSyllabusImage(base64Data,mediaType){
     };
   }catch(e){return{subject:null,meetingTimes:[],deadlines:[],error:"Couldn't read that image. Try again."};}
 }
+// Whole-semester college schedule scan -- a registrar "my schedule" page
+// (grid or text list) covers SEVERAL classes at once, unlike
+// extractClassSyllabusText/Image above (one class per call). Wraps the
+// exact same per-class shape those already use inside a "classes" array
+// instead of building a second, parallel field contract. The one genuinely
+// new instruction: registrar exports often embed one-off exam rows (a
+// single date, often a different time than the regular meeting) right
+// inside a course's own listing -- those must land as that class's own
+// deadlines entry, not get mistaken for a second recurring meeting time.
+const COLLEGE_SCHEDULE_JSON_CONTRACT=
+  "Respond with ONLY valid JSON, no markdown fences, no commentary, in this exact shape: "+
+  "{\"classes\":[{\"subject\":{\"name\":\"Biology 101\"},"+
+  "\"meetingTimes\":[{\"days\":[0,2,4],\"startTime\":\"10:00\",\"duration\":50}],"+
+  "\"deadlines\":[{\"title\":\"Midterm 1\",\"date\":\"2026-09-24\",\"kind\":\"exam\",\"examType\":\"midterm\",\"confidence\":\"high\"}]}]}. "+
+  "One entry in \"classes\" per distinct course. \"subject.name\" is the class name as it would appear on a schedule -- if genuinely not stated, use your best guess from context, never leave it blank. "+
+  "\"meetingTimes\" is the class's REAL RECURRING weekly pattern only -- \"days\" uses 0=Monday..6=Sunday, \"startTime\" is 24-hour \"HH:MM\", \"duration\" is minutes, and it should only ever describe something that repeats across a semester-long date range. Include one entry per distinct day/time pattern (e.g. a class meeting Mon/Wed/Fri at one time and a separate recitation Tue/Thu at another time are two entries, possibly even two different \"classes\" entries if the recitation has its own name). "+
+  "Any entry with a SINGLE date instead of a recurring range -- especially anything labeled Exam, Midterm, Final, or Common Hour Exam, even if its listed time differs from the class's regular meeting time -- is NOT a meeting time. It belongs in that same class's own \"deadlines\" array as \"kind\":\"exam\" with that real date, exactly like any other exam. Never fold a one-off exam date into \"meetingTimes\". "+
+  "\"deadlines\" otherwise follows the same rules as a normal exam/assignment: \"title\" short, \"date\" YYYY-MM-DD (never omit even if uncertain), \"kind\" is \"exam\" for quizzes/tests/midterms/finals/common-hour-exams, \"project\" for a genuinely multi-step multi-week deliverable, or \"assignment\" for everything else. "+
+  "\"examType\" (exams only: \"quiz\"/\"midterm\"/\"final\"/\"project\"/\"other\"), \"gradeWeightPercent\" (exams only, ONLY when the source explicitly states a percentage of the final grade, a plain number like 20, never guessed), "+
+  "\"confidence\" (\"high\"/\"low\"), \"detail\" (optional, only when something concrete is stated beyond the title). "+
+  ANTI_GARBAGE_EXTRACTION_RULE+
+  "If you find no classes at all, return an empty \"classes\" array -- never omit the key.";
+async function extractCollegeScheduleText(text){
+  if(!text||!text.trim())return{classes:[],error:null};
+  try{
+    const prompt="This is a college student's full class schedule for a term -- it may be a registrar 'my schedule' export, a list of sections, or similar, and it likely covers several different classes at once. "+
+      "Today's date is "+dayKey()+". If a date has no year, infer the most likely upcoming year given today's date. "+
+      "Extract every class, its recurring weekly meeting time(s), and every deadline/exam date mentioned for each one. "+
+      COLLEGE_SCHEDULE_JSON_CONTRACT+"\n\n"+text.slice(0,30000);
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+    const data=await res.json();
+    if(!res.ok)return{classes:[],error:data.error||"Couldn't read that. Try again."};
+    const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
+    const parsed=JSON.parse(raw);
+    const classes=(parsed&&Array.isArray(parsed.classes))?parsed.classes.filter(c=>c&&c.subject&&c.subject.name).map(c=>({
+      subject:c.subject,
+      meetingTimes:Array.isArray(c.meetingTimes)?c.meetingTimes:[],
+      deadlines:(Array.isArray(c.deadlines)?c.deadlines:[]).filter(d=>looksLikeRealDeadlineTitle(d&&d.title)).map(withDerivedExamImportance),
+    })):[];
+    return{classes,error:null};
+  }catch(e){return{classes:[],error:"Couldn't read that. Try again."};}
+}
+async function extractCollegeScheduleImage(base64Data,mediaType){
+  try{
+    const prompt="This image is a screenshot or photo of a college student's full class schedule for a term -- a registrar 'my schedule' grid or similar, likely covering several different classes at once. "+
+      "Today's date is "+dayKey()+". If a date has no year, infer the most likely upcoming year given today's date. "+
+      "Extract every class, its recurring weekly meeting time(s), and every deadline/exam date visible for each one. "+
+      "Never invent a URL or link -- a screenshot's visible text has no way to reveal what an actual link points to. "+
+      COLLEGE_SCHEDULE_JSON_CONTRACT;
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt,image:{mediaType,data:base64Data}}],model:"standard"})});
+    const data=await res.json();
+    if(!res.ok)return{classes:[],error:data.error||"Couldn't read that image. Try again."};
+    const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
+    const parsed=JSON.parse(raw);
+    const classes=(parsed&&Array.isArray(parsed.classes))?parsed.classes.filter(c=>c&&c.subject&&c.subject.name).map(c=>({
+      subject:c.subject,
+      meetingTimes:Array.isArray(c.meetingTimes)?c.meetingTimes:[],
+      deadlines:(Array.isArray(c.deadlines)?c.deadlines:[]).filter(d=>looksLikeRealDeadlineTitle(d&&d.title)).map(withDerivedExamImportance),
+    })):[];
+    return{classes,error:null};
+  }catch(e){return{classes:[],error:"Couldn't read that image. Try again."};}
+}
 // High school schedule grid/table -- a single photo of the whole week's
 // periods, no deadlines involved (a schedule grid has no due dates). Returns
 // one row per period so ClassSetupWizard can bulk-create every class at once.
@@ -14219,7 +14281,7 @@ const WizardStepper=({step})=>{
   );
 };
 
-function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
+function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCourseId}){
   const [step,setStep]=useState("status"); // timezone | term | holidays | awake | status | classes | activities | calendarSync | window | finalReview
   const [status,setStatus]=useState(initialStatus||"");
   // Classes fully reviewed this session, staged -- nothing in here touches
@@ -14244,6 +14306,13 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
   const [pasteMode,setPasteMode]=useState(false);
   const [pasteText,setPasteText]=useState("");
   const [scanError,setScanError]=useState("");
+  // College bulk "Scan my whole schedule" -- classes extracted from one
+  // scan beyond the first, waiting their turn through the same one-at-a-
+  // time review screen a single-class scan already uses (see
+  // finishReviewingClass below, which shifts the next one off this queue
+  // instead of returning to the summary screen once the current one is
+  // confirmed).
+  const [scanQueue,setScanQueue]=useState([]);
   const [review,setReview]=useState(null); // {subjectName,color,meetingTimes:[],items:[],sourceText}
   // 2026-07-29 declutter fix: the "When does it meet?" meeting-time
   // builder used to always show its full form, even for a manually-typed
@@ -14275,6 +14344,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
   const [wizGoogleSyncing,setWizGoogleSyncing]=useState(false);
   const fileInputRef=useRef(null);
   const hsFileInputRef=useRef(null);
+  const collegeScheduleFileRef=useRef(null);
   const [activities,setActivities]=useState([]);
   const [workStart,setWorkStart]=useState("10:00");
   const [workEnd,setWorkEnd]=useState("18:00");
@@ -14302,11 +14372,11 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
   // those use their own "Cancel" action (discards a scan/entry in
   // progress), a different, higher-stakes semantic than a plain Back.
   const goBack=()=>{
-    if(step==="classes"&&(addMode==="scan"||addMode==="hsSchedule")){setAddMode("choose");return;}
+    if(step==="classes"&&(addMode==="scan"||addMode==="hsSchedule"||addMode==="collegeSchedule")){setAddMode("choose");return;}
     if(step==="classes"&&addMode==="choose"){setAddMode(null);return;}
     if(prevWizardStep)setStep(prevWizardStep);
   };
-  const canGoBack=(step==="classes"&&(addMode==="scan"||addMode==="hsSchedule"||addMode==="choose"))||!!prevWizardStep;
+  const canGoBack=(step==="classes"&&(addMode==="scan"||addMode==="hsSchedule"||addMode==="collegeSchedule"||addMode==="choose"))||!!prevWizardStep;
 
   useEffect(()=>{
     if(!open)return;
@@ -14339,6 +14409,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
     setPasteMode(false);
     setPasteText("");
     setReview(null);
+    setScanQueue([]);
     setHsReview(null);
     setHsFreeReview([]);
     setHsPasteMode(false);
@@ -14477,6 +14548,61 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
     finally{setScanning(false);}
   };
 
+  // Kicks off the one-at-a-time review queue a whole-schedule scan feeds --
+  // takes the first extracted class through the exact same
+  // buildReviewFromExtraction a single-class scan already uses, stashes
+  // the rest for finishReviewingClass to advance through automatically.
+  const startClassQueue=(classes,sourceText)=>{
+    if(!classes||classes.length===0){setScanError("Couldn't find any classes in that. Try a clearer photo or paste more of the text.");return;}
+    buildReviewFromExtraction(classes[0],sourceText);
+    setScanQueue(classes.slice(1));
+  };
+  const handleCollegeScheduleFile=async(e)=>{
+    const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
+    setScanning(true);setScanError("");
+    try{
+      const ext=file.name.split(".").pop().toLowerCase();
+      if(IMAGE_EXT_MEDIA_TYPES[ext]){
+        const dataUrl=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsDataURL(file);});
+        const base64=(dataUrl.split(",")[1])||"";
+        const result=await extractCollegeScheduleImage(base64,IMAGE_EXT_MEDIA_TYPES[ext]);
+        if(result.error){setScanError(result.error);return;}
+        startClassQueue(result.classes);
+        return;
+      }
+      let text="";
+      if(ext==="pdf"){
+        const pdfjsLib=await window._pdfjs;const buf=await file.arrayBuffer();const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+        for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();text+=tc.items.map(it=>it.str).join(" ")+"\n\n";}
+      }else if(ext==="docx"){
+        if(!window.mammoth)throw new Error("Document reader still loading, try again in a moment.");
+        const buf=await file.arrayBuffer();
+        const mres=await window.mammoth.extractRawText({arrayBuffer:buf});
+        text=mres.value;
+      }else if(ext==="doc"){
+        setScanError("Studlin can only read .docx, not the older .doc format. Try re-saving it as .docx or PDF.");
+        setScanning(false);
+        return;
+      }else{
+        text=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsText(file);});
+      }
+      const result=await extractCollegeScheduleText(text);
+      if(result.error){setScanError(result.error);return;}
+      startClassQueue(result.classes,text);
+    }catch(err){setScanError("Couldn't read that file: "+err.message);}
+    finally{setScanning(false);}
+  };
+  const handleCollegeSchedulePaste=async()=>{
+    if(!pasteText.trim())return;
+    setScanning(true);setScanError("");
+    try{
+      const result=await extractCollegeScheduleText(pasteText);
+      if(result.error){setScanError(result.error);return;}
+      startClassQueue(result.classes,pasteText);
+    }catch(err){setScanError("Couldn't read that text: "+err.message);}
+    finally{setScanning(false);}
+  };
+
   // Shared by both HS extraction entry points (photo and paste-text) so the
   // review-row shaping and free-period derivation are written once. Also
   // computes hsFreeReview from schoolStart/schoolEnd (Phase 9) -- purely
@@ -14536,6 +14662,16 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
     setTimeout(()=>setJustAdded(""),3000);
     setReview(null);
     setEditingPendingId(null);
+    // A whole-schedule scan leaves the rest of its classes queued here --
+    // advance straight into the next one's review instead of dropping
+    // back to the summary screen, so confirming a scanned schedule is
+    // "review each class once," not "re-scan once per class."
+    if(scanQueue.length>0){
+      const [nextClass,...rest]=scanQueue;
+      setScanQueue(rest);
+      buildReviewFromExtraction(nextClass);
+      return;
+    }
     setAddMode(null);
   };
 
@@ -14602,9 +14738,14 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
   const commitAllToCalendar=()=>{
     if(windowInvalid||pendingClasses.length===0)return;
     let subjects=getSubjects();
-    const withIds=pendingClasses.map(cls=>({...cls,subjId:"subj-"+Date.now()+"-"+Math.round(Math.random()*1000)+"-"+cls.id}));
+    // Opened from an existing course's own "Import syllabus" action
+    // (targetCourseId set) -- attach to that exact course instead of
+    // minting a new, unrelated one. quickScan only ever produces one
+    // pending class per scan, so this only ever applies to the first.
+    const withIds=pendingClasses.map((cls,i)=>({...cls,subjId:(targetCourseId&&i===0)?targetCourseId:("subj-"+Date.now()+"-"+Math.round(Math.random()*1000)+"-"+cls.id)}));
     let routine=getWeeklyRoutine();
     withIds.forEach(cls=>{
+      if(cls.subjId===targetCourseId)return; // already exists -- don't duplicate the subject or its meeting time, only the deadlines/sessions below are new
       subjects=[...subjects,{id:cls.subjId,label:cls.name,color:cls.color,termEnd:termEnd||null}];
       const routineItems=(cls.meetingTimes||[]).filter(mt=>mt.days.length>0).map(mt=>({id:"rt-"+Date.now()+"-"+Math.round(Math.random()*1000),title:cls.name,kind:"class",subject:cls.name,courseId:cls.subjId,days:mt.days,startTime:mt.startTime,duration:mt.duration}));
       routine=[...routine,...routineItems];
@@ -14757,12 +14898,16 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
                   a per-class syllabus doesn't map to how a school day
                   actually works for them (periods, not standalone
                   syllabi), so this option is college-only. */}
-              {status!=="highschool"&&(
+              {status!=="highschool"&&(<>
+                <button type="button" onClick={()=>{setScanError("");setPasteMode(false);setPasteText("");setAddMode("collegeSchedule");}} style={classSetupChoiceStyle}>
+                  <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Scan my whole schedule</div>
+                  <div style={{fontSize:12,color:T.muted}}>Upload a screenshot, photo, or paste your full schedule — Studlin splits it into classes and finds each one's meeting time and exam dates automatically.</div>
+                </button>
                 <button type="button" onClick={()=>{setScanError("");setPasteMode(false);setPasteText("");setAddMode("scan");}} style={classSetupChoiceStyle}>
                   <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Scan a syllabus</div>
                   <div style={{fontSize:12,color:T.muted}}>Upload a file or photo — Studlin reads the class name, meeting time, and deadlines.</div>
                 </button>
-              )}
+              </>)}
               <button type="button" onClick={startManual} style={classSetupChoiceStyle}>
                 <div style={{fontSize:13.5,fontWeight:700,color:T.text,marginBottom:3}}>Enter manually</div>
                 <div style={{fontSize:12,color:T.muted}}>Type in the class name and when it meets yourself.</div>
@@ -14774,6 +14919,27 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
                 </button>
               )}
             </div>
+          </>)}
+
+          {step==="classes"&&addMode==="collegeSchedule"&&(<>
+            <TitleSub title="Scan my whole schedule" sub="A screenshot of your schedule grid, or paste the text list — Studlin splits it into every class, with its meeting time and any exam dates it finds." />
+            {scanning
+              ? <div style={{padding:"40px 0",textAlign:"center",color:T.muted,fontSize:13}}>Reading your schedule…</div>
+              : pasteMode ? (
+                <div>
+                  <textarea value={pasteText} onChange={e=>setPasteText(e.target.value)} placeholder="Paste your schedule text here" rows={8}
+                    style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
+                  <Btn onClick={handleCollegeSchedulePaste} disabled={!pasteText.trim()} style={{marginTop:10,width:"100%",justifyContent:"center",opacity:pasteText.trim()?1:0.45}}>Scan this text</Btn>
+                </div>
+              ) : <button type="button" onClick={()=>collegeScheduleFileRef.current&&collegeScheduleFileRef.current.click()} style={{width:"100%",padding:"32px",borderRadius:12,border:`1.5px dashed ${T.borderHover}`,background:T.card2,color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:13,textAlign:"center"}}>Tap to choose a file or photo</button>
+            }
+            <input ref={collegeScheduleFileRef} type="file" accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif" style={{display:"none"}} onChange={handleCollegeScheduleFile} />
+            {scanError&&<div style={{fontSize:12,color:T.red,marginTop:10}}>{scanError}</div>}
+            {!scanning&&(
+              <button type="button" onClick={()=>{setPasteMode(m=>!m);setScanError("");}} style={{marginTop:12,background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>
+                {pasteMode?"Upload a file instead":"File didn't work? Paste the text instead"}
+              </button>
+            )}
           </>)}
 
           {step==="classes"&&addMode==="scan"&&(<>
@@ -14883,11 +15049,12 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
             const meetingItemsForBuilder=review.meetingTimes.map(mt=>({id:mt.id,title:review.subjectName||"Class",kind:"class",days:mt.days,startTime:mt.startTime,duration:mt.duration}));
             const setItem=(i,patch)=>setReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,...patch}:x)}));
             const addManualItem=()=>setReview(r=>({...r,items:[...r.items,{id:"cd-manual-"+Date.now(),title:"",date:dayKey(),kind:"assignment",include:true,noDate:false,attackBlock:true,proposeSessions:false,sessionCount:4,detail:"",detailOpen:false,estimatedHours:null,difficulty:500,phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false,materialFiles:[],materialLinks:[],materialOpen:false,linkDraft:"",linkLabelDraft:"",pasteMaterialMode:false,pasteMaterialText:""}]}));
-            const cancelReview=()=>{setReview(null);setEditingPendingId(null);setReviewSub("items");setAddMode(null);};
+            const cancelReview=()=>{setReview(null);setEditingPendingId(null);setReviewSub("items");setAddMode(null);setScanQueue([]);};
             const ITEM_KIND_OPTIONS=[{value:"assignment",label:"Assignment"},{value:"exam",label:"Exam"},{value:"project",label:"Project"}];
 
             if(reviewSub==="items")return(<>
-              <TitleSub title={editingPendingId?"Edit this class":"Review this class"} sub="Check what Studlin found, fix anything wrong, and mark what each thing actually is." />
+              <TitleSub title={editingPendingId?"Edit this class":"Review this class"}
+                sub={scanQueue.length>0?(scanQueue.length+" more class"+(scanQueue.length!==1?"es":"")+" found in your schedule, up next after this one."):"Check what Studlin found, fix anything wrong, and mark what each thing actually is."} />
               <Field label="Class name">
                 <div style={{display:"flex",gap:10,alignItems:"center"}}>
                   <ColorSelect value={review.color} onChange={c=>setReview(r=>({...r,color:c}))} />
@@ -16588,6 +16755,29 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // quickScan prop) so an already-onboarded student can add one more class's
   // dates without walking the whole classes->activities->window flow again.
   const [quickScanOpen,setQuickScanOpen]=useState(false);
+  // Set right before setQuickScanOpen(true) from an existing course's own
+  // "Import syllabus" menu action -- without this, the scan used to
+  // silently create a brand-new, unrelated course instead of attaching
+  // anything to the one actually clicked (found live, see
+  // ClassSetupWizard's commitAllToCalendar).
+  const [quickScanTargetCourseId,setQuickScanTargetCourseId]=useState(null);
+  // High-school course menu's "Weekly schedule" -- a short note per
+  // weekday a class meets (lecture vs. lab vs. homework due), stored on
+  // that course's own routine "class" entry. New concept, no prior field
+  // for it anywhere -- meeting TIME was already captured at onboarding,
+  // this is meeting CONTENT, genuinely different information.
+  const [weeklyContentCourseId,setWeeklyContentCourseId]=useState(null);
+  const [weeklyContentDraft,setWeeklyContentDraft]=useState({});
+  const openWeeklyContent=(courseId)=>{
+    const r=routines.find(rt=>rt.kind==="class"&&rt.courseId===courseId);
+    setWeeklyContentDraft((r&&r.weeklyContent)||{});
+    setWeeklyContentCourseId(courseId);
+  };
+  const saveWeeklyContent=()=>{
+    const r=routines.find(rt=>rt.kind==="class"&&rt.courseId===weeklyContentCourseId);
+    if(r)persistRoutines(routines.map(rt=>rt.id===r.id?{...rt,weeklyContent:weeklyContentDraft}:rt));
+    setWeeklyContentCourseId(null);
+  };
   const [timeOffOpen,setTimeOffOpen]=useState(false);
   const [timeOffHours,setTimeOffHours]=useState(2);
   const [timeOffResult,setTimeOffResult]=useState(null);
@@ -16665,6 +16855,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // true by the time an existing user reaches this from the Tools menu).
   const finishQuickScan=()=>{
     setQuickScanOpen(false);
+    setQuickScanTargetCourseId(null);
     setUserSubjectsState(getSubjects());
     persistRoutines(getWeeklyRoutine());
     setEvents(lsGet("events",[]).filter(e=>!e.id.startsWith("seed-")));
@@ -18073,7 +18264,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           <div onMouseLeave={()=>setCourseMenuOpenId(null)} style={{position:"absolute",top:"100%",right:0,zIndex:40,marginTop:4,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 12px 28px -12px rgba(0,0,0,0.5)",overflow:"hidden",minWidth:150}}>
             <button onClick={()=>startRenameCourse(sub)} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Rename</button>
             <button onClick={()=>{setCourseMenuOpenId(null);setActive("settings");}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Change color</button>
-            <button onClick={()=>{setCourseMenuOpenId(null);setQuickScanOpen(true);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Import syllabus</button>
+            {getProfile().status==="highschool"?(
+              <button onClick={()=>{setCourseMenuOpenId(null);openWeeklyContent(sub.id);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Weekly schedule</button>
+            ):(
+              <button onClick={()=>{setCourseMenuOpenId(null);setQuickScanTargetCourseId(sub.id);setQuickScanOpen(true);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Import syllabus</button>
+            )}
             <button onClick={()=>{setCourseMenuOpenId(null);setConfirmDeleteCourseId(sub.id);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.red,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Delete</button>
           </div>
         )}
@@ -18479,7 +18674,23 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           isLast={calTourStep===CAL_TOUR_STEPS.length-1} onNext={advanceCalTour} onSkip={skipCalTour} />
       )}
       <ClassSetupWizard open={classSetupOpen} initialStatus={getProfile().status} onFinish={finishClassSetup} onSkip={skipClassSetup} />
-      <ClassSetupWizard open={quickScanOpen} quickScan initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>setQuickScanOpen(false)} />
+      <ClassSetupWizard open={quickScanOpen} quickScan targetCourseId={quickScanTargetCourseId} initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>{setQuickScanOpen(false);setQuickScanTargetCourseId(null);}} />
+      <Modal open={!!weeklyContentCourseId} onClose={()=>setWeeklyContentCourseId(null)} title="Weekly schedule" sub="A short note for each day this class meets -- lecture, lab, homework due, whatever's useful." width={460}
+        footer={<><Btn variant="subtle" onClick={()=>setWeeklyContentCourseId(null)}>Cancel</Btn><Btn onClick={saveWeeklyContent}>Save</Btn></>}>
+        {(()=>{
+          const r=routines.find(rt=>rt.kind==="class"&&rt.courseId===weeklyContentCourseId);
+          if(!r)return <div style={{fontSize:12.5,color:T.muted}}>This class doesn't have a meeting time set yet -- add one first.</div>;
+          return (
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              {r.days.slice().sort((a,b)=>a-b).map(day=>(
+                <Field key={day} label={ROUTINE_DOW[day]}>
+                  <Input value={weeklyContentDraft[day]||""} onChange={e=>setWeeklyContentDraft(d=>({...d,[day]:e.target.value}))} placeholder="e.g. Lecture, ch. 4" />
+                </Field>
+              ))}
+            </div>
+          );
+        })()}
+      </Modal>
       <NewEventModal open={newEventOpen} initialTitle={newEventPrefill.title} initialDate={newEventPrefill.date} initialStartTime={newEventPrefill.startTime}
         anchorX={newEventPrefill.anchorX} anchorY={newEventPrefill.anchorY} color={newEventPrefill.color}
         hideRepeat={newEventPrefill.chipKind==="session"}
