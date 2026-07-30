@@ -10128,7 +10128,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
       {/* ── INVITE MODAL ── */}
       {inviteOpen&&(
         <div onClick={()=>setInviteOpen(false)} style={{position:"fixed",inset:0,zIndex:90,background:"rgba(8,12,10,0.78)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <div onClick={e=>e.stopPropagation()} style={{width:460,maxWidth:"92vw",background:T.surface,border:`1px solid ${T.border}`,borderRadius:18,padding:32,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)"}}>
+          <div onClick={e=>e.stopPropagation()} style={{width:460,maxWidth:"92vw",background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:28,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)"}}>
             <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
               <div style={{width:42,height:42,borderRadius:12,background:T.lime+"18",border:`1px solid ${T.lime}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,flexShrink:0}}>{Icon.users}</div>
               <div>
@@ -12309,7 +12309,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
     const q=quoteRef.current;
     return(
       <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(10px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-        <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:520,background:T.card,borderRadius:20,border:`1px solid ${T.border}`,padding:"40px 36px",textAlign:"center"}}>
+        <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:520,background:T.card,borderRadius:10,border:`1px solid ${T.border}`,padding:"32px 28px",textAlign:"center"}}>
           <div style={{fontSize:16,fontStyle:"italic",color:T.text,lineHeight:1.7,marginBottom:8,fontFamily:T.serif}}>"{q.text}"</div>
           <div style={{fontSize:12,color:T.muted,marginBottom:28}}>— {q.author}</div>
           <div style={{fontSize:15,fontWeight:600,color:T.white,marginBottom:4}}>{task.title}</div>
@@ -12395,7 +12395,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
     };
     return(
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(10px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-        <div style={{width:"100%",maxWidth:480,background:T.card,borderRadius:20,border:`1px solid ${T.border}`,padding:"36px 32px",textAlign:"center"}}>
+        <div style={{width:"100%",maxWidth:480,background:T.card,borderRadius:10,border:`1px solid ${T.border}`,padding:"32px 28px",textAlign:"center"}}>
           {asgStep==="choice"&&(<>
             <div style={{fontSize:17,fontWeight:700,color:T.white,marginBottom:8}}>Time's up on "{task.title}"</div>
             <div style={{fontSize:13,color:T.text,marginBottom:28,lineHeight:1.6}}>Did you finish the assignment?</div>
@@ -12466,7 +12466,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
     };
     return(
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(10px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-        <div style={{width:"100%",maxWidth:480,background:T.card,borderRadius:20,border:`1px solid ${T.border}`,padding:"36px 32px",textAlign:"center"}}>
+        <div style={{width:"100%",maxWidth:480,background:T.card,borderRadius:10,border:`1px solid ${T.border}`,padding:"32px 28px",textAlign:"center"}}>
           {sbStep==="choice"&&(<>
             <div style={{fontSize:17,fontWeight:700,color:T.white,marginBottom:8}}>Time's up on "{task.title}"</div>
             <div style={{fontSize:13,color:T.text,marginBottom:28,lineHeight:1.6}}>Did you finish it?</div>
@@ -12524,7 +12524,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
     };
     return(
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(10px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-        <div style={{width:"100%",maxWidth:480,background:T.card,borderRadius:20,border:`1px solid ${T.border}`,padding:"36px 32px",textAlign:"center"}}>
+        <div style={{width:"100%",maxWidth:480,background:T.card,borderRadius:10,border:`1px solid ${T.border}`,padding:"32px 28px",textAlign:"center"}}>
           {abStep==="choice"&&(<>
             <div style={{fontSize:17,fontWeight:700,color:T.white,marginBottom:8}}>Time's up on "{task.title}"</div>
             <div style={{fontSize:13,color:T.text,marginBottom:28,lineHeight:1.6}}>Did you finish it?</div>
@@ -12685,7 +12685,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
 
   return(<>
     <div onPointerDown={widgetPointerDown} onPointerMove={widgetPointerMove} onPointerUp={widgetPointerUp}
-      style={{position:"fixed",...(dragPos?{left:dragPos.x,top:dragPos.y,right:"auto",bottom:"auto"}:{bottom:20,right:collapsed?8:20}),zIndex:500,width:collapsed?64:284,background:T.card,border:`1px solid ${T.border}`,borderRadius:18,boxShadow:"0 20px 50px -14px rgba(0,0,0,0.5)",padding:collapsed?"30px 8px 14px":"14px 16px",fontFamily:T.font,animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)",transition:"width 0.28s cubic-bezier(.2,.85,.3,1), padding 0.28s cubic-bezier(.2,.85,.3,1)",overflow:"hidden",boxSizing:"border-box",cursor:"grab",touchAction:"none"}}>
+      style={{position:"fixed",...(dragPos?{left:dragPos.x,top:dragPos.y,right:"auto",bottom:"auto"}:{bottom:20,right:collapsed?8:20}),zIndex:500,width:collapsed?64:284,background:T.card,border:`1px solid ${T.border}`,borderRadius:10,boxShadow:"0 20px 50px -14px rgba(0,0,0,0.5)",padding:collapsed?"30px 8px 14px":"14px 16px",fontFamily:T.font,animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)",transition:"width 0.28s cubic-bezier(.2,.85,.3,1), padding 0.28s cubic-bezier(.2,.85,.3,1)",overflow:"hidden",boxSizing:"border-box",cursor:"grab",touchAction:"none"}}>
       {!collapsed&&(
         <button onClick={()=>setSoundOn(s=>!s)} title={soundOn?"Mute alarm":"Unmute alarm"} style={{position:"absolute",top:10,right:66,width:22,height:22,borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,color:soundOn?T.muted:T.faint,display:"grid",placeItems:"center",cursor:"pointer",zIndex:1,padding:0}}>
           {soundOn?Icon.volume:Icon.volOff}
@@ -15226,7 +15226,7 @@ function RescheduleModal({task,events,commit,onClose}){
 
   return (
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(6px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
-      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:420,background:T.card,border:`1px solid ${T.border}`,borderRadius:18,padding:24,animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:420,background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:22,animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
         <div style={{fontSize:15,fontWeight:700,color:T.white,marginBottom:10}}>Reschedule "{task.title}"?</div>
         {candidates.length===0
           ? <div style={{fontSize:12.5,color:T.red,marginBottom:14,padding:"10px 12px",background:T.red+"14",borderRadius:9}}>No open slot before its deadline, even after freeing up what we can. Try a manual edit instead.</div>
@@ -15584,7 +15584,7 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
       )}
       {canAddAttackBlock&&(<>
         <AttackBlockExplainer />
-        <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14}}>
+        <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
           <div onClick={()=>setAddAttackBlock(a=>!a)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
             <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Start an Attack Block for this</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>A short probe session, scheduled the moment you save. Studlin figures out the rest.</div></div>
             <div style={{width:36,height:20,borderRadius:10,background:addAttackBlock?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer"}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:addAttackBlock?18:2,transition:"left 0.2s"}} /></div>
@@ -15604,7 +15604,7 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
           <MaterialEditor item={examPlan} onChange={patch=>setExamPlan(m=>({...m,...patch}))} label={title.trim()||"Untitled exam"} idPrefix={"edittask-"+ev.id} />
         </Field>
         {linkedSessions.length===0&&(
-          <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14}}>
+          <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
             <div onClick={()=>setExamPlan(m=>({...m,proposeSessions:!m.proposeSessions}))} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
               <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Have Studlin make your study plan</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Spaced study sessions counting down to the exam date, added the moment you save.</div></div>
               <div style={{width:36,height:20,borderRadius:10,background:examPlan.proposeSessions?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer"}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:examPlan.proposeSessions?18:2,transition:"left 0.2s"}} /></div>
@@ -15682,7 +15682,7 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
       ):(
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           {collabCandidates.map(c=>(
-            <label key={c.uid} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:collabSelected.includes(c.uid)?T.card2:"transparent"}}>
+            <label key={c.uid} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:8,border:`1px solid ${T.border}`,cursor:"pointer",background:collabSelected.includes(c.uid)?T.card2:"transparent"}}>
               <input type="checkbox" checked={collabSelected.includes(c.uid)} onChange={()=>toggleCollabSelected(c.uid)} style={{cursor:"pointer"}} />
               <div style={{fontSize:13,fontWeight:600,color:T.text}}>{c.name}</div>
             </label>
@@ -17844,7 +17844,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           <Field label="Study material (optional)" hint="Upload files, paste notes, or drop a link — you can always add more later in Studlin Prep.">
             <MaterialEditor item={evExamPlan} onChange={patch=>setEvExamPlan(m=>({...m,...patch}))} label={evTitle.trim()||"Untitled exam"} idPrefix="addtask-exam" />
           </Field>
-          <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14}}>
+          <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
             <div onClick={()=>setEvExamPlan(m=>({...m,proposeSessions:!m.proposeSessions}))} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
               <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Have Studlin make your study plan</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Spaced study sessions counting down to the exam date. Leave this off to plan it yourself.</div></div>
               <div style={{width:36,height:20,borderRadius:10,background:evExamPlan.proposeSessions?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer"}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:evExamPlan.proposeSessions?18:2,transition:"left 0.2s"}} /></div>
@@ -17914,7 +17914,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
 
         {isTaskKind&&!isChecklistMode&&!evSplitEnabled&&(<>
           <AttackBlockExplainer />
-          <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14}}>
+          <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
             <div onClick={()=>setEvAttackBlock(a=>!a)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
               <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>I don't know how long this takes</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Start with a short probe session. Studlin figures out the rest.</div></div>
               <div style={{width:36,height:20,borderRadius:10,background:evAttackBlock?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer"}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:evAttackBlock?18:2,transition:"left 0.2s"}} /></div>
@@ -17957,7 +17957,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         )}
 
         {isTaskKind&&!isChecklistMode&&!evAttackBlock&&(
-          <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14}}>
+          <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
             <div onClick={()=>setEvSplitEnabled(s=>!s)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
               <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Split into sessions</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Spread this task across multiple days</div></div>
               <div style={{width:36,height:20,borderRadius:10,background:evSplitEnabled?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer"}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:evSplitEnabled?18:2,transition:"left 0.2s"}} /></div>
@@ -20555,7 +20555,7 @@ function LevelRoadmapModal({open,onClose,currentMinutes}){
   if(!open)return null;
   return(
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
-      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:460,maxHeight:"80vh",background:T.card,borderRadius:18,border:`1px solid ${T.border}`,overflow:"hidden",display:"flex",flexDirection:"column",boxShadow:"0 28px 70px -20px rgba(0,0,0,0.55)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:460,maxHeight:"80vh",background:T.card,borderRadius:10,border:`1px solid ${T.border}`,overflow:"hidden",display:"flex",flexDirection:"column",boxShadow:"0 28px 70px -20px rgba(0,0,0,0.55)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
         <div style={{padding:"20px 22px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
           <div>
             <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Career Rank Roadmap</div>
@@ -20607,7 +20607,7 @@ function StreakDetailModal({open,onClose,streak}){
   const {cells,longest}=computeStreakHeatmap();
   return(
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
-      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:460,background:T.card,borderRadius:18,border:`1px solid ${T.border}`,overflow:"hidden",boxShadow:"0 28px 70px -20px rgba(0,0,0,0.55)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:460,background:T.card,borderRadius:10,border:`1px solid ${T.border}`,overflow:"hidden",boxShadow:"0 28px 70px -20px rgba(0,0,0,0.55)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
         <div style={{padding:"20px 22px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div>
             <div style={{fontSize:16,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Study Streak</div>
@@ -21396,7 +21396,7 @@ function FeedbackPage() {
       </div>
 
       {/* Category */}
-      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:24}}>
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:20}}>
         <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,marginBottom:14}}>What kind of feedback?</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
           {CATS.map(c=>(
@@ -21409,7 +21409,7 @@ function FeedbackPage() {
       </div>
 
       {/* Message */}
-      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:24}}>
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:20}}>
         <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,marginBottom:14}}>Tell us more</div>
         <textarea
           value={msg}
@@ -21702,7 +21702,7 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
       </div>
 
       {/* Record / import card */}
-      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:"24px 26px"}}>
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"20px 22px"}}>
         {!recording&&subjectRequired&&(
           <div style={{marginBottom:16}}>
             <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>{subject?"Class":"Which class is this for?"}</div>
@@ -21742,7 +21742,7 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
 
       {/* Saved lectures */}
       {saved.length>0&&!selectedLec&&(
-        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:20}}>
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:20}}>
           <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,marginBottom:12}}>Saved lectures</div>
           <div style={{display:"flex",flexDirection:"column",gap:6}}>
             {saved.slice(0,5).map(l=>(
@@ -21761,7 +21761,7 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
       )}
 
       {/* Transcript area */}
-      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:20}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
           <span style={{fontFamily:T.mono,fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted}}>Live transcript</span>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
@@ -21789,7 +21789,7 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
           {title:"Practice quiz",desc:"Generate a multiple-choice quiz from this lecture",icon:Icon.zap,action:()=>curTx&&startQuiz(curTx,curSubject),badge:null,color:T.purple},
           {title:"Summary",desc:"Get a concise outline of the full lecture",icon:Icon.file,action:()=>curTx&&processTranscript(curTx,curSubject,"summary"),badge:null,color:T.amber},
         ].map((it,i)=>(
-          <div key={i} onClick={()=>it.action()} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:18,padding:20,cursor:curTx||it.badge?"pointer":"default",position:"relative",opacity:(!curTx&&!it.badge)?0.5:1}}>
+          <div key={i} onClick={()=>it.action()} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:18,cursor:curTx||it.badge?"pointer":"default",position:"relative",opacity:(!curTx&&!it.badge)?0.5:1}}>
             {it.badge&&<span style={{position:"absolute",top:14,right:14,fontFamily:T.mono,fontSize:9,letterSpacing:"0.08em",padding:"3px 8px",borderRadius:99,background:T.purple+"22",color:T.purple,border:`1px solid ${T.purple}44`,fontWeight:700}}>{it.badge}</span>}
             <div style={{width:36,height:36,borderRadius:10,background:it.color+"18",border:`1px solid ${it.color}33`,display:"grid",placeItems:"center",color:it.color,marginBottom:12}}>{it.icon}</div>
             <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>{it.title}</div>
@@ -22139,7 +22139,7 @@ function AuthGate(){
 function NotifPermModal({onAllow=()=>{},onDeny=()=>{}}) {
   return (
     <div style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-      <div style={{background:T.bg,borderRadius:24,padding:"36px 32px 28px",maxWidth:360,width:"100%",boxShadow:"0 24px 80px rgba(0,0,0,0.35)",border:`1px solid ${T.border}`,textAlign:"center"}}>
+      <div style={{background:T.bg,borderRadius:10,padding:"30px 28px 24px",maxWidth:360,width:"100%",boxShadow:"0 24px 80px rgba(0,0,0,0.35)",border:`1px solid ${T.border}`,textAlign:"center"}}>
         <div style={{width:64,height:64,borderRadius:18,background:`linear-gradient(135deg,${T.lime}30,${T.lime}10)`,border:`1px solid ${T.lime}40`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 20px",color:T.lime}}>{ic(<><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></>,28)}</div>
         <div style={{fontFamily:T.sans,fontWeight:700,fontSize:20,color:T.text,marginBottom:8,letterSpacing:"-0.3px"}}>Stay on track</div>
         <div style={{fontFamily:T.sans,fontSize:14,color:T.muted,lineHeight:1.6,marginBottom:28}}>
@@ -24164,7 +24164,7 @@ function App() {
       {notifPermModal && <NotifPermModal onAllow={handleNotifAllow} onDeny={handleNotifDeny} />}
       {!calOnboardDone&&(
         <div style={{position:"fixed",inset:0,zIndex:200,background:"rgba(8,12,10,0.82)",backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px"}}>
-          <div style={{width:"100%",maxWidth:480,background:T.surface,border:`1px solid ${T.border}`,borderRadius:20,padding:"36px 36px 28px",boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease"}}>
+          <div style={{width:"100%",maxWidth:480,background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:"32px 32px 26px",boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease"}}>
             <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:6}}>
               <div style={{width:44,height:44,borderRadius:12,background:T.lime+"18",border:`1px solid ${T.lime}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,fontSize:20}}>{Icon.cal}</div>
               <div>
