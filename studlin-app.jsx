@@ -6300,6 +6300,19 @@ function StudlinPrep({setActive=()=>{}}={}){
   const [buildPlanHoursTarget,setBuildPlanHoursTarget]=useState("");
   const [buildPlanFocuses,setBuildPlanFocuses]=useState([]);
   const [buildPlanFocusesLoading,setBuildPlanFocusesLoading]=useState(false);
+  // Correction round (2026-07-31): confidence used to be an instant-fire
+  // button (click it, immediately advance). Now that impact + material +
+  // the flashcard/PE toggles + hours target all live on the same
+  // calibration screen, confidence needs to be a real held selection --
+  // pre-filled from the exam's last real confidenceLog rating so "Redo
+  // study plan" actually shows what you answered last time, not a blank
+  // slate. buildPlanMaterialOpen is the calibration screen's own
+  // "+ Add material" collapse -- expanded by default only when there's
+  // genuinely none yet, same convention the page's other material card
+  // already uses, kept as separate state so it doesn't cross-talk with
+  // that other, unrelated instance of the same idea.
+  const [buildPlanConfidence,setBuildPlanConfidence]=useState("okay");
+  const [buildPlanMaterialOpen,setBuildPlanMaterialOpen]=useState(false);
   // "Create manually" -- the other half of the choice step (Phase 4).
   // Each row is {text, date, time, duration}: date+time filled in creates
   // a normally-scheduled session right away (validated the same
@@ -6468,7 +6481,18 @@ function StudlinPrep({setActive=()=>{}}={}){
     setBuildPlanGeneric(false);
     setBuildPlanPreview(null);
     setBuildPlanGenFlashcards(false);setBuildPlanGenPE(false);setBuildPlanHoursTarget("");setBuildPlanFocuses([]);
-    setBuildPlanStep(hasMaterial?"confidence":"choice");
+    setBuildPlanMaterialOpen(!hasMaterial);
+    // Pre-fill confidence from the exam's own history -- real correction:
+    // this used to reset to a blank slate every time, so "Redo study
+    // plan" never actually showed you what you'd said last time.
+    const log=exam.confidenceLog||[];
+    setBuildPlanConfidence(log[log.length-1]||"okay");
+    // Zero sessions -> Build (show the Generate/Manual choice). Any
+    // sessions already scheduled -> Redo, skip straight to calibration,
+    // now pre-filled and editable instead of silently re-running the
+    // first answer.
+    const hasSessions=lsGet("events",[]).some(e=>e.dueEventId===exam.id);
+    setBuildPlanStep(hasSessions?"confidence":"choice");
   };
   const closeBuildPlan=()=>{
     setBuildPlanExamId(null);setBuildPlanStep("choice");setBuildPlanGeneric(false);setBuildPlanPreview(null);
@@ -6486,27 +6510,25 @@ function StudlinPrep({setActive=()=>{}}={}){
     if(!buildPlanExam)return;
     lsSet("events",lsGet("events",[]).map(e=>e.id===buildPlanExam.id?{...e,sourceMaterials:fileTexts,referenceLinks:materialLinks}:e));
   };
-  const startGenericPlan=()=>{
+  // Replaces the old startGenericPlan/chooseConfidence split -- confidence
+  // is no longer an instant-fire button, it's a held selection
+  // (buildPlanConfidence) read here alongside impact/material/hours, all
+  // from the one calibration screen. Whether this run is "generic" or
+  // material-grounded now falls naturally out of whether material was
+  // actually added, not a separate top-level choice from a screen ago.
+  const generatePreview=async()=>{
     if(!buildPlanExam)return;
-    setBuildPlanGeneric(true);
+    const hasMaterial=buildPlanMaterialText.trim().length>0;
+    setBuildPlanGeneric(!hasMaterial);
+    if(hasMaterial)persistBuildPlanMaterial();
     const baseDuration=suggestDurationFor(buildPlanExam.subject,"study block")||25;
-    const params=computeStudyPlanParams(buildPlanExam.examWeight,baseDuration,"okay",0);
-    const dates=computeReviewDates(buildPlanExam.date,dayKey(),params.sessionCount);
-    setBuildPlanPreview({sessionCount:params.sessionCount,sessionDuration:params.sessionDuration,difficultyValue:params.difficultyValue,dates});
-    setBuildPlanFocuses([]);
-    setBuildPlanStep("preview");
-  };
-  const chooseConfidence=async(level)=>{
-    if(!buildPlanExam)return;
-    persistBuildPlanMaterial();
-    const baseDuration=suggestDurationFor(buildPlanExam.subject,"study block")||25;
-    const params=computeStudyPlanParams(buildPlanExam.examWeight,baseDuration,level,buildPlanMaterialText.length);
+    const params=computeStudyPlanParams(buildPlanExam.examWeight,baseDuration,buildPlanConfidence,buildPlanMaterialText.length);
     const {sessionCount,sessionDuration}=applyHoursTargetCap(params.sessionCount,params.sessionDuration,parseFloat(buildPlanHoursTarget));
     const dates=computeReviewDates(buildPlanExam.date,dayKey(),sessionCount);
     setBuildPlanPreview({sessionCount,sessionDuration,difficultyValue:params.difficultyValue,dates});
     setBuildPlanStep("preview");
     setBuildPlanFocuses(dates.map(()=>""));
-    if(buildPlanMaterialText.trim()&&dates.length>0){
+    if(hasMaterial&&dates.length>0){
       setBuildPlanFocusesLoading(true);
       const focuses=await proposeSessionFocuses(buildPlanExam.title,buildPlanMaterialText,dates.length,buildPlanExam.subject);
       setBuildPlanFocusesLoading(false);
@@ -7186,9 +7208,15 @@ function StudlinPrep({setActive=()=>{}}={}){
                 next actionable session expands with Start/Move, same
                 one-at-a-time progressive disclosure as the exam list. ── */}
             {examSessions.length===0?(
-              <Card style={{padding:"28px 20px",textAlign:"center",marginBottom:24}}>
-                <div style={{fontSize:13,color:T.muted,marginBottom:16}}>No study plan yet.</div>
-                <Btn onClick={()=>openBuildPlan(selectedExam)}>Build study plan</Btn>
+              // Correction round: was a big centered box with a lot of
+              // dead space around one button -- now a plain prompt row.
+              // This is also the ONE place "Build study plan" shows up
+              // when there's nothing yet (the Materials & study kit
+              // section's own Generate button, below, only ever renders
+              // once sessions already exist -- see its own comment).
+              <Card style={{padding:"14px 16px",marginBottom:24,display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
+                <div style={{fontSize:13,color:T.muted}}>No study plan yet.</div>
+                <Btn onClick={()=>openBuildPlan(selectedExam)} style={{flexShrink:0}}>Build study plan</Btn>
               </Card>
             ):(
               <div style={{marginBottom:24}}>
@@ -7335,9 +7363,15 @@ function StudlinPrep({setActive=()=>{}}={}){
                 {/* 2026-07-31: one entry point, replacing what used to be
                     three inconsistent ones (Build my study kit, Flashcards
                     only/Practice exam only, Redo the plan) -- see
-                    openBuildPlan/commitBuildPlan above. */}
-                <Btn onClick={()=>openBuildPlan(selectedExam)}>{examSessions.length===0?"Build study plan":"Redo study plan"}</Btn>
+                    openBuildPlan/commitBuildPlan above. Only rendered
+                    once sessions already exist -- the empty-state card in
+                    the timeline above (examSessions.length===0 branch) is
+                    the one and only "Build study plan" trigger; a second
+                    one here (spotted live) was confusing. */}
+                {examSessions.length>0&&(<>
+                <Btn onClick={()=>openBuildPlan(selectedExam)}>Redo study plan</Btn>
                 <div style={{fontSize:10.5,color:T.muted,marginTop:6}}>Sessions calibrated to your confidence, plus flashcards and a practice exam if you want them.</div>
+                </>)}
                 {genMsg&&(
                   <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8}}>
                     <span style={{fontSize:11.5,color:genMsg.startsWith("✓")?T.teal:T.red}}>{genMsg}</span>
@@ -7474,15 +7508,19 @@ function StudlinPrep({setActive=()=>{}}={}){
         sub={buildPlanExam?buildPlanExam.title:""} width={520}
         footer={buildPlanStep==="preview"?<><Btn variant="subtle" onClick={closeBuildPlan}>Cancel</Btn><Btn onClick={commitBuildPlan} disabled={buildPlanLoading}>{buildPlanLoading?"Building…":"Confirm plan"}</Btn></>
           :buildPlanStep==="manual"?<><Btn variant="subtle" onClick={closeBuildPlan}>Cancel</Btn><Btn onClick={commitManualSessions}>Add session{manualSessionRows.filter(r=>r.text.trim()).length!==1?"s":""}</Btn></>
+          :buildPlanStep==="confidence"?<><Btn variant="subtle" onClick={closeBuildPlan}>Cancel</Btn><Btn onClick={generatePreview}>See preview</Btn></>
           :<Btn variant="subtle" onClick={closeBuildPlan}>Cancel</Btn>}>
+        {/* Correction round (2026-07-31): exactly 2 choices -- the old
+            three-way split (add material / just block out time / create
+            manually) folded material-vs-not into a top-level branch, when
+            it's really just an optional input to Generate. */}
         {buildPlanExam&&buildPlanStep==="choice"&&(
           <div>
             <div style={{fontSize:13,color:T.text,lineHeight:1.6,marginBottom:18}}>
-              Add material and I'll build a real plan with flashcards, or I can just block out study time for now.
+              Have Studlin build the plan -- confidence, material if you've got it, flashcards if you want them -- or lay out your own sessions by hand.
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:8}}>
-              <Btn onClick={()=>setBuildPlanStep("material")} style={{width:"100%",justifyContent:"center"}}>Add material</Btn>
-              <Btn variant="ghost" onClick={startGenericPlan} style={{width:"100%",justifyContent:"center"}}>Just block out study time</Btn>
+              <Btn onClick={()=>setBuildPlanStep("confidence")} style={{width:"100%",justifyContent:"center"}}>Studlin generates</Btn>
               <Btn variant="ghost" onClick={openManualSessions} style={{width:"100%",justifyContent:"center"}}>Create manually</Btn>
             </div>
           </div>
@@ -7515,40 +7553,73 @@ function StudlinPrep({setActive=()=>{}}={}){
             <button type="button" onClick={addManualSessionRow} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>+ Add another session</button>
           </div>
         )}
-        {buildPlanExam&&buildPlanStep==="material"&&(
-          <div>
-            <input type="file" ref={fileInputRef} onChange={handlePrepFile} accept=".txt,.md,.pdf,.docx" style={{display:"none"}} multiple />
-            <div onClick={()=>fileInputRef.current&&fileInputRef.current.click()} style={{border:`1px dashed ${T.borderHover}`,borderRadius:10,padding:18,textAlign:"center",background:T.card2,cursor:"pointer",marginBottom:10}}>
-              <div style={{fontSize:12.5,color:T.text,fontWeight:500}}>Click to upload: PDF, DOCX, or TXT</div>
-            </div>
-            <button type="button" onClick={()=>setPasteMode(m=>!m)} style={{width:"100%",textAlign:"center",padding:"9px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,marginBottom:pasteMode?10:14}}>{pasteMode?"Upload a file instead":"Or paste text instead"}</button>
-            {pasteMode&&(
-              <div style={{marginBottom:14}}>
-                <textarea value={pasteText} onChange={e=>setPasteText(e.target.value)} placeholder="Paste your notes or material here" rows={5}
-                  style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
-                <Btn onClick={()=>{setFileTexts(prev=>[...prev,{name:"Pasted text",...finalizeExtractedText(pasteText)}]);setPasteText("");setPasteMode(false);}} disabled={!pasteText.trim()} style={{marginTop:10,width:"100%",justifyContent:"center",opacity:pasteText.trim()?1:0.45}}>Add pasted text</Btn>
-              </div>
-            )}
-            {fileTexts.length>0&&(
-              <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:14}}>
-                {fileTexts.map(f=>(
-                  <div key={f.name} style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card2,borderRadius:8,gap:8}}>
-                    <div style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{f.name}</div>
-                    <button onClick={()=>removePrepFile(f.name)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0}}>×</button>
-                  </div>
-                ))}
-              </div>
-            )}
-            <Btn onClick={()=>{persistBuildPlanMaterial();setBuildPlanStep("confidence");}} disabled={fileTexts.length===0&&materialLinks.length===0} style={{width:"100%",justifyContent:"center"}}>Continue</Btn>
-          </div>
-        )}
+        {/* Correction round: one calibration screen with everything on it
+            -- impact, confidence, material (collapsible, optional), the
+            flashcard/PE toggles, and the hours target. Replaces the old
+            standalone "material" step entirely; whether this run ends up
+            generic or material-grounded now just falls out of whether
+            the material section below is empty, not a separate earlier
+            choice. Impact writes straight through to the exam
+            (patchExam), so it's also automatically what Redo pre-fills. */}
         {buildPlanExam&&buildPlanStep==="confidence"&&(
           <div>
-            <div style={{fontSize:13,color:T.text,marginBottom:14}}>How confident are you on this material?</div>
-            <div style={{display:"flex",gap:8,marginBottom:18}}>
-              {["shaky","okay","solid"].map(level=>(
-                <Btn key={level} variant="ghost" onClick={()=>chooseConfidence(level)} style={{flex:1,justifyContent:"center",textTransform:"capitalize"}}>{level}</Btn>
-              ))}
+            <div style={{marginBottom:16}}>
+              <div style={{fontSize:12,color:T.muted,marginBottom:6}}>How important is this exam?</div>
+              <div style={{display:"flex",gap:8}}>
+                {[["quiz","Quiz"],["major","Major"]].map(([v,label])=>(
+                  <button key={v} type="button" onClick={()=>patchExam(buildPlanExam.id,{examWeight:v})}
+                    style={{flex:1,padding:"8px",borderRadius:7,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,
+                      background:(buildPlanExam.examWeight||"major")===v?T.lime+"14":T.card2,color:(buildPlanExam.examWeight||"major")===v?T.lime:T.muted,
+                      border:`1px solid ${(buildPlanExam.examWeight||"major")===v?T.lime+"44":T.border}`}}>{label}</button>
+                ))}
+              </div>
+            </div>
+            <div style={{marginBottom:16}}>
+              <div style={{fontSize:12,color:T.muted,marginBottom:6}}>How confident are you on this material?</div>
+              <div style={{display:"flex",gap:8}}>
+                {["shaky","okay","solid"].map(level=>(
+                  <button key={level} type="button" onClick={()=>setBuildPlanConfidence(level)}
+                    style={{flex:1,padding:"8px",borderRadius:7,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,textTransform:"capitalize",
+                      background:buildPlanConfidence===level?T.lime+"14":T.card2,color:buildPlanConfidence===level?T.lime:T.muted,
+                      border:`1px solid ${buildPlanConfidence===level?T.lime+"44":T.border}`}}>{level}</button>
+                ))}
+              </div>
+            </div>
+            <div style={{marginBottom:16}}>
+              {!buildPlanMaterialOpen?(
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <span style={{fontSize:12,color:T.muted}}>{fileTexts.length>0||materialLinks.length>0?fileTexts.length+materialLinks.length+" material item"+((fileTexts.length+materialLinks.length)!==1?"s":""):"No material added"}</span>
+                  <button type="button" onClick={()=>setBuildPlanMaterialOpen(true)} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>{fileTexts.length>0||materialLinks.length>0?"Edit material":"+ Add material"}</button>
+                </div>
+              ):(
+                <div>
+                  <input type="file" ref={fileInputRef} onChange={handlePrepFile} accept=".txt,.md,.pdf,.docx" style={{display:"none"}} multiple />
+                  <div onClick={()=>fileInputRef.current&&fileInputRef.current.click()} style={{border:`1px dashed ${T.borderHover}`,borderRadius:10,padding:14,textAlign:"center",background:T.card2,cursor:"pointer",marginBottom:8}}>
+                    <div style={{fontSize:12,color:T.text,fontWeight:500}}>Click to upload: PDF, DOCX, or TXT</div>
+                  </div>
+                  <button type="button" onClick={()=>setPasteMode(m=>!m)} style={{width:"100%",textAlign:"center",padding:"7px",borderRadius:8,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:11.5,marginBottom:pasteMode?8:10}}>{pasteMode?"Upload a file instead":"Or paste text instead"}</button>
+                  {pasteMode&&(
+                    <div style={{marginBottom:10}}>
+                      <textarea value={pasteText} onChange={e=>setPasteText(e.target.value)} placeholder="Paste your notes or material here" rows={4}
+                        style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"10px 12px",color:T.text,fontSize:12.5,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
+                      <Btn onClick={()=>{setFileTexts(prev=>[...prev,{name:"Pasted text",...finalizeExtractedText(pasteText)}]);setPasteText("");setPasteMode(false);}} disabled={!pasteText.trim()} style={{marginTop:8,width:"100%",justifyContent:"center",opacity:pasteText.trim()?1:0.45}}>Add pasted text</Btn>
+                    </div>
+                  )}
+                  {fileTexts.length>0&&(
+                    <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:8}}>
+                      {fileTexts.map(f=>(
+                        <div key={f.name} style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12,padding:"6px 10px",background:T.card2,borderRadius:8,gap:8}}>
+                          <div style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{f.name}</div>
+                          <button onClick={()=>removePrepFile(f.name)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0}}>×</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {(fileTexts.length>0||materialLinks.length>0)&&(
+                    <button type="button" onClick={()=>setBuildPlanMaterialOpen(false)} style={{background:"none",border:"none",color:T.muted,fontSize:11.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>Done</button>
+                  )}
+                </div>
+              )}
             </div>
             <div style={{borderTop:`1px solid ${T.border}`,paddingTop:14,display:"flex",flexDirection:"column",gap:10}}>
               <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
@@ -17883,6 +17954,36 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
               );
             })}
           </div>
+          {/* Correction round (2026-07-31): manually-created study
+              sessions with no time yet used to only be reachable by
+              clicking into their specific exam on the right -- this is
+              the persistent, always-visible home the live feedback
+              actually asked for. Same sidebarDragChip kind:"session"
+              mechanism already wired last round (see commitNewEvent's
+              chipKind==="session" branch), just a second place it's
+              rendered from. Hidden entirely when empty, same convention
+              "Past terms" above already uses for the same reason. */}
+          {(()=>{
+            const unscheduledSessions=events.filter(e=>e.kind==="study block"&&e.isExamPrepSession&&e.status==="pending"&&(!e.date||!e.time));
+            if(unscheduledSessions.length===0)return null;
+            return (
+              <div style={{marginTop:18}}>
+                <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Study Sessions</div>
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  {unscheduledSessions.map(s=>{
+                    const tagColor=colorOf(s.courseId||s.subject);
+                    return (
+                      <div key={s.id} draggable onDragStart={()=>setSidebarDragChip({title:s.title,color:tagColor,movable:false,kind:"session",sessionId:s.id})} onDragEnd={()=>setSidebarDragChip(null)}
+                        title="Drag onto the calendar to set when to study" style={{...subjectRowStyle(tagColor),cursor:"grab",border:`1px dashed ${tagColor}66`,flexDirection:"column",alignItems:"flex-start",gap:1}}>
+                        <span style={{fontSize:12,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"100%"}}>{s.title}</span>
+                        <span style={{fontSize:9,color:T.faint}}>{s.subject||"—"} · not scheduled</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
         </div>
         )}
         {/* Full-height divider with a subtle shadow (173547) -- previously
