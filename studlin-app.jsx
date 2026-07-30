@@ -3080,6 +3080,22 @@ function looksLikeRealDeadlineTitle(title){
 }
 const ANTI_GARBAGE_EXTRACTION_RULE=
   "Only extract an item if it is clearly a specific graded assignment, project, reading, quiz, or exam that is due or occurs on that date -- never extract a course title, professor name, room/location, grading policy, or general encouragement text, even if a date-like number happens to sit near it. Each \"title\" must be a short, specific noun phrase naming the actual assignment (e.g. \"Problem Set 3\", \"Midterm Exam\", \"Ch. 5 Reading\") -- never a full sentence or a fragment of one. If you can't confidently name the specific item due, skip that date entirely rather than guessing a title from nearby text. ";
+// Every real syllabus/schedule this ever gets pointed at looks different --
+// different school, different LMS export, different registrar, a phone
+// photo vs. a clean screenshot vs. pasted plain text. Rather than one
+// prompt implicitly assuming the exact format whatever sample it was
+// tuned against happens to use, this spells out the actual variance
+// (date formats, day notation, time formats, which classes to even
+// include) so the model handles a genuinely unfamiliar layout instead of
+// only the common case. Shared across every syllabus/schedule extraction
+// prompt in this file -- one place to strengthen this, not five.
+const SCHEDULE_EXTRACTION_ROBUSTNESS_RULE=
+  "Dates can appear in any format -- MM/DD/YYYY, MM/DD/YY, \"Sept 24\", \"September 24th, 2026\", \"24 Sept\", \"Wed 9/24\", ISO YYYY-MM-DD, or spelled out in a sentence -- read all of them the same way. When a date has no year stated, infer it from today's date: if the resulting date (with the current year) would already be more than about 30 days in the past, use next year instead, otherwise use the current year -- this keeps a syllabus scanned mid-term from misdating its own already-past early-term items while still landing a January date correctly for a term that started the previous fall. "+
+  "Days of the week can be written many ways -- \"MWF\", \"M/W/F\", \"Mon, Wed, Fri\", full names, or numbers -- read them all the same way. \"TTh\", \"T/Th\", \"TR\", and \"Tu/Th\" all mean Tuesday AND Thursday, never Tuesday twice -- this specific pair is the most common misread, be careful with it. \"MTWRF\" or \"MTWTF\" means all five weekdays (the \"R\" in some academic notation stands for Thursday, not Tuesday). "+
+  "Times can be 12-hour with am/pm in any spacing/punctuation (\"9am\", \"9:00 AM\", \"9:00a\"), 24-hour (\"13:00\"), or a range where only the second time states am/pm and it applies to both (\"9-9:50am\" means 9:00am-9:50am). If a class's meeting time genuinely isn't stated anywhere (fully online/asynchronous, or just not listed), omit that meeting time entirely rather than guessing one. "+
+  "If the source shows multiple sections of the same class, or marks something Waitlisted, Dropped, or Not Registered, only extract classes clearly marked as actually registered/enrolled/confirmed -- skip anything explicitly marked otherwise, and skip a duplicate section of a class you already extracted. "+
+  "Use a clean, human-readable class name a student would actually recognize (e.g. \"Calculus II\", \"Biology 101\") -- strip out CRNs, section numbers, and room/building codes that a course catalog listing bundles into the same line, they don't belong in the name. "+
+  "Office hours, tutoring sessions, review sessions, or an instructor's general availability are never the class's own meeting time, even when they're listed right next to it -- only extract the actual scheduled class meeting. ";
 // Returns {items, error} rather than a bare array so the caller can tell
 // "genuinely found nothing in the image" apart from "the call itself
 // failed" and show a real message instead of a silent empty state either way.
@@ -3129,7 +3145,7 @@ const CLASS_SYLLABUS_JSON_CONTRACT=
   "\"gradeWeightPercent\" (exams only, ONLY when the source explicitly states what percentage of the final grade this is worth, e.g. \"worth 20% of your grade\" -- a plain number like 20, not a string or a % sign; omit entirely if no percentage is stated, never guess one), "+
   "\"confidence\" (\"high\"/\"low\"), \"detail\" (optional, only when something concrete is stated beyond the title), \"estimatedHours\" (assignment/project only, best guess of total hours a typical student needs), "+
   "\"difficulty\" (your best guess of how mentally demanding this specific item is for a typical student, an integer 0-1000 where 500 is average -- base it on the title and detail, e.g. a short reading response is well below average, a proof-based problem set or a comprehensive final is well above). "+
-  ANTI_GARBAGE_EXTRACTION_RULE+
+  ANTI_GARBAGE_EXTRACTION_RULE+SCHEDULE_EXTRACTION_ROBUSTNESS_RULE+
   "If you find no deadlines at all, return an empty \"deadlines\" array -- never omit the key.";
 async function extractClassSyllabusText(text){
   if(!text||!text.trim())return{subject:null,meetingTimes:[],deadlines:[],error:null};
@@ -3191,7 +3207,7 @@ const COLLEGE_SCHEDULE_JSON_CONTRACT=
   "\"deadlines\" otherwise follows the same rules as a normal exam/assignment: \"title\" short, \"date\" YYYY-MM-DD (never omit even if uncertain), \"kind\" is \"exam\" for quizzes/tests/midterms/finals/common-hour-exams, \"project\" for a genuinely multi-step multi-week deliverable, or \"assignment\" for everything else. "+
   "\"examType\" (exams only: \"quiz\"/\"midterm\"/\"final\"/\"project\"/\"other\"), \"gradeWeightPercent\" (exams only, ONLY when the source explicitly states a percentage of the final grade, a plain number like 20, never guessed), "+
   "\"confidence\" (\"high\"/\"low\"), \"detail\" (optional, only when something concrete is stated beyond the title). "+
-  ANTI_GARBAGE_EXTRACTION_RULE+
+  ANTI_GARBAGE_EXTRACTION_RULE+SCHEDULE_EXTRACTION_ROBUSTNESS_RULE+
   "If you find no classes at all, return an empty \"classes\" array -- never omit the key.";
 async function extractCollegeScheduleText(text){
   if(!text||!text.trim())return{classes:[],error:null};
@@ -3236,14 +3252,23 @@ async function extractCollegeScheduleImage(base64Data,mediaType){
 // High school schedule grid/table -- a single photo of the whole week's
 // periods, no deadlines involved (a schedule grid has no due dates). Returns
 // one row per period so ClassSetupWizard can bulk-create every class at once.
+// Shared by both HS extractors below -- pulled out so the rotating-block-
+// schedule guidance (many US high schools run "A Day"/"B Day" or a
+// numbered cycle instead of fixed weekdays, a real gap this had zero
+// handling for before) and the robustness rule only need writing once.
+const HS_SCHEDULE_JSON_CONTRACT=
+  "For each period return: \"subjectName\" (the class name as shown, e.g. \"English IV\", \"AP Biology\"), "+
+  "\"startTime\" and \"endTime\" (24-hour \"HH:MM\"), "+
+  "\"days\" (which weekdays this period happens, 0=Monday..6=Sunday -- if the schedule doesn't say otherwise, assume every school day it's shown applies to, most commonly Monday-Friday so [0,1,2,3,4]), "+
+  "\"confidence\" (\"high\" normally; \"low\" specifically when the schedule uses a rotating block system -- \"A Day\"/\"B Day\", or a numbered cycle like \"Day 1\"-\"Day 6\" -- instead of fixed weekdays, since which actual weekdays a rotating day falls on isn't something a single week's schedule can state with certainty; still do your best guess for \"days\" in that case, just flag it low-confidence rather than presenting a guess as fact). "+
+  "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
+  "{\"periods\":[{\"subjectName\":\"English IV\",\"startTime\":\"08:00\",\"endTime\":\"08:45\",\"days\":[0,1,2,3,4],\"confidence\":\"high\"}]}. "+
+  SCHEDULE_EXTRACTION_ROBUSTNESS_RULE;
 async function extractHsScheduleFromImage(base64Data,mediaType){
   try{
     const prompt="This image is a photo or screenshot of a high school class schedule -- a table or list of periods, each with a class name and the time it meets. "+
-      "Extract every period you can see. For each return: \"subjectName\" (the class name as shown, e.g. \"English IV\", \"AP Biology\"), "+
-      "\"startTime\" and \"endTime\" (24-hour \"HH:MM\"), "+
-      "\"days\" (which weekdays this period happens, 0=Monday..6=Sunday -- if the schedule doesn't say otherwise, assume every school day it's shown applies to, most commonly Monday-Friday so [0,1,2,3,4]). "+
-      "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
-      "{\"periods\":[{\"subjectName\":\"English IV\",\"startTime\":\"08:00\",\"endTime\":\"08:45\",\"days\":[0,1,2,3,4]}]}. "+
+      "Extract every period you can see. "+
+      HS_SCHEDULE_JSON_CONTRACT+
       "If you can't make out any periods at all, respond with {\"periods\":[]}.";
     const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt,image:{mediaType,data:base64Data}}],model:"standard"})});
     const data=await res.json();
@@ -3262,11 +3287,8 @@ async function extractHsScheduleFromText(text){
   if(!text||!text.trim())return{periods:[],error:null};
   try{
     const prompt="This is pasted text describing a high school class schedule -- a table or list of periods, each with a class name and the time it meets (it may include other content too, ignore anything irrelevant). "+
-      "Extract every period you can find. For each return: \"subjectName\" (the class name as shown, e.g. \"English IV\", \"AP Biology\"), "+
-      "\"startTime\" and \"endTime\" (24-hour \"HH:MM\"), "+
-      "\"days\" (which weekdays this period happens, 0=Monday..6=Sunday -- if the schedule doesn't say otherwise, assume every school day it's shown applies to, most commonly Monday-Friday so [0,1,2,3,4]). "+
-      "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
-      "{\"periods\":[{\"subjectName\":\"English IV\",\"startTime\":\"08:00\",\"endTime\":\"08:45\",\"days\":[0,1,2,3,4]}]}. "+
+      "Extract every period you can find. "+
+      HS_SCHEDULE_JSON_CONTRACT+
       "If you can't find any periods at all, respond with {\"periods\":[]}.\n\n"+text.slice(0,30000);
     const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
     const data=await res.json();
@@ -14620,8 +14642,9 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       subjectName:p.subjectName||"",
       startTime:p.startTime||"08:00",endTime:p.endTime||"08:45",
       days:Array.isArray(p.days)&&p.days.length>0?p.days:[0,1,2,3,4],
+      confidence:p.confidence||"high",
     }));
-    setHsReview(normalized.map((p,i)=>({id:"hs-"+i,subjectName:p.subjectName||("Period "+(i+1)),color:SUBJECT_COLORS[i%SUBJECT_COLORS.length],startTime:p.startTime,endTime:p.endTime,days:p.days,isFree:false})));
+    setHsReview(normalized.map((p,i)=>({id:"hs-"+i,subjectName:p.subjectName||("Period "+(i+1)),color:SUBJECT_COLORS[i%SUBJECT_COLORS.length],startTime:p.startTime,endTime:p.endTime,days:p.days,confidence:p.confidence,isFree:false})));
     setHsFreeReview(deriveFreePeriodsFromPeriods(normalized,schoolStart,schoolEnd));
     setEditingHsTimeId(null);
     setAddMode("hsReview");
@@ -15008,6 +15031,9 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                       <Input value={p.subjectName} onChange={e=>setHsReview(r=>r.map((x,xi)=>xi===i?{...x,subjectName:e.target.value}:x))} style={{flex:1}} disabled={p.isFree} />
                       {!isEditingTime&&(
                         <div onDoubleClick={()=>setEditingHsTimeId(p.id)} title="Double-click to edit" style={{fontSize:11,color:T.muted,whiteSpace:"nowrap",cursor:"pointer"}}>{p.days.map(d=>ROUTINE_DOW[d]).join("")} · {fmtClock12(p.startTime)}–{fmtClock12(p.endTime)}</div>
+                      )}
+                      {p.confidence==="low"&&(
+                        <span title="This looks like a rotating block schedule (A/B days, a numbered cycle) -- Studlin guessed which weekdays this applies to, double-check it" style={{fontSize:10,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 7px",whiteSpace:"nowrap",flexShrink:0}}>Double-check days</span>
                       )}
                     </div>
                     <div style={{display:"flex",gap:6,marginTop:8}}>
