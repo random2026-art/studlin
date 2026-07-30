@@ -4350,15 +4350,20 @@ function suggestDurationFor(subject,kind){
 function upcomingExams(){
   return lsGet("events",[]).filter(e=>e.kind==="exam"&&e.date>=dayKey()).sort((a,b)=>a.date.localeCompare(b.date));
 }
-// Same "deadline kind, not a checklist sub-item, still pending" query
-// Dashboard's masterAssignments/masterProjects already use -- pulled out
-// here too so Studlin Prep's own Assignments/Projects tables (Phase 9)
-// can reuse it without duplicating the filter logic a second time.
+// Same "deadline kind, still pending" query Dashboard's masterAssignments/
+// masterProjects used to use before "Your Classes" was retired in favor of
+// Studlin Prep's own dense tables (2026-07-30) -- pulled out here so those
+// tables can reuse it without duplicating the filter logic a second time.
+// Includes class-linked no-date-yet items (checklist:true with a real
+// subject -- a syllabus scan, or a manually-tagged item) so Prep is now the
+// one place that shows them; a plain subject-less checklist:true to-do
+// (no class attached) is still excluded -- that one only ever belonged on
+// the standalone Checklist card, never here.
 function upcomingAssignments(){
-  return lsGet("events",[]).filter(e=>e.kind==="deadline"&&!e.checklist&&!isProjectMarker(e)&&e.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
+  return lsGet("events",[]).filter(e=>e.kind==="deadline"&&(!e.checklist||e.subject)&&!isProjectMarker(e)&&e.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
 }
 function upcomingProjects(){
-  return lsGet("events",[]).filter(e=>e.kind==="deadline"&&!e.checklist&&isProjectMarker(e)&&e.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
+  return lsGet("events",[]).filter(e=>e.kind==="deadline"&&(!e.checklist||e.subject)&&isProjectMarker(e)&&e.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
 }
 // Storage-only half of linking a deck to an exam -- callers that keep
 // their own local mirror of "decks" in React state (Flashcards) are
@@ -6967,7 +6972,7 @@ function StudlinPrep({setActive=()=>{}}={}){
                 {assignments.map(a=>{
                   const today=dayKey();
                   const daysUntil=a.date?Math.round((new Date(a.date+"T12:00:00")-new Date(today+"T12:00:00"))/86400000):null;
-                  const daysLabel=daysUntil==null?"—":daysUntil<=0?"Today":daysUntil+"d";
+                  const daysLabel=daysUntil==null?"No date":daysUntil<=0?"Today":daysUntil+"d";
                   const chainId=(lsGet("events",[]).find(e=>e.dueEventId===a.id&&e.attackChainId)||{}).attackChainId||null;
                   const pending=chainId?lsGet("events",[]).filter(e=>e.attackChainId===chainId&&e.status!=="done"):[];
                   const statusLabel=pending.length===0?"no blocks yet":pending.length+" block"+(pending.length!==1?"s":"")+" scheduled";
@@ -6975,8 +6980,12 @@ function StudlinPrep({setActive=()=>{}}={}){
                     <div key={a.id} style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,alignItems:"center"}}>
                       <div onClick={()=>setDetailEventId(a.id)} style={{fontSize:11.5,fontWeight:600,color:T.white,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={a.title}>{a.title}</div>
                       <div style={{fontSize:10.5,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.subject||"—"}</div>
-                      <input type="date" value={a.date||""} onChange={e=>patchExam(a.id,{date:e.target.value})} style={{...cellSelStyle,colorScheme:"dark"}} />
-                      <div style={{fontSize:10.5,color:daysUntil!=null&&daysUntil<=1?T.red:T.muted}}>{daysLabel}</div>
+                      {/* Setting a date on a class-linked no-date-yet item
+                          (checklist:true -- see upcomingAssignments' own
+                          comment) graduates it into a real dated deadline,
+                          same as Dashboard's retired setNoDateItemDate did. */}
+                      <input type="date" value={a.date||""} onChange={e=>e.target.value&&patchExam(a.id,{date:e.target.value,checklist:false,time:a.time||"23:59"})} style={{...cellSelStyle,colorScheme:"dark"}} />
+                      <div style={{fontSize:10.5,color:daysUntil==null?T.amber:daysUntil<=1?T.red:T.muted,fontStyle:daysUntil==null?"italic":"normal"}}>{daysLabel}</div>
                       <select value={bucketOf(a.priority)} onChange={e=>patchExam(a.id,{priority:BUCKET_VALS[e.target.value]})} style={cellSelStyle}>
                         <option value="low">Low</option><option value="medium">Med</option><option value="high">High</option>
                       </select>
@@ -7009,7 +7018,7 @@ function StudlinPrep({setActive=()=>{}}={}){
                 {projects.map(p=>{
                   const today=dayKey();
                   const daysUntil=p.date?Math.round((new Date(p.date+"T12:00:00")-new Date(today+"T12:00:00"))/86400000):null;
-                  const daysLabel=daysUntil==null?"—":daysUntil<=0?"Today":daysUntil+"d";
+                  const daysLabel=daysUntil==null?"No date":daysUntil<=0?"Today":daysUntil+"d";
                   const hasPhases=p.phases&&p.phases.length>0;
                   const steps=hasPhases?p.phases:(p.outline||[]);
                   const doneCount=hasPhases?steps.filter(s=>s.status==="done").length:steps.filter(s=>s.done).length;
@@ -7017,8 +7026,8 @@ function StudlinPrep({setActive=()=>{}}={}){
                     <div key={p.id} style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,alignItems:"center"}}>
                       <div onClick={()=>setDetailEventId(p.id)} style={{fontSize:11.5,fontWeight:600,color:T.white,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={p.title}>{p.title}</div>
                       <div style={{fontSize:10.5,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.subject||"—"}</div>
-                      <input type="date" value={p.date||""} onChange={e=>patchExam(p.id,{date:e.target.value})} style={{...cellSelStyle,colorScheme:"dark"}} />
-                      <div style={{fontSize:10.5,color:daysUntil!=null&&daysUntil<=1?T.red:T.muted}}>{daysLabel}</div>
+                      <input type="date" value={p.date||""} onChange={e=>e.target.value&&patchExam(p.id,{date:e.target.value,checklist:false,time:p.time||"23:59"})} style={{...cellSelStyle,colorScheme:"dark"}} />
+                      <div style={{fontSize:10.5,color:daysUntil==null?T.amber:daysUntil<=1?T.red:T.muted,fontStyle:daysUntil==null?"italic":"normal"}}>{daysLabel}</div>
                       <select value={bucketOf(p.priority)} onChange={e=>patchExam(p.id,{priority:BUCKET_VALS[e.target.value]})} style={cellSelStyle}>
                         <option value="low">Low</option><option value="medium">Med</option><option value="high">High</option>
                       </select>
@@ -13217,8 +13226,22 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   const isSelected = !isRoutine && selectedEventId === ev.id;
                   const leftPct = (col / totalCols) * 100;
                   const widthPct = 100 / totalCols;
+                  // Commute buffer strips (2026-07-30) -- effectiveLeadIn/
+                  // effectiveTrailOut already reserve this time in the real
+                  // conflict math (see their own comment), but nothing ever
+                  // drew in that reserved gap, so a real commute a student
+                  // set was completely invisible on the grid. Thin hatched
+                  // strip directly above/below the block itself, same
+                  // subject color at low opacity, non-interactive.
+                  const commuteStripStyle=(mins,edge)=>({position:"absolute",top:edge==="before"?topPx-mins*(WK_PX_HR/60):topPx+heightPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:mins*(WK_PX_HR/60),borderRadius:edge==="before"?"5px 5px 0 0":"0 0 5px 5px",background:`repeating-linear-gradient(135deg, ${subjectColor}26, ${subjectColor}26 4px, transparent 4px, transparent 8px)`,border:`1px dashed ${subjectColor}55`,[edge==="before"?"borderBottom":"borderTop"]:"none",zIndex:2,pointerEvents:"none",boxSizing:"border-box",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"});
                   return (
-                    <div key={ev.id}
+                    <React.Fragment key={ev.id}>
+                    {ev.commuteBefore>0 && (
+                      <div title={ev.commuteBefore+" min commute"} style={commuteStripStyle(ev.commuteBefore,"before")}>
+                        {ev.commuteBefore*(WK_PX_HR/60)>13 && <span style={{fontSize:8,color:subjectColor,fontWeight:600,whiteSpace:"nowrap"}}>{ev.commuteBefore}m commute</span>}
+                      </div>
+                    )}
+                    <div
                       draggable
                       onDragStart={()=>{ if(!isRoutine){setWkDragId(ev.id); setWkDragDeadline(ev.deadline||null);closePopover();} else {setWkDragRoutineOccurrence({routineId:ev.routineId,fromDate:ev.date});} }}
                       onDoubleClick={()=>{ if(!isRoutine)openEdit(ev); else if(onEditRoutine)onEditRoutine(ev.routineId); }}
@@ -13263,6 +13286,12 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                           style={{position:"absolute",top:-8,right:-8,width:18,height:18,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.red,fontSize:11,lineHeight:1,cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 4px 10px -2px rgba(0,0,0,0.4)"}}>×</button>
                       )}
                     </div>
+                    {ev.commuteAfter>0 && (
+                      <div title={ev.commuteAfter+" min commute"} style={commuteStripStyle(ev.commuteAfter,"after")}>
+                        {ev.commuteAfter*(WK_PX_HR/60)>13 && <span style={{fontSize:8,color:subjectColor,fontWeight:600,whiteSpace:"nowrap"}}>{ev.commuteAfter}m commute</span>}
+                      </div>
+                    )}
+                    </React.Fragment>
                   );
                 }); })()}
                 {ghostEl}
@@ -14793,7 +14822,6 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
 // illegibility on a packed day and clamp to a narrow window on a light
 // one). The container just scrolls, same as any normal calendar, landing
 // near the current time or the first real event on open.
-const DAY_PLANNER_PX_PER_HR=64;
 function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending}) {
   const scrollRef=useRef(null);
   const [dayPreviewOpen,setDayPreviewOpen]=useState(false);
@@ -14801,7 +14829,40 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
   const niceDayLabel=(()=>{const p=selDay.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});})();
   const visibleEvs=(dayEvents||[]).filter(ev=>ev.kind!=="free period"&&ev.time);
   const workWindow=getWorkWindowMinsFor(prefs,selDay);
-  const spanStart=0,spanEnd=1440,pxPerHr=DAY_PLANNER_PX_PER_HR;
+  // User-driven zoom (Phase 10b's own drag handle, extended here) --
+  // shares the exact same persisted value as WeeklyPlanner's handle (see
+  // getCalZoom/saveCalZoom's own comment) so switching Week/Day keeps a
+  // consistent feel instead of needing two independent settings.
+  const [pxPerHr,setPxPerHr]=useState(()=>getCalZoom());
+  const dayZoomDrag=useRef(null); // {startClientY,startPxHr}|null
+  const [dayZoomDragging,setDayZoomDragging]=useState(false);
+  useEffect(()=>{
+    if(!dayZoomDragging)return;
+    const onMove=(e)=>{
+      const info=dayZoomDrag.current;
+      if(!info)return;
+      const next=clampCalZoom(info.startPxHr+(e.clientY-info.startClientY)*0.5);
+      setPxPerHr(next);
+    };
+    const onUp=()=>{
+      setPxPerHr(px=>{ saveCalZoom(px); return px; });
+      dayZoomDrag.current=null;
+      setDayZoomDragging(false);
+      document.body.style.cursor="";
+      document.body.style.userSelect="";
+    };
+    document.addEventListener("mousemove",onMove);
+    document.addEventListener("mouseup",onUp);
+    return ()=>{ document.removeEventListener("mousemove",onMove); document.removeEventListener("mouseup",onUp); };
+  },[dayZoomDragging]);
+  const startDayZoomDrag=(e)=>{
+    e.preventDefault();
+    dayZoomDrag.current={startClientY:e.clientY,startPxHr:pxPerHr};
+    setDayZoomDragging(true);
+    document.body.style.cursor="ns-resize";
+    document.body.style.userSelect="none";
+  };
+  const spanStart=0,spanEnd=1440;
   const starts=visibleEvs.map(ev=>{const p=ev.time.split(":").map(Number);return p[0]*60+p[1];});
   const scrollToMin=starts.length>0?Math.max(0,Math.min(...starts)-30):(workWindow?workWindow.start:8*60);
   useEffect(()=>{
@@ -14830,6 +14891,14 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
     <Card style={{padding:16}}>
       <div style={{height:"calc(100vh - 320px)",minHeight:360}}>
         <div ref={scrollRef} style={{height:"100%",overflowY:"auto",position:"relative"}}>
+          {/* Same thin-line-plus-grip zoom handle as WeeklyPlanner's, sticky
+              so it stays reachable regardless of scroll position -- see
+              pxPerHr's own comment above for why Day now shares Week's
+              zoom setting instead of a hardcoded constant. */}
+          <div onMouseDown={startDayZoomDrag} title="Drag to zoom"
+            style={{position:"sticky",top:8,left:0,height:0,zIndex:7,display:"flex",marginLeft:45,cursor:"ns-resize"}}>
+            <div style={{width:18,height:18,borderRadius:"50%",background:T.lime,border:`2px solid ${T.card}`,marginLeft:-9,boxShadow:"0 2px 6px rgba(0,0,0,0.35)"}} />
+          </div>
           <div style={{position:"relative",height:totalHeightPx,marginLeft:54}}>
             {Array.from({length:Math.max(1,hourEnd-hourStart)},(_,i)=>hourStart+i).map(h=>(
               <div key={h} style={{position:"absolute",top:(h*60-spanStart)*(pxPerHr/60),left:0,right:0,borderTop:`1px solid ${T.borderHover}`,boxSizing:"border-box"}}>
@@ -14861,8 +14930,18 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
                   :{background:color+"1E",borderLeft:`3px solid ${color}`,color};
               const leftPct=(col/totalCols)*100;
               const widthPct=100/totalCols;
+              // Commute buffer strips -- same treatment as WeeklyPlanner's
+              // (see its own comment), so a real commute stays visible
+              // whichever view a student happens to be looking at.
+              const commuteStripStyle=(mins,edge)=>({position:"absolute",top:edge==="before"?topPx-mins*(pxPerHr/60):topPx+heightPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:mins*(pxPerHr/60),borderRadius:edge==="before"?"6px 6px 0 0":"0 0 6px 6px",background:`repeating-linear-gradient(135deg, ${color}26, ${color}26 4px, transparent 4px, transparent 8px)`,border:`1px dashed ${color}55`,[edge==="before"?"borderBottom":"borderTop"]:"none",zIndex:2,pointerEvents:"none",boxSizing:"border-box",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"});
               return (
-                <div key={ev.id} onDoubleClick={()=>openEdit(ev)}
+                <React.Fragment key={ev.id}>
+                {ev.commuteBefore>0 && (
+                  <div title={ev.commuteBefore+" min commute"} style={commuteStripStyle(ev.commuteBefore,"before")}>
+                    {ev.commuteBefore*(pxPerHr/60)>13 && <span style={{fontSize:9,color,fontWeight:600,whiteSpace:"nowrap"}}>{ev.commuteBefore}m commute</span>}
+                  </div>
+                )}
+                <div onDoubleClick={()=>openEdit(ev)}
                   onClick={()=>{isDone?uncrossDone(ev.id):markDone(ev.id);}}
                   title="Click to toggle done, double-click to edit"
                   style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:6,padding:"4px 8px",cursor:"pointer",overflow:"hidden",zIndex:3,opacity:isDone?0.6:1,boxSizing:"border-box",...kindStyle}}>
@@ -14870,6 +14949,12 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
                   <div style={{fontSize:11.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:isDone?"line-through":"none"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                   {heightPx>34&&<div style={{fontSize:9.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:2}}>{fmtTime(ev.time)}{dur?" · "+dur+"m":""}</div>}
                 </div>
+                {ev.commuteAfter>0 && (
+                  <div title={ev.commuteAfter+" min commute"} style={commuteStripStyle(ev.commuteAfter,"after")}>
+                    {ev.commuteAfter*(pxPerHr/60)>13 && <span style={{fontSize:9,color,fontWeight:600,whiteSpace:"nowrap"}}>{ev.commuteAfter}m commute</span>}
+                  </div>
+                )}
+                </React.Fragment>
               );
             })}
           </div>
@@ -15759,8 +15844,13 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
   const [allDay,setAllDay]=useState(false);
   const [repeat,setRepeat]=useState("none"); // none | weekly | selected
   const [repeatDays,setRepeatDays]=useState([]);
-  const [commuteBefore,setCommuteBefore]=useState(0);
-  const [commuteAfter,setCommuteAfter]=useState(0);
+  // "" (not 0) is the unset state -- a controlled number input whose value
+  // defaults to 0 can never actually be cleared by the student (deleting
+  // the digit just snaps straight back to "0"). Only coerced to a real
+  // number at create() time; effectiveLeadIn/effectiveTrailOut already
+  // treat a falsy commuteBefore/commuteAfter as "no commute" downstream.
+  const [commuteBefore,setCommuteBefore]=useState("");
+  const [commuteAfter,setCommuteAfter]=useState("");
   const [location,setLocation]=useState("");
   const [movable,setMovable]=useState(false); // Fixed by default; toggle on = Free
 
@@ -15796,7 +15886,7 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
     // (0=Mon..6=Sun), JS's own Date#getDay() is Sun-first (0=Sun..6=Sat).
     const jsDay=new Date(d+"T12:00:00").getDay();
     setRepeatDays([jsDay===0?6:jsDay-1]);
-    setCommuteBefore(0);setCommuteAfter(0);
+    setCommuteBefore("");setCommuteAfter("");
     setLocation("");setMovable(false);
   },[open,initialTitle,initialDate,initialStartTime]);
 
@@ -15810,7 +15900,8 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
       title:title.trim(),date,startTime,endTime,allDay,
       repeat,
       repeatDays:repeat==="none"?[]:repeatDays,
-      commuteBefore,commuteAfter,
+      commuteBefore:commuteBefore===""?0:Math.max(0,+commuteBefore||0),
+      commuteAfter:commuteAfter===""?0:Math.max(0,+commuteAfter||0),
       location:location.trim(),movable,
     });
   };
@@ -15882,11 +15973,11 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
               (173401) instead of two stacked bordered inputs. */}
           <div style={{display:"flex",alignItems:"center",gap:10,fontSize:11,color:T.muted,flexWrap:"wrap"}}>
             <span style={{display:"flex",alignItems:"center",gap:5}}>Commute before:
-              <input type="number" min={0} value={commuteBefore} onChange={e=>setCommuteBefore(Math.max(0,+e.target.value||0))}
+              <input type="number" min={0} placeholder="0" value={commuteBefore} onChange={e=>setCommuteBefore(e.target.value)}
                 style={{width:42,background:T.card2,border:`1px solid ${T.border}`,borderRadius:5,padding:"2px 5px",color:T.text,fontSize:11,fontFamily:T.font,outline:"none"}} /> min
             </span>
             <span style={{display:"flex",alignItems:"center",gap:5}}>after:
-              <input type="number" min={0} value={commuteAfter} onChange={e=>setCommuteAfter(Math.max(0,+e.target.value||0))}
+              <input type="number" min={0} placeholder="0" value={commuteAfter} onChange={e=>setCommuteAfter(e.target.value)}
                 style={{width:42,background:T.card2,border:`1px solid ${T.border}`,borderRadius:5,padding:"2px 5px",color:T.text,fontSize:11,fontFamily:T.font,outline:"none"}} /> min
             </span>
           </div>
@@ -15928,8 +16019,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   const [recentlyCreatedOpen,setRecentlyCreatedOpen]=useState(false);
   const [overdueSectionOpen,setOverdueSectionOpen]=useState(false);
   // Per-item expand, one at a time (same convention as everywhere else in
-  // this file that expands a list row -- e.g. StudlinPrep's
-  // expandedListExamId, Dashboard's own expandedMasterId). Click toggles
+  // this file that expands a list row -- e.g. StudlinPrep's own
+  // expandedListExamId). Click toggles
   // type-specific content in place (study sessions for an exam, Attack
   // Block sessions for an assignment, the full checklist for a project);
   // double-click still opens the real edit modal via setDetailEventId,
@@ -17492,12 +17583,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // Type-differentiated expand for a right-column item -- click shows a
   // quiz/exam's study sessions, an assignment's Attack Block sessions, or
   // a project's full checklist (click again to collapse); double-click
-  // still opens the real edit modal. Same data relationships and click/
-  // dblclick convention Dashboard's renderExamItem/renderAssignmentItem/
-  // renderProjectItem already use (masterAssignments/masterProjects/
-  // masterExams section) -- reused here rather than re-derived, just
-  // scoped to this component's own `events` and a single expand id
-  // instead of Dashboard's expandedMasterId.
+  // still opens the real edit modal. Scoped to this component's own
+  // `events` and a single local expand id.
   const renderSidebarItem=(item)=>{
     const tagColor=item.color||colorOf(item.courseId||item.subject);
     const isExpanded=expandedSidebarItemId===item.id;
@@ -20841,186 +20928,16 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
         id:ev.id,
       };
     });
-  // ── Your Classes (Assignments / Projects / Exams / No date yet) — reuses
-  // exactly the data shapes already established this session: plain
-  // deadline markers vs. phased projects are already distinguished by
-  // whether `phases` exists, exams already have computeExamReadiness/linked
-  // decks & practice exams from Studlin Prep, undated items are just
-  // checklist:true markers with a subject (see commitSyllabusEvents).
-  // Nothing new is computed here that doesn't already exist somewhere else
-  // in the app. selectedClassId "all" shows the type tabs across every
-  // class; picking an actual class swaps to one combined view for just
-  // that class instead. ──
-  const [masterTab,setMasterTab]=useState("assignments"); // assignments | projects | exams | nodate
-  const [expandedMasterId,setExpandedMasterId]=useState(null);
-  const [selectedClassId,setSelectedClassId]=useState("all");
-  const masterAssignments=allEvents.filter(ev=>ev.kind==="deadline"&&!ev.checklist&&!isProjectMarker(ev)&&ev.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
-  const masterProjects=allEvents.filter(ev=>ev.kind==="deadline"&&isProjectMarker(ev)&&ev.status!=="done").sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
-  const masterExams=allEvents.filter(ev=>ev.kind==="exam"&&ev.date>=today).sort((a,b)=>a.date.localeCompare(b.date));
-  // Class-linked items with no known date yet (a syllabus scan, or a
-  // manually-added checklist item the student tagged with a subject) --
-  // deliberately excluded from the plain Checklist card (see checklistItems
-  // above), shown here instead, labeled by class + kind.
-  const masterNoDate=allEvents.filter(ev=>ev.checklist&&ev.subject&&ev.status!=="done").sort((a,b)=>a.title.localeCompare(b.title));
-  const masterDecks=lsGet("decks",[]);
-  const masterPracticeExams=lsGet("practiceExams",[]);
-  const yourClassesSubjects=getSubjects();
-  const jumpToPrepExam=(examId)=>{lsSet("openPrepExamId",examId);setActive("prep");};
-  // Gives a dateless item a real date in place -- same lsGet/lsSet-then-
-  // forcePlan pattern toggleChecklistItem already uses. Only sets the date;
-  // doesn't retroactively schedule Attack Block/exam sessions -- the
-  // student can do that afterward the same way any other dated item gets
-  // scheduled (Balance my week, manual placement).
-  const setNoDateItemDate=(item,dateStr)=>{
-    if(!dateStr)return;
-    const all=lsGet("events",[]);
-    const next=all.map(e=>e.id===item.id?{...e,date:dateStr,time:item.kind==="exam"?"09:00":"23:59",checklist:false}:e);
-    lsSet("events",next);
-    setExpandedMasterId(null);
-    forcePlan(x=>x+1);
-  };
-  const renderAssignmentItem=(a)=>{
-    const chainId=(allEvents.find(e=>e.dueEventId===a.id&&e.attackChainId)||{}).attackChainId||null;
-    const sessions=chainId?allEvents.filter(e=>e.attackChainId===chainId):[];
-    const pending=sessions.filter(e=>e.status==="pending");
-    const isExpanded=expandedMasterId===a.id;
-    return(
-      <div key={a.id}>
-        <div onClick={()=>setExpandedMasterId(isExpanded?null:a.id)} onDoubleClick={()=>setDetailEventId(a.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:isExpanded?T.card2:"transparent"}}>
-          <div style={{minWidth:0}}>
-            <div style={{fontSize:13,fontWeight:600,color:T.text}}>{a.title}</div>
-            <div style={{fontSize:11,color:T.muted,marginTop:1}}>{a.subject}{a.date?" · "+a.date:""}</div>
-          </div>
-          {sessions.length>0&&<span style={{fontSize:10.5,color:T.muted,flexShrink:0}}>{pending.length} block{pending.length!==1?"s":""} scheduled</span>}
-        </div>
-        {isExpanded&&(
-          <div style={{padding:"10px 12px 4px 20px",display:"flex",flexDirection:"column",gap:8}}>
-            {pending.length===0
-              ?<div style={{fontSize:11.5,color:T.muted}}>No Attack Block sessions scheduled for this yet.</div>
-              :pending.map(s=>(
-                <div key={s.id} style={{display:"flex",alignItems:"center",gap:10,fontSize:11.5}}>
-                  <span style={{color:T.text,flex:1}}>{s.date} {fmtClock(s.time)}</span>
-                  <NumField min={5} max={480} fallback={s.duration||25} value={s.duration||25} onChange={v=>{const next=lsGet("events",[]).map(e=>e.id===s.id?{...e,duration:v}:e);lsSet("events",next);forcePlan(x=>x+1);}} style={{width:56}} />
-                  <span style={{color:T.faint}}>min</span>
-                </div>
-              ))}
-            {chainId&&pending.length>0&&<BtnSm variant="subtle" onClick={()=>{reoptimizeAttackChain(chainId);forcePlan(x=>x+1);}}>Re-optimize</BtnSm>}
-          </div>
-        )}
-      </div>
-    );
-  };
-  const renderProjectItem=(p)=>{
-    const isExpanded=expandedMasterId===p.id;
-    // Phases (status: pending/active/done) and outline (done: boolean) are
-    // the two shapes a project's checklist can be in — see isProjectMarker
-    // above. Normalized here to one {label,done,active}[] shape so this
-    // card can render either without caring which path built the project.
-    const hasPhases=p.phases&&p.phases.length>0;
-    const steps=hasPhases
-      ?p.phases.map(ph=>({label:ph.name,done:ph.status==="done",active:ph.status==="active"}))
-      :(p.outline||[]).map(o=>({label:o.text,done:!!o.done,active:false}));
-    const firstUndone=steps.findIndex(s=>!s.done);
-    if(!hasPhases&&firstUndone>=0)steps[firstUndone].active=true;
-    const doneCount=steps.filter(s=>s.done).length;
-    return(
-      <div key={p.id}>
-        <div onClick={()=>setExpandedMasterId(isExpanded?null:p.id)} onDoubleClick={()=>setDetailEventId(p.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:isExpanded?T.card2:"transparent"}}>
-          <div style={{minWidth:0}}>
-            <div style={{fontSize:13,fontWeight:600,color:T.text}}>{p.title}</div>
-            <div style={{fontSize:11,color:T.muted,marginTop:1}}>{p.subject}{p.date?" · due "+p.date:""}</div>
-          </div>
-          <span style={{fontSize:10.5,color:T.muted,flexShrink:0}}>{doneCount}/{steps.length} {hasPhases?"phases":"steps"}</span>
-        </div>
-        {isExpanded&&(
-          <div style={{padding:"10px 12px 4px 20px",display:"flex",flexDirection:"column",gap:7}}>
-            {steps.map((s,pi)=>{
-              const hasScheduled=allEvents.some(e=>e.dueEventId===p.id&&e.projectPhaseIndex===pi&&e.status==="pending");
-              const stColor=s.done?T.lime:s.active?T.amber:T.faint;
-              const statusLabel=s.done?"done":s.active?"active":"pending";
-              return(
-                <div key={pi} style={{display:"flex",alignItems:"center",gap:8,fontSize:11.5}}>
-                  <span style={{color:T.text,flex:1}}>{pi+1}. {s.label}</span>
-                  <span style={{fontSize:9.5,fontWeight:700,color:stColor,textTransform:"uppercase"}}>{statusLabel}</span>
-                  {hasPhases&&!s.done&&<span style={{fontSize:10,color:hasScheduled?T.teal:T.muted}}>{hasScheduled?"scheduled":"unscheduled"}</span>}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    );
-  };
-  const renderExamItem=(ex)=>{
-    const readiness=computeExamReadiness(ex,allEvents,today);
-    const deck=masterDecks.find(d=>deckLinkedToExam(d,ex.id));
-    const pes=masterPracticeExams.filter(p=>p.examEventId===ex.id);
-    // No study material yet and the exam is soon -- swap the passive
-    // status badge for an active CTA so the row explains what clicking it
-    // does, instead of a label the student has to interpret and remember
-    // Studlin Prep exists to act on.
-    const needsKit=readiness&&readiness.state==="no-data"&&readiness.daysUntil<=14;
-    const stateColor=readiness?.state==="behind"||readiness?.state==="at-risk"?T.red:readiness?.state==="on-track"?T.lime:T.muted;
-    const isExpanded=expandedMasterId===ex.id;
-    // Same dueEventId query every other consumer of this relationship
-    // already uses (computeExamReadiness, linkedPrepSessions) -- every
-    // session Studlin scheduled for this exam, kit-titled or generic.
-    const sessions=allEvents.filter(e=>e.dueEventId===ex.id);
-    const pending=sessions.filter(s=>s.status==="pending");
-    return(
-      <div key={ex.id}>
-        <div onClick={()=>setExpandedMasterId(isExpanded?null:ex.id)} onDoubleClick={()=>setDetailEventId(ex.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:isExpanded?T.card2:"transparent"}}>
-          <div style={{minWidth:0}}>
-            <div style={{fontSize:13,fontWeight:600,color:T.text}}>{ex.title}</div>
-            <div style={{fontSize:11,color:T.muted,marginTop:1}}>{ex.subject} · {ex.date} · {deck?deck.count+" cards":"no deck"}{pes.length>0?" · "+pes.length+" practice exam"+(pes.length!==1?"s":""):""}</div>
-          </div>
-          <span onClick={(e)=>{e.stopPropagation();jumpToPrepExam(ex.id);}} style={{fontSize:10,fontWeight:700,color:needsKit?T.lime:stateColor,background:(needsKit?T.lime:stateColor)+"14",border:`1px solid ${needsKit?T.lime:stateColor}44`,borderRadius:5,padding:"3px 9px",flexShrink:0,cursor:"pointer"}}>
-            {needsKit?"Build study kit →":readiness?readiness.state.toUpperCase().replace("-"," "):"Open in Prep →"}
-          </span>
-        </div>
-        {isExpanded&&(
-          <div style={{padding:"10px 12px 4px 20px",display:"flex",flexDirection:"column",gap:8}}>
-            {readiness&&<div style={{fontSize:11.5,color:T.muted}}>{readiness.sentence}</div>}
-            {pending.length===0
-              ?<div style={{fontSize:11.5,color:T.muted}}>No study sessions scheduled yet.</div>
-              :pending.map(s=>(
-                <div key={s.id} style={{fontSize:11.5,color:T.text}}>{s.date} {fmtClock(s.time)} — {s.title}</div>
-              ))}
-            <BtnSm variant="subtle" onClick={(e)=>{e.stopPropagation();jumpToPrepExam(ex.id);}}>Open in Studlin Prep →</BtnSm>
-          </div>
-        )}
-      </div>
-    );
-  };
-  const renderNoDateItem=(item,showSubject)=>{
-    const isExpanded=expandedMasterId===item.id;
-    return(
-      <div key={item.id}>
-        <div onClick={()=>setExpandedMasterId(isExpanded?null:item.id)} onDoubleClick={()=>setDetailEventId(item.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",background:isExpanded?T.card2:"transparent"}}>
-          <div style={{minWidth:0}}>
-            <div style={{fontSize:13,fontWeight:600,color:T.text}}>{item.title}</div>
-            <div style={{fontSize:11,color:T.muted,marginTop:1}}>{showSubject?item.subject+" · ":""}{item.kind==="exam"?"Exam":"Assignment"} · date TBD</div>
-          </div>
-        </div>
-        {isExpanded&&(
-          <div style={{padding:"10px 12px 4px 20px",display:"flex",alignItems:"center",gap:10}}>
-            <input type="date" onChange={e=>setNoDateItemDate(item,e.target.value)} style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"7px 10px",color:T.text,fontSize:12.5,fontFamily:T.font,outline:"none"}} />
-            <span style={{fontSize:11,color:T.muted}}>Set a date once you know it</span>
-          </div>
-        )}
-      </div>
-    );
-  };
-
   // Checklist to-dos — no duration, no calendar slot, just a checkbox. Kept
   // in the same `events` localStorage array as everything else (same
   // id/status shape markDone-style toggles already expect), just flagged
   // and filtered out of every calendar/planner surface above. Excludes
   // anything with a subject -- those are class-linked (a syllabus-scanned
   // deadline with no known date yet, or a manually-added checklist item the
-  // student tagged with a subject) and belong in Your Classes' "No date
-  // yet" section instead, labeled with class + kind rather than showing up
-  // as a bare title in this generic list.
+  // student tagged with a subject) and show up in Studlin Prep's
+  // Assignments/Projects tables instead (see upcomingAssignments' own
+  // comment), labeled by class rather than as a bare title in this
+  // generic list.
   const checklistItems=allEvents.filter(ev=>ev.checklist&&ev.status!=="done"&&!ev.subject).sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
   const [checklistDraft,setChecklistDraft]=useState("");
   const toggleChecklistItem=(id)=>{
@@ -21254,110 +21171,6 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
             ))}
         </div>
 
-      </div>
-
-      {/* Your Classes — pick a class, see everything tied to it
-          (assignments, projects, exams, undated items) in one place.
-          "All" keeps the original type-tabbed view across every class. */}
-      <div style={{background:T.card,borderRadius:8,padding:20,border:`1px solid ${T.border}`}}>
-        <div style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:T.text,marginBottom:14}}>Your Classes</div>
-        {yourClassesSubjects.length===0?(
-          <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 8px",textAlign:"center"}}>
-            <div style={{fontSize:13,color:T.muted,marginBottom:18,lineHeight:1.6}}>No classes yet. Add one and everything for it -- assignments, exams, projects -- shows up here.</div>
-            <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",background:T.lime,color:T.ink,border:"none",borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>+ Add your first class</button>
-          </div>
-        ):(<>
-        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>
-          <button onClick={()=>{setSelectedClassId("all");setExpandedMasterId(null);}} style={{padding:"6px 12px",borderRadius:6,fontSize:11.5,fontWeight:600,cursor:"pointer",background:selectedClassId==="all"?T.lime+"14":"transparent",color:selectedClassId==="all"?T.lime:T.muted,border:`1px solid ${selectedClassId==="all"?T.lime+"44":T.border}`,fontFamily:T.font}}>All</button>
-          {yourClassesSubjects.map(s=>(
-            <button key={s.id} onClick={()=>{setSelectedClassId(s.id);setExpandedMasterId(null);}} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:6,fontSize:11.5,fontWeight:600,cursor:"pointer",background:selectedClassId===s.id?s.color+"18":"transparent",color:selectedClassId===s.id?s.color:T.muted,border:`1px solid ${selectedClassId===s.id?s.color+"55":T.border}`,fontFamily:T.font}}>
-              <span style={{width:7,height:7,borderRadius:"50%",background:s.color,flexShrink:0}} />{s.label}
-            </button>
-          ))}
-        </div>
-
-        {selectedClassId==="all"&&(<>
-          <div style={{display:"flex",gap:6,marginBottom:14}}>
-            {["assignments","projects","exams","nodate"].map(v=>(
-              <button key={v} onClick={()=>{setMasterTab(v);setExpandedMasterId(null);}} style={{padding:"6px 12px",borderRadius:7,fontSize:11.5,fontWeight:600,cursor:"pointer",background:masterTab===v?T.lime+"14":"transparent",color:masterTab===v?T.lime:T.muted,border:`1px solid ${masterTab===v?T.lime+"44":T.border}`,fontFamily:T.font,textTransform:"capitalize"}}>{v==="nodate"?"No date yet":v}</button>
-            ))}
-          </div>
-
-          {masterTab==="assignments"&&(
-            masterAssignments.length===0
-              ?<div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"18px 0"}}>Nothing due yet.</div>
-              :<div style={{display:"flex",flexDirection:"column",gap:6}}>{masterAssignments.map(renderAssignmentItem)}</div>
-          )}
-          {masterTab==="projects"&&(
-            masterProjects.length===0
-              ?<div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"18px 0"}}>No projects yet.</div>
-              :<div style={{display:"flex",flexDirection:"column",gap:6}}>{masterProjects.map(renderProjectItem)}</div>
-          )}
-          {masterTab==="exams"&&(
-            masterExams.length===0
-              ?<div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"18px 0"}}>No upcoming exams yet.</div>
-              :<div style={{display:"flex",flexDirection:"column",gap:6}}>{masterExams.map(renderExamItem)}</div>
-          )}
-          {masterTab==="nodate"&&(
-            masterNoDate.length===0
-              ?<div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"18px 0"}}>Nothing waiting on a date.</div>
-              :<div style={{display:"flex",flexDirection:"column",gap:6}}>{masterNoDate.map(item=>renderNoDateItem(item,true))}</div>
-          )}
-        </>)}
-
-        {selectedClassId!=="all"&&(()=>{
-          const subj=yourClassesSubjects.find(s=>s.id===selectedClassId);
-          if(!subj)return null;
-          // courseId match preferred, label fallback for data predating the
-          // courseId migration (also fixes a pre-existing bug here: this
-          // used to match a routine's title instead of its subject).
-          const inThisCourse=(item)=>item.courseId===subj.id||item.subject===subj.label;
-          const meetings=getWeeklyRoutine().filter(r=>r.kind==="class"&&inThisCourse(r));
-          const cA=masterAssignments.filter(inThisCourse);
-          const cP=masterProjects.filter(inThisCourse);
-          const cE=masterExams.filter(inThisCourse);
-          const cN=masterNoDate.filter(inThisCourse);
-          const totalCount=cA.length+cP.length+cE.length+cN.length;
-          return (
-            <div>
-              {meetings.length>0&&(
-                <div style={{fontSize:11.5,color:T.muted,marginBottom:14}}>
-                  Meets {meetings.map(m=>m.days.map(d=>ROUTINE_DOW[d]).join("")+" "+fmtClock12(m.startTime)).join(", ")}
-                </div>
-              )}
-              {totalCount===0
-                ?<div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"18px 0"}}>Nothing tracked for {subj.label} yet.</div>
-                :<div style={{display:"flex",flexDirection:"column",gap:16}}>
-                  {cA.length>0&&(
-                    <div>
-                      <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Assignments</div>
-                      <div style={{display:"flex",flexDirection:"column",gap:6}}>{cA.map(renderAssignmentItem)}</div>
-                    </div>
-                  )}
-                  {cP.length>0&&(
-                    <div>
-                      <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Projects</div>
-                      <div style={{display:"flex",flexDirection:"column",gap:6}}>{cP.map(renderProjectItem)}</div>
-                    </div>
-                  )}
-                  {cE.length>0&&(
-                    <div>
-                      <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Exams</div>
-                      <div style={{display:"flex",flexDirection:"column",gap:6}}>{cE.map(renderExamItem)}</div>
-                    </div>
-                  )}
-                  {cN.length>0&&(
-                    <div>
-                      <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>No date yet</div>
-                      <div style={{display:"flex",flexDirection:"column",gap:6}}>{cN.map(item=>renderNoDateItem(item,false))}</div>
-                    </div>
-                  )}
-                </div>
-              }
-            </div>
-          );
-        })()}
-        </>)}
       </div>
 
       {/* ROW 5: Upcoming + Pick up where you left off */}
