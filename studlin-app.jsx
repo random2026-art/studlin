@@ -7808,7 +7808,7 @@ function StudlinPrep({setActive=()=>{}}={}){
                       <span style={{color:T.text,flexShrink:0}}>Session {i+1}</span>
                       <div style={{display:"flex",alignItems:"center",gap:6}}>
                         <Input type="date" value={ov?.date??d} onChange={e=>setOv({date:e.target.value})} style={{width:130,fontSize:11.5,padding:"5px 8px"}} />
-                        <NumField min={5} max={240} fallback={buildPlanPreview.sessionDuration} value={ov?.duration??buildPlanPreview.sessionDuration} onChange={v=>setOv({duration:v})} style={{width:48}} />
+                        <NumField min={5} max={240} fallback={buildPlanPreview.sessionDuration} value={ov?.duration??buildPlanPreview.sessionDuration} onChange={v=>setOv({duration:v})} style={{width:56}} />
                         <span style={{fontSize:10.5,color:T.muted,flexShrink:0}}>min</span>
                       </div>
                     </div>
