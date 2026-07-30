@@ -6868,8 +6868,7 @@ function StudlinPrep({setActive=()=>{}}={}){
                 setMaterialLinks(ex.referenceLinks&&ex.referenceLinks.length>0?normalizeLinks(ex.referenceLinks):(ex.referenceLink?[{label:"",url:ex.referenceLink}]:[]));
                 setLinkDraft("");setLinkLabelDraft("");
                 setPasteMode(false);setPasteText("");
-                setSessionCountDraft(defaultSessionCountFor(ex.examWeight));
-                setMaterialAddOpen(false);setMoreGenOptionsOpen(false);
+                setMaterialAddOpen(false);
                 setPrepMaterialsOpen(false);setExpandedSessionId(null);
               };
               // Phase 9: spreadsheet-style table replacing the old "11 days"
