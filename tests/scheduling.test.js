@@ -807,6 +807,37 @@ describe("findSlotWithEviction", () => {
       });
     }
   });
+
+  test("evicts the lowest-priority candidate even when a higher-priority one has a farther-off deadline (priority now wins over deadline distance)", () => {
+    const m = loadStudlinModule();
+    const today = m.dayKey();
+    const addDays = (n) => m.dayKey(new Date(Date.now() + n * 86400000));
+    // Pack the whole work+catch-up window solid so eviction must engage,
+    // same fixture shape as the first test in this block. Two of the
+    // candidates are deliberately distinguishable: one low-priority with a
+    // CLOSER (but still >7-day, so eviction-eligible) deadline, one
+    // high-priority with a FARTHER deadline. The old furthest-deadline-only
+    // sort would evict the high-priority one first; priority-aware sorting
+    // must evict the low-priority one first instead.
+    const packed = [];
+    let t = 9 * 60;
+    let idx = 0;
+    while (t + 30 <= 20 * 60) {
+      const time = `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+      if (idx === 0) {
+        packed.push({ id: "low-pri-close-deadline", title: "Low priority", date: today, time, kind: "study block", duration: 30, status: "pending", deadline: addDays(10), priority: 100 });
+      } else if (idx === 1) {
+        packed.push({ id: "high-pri-far-deadline", title: "High priority", date: today, time, kind: "study block", duration: 30, status: "pending", deadline: addDays(30), priority: 900 });
+      } else {
+        packed.push({ id: "pack-" + idx, title: "Filler " + idx, date: today, time, kind: "study block", duration: 30, status: "pending", deadline: null, priority: 500 });
+      }
+      t += 30; idx++;
+    }
+    const result = m.findSlotWithEviction(packed, [], DEFAULT_PREFS, today, "09:00", 30, today);
+    const evictedIds = result.events.filter((e) => e.movedByStudlin).map((e) => e.id);
+    assert.ok(evictedIds.includes("low-pri-close-deadline"), "the low-priority candidate should have been evicted");
+    assert.ok(!evictedIds.includes("high-pri-far-deadline"), "the higher-priority candidate should NOT have been evicted just because its deadline is farther off");
+  });
 });
 
 describe("undoTier0Move (regression: restored a task to its original slot with no re-check, silently overlapping anything that had since landed there)", () => {
@@ -2801,5 +2832,32 @@ describe("computeWeekBalancePlan (manually-triggered 'Balance my week')", () => 
     const heavy = Array.from({ length: 5 }, (_, i) => realTask({ id: "h" + i, date: days[0], time: `${9 + i}:00`, duration: 60, deadline: soonDeadline }));
     const result = m.computeWeekBalancePlan(heavy, [], DEFAULT_PREFS, MONDAY);
     assert.equal(result.moves.length, 0);
+  });
+
+  test("sheds the lowest-priority task on a heavy day first, even when a higher-priority task is bigger", () => {
+    const m = loadStudlinModule();
+    // "big-important" is the largest single block but high priority (900);
+    // "small-unimportant" is smaller but low priority (100). The old
+    // duration-only sort would pick big-important first purely for being
+    // biggest; priority-aware selection must pick small-unimportant first.
+    const heavy = [
+      realTask({ id: "big-important", date: days[0], time: "09:00", duration: 90, deadline: null, priority: 900 }),
+      realTask({ id: "small-unimportant", date: days[0], time: "10:30", duration: 45, deadline: null, priority: 100 }),
+      realTask({ id: "h1", date: days[0], time: "11:15", duration: 60, deadline: null, priority: 500 }),
+      realTask({ id: "h2", date: days[0], time: "12:15", duration: 60, deadline: null, priority: 500 }),
+    ];
+    const result = m.computeWeekBalancePlan(heavy, [], DEFAULT_PREFS, MONDAY);
+    assert.ok(result.moves.length > 0, "expected at least one move");
+    assert.equal(result.moves[0].id, "small-unimportant", "the lowest-priority candidate should be the first one shed, not the biggest one");
+  });
+
+  test("every move carries a non-empty, factual reason", () => {
+    const m = loadStudlinModule();
+    const heavy = Array.from({ length: 5 }, (_, i) => realTask({ id: "h" + i, date: days[0], time: `${9 + i}:00`, duration: 60, deadline: null }));
+    const result = m.computeWeekBalancePlan(heavy, [], DEFAULT_PREFS, MONDAY);
+    assert.ok(result.moves.length > 0);
+    result.moves.forEach((mv) => {
+      assert.ok(typeof mv.reason === "string" && mv.reason.length > 0, "every move must carry a real reason string");
+    });
   });
 });

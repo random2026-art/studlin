@@ -1678,6 +1678,15 @@ function findSlotWithEviction(events,routines,prefs,desiredDate,desiredTime,dura
   const candidates=events.filter(e=>e.date===desiredDate&&e.kind==="study block"&&e.status==="pending"&&
     !isCoopStudySession(e)&&(!e.deadline||daysUntilDeadline(e)>7)
   ).sort((a,b)=>{
+    // Priority-first (lowest evicted first) now that sessions actually
+    // carry a real, current priority (see computeSessionPriority/
+    // restampSessionPriorities) -- this is what makes eviction pick the
+    // genuinely least-important thing on the day, not just whichever
+    // happens to have the farthest-off deadline. Deadline distance stays
+    // as the tiebreak for equal/default priority, so legacy data (or two
+    // equally-important tasks) behaves exactly as it did before.
+    const pa=a.priority??500,pb=b.priority??500;
+    if(pa!==pb)return pa-pb;
     const da=a.deadline?daysUntilDeadline(a):Infinity;
     const db=b.deadline?daysUntilDeadline(b):Infinity;
     return db-da; // furthest-out (or no) deadline evicted first
@@ -4838,8 +4847,12 @@ function computeWeekBalancePlan(events,routines,prefs,startDateKey){
       // for same-day eviction: real study blocks only, no imminent deadline
       // (more than a week out, or none at all) — never an exam, a fixed
       // commitment, or a task genuinely due soon.
+      // Lowest priority first (sessions carry a real, current priority as
+      // of computeSessionPriority/restampSessionPriorities), duration as
+      // the tiebreak among equal/default priority -- shed the least
+      // important thing on the day, not just the biggest chunk of time.
       const candidates=working.filter(e=>e.date===heavyDk&&isFlex(e)&&e.kind==="study block"&&(!e.deadline||daysUntilDeadline(e)>7))
-        .sort((a,b)=>(b.duration||0)-(a.duration||0));
+        .sort((a,b)=>((a.priority??500)-(b.priority??500))||((b.duration||0)-(a.duration||0)));
       if(candidates.length===0)break; // this day is heavy but nothing on it is safely movable
       const task=candidates[0];
       // Target the currently-lightest OTHER day in the window, recomputed
@@ -4855,7 +4868,12 @@ function computeWeekBalancePlan(events,routines,prefs,startDateKey){
         const slot=findLegalSlotOrNull(working.filter(e=>e.id!==task.id),routines,prefs,t.dk,prefs.workStartTime,task.duration,task.deadline||null);
         if(!slot)continue;
         working=working.map(e=>e.id===task.id?{...e,date:slot.date,time:slot.time}:e);
-        moves.push({id:task.id,title:task.title,duration:task.duration,fromDate:task.date,fromTime:task.time,toDate:slot.date,toTime:slot.time});
+        // Plain and factual, same "state the fact" convention this file's
+        // other student-facing reason copy already follows -- this answers
+        // "why THIS task got picked to move," a different question from
+        // fmtPlacementReason's "why THIS time slot."
+        const reason="Moved off "+heavyDk+" ("+Math.round(before[heavyDk])+" min of flexible work that day, above your "+Math.round(avg)+" min average) — the lowest priority item scheduled that day.";
+        moves.push({id:task.id,title:task.title,duration:task.duration,fromDate:task.date,fromTime:task.time,toDate:slot.date,toTime:slot.time,reason});
         moved=true;
         break;
       }
@@ -18743,9 +18761,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:7,maxHeight:220,overflowY:"auto"}}>
             {weekBalancePlan.moves.map(m=>(
-              <div key={m.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`}}>
-                <div style={{flex:1,fontSize:13,color:T.text,fontWeight:500}}>{m.title}</div>
-                <div style={{fontSize:11,color:T.muted,flexShrink:0}}>{m.fromDate} {fmtTime(m.fromTime)} → <strong style={{color:T.lime}}>{m.toDate} {fmtTime(m.toTime)}</strong></div>
+              <div key={m.id} style={{display:"flex",flexDirection:"column",gap:4,padding:"9px 12px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`}}>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <div style={{flex:1,fontSize:13,color:T.text,fontWeight:500}}>{m.title}</div>
+                  <div style={{fontSize:11,color:T.muted,flexShrink:0}}>{m.fromDate} {fmtTime(m.fromTime)} → <strong style={{color:T.lime}}>{m.toDate} {fmtTime(m.toTime)}</strong></div>
+                </div>
+                {m.reason&&<div style={{fontSize:10.5,color:T.faint}}>{m.reason}</div>}
               </div>
             ))}
           </div>
@@ -21278,9 +21299,12 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
         {overrunPlan&&overrunPlan.moves.length>0&&(
           <div style={{display:"flex",flexDirection:"column",gap:7,maxHeight:280,overflowY:"auto"}}>
             {overrunPlan.moves.map(m=>(
-              <div key={m.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`}}>
-                <div style={{flex:1,fontSize:13,color:T.text,fontWeight:500}}>{m.title}</div>
-                <div style={{fontSize:11,color:T.muted,flexShrink:0}}>{m.fromDate} {fmtClock(m.fromTime)} → <strong style={{color:T.lime}}>{m.toDate} {fmtClock(m.toTime)}</strong></div>
+              <div key={m.id} style={{display:"flex",flexDirection:"column",gap:4,padding:"9px 12px",background:T.card2,borderRadius:8,border:`1px solid ${T.border}`}}>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <div style={{flex:1,fontSize:13,color:T.text,fontWeight:500}}>{m.title}</div>
+                  <div style={{fontSize:11,color:T.muted,flexShrink:0}}>{m.fromDate} {fmtClock(m.fromTime)} → <strong style={{color:T.lime}}>{m.toDate} {fmtClock(m.toTime)}</strong></div>
+                </div>
+                {m.reason&&<div style={{fontSize:10.5,color:T.faint}}>{m.reason}</div>}
               </div>
             ))}
           </div>
