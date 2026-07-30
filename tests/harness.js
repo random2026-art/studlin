@@ -119,7 +119,8 @@ function loadStudlinModule(options) {
     "upcomingAssignments","upcomingProjects",
     "computeSessionPriority","computePreparedness","restampSessionPriorities",
     "CONFIDENCE_TO_UNIT","EXAM_WEIGHT_TO_IMPACT",
-    "computeCapacitySlack","EXAM_READINESS_TIGHT_SLACK_RATIO"];
+    "computeCapacitySlack","EXAM_READINESS_TIGHT_SLACK_RATIO",
+    "applyHoursTargetCap"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }

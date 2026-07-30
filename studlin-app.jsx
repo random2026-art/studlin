@@ -4350,6 +4350,23 @@ function computeStudyPlanParams(examWeight,baseDuration,confidenceLevel,material
   const sessionDuration=Math.max(15,Math.round((baseDuration||25)*level.durationMultiplier/5)*5);
   return {sessionCount,sessionDuration,difficultyValue:level.difficultyValue};
 }
+// The unified Build/Redo study plan flow's optional "how many hours do you
+// want to study for this" field -- a soft cap, not a second independent
+// input fighting with confidence: only ever scales the confidence-driven
+// plan DOWN when its calculated total exceeds the stated target, never
+// pads it up past what confidence+material already called for. A falsy/
+// zero/negative hoursTarget (field left blank) is a no-op, returning the
+// inputs unchanged.
+function applyHoursTargetCap(sessionCount,sessionDuration,hoursTarget){
+  if(!(hoursTarget>0))return {sessionCount,sessionDuration};
+  const targetMins=hoursTarget*60;
+  const calculatedMins=sessionCount*sessionDuration;
+  if(calculatedMins<=targetMins)return {sessionCount,sessionDuration};
+  const scale=targetMins/calculatedMins;
+  const cappedDuration=Math.max(10,Math.round(sessionDuration*scale/5)*5);
+  const cappedCount=Math.max(1,Math.round(targetMins/cappedDuration));
+  return {sessionCount:cappedCount,sessionDuration:cappedDuration};
+}
 function suggestDurationFor(subject,kind){
   const events=lsGet("events",[]).filter(e=>e.status==="done"&&e.timeSpent&&e.subject===subject&&e.kind===kind);
   if(events.length===0)return null;
@@ -6249,11 +6266,6 @@ function StudlinPrep({setActive=()=>{}}={}){
   const [,forceTick]=useState(0);
   const refresh=()=>forceTick(x=>x+1);
   const [upgradeModal,setUpgradeModal]=useState(null); // {feature,detail}
-  // Desired session count for the Study Sessions card's "Schedule sessions
-  // for me" / "Redo the plan" actions -- reset whenever a different exam
-  // is selected (see the exam-card onClick below) so it never carries a
-  // stale count over from whichever exam was open last.
-  const [sessionCountDraft,setSessionCountDraft]=useState(4);
   const [sessionScheduleLoading,setSessionScheduleLoading]=useState(false);
   // Phase 9b: hover-expand on the behind/on-track pill (see the exam
   // detail view below) -- explains why, not just the status.
@@ -6271,6 +6283,23 @@ function StudlinPrep({setActive=()=>{}}={}){
   const [buildPlanGeneric,setBuildPlanGeneric]=useState(false);
   const [buildPlanPreview,setBuildPlanPreview]=useState(null); // {sessionCount,sessionDuration,difficultyValue,dates}
   const [buildPlanLoading,setBuildPlanLoading]=useState(false);
+  // 2026-07-31 unification: this modal is now the ONE place that generates
+  // or rebuilds a study plan -- it used to be one of three separate,
+  // inconsistent entry points (this modal, "Build my study kit," and the
+  // inline "Redo the plan" tool), only this one ever asked confidence, and
+  // none of them let you see/edit the AI's per-session focus before
+  // committing. genFlashcards/genPE are opt-in extras (default off -- one
+  // primary action, not three checkboxes fighting for attention);
+  // hoursTarget is optional and only ever scales the calculated plan DOWN,
+  // never pads it up past what confidence+material actually calls for.
+  // focuses is the editable per-session "what to study" text, generated
+  // alongside the preview so there's something real to edit by the time
+  // the student sees it, not just baked silently into notes at commit.
+  const [buildPlanGenFlashcards,setBuildPlanGenFlashcards]=useState(false);
+  const [buildPlanGenPE,setBuildPlanGenPE]=useState(false);
+  const [buildPlanHoursTarget,setBuildPlanHoursTarget]=useState("");
+  const [buildPlanFocuses,setBuildPlanFocuses]=useState([]);
+  const [buildPlanFocusesLoading,setBuildPlanFocusesLoading]=useState(false);
   // Progressive disclosure for the exam-detail view -- everything used to
   // render at once (upload/paste/notes/links, three generate buttons, the
   // full editable session list) regardless of whether the student had
@@ -6280,7 +6309,6 @@ function StudlinPrep({setActive=()=>{}}={}){
   // nothing to be less overwhelming than a first-time student's one
   // real option, so there's no reason to hide it behind a click.
   const [materialAddOpen,setMaterialAddOpen]=useState(false);
-  const [moreGenOptionsOpen,setMoreGenOptionsOpen]=useState(false);
   // Part B (exam detail timeline) -- materialsOpen collapses everything
   // that isn't "what do I do next" (material, flashcards, practice exams)
   // below the timeline; expandedSessionId controls which single timeline
@@ -6396,10 +6424,12 @@ function StudlinPrep({setActive=()=>{}}={}){
     setBuildPlanExamId(exam.id);
     setBuildPlanGeneric(false);
     setBuildPlanPreview(null);
+    setBuildPlanGenFlashcards(false);setBuildPlanGenPE(false);setBuildPlanHoursTarget("");setBuildPlanFocuses([]);
     setBuildPlanStep(hasMaterial?"confidence":"choice");
   };
   const closeBuildPlan=()=>{
     setBuildPlanExamId(null);setBuildPlanStep("choice");setBuildPlanGeneric(false);setBuildPlanPreview(null);
+    setBuildPlanGenFlashcards(false);setBuildPlanGenPE(false);setBuildPlanHoursTarget("");setBuildPlanFocuses([]);
   };
   // Persists whatever material the student added in the modal's own
   // upload step back onto the exam event itself -- an already-existing
@@ -6419,20 +6449,36 @@ function StudlinPrep({setActive=()=>{}}={}){
     const params=computeStudyPlanParams(buildPlanExam.examWeight,baseDuration,"okay",0);
     const dates=computeReviewDates(buildPlanExam.date,dayKey(),params.sessionCount);
     setBuildPlanPreview({sessionCount:params.sessionCount,sessionDuration:params.sessionDuration,difficultyValue:params.difficultyValue,dates});
+    setBuildPlanFocuses([]);
     setBuildPlanStep("preview");
   };
-  const chooseConfidence=(level)=>{
+  const chooseConfidence=async(level)=>{
     if(!buildPlanExam)return;
     persistBuildPlanMaterial();
     const baseDuration=suggestDurationFor(buildPlanExam.subject,"study block")||25;
     const params=computeStudyPlanParams(buildPlanExam.examWeight,baseDuration,level,buildPlanMaterialText.length);
-    const dates=computeReviewDates(buildPlanExam.date,dayKey(),params.sessionCount);
-    setBuildPlanPreview({sessionCount:params.sessionCount,sessionDuration:params.sessionDuration,difficultyValue:params.difficultyValue,dates});
+    const {sessionCount,sessionDuration}=applyHoursTargetCap(params.sessionCount,params.sessionDuration,parseFloat(buildPlanHoursTarget));
+    const dates=computeReviewDates(buildPlanExam.date,dayKey(),sessionCount);
+    setBuildPlanPreview({sessionCount,sessionDuration,difficultyValue:params.difficultyValue,dates});
     setBuildPlanStep("preview");
+    setBuildPlanFocuses(dates.map(()=>""));
+    if(buildPlanMaterialText.trim()&&dates.length>0){
+      setBuildPlanFocusesLoading(true);
+      const focuses=await proposeSessionFocuses(buildPlanExam.title,buildPlanMaterialText,dates.length,buildPlanExam.subject);
+      setBuildPlanFocusesLoading(false);
+      if(focuses)setBuildPlanFocuses(focuses);
+    }
   };
   const adjustBuildPlanCount=(count)=>{
     if(!buildPlanExam)return;
     setBuildPlanPreview(p=>p?{...p,sessionCount:count,dates:computeReviewDates(buildPlanExam.date,dayKey(),count)}:p);
+    // Keep the focuses array in sync with the new count -- truncate or pad
+    // with blanks rather than re-calling the AI on every count tweak.
+    setBuildPlanFocuses(f=>{
+      const next=f.slice(0,count);
+      while(next.length<count)next.push("");
+      return next;
+    });
   };
   const commitBuildPlan=async()=>{
     if(!buildPlanExam||!buildPlanPreview)return;
@@ -6447,10 +6493,28 @@ function StudlinPrep({setActive=()=>{}}={}){
       // already follow), plus the required nudge that material unlocks more.
       finalSessions=sessions.map(s=>({...s,notes:"General review — no material attached yet. Add material anytime to unlock real flashcards for this exam.",isGenericStudyPlan:true}));
     }else{
-      const focuses=buildPlanMaterialText.trim()?await proposeSessionFocuses(buildPlanExam.title,buildPlanMaterialText,sessions.length,buildPlanExam.subject):null;
-      finalSessions=focuses?sessions.map((s,i)=>focuses[i]?{...s,notes:focuses[i]}:s):sessions;
+      // Focuses were already generated (and are editable) back in
+      // chooseConfidence/the preview step -- use whatever the student
+      // actually confirmed, don't silently regenerate a second set here.
+      finalSessions=sessions.map((s,i)=>buildPlanFocuses[i]?{...s,notes:buildPlanFocuses[i]}:s);
     }
     lsSet("events",events.concat(finalSessions));
+    // Also generate flashcards/a practice exam if requested -- replaces
+    // any existing ones for this exam outright. This whole flow is
+    // already preview-then-confirm (the Confirm plan click just made); a
+    // second nested "are you sure you want to replace it" on top of that
+    // would just be extra friction for something the student already
+    // explicitly asked for by checking the box and confirming.
+    if(buildPlanGenFlashcards&&materialText.trim()){
+      const existingDeck=allDecks.find(d=>deckLinkedToExam(d,buildPlanExam.id));
+      if(existingDeck)deleteDeckAndSessions(existingDeck.id,buildPlanExam.id);
+      await doGenDeckForExam();
+    }
+    if(buildPlanGenPE&&materialText.trim()){
+      const existingPE=allPracticeExams.find(p=>p.examEventId===buildPlanExam.id);
+      if(existingPE)deletePracticeExamAndSessions(existingPE.id);
+      await doGenPracticeExamForExam();
+    }
     setBuildPlanLoading(false);
     closeBuildPlan();
     refresh();
@@ -6505,9 +6569,10 @@ function StudlinPrep({setActive=()=>{}}={}){
   const materialText=fileTexts.filter(f=>f.name!=="From your syllabus").map(f=>f.text).join("\n\n");
   const fileInputRef=useRef(null);
   // Paste-text fallback -- same pattern ClassSetupWizard's syllabus scan
-  // already uses. Pushes straight into fileTexts so buildStudyKit/
-  // genDeckForExam/genPracticeExamForExam need zero changes -- it's just
-  // another material source in the same pool.
+  // already uses. Pushes straight into fileTexts so the unified Build/Redo
+  // study plan flow (see commitBuildPlan) and doGenDeckForExam/
+  // doGenPracticeExamForExam need zero changes -- it's just another
+  // material source in the same pool.
   const [pasteMode,setPasteMode]=useState(false);
   const [pasteText,setPasteText]=useState("");
   // Reference link (e.g. an existing Quizlet set, a shared notes doc) --
@@ -6549,18 +6614,13 @@ function StudlinPrep({setActive=()=>{}}={}){
   };
   const removePrepFile=(name)=>setFileTexts(prev=>prev.filter(f=>f.name!==name));
 
-  // Regenerating (new material, a second click, whatever the reason) used
-  // to just pile on -- a brand new deck/practice exam every time, with the
-  // previous one and its scheduled sessions left behind untouched and
-  // invisible (the exam hub only ever shows the FIRST deck it finds for
-  // an exam). replaceConfirm gates every generation path that could
-  // orphan an existing deck/PE behind an explicit confirm -- deleting a
-  // deck a student may have already studied from is real data loss, not
-  // something to do silently on a second button click.
-  const [replaceConfirm,setReplaceConfirm]=useState(null); // {type:"deck"|"quiz"|"kit", existingDeck, existingPE}
-  // Direct student-initiated delete (distinct from replaceConfirm above,
-  // which only fires as a side effect of regenerating) -- same CLAUDE.md
-  // data-safety rule: no single-click delete anywhere data disappears.
+  // Direct student-initiated delete -- CLAUDE.md's "anything that deletes
+  // user data needs a confirm modal" rule for the plain Delete buttons.
+  // Regenerating via the unified Build/Redo study plan flow (see
+  // commitBuildPlan) deletes-and-replaces an existing deck/PE directly
+  // instead of a separate nested confirm -- that flow is already its own
+  // preview-then-confirm, so a second "are you sure" on top of the
+  // Confirm plan click would just be extra friction.
   const [deleteConfirm,setDeleteConfirm]=useState(null); // {type:"deck"|"deckAll"|"pe", id, examId, name}
   const doGenDeckForExam=async()=>{
     if(!materialText.trim()||!selectedExam)return;
@@ -6636,30 +6696,6 @@ function StudlinPrep({setActive=()=>{}}={}){
     setDeleteConfirm(null);
     refresh();
   };
-  const genDeckForExam=()=>{
-    if(!selectedExam)return;
-    const existingDeck=allDecks.find(d=>deckLinkedToExam(d,selectedExam.id));
-    if(existingDeck){setReplaceConfirm({type:"deck",existingDeck,existingPE:null});return;}
-    doGenDeckForExam();
-  };
-  const genPracticeExamForExam=()=>{
-    if(!selectedExam)return;
-    const existingPE=allPracticeExams.find(p=>p.examEventId===selectedExam.id);
-    if(existingPE){setReplaceConfirm({type:"quiz",existingDeck:null,existingPE});return;}
-    doGenPracticeExamForExam();
-  };
-  const confirmReplace=async()=>{
-    if(!replaceConfirm||!selectedExam)return;
-    const{type,existingDeck,existingPE}=replaceConfirm;
-    if(existingDeck)deleteDeckAndSessions(existingDeck.id,selectedExam.id);
-    if(existingPE)deletePracticeExamAndSessions(existingPE.id);
-    setReplaceConfirm(null);
-    refresh();
-    if(type==="deck")await doGenDeckForExam();
-    else if(type==="quiz")await doGenPracticeExamForExam();
-    else if(type==="kit")await doBuildStudyKit();
-  };
-
   // ── Scheduling — reuses buildSpacedSessionPreviews (shared with
   // Flashcards' own review-schedule flow) for both deck reviews and
   // practice-exam blocks, so the two can never place sessions differently
@@ -6698,114 +6734,6 @@ function StudlinPrep({setActive=()=>{}}={}){
     }));
     lsSet("events",events.concat(newEvents));
     setSchedulePreview(null);
-  };
-
-  // ── Build my study kit -- one action instead of the five separate clicks
-  // (generate cards, generate quiz, schedule reviews, schedule quiz) the
-  // buttons above require. Generation stays instant/low-stakes exactly like
-  // genDeckForExam/genPracticeExamForExam already are; only the combined
-  // scheduling step is preview-then-confirm, same discipline as everywhere
-  // else. If only one half is allowed (a free-tier limit), proceeds with
-  // just that half instead of blocking the whole action. ──
-  const [kitLoading,setKitLoading]=useState(false);
-  const [kitPreview,setKitPreview]=useState(null); // {deck,pe,reviewSession,deckSessions,peSessions,warnings,examId,examDate,examTitle}
-  const buildStudyKit=()=>{
-    if(!selectedExam)return;
-    const existingDeck=allDecks.find(d=>deckLinkedToExam(d,selectedExam.id));
-    const existingPE=allPracticeExams.find(p=>p.examEventId===selectedExam.id);
-    if(existingDeck||existingPE){setReplaceConfirm({type:"kit",existingDeck:existingDeck||null,existingPE:existingPE||null});return;}
-    doBuildStudyKit();
-  };
-  const doBuildStudyKit=async()=>{
-    if(!materialText.trim()||!selectedExam)return;
-    const canCards=canGenFlashcards();
-    const canQuiz=canGenQuiz();
-    if(!canCards&&!canQuiz){
-      setUpgradeModal({feature:"AI flashcard and practice exam generations",detail:"You've used this month's free flashcard and practice exam generations. They reset in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+", or upgrade for unlimited right now."});
-      return;
-    }
-    setKitLoading(true);setGenMsg("");
-    const warnings=[];
-    // The plan now stages three things in order -- review the material
-    // first, then spaced flashcard reviews, then a practice exam near the
-    // end -- instead of the deck/PE sessions being the only thing
-    // scheduled. The review session is anchored to the EARLIEST legal
-    // slot (found now, up front) rather than trying to make it "win" a
-    // spot in the deck sessions' own spaced-across-the-window
-    // computation below -- simpler and safer than teaching
-    // buildSpacedSessionPreviews (shared with several other callers)
-    // about a session it doesn't otherwise know about, and guarantees
-    // first-chronologically by construction.
-    const reviewDuration=suggestDurationFor(selectedExam.subject,"study block")||25;
-    const reviewSlot=findReliableSlotFor(lsGet("events",[]),getWeeklyRoutine(),getSchedulePreferences(),dayKey(),getSchedulePreferences().workStartTime,reviewDuration,selectedExam.date,selectedExam.difficulty??5);
-    const [cards,questions,reviewFocusLines]=await Promise.all([
-      canCards?generateFlashcardsFromText(materialText,selectedExam.subject||"this exam",10):Promise.resolve(null),
-      canQuiz?generateQuizFromText(materialText,selectedExam.subject||"this exam",8):Promise.resolve(null),
-      reviewSlot?proposeSessionFocuses(selectedExam.title,materialText,1,selectedExam.subject):Promise.resolve(null),
-    ]);
-    setKitLoading(false);
-    let deck=null,pe=null;
-    if(canCards){
-      if(cards&&cards.length>0){
-        recordFlashcardGen();
-        deck={id:String(Date.now()+Math.random()*1000),name:selectedExam.title,count:cards.length,done:0,color:colorOf(selectedExam.subject),cards,examEventId:selectedExam.id,examEventIds:[selectedExam.id]};
-        lsSet("decks",[deck,...lsGet("decks",[])]);
-      }else warnings.push("Couldn't generate flashcards this time.");
-    }else warnings.push("This month's free flashcard generations are used up.");
-    if(canQuiz){
-      if(questions&&questions.length>0){
-        recordQuizGen();
-        pe=createPracticeExam(selectedExam.title,selectedExam.subject,selectedExam.id,questions);
-      }else warnings.push("Couldn't generate a practice exam this time.");
-    }else warnings.push("This month's free practice exam generations are used up.");
-    refresh();
-    if(!deck&&!pe){setGenMsg(warnings[0]||"Couldn't build a study kit. Try again.");return;}
-    const deckSessions=deck?buildSpacedSessionPreviews(selectedExam.date,selectedExam.subject,4):[];
-    const peSessions=pe?buildSpacedSessionPreviews(selectedExam.date,selectedExam.subject,1,60):[];
-    // Grounded-or-nothing, same as everywhere else proposeSessionFocuses
-    // is used -- a review session still gets scheduled even with no
-    // focus line (just no notes), never blocked on it.
-    const reviewSession=reviewSlot?{date:reviewSlot.date,time:reviewSlot.time,duration:reviewDuration,notes:(reviewFocusLines&&reviewFocusLines[0])||""}:null;
-    setKitPreview({deck,pe,reviewSession,deckSessions,peSessions,warnings,examId:selectedExam.id,examDate:selectedExam.date,examTitle:selectedExam.title});
-  };
-  const commitStudyKit=()=>{
-    if(!kitPreview)return;
-    const events=removeGenericExamPrepSessions(lsGet("events",[]),kitPreview.examId);
-    const kitExam=selectedExam&&selectedExam.id===kitPreview.examId?selectedExam:events.find(e=>e.id===kitPreview.examId);
-    const sessionPriority=computeSessionPriority(kitExam,dayKey());
-    // Same shape the Study Sessions card's own buildExamSessionEvents
-    // output uses -- no deckId/practiceExamId, so it's correctly treated
-    // as a plain generic session (removeGenericExamPrepSessions above
-    // already cleared out anything stale here on rebuild).
-    const reviewEvents=kitPreview.reviewSession?[{
-      id:"kitreview-"+kitPreview.examId+"-"+Date.now(),
-      title:"Study: "+kitPreview.examTitle,
-      date:kitPreview.reviewSession.date,time:kitPreview.reviewSession.time,subject:"",notes:kitPreview.reviewSession.notes||"",
-      kind:"study block",duration:kitPreview.reviewSession.duration,
-      priority:sessionPriority,difficulty:5,deadline:kitPreview.examDate,
-      status:"pending",timeSpent:0,completedAt:null,
-      dueEventId:kitPreview.examId,isExamPrepSession:true,
-    }]:[];
-    const deckEvents=kitPreview.deck?kitPreview.deckSessions.map((s,i)=>({
-      id:"deckrev-"+kitPreview.deck.id+"-"+Date.now()+"-"+i,
-      title:"Review: "+kitPreview.deck.name,
-      date:s.date,time:s.time,subject:"",kind:"study block",notes:"",
-      priority:sessionPriority,difficulty:5,deadline:kitPreview.examDate,duration:s.duration,
-      status:"pending",timeSpent:0,completedAt:null,
-      deckId:kitPreview.deck.id,placementReason:s.placementReason||null,
-      dueEventId:kitPreview.examId,isExamPrepSession:true,
-    })):[];
-    const peEvents=kitPreview.pe?kitPreview.peSessions.map((s,i)=>({
-      id:"practiceexam-"+kitPreview.pe.id+"-"+Date.now()+"-"+i,
-      title:"Practice Exam: "+kitPreview.pe.name,
-      date:s.date,time:s.time,subject:"",kind:"study block",notes:"",
-      priority:sessionPriority,difficulty:5,deadline:kitPreview.examDate,duration:s.duration,
-      status:"pending",timeSpent:0,completedAt:null,
-      practiceExamId:kitPreview.pe.id,placementReason:s.placementReason||null,
-      dueEventId:kitPreview.examId,isExamPrepSession:true,
-    })):[];
-    lsSet("events",events.concat(reviewEvents,deckEvents,peEvents));
-    setKitPreview(null);
   };
 
   // ── Taking a practice exam -- direct execution, right inside Prep, no
@@ -7107,28 +7035,6 @@ function StudlinPrep({setActive=()=>{}}={}){
         // this marker, so one query is the single source of truth instead
         // of three separate un-editable summaries.
         const examSessions=lsGet("events",[]).filter(e=>e.dueEventId===selectedExam.id).sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
-        const hasGenericSessions=examSessions.some(s=>!s.deckId&&!s.practiceExamId);
-        // Regenerating only ever touches the generic (non deck/PE-linked)
-        // sessions -- removeGenericExamPrepSessions is the same guard
-        // commitStudyKit already trusts, so a deliberately-scheduled deck
-        // review or practice-exam sitting never gets silently swept away
-        // by "Redo the plan".
-        // If material is already uploaded for this exam, each session gets
-        // a real "what to study" line (proposeSessionFocuses) instead of
-        // just the generic "Study: <title>" title -- grounded-or-nothing,
-        // same as its proposeProjectPhases/proposeOutline siblings, so a
-        // thin/unhelpful material pool just leaves sessions exactly as
-        // they were before this existed rather than inventing filler.
-        const scheduleGenericSessions=async(count)=>{
-          setSessionScheduleLoading(true);
-          const events=removeGenericExamPrepSessions(lsGet("events",[]),selectedExam.id);
-          const sessions=buildExamSessionEvents(selectedExam.title,selectedExam.date,selectedExam.subject,count,"prep-"+selectedExam.id+"-"+Date.now(),events,getWeeklyRoutine(),getSchedulePreferences(),{dueEventId:selectedExam.id},selectedExam.difficulty,undefined,selectedExam.examWeight,selectedExam.confidenceLog);
-          const focuses=materialText.trim()?await proposeSessionFocuses(selectedExam.title,materialText,sessions.length,selectedExam.subject):null;
-          const finalSessions=focuses?sessions.map((s,i)=>focuses[i]?{...s,notes:focuses[i]}:s):sessions;
-          lsSet("events",events.concat(finalSessions));
-          setSessionScheduleLoading(false);
-          refresh();
-        };
         // Offered once material exists but at least one already-scheduled
         // generic (non deck/PE) session still has no focus line -- patches
         // notes onto the existing pending sessions in place rather than
@@ -7383,32 +7289,16 @@ function StudlinPrep({setActive=()=>{}}={}){
               </>)}
               <div style={{borderTop:`1px solid ${T.border}`,marginTop:14,paddingTop:14}}>
                 <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:10}}>Generate</div>
-                <div style={{marginBottom:10}}>
-                  <Btn onClick={buildStudyKit} disabled={!materialText.trim()||kitLoading||genLoading!==null}>{kitLoading?"Building…":"Build my study kit"}</Btn>
-                  <div style={{fontSize:10.5,color:T.muted,marginTop:6}}>Flashcards, a practice exam, and review sessions counting down to test day.</div>
-                </div>
-                {!moreGenOptionsOpen&&!genMsg?(
-                  <button type="button" onClick={()=>setMoreGenOptionsOpen(true)} style={{background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>More options</button>
-                ):(
-                  <div>
-                    <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:genMsg?6:0}}>
-                      <span style={{fontSize:10.5,color:T.faint}}>or just one:</span>
-                      <BtnSm variant="subtle" onClick={genDeckForExam} disabled={!materialText.trim()||genLoading!==null||kitLoading}>{genLoading==="cards"?"Generating…":"Flashcards only"}</BtnSm>
-                      <BtnSm variant="subtle" onClick={genPracticeExamForExam} disabled={!materialText.trim()||genLoading!==null||kitLoading}>{genLoading==="quiz"?"Generating…":"Practice exam only"}</BtnSm>
-                    </div>
-                    {genMsg&&(
-                      <div style={{display:"flex",alignItems:"center",gap:10}}>
-                        <span style={{fontSize:11.5,color:genMsg.startsWith("✓")?T.teal:T.red}}>{genMsg}</span>
-                        <button type="button" onClick={()=>{setGenMsg("");setMoreGenOptionsOpen(false);}} style={{background:"none",border:"none",color:T.faint,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>Hide</button>
-                      </div>
-                    )}
-                  </div>
-                )}
-                {hasGenericSessions&&(
-                  <div style={{display:"flex",alignItems:"center",gap:8,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`,flexWrap:"wrap"}}>
-                    <NumField min={1} max={6} fallback={4} value={sessionCountDraft} onChange={setSessionCountDraft} style={{width:48}} />
-                    <BtnSm variant="subtle" onClick={()=>scheduleGenericSessions(sessionCountDraft)} disabled={sessionScheduleLoading}>{sessionScheduleLoading?"Scheduling…":"Redo the plan"}</BtnSm>
-                    <span style={{fontSize:10.5,color:T.faint}}>Replaces Studlin's own sessions with a fresh plan for this count — review and practice-exam sessions are kept.</span>
+                {/* 2026-07-31: one entry point, replacing what used to be
+                    three inconsistent ones (Build my study kit, Flashcards
+                    only/Practice exam only, Redo the plan) -- see
+                    openBuildPlan/commitBuildPlan above. */}
+                <Btn onClick={()=>openBuildPlan(selectedExam)}>{examSessions.length===0?"Build study plan":"Redo study plan"}</Btn>
+                <div style={{fontSize:10.5,color:T.muted,marginTop:6}}>Sessions calibrated to your confidence, plus flashcards and a practice exam if you want them.</div>
+                {genMsg&&(
+                  <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8}}>
+                    <span style={{fontSize:11.5,color:genMsg.startsWith("✓")?T.teal:T.red}}>{genMsg}</span>
+                    <button type="button" onClick={()=>setGenMsg("")} style={{background:"none",border:"none",color:T.faint,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>Hide</button>
                   </div>
                 )}
               </div>
@@ -7536,7 +7426,9 @@ function StudlinPrep({setActive=()=>{}}={}){
           when it doesn't (add material for a real plan, or just block out
           study time). Preview is always adjustable; nothing commits until
           Confirm. ── */}
-      <Modal open={!!buildPlanExamId} onClose={closeBuildPlan} title="Build study plan" sub={buildPlanExam?buildPlanExam.title:""} width={520}
+      <Modal open={!!buildPlanExamId} onClose={closeBuildPlan}
+        title={buildPlanExam&&lsGet("events",[]).some(e=>e.dueEventId===buildPlanExam.id)?"Redo study plan":"Build study plan"}
+        sub={buildPlanExam?buildPlanExam.title:""} width={520}
         footer={buildPlanStep==="preview"?<><Btn variant="subtle" onClick={closeBuildPlan}>Cancel</Btn><Btn onClick={commitBuildPlan} disabled={buildPlanLoading}>{buildPlanLoading?"Building…":"Confirm plan"}</Btn></>:<Btn variant="subtle" onClick={closeBuildPlan}>Cancel</Btn>}>
         {buildPlanExam&&buildPlanStep==="choice"&&(
           <div>
@@ -7578,11 +7470,25 @@ function StudlinPrep({setActive=()=>{}}={}){
         )}
         {buildPlanExam&&buildPlanStep==="confidence"&&(
           <div>
-            <div style={{fontSize:13,color:T.text,marginBottom:18}}>How confident are you on this material?</div>
-            <div style={{display:"flex",gap:8}}>
+            <div style={{fontSize:13,color:T.text,marginBottom:14}}>How confident are you on this material?</div>
+            <div style={{display:"flex",gap:8,marginBottom:18}}>
               {["shaky","okay","solid"].map(level=>(
                 <Btn key={level} variant="ghost" onClick={()=>chooseConfidence(level)} style={{flex:1,justifyContent:"center",textTransform:"capitalize"}}>{level}</Btn>
               ))}
+            </div>
+            <div style={{borderTop:`1px solid ${T.border}`,paddingTop:14,display:"flex",flexDirection:"column",gap:10}}>
+              <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
+                <input type="checkbox" checked={buildPlanGenFlashcards} onChange={e=>setBuildPlanGenFlashcards(e.target.checked)} />
+                <span style={{fontSize:12.5,color:T.text}}>Also generate flashcards</span>
+              </label>
+              <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
+                <input type="checkbox" checked={buildPlanGenPE} onChange={e=>setBuildPlanGenPE(e.target.checked)} />
+                <span style={{fontSize:12.5,color:T.text}}>Also generate a practice exam</span>
+              </label>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
+                <span style={{fontSize:12,color:T.muted}}>Hours to study for this (optional):</span>
+                <Input type="number" min={0} step={0.5} value={buildPlanHoursTarget} onChange={e=>setBuildPlanHoursTarget(e.target.value)} placeholder="—" style={{width:60}} />
+              </div>
             </div>
           </div>
         )}
@@ -7593,14 +7499,27 @@ function StudlinPrep({setActive=()=>{}}={}){
                 No material yet, so these are general review blocks, not focused sessions. Add material anytime to unlock real flashcards for this exam.
               </div>
             )}
+            {(buildPlanGenFlashcards||buildPlanGenPE)&&(
+              <div style={{fontSize:12,color:T.muted,background:T.card2,borderRadius:8,padding:"10px 12px",marginBottom:14,lineHeight:1.5}}>
+                {buildPlanGenFlashcards&&buildPlanGenPE?"+ Flashcards and a practice exam will also be generated.":buildPlanGenFlashcards?"+ Flashcards will also be generated.":"+ A practice exam will also be generated."}
+                {(allDecks.some(d=>deckLinkedToExam(d,buildPlanExam.id))||allPracticeExams.some(p=>p.examEventId===buildPlanExam.id))?" This replaces what's already there for this exam.":""}
+              </div>
+            )}
             {buildPlanPreview.dates.length===0?(
               <div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"14px 0",marginBottom:14}}>Too close to the exam to fit a session.</div>
             ):(
-              <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:16}}>
+              <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
                 {buildPlanPreview.dates.map((d,i)=>(
-                  <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:12.5,padding:"8px 10px",background:T.card2,borderRadius:8}}>
-                    <span style={{color:T.text}}>Session {i+1}</span>
-                    <span style={{color:T.muted,fontFamily:T.mono,fontSize:11.5}}>{d} · {buildPlanPreview.sessionDuration}min</span>
+                  <div key={i} style={{padding:"8px 10px",background:T.card2,borderRadius:8}}>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,marginBottom:!buildPlanGeneric?6:0}}>
+                      <span style={{color:T.text}}>Session {i+1}</span>
+                      <span style={{color:T.muted,fontFamily:T.mono,fontSize:11.5}}>{d} · {buildPlanPreview.sessionDuration}min</span>
+                    </div>
+                    {!buildPlanGeneric&&(
+                      <Input value={buildPlanFocuses[i]||""} onChange={e=>setBuildPlanFocuses(f=>f.map((v,vi)=>vi===i?e.target.value:v))}
+                        placeholder={buildPlanFocusesLoading?"Reading your material…":"What to study this session (optional)"}
+                        style={{width:"100%",fontSize:12}} />
+                    )}
                   </div>
                 ))}
               </div>
@@ -7699,33 +7618,8 @@ function StudlinPrep({setActive=()=>{}}={}){
         )}
       </Modal>
 
-      {/* ── Replace confirm -- regenerating when a deck/PE already exists
-          for this exam deletes it (and its scheduled sessions) first, so
-          this is a real "are you sure" per CLAUDE.md's data-safety rule,
-          not a silent overwrite on a second click of the same button. ── */}
-      <Modal open={!!replaceConfirm} onClose={()=>setReplaceConfirm(null)} title="Replace existing material?" width={440}
-        footer={<><Btn variant="subtle" onClick={()=>setReplaceConfirm(null)}>Cancel</Btn><Btn variant="danger" onClick={confirmReplace}>Replace</Btn></>}>
-        {replaceConfirm&&(
-          <div style={{display:"flex",flexDirection:"column",gap:10}}>
-            {replaceConfirm.existingDeck&&(()=>{
-              const sharedWithOther=deckExamIds(replaceConfirm.existingDeck).length>1;
-              return (
-                <div style={{fontSize:13,color:T.text,lineHeight:1.5}}>
-                  This exam already has a deck: <strong>{replaceConfirm.existingDeck.name}</strong> ({replaceConfirm.existingDeck.count} cards).
-                  {" "}Rebuilding will {sharedWithOther?"unlink it from this exam (it's still linked to another exam, so the deck itself stays)":"delete it"}, remove this exam's review sessions from it, and generate a fresh one from your current material.
-                </div>
-              );
-            })()}
-            {replaceConfirm.existingPE&&(
-              <div style={{fontSize:13,color:T.text,lineHeight:1.5}}>This exam already has a practice exam: <strong>{replaceConfirm.existingPE.name}</strong> ({replaceConfirm.existingPE.questions.length} questions). Rebuilding will delete it, along with its scheduled session, and generate a fresh one.</div>
-            )}
-          </div>
-        )}
-      </Modal>
-
       {/* ── Delete confirm -- direct student-initiated delete of a deck or
-          practice exam from Prep. Distinct from replaceConfirm above (which
-          only fires as a side effect of regenerating); this is CLAUDE.md's
+          practice exam from Prep. This is CLAUDE.md's
           "anything that deletes user data needs a confirm modal" rule for
           the plain Delete buttons themselves. ── */}
       <Modal open={!!deleteConfirm} onClose={()=>setDeleteConfirm(null)} title="Delete this?" width={420}
@@ -7735,61 +7629,6 @@ function StudlinPrep({setActive=()=>{}}={}){
             {deleteConfirm.type==="pe"
               ?<>This deletes <strong>{deleteConfirm.name}</strong> and any scheduled sessions for it. This can't be undone.</>
               :<>This deletes <strong>{deleteConfirm.name}</strong> and its scheduled review sessions. This can't be undone.</>}
-          </div>
-        )}
-      </Modal>
-
-      {/* ── Study kit preview -- everything Build My Study Kit is about to
-          create/schedule, one confirm instead of stacking the deck/quiz
-          schedule-preview modal above twice in a row. ── */}
-      <Modal open={!!kitPreview} onClose={()=>setKitPreview(null)}
-        title="Your study kit"
-        sub={kitPreview?((kitPreview.reviewSession?1:0)+kitPreview.deckSessions.length+kitPreview.peSessions.length)+" session"+(((kitPreview.reviewSession?1:0)+kitPreview.deckSessions.length+kitPreview.peSessions.length)!==1?"s":"")+" counting down to "+kitPreview.examDate:""}
-        width={480}
-        footer={<><Btn variant="subtle" onClick={()=>setKitPreview(null)}>Cancel</Btn><Btn onClick={commitStudyKit} disabled={!kitPreview||(!kitPreview.deck&&!kitPreview.pe)}>Add to my calendar</Btn></>}>
-        {kitPreview&&(
-          <div>
-            {kitPreview.warnings.length>0&&(
-              <div style={{fontSize:11.5,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:8,padding:"8px 12px",marginBottom:14}}>
-                {kitPreview.warnings.join(" ")}
-              </div>
-            )}
-            {kitPreview.reviewSession&&(
-              <div style={{marginBottom:14}}>
-                <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>First: review the material</div>
-                <div style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card2,borderRadius:8}}>
-                  <span style={{color:T.text}}>{kitPreview.reviewSession.date}</span>
-                  <span style={{color:T.muted,fontFamily:T.mono}}>{kitPreview.reviewSession.time} · {kitPreview.reviewSession.duration}m</span>
-                </div>
-                {kitPreview.reviewSession.notes&&<div style={{fontSize:11,color:T.muted,marginTop:6}}>{kitPreview.reviewSession.notes}</div>}
-              </div>
-            )}
-            {kitPreview.deck&&(
-              <div style={{marginBottom:14}}>
-                <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>{kitPreview.deck.count} flashcards · {kitPreview.deckSessions.length} review session{kitPreview.deckSessions.length!==1?"s":""}</div>
-                <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                  {kitPreview.deckSessions.map((s,i)=>(
-                    <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card2,borderRadius:8}}>
-                      <span style={{color:T.text}}>{s.date}</span>
-                      <span style={{color:T.muted,fontFamily:T.mono}}>{s.time} · {s.duration}m</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {kitPreview.pe&&(
-              <div>
-                <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>{kitPreview.pe.questions.length} practice questions · {kitPreview.peSessions.length} session</div>
-                <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                  {kitPreview.peSessions.map((s,i)=>(
-                    <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card2,borderRadius:8}}>
-                      <span style={{color:T.text}}>{s.date}</span>
-                      <span style={{color:T.muted,fontFamily:T.mono}}>{s.time} · {s.duration}m</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         )}
       </Modal>
@@ -10794,7 +10633,7 @@ function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,workin
 }
 // A generic "Study: <examTitle>" session (from the syllabus scan above)
 // and a kit-titled session ("Review: <deck>"/"Practice Exam: <set>", see
-// StudlinPrep's commitStudyKit/commitSchedulePreview) can both end up on
+// StudlinPrep's commitSchedulePreview) can both end up on
 // the calendar for the same exam once a kit is built after the scan
 // already scheduled the generic ones -- redundant, and worse, the
 // generic ones say nothing about what to actually do in that session
