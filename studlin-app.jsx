@@ -1184,6 +1184,18 @@ const saveRoutineOverrides=(o)=>lsSet("routineOverrides",o);
 // isn't necessarily tied to the school calendar the way a class is.
 const getSchoolTerm=()=>lsGet("schoolTerm",null);
 const saveSchoolTerm=(t)=>lsSet("schoolTerm",t);
+// Term rollover (Phase 8 follow-up, 2026-07-29): has today passed the end
+// of the currently configured term? Pure so it's testable without a real
+// clock -- callers pass today's own dayKey(). No term configured (never
+// set, or explicitly cleared) means nothing to roll over, same "opt-in"
+// spirit as getSchoolTerm itself.
+const isTermRolloverDue=(term,todayKey)=>!!(term&&term.end&&todayKey>term.end);
+// Dismissing the rollover prompt is remembered per term-end date, not
+// permanently -- so it stays quiet for the rest of THIS ended term, but
+// automatically starts prompting again the next time a newer term also
+// ends, rather than a one-time global dismiss that goes stale forever.
+const getTermRolloverDismissedFor=()=>lsGet("termRolloverDismissedFor",null);
+const dismissTermRollover=(termEnd)=>lsSet("termRolloverDismissedFor",termEnd);
 // Calendar zoom (pixels per hour) -- Phase 10b, user-driven, not auto-fit
 // (auto-fit was tried before and deliberately removed, see
 // computeDayViewScale's own retirement comment, for shrinking blocks down
@@ -14004,7 +14016,13 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
     // routine instead of a fake class+subject.
     const valid=hsReview.filter(p=>p.subjectName.trim()&&!p.isFree);
     const freeFromClasses=hsReview.filter(p=>p.subjectName.trim()&&p.isFree);
-    const newSubjects=valid.map(p=>({id:"subj-"+Date.now()+"-"+Math.round(Math.random()*1000),label:p.subjectName.trim(),color:p.color}));
+    // termEnd (Phase 8 follow-up): tags which term a course belongs to, so
+    // a future term rollover can filter the sidebar to just the active
+    // term instead of showing every course ever added. Unset (null) if no
+    // term is configured -- an untagged course always counts as current,
+    // matching this codebase's usual "additive, backward compatible" rule
+    // for a new optional field.
+    const newSubjects=valid.map(p=>({id:"subj-"+Date.now()+"-"+Math.round(Math.random()*1000),label:p.subjectName.trim(),color:p.color,termEnd:termEnd||null}));
     saveSubjects([...getSubjects(),...newSubjects]);
     const routineItems=valid.map((p,i)=>{
       const dur=Math.max(15,timeToMinutes(p.endTime)-timeToMinutes(p.startTime));
@@ -14020,6 +14038,12 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
       .concat(freeFromClasses.map((p,i)=>({id:"free-manual-"+Date.now()+"-"+i,title:p.subjectName.trim(),kind:"free",days:p.days,startTime:p.startTime,duration:Math.max(15,timeToMinutes(p.endTime)-timeToMinutes(p.startTime))})));
     saveWeeklyRoutine([...getWeeklyRoutine(),...routineItems,...freeItems]);
     if(schoolStart&&schoolEnd)saveHsSchoolHours({start:schoolStart,end:schoolEnd});
+    // Gap fix found while adding term-tagging: the "term" step (End of
+    // Term) already collects termStart/termEnd for every account, HS or
+    // college, but only commitAllToCalendar (the college path) was ever
+    // persisting it via saveSchoolTerm -- an HS account's answer to that
+    // step was silently discarded.
+    if(termStart&&termEnd)saveSchoolTerm({start:termStart,end:termEnd});
     if(status)saveProfile({...getProfile(),status});
     // Whole-schedule photo/paste import has no deadlines to review, so
     // there's nothing to stage -- it commits immediately, same as it always has.
@@ -14050,7 +14074,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan}){
     const withIds=pendingClasses.map(cls=>({...cls,subjId:"subj-"+Date.now()+"-"+Math.round(Math.random()*1000)+"-"+cls.id}));
     let routine=getWeeklyRoutine();
     withIds.forEach(cls=>{
-      subjects=[...subjects,{id:cls.subjId,label:cls.name,color:cls.color}];
+      subjects=[...subjects,{id:cls.subjId,label:cls.name,color:cls.color,termEnd:termEnd||null}];
       const routineItems=(cls.meetingTimes||[]).filter(mt=>mt.days.length>0).map(mt=>({id:"rt-"+Date.now()+"-"+Math.round(Math.random()*1000),title:cls.name,kind:"class",subject:cls.name,courseId:cls.subjId,days:mt.days,startTime:mt.startTime,duration:mt.duration}));
       routine=[...routine,...routineItems];
     });
@@ -15852,6 +15876,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // double-click still opens the real edit modal via setDetailEventId,
   // unchanged.
   const [expandedSidebarItemId,setExpandedSidebarItemId]=useState(null);
+  // Term rollover follow-up: collapsed by default, matching the Recently
+  // Created/Overdue sections' own convention.
+  const [pastCoursesOpen,setPastCoursesOpen]=useState(false);
   // ── Phase 7d: drag a course/activity chip from the sidebar onto the
   // calendar to set/create its meeting time. Separate from `dragId` above
   // (that's for moving an EXISTING event between days) -- this carries
@@ -17337,6 +17364,62 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       .sort((a,b)=>idTimestamp(b.id)-idTimestamp(a.id))
       .slice(0,5);
   })();
+  // Term rollover follow-up (Phase 8): courses tagged with a termEnd that
+  // doesn't match the currently configured term are "past" -- collapsed
+  // out of the way instead of cluttering the main list, but never
+  // deleted (CLAUDE.md's data-safety rule). An untagged course (termEnd
+  // unset, e.g. anything created before this field existed) always
+  // counts as current, same additive/backward-compatible convention this
+  // file uses for every new optional field.
+  const currentTerm=getSchoolTerm();
+  const currentTermSubjects=userSubjects.filter(s=>!s.termEnd||!currentTerm||s.termEnd===currentTerm.end);
+  const pastTermSubjects=userSubjects.filter(s=>s.termEnd&&currentTerm&&s.termEnd!==currentTerm.end);
+  // Extracted from what used to be a plain inline .map so the identical
+  // row markup (rename/delete-confirm/drag/3-dot menu) can be reused for
+  // both the current-term list and the collapsed past-terms section
+  // below, without duplicating that logic a second time.
+  const renderCourseRow=(sub)=>{
+    const isSelected=selectedCourseId===sub.id;
+    const isRenaming=renamingCourseId===sub.id;
+    const isConfirmingDelete=confirmDeleteCourseId===sub.id;
+    const linkedCount=isConfirmingDelete?countLinkedForCourse(sub):0;
+    const isUnscheduled=!routines.some(r=>r.kind==="class"&&r.courseId===sub.id&&r.days&&r.days.length>0);
+    return (
+      <div key={sub.id} style={{position:"relative"}}>
+        {isConfirmingDelete?(
+          <div style={{padding:"8px 10px",borderRadius:8,border:`1px solid ${T.red}55`,background:T.red+"12"}}>
+            <div style={{fontSize:10.5,color:T.text,marginBottom:8,lineHeight:1.4}}>Delete "{sub.label}" and its {linkedCount} linked item{linkedCount!==1?"s":""}?</div>
+            <div style={{display:"flex",gap:6}}>
+              <button onClick={()=>confirmDeleteCourse(sub)} style={{fontSize:10.5,fontWeight:600,padding:"4px 9px",borderRadius:5,background:T.red,color:"#fff",border:"none",cursor:"pointer",fontFamily:T.font}}>Delete</button>
+              <button onClick={()=>setConfirmDeleteCourseId(null)} style={{fontSize:10.5,padding:"4px 9px",borderRadius:5,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,cursor:"pointer",fontFamily:T.font}}>Cancel</button>
+            </div>
+          </div>
+        ):isRenaming?(
+          <input autoFocus value={renameDraft} onChange={e=>setRenameDraft(e.target.value)}
+            onKeyDown={e=>{if(e.key==="Enter")commitRenameCourse(sub);if(e.key==="Escape")setRenamingCourseId(null);}}
+            onBlur={()=>commitRenameCourse(sub)}
+            style={{width:"100%",boxSizing:"border-box",...subjectRowStyle(sub.color),border:`1px solid ${sub.color}66`,color:T.text,fontSize:12,fontFamily:T.font,outline:"none"}} />
+        ):(
+          <div onClick={()=>setSelectedCourseId(isSelected?null:sub.id)}
+            draggable onDragStart={()=>setSidebarDragChip({title:sub.label,color:sub.color,movable:false,kind:"course",courseId:sub.id})} onDragEnd={()=>setSidebarDragChip(null)}
+            style={{...subjectRowStyle(sub.color),cursor:"pointer",justifyContent:"space-between",outline:isSelected?`2px solid ${sub.color}`:"none",outlineOffset:1,...(isUnscheduled?{border:`1px dashed ${sub.color}66`}:{})}}>
+            <span style={{fontSize:12,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{sub.label}</span>
+            {isUnscheduled&&<span title="Drag onto the calendar to set when it meets" style={{fontSize:9,color:T.faint,flexShrink:0,marginRight:4}}>not scheduled</span>}
+            <button type="button" onClick={(e)=>{e.stopPropagation();setCourseMenuOpenId(courseMenuOpenId===sub.id?null:sub.id);}}
+              style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:"0 0 0 6px",fontSize:14,lineHeight:1,flexShrink:0}}>⋯</button>
+          </div>
+        )}
+        {courseMenuOpenId===sub.id&&(
+          <div onMouseLeave={()=>setCourseMenuOpenId(null)} style={{position:"absolute",top:"100%",right:0,zIndex:40,marginTop:4,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 12px 28px -12px rgba(0,0,0,0.5)",overflow:"hidden",minWidth:150}}>
+            <button onClick={()=>startRenameCourse(sub)} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Rename</button>
+            <button onClick={()=>{setCourseMenuOpenId(null);setActive("settings");}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Change color</button>
+            <button onClick={()=>{setCourseMenuOpenId(null);setQuickScanOpen(true);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Import syllabus</button>
+            <button onClick={()=>{setCourseMenuOpenId(null);setConfirmDeleteCourseId(sub.id);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.red,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Delete</button>
+          </div>
+        )}
+      </div>
+    );
+  };
   // Type-differentiated expand for a right-column item -- click shows a
   // quiz/exam's study sessions, an assignment's Attack Block sessions, or
   // a project's full checklist (click again to collapse); double-click
@@ -17408,53 +17491,22 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
             <button type="button" onClick={()=>setQuickScanOpen(true)} style={{background:"none",border:"none",color:T.lime,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0}}>+ Add new</button>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:18}}>
-            {userSubjects.length===0&&<div style={{fontSize:11,color:T.faint,padding:"4px 0 8px"}}>No courses yet.</div>}
-            {userSubjects.map(sub=>{
-              const isSelected=selectedCourseId===sub.id;
-              const isRenaming=renamingCourseId===sub.id;
-              const isConfirmingDelete=confirmDeleteCourseId===sub.id;
-              const linkedCount=isConfirmingDelete?countLinkedForCourse(sub):0;
-              // 2026-07-29: a course added via the onboarding roster (or
-              // manual add) has no meeting time yet -- dashed border +
-              // hint nudges toward the drag that actually schedules it.
-              const isUnscheduled=!routines.some(r=>r.kind==="class"&&r.courseId===sub.id&&r.days&&r.days.length>0);
-              return (
-                <div key={sub.id} style={{position:"relative"}}>
-                  {isConfirmingDelete?(
-                    <div style={{padding:"8px 10px",borderRadius:10,border:`1px solid ${T.red}55`,background:T.red+"12"}}>
-                      <div style={{fontSize:10.5,color:T.text,marginBottom:8,lineHeight:1.4}}>Delete "{sub.label}" and its {linkedCount} linked item{linkedCount!==1?"s":""}?</div>
-                      <div style={{display:"flex",gap:6}}>
-                        <button onClick={()=>confirmDeleteCourse(sub)} style={{fontSize:10.5,fontWeight:600,padding:"4px 9px",borderRadius:5,background:T.red,color:"#fff",border:"none",cursor:"pointer",fontFamily:T.font}}>Delete</button>
-                        <button onClick={()=>setConfirmDeleteCourseId(null)} style={{fontSize:10.5,padding:"4px 9px",borderRadius:5,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,cursor:"pointer",fontFamily:T.font}}>Cancel</button>
-                      </div>
-                    </div>
-                  ):isRenaming?(
-                    <input autoFocus value={renameDraft} onChange={e=>setRenameDraft(e.target.value)}
-                      onKeyDown={e=>{if(e.key==="Enter")commitRenameCourse(sub);if(e.key==="Escape")setRenamingCourseId(null);}}
-                      onBlur={()=>commitRenameCourse(sub)}
-                      style={{width:"100%",boxSizing:"border-box",...subjectRowStyle(sub.color),border:`1px solid ${sub.color}66`,color:T.text,fontSize:12,fontFamily:T.font,outline:"none"}} />
-                  ):(
-                    <div onClick={()=>setSelectedCourseId(isSelected?null:sub.id)}
-                      draggable onDragStart={()=>setSidebarDragChip({title:sub.label,color:sub.color,movable:false,kind:"course",courseId:sub.id})} onDragEnd={()=>setSidebarDragChip(null)}
-                      style={{...subjectRowStyle(sub.color),cursor:"pointer",justifyContent:"space-between",outline:isSelected?`2px solid ${sub.color}`:"none",outlineOffset:1,...(isUnscheduled?{border:`1px dashed ${sub.color}66`}:{})}}>
-                      <span style={{fontSize:12,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{sub.label}</span>
-                      {isUnscheduled&&<span title="Drag onto the calendar to set when it meets" style={{fontSize:9,color:T.faint,flexShrink:0,marginRight:4}}>not scheduled</span>}
-                      <button type="button" onClick={(e)=>{e.stopPropagation();setCourseMenuOpenId(courseMenuOpenId===sub.id?null:sub.id);}}
-                        style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:"0 0 0 6px",fontSize:14,lineHeight:1,flexShrink:0}}>⋯</button>
-                    </div>
-                  )}
-                  {courseMenuOpenId===sub.id&&(
-                    <div onMouseLeave={()=>setCourseMenuOpenId(null)} style={{position:"absolute",top:"100%",right:0,zIndex:40,marginTop:4,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 12px 28px -12px rgba(0,0,0,0.5)",overflow:"hidden",minWidth:150}}>
-                      <button onClick={()=>startRenameCourse(sub)} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Rename</button>
-                      <button onClick={()=>{setCourseMenuOpenId(null);setActive("settings");}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Change color</button>
-                      <button onClick={()=>{setCourseMenuOpenId(null);setQuickScanOpen(true);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Import syllabus</button>
-                      <button onClick={()=>{setCourseMenuOpenId(null);setConfirmDeleteCourseId(sub.id);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.red,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Delete</button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {currentTermSubjects.length===0&&<div style={{fontSize:11,color:T.faint,padding:"4px 0 8px"}}>No courses yet.</div>}
+            {currentTermSubjects.map(renderCourseRow)}
           </div>
+          {pastTermSubjects.length>0&&(
+            <div style={{marginBottom:18}}>
+              <button type="button" onClick={()=>setPastCoursesOpen(v=>!v)} style={{display:"flex",alignItems:"center",gap:5,width:"100%",background:"none",border:"none",cursor:"pointer",padding:0,marginBottom:6,fontFamily:T.font}}>
+                <span style={{fontSize:9,color:T.faint,transform:pastCoursesOpen?"rotate(90deg)":"none",transition:"transform 0.15s"}}>›</span>
+                <span style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Past terms ({pastTermSubjects.length})</span>
+              </button>
+              {pastCoursesOpen&&(
+                <div style={{display:"flex",flexDirection:"column",gap:6,opacity:0.6}}>
+                  {pastTermSubjects.map(renderCourseRow)}
+                </div>
+              )}
+            </div>
+          )}
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
             <span style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Activities</span>
             <button type="button" onClick={()=>setRoutineCenterOpen(true)} style={{background:"none",border:"none",color:T.lime,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0}}>+ Add new</button>
@@ -17486,6 +17538,23 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           style={{position:"absolute",top:16,right:(calSidebarCollapsed?0:14)-9,width:18,height:18,borderRadius:"50%",background:T.card,border:`1px solid ${T.border}`,color:T.faint,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 1px 3px rgba(0,0,0,0.2)"}}>{calSidebarCollapsed?"›":"‹"}</button>
       </div>
     <div style={{flex:1,minWidth:0,paddingLeft:14}}>
+      {/* Term rollover (Phase 8 follow-up): a one-time-per-ended-term,
+          dismissible prompt once today's date passes schoolTerm.end.
+          Courses always start fresh each term (no auto-copy) -- Activities
+          are left alone entirely by this prompt since they're meant to
+          carry forward, matching the asymmetry Shovel's own onboarding
+          shows (only Courses gets a "copy from previous" option there).
+          Reopens the same wizard used for initial setup rather than a
+          separate rollover-specific flow. */}
+      {currentTerm&&isTermRolloverDue(currentTerm,todayK)&&getTermRolloverDismissedFor()!==currentTerm.end&&(
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,padding:"10px 14px",borderRadius:8,border:`1px solid ${T.amber}44`,background:T.amber+"10",marginBottom:10}}>
+          <div style={{fontSize:12.5,color:T.text}}>Your term ended {currentTerm.end} — set up next term?</div>
+          <div style={{display:"flex",gap:8,flexShrink:0}}>
+            <button type="button" onClick={()=>setClassSetupOpen(true)} style={{padding:"6px 12px",borderRadius:6,border:"none",background:T.amber,color:T.ink,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Set up next term</button>
+            <button type="button" onClick={()=>dismissTermRollover(currentTerm.end)} title="Dismiss" style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:14,padding:"0 4px"}}>×</button>
+          </div>
+        </div>
+      )}
       {/* Slim toolbar replaces the old page header + separate view-switcher
           row (ui/tokens-and-calendar Part 2). Date range + prev/next on the
           left; Day/Week/Month switcher, a "..." overflow for the less-
@@ -19948,7 +20017,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:3}}>Manage Subjects & Labels</div>
                   <div style={{fontSize:12,color:T.muted}}>Color-code your classes. These labels appear on your calendar and tasks globally.</div>
                 </div>
-                <Btn onClick={()=>setMgmtSubjs(s=>[...s,{id:String(Date.now()),label:"",color:SUBJECT_COLORS[s.length%SUBJECT_COLORS.length]}])}>+ Add</Btn>
+                <Btn onClick={()=>{const term=getSchoolTerm();setMgmtSubjs(s=>[...s,{id:String(Date.now()),label:"",color:SUBJECT_COLORS[s.length%SUBJECT_COLORS.length],termEnd:term?term.end:null}]);}}>+ Add</Btn>
               </div>
               {mgmtSubjs.length===0&&(
                 <div style={{fontSize:12.5,color:T.muted,padding:"20px 0",textAlign:"center",borderTop:`1px solid ${T.border}`}}>No subjects yet. Click "+ Add" to create your first label.</div>

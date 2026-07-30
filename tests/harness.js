@@ -114,7 +114,9 @@ function loadStudlinModule(options) {
     "deriveFreePeriodsFromPeriods","getHsSchoolHours","saveHsSchoolHours",
     "subtractIntervals","effectiveLeadIn","effectiveTrailOut","isLeadInFixed",
     "getRoutineOverrides","saveRoutineOverrides","expandRoutineOccurrences",
-    "getHolidays","saveHolidays","getWakeSleep","saveWakeSleep"];
+    "getHolidays","saveHolidays","getWakeSleep","saveWakeSleep",
+    "isTermRolloverDue","getTermRolloverDismissedFor","dismissTermRollover",
+    "upcomingAssignments","upcomingProjects"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }
