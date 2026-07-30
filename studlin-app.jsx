@@ -1667,6 +1667,22 @@ function findNotTodaySlot(task,events,routines,prefs,todayKey){
 // an already-occupied slot rather than silently dropping the task. That
 // tradeoff is fine for callers who already accept it; it is not fine for a
 // student-facing reschedule that's supposed to represent a legal move.
+// A session that's already been relocated once or twice shouldn't be an
+// equally fair eviction/rebalance target forever just because it's
+// flexible and low-priority -- without this, the same session can get
+// bounced around indefinitely (evicted, land somewhere, evicted again
+// next week) with zero completion progress, which is worse than not
+// reshuffling at all. RESHUFFLE_PENALTY is added per prior move on top
+// of the session's own priority (priority itself lands on a 0-1000
+// scale, see computeSessionPriority) before ranking eviction/rebalance
+// candidates -- large enough to meaningfully protect a twice-moved
+// session, not so large one move makes it permanently unmovable. Once a
+// session crosses RESHUFFLE_ESCALATE_THRESHOLD moves it's excluded from
+// silent eviction/rebalance candidates entirely -- see the exam-detail
+// "Moved Nx" tag, which asks the student directly instead of guessing a
+// third time.
+const RESHUFFLE_PENALTY=60;
+const RESHUFFLE_ESCALATE_THRESHOLD=2;
 function findSlotWithEviction(events,routines,prefs,desiredDate,desiredTime,duration,deadlineKey){
   const daysOut=deadlineKey?Math.ceil((new Date(deadlineKey+"T12:00:00")-new Date(dayKey()+"T12:00:00"))/86400000):null;
   const isImminent=daysOut!==null&&daysOut<=3;
@@ -1676,16 +1692,20 @@ function findSlotWithEviction(events,routines,prefs,desiredDate,desiredTime,dura
   }
 
   const candidates=events.filter(e=>e.date===desiredDate&&e.kind==="study block"&&e.status==="pending"&&
-    !isCoopStudySession(e)&&(!e.deadline||daysUntilDeadline(e)>7)
+    !isCoopStudySession(e)&&(!e.deadline||daysUntilDeadline(e)>7)&&(e.reshuffleCount||0)<RESHUFFLE_ESCALATE_THRESHOLD
   ).sort((a,b)=>{
     // Priority-first (lowest evicted first) now that sessions actually
     // carry a real, current priority (see computeSessionPriority/
     // restampSessionPriorities) -- this is what makes eviction pick the
     // genuinely least-important thing on the day, not just whichever
-    // happens to have the farthest-off deadline. Deadline distance stays
-    // as the tiebreak for equal/default priority, so legacy data (or two
-    // equally-important tasks) behaves exactly as it did before.
-    const pa=a.priority??500,pb=b.priority??500;
+    // happens to have the farthest-off deadline. A per-move penalty is
+    // added on top so an already-moved session needs a bigger genuine
+    // priority gap to be picked again (see RESHUFFLE_PENALTY above).
+    // Deadline distance stays as the final tiebreak, so legacy data (or
+    // two equally-important, never-moved tasks) behaves exactly as
+    // before.
+    const pa=(a.priority??500)+(a.reshuffleCount||0)*RESHUFFLE_PENALTY;
+    const pb=(b.priority??500)+(b.reshuffleCount||0)*RESHUFFLE_PENALTY;
     if(pa!==pb)return pa-pb;
     const da=a.deadline?daysUntilDeadline(a):Infinity;
     const db=b.deadline?daysUntilDeadline(b):Infinity;
@@ -1728,7 +1748,7 @@ function findSlotWithEviction(events,routines,prefs,desiredDate,desiredTime,dura
     // undoTier0Move (both keyed generically off movedByStudlin/movedFrom)
     // work for it too. Without this, an evicted task moved silently with
     // no visibility and no way to undo it.
-    pool=pool.concat([{...ev,date:newSlot.date,time:newSlot.time,movedByStudlin:true,movedFrom:{date:ev.date,time:ev.time},movedAt:Date.now()}]);
+    pool=pool.concat([{...ev,date:newSlot.date,time:newSlot.time,movedByStudlin:true,movedFrom:{date:ev.date,time:ev.time},movedAt:Date.now(),reshuffleCount:(ev.reshuffleCount||0)+1}]);
   }
 
   const placement=findLegalSlotOrNull(working,routines,prefs,desiredDate,desiredTime,duration,deadlineKey);
@@ -2486,7 +2506,7 @@ function reconcileFixedEventConflicts(newFixedEvents){
       }
       const movedReason={type:"displaced",causedByTitle:nf.title};
       moved.push({id:e.id,title:e.title,from:{date:e.date,time:e.time},to:slot,causedByTitle:nf.title});
-      return{...e,date:slot.date,time:slot.time,movedByStudlin:true,movedFrom:{date:e.date,time:e.time},movedAt:Date.now(),movedReason};
+      return{...e,date:slot.date,time:slot.time,movedByStudlin:true,movedFrom:{date:e.date,time:e.time},movedAt:Date.now(),movedReason,reshuffleCount:(e.reshuffleCount||0)+1};
     });
   });
   const finalEvents=working.concat(newFixedEvents);
@@ -3070,7 +3090,8 @@ async function extractSyllabusDeadlinesFromImage(base64Data,mediaType){
       "For each item return: \"title\" (short, e.g. \"Problem Set 3\" or \"Midterm Exam\"), "+
       "\"date\" (YYYY-MM-DD, your best guess — never omit even if uncertain), "+
       "\"kind\" (either \"deadline\" for assignments/readings/papers or \"exam\" for quizzes, tests, midterms, and finals), "+
-      "\"examWeight\" (ONLY when kind is \"exam\": \"quiz\" for a quiz or short in-class test worth relatively little, \"major\" for a midterm, final, or unit exam worth significant grade weight — omit entirely when kind is \"deadline\"), "+
+      "\"examType\" (ONLY when kind is \"exam\": \"quiz\" for a quiz or short in-class test, \"midterm\" for a midterm exam, \"final\" for a final exam, \"project\" for a project defense/presentation exam, \"other\" for anything else exam-like — omit entirely when kind is \"deadline\"), "+
+      "\"gradeWeightPercent\" (ONLY when kind is \"exam\" AND the source explicitly states what percentage of the final grade this is worth, e.g. \"worth 20% of your grade\" — a plain number like 20, not a string or a % sign; omit entirely if no percentage is stated anywhere, never guess one), "+
       "\"confidence\" (\"high\" if the date is clearly legible, \"low\" if it's blurry, cut off, or you had to infer it), "+
       "\"detail\" (optional — only include when the image actually shows something concrete beyond the date itself; leave the key out rather than inventing filler when nothing specific is visible). "+
       "\"estimatedHours\" (ONLY when kind is \"deadline\": your best-guess total hours a typical student would need for the whole thing, based on the title — a short reading response or problem set is usually 1-3 hours, an essay or lab report is usually 4-8 hours, a term paper or major project is usually 12-25 hours; omit entirely when kind is \"exam\"). "+
@@ -3084,7 +3105,7 @@ async function extractSyllabusDeadlinesFromImage(base64Data,mediaType){
     if(!res.ok)return{items:[],error:data.error||"Couldn't read that image. Try again."};
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
     const parsed=JSON.parse(raw);
-    if(parsed&&Array.isArray(parsed.deadlines))return{items:parsed.deadlines.filter(d=>looksLikeRealDeadlineTitle(d&&d.title)),error:null};
+    if(parsed&&Array.isArray(parsed.deadlines))return{items:parsed.deadlines.filter(d=>looksLikeRealDeadlineTitle(d&&d.title)).map(withDerivedExamImportance),error:null};
     return{items:[],error:null};
   }catch(e){return{items:[],error:"Couldn't read that image. Try again."};}
 }
@@ -3104,7 +3125,9 @@ const CLASS_SYLLABUS_JSON_CONTRACT=
   "\"meetingTimes\" is when the class actually meets each week -- \"days\" uses 0=Monday..6=Sunday, \"startTime\" is 24-hour \"HH:MM\", \"duration\" is minutes. Include one entry per distinct day/time pattern (e.g. a class meeting Mon/Wed/Fri at one time and Tue/Thu at another is two entries). Omit \"meetingTimes\" entirely (empty array) if no recurring meeting time is stated anywhere in the source. "+
   "\"deadlines\" follows the same rules as before, plus a third \"kind\": \"title\" short, \"date\" YYYY-MM-DD (never omit even if uncertain), "+
   "\"kind\" is \"exam\" for quizzes/tests/midterms/finals, \"project\" for a genuinely multi-step, multi-week deliverable (a research paper, a term project, a presentation with real preparation involved -- not just a due date, an actual body of work), or \"assignment\" for everything else (problem sets, readings, short papers, labs, quick responses). "+
-  "\"examWeight\" (\"quiz\" or \"major\", exams only), \"confidence\" (\"high\"/\"low\"), \"detail\" (optional, only when something concrete is stated beyond the title), \"estimatedHours\" (assignment/project only, best guess of total hours a typical student needs), "+
+  "\"examType\" (exams only: \"quiz\" for a quiz or short in-class test, \"midterm\" for a midterm exam, \"final\" for a final exam, \"project\" for a project defense/presentation exam, \"other\" for anything else exam-like), "+
+  "\"gradeWeightPercent\" (exams only, ONLY when the source explicitly states what percentage of the final grade this is worth, e.g. \"worth 20% of your grade\" -- a plain number like 20, not a string or a % sign; omit entirely if no percentage is stated, never guess one), "+
+  "\"confidence\" (\"high\"/\"low\"), \"detail\" (optional, only when something concrete is stated beyond the title), \"estimatedHours\" (assignment/project only, best guess of total hours a typical student needs), "+
   "\"difficulty\" (your best guess of how mentally demanding this specific item is for a typical student, an integer 0-1000 where 500 is average -- base it on the title and detail, e.g. a short reading response is well below average, a proof-based problem set or a comprehensive final is well above). "+
   ANTI_GARBAGE_EXTRACTION_RULE+
   "If you find no deadlines at all, return an empty \"deadlines\" array -- never omit the key.";
@@ -3123,7 +3146,7 @@ async function extractClassSyllabusText(text){
     return{
       subject:(parsed&&parsed.subject&&parsed.subject.name)?parsed.subject:null,
       meetingTimes:(parsed&&Array.isArray(parsed.meetingTimes))?parsed.meetingTimes:[],
-      deadlines:(parsed&&Array.isArray(parsed.deadlines))?parsed.deadlines.filter(d=>looksLikeRealDeadlineTitle(d&&d.title)):[],
+      deadlines:(parsed&&Array.isArray(parsed.deadlines))?parsed.deadlines.filter(d=>looksLikeRealDeadlineTitle(d&&d.title)).map(withDerivedExamImportance):[],
       error:null,
     };
   }catch(e){return{subject:null,meetingTimes:[],deadlines:[],error:"Couldn't read that file. Try again."};}
@@ -3143,7 +3166,7 @@ async function extractClassSyllabusImage(base64Data,mediaType){
     return{
       subject:(parsed&&parsed.subject&&parsed.subject.name)?parsed.subject:null,
       meetingTimes:(parsed&&Array.isArray(parsed.meetingTimes))?parsed.meetingTimes:[],
-      deadlines:(parsed&&Array.isArray(parsed.deadlines))?parsed.deadlines.filter(d=>looksLikeRealDeadlineTitle(d&&d.title)):[],
+      deadlines:(parsed&&Array.isArray(parsed.deadlines))?parsed.deadlines.filter(d=>looksLikeRealDeadlineTitle(d&&d.title)).map(withDerivedExamImportance):[],
       error:null,
     };
   }catch(e){return{subject:null,meetingTimes:[],deadlines:[],error:"Couldn't read that image. Try again."};}
@@ -4829,6 +4852,13 @@ const WEEK_BALANCE_HEAVY_THRESHOLD_MINS=45;
 // amount of total flexible work in the window before "lopsided" is even
 // a meaningful question to ask.
 const WEEK_BALANCE_MIN_TOTAL_MINS=180;
+// How much a target day's reliability (0-1, from getBucketReliability)
+// can outweigh raw minutes-away-from-average when picking where a
+// shed task lands -- treats a fully-reliable slot as worth up to 60
+// "minutes lighter" than it actually is, enough to beat a merely-lighter
+// but historically-unreliable day without ever fully overriding load
+// balancing itself.
+const REBALANCE_RELIABILITY_MINS_WEIGHT=60;
 function computeWeekBalancePlan(events,routines,prefs,startDateKey){
   const days=[];
   for(let i=0;i<WEEK_BALANCE_DAYS;i++){
@@ -4865,34 +4895,48 @@ function computeWeekBalancePlan(events,routines,prefs,startDateKey){
       // (more than a week out, or none at all) — never an exam, a fixed
       // commitment, or a task genuinely due soon.
       // Lowest priority first (sessions carry a real, current priority as
-      // of computeSessionPriority/restampSessionPriorities), duration as
-      // the tiebreak among equal/default priority -- shed the least
-      // important thing on the day, not just the biggest chunk of time.
-      const candidates=working.filter(e=>e.date===heavyDk&&isFlex(e)&&e.kind==="study block"&&(!e.deadline||daysUntilDeadline(e)>7))
-        .sort((a,b)=>((a.priority??500)-(b.priority??500))||((b.duration||0)-(a.duration||0)));
+      // of computeSessionPriority/restampSessionPriorities), a per-move
+      // penalty added on top so an already-reshuffled session needs a
+      // bigger genuine priority gap to be picked again (see
+      // RESHUFFLE_PENALTY), duration as the final tiebreak -- shed the
+      // least important, least-already-disrupted thing on the day.
+      // Anything that's crossed RESHUFFLE_ESCALATE_THRESHOLD is excluded
+      // entirely rather than silently reshuffled again.
+      const candidates=working.filter(e=>e.date===heavyDk&&isFlex(e)&&e.kind==="study block"&&(!e.deadline||daysUntilDeadline(e)>7)&&(e.reshuffleCount||0)<RESHUFFLE_ESCALATE_THRESHOLD)
+        .sort((a,b)=>(((a.priority??500)+(a.reshuffleCount||0)*RESHUFFLE_PENALTY)-((b.priority??500)+(b.reshuffleCount||0)*RESHUFFLE_PENALTY))||((b.duration||0)-(a.duration||0)));
       if(candidates.length===0)break; // this day is heavy but nothing on it is safely movable
       const task=candidates[0];
-      // Target the currently-lightest OTHER day in the window, recomputed
-      // fresh for each task so a big task doesn't all land on the same
-      // just-lightened day.
-      const targets=days.filter(dk=>dk!==heavyDk).map(dk=>({dk,mins:minutesFor(dk,working)})).sort((a,b)=>a.mins-b.mins);
+      // Target the lightest OTHER day in the window that's also a
+      // reliable time for this student -- reuses the exact bucket/tier
+      // derivation findTier0Slot/findReliableSlotFor already use for
+      // fresh placement (hourBucket+difficultyTierOf+getBucketReliability),
+      // extended here so rebalancing doesn't just chase an empty calendar
+      // slot while ignoring whether the student actually follows through
+      // at that time. A day's own legal slot is computed once, up front,
+      // for every candidate day (not just the eventual pick) so the
+      // ranking can weigh mins-away-from-average against reliability
+      // together instead of trying strictly-lightest-first and stopping
+      // at the first day with room. Missing/insufficient reliability
+      // sample (getBucketReliability returns null) is treated as neutral
+      // (0.5) rather than penalizing a sparse-history account.
+      const tier=difficultyTierOf(task);
+      const targets=days.filter(dk=>dk!==heavyDk).map(dk=>{
+        const slot=findLegalSlotOrNull(working.filter(e=>e.id!==task.id),routines,prefs,dk,prefs.workStartTime,task.duration,task.deadline||null);
+        if(!slot)return null;
+        const reliability=getBucketReliability(hourBucket(slot.time),tier)??0.5;
+        return {dk,mins:minutesFor(dk,working),slot,reliability};
+      }).filter(Boolean).sort((a,b)=>(a.mins-a.reliability*REBALANCE_RELIABILITY_MINS_WEIGHT)-(b.mins-b.reliability*REBALANCE_RELIABILITY_MINS_WEIGHT));
       let moved=false;
-      for(const t of targets){
-        // findLegalSlotOrNull only — the hard-wall-safe version. A move
-        // that can't land on a genuinely free, non-overlapping, still-
-        // before-its-own-deadline slot is not included in the plan at all,
-        // never forced through findOpenSlotFor's unsafe fallback.
-        const slot=findLegalSlotOrNull(working.filter(e=>e.id!==task.id),routines,prefs,t.dk,prefs.workStartTime,task.duration,task.deadline||null);
-        if(!slot)continue;
-        working=working.map(e=>e.id===task.id?{...e,date:slot.date,time:slot.time}:e);
+      if(targets.length>0){
+        const t=targets[0];
+        working=working.map(e=>e.id===task.id?{...e,date:t.slot.date,time:t.slot.time}:e);
         // Plain and factual, same "state the fact" convention this file's
         // other student-facing reason copy already follows -- this answers
         // "why THIS task got picked to move," a different question from
         // fmtPlacementReason's "why THIS time slot."
-        const reason="Moved off "+heavyDk+" ("+Math.round(before[heavyDk])+" min of flexible work that day, above your "+Math.round(avg)+" min average) — the lowest priority item scheduled that day.";
-        moves.push({id:task.id,title:task.title,duration:task.duration,fromDate:task.date,fromTime:task.time,toDate:slot.date,toTime:slot.time,reason});
+        const reason="Moved off "+heavyDk+" ("+Math.round(before[heavyDk])+" min of flexible work that day, above your "+Math.round(avg)+" min average). The lowest priority item scheduled that day.";
+        moves.push({id:task.id,title:task.title,duration:task.duration,fromDate:task.date,fromTime:task.time,toDate:t.slot.date,toTime:t.slot.time,reason});
         moved=true;
-        break;
       }
       // No legal day anywhere in the window for this specific task — drop
       // just this one candidate and stop trying this heavy day rather than
@@ -6300,6 +6344,12 @@ function StudlinPrep({setActive=()=>{}}={}){
   const [buildPlanHoursTarget,setBuildPlanHoursTarget]=useState("");
   const [buildPlanFocuses,setBuildPlanFocuses]=useState([]);
   const [buildPlanFocusesLoading,setBuildPlanFocusesLoading]=useState(false);
+  // Per-session {date,duration} edits made in the preview step -- null
+  // entries mean "still using the auto-computed value." commitBuildPlan
+  // re-resolves any overridden row through findReliableSlotFor instead of
+  // trusting the auto-picked time, since a manually-chosen date needs a
+  // real, non-conflicting slot found for it too.
+  const [buildPlanOverrides,setBuildPlanOverrides]=useState([]);
   // Correction round (2026-07-31): confidence used to be an instant-fire
   // button (click it, immediately advance). Now that impact + material +
   // the flashcard/PE toggles + hours target all live on the same
@@ -6528,6 +6578,11 @@ function StudlinPrep({setActive=()=>{}}={}){
     setBuildPlanPreview({sessionCount,sessionDuration,difficultyValue:params.difficultyValue,dates});
     setBuildPlanStep("preview");
     setBuildPlanFocuses(dates.map(()=>""));
+    // One {date,duration}|null per session index -- null means "use the
+    // auto-computed value," matching how buildPlanFocuses' blank string
+    // means "no edit yet." Reset on every fresh preview generation, same
+    // as buildPlanFocuses just above.
+    setBuildPlanOverrides(dates.map(()=>null));
     if(hasMaterial&&dates.length>0){
       setBuildPlanFocusesLoading(true);
       const focuses=await proposeSessionFocuses(buildPlanExam.title,buildPlanMaterialText,dates.length,buildPlanExam.subject);
@@ -6545,24 +6600,52 @@ function StudlinPrep({setActive=()=>{}}={}){
       while(next.length<count)next.push("");
       return next;
     });
+    setBuildPlanOverrides(o=>{
+      const next=o.slice(0,count);
+      while(next.length<count)next.push(null);
+      return next;
+    });
   };
   const commitBuildPlan=async()=>{
     if(!buildPlanExam||!buildPlanPreview)return;
     setBuildPlanLoading(true);
     const events=removeGenericExamPrepSessions(lsGet("events",[]),buildPlanExam.id);
-    const sessions=buildExamSessionEvents(buildPlanExam.title,buildPlanExam.date,buildPlanExam.subject,buildPlanPreview.sessionCount,"prep-"+buildPlanExam.id+"-"+Date.now(),events,getWeeklyRoutine(),getSchedulePreferences(),{dueEventId:buildPlanExam.id},buildPlanPreview.difficultyValue,buildPlanPreview.sessionDuration,buildPlanExam.examWeight,buildPlanExam.confidenceLog);
+    const routines=getWeeklyRoutine();
+    const prefs=getSchedulePreferences();
+    const sessions=buildExamSessionEvents(buildPlanExam.title,buildPlanExam.date,buildPlanExam.subject,buildPlanPreview.sessionCount,"prep-"+buildPlanExam.id+"-"+Date.now(),events,routines,prefs,{dueEventId:buildPlanExam.id},buildPlanPreview.difficultyValue,buildPlanPreview.sessionDuration,buildPlanExam.examWeight,buildPlanExam.confidenceLog);
+    // Apply any per-row date/duration edits made in the preview step.
+    // Re-resolved through the exact same findReliableSlotFor
+    // buildExamSessionEvents already uses internally, so a manually-picked
+    // day still lands on a real, non-conflicting time instead of blindly
+    // keeping whatever time the auto-computed duration happened to land
+    // on. `working` updates after each placed override so a second edited
+    // row sees the first's new slot, never colliding with it. Falls back
+    // to the auto-picked session untouched if no legal slot exists for an
+    // override -- never forced through, same discipline eviction/rebalance
+    // already follow elsewhere in this file.
+    let working=events.concat(sessions);
+    const placedSessions=sessions.map((s,i)=>{
+      const ov=buildPlanOverrides[i];
+      if(!ov)return s;
+      const date=ov.date||s.date;
+      const duration=ov.duration||s.duration;
+      const slot=findReliableSlotFor(working.filter(e=>e.id!==s.id),routines,prefs,date,prefs.workStartTime,duration,buildPlanExam.date,buildPlanPreview.difficultyValue??500);
+      const placed=slot?{...s,date:slot.date,time:slot.time,duration,placementReason:slot.reason||s.placementReason}:s;
+      working=working.map(e=>e.id===s.id?placed:e);
+      return placed;
+    });
     let finalSessions;
     if(buildPlanGeneric){
       // Honest, clearly-labeled generic sessions -- no fabricated "what to
       // study" line since there's no material to ground one in (grounded-
       // or-nothing, same principle proposeSessionFocuses' other callers
       // already follow), plus the required nudge that material unlocks more.
-      finalSessions=sessions.map(s=>({...s,notes:"General review — no material attached yet. Add material anytime to unlock real flashcards for this exam.",isGenericStudyPlan:true}));
+      finalSessions=placedSessions.map(s=>({...s,notes:"General review. No material attached yet. Add material anytime to unlock real flashcards for this exam.",isGenericStudyPlan:true}));
     }else{
       // Focuses were already generated (and are editable) back in
       // chooseConfidence/the preview step -- use whatever the student
       // actually confirmed, don't silently regenerate a second set here.
-      finalSessions=sessions.map((s,i)=>buildPlanFocuses[i]?{...s,notes:buildPlanFocuses[i]}:s);
+      finalSessions=placedSessions.map((s,i)=>buildPlanFocuses[i]?{...s,notes:buildPlanFocuses[i]}:s);
     }
     lsSet("events",events.concat(finalSessions));
     // Also generate flashcards/a practice exam if requested -- replaces
@@ -7168,7 +7251,7 @@ function StudlinPrep({setActive=()=>{}}={}){
                 :readiness.state==="at-risk"
                   ?"Worth an extra review session before the exam, or revisiting whatever didn't click last time."
                   :readiness.state==="tight"
-                    ?"Not behind yet, but there's little slack left before the exam -- worth keeping every remaining session, since there's not much room to lose one."
+                    ?"Not behind yet, but there's little slack left before the exam. Worth keeping every remaining session, since there's not much room to lose one."
                     :readiness.state==="no-data"
                       ?"Build a study kit below to get review sessions started."
                       :null;
@@ -7204,6 +7287,20 @@ function StudlinPrep({setActive=()=>{}}={}){
               );
             })()}
 
+            {(()=>{
+              const suggestion=performanceConfidenceSuggestion(selectedExam);
+              if(!suggestion)return null;
+              return (
+                <div style={{background:T.card,border:`1px solid ${T.amber}44`,borderRadius:8,padding:"12px 14px",marginBottom:20,fontSize:12.5,color:T.text,lineHeight:1.5}}>
+                  Your last real result on this came back <strong style={{color:T.amber}}>{suggestion.suggested}</strong>, below the <strong>{suggestion.current}</strong> you last said. Update your confidence?
+                  <div style={{display:"flex",gap:8,marginTop:10}}>
+                    <BtnSm onClick={()=>{patchExam(selectedExam.id,{confidenceLog:[...(selectedExam.confidenceLog||[]),suggestion.suggested]});refresh();}}>Update to {suggestion.suggested}</BtnSm>
+                    <BtnSm variant="ghost" onClick={()=>{dismissPerformanceConfidence(selectedExam.id);refresh();}}>Not now</BtnSm>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* ── Session timeline -- the page's center of gravity. Only the
                 next actionable session expands with Start/Move, same
                 one-at-a-time progressive disclosure as the exam list. ── */}
@@ -7214,10 +7311,14 @@ function StudlinPrep({setActive=()=>{}}={}){
               // when there's nothing yet (the Materials & study kit
               // section's own Generate button, below, only ever renders
               // once sessions already exist -- see its own comment).
-              <Card style={{padding:"14px 16px",marginBottom:24,display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
-                <div style={{fontSize:13,color:T.muted}}>No study plan yet.</div>
-                <Btn onClick={()=>openBuildPlan(selectedExam)} style={{flexShrink:0}}>Build study plan</Btn>
-              </Card>
+              <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"16px 18px",marginBottom:24,display:"flex",alignItems:"flex-start",gap:14}}>
+                <div style={{flexShrink:0,width:38,height:38,borderRadius:8,background:T.muted+"1A",display:"flex",alignItems:"center",justifyContent:"center",color:T.muted}}>{Icon.brain}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>No study plan yet</div>
+                  <div style={{fontSize:13,color:T.text,lineHeight:1.5,marginBottom:14}}>Add material and Studlin will build one, or set it up yourself.</div>
+                  <Btn onClick={()=>openBuildPlan(selectedExam)} style={{padding:"7px 14px",fontSize:12}}>Build study plan</Btn>
+                </div>
+              </div>
             ):(
               <div style={{marginBottom:24}}>
                 {examSessions.map(s=>{
@@ -7240,6 +7341,18 @@ function StudlinPrep({setActive=()=>{}}={}){
                           {statusLabel||((s.duration||25)+"min · "+fmtRolloverClock(s.time))}
                         </div>
                       </div>
+                      {/* Once a session has been silently reshuffled past
+                          RESHUFFLE_ESCALATE_THRESHOLD times, it's already
+                          excluded from further silent eviction/rebalance
+                          candidates (see findSlotWithEviction/
+                          computeWeekBalancePlan) -- this is the direct ask
+                          that replaces guessing a third time. */}
+                      {!isDone&&(s.reshuffleCount||0)>=RESHUFFLE_ESCALATE_THRESHOLD&&(
+                        <button onClick={(e)=>{e.stopPropagation();setExpandedSessionId(s.id);setEditingSessionId(s.id);}}
+                          style={{background:"none",border:"none",color:T.amber,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,marginTop:4,textDecoration:"underline"}}>
+                          Moved {s.reshuffleCount}x · Lock in a time?
+                        </button>
+                      )}
                       {/* Any row that's expanded (clicked) or auto-shown as
                           "next" surfaces Start+Move first -- Move is what
                           drills into the date/time/duration editor below,
@@ -7304,9 +7417,9 @@ function StudlinPrep({setActive=()=>{}}={}){
                     <div key={f.name} style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12,padding:"7px 10px",background:T.card2,borderRadius:8,gap:8}}>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</div>
-                        {f.name==="From your syllabus"&&<div style={{fontSize:10,color:T.faint,marginTop:1}}>Background only — not used for flashcards, practice exams, or study sessions</div>}
-                        {f.empty&&<div style={{fontSize:10,color:T.amber,marginTop:1}}>Couldn't find readable text in this one — try a different file</div>}
-                        {f.truncated&&!f.empty&&<div style={{fontSize:10,color:T.faint,marginTop:1}}>Trimmed — only the first part will be used</div>}
+                        {f.name==="From your syllabus"&&<div style={{fontSize:10,color:T.faint,marginTop:1}}>Background only. Not used for flashcards, practice exams, or study sessions.</div>}
+                        {f.empty&&<div style={{fontSize:10,color:T.amber,marginTop:1}}>Couldn't find readable text in this one. Try a different file.</div>}
+                        {f.truncated&&!f.empty&&<div style={{fontSize:10,color:T.faint,marginTop:1}}>Trimmed. Only the first part will be used.</div>}
                       </div>
                       <button onClick={()=>removePrepFile(f.name)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,flexShrink:0}}>×</button>
                     </div>
@@ -7381,9 +7494,10 @@ function StudlinPrep({setActive=()=>{}}={}){
               </div>
             </Card>
 
+            {(deck||examSessions.length>0)&&(
             <Card style={{padding:20,marginBottom:16}}>
               <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Flashcards</div>
-              {!deck?<div style={{fontSize:12,color:T.muted}}>No deck yet — generate one from material above.</div>:(
+              {!deck?<div style={{fontSize:12,color:T.muted}}>No deck yet. Generate one from material above.</div>:(
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
                   <div style={{fontSize:12.5,color:T.text}}>{deck.name} · {deck.count} cards</div>
                   <div style={{display:"flex",gap:6,flexShrink:0,flexWrap:"wrap"}}>
@@ -7395,10 +7509,12 @@ function StudlinPrep({setActive=()=>{}}={}){
                 </div>
               )}
             </Card>
+            )}
 
+            {(pes.length>0||examSessions.length>0)&&(
             <Card style={{padding:20}}>
               <div style={{fontSize:13,fontWeight:700,color:T.white,marginBottom:10}}>Practice Exams</div>
-              {pes.length===0?<div style={{fontSize:12,color:T.muted}}>No practice exams yet — generate one from material above.</div>:(
+              {pes.length===0?<div style={{fontSize:12,color:T.muted}}>No practice exams yet. Generate one from material above.</div>:(
                 <div style={{display:"flex",flexDirection:"column",gap:8}}>
                   {pes.map(pe=>{
                     const lastAttempt=pe.attempts&&pe.attempts.length>0?pe.attempts[pe.attempts.length-1]:null;
@@ -7419,6 +7535,7 @@ function StudlinPrep({setActive=()=>{}}={}){
                 </div>
               )}
             </Card>
+            )}
             </>)}
           </div>
         );
@@ -7517,7 +7634,7 @@ function StudlinPrep({setActive=()=>{}}={}){
         {buildPlanExam&&buildPlanStep==="choice"&&(
           <div>
             <div style={{fontSize:13,color:T.text,lineHeight:1.6,marginBottom:18}}>
-              Have Studlin build the plan -- confidence, material if you've got it, flashcards if you want them -- or lay out your own sessions by hand.
+              Studlin can build the plan for you. Or you can lay it out yourself.
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:8}}>
               <Btn onClick={()=>setBuildPlanStep("confidence")} style={{width:"100%",justifyContent:"center"}}>Studlin generates</Btn>
@@ -7528,14 +7645,15 @@ function StudlinPrep({setActive=()=>{}}={}){
         {buildPlanExam&&buildPlanStep==="manual"&&(
           <div>
             <div style={{fontSize:13,color:T.text,lineHeight:1.6,marginBottom:14}}>
-              What do you want to study each session? Fill in a time to schedule it now, or leave it blank -- you'll be able to drag it onto the calendar later.
+              What do you want to study each session? Fill in a time to schedule it now, or leave it blank. You'll be able to drag it onto the calendar later.
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:14}}>
               {manualSessionRows.map((row,i)=>(
                 <div key={i} style={{padding:"10px",background:T.card2,borderRadius:8,display:"flex",flexDirection:"column",gap:8}}>
+                  <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Session {i+1}</div>
                   <div style={{display:"flex",gap:8,alignItems:"center"}}>
                     <Input value={row.text} onChange={e=>setManualSessionRows(rows=>rows.map((r,ri)=>ri===i?{...r,text:e.target.value}:r))}
-                      placeholder={"Session "+(i+1)+": what to study"} style={{flex:1,fontSize:12.5}} />
+                      placeholder="What to study" style={{flex:1,fontSize:12.5}} />
                     {manualSessionRows.length>1&&(
                       <button onClick={()=>setManualSessionRows(rows=>rows.filter((_,ri)=>ri!==i))} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1}}>×</button>
                     )}
@@ -7564,15 +7682,42 @@ function StudlinPrep({setActive=()=>{}}={}){
         {buildPlanExam&&buildPlanStep==="confidence"&&(
           <div>
             <div style={{marginBottom:16}}>
-              <div style={{fontSize:12,color:T.muted,marginBottom:6}}>How important is this exam?</div>
-              <div style={{display:"flex",gap:8}}>
-                {[["quiz","Quiz"],["major","Major"]].map(([v,label])=>(
-                  <button key={v} type="button" onClick={()=>patchExam(buildPlanExam.id,{examWeight:v})}
-                    style={{flex:1,padding:"8px",borderRadius:7,fontSize:12.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,
-                      background:(buildPlanExam.examWeight||"major")===v?T.lime+"14":T.card2,color:(buildPlanExam.examWeight||"major")===v?T.lime:T.muted,
-                      border:`1px solid ${(buildPlanExam.examWeight||"major")===v?T.lime+"44":T.border}`}}>{label}</button>
+              <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:6}}>What kind of exam is this?</div>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {[["quiz","Quiz"],["midterm","Midterm"],["final","Final"],["project","Project"],["other","Other"]].map(([v,label])=>(
+                  <button key={v} type="button" onClick={()=>{
+                    // Picking a type silently derives an importance level
+                    // (and the legacy examWeight every other consumer still
+                    // reads) -- the level itself shows right below as an
+                    // editable pill, not a second required question.
+                    const level=EXAM_TYPE_TO_IMPORTANCE[v]||"moderate";
+                    patchExam(buildPlanExam.id,{examType:v,importanceLevel:level,examWeight:examWeightFromImportance(level)});
+                  }}
+                    style={{padding:"7px 12px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,
+                      background:buildPlanExam.examType===v?T.lime+"14":T.card2,color:buildPlanExam.examType===v?T.lime:T.muted,
+                      border:`1px solid ${buildPlanExam.examType===v?T.lime+"44":T.border}`}}>{label}</button>
                 ))}
               </div>
+              {buildPlanExam.examType&&(<>
+                <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginTop:12,marginBottom:6}}>Importance</div>
+                <div style={{display:"flex",gap:6}}>
+                  {[["minor","Minor"],["moderate","Moderate"],["major","Major"],["critical","Critical"]].map(([v,label])=>{
+                    const active=(buildPlanExam.importanceLevel||"moderate")===v;
+                    return (
+                      <button key={v} type="button" onClick={()=>patchExam(buildPlanExam.id,{importanceLevel:v,examWeight:examWeightFromImportance(v)})}
+                        style={{flex:1,padding:"6px",borderRadius:7,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,
+                          background:active?T.lime+"14":T.card2,color:active?T.lime:T.muted,
+                          border:`1px solid ${active?T.lime+"44":T.border}`}}>{label}</button>
+                    );
+                  })}
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginTop:8}}>
+                  <span style={{fontSize:11.5,color:T.muted}}>% of grade (if you know it):</span>
+                  <Input type="number" min={0} max={100} step={1} value={buildPlanExam.gradeWeightPercent??""}
+                    onChange={e=>patchExam(buildPlanExam.id,{gradeWeightPercent:e.target.value===""?null:parseFloat(e.target.value)})}
+                    placeholder="0" style={{width:56,fontSize:11.5,padding:"5px 8px"}} />
+                </div>
+              </>)}
             </div>
             <div style={{marginBottom:16}}>
               <div style={{fontSize:12,color:T.muted,marginBottom:6}}>How confident are you on this material?</div>
@@ -7632,7 +7777,7 @@ function StudlinPrep({setActive=()=>{}}={}){
               </label>
               <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
                 <span style={{fontSize:12,color:T.muted}}>Hours to study for this (optional):</span>
-                <Input type="number" min={0} step={0.5} value={buildPlanHoursTarget} onChange={e=>setBuildPlanHoursTarget(e.target.value)} placeholder="—" style={{width:60}} />
+                <Input type="number" min={0} step={0.5} value={buildPlanHoursTarget} onChange={e=>setBuildPlanHoursTarget(e.target.value)} placeholder="0" style={{width:60}} />
               </div>
             </div>
           </div>
@@ -7654,11 +7799,18 @@ function StudlinPrep({setActive=()=>{}}={}){
               <div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"14px 0",marginBottom:14}}>Too close to the exam to fit a session.</div>
             ):(
               <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
-                {buildPlanPreview.dates.map((d,i)=>(
+                {buildPlanPreview.dates.map((d,i)=>{
+                  const ov=buildPlanOverrides[i];
+                  const setOv=(patch)=>setBuildPlanOverrides(o=>o.map((v,vi)=>vi===i?{date:v?.date??d,duration:v?.duration??buildPlanPreview.sessionDuration,...patch}:v));
+                  return (
                   <div key={i} style={{padding:"8px 10px",background:T.card2,borderRadius:8}}>
-                    <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,marginBottom:!buildPlanGeneric?6:0}}>
-                      <span style={{color:T.text}}>Session {i+1}</span>
-                      <span style={{color:T.muted,fontFamily:T.mono,fontSize:11.5}}>{d} · {buildPlanPreview.sessionDuration}min</span>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:12.5,marginBottom:6,gap:8}}>
+                      <span style={{color:T.text,flexShrink:0}}>Session {i+1}</span>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <Input type="date" value={ov?.date??d} onChange={e=>setOv({date:e.target.value})} style={{width:130,fontSize:11.5,padding:"5px 8px"}} />
+                        <NumField min={5} max={240} fallback={buildPlanPreview.sessionDuration} value={ov?.duration??buildPlanPreview.sessionDuration} onChange={v=>setOv({duration:v})} style={{width:48}} />
+                        <span style={{fontSize:10.5,color:T.muted,flexShrink:0}}>min</span>
+                      </div>
                     </div>
                     {!buildPlanGeneric&&(
                       <Input value={buildPlanFocuses[i]||""} onChange={e=>setBuildPlanFocuses(f=>f.map((v,vi)=>vi===i?e.target.value:v))}
@@ -7666,7 +7818,8 @@ function StudlinPrep({setActive=()=>{}}={}){
                         style={{width:"100%",fontSize:12}} />
                     )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
             <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -8800,19 +8953,20 @@ function Notes({setActive=()=>{}}){
         "For each item return: \"title\" (short, e.g. \"Problem Set 3\" or \"Midterm Exam\"), "+
         "\"date\" (YYYY-MM-DD, your best guess — never omit even if uncertain), "+
         "\"kind\" (either \"deadline\" for assignments/readings/papers or \"exam\" for quizzes, tests, midterms, and finals), "+
-        "\"examWeight\" (ONLY when kind is \"exam\": \"quiz\" for a quiz or short in-class test worth relatively little, \"major\" for a midterm, final, or unit exam worth significant grade weight — omit entirely when kind is \"deadline\"), "+
+        "\"examType\" (ONLY when kind is \"exam\": \"quiz\" for a quiz or short in-class test, \"midterm\" for a midterm exam, \"final\" for a final exam, \"project\" for a project defense/presentation exam, \"other\" for anything else exam-like — omit entirely when kind is \"deadline\"), "+
+        "\"gradeWeightPercent\" (ONLY when kind is \"exam\" AND the source explicitly states what percentage of the final grade this is worth, e.g. \"worth 20% of your grade\" — a plain number like 20, not a string or a % sign; omit entirely if no percentage is stated anywhere, never guess one), "+
         "\"confidence\" (\"high\" if an explicit date was stated, \"low\" if you inferred/guessed it, e.g. from \"the Friday after spring break\"), "+
         "\"detail\" (optional — only include this key when the source text actually states something concrete and useful beyond the date itself, e.g. \"Covers chapters 4-6, bring a calculator\" for an exam or \"Submit as PDF, cite 3 sources\" for an assignment; leave the key out entirely rather than inventing generic filler when nothing specific is stated). "+
         "\"estimatedHours\" (ONLY when kind is \"deadline\": your best-guess total hours a typical student would need for the whole thing, based on the title and any detail given — a short reading response or problem set is usually 1-3 hours, an essay or lab report is usually 4-8 hours, a term paper or major project is usually 12-25 hours; omit entirely when kind is \"exam\"). "+
         ANTI_GARBAGE_EXTRACTION_RULE+
         "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
-        "{\"deadlines\":[{\"title\":\"Problem Set 3\",\"date\":\"2026-09-22\",\"kind\":\"deadline\",\"confidence\":\"high\",\"estimatedHours\":2},{\"title\":\"Unit 2 Midterm\",\"date\":\"2026-10-03\",\"kind\":\"exam\",\"examWeight\":\"major\",\"confidence\":\"high\",\"detail\":\"Covers chapters 4-6, bring a calculator\"}]}. "+
+        "{\"deadlines\":[{\"title\":\"Problem Set 3\",\"date\":\"2026-09-22\",\"kind\":\"deadline\",\"confidence\":\"high\",\"estimatedHours\":2},{\"title\":\"Unit 2 Midterm\",\"date\":\"2026-10-03\",\"kind\":\"exam\",\"examType\":\"midterm\",\"confidence\":\"high\",\"detail\":\"Covers chapters 4-6, bring a calculator\"}]}. "+
         "If you find no dates at all, respond with {\"deadlines\":[]}.\n\n"+text.slice(0,30000);
       const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
       const data=await res.json();
       const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
       const parsed=JSON.parse(raw);
-      if(parsed&&Array.isArray(parsed.deadlines))return parsed.deadlines.filter(d=>looksLikeRealDeadlineTitle(d&&d.title));
+      if(parsed&&Array.isArray(parsed.deadlines))return parsed.deadlines.filter(d=>looksLikeRealDeadlineTitle(d&&d.title)).map(withDerivedExamImportance);
       return regexScanDeadlines(text);
     }catch(e){return regexScanDeadlines(text);}
   };
@@ -9182,6 +9336,19 @@ function Notes({setActive=()=>{}}){
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                     <SelectChip options={[{value:"deadline",label:"To-Do"},{value:"exam",label:"Exam"}]} value={it.kind} onChange={v=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,kind:v,attackBlock:v==="deadline",proposeSessions:false,sessionCount:x.sessionCount||defaultSessionCountFor()}:x)}))} />
+                    {it.kind==="exam"&&(
+                      <SelectChip size="sm" options={[{value:"quiz",label:"Quiz"},{value:"midterm",label:"Midterm"},{value:"final",label:"Final"},{value:"project",label:"Project"},{value:"other",label:"Other"}]}
+                        value={it.examType||""} onChange={v=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>{
+                          if(xi!==i)return x;
+                          const level=EXAM_TYPE_TO_IMPORTANCE[v]||"moderate";
+                          return {...x,examType:v,importanceLevel:level,examWeight:examWeightFromImportance(level)};
+                        })}))} />
+                    )}
+                    {it.kind==="exam"&&(
+                      <Input type="number" min={0} max={100} step={1} value={it.gradeWeightPercent??""}
+                        onChange={ev=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,gradeWeightPercent:ev.target.value===""?null:parseFloat(ev.target.value)}:x)}))}
+                        placeholder="% of grade" style={{width:90,fontSize:11}} />
+                    )}
                     {it.confidence==="low"&&!it.noDate&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 8px"}}>Low confidence, double-check</span>}
                     <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:T.muted,cursor:"pointer"}}>
                       <input type="checkbox" checked={!!it.noDate} onChange={()=>setSyllabusReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,noDate:!x.noDate}:x)}))} />
@@ -10628,6 +10795,33 @@ const CONFIDENCE_TO_UNIT={shaky:0.2,okay:0.6,solid:1.0};
 // major/1.0 -- fails toward treating an unknown exam as significant, not
 // toward under-scheduling it.
 const EXAM_WEIGHT_TO_IMPACT={quiz:0.4,major:1.0};
+// Richer importance signal (Prep redesign, exam-type + derived level),
+// additive alongside examWeight rather than replacing it -- examWeight is
+// read directly (strict string equality, several sites) by
+// defaultSessionCountFor, evaluateExamPrepAdjustment, the exam-table
+// dropdown, and multiple AI-prompt schemas; too many dependents to safely
+// swap out. Instead, whenever importanceLevel is set, examWeight is
+// derived alongside it (see EXAM_TYPE_TO_IMPORTANCE/examWeightFromImportance
+// below) so every existing consumer keeps behaving exactly as before with
+// zero migration for exams that predate this field.
+const EXAM_TYPE_TO_IMPORTANCE={quiz:"moderate",midterm:"major",final:"critical",project:"major",other:"moderate"};
+const IMPORTANCE_TO_IMPACT={minor:0.2,moderate:0.5,major:0.8,critical:1.0};
+// minor/moderate collapse to the existing "quiz" bucket, major/critical to
+// "major" -- same two legacy buckets defaultSessionCountFor/
+// evaluateExamPrepAdjustment/EXAM_WEIGHT_TO_IMPACT already understand.
+const examWeightFromImportance=(level)=>(level==="minor"||level==="moderate")?"quiz":"major";
+// Post-processes an AI-parsed syllabus/deadline item -- derives
+// importanceLevel + the legacy examWeight from the extracted examType, in
+// code rather than trusting the AI to independently emit a second,
+// possibly-inconsistent judgment call. No-op for non-exam items or when
+// the AI omitted examType. Called right after JSON-parsing an extraction
+// response, before any downstream code (which still only ever reads
+// examWeight/importanceLevel, never examType directly) sees the item.
+function withDerivedExamImportance(it){
+  if(!it||it.kind!=="exam"||!it.examType)return it;
+  const level=EXAM_TYPE_TO_IMPORTANCE[it.examType]||"moderate";
+  return {...it,importanceLevel:level,examWeight:examWeightFromImportance(level)};
+}
 const SESSION_PRIORITY_URGENCY_HORIZON_DAYS=21;
 // Real priority for an AI-generated study session, replacing the flat
 // priority:5 (or an occasional hand-tuned 6) every session used to get
@@ -10648,7 +10842,12 @@ function computeSessionPriority(examLike,todayKey){
   // at all (shouldn't happen for a real exam, but stay defensive) lands
   // on a neutral middle rather than 0 or 1.
   const urgency=daysUntil==null?0.5:Math.max(0,Math.min(1,1-daysUntil/SESSION_PRIORITY_URGENCY_HORIZON_DAYS));
-  const impact=EXAM_WEIGHT_TO_IMPACT[examLike.examWeight]??EXAM_WEIGHT_TO_IMPACT.major;
+  // importanceLevel (new, richer signal) is checked first when present;
+  // anything without it (every exam that predates this field) computes
+  // byte-identically to before via the legacy examWeight table.
+  const impact=examLike.importanceLevel
+    ?(IMPORTANCE_TO_IMPACT[examLike.importanceLevel]??IMPORTANCE_TO_IMPACT.major)
+    :(EXAM_WEIGHT_TO_IMPACT[examLike.examWeight]??EXAM_WEIGHT_TO_IMPACT.major);
   const log=examLike.confidenceLog||[];
   const lastRating=log[log.length-1];
   // No check-in yet (very common right after an exam is first created) ->
@@ -10706,6 +10905,57 @@ function computePreparedness(examEvent,events,todayKey){
   const totalWeight=components.reduce((s,c)=>s+c.weight,0);
   const score=Math.round(components.reduce((s,c)=>s+c.value*c.weight,0)/totalWeight*100);
   return {score:Math.max(0,Math.min(100,score)),breakdown:components.map(c=>c.key)};
+}
+// Real performance data (quiz scores, practice-exam attempts) already
+// feeds computePreparedness's bar, but confidenceLog -- the only thing
+// computeSessionPriority/computeStudyPlanParams actually read -- stays
+// 100% self-reported forever otherwise. Same lastQuiz/lastAttempt
+// averaging computePreparedness already does, just mapped onto the
+// shaky/okay/solid vocabulary instead of a 0-100 score. Returns null when
+// there's no real performance data yet -- nothing to suggest without it.
+function derivePerformanceConfidence(examEvent){
+  if(!examEvent)return null;
+  const lastQuiz=(examEvent.quizScores&&examEvent.quizScores.length)?examEvent.quizScores[examEvent.quizScores.length-1]:null;
+  const practiceExams=lsGet("practiceExams",[]).filter(pe=>pe.examEventId===examEvent.id);
+  const lastAttempt=practiceExams.reduce((latest,pe)=>{
+    const a=(pe.attempts&&pe.attempts.length)?pe.attempts[pe.attempts.length-1]:null;
+    if(!a)return latest;
+    return(!latest||a.at>latest.at)?a:latest;
+  },null);
+  const parts=[];
+  if(lastQuiz)parts.push(lastQuiz.score/lastQuiz.total);
+  if(lastAttempt)parts.push(lastAttempt.score/lastAttempt.total);
+  if(parts.length===0)return null;
+  const avg=parts.reduce((a,b)=>a+b,0)/parts.length;
+  // Same rough thresholds the midpoints of CONFIDENCE_TO_UNIT's own
+  // 0.2/0.6/1.0 values imply.
+  return avg<0.4?"shaky":avg<0.8?"okay":"solid";
+}
+// Transparent, dismissible only -- this app never silently overrides
+// something a student explicitly stated (same principle the peak-hour
+// insight banner and every readiness sentence already follow). Only
+// flags a genuine divergence: real performance suggests worse than the
+// last thing the student actually said, and there IS a last self-report
+// to diverge from (nothing to compare against otherwise). Independent
+// per-exam cooldown once dismissed, same convention weekBalanceNudge's
+// own single cooldown timestamp already uses.
+const PERFORMANCE_CONFIDENCE_COOLDOWN_MS=3*24*60*60*1000;
+function performanceConfidenceSuggestion(examEvent){
+  if(!examEvent)return null;
+  const suggested=derivePerformanceConfidence(examEvent);
+  if(!suggested)return null;
+  const log=examEvent.confidenceLog||[];
+  const lastSelf=log.length>0?log[log.length-1]:null;
+  if(!lastSelf)return null;
+  if(CONFIDENCE_TO_UNIT[suggested]>=CONFIDENCE_TO_UNIT[lastSelf])return null;
+  const dismissed=lsGet("performanceConfidenceDismissedAt",{});
+  if(dismissed[examEvent.id]&&Date.now()-dismissed[examEvent.id]<PERFORMANCE_CONFIDENCE_COOLDOWN_MS)return null;
+  return {suggested,current:lastSelf};
+}
+function dismissPerformanceConfidence(examId){
+  const dismissed=lsGet("performanceConfidenceDismissedAt",{});
+  dismissed[examId]=Date.now();
+  lsSet("performanceConfidenceDismissedAt",dismissed);
 }
 // Keeps every AI-generated session's priority current after something
 // real changes about the exam -- called right after a confidence
@@ -10987,6 +11237,17 @@ function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routin
   // without this it silently never qualified for Attack Block gating at all,
   // so its phases/outline never got attached to the committed event.
   const gates=items.map(it=>(it.kind==="deadline"||it.kind==="project")&&it.attackBlock&&!it.noDate?attackBlockActionableDate(it.estimatedHours,it.date,today):null);
+  // Re-scanning the same syllabus (or re-syncing Canvas) used to silently
+  // double every exam/deadline it already knew about, each with its own
+  // fresh study sessions -- this app already dedups two other import
+  // paths the same way (calendar-sync by externalUid, habit
+  // materialization by routineId+date), syllabus import was the one
+  // missing it. Keyed on title+subject+date+kind since syllabus items
+  // don't have a stable external id to match on. Computed once, up
+  // front, so the marker/attack/session-building passes below can all
+  // just skip a duplicate index rather than each re-deriving this.
+  const normKind=it=>it.kind==="exam"?"exam":"deadline";
+  const isDuplicate=items.map(it=>existing.some(e=>e.title&&it.title&&e.title.trim().toLowerCase()===it.title.trim().toLowerCase()&&e.subject===tag&&e.date===(it.date||"")&&e.kind===normKind(it)));
   const markerEvents=items.map((it,i)=>{
     const syllabusSeed=it.detail&&it.detail.trim()
       ?[{name:"From your syllabus",text:it.detail.trim()}]
@@ -11056,6 +11317,13 @@ function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routin
       // adaptive check-in after each linked study session completes — see
       // evaluateExamPrepAdjustment. Only meaningful for kind:"exam".
       examWeight:it.kind==="exam"?(it.examWeight||"major"):undefined,
+      // Richer importance signal, carried through when the syllabus scan
+      // (or the review screen's own type chip) set it -- undefined for
+      // legacy paths that never set it, computeSessionPriority falls back
+      // to examWeight in that case.
+      ...(it.kind==="exam"&&it.examType?{examType:it.examType}:{}),
+      ...(it.kind==="exam"&&it.importanceLevel?{importanceLevel:it.importanceLevel}:{}),
+      ...(it.kind==="exam"&&it.gradeWeightPercent!=null?{gradeWeightPercent:it.gradeWeightPercent}:{}),
       confidenceLog:it.kind==="exam"?[]:undefined,
       // Overrides the flat difficulty:5 above, exam items only — a
       // deadline marker's difficulty field is unused today, so it's left
@@ -11070,9 +11338,10 @@ function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routin
   // due" fact, unplaced and duration-less; this is the actual prep-time
   // scheduling. Anything further out stays prepPending (see above) instead
   // of scheduling now.
-  let working=existing.concat(markerEvents);
+  let working=existing.concat(markerEvents.filter((_,i)=>!isDuplicate[i]));
   const attackEvents=[];
   items.forEach((it,i)=>{
+    if(isDuplicate[i])return;
     if(it.kind!=="deadline"||!it.attackBlock||it.noDate)return;
     const gate=gates[i];
     if(!gate||today<gate.startDate)return;
@@ -11088,6 +11357,7 @@ function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routin
   // the exam date (see buildExamSessionEvents above).
   let examSessionEvents=[];
   items.forEach((it,i)=>{
+    if(isDuplicate[i])return;
     if(it.kind!=="exam"||!it.proposeSessions||it.noDate)return;
     const sessions=buildExamSessionEvents(it.title,it.date,tag,it.sessionCount||4,"examrev-"+noteId+"-"+i,working,routines,prefs,{noteId,dueEventId:markerEvents[i].id},it.difficulty,undefined,markerEvents[i].examWeight,markerEvents[i].confidenceLog);
     examSessionEvents=examSessionEvents.concat(sessions);working=working.concat(sessions);
@@ -11098,7 +11368,12 @@ function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routin
   // only when a real courseId was actually passed in, so existing callers
   // that never pass one see zero diff in their output.
   const withCourseId=(list)=>courseId?list.map(e=>({...e,courseId})):list;
-  return {markerEvents:withCourseId(markerEvents),attackEvents:withCourseId(attackEvents),examSessionEvents:withCourseId(examSessionEvents)};
+  // Duplicate indices are filtered out of markerEvents here, at the very
+  // end, rather than earlier -- everything above (gates/attackEvents/
+  // examSessionEvents) still needs markerEvents[i] to exist at its
+  // original index for id/examWeight/confidenceLog linkage, it just never
+  // does real work for a duplicate index thanks to the isDuplicate guards.
+  return {markerEvents:withCourseId(markerEvents.filter((_,i)=>!isDuplicate[i])),attackEvents:withCourseId(attackEvents),examSessionEvents:withCourseId(examSessionEvents)};
 }
 // sourceMaterial is optional -- the raw scanned text (syllabus, notes),
 // when the caller has it -- attached to exam-kind markers only, so Studlin
@@ -16734,7 +17009,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       // same per-item undo icon and lets the fully generic undoTier0Move
       // reverse it. Previously the ~3.4s toast below was the only record
       // this ever happened.
-      return {...ev,date:slot.date,time:slot.time,movedByStudlin:true,movedFrom:{date:ev.date,time:ev.time},movedAt:Date.now()};
+      return {...ev,date:slot.date,time:slot.time,movedByStudlin:true,movedFrom:{date:ev.date,time:ev.time},movedAt:Date.now(),reshuffleCount:(ev.reshuffleCount||0)+1};
     });
     if(changed){
       setEvents(next);lsSet("events",next);
@@ -18824,7 +19099,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       </Modal>
       <Modal open={weekBalanceOpen} onClose={()=>{setWeekBalanceOpen(false);setWeekBalancePlan(null);}}
         title="Balance my week"
-        sub={weekBalancePlan?(weekBalancePlan.moves.length>0?weekBalancePlan.moves.length+" task"+(weekBalancePlan.moves.length!==1?"s":"")+" would move to spread the load out":"Your week's already pretty even — nothing to move."):"Looks at the next 7 days and moves flexible study blocks off your heaviest days onto lighter ones."}
+        sub={weekBalancePlan?(weekBalancePlan.moves.length>0?weekBalancePlan.moves.length+" task"+(weekBalancePlan.moves.length!==1?"s":"")+" would move to spread the load out":"Your week's already pretty even. Nothing to move."):"Looks at the next 7 days and moves flexible study blocks off your heaviest days onto lighter ones."}
         width={520}
         footer={weekBalancePlan&&weekBalancePlan.moves.length>0?(
           <><Btn variant="subtle" onClick={()=>{logSuggestionDecision("weekBalancePlan","dismissed",{moveCount:weekBalancePlan.moves.length});setWeekBalanceOpen(false);setWeekBalancePlan(null);}}>Cancel</Btn><Btn onClick={confirmWeekBalance}>Apply {weekBalancePlan.moves.length} change{weekBalancePlan.moves.length!==1?"s":""}</Btn></>
@@ -18858,7 +19133,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       )}
       {weekBalanceNudge&&(
         <div style={{position:"fixed",bottom:20,left:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
-          <div style={{fontSize:13,color:T.white,marginBottom:10,lineHeight:1.5}}>Your week's a bit lopsided — some days are carrying a lot more than others. Want Studlin to spread it out?</div>
+          <div style={{fontSize:13,color:T.white,marginBottom:10,lineHeight:1.5}}>Your week's a bit lopsided. Some days are carrying a lot more than others. Want Studlin to spread it out?</div>
           <div style={{display:"flex",gap:8}}>
             <Btn onClick={acceptWeekBalanceNudge} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Review</Btn>
             <Btn variant="ghost" onClick={declineWeekBalanceNudge} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Not now</Btn>
@@ -22938,12 +23213,12 @@ function App() {
         const d=new Date(today+"T12:00:00");d.setDate(d.getDate()+7);
         const to={date:dayKey(d),time:ev.time};
         applied.push({id:ev.id,from:move.from,to});
-        return {...ev,date:to.date,time:to.time,movedByStudlin:true,movedFrom:move.from,movedAt:Date.now(),movedReason:{type:"deferred"}};
+        return {...ev,date:to.date,time:to.time,movedByStudlin:true,movedFrom:move.from,movedAt:Date.now(),movedReason:{type:"deferred"},reshuffleCount:(ev.reshuffleCount||0)+1};
       }
       const manual=override&&override.date&&override.time;
       const to=manual?{date:override.date,time:override.time}:move.to;
       applied.push({id:ev.id,from:move.from,to});
-      return {...ev,date:to.date,time:to.time,movedByStudlin:true,movedFrom:move.from,movedAt:Date.now(),movedReason:manual?{type:"manualOverride"}:(move.reason||null)};
+      return {...ev,date:to.date,time:to.time,movedByStudlin:true,movedFrom:move.from,movedAt:Date.now(),movedReason:manual?{type:"manualOverride"}:(move.reason||null),reshuffleCount:(ev.reshuffleCount||0)+1};
     });
     // Compression side effects (a sibling dropped or shortened to make
     // room) only apply for moves that weren't skipped.
@@ -23620,6 +23895,7 @@ function App() {
         working=result.events.map(e=>e.id===ev.id?{
           ...e,date:result.placement.date,time:result.placement.time,
           movedByStudlin:true,movedFrom:{date:ev.date,time:ev.time},movedAt:Date.now(),movedReason:result.reason||null,
+          reshuffleCount:(ev.reshuffleCount||0)+1,
         }:e);
         movedBatch.push({id:ev.id,title:ev.title,from:{date:ev.date,time:ev.time},to:result.placement,reason:result.reason||null});
         working.forEach(e=>{

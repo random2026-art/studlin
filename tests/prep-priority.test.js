@@ -57,6 +57,113 @@ describe("computeSessionPriority", () => {
     const m = loadStudlinModule();
     assert.equal(m.computeSessionPriority(null, "2026-08-10"), 500);
   });
+
+  test("characterization: an exam with no importanceLevel computes byte-identically to before this field existed", () => {
+    const m = loadStudlinModule({ now: "2026-08-08T12:00:00" });
+    const e = exam({ date: "2026-08-10", examWeight: "major", confidenceLog: ["shaky"], difficulty: 900 });
+    assert.equal(e.importanceLevel, undefined, "sanity check -- this fixture predates importanceLevel");
+    const p = m.computeSessionPriority(e, "2026-08-08");
+    assert.ok(p > 700, "must still fall back to the legacy examWeight table unchanged");
+  });
+
+  test("importanceLevel, when present, is used instead of examWeight -- critical outranks major even with the same examWeight", () => {
+    const m = loadStudlinModule({ now: "2026-08-08T12:00:00" });
+    const majorLevel = exam({ date: "2026-08-10", examWeight: "major", importanceLevel: "major", confidenceLog: ["okay"], difficulty: 500 });
+    const criticalLevel = exam({ date: "2026-08-10", examWeight: "major", importanceLevel: "critical", confidenceLog: ["okay"], difficulty: 500 });
+    const pMajor = m.computeSessionPriority(majorLevel, "2026-08-08");
+    const pCritical = m.computeSessionPriority(criticalLevel, "2026-08-08");
+    assert.ok(pCritical > pMajor, "critical (impact 1.0) should score higher than major (impact 0.8) despite identical examWeight");
+  });
+
+  test("an unrecognized importanceLevel falls back to major's impact, not a crash", () => {
+    const m = loadStudlinModule();
+    const e = exam({ importanceLevel: "not-a-real-level" });
+    assert.doesNotThrow(() => m.computeSessionPriority(e, "2026-08-08"));
+  });
+});
+
+describe("richer exam importance (examType -> importanceLevel -> legacy examWeight)", () => {
+  test("EXAM_TYPE_TO_IMPORTANCE covers every exam type with a sane default", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.EXAM_TYPE_TO_IMPORTANCE.quiz, "moderate");
+    assert.equal(m.EXAM_TYPE_TO_IMPORTANCE.midterm, "major");
+    assert.equal(m.EXAM_TYPE_TO_IMPORTANCE.final, "critical");
+    assert.equal(m.EXAM_TYPE_TO_IMPORTANCE.project, "major");
+    assert.equal(m.EXAM_TYPE_TO_IMPORTANCE.other, "moderate");
+  });
+
+  test("examWeightFromImportance collapses minor/moderate to quiz, major/critical to major", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.examWeightFromImportance("minor"), "quiz");
+    assert.equal(m.examWeightFromImportance("moderate"), "quiz");
+    assert.equal(m.examWeightFromImportance("major"), "major");
+    assert.equal(m.examWeightFromImportance("critical"), "major");
+  });
+
+  test("withDerivedExamImportance derives importanceLevel + legacy examWeight from an AI-extracted examType", () => {
+    const m = loadStudlinModule();
+    const it = m.withDerivedExamImportance({ title: "Final Exam", kind: "exam", examType: "final" });
+    assert.equal(it.importanceLevel, "critical");
+    assert.equal(it.examWeight, "major");
+  });
+
+  test("withDerivedExamImportance is a no-op for non-exam items and items missing examType", () => {
+    const m = loadStudlinModule();
+    const deadline = { title: "Problem Set", kind: "deadline" };
+    assert.deepEqual(m.withDerivedExamImportance(deadline), deadline);
+    const noType = { title: "Some Exam", kind: "exam" };
+    assert.deepEqual(m.withDerivedExamImportance(noType), noType);
+  });
+});
+
+describe("performance-grounded confidence (transparent, dismissible suggestion)", () => {
+  test("derivePerformanceConfidence returns null with no quiz/practice-exam data at all", () => {
+    const m = loadStudlinModule();
+    const e = exam({ quizScores: [] });
+    m.lsSet("practiceExams", []);
+    assert.equal(m.derivePerformanceConfidence(e), null);
+  });
+
+  test("derivePerformanceConfidence maps a bad quiz score to shaky", () => {
+    const m = loadStudlinModule();
+    const e = exam({ quizScores: [{ score: 2, total: 10, at: 1 }] });
+    assert.equal(m.derivePerformanceConfidence(e), "shaky");
+  });
+
+  test("derivePerformanceConfidence maps a strong score to solid", () => {
+    const m = loadStudlinModule();
+    const e = exam({ quizScores: [{ score: 9, total: 10, at: 1 }] });
+    assert.equal(m.derivePerformanceConfidence(e), "solid");
+  });
+
+  test("performanceConfidenceSuggestion flags a genuine divergence (performance worse than last self-report)", () => {
+    const m = loadStudlinModule();
+    const e = exam({ confidenceLog: ["solid"], quizScores: [{ score: 1, total: 10, at: 1 }] });
+    const suggestion = m.performanceConfidenceSuggestion(e);
+    assert.ok(suggestion, "expected a suggestion since performance (shaky) is worse than the last self-report (solid)");
+    assert.equal(suggestion.suggested, "shaky");
+    assert.equal(suggestion.current, "solid");
+  });
+
+  test("performanceConfidenceSuggestion stays silent when performance matches or beats the last self-report", () => {
+    const m = loadStudlinModule();
+    const e = exam({ confidenceLog: ["shaky"], quizScores: [{ score: 9, total: 10, at: 1 }] });
+    assert.equal(m.performanceConfidenceSuggestion(e), null, "performance is better than self-reported, nothing to flag");
+  });
+
+  test("performanceConfidenceSuggestion never fires with no self-reported baseline to diverge from", () => {
+    const m = loadStudlinModule();
+    const e = exam({ confidenceLog: [], quizScores: [{ score: 1, total: 10, at: 1 }] });
+    assert.equal(m.performanceConfidenceSuggestion(e), null);
+  });
+
+  test("dismissPerformanceConfidence suppresses the suggestion until the cooldown passes", () => {
+    const m = loadStudlinModule();
+    const e = exam({ id: "exam-cooldown", confidenceLog: ["solid"], quizScores: [{ score: 1, total: 10, at: 1 }] });
+    assert.ok(m.performanceConfidenceSuggestion(e), "sanity check -- should flag before dismissal");
+    m.dismissPerformanceConfidence(e.id);
+    assert.equal(m.performanceConfidenceSuggestion(e), null, "must stay quiet immediately after being dismissed");
+  });
 });
 
 describe("computePreparedness", () => {

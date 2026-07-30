@@ -292,6 +292,52 @@ describe("buildSyllabusEventBatch / commitSyllabusEvents (Class Setup Wizard's e
     const stored = lsGet("events", []);
     assert.equal(stored.length, 2);
   });
+
+  test("re-scanning the same syllabus does not duplicate an exam already on the calendar", () => {
+    const { buildSyllabusEventBatch, getWeeklyRoutine, getSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const examItem = syllabusItem({ title: "Quiz 7", date: "2026-08-09", kind: "exam", proposeSessions: false, examWeight: "quiz" });
+    const existingExam = { id: "syl-old-0", title: "Quiz 7", date: "2026-08-09", subject: "Chemistry", kind: "exam", status: "pending" };
+    const { markerEvents } = buildSyllabusEventBatch([existingExam], "wiz-dup", "Chemistry", [examItem], null, getWeeklyRoutine(), getSchedulePreferences());
+    assert.equal(markerEvents.length, 0, "already-existing exam should be skipped, not duplicated");
+  });
+
+  test("re-scanning the same syllabus does not duplicate the exam's own study sessions either", () => {
+    const { buildSyllabusEventBatch, getWeeklyRoutine, getSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const examItem = syllabusItem({ title: "Quiz 7", date: "2026-08-09", kind: "exam", proposeSessions: true, sessionCount: 2, examWeight: "quiz" });
+    const existingExam = { id: "syl-old-0", title: "Quiz 7", date: "2026-08-09", subject: "Chemistry", kind: "exam", status: "pending" };
+    const { markerEvents, examSessionEvents } = buildSyllabusEventBatch([existingExam], "wiz-dup2", "Chemistry", [examItem], null, getWeeklyRoutine(), getSchedulePreferences());
+    assert.equal(markerEvents.length, 0);
+    assert.equal(examSessionEvents.length, 0, "no fresh sessions should be built for a marker that was skipped as a duplicate");
+  });
+
+  test("an exam item carrying examType/importanceLevel/gradeWeightPercent (from syllabus extraction or the review screen) passes through onto the committed marker", () => {
+    const { buildSyllabusEventBatch, getWeeklyRoutine, getSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const examItem = syllabusItem({ title: "Final Exam", date: "2026-08-09", kind: "exam", proposeSessions: false, examWeight: "major", examType: "final", importanceLevel: "critical", gradeWeightPercent: 30 });
+    const { markerEvents } = buildSyllabusEventBatch([], "wiz-imp", "Chemistry", [examItem], null, getWeeklyRoutine(), getSchedulePreferences());
+    assert.equal(markerEvents[0].examType, "final");
+    assert.equal(markerEvents[0].importanceLevel, "critical");
+    assert.equal(markerEvents[0].gradeWeightPercent, 30);
+  });
+
+  test("an exam item with no examType (legacy path) never gets importanceLevel/gradeWeightPercent fields at all", () => {
+    const { buildSyllabusEventBatch, getWeeklyRoutine, getSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const examItem = syllabusItem({ title: "Quiz 9", date: "2026-08-09", kind: "exam", proposeSessions: false, examWeight: "quiz" });
+    const { markerEvents } = buildSyllabusEventBatch([], "wiz-legacy", "Chemistry", [examItem], null, getWeeklyRoutine(), getSchedulePreferences());
+    assert.equal(markerEvents[0].importanceLevel, undefined);
+    assert.equal(markerEvents[0].gradeWeightPercent, undefined);
+    assert.equal(markerEvents[0].examWeight, "quiz", "legacy examWeight still comes through unchanged");
+  });
+
+  test("dedup is case-insensitive and scoped to matching subject+date+kind -- a different date or class is not a duplicate", () => {
+    const { buildSyllabusEventBatch, getWeeklyRoutine, getSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const existingExam = { id: "syl-old-0", title: "quiz 7", date: "2026-08-09", subject: "Chemistry", kind: "exam", status: "pending" };
+    const sameTitleDifferentDate = syllabusItem({ title: "Quiz 7", date: "2026-08-16", kind: "exam", proposeSessions: false, examWeight: "quiz" });
+    const sameTitleDifferentClass = syllabusItem({ title: "Quiz 7", date: "2026-08-09", kind: "exam", proposeSessions: false, examWeight: "quiz" });
+    const { markerEvents: m1 } = buildSyllabusEventBatch([existingExam], "wiz-dup3", "Chemistry", [sameTitleDifferentDate], null, getWeeklyRoutine(), getSchedulePreferences());
+    assert.equal(m1.length, 1, "different date is a genuinely new exam, not a duplicate");
+    const { markerEvents: m2 } = buildSyllabusEventBatch([existingExam], "wiz-dup4", "Physics", [sameTitleDifferentClass], null, getWeeklyRoutine(), getSchedulePreferences());
+    assert.equal(m2.length, 1, "different subject is a genuinely new exam, not a duplicate");
+  });
 });
 
 describe("buildPendingSchedulePreview (Class Setup Wizard's multi-class drill-down review)", () => {
@@ -837,6 +883,59 @@ describe("findSlotWithEviction", () => {
     const evictedIds = result.events.filter((e) => e.movedByStudlin).map((e) => e.id);
     assert.ok(evictedIds.includes("low-pri-close-deadline"), "the low-priority candidate should have been evicted");
     assert.ok(!evictedIds.includes("high-pri-far-deadline"), "the higher-priority candidate should NOT have been evicted just because its deadline is farther off");
+  });
+
+  test("a session already reshuffled twice is protected over a never-moved lower-priority one (reshuffle penalty flips plain-priority ordering)", () => {
+    const m = loadStudlinModule();
+    const today = m.dayKey();
+    // Without the reshuffle penalty, "already-moved" (priority 100) would
+    // be evicted first purely on raw priority. With RESHUFFLE_PENALTY
+    // added on top of its reshuffleCount, its effective score should
+    // exceed "never-moved" (priority 150, reshuffleCount 0), flipping who
+    // gets evicted.
+    const packed = [];
+    let t = 9 * 60;
+    let idx = 0;
+    while (t + 30 <= 20 * 60) {
+      const time = `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+      if (idx === 0) {
+        packed.push({ id: "already-moved", title: "Already moved twice", date: today, time, kind: "study block", duration: 30, status: "pending", deadline: null, priority: 100, reshuffleCount: 2 });
+      } else if (idx === 1) {
+        packed.push({ id: "never-moved", title: "Never moved", date: today, time, kind: "study block", duration: 30, status: "pending", deadline: null, priority: 150, reshuffleCount: 0 });
+      } else {
+        packed.push({ id: "pack-" + idx, title: "Filler " + idx, date: today, time, kind: "study block", duration: 30, status: "pending", deadline: null, priority: 500 });
+      }
+      t += 30; idx++;
+    }
+    const result = m.findSlotWithEviction(packed, [], DEFAULT_PREFS, today, "09:00", 30, today);
+    const evictedIds = result.events.filter((e) => e.movedByStudlin).map((e) => e.id);
+    assert.ok(evictedIds.includes("never-moved"), "the never-moved lower-effective-score candidate should be evicted");
+    assert.ok(!evictedIds.includes("already-moved"), "a session already reshuffled twice should be protected by the penalty despite its lower raw priority");
+  });
+
+  test("a session at or above RESHUFFLE_ESCALATE_THRESHOLD moves is excluded from eviction candidates entirely", () => {
+    const m = loadStudlinModule();
+    const today = m.dayKey();
+    const packed = [];
+    let t = 9 * 60;
+    let idx = 0;
+    while (t + 30 <= 20 * 60) {
+      const time = `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+      if (idx === 0) {
+        // Lowest raw priority of all, but at the escalation threshold --
+        // must never be picked even though it would otherwise be the
+        // obvious first candidate.
+        packed.push({ id: "escalated", title: "Escalated", date: today, time, kind: "study block", duration: 30, status: "pending", deadline: null, priority: 10, reshuffleCount: m.RESHUFFLE_ESCALATE_THRESHOLD });
+      } else if (idx === 1) {
+        packed.push({ id: "eligible", title: "Still eligible", date: today, time, kind: "study block", duration: 30, status: "pending", deadline: null, priority: 400, reshuffleCount: 0 });
+      } else {
+        packed.push({ id: "pack-" + idx, title: "Filler " + idx, date: today, time, kind: "study block", duration: 30, status: "pending", deadline: null, priority: 500 });
+      }
+      t += 30; idx++;
+    }
+    const result = m.findSlotWithEviction(packed, [], DEFAULT_PREFS, today, "09:00", 30, today);
+    const evictedIds = result.events.filter((e) => e.movedByStudlin).map((e) => e.id);
+    assert.ok(!evictedIds.includes("escalated"), "a session at the escalation threshold must never be silently evicted again");
   });
 });
 
@@ -2859,5 +2958,39 @@ describe("computeWeekBalancePlan (manually-triggered 'Balance my week')", () => 
     result.moves.forEach((mv) => {
       assert.ok(typeof mv.reason === "string" && mv.reason.length > 0, "every move must carry a real reason string");
     });
+  });
+
+  test("a task already reshuffled twice is protected over a never-moved lower-priority one (reshuffle penalty flips plain-priority ordering)", () => {
+    const m = loadStudlinModule();
+    // Without the reshuffle penalty, "already-moved" (priority 100) would
+    // be shed first purely on raw priority. With RESHUFFLE_PENALTY added
+    // on top of its reshuffleCount, its effective score should exceed
+    // "never-moved" (priority 150, reshuffleCount 0), flipping which one
+    // gets shed first.
+    const heavy = [
+      realTask({ id: "already-moved", date: days[0], time: "09:00", duration: 60, deadline: null, priority: 100, reshuffleCount: 2 }),
+      realTask({ id: "never-moved", date: days[0], time: "10:00", duration: 60, deadline: null, priority: 150, reshuffleCount: 0 }),
+      realTask({ id: "h1", date: days[0], time: "11:00", duration: 60, deadline: null, priority: 500 }),
+      realTask({ id: "h2", date: days[0], time: "12:00", duration: 60, deadline: null, priority: 500 }),
+    ];
+    const result = m.computeWeekBalancePlan(heavy, [], DEFAULT_PREFS, MONDAY);
+    assert.ok(result.moves.length > 0, "expected at least one move");
+    assert.equal(result.moves[0].id, "never-moved", "the never-moved lower-effective-score task should be shed first");
+    assert.ok(!result.moves.some((mv) => mv.id === "already-moved"), "a task already reshuffled twice should be protected by the penalty despite its lower raw priority");
+  });
+
+  test("a task at or above RESHUFFLE_ESCALATE_THRESHOLD moves is excluded from rebalance candidates entirely", () => {
+    const m = loadStudlinModule();
+    const heavy = [
+      // Lowest raw priority of all, but at the escalation threshold --
+      // must never be picked even though it would otherwise be the
+      // obvious first candidate.
+      realTask({ id: "escalated", date: days[0], time: "09:00", duration: 60, deadline: null, priority: 10, reshuffleCount: m.RESHUFFLE_ESCALATE_THRESHOLD }),
+      realTask({ id: "eligible", date: days[0], time: "10:00", duration: 60, deadline: null, priority: 400, reshuffleCount: 0 }),
+      realTask({ id: "h1", date: days[0], time: "11:00", duration: 60, deadline: null, priority: 500 }),
+      realTask({ id: "h2", date: days[0], time: "12:00", duration: 60, deadline: null, priority: 500 }),
+    ];
+    const result = m.computeWeekBalancePlan(heavy, [], DEFAULT_PREFS, MONDAY);
+    assert.ok(!result.moves.some((mv) => mv.id === "escalated"), "a task at the escalation threshold must never be silently reshuffled again");
   });
 });

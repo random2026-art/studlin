@@ -77,6 +77,7 @@ function loadStudlinModule(options) {
     "planBrainDumpTasks","matchEventByTitle","getWeeklyRoutine","saveWeeklyRoutine",
     "getRoutineSkips","getRoutineOccurrencesForDate","findHabitSlotForToday",
     "materializeHabitsForDate","findTier0Slot","findSlotWithEviction",
+    "RESHUFFLE_PENALTY","RESHUFFLE_ESCALATE_THRESHOLD","REBALANCE_RELIABILITY_MINS_WEIGHT",
     "examAlreadyPassedToday","getSchoolTerm","saveSchoolTerm",
     "getTimerCheckpoint","checkpointTimerSession","clearTimerCheckpoint",
     "resolveOrphanedCheckpoint","mergeImportedEvents","detectCalendarSourceType",
@@ -118,6 +119,8 @@ function loadStudlinModule(options) {
     "isTermRolloverDue","getTermRolloverDismissedFor","dismissTermRollover",
     "upcomingAssignments","upcomingProjects",
     "computeSessionPriority","computePreparedness","restampSessionPriorities",
+    "IMPORTANCE_TO_IMPACT","EXAM_TYPE_TO_IMPORTANCE","examWeightFromImportance","withDerivedExamImportance",
+    "derivePerformanceConfidence","performanceConfidenceSuggestion","dismissPerformanceConfidence",
     "CONFIDENCE_TO_UNIT","EXAM_WEIGHT_TO_IMPACT",
     "computeCapacitySlack","EXAM_READINESS_TIGHT_SLACK_RATIO",
     "applyHoursTargetCap"];

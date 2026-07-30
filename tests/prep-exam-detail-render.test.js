@@ -107,7 +107,7 @@ describe("Studlin Prep exam detail render", () => {
     seedExam(localStorage, "exam-no-plan");
     const el = React.createElement(sandbox.StudlinPrep, {});
     const html = ReactDOMServer.renderToStaticMarkup(el);
-    assert.match(html, /No study plan yet\./);
+    assert.match(html, /No study plan yet/);
   });
 
   test("renders the exam detail page for an exam WITH a linked session, without throwing", () => {
@@ -116,6 +116,6 @@ describe("Studlin Prep exam detail render", () => {
     const el = React.createElement(sandbox.StudlinPrep, {});
     const html = ReactDOMServer.renderToStaticMarkup(el);
     assert.match(html, /Organic Chemistry Midterm/);
-    assert.doesNotMatch(html, /No study plan yet\./);
+    assert.doesNotMatch(html, /No study plan yet/);
   });
 });
