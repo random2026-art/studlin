@@ -629,10 +629,17 @@ const TimeInput = ({value,onChange,style,lockedRanges,bare}) => {
   // bordered box, which already supplies the chrome, so double-boxing
   // would look wrong. Still three real, independently clickable <select>s
   // underneath either way.
+  // appearance:none on the boxed (non-bare) variant too, not just bare --
+  // the browser's own native dropdown arrow was rendering on top of the
+  // 2-digit number in a box this narrow (32px), since hiding that arrow
+  // was only ever done for the bare mode. These are compact tap-to-cycle
+  // number fields, not really read as "dropdowns" visually at this size
+  // anyway, so there's nothing lost by removing the arrow -- the whole
+  // box is still clickable and opens the native option list either way.
   const selStyle=bare
     ?{width:"auto",flexShrink:0,padding:0,background:"transparent",border:"none",color:T.text,fontSize:14,fontWeight:600,fontFamily:T.font,outline:"none",cursor:"pointer",appearance:"none",WebkitAppearance:"none",MozAppearance:"none"}
-    :{width:32,flexShrink:0,padding:"4px 1px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:5,color:T.text,fontSize:12,fontFamily:T.font,outline:"none",cursor:"pointer",boxSizing:"border-box",textAlign:"center"};
-  const apStyle=bare?selStyle:{...selStyle,width:40};
+    :{width:30,flexShrink:0,padding:"4px 2px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:5,color:T.text,fontSize:12,fontFamily:T.font,outline:"none",cursor:"pointer",boxSizing:"border-box",textAlign:"center",appearance:"none",WebkitAppearance:"none",MozAppearance:"none"};
+  const apStyle=bare?selStyle:{...selStyle,width:36};
   return (
     <div style={{display:"flex",flexDirection:"row",gap:bare?1:2,alignItems:"center",flexShrink:0,...(style||{})}}>
       <select value={h} onChange={e=>commit(+e.target.value,m,ap)} style={selStyle}>
@@ -12827,7 +12834,7 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
 
-function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence}) {
+function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, previewEvent}) {
   // Phase 10b: user-driven zoom (drag handle below), replacing the old
   // fixed constant. Persisted via getCalZoom/saveCalZoom so it's
   // remembered across visits and shared with DayPlanner. Deliberately not
@@ -13118,6 +13125,24 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
               const dur = dragEv ? (dragEv.duration || 30) : 30;
               ghostEl = <div style={{position:"absolute",top:(gh*60+gm)*(WK_PX_HR/60),left:2,right:2,height:Math.max(22,dur*(WK_PX_HR/60)),borderRadius:5,background:T.lime+"14",border:`1.5px dashed ${T.lime}`,zIndex:4,pointerEvents:"none",boxSizing:"border-box"}} />;
             }
+            // Live preview (2026-07-30): a dropped course/activity used to
+            // stay invisible until Create was clicked -- this renders it
+            // as a real-looking block (not just a dashed outline) at
+            // wherever the still-open New Event popover's own date/time
+            // fields currently say, updating live as those fields change.
+            // Dashed border + slightly reduced opacity is the only visual
+            // cue it isn't committed yet.
+            let previewEl = null;
+            if (previewEvent && previewEvent.date === dk && !previewEvent.allDay) {
+              const p = previewEvent.startTime.split(":").map(Number);
+              const pStart = p[0] * 60 + p[1];
+              const pDur = Math.max(15, timeToMinutes(previewEvent.endTime) - timeToMinutes(previewEvent.startTime));
+              previewEl = (
+                <div style={{position:"absolute",top:pStart*(WK_PX_HR/60),left:2,right:2,height:Math.max(22,pDur*(WK_PX_HR/60)),borderRadius:5,padding:"2px 5px 2px 8px",background:previewEvent.color+"22",border:`1.5px dashed ${previewEvent.color}`,zIndex:6,pointerEvents:"none",boxSizing:"border-box",overflow:"hidden"}}>
+                  <div style={{fontSize:9.5,fontWeight:700,color:previewEvent.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{previewEvent.title||"New event"}</div>
+                </div>
+              );
+            }
             return (
               <div key={colIdx} style={{position:"relative",borderLeft:`1px solid ${T.border}`,height:24*WK_PX_HR,boxSizing:"border-box"}}
                 ref={el => { wkColRefs.current[dk] = el; }}
@@ -13241,6 +13266,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   );
                 }); })()}
                 {ghostEl}
+                {previewEl}
               </div>
             );
           })}
@@ -15725,7 +15751,7 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
 // or one-off EVENT (a class meeting, an activity), not a task with a due
 // date. Presentation-only: the caller supplies onCreate and owns the
 // actual commit (CalendarTab already has routines/events in scope).
-function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,anchorY,onClose,onCreate}){
+function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,anchorY,color,onPreviewChange,onClose,onCreate}){
   const [title,setTitle]=useState("");
   const [date,setDate]=useState("");
   const [startTime,setStartTime]=useState("09:00");
@@ -15737,6 +15763,23 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
   const [commuteAfter,setCommuteAfter]=useState(0);
   const [location,setLocation]=useState("");
   const [movable,setMovable]=useState(false); // Fixed by default; toggle on = Free
+
+  // Live preview (2026-07-30): reports this form's current title/date/time
+  // up to the caller on every relevant change while open, so the calendar
+  // grid can render a real-looking preview block at the exact spot this
+  // will land instead of staying blank until Create. Deliberately two
+  // separate effects, not one with a cleanup function -- a single effect's
+  // cleanup fires on EVERY dependency change, not just on unmount, which
+  // would null the preview out and back in on every keystroke (a visible
+  // flicker). The second effect, keyed only on `open` itself, is the only
+  // one that ever clears it, and only when the popover actually closes.
+  useEffect(()=>{
+    if(!open||!onPreviewChange)return;
+    onPreviewChange({title,date,startTime,endTime,allDay,color:color||T.lime});
+  },[open,title,date,startTime,endTime,allDay,color]);
+  useEffect(()=>{
+    if(!open&&onPreviewChange)onPreviewChange(null);
+  },[open]);
 
   useEffect(()=>{
     if(!open)return;
@@ -15772,16 +15815,32 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
     });
   };
 
-  // 2026-07-29: anchored popover that opens right next to the block that
-  // was just dropped, sized relative to THIS calendar's own column width
-  // rather than Shovel's absolute reference pixels (which come from a
-  // wider viewport/different grid proportions) -- 440px card was
+  // 2026-07-29/30: anchored popover that opens right next to the block
+  // that was just dropped, sized relative to THIS calendar's own column
+  // width rather than Shovel's absolute reference pixels (which come from
+  // a wider viewport/different grid proportions) -- 440px card was
   // dwarfing the actual drop target instead of sitting beside it.
+  // Positioning redone (2026-07-30) to actually stay "to the side" and
+  // avoid needing to scroll to reach Create: prefers opening to the RIGHT
+  // of the drop point (so the dropped block stays visible on its left),
+  // falls back to the LEFT if there's no room on the right; vertically,
+  // prefers sitting level with the drop point but pins its bottom edge
+  // above the viewport bottom once there isn't enough room below --
+  // instead of always anchoring from the top and letting the card run off
+  // the bottom edge into a forced scroll, the way a fixed y-24 anchor did.
   const POPOVER_WIDTH=360;
+  // No real DOM measurement available before first paint, so this is a
+  // deliberate estimate of the tallest the form realistically gets
+  // (title+date+time+repeat+commute+location+fixed/free+header/footer) --
+  // generous enough that the common case fits without scrolling, per the
+  // explicit ask, while maxHeight below still protects very short
+  // viewports as a last resort.
+  const ESTIMATED_HEIGHT=460;
   const x=anchorX!=null?anchorX:window.innerWidth/2;
   const y=anchorY!=null?anchorY:window.innerHeight/2;
-  const left=Math.min(Math.max(8,x+4),window.innerWidth-POPOVER_WIDTH-8);
-  const top=Math.min(Math.max(8,y-24),window.innerHeight-40);
+  const fitsRight=x+10+POPOVER_WIDTH<=window.innerWidth-8;
+  const left=fitsRight?Math.max(8,x+10):Math.max(8,x-10-POPOVER_WIDTH);
+  const top=Math.min(Math.max(8,y-24),Math.max(8,window.innerHeight-ESTIMATED_HEIGHT-8));
   return ReactDOM.createPortal((
     <>
       <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:998}} />
@@ -15887,6 +15946,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   const [sidebarDragChip,setSidebarDragChip]=useState(null); // {title,color,movable}|null
   const [newEventOpen,setNewEventOpen]=useState(false);
   const [newEventPrefill,setNewEventPrefill]=useState({title:"",date:"",startTime:"",chipKind:null,courseId:null,routineId:null});
+  // Live preview (2026-07-30): the dropped course/activity used to stay
+  // invisible on the grid until Create was actually clicked, so there was
+  // no way to see where it would actually land while still editing the
+  // popover. NewEventModal reports its current title/date/time back up
+  // here on every change (via onPreviewChange below) while open, and
+  // WeeklyPlanner renders it as a real-looking (if slightly muted) block
+  // at that exact position -- Cancel/close clears it, Create replaces it
+  // with the real committed event.
+  const [previewEvent,setPreviewEvent]=useState(null);
   // Phase 7e: set when a routine occurrence was just dropped somewhere new,
   // waiting on the student to pick "just this one" or "every week".
   const [routineDropPending,setRoutineDropPending]=useState(null); // {routineId,fromDate,toDate,toTime}|null
@@ -16489,6 +16557,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     // whole screen.
     setNewEventPrefill({title:(chip&&chip.title)||"",date:dateKey,startTime:startTime||"09:00",
       chipKind:(chip&&chip.kind)||null,courseId:(chip&&chip.courseId)||null,routineId:(chip&&chip.routineId)||null,
+      color:(chip&&chip.color)||T.lime,
       anchorX:(anchorPoint&&anchorPoint.x)||null,anchorY:(anchorPoint&&anchorPoint.y)||null});
     setNewEventOpen(true);
   };
@@ -17682,7 +17751,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
           selDay={selDay} setSelDay={setSelDay} onDeleteEvent={deleteEventWithUndo} catchUpPending={catchUpPending}
           sidebarDragChip={sidebarDragChip} onDropSidebarChip={(dk,time,anchorPoint)=>{openNewEventForDrop(sidebarDragChip,dk,time,anchorPoint);setSidebarDragChip(null);}}
-          onDropRoutineOccurrence={onDropRoutineOccurrence} />
+          onDropRoutineOccurrence={onDropRoutineOccurrence} previewEvent={previewEvent} />
       )}
       {calView==="daily"&&(
         <DayPlanner dayEvents={dayEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} />
@@ -17747,8 +17816,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       <ClassSetupWizard open={classSetupOpen} initialStatus={getProfile().status} onFinish={finishClassSetup} onSkip={skipClassSetup} />
       <ClassSetupWizard open={quickScanOpen} quickScan initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>setQuickScanOpen(false)} />
       <NewEventModal open={newEventOpen} initialTitle={newEventPrefill.title} initialDate={newEventPrefill.date} initialStartTime={newEventPrefill.startTime}
-        anchorX={newEventPrefill.anchorX} anchorY={newEventPrefill.anchorY}
-        onClose={()=>setNewEventOpen(false)} onCreate={commitNewEvent} />
+        anchorX={newEventPrefill.anchorX} anchorY={newEventPrefill.anchorY} color={newEventPrefill.color}
+        onPreviewChange={setPreviewEvent}
+        onClose={()=>{setNewEventOpen(false);setPreviewEvent(null);}}
+        onCreate={(payload)=>{setPreviewEvent(null);commitNewEvent(payload);}} />
       {/* Phase 7e: dropped a routine occurrence somewhere new -- ask scope
           before touching anything. "Just this one" only offered when the
           drop landed on the same date it started on (see
@@ -17876,13 +17947,17 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           <SelectChip options={[{value:"assignment",label:"Assignment"},{value:"project",label:"Project"},"exam","class",{value:"busy block",label:"Activity"},"reminder"]} value={evKind} onChange={onEvKindChange} />
         </Field>
 
-        {evKind==="assignment"&&(
-          <label className="checkbox" onClick={()=>setAsChecklist(s=>!s)} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:14,fontSize:12.5,color:T.text}}>
-            <span style={{width:16,height:16,borderRadius:4,border:`1.5px solid ${asChecklist?T.lime:T.border}`,background:asChecklist?T.lime:"transparent",display:"grid",placeItems:"center",flexShrink:0,color:T.ink}}>{asChecklist&&Icon.check}</span>
-            No specific time, add to checklist instead
-            <span style={{color:T.muted,fontWeight:400}}>(skips the calendar, shows up as a checkbox on your Dashboard)</span>
-          </label>
-        )}
+        {/* "No specific time, add to checklist instead" removed (2026-07-30)
+            -- a plain checklist item can already be added directly from
+            Dashboard, so this was a second, redundant entry point to the
+            same thing cluttering the calendar's own task-creation modal.
+            asChecklist/isChecklistMode below now always evaluate false in
+            this modal (nothing else sets asChecklist=true here), which
+            correctly makes every branch gated on it simply unreachable --
+            left in place rather than torn out, since several other
+            conditionals in this same modal key off !isChecklistMode and
+            re-deriving all of them individually is a bigger, riskier
+            change than removing this one entry point. */}
 
         <Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field>
         {evSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Drivers ed, SAT prep, club..." value={evCustom} onChange={ev=>setEvCustom(ev.target.value)} /></Field>}
