@@ -5432,7 +5432,7 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
   
   return (
     <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:95,background:"rgba(8,12,10,0.72)",backdropFilter:"blur(7px)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-      <div onClick={e=>e.stopPropagation()} style={{width:520,maxWidth:"100%",background:T.surface,border:"1px solid "+T.border,borderRadius:16,padding:28,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)",maxHeight:"90vh",overflowY:"auto"}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:520,maxWidth:"100%",background:T.surface,border:"1px solid "+T.border,borderRadius:8,padding:26,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)",maxHeight:"90vh",overflowY:"auto"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:24}}>
           <span style={{display:"inline-flex",width:34,height:34,borderRadius:10,background:T.lime+"20",border:"1px solid "+T.lime+"44",alignItems:"center",justifyContent:"center",color:T.lime}}>{Icon.settings}</span>
           <div style={{fontSize:18,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Study Schedule Preferences</div>
@@ -5551,7 +5551,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
   const choose=(name)=>{setPlanLS(name);onClose();if(onUpgraded)onUpgraded(name);};
   return (
     <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:90,background:"rgba(8,12,10,0.72)",backdropFilter:"blur(7px)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <div onClick={e=>e.stopPropagation()} style={{width:580,maxWidth:"92vw",background:T.surface,border:"1px solid "+T.border,borderRadius:16,padding:28,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)"}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:580,maxWidth:"92vw",background:T.surface,border:"1px solid "+T.border,borderRadius:8,padding:26,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
           <span style={{display:"inline-flex",width:30,height:30,borderRadius:8,background:T.lime+"1c",border:"1px solid "+T.lime+"44",alignItems:"center",justifyContent:"center",color:T.lime}}>{Icon.wand}</span>
           <div style={{fontSize:17,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>You have hit your {feature} limit</div>
@@ -12593,7 +12593,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
             <div style={{fontSize:13,color:T.muted,marginBottom:22}}>{task.title}</div>
 
             <div style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(coop.length+1,3)},1fr)`,gap:10,marginBottom:tieredUp?16:22}}>
-              <div style={{background:T.card2,borderRadius:14,padding:"18px 20px",textAlign:"left"}}>
+              <div style={{background:T.card2,borderRadius:8,padding:"16px 18px",textAlign:"left"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:9}}>
                   <span style={{fontSize:12,color:T.muted,fontWeight:600}}>{coop.length?"You":tierAfter}</span>
                   <span style={{fontFamily:T.mono,fontSize:16,fontWeight:700,color:T.lime}}>+{gain}m</span>
@@ -12604,7 +12604,7 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
                 <div style={{fontSize:11,color:T.faint,marginTop:7}}>{coop.length?tierAfter:(prog.next?`${(prog.next.minMinutes-minutesAfter).toLocaleString()}m to ${prog.next.title}`:"Maximum rank achieved")}</div>
               </div>
               {coop.slice(0,2).map((p,i)=>(
-                <div key={p.uid||i} style={{background:T.card2,borderRadius:14,padding:"18px 20px",textAlign:"left"}}>
+                <div key={p.uid||i} style={{background:T.card2,borderRadius:8,padding:"16px 18px",textAlign:"left"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:9}}>
                     <span style={{fontSize:12,color:T.muted,fontWeight:600}}>{p.name}</span>
                     <span style={{fontFamily:T.mono,fontSize:16,fontWeight:700,color:T.teal}}>+{gain}m</span>
@@ -18787,7 +18787,7 @@ function WriteStudio(){
       </div>
 
       {/* ── CENTER: Editor */}
-      <div style={{display:"flex",flexDirection:"column",overflow:"hidden",background:T.card,borderRadius:16,border:"1px solid "+T.border}}>
+      <div style={{display:"flex",flexDirection:"column",overflow:"hidden",background:T.card,borderRadius:8,border:"1px solid "+T.border}}>
         {activeEssay?(
           <>
             <div style={{padding:"14px 18px",borderBottom:"1px solid "+T.border,display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
@@ -18820,7 +18820,7 @@ function WriteStudio(){
       </div>
 
       {/* ── RIGHT: AI Panel */}
-      <div style={{background:T.card,borderRadius:16,border:"1px solid "+T.border,padding:14,overflowY:"auto"}}>
+      <div style={{background:T.card,borderRadius:8,border:"1px solid "+T.border,padding:14,overflowY:"auto"}}>
         <AiPanel />
       </div>
 
@@ -18913,7 +18913,7 @@ function Solve(){
         <button onClick={function(){scrollSubjects(1);}} style={{width:32,height:32,borderRadius:"50%",border:"1px solid "+T.border,background:T.card,color:T.muted,cursor:"pointer",display:"grid",placeItems:"center",flexShrink:0,fontSize:14}}>›</button>
       </div>
 
-      <div onDragOver={function(e){e.preventDefault();}} onDrop={handleDrop} onClick={function(){if(!imagePreview)fileRef.current&&fileRef.current.click();}} style={{border:"2px dashed "+(imagePreview?T.lime+"44":T.border),borderRadius:16,padding:imagePreview?0:36,textAlign:"center",background:imagePreview?"transparent":T.card,cursor:imagePreview?"default":"pointer",marginBottom:16,overflow:"hidden",position:"relative",transition:"border-color 0.2s"}}>
+      <div onDragOver={function(e){e.preventDefault();}} onDrop={handleDrop} onClick={function(){if(!imagePreview)fileRef.current&&fileRef.current.click();}} style={{border:"2px dashed "+(imagePreview?T.lime+"44":T.border),borderRadius:8,padding:imagePreview?0:36,textAlign:"center",background:imagePreview?"transparent":T.card,cursor:imagePreview?"default":"pointer",marginBottom:16,overflow:"hidden",position:"relative",transition:"border-color 0.2s"}}>
         <input type="file" ref={fileRef} onChange={handleFile} accept="image/*" style={{display:"none"}} />
         {imagePreview?(
           <div style={{position:"relative"}}>
@@ -21400,7 +21400,7 @@ function FeedbackPage() {
         <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:T.muted,marginBottom:14}}>What kind of feedback?</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
           {CATS.map(c=>(
-            <button key={c.id} onClick={()=>setCategory(c.id)} style={{display:"flex",alignItems:"center",gap:12,padding:"14px 16px",borderRadius:14,border:`1.5px solid ${category===c.id?c.color+"80":T.border}`,background:category===c.id?c.color+"0e":T.card2,cursor:"pointer",fontFamily:T.font,textAlign:"left",transition:"all 0.15s"}}>
+            <button key={c.id} onClick={()=>setCategory(c.id)} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",borderRadius:8,border:`1.5px solid ${category===c.id?c.color+"80":T.border}`,background:category===c.id?c.color+"0e":T.card2,cursor:"pointer",fontFamily:T.font,textAlign:"left",transition:"all 0.15s"}}>
               <span style={{width:32,height:32,borderRadius:8,background:c.color+"18",display:"grid",placeItems:"center",color:c.color,flexShrink:0}}>{c.icon}</span>
               <span style={{fontSize:13,fontWeight:category===c.id?700:500,color:category===c.id?T.white:T.muted}}>{c.label}</span>
             </button>
@@ -21427,7 +21427,7 @@ function FeedbackPage() {
       </div>
 
       {/* Footer note */}
-      <div style={{padding:"14px 18px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:14,display:"flex",gap:12,alignItems:"flex-start"}}>
+      <div style={{padding:"14px 18px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,display:"flex",gap:12,alignItems:"flex-start"}}>
         <span style={{color:T.lime,flexShrink:0,marginTop:2}}>{Icon.heart}</span>
         <div style={{fontSize:12.5,color:T.text,lineHeight:1.6}}>Studlin is built by students, for students. Your feedback directly influences what we build next. We read every message.</div>
       </div>
@@ -22005,7 +22005,7 @@ function VerifyEmailScreen({user}){
         </div>
         <span style={{fontSize:22,fontWeight:700,color:"#E8EFE7"}}>Studlin</span>
       </div>
-      <div style={{width:"100%",maxWidth:380,background:"#111A15",border:"1px solid rgba(174,206,94,0.16)",borderRadius:16,padding:"28px 26px",textAlign:"center"}}>
+      <div style={{width:"100%",maxWidth:380,background:"#111A15",border:"1px solid rgba(174,206,94,0.16)",borderRadius:10,padding:"26px 24px",textAlign:"center"}}>
         <div style={{fontSize:17,fontWeight:700,color:"#E8EFE7",marginBottom:8}}>Enter your code</div>
         <p style={{fontSize:13.5,color:"rgba(232,239,231,0.6)",lineHeight:1.6,margin:"0 0 20px"}}>
           We sent a 6-digit code to<br/><strong style={{color:"#E8EFE7"}}>{user.email}</strong>.
@@ -22064,7 +22064,7 @@ function SharedChatView({shareId}){
             <div style={{maxWidth:"80%",fontSize:14,lineHeight:1.75,color:text,background:m.r==="user"?card:"transparent",padding:m.r==="user"?"12px 16px":0,borderRadius:m.r==="user"?12:0,whiteSpace:"pre-wrap"}}>{m.t}</div>
           </div>
         ))}
-        <div style={{marginTop:40,padding:"28px 24px",borderRadius:16,background:card,border:`1px solid rgba(255,255,255,0.07)`,textAlign:"center"}}>
+        <div style={{marginTop:40,padding:"26px 22px",borderRadius:8,background:card,border:`1px solid rgba(255,255,255,0.07)`,textAlign:"center"}}>
           <div style={{fontSize:17,fontWeight:700,color:text,marginBottom:8}}>Study smarter with Studlin AI</div>
           <div style={{fontSize:13,color:muted,marginBottom:20,lineHeight:1.6}}>Your AI study assistant, flashcards, notes, and calendar. All in one place.</div>
           <a href="/app" style={{display:"inline-flex",padding:"11px 28px",borderRadius:99,background:lime,color:"#0E1F18",fontSize:14,fontWeight:700,textDecoration:"none"}}>Get started free</a>
@@ -23561,7 +23561,7 @@ function App() {
           </button>
           {notifOpen && (<>
             <div onClick={()=>setNotifOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
-            <div style={{position:"absolute",top:46,right:0,width:340,maxWidth:"86vw",background:T.card,border:`1px solid ${T.border}`,borderRadius:14,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
+            <div style={{position:"absolute",top:46,right:0,width:340,maxWidth:"86vw",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
               <div style={{padding:"13px 16px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <span style={{fontSize:13,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Notifications</span>
                 <span onClick={()=>setNotifOpen(false)} style={{fontSize:11,color:T.lime,cursor:"pointer",fontWeight:600}}>Mark all read</span>
@@ -23652,7 +23652,7 @@ function App() {
 
         {creditCheckout ? (
           <div>
-            <div style={{background:T.lime,borderRadius:14,padding:"18px 20px",marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{background:T.lime,borderRadius:8,padding:"18px 20px",marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div>
                 <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",fontWeight:600,color:"rgba(8,12,40,0.6)"}}>YOU'RE BUYING</div>
                 <div style={{fontFamily:T.hand,fontSize:36,fontWeight:700,color:T.ink,lineHeight:0.9,marginTop:4}}>{creditCheckout.label}</div>
@@ -23668,7 +23668,7 @@ function App() {
           </div>
         ) : (
           <>
-            <div style={{background:T.lime,borderRadius:14,padding:"20px 22px",position:"relative",overflow:"hidden",marginBottom:18}}>
+            <div style={{background:T.lime,borderRadius:8,padding:"20px 22px",position:"relative",overflow:"hidden",marginBottom:18}}>
               <div style={{position:"absolute",right:-30,top:-30,width:160,height:160,background:"radial-gradient(circle,rgba(255,255,255,0.45),transparent 70%)",pointerEvents:"none"}} />
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",position:"relative"}}>
                 <div>
