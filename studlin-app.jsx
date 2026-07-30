@@ -6407,7 +6407,7 @@ function StudlinPrep({setActive=()=>{}}={}){
     if(!buildPlanExam||!buildPlanPreview)return;
     setBuildPlanLoading(true);
     const events=removeGenericExamPrepSessions(lsGet("events",[]),buildPlanExam.id);
-    const sessions=buildExamSessionEvents(buildPlanExam.title,buildPlanExam.date,buildPlanExam.subject,buildPlanPreview.sessionCount,"prep-"+buildPlanExam.id+"-"+Date.now(),events,getWeeklyRoutine(),getSchedulePreferences(),{dueEventId:buildPlanExam.id},buildPlanPreview.difficultyValue,buildPlanPreview.sessionDuration);
+    const sessions=buildExamSessionEvents(buildPlanExam.title,buildPlanExam.date,buildPlanExam.subject,buildPlanPreview.sessionCount,"prep-"+buildPlanExam.id+"-"+Date.now(),events,getWeeklyRoutine(),getSchedulePreferences(),{dueEventId:buildPlanExam.id},buildPlanPreview.difficultyValue,buildPlanPreview.sessionDuration,buildPlanExam.examWeight,buildPlanExam.confidenceLog);
     let finalSessions;
     if(buildPlanGeneric){
       // Honest, clearly-labeled generic sessions -- no fabricated "what to
@@ -6652,11 +6652,13 @@ function StudlinPrep({setActive=()=>{}}={}){
     if(!schedulePreview)return;
     const events=removeGenericExamPrepSessions(lsGet("events",[]),schedulePreview.examId);
     const isDeck=schedulePreview.kind==="deck";
+    const previewExam=selectedExam&&selectedExam.id===schedulePreview.examId?selectedExam:events.find(e=>e.id===schedulePreview.examId);
+    const sessionPriority=computeSessionPriority(previewExam,dayKey());
     const newEvents=schedulePreview.sessions.map((s,i)=>({
       id:(isDeck?"deckrev-":"practiceexam-")+schedulePreview.refId+"-"+Date.now()+"-"+i,
       title:(isDeck?"Review: ":"Practice Exam: ")+schedulePreview.title,
       date:s.date,time:s.time,subject:"",kind:"study block",notes:"",
-      priority:5,difficulty:5,deadline:schedulePreview.examDate,duration:s.duration,
+      priority:sessionPriority,difficulty:5,deadline:schedulePreview.examDate,duration:s.duration,
       status:"pending",timeSpent:0,completedAt:null,
       ...(isDeck?{deckId:schedulePreview.refId}:{practiceExamId:schedulePreview.refId}),
       placementReason:s.placementReason||null,
@@ -6738,6 +6740,8 @@ function StudlinPrep({setActive=()=>{}}={}){
   const commitStudyKit=()=>{
     if(!kitPreview)return;
     const events=removeGenericExamPrepSessions(lsGet("events",[]),kitPreview.examId);
+    const kitExam=selectedExam&&selectedExam.id===kitPreview.examId?selectedExam:events.find(e=>e.id===kitPreview.examId);
+    const sessionPriority=computeSessionPriority(kitExam,dayKey());
     // Same shape the Study Sessions card's own buildExamSessionEvents
     // output uses -- no deckId/practiceExamId, so it's correctly treated
     // as a plain generic session (removeGenericExamPrepSessions above
@@ -6747,7 +6751,7 @@ function StudlinPrep({setActive=()=>{}}={}){
       title:"Study: "+kitPreview.examTitle,
       date:kitPreview.reviewSession.date,time:kitPreview.reviewSession.time,subject:"",notes:kitPreview.reviewSession.notes||"",
       kind:"study block",duration:kitPreview.reviewSession.duration,
-      priority:5,difficulty:5,deadline:kitPreview.examDate,
+      priority:sessionPriority,difficulty:5,deadline:kitPreview.examDate,
       status:"pending",timeSpent:0,completedAt:null,
       dueEventId:kitPreview.examId,isExamPrepSession:true,
     }]:[];
@@ -6755,7 +6759,7 @@ function StudlinPrep({setActive=()=>{}}={}){
       id:"deckrev-"+kitPreview.deck.id+"-"+Date.now()+"-"+i,
       title:"Review: "+kitPreview.deck.name,
       date:s.date,time:s.time,subject:"",kind:"study block",notes:"",
-      priority:5,difficulty:5,deadline:kitPreview.examDate,duration:s.duration,
+      priority:sessionPriority,difficulty:5,deadline:kitPreview.examDate,duration:s.duration,
       status:"pending",timeSpent:0,completedAt:null,
       deckId:kitPreview.deck.id,placementReason:s.placementReason||null,
       dueEventId:kitPreview.examId,isExamPrepSession:true,
@@ -6764,7 +6768,7 @@ function StudlinPrep({setActive=()=>{}}={}){
       id:"practiceexam-"+kitPreview.pe.id+"-"+Date.now()+"-"+i,
       title:"Practice Exam: "+kitPreview.pe.name,
       date:s.date,time:s.time,subject:"",kind:"study block",notes:"",
-      priority:5,difficulty:5,deadline:kitPreview.examDate,duration:s.duration,
+      priority:sessionPriority,difficulty:5,deadline:kitPreview.examDate,duration:s.duration,
       status:"pending",timeSpent:0,completedAt:null,
       practiceExamId:kitPreview.pe.id,placementReason:s.placementReason||null,
       dueEventId:kitPreview.examId,isExamPrepSession:true,
@@ -6803,6 +6807,12 @@ function StudlinPrep({setActive=()=>{}}={}){
         ?{...ev,quizScores:[...(ev.quizScores||[]),{score,total,at:Date.now()}]}
         :ev);
       lsSet("events",next);
+      // Covers both triggers that just happened here (the practice-exam
+      // attempt recorded above, and the quizScores write just above) --
+      // a strong or weak practice-exam result should immediately move
+      // this exam's remaining sessions' priority, same reasoning as the
+      // confidence check-in trigger.
+      restampSessionPriorities(pe.examEventId);
       if(wrongTopics.length>0){
         const exam=next.find(ev=>ev.id===pe.examEventId);
         const linkedDeck=allDecks.find(d=>d.examEventId===pe.examEventId);
@@ -6813,7 +6823,7 @@ function StudlinPrep({setActive=()=>{}}={}){
               id:"weakspot-"+pe.id+"-"+Date.now(),
               title:"Review weak spots: "+wrongTopics.slice(0,3).join(", "),
               date:slot.date,time:slot.time,subject:"",kind:"study block",notes:"",
-              priority:6,difficulty:5,deadline:exam.date,duration:25,
+              priority:computeSessionPriority(exam,dayKey()),difficulty:5,deadline:exam.date,duration:25,
               status:"pending",timeSpent:0,completedAt:null,
               ...(linkedDeck?{deckId:linkedDeck.id}:{}),
               placementReason:slot.reason||null,dueEventId:pe.examEventId,isExamPrepSession:true,
@@ -6866,7 +6876,7 @@ function StudlinPrep({setActive=()=>{}}={}){
               // needed). Clicking the name is the only thing that navigates
               // into the exam detail page below (unchanged/not rebuilt).
               const cellSelStyle={width:"100%",background:"transparent",border:"none",color:T.text,fontSize:10.5,fontFamily:T.font,outline:"none",cursor:"pointer",padding:"2px 0"};
-              const gridCols="minmax(120px,1.6fr) 84px 64px 68px 104px 56px 70px 70px 120px";
+              const gridCols="minmax(120px,1.6fr) 84px 64px 68px 104px 56px 70px 70px 120px 76px";
               return (
               <div>
                 <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
@@ -6885,7 +6895,7 @@ function StudlinPrep({setActive=()=>{}}={}){
                 <div style={{overflowX:"auto",border:`1px solid ${T.border}`,borderRadius:8}}>
                   <div style={{minWidth:760}}>
                     <div style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,background:T.card2}}>
-                      {["Name","Class","Type","Flex","Due","Days","Urgency","Difficulty","Sessions"].map((h,i)=>(
+                      {["Name","Class","Type","Flex","Due","Days","Urgency","Difficulty","Sessions","Prep"].map((h,i)=>(
                         <div key={h+i} style={{fontSize:9,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>{h}</div>
                       ))}
                     </div>
@@ -6933,6 +6943,19 @@ function StudlinPrep({setActive=()=>{}}={}){
                           <div onClick={()=>viewPlan(ex)} style={{fontSize:10.5,color:T.muted,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title="Click to open the study plan">
                             {sessionsLabel}
                           </div>
+                          {(()=>{
+                            const prep=computePreparedness(ex,lsGet("events",[]),today);
+                            if(!prep||prep.score==null)return <div style={{fontSize:10.5,color:T.faint}}>—</div>;
+                            const barColor=prep.score>=70?T.lime:prep.score<40?T.red:T.amber;
+                            return (
+                              <div style={{display:"flex",alignItems:"center",gap:5}} title="Preparedness">
+                                <div style={{width:26,height:4,borderRadius:99,background:T.card2,overflow:"hidden",flexShrink:0}}>
+                                  <div style={{height:"100%",width:prep.score+"%",background:barColor,borderRadius:99}} />
+                                </div>
+                                <span style={{fontSize:9.5,color:T.muted}}>{prep.score}%</span>
+                              </div>
+                            );
+                          })()}
                         </div>
                       );
                     })}
@@ -7068,7 +7091,7 @@ function StudlinPrep({setActive=()=>{}}={}){
         const scheduleGenericSessions=async(count)=>{
           setSessionScheduleLoading(true);
           const events=removeGenericExamPrepSessions(lsGet("events",[]),selectedExam.id);
-          const sessions=buildExamSessionEvents(selectedExam.title,selectedExam.date,selectedExam.subject,count,"prep-"+selectedExam.id+"-"+Date.now(),events,getWeeklyRoutine(),getSchedulePreferences(),{dueEventId:selectedExam.id},selectedExam.difficulty);
+          const sessions=buildExamSessionEvents(selectedExam.title,selectedExam.date,selectedExam.subject,count,"prep-"+selectedExam.id+"-"+Date.now(),events,getWeeklyRoutine(),getSchedulePreferences(),{dueEventId:selectedExam.id},selectedExam.difficulty,undefined,selectedExam.examWeight,selectedExam.confidenceLog);
           const focuses=materialText.trim()?await proposeSessionFocuses(selectedExam.title,materialText,sessions.length,selectedExam.subject):null;
           const finalSessions=focuses?sessions.map((s,i)=>focuses[i]?{...s,notes:focuses[i]}:s):sessions;
           lsSet("events",events.concat(finalSessions));
@@ -7100,7 +7123,7 @@ function StudlinPrep({setActive=()=>{}}={}){
           const previews=buildSpacedSessionPreviews(selectedExam.date,selectedExam.subject,1,d);
           if(previews.length===0)return;
           const s=previews[0];
-          const session={id:"prep-"+selectedExam.id+"-"+Date.now(),title:"Study: "+selectedExam.title,date:s.date,time:s.time,subject:selectedExam.subject,notes:"",kind:"study block",duration:s.duration,priority:5,difficulty:selectedExam.difficulty??500,deadline:selectedExam.date,status:"pending",timeSpent:0,completedAt:null,placementReason:s.placementReason||null,isExamPrepSession:true,dueEventId:selectedExam.id};
+          const session={id:"prep-"+selectedExam.id+"-"+Date.now(),title:"Study: "+selectedExam.title,date:s.date,time:s.time,subject:selectedExam.subject,notes:"",kind:"study block",duration:s.duration,priority:computeSessionPriority(selectedExam,dayKey()),difficulty:selectedExam.difficulty??500,deadline:selectedExam.date,status:"pending",timeSpent:0,completedAt:null,placementReason:s.placementReason||null,isExamPrepSession:true,dueEventId:selectedExam.id};
           lsSet("events",lsGet("events",[]).concat([session]));
           refresh();
         };
@@ -7145,6 +7168,14 @@ function StudlinPrep({setActive=()=>{}}={}){
                   :readiness.state==="no-data"
                     ?"Build a study kit below to get review sessions started."
                     :null;
+              // Additive, next to readiness (behind/on-track/etc), not a
+              // replacement of it -- the category above answers "is the
+              // pace okay" (its own distinct rules), this answers "how
+              // prepared, as a percentage" (a separate weighted blend).
+              // Both stay visible since they're answering different
+              // questions.
+              const prep=computePreparedness(selectedExam,lsGet("events",[]),dayKey());
+              const prepColor=prep&&prep.score!=null?(prep.score>=70?T.lime:prep.score<40?T.red:T.amber):T.faint;
               return (
                 <div style={{marginBottom:20}}>
                   <span onMouseEnter={()=>setReadinessExpanded(true)} onMouseLeave={()=>setReadinessExpanded(false)}
@@ -7154,6 +7185,16 @@ function StudlinPrep({setActive=()=>{}}={}){
                   <div style={{fontSize:13,color:T.text,lineHeight:1.5,marginTop:8}}>{readiness.sentence}</div>
                   {readinessExpanded&&suggestion&&(
                     <div style={{marginTop:6,padding:"10px 12px",borderRadius:6,border:`1px solid ${T.border}`,background:T.card2,fontSize:12,color:T.muted,lineHeight:1.5}}>{suggestion}</div>
+                  )}
+                  {prep&&prep.score!=null?(
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginTop:10}}>
+                      <div style={{flex:1,maxWidth:220,height:6,borderRadius:99,background:T.card2,overflow:"hidden"}}>
+                        <div style={{height:"100%",width:prep.score+"%",background:prepColor,borderRadius:99}} />
+                      </div>
+                      <span style={{fontSize:11.5,fontWeight:600,color:T.muted}}>{prep.score}% prepared</span>
+                    </div>
+                  ):(
+                    <div style={{fontSize:11.5,color:T.faint,marginTop:10}}>Not started yet</div>
                   )}
                 </div>
               );
@@ -8008,10 +8049,15 @@ function Flashcards() {
     if(!reviewSchedulePreview)return;
     const included=reviewSchedulePreview.sessions.filter(s=>s.include);
     const events=lsGet("events",[]);
+    // Not exam-linked for every deck (a plain unlinked deck review has no
+    // examEventId at all) -- computeSessionPriority(null,...) falls back
+    // to its own neutral default (500) in that case.
+    const reviewExam=reviewSchedulePreview.examEventId?events.find(e=>e.id===reviewSchedulePreview.examEventId):null;
+    const sessionPriority=computeSessionPriority(reviewExam,dayKey());
     const newEvents=included.map((s,i)=>({
       id:"deckrev-"+reviewSchedulePreview.deckId+"-"+Date.now()+"-"+i,
       title:"Review: "+reviewSchedulePreview.deckName,date:s.date,time:s.time,
-      subject:"",kind:"study block",notes:"",priority:5,difficulty:5,
+      subject:"",kind:"study block",notes:"",priority:sessionPriority,difficulty:5,
       deadline:reviewSchedulePreview.examDate,duration:s.duration,
       status:"pending",timeSpent:0,completedAt:null,deckId:reviewSchedulePreview.deckId,
       placementReason:s.placementReason||null,
@@ -9211,6 +9257,7 @@ function Notes({setActive=()=>{}}){
                           ?{...ev,quizScores:[...(ev.quizScores||[]),{score:quizOverlay.score,total:quizOverlay.questions.length,at:Date.now()}]}
                           :ev);
                         lsSet("events",next);
+                        restampSessionPriorities(quizOverlay.linkedExamId);
                       }
                     }else{
                       setQuizOverlay(qo=>({...qo,idx:qo.idx+1,picked:null}));
@@ -10538,6 +10585,123 @@ function computeExamReadiness(examEvent,events,todayKey){
   return {state:base.state,daysUntil,sessionsTotal:total,sessionsDone:done,quizScore,sentence};
 }
 
+// Confidence check-in vocabulary -> 0-1, shared by computeSessionPriority
+// (inverted below, since "shaky" should raise urgency) and
+// computePreparedness (not inverted, since "solid" should raise the
+// prepared score) -- one source of truth instead of two separately
+// hardcoded tables.
+const CONFIDENCE_TO_UNIT={shaky:0.2,okay:0.6,solid:1.0};
+// "quiz" vs "major" -- how much this exam should matter when it's
+// competing for a limited time slot. Missing entirely (an exam added
+// through the Add Task modal never sets this field) defaults to
+// major/1.0 -- fails toward treating an unknown exam as significant, not
+// toward under-scheduling it.
+const EXAM_WEIGHT_TO_IMPACT={quiz:0.4,major:1.0};
+const SESSION_PRIORITY_URGENCY_HORIZON_DAYS=21;
+// Real priority for an AI-generated study session, replacing the flat
+// priority:5 (or an occasional hand-tuned 6) every session used to get
+// regardless of the actual exam behind it. Weighted the same way
+// scoreTask already is -- a plain, explainable weighted sum, not a black
+// box -- urgency (days left) weighs most, then impact (quiz/major), then
+// confidence, then raw difficulty. Accepts anything carrying
+// {difficulty,examWeight,confidenceLog,date}, not necessarily a full
+// stored exam event -- callers that only have those four raw fields in
+// scope (buildExamSessionEvents) can pass a plain object built on the
+// spot rather than needing the real exam record.
+function computeSessionPriority(examLike,todayKey){
+  if(!examLike)return 500;
+  const today=todayKey||dayKey();
+  const difficultyNorm=normalizeTaskVal(examLike.difficulty,5);
+  const daysUntil=examLike.date?Math.round((new Date(examLike.date+"T12:00:00")-new Date(today+"T12:00:00"))/86400000):null;
+  // 21+ days out contributes ~0 urgency, tomorrow contributes ~1. No date
+  // at all (shouldn't happen for a real exam, but stay defensive) lands
+  // on a neutral middle rather than 0 or 1.
+  const urgency=daysUntil==null?0.5:Math.max(0,Math.min(1,1-daysUntil/SESSION_PRIORITY_URGENCY_HORIZON_DAYS));
+  const impact=EXAM_WEIGHT_TO_IMPACT[examLike.examWeight]??EXAM_WEIGHT_TO_IMPACT.major;
+  const log=examLike.confidenceLog||[];
+  const lastRating=log[log.length-1];
+  // No check-in yet (very common right after an exam is first created) ->
+  // neutral "okay", deliberately not "shaky" (would over-prioritize every
+  // brand-new exam) or "solid" (would under-prioritize one no one has
+  // actually looked at yet).
+  const confidenceUnit=CONFIDENCE_TO_UNIT[lastRating]??CONFIDENCE_TO_UNIT.okay;
+  const confidenceInverse=1-confidenceUnit;
+  const raw=0.35*urgency+0.30*impact+0.20*confidenceInverse+0.15*difficultyNorm;
+  return Math.round(Math.min(1,raw)*1000);
+}
+// Preparedness bar (Studlin Prep only, additive) -- a 0-100 blend of real
+// signals, distinct from computeExamReadiness's behind/at-risk/on-track
+// state just above (that function is untouched by this one -- it answers
+// "is the pace okay", this answers "how prepared, as a percentage").
+// Weight redistributes across whichever signals actually exist rather
+// than fabricating a value for one that's missing entirely (e.g. no
+// quiz/practice-exam attempt taken yet). Flashcard accuracy is
+// deliberately excluded -- decks don't track correct/wrong answers
+// anywhere in this app today (the "Missed/Hard/Good/Mastered" buttons in
+// the Flashcards study UI only flip local component state, they never
+// write back to `decks`), so there's no real signal to use yet -- a
+// fast-follow once that tracking actually exists, not attempted here.
+function computePreparedness(examEvent,events,todayKey){
+  if(!examEvent||examEvent.kind!=="exam")return null;
+  const sessions=events.filter(e=>e.dueEventId===examEvent.id);
+  const total=sessions.length;
+  if(total===0)return {score:null,breakdown:[]};
+  const done=sessions.filter(e=>e.status==="done").length;
+  const completion=done/total;
+  const components=[{key:"completion",value:completion,weight:0.45}];
+  const log=examEvent.confidenceLog||[];
+  if(log.length>0){
+    components.push({key:"confidence",value:CONFIDENCE_TO_UNIT[log[log.length-1]]??0.6,weight:0.30});
+  }
+  // Real exam-performance signal: most recent quiz score and most recent
+  // practice-exam attempt (recordPracticeExamAttempt already stores
+  // {score,total,at,wrongTopics} per attempt) -- averaged when both exist,
+  // whichever one exists when only one does, omitted entirely (weight
+  // redistributed to the other components) when neither does yet.
+  const lastQuiz=(examEvent.quizScores&&examEvent.quizScores.length)?examEvent.quizScores[examEvent.quizScores.length-1]:null;
+  const practiceExams=lsGet("practiceExams",[]).filter(pe=>pe.examEventId===examEvent.id);
+  const lastAttempt=practiceExams.reduce((latest,pe)=>{
+    const a=(pe.attempts&&pe.attempts.length)?pe.attempts[pe.attempts.length-1]:null;
+    if(!a)return latest;
+    return(!latest||a.at>latest.at)?a:latest;
+  },null);
+  const examScoreParts=[];
+  if(lastQuiz)examScoreParts.push(lastQuiz.score/lastQuiz.total);
+  if(lastAttempt)examScoreParts.push(lastAttempt.score/lastAttempt.total);
+  if(examScoreParts.length>0){
+    const examScore=examScoreParts.reduce((a,b)=>a+b,0)/examScoreParts.length;
+    components.push({key:"examScore",value:examScore,weight:0.25});
+  }
+  const totalWeight=components.reduce((s,c)=>s+c.weight,0);
+  const score=Math.round(components.reduce((s,c)=>s+c.value*c.weight,0)/totalWeight*100);
+  return {score:Math.max(0,Math.min(100,score)),breakdown:components.map(c=>c.key)};
+}
+// Keeps every AI-generated session's priority current after something
+// real changes about the exam -- called right after a confidence
+// check-in, a quiz score, or a practice-exam attempt gets recorded (see
+// each call site's own comment for why that specific moment). Recomputes
+// once for the exam as a whole (not per-session -- "this exam as a whole
+// just got less urgent" is the actual fact being recorded) and stamps it
+// onto every still-pending session for this exam that hasn't been
+// manually overridden. A session the student explicitly re-prioritized
+// themselves (see EventDetailModal's save, priorityAutoManaged:false) is
+// deliberately skipped -- automation never fights an explicit student
+// edit, same precedent userPinned/movable already establish elsewhere in
+// this file.
+function restampSessionPriorities(examId){
+  if(!examId)return;
+  const all=lsGet("events",[]);
+  const exam=all.find(e=>e.id===examId);
+  if(!exam)return;
+  const sessionPriority=computeSessionPriority(exam,dayKey());
+  const next=all.map(e=>
+    (e.dueEventId===examId&&e.status==="pending"&&e.isExamPrepSession&&e.priorityAutoManaged!==false)
+      ?{...e,priority:sessionPriority}
+      :e
+  );
+  lsSet("events",next);
+}
+
 // Shared by commitSyllabusEvents (exam items) and commitBrainDump (exam
 // items) — builds real scheduled study sessions counting down to a date,
 // on the same computeReviewOffsets curve Flashcards' deck-linked review
@@ -10545,12 +10709,18 @@ function computeExamReadiness(examEvent,events,todayKey){
 // here the way Attack Blocks get one — that curve already refuses to
 // propose anything for the too-far-out portion of the timeline on its own.
 // Caller merges the returned events into its own working array/lsSet.
-function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,working,routines,prefs,extraFields,difficulty,durationOverride){
+function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,working,routines,prefs,extraFields,difficulty,durationOverride,examWeight,confidenceLog){
   const dates=computeReviewDates(examDate,dayKey(),count);
   // durationOverride lets the study-plan calibration (Prep redesign Part C)
   // scale minutes per session by confidence level -- every existing caller
   // omits it and keeps today's suggestDurationFor-or-25 behavior unchanged.
   const duration=durationOverride||suggestDurationFor(subject,"study block")||25;
+  // examWeight/confidenceLog are optional trailing params (new) -- every
+  // caller either has the real exam object in scope (just needs a small
+  // .examWeight/.confidenceLog addition to the call) or genuinely doesn't
+  // have them (a brand-new exam with no history yet), in which case
+  // computeSessionPriority's own defaults apply cleanly.
+  const sessionPriority=computeSessionPriority({difficulty,examWeight,confidenceLog,date:examDate},dayKey());
   let localWorking=working;
   const built=[];
   dates.forEach((date,si)=>{
@@ -10560,7 +10730,7 @@ function buildExamSessionEvents(examTitle,examDate,subject,count,idPrefix,workin
       id:idPrefix+"-"+si,
       title:"Study: "+examTitle,date:slot.date,time:slot.time,
       subject,notes:"",kind:"study block",duration,
-      priority:5,difficulty:difficulty??500,deadline:examDate,
+      priority:sessionPriority,difficulty:difficulty??500,deadline:examDate,
       status:"pending",timeSpent:0,completedAt:null,
       placementReason:slot.reason||null,
       // Marks this specifically as one of the adaptive spaced-review
@@ -10667,7 +10837,7 @@ function planBrainDumpTasks(items,events,routines,prefs){
     const examTask={id:String(Date.now()+Math.random()*1000),title:it.title,date:examDate,time:it.dueTime||"09:00",subject:"",kind:"exam",notes:"",priority:5,difficulty:it.difficulty??500,deadline:null,duration:null,status:"pending",timeSpent:0,completedAt:null,examWeight:it.examWeight||"major",confidenceLog:[]};
     examTasks.push(examTask);working=working.concat([examTask]);
     if(it.proposeSessions){
-      const sessions=buildExamSessionEvents(it.title,examDate,"",it.sessionCount||4,"bdexam-"+examTask.id,working,routines,prefs,{dueEventId:examTask.id},it.difficulty);
+      const sessions=buildExamSessionEvents(it.title,examDate,"",it.sessionCount||4,"bdexam-"+examTask.id,working,routines,prefs,{dueEventId:examTask.id},it.difficulty,undefined,examTask.examWeight,examTask.confidenceLog);
       examTasks.push(...sessions);working=working.concat(sessions);
     }
   });
@@ -10888,7 +11058,7 @@ function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routin
   let examSessionEvents=[];
   items.forEach((it,i)=>{
     if(it.kind!=="exam"||!it.proposeSessions||it.noDate)return;
-    const sessions=buildExamSessionEvents(it.title,it.date,tag,it.sessionCount||4,"examrev-"+noteId+"-"+i,working,routines,prefs,{noteId,dueEventId:markerEvents[i].id},it.difficulty);
+    const sessions=buildExamSessionEvents(it.title,it.date,tag,it.sessionCount||4,"examrev-"+noteId+"-"+i,working,routines,prefs,{noteId,dueEventId:markerEvents[i].id},it.difficulty,undefined,markerEvents[i].examWeight,markerEvents[i].confidenceLog);
     examSessionEvents=examSessionEvents.concat(sessions);working=working.concat(sessions);
   });
   // Stamped on every produced event as a final pass (rather than threading
@@ -15592,14 +15762,20 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
         ...(kind==="exam"?{sourceMaterials:examPlan.materialFiles,referenceLinks:examPlan.materialLinks}:{}),
         ...(droppedProject?{phases:undefined,outline:undefined}:{}),
         ...(requiresProjectDetail&&newProjPhases.length>0?{phases:newProjPhases.map((name,pi)=>({name,status:pi===0?"active":"pending"}))}:{}),
-        ...(requiresProjectDetail&&newProjOutline.length>0?{outline:newProjOutline}:{})};
+        ...(requiresProjectDetail&&newProjOutline.length>0?{outline:newProjOutline}:{}),
+        // The one place a student can directly re-prioritize a single
+        // AI-generated session -- once they do, restampSessionPriorities
+        // (triggered by check-ins/quiz scores elsewhere) skips this
+        // session from then on, same "student's explicit action wins"
+        // precedent userPinned/movable already establish in this file.
+        ...(e.isExamPrepSession&&priority!==e.priority?{priorityAutoManaged:false}:{})};
       if(timeChanged){const {movedByStudlin,movedFrom,movedAt,placementReason,...rest}=merged;return rest;}
       return merged;
     });
     let next=date?rebalanceDay(date,updated,routines,prefs):updated;
     if(attackPair)next=next.concat([attackPair.task]);
     if(kind==="exam"&&examPlan.proposeSessions&&linkedSessions.length===0){
-      const sessions=buildExamSessionEvents(title.trim(),date,subject,examPlan.sessionCount||4,"edittask-exam-"+ev.id,next,routines,prefs,{dueEventId:ev.id},difficulty);
+      const sessions=buildExamSessionEvents(title.trim(),date,subject,examPlan.sessionCount||4,"edittask-exam-"+ev.id,next,routines,prefs,{dueEventId:ev.id},difficulty,undefined,ev.examWeight,ev.confidenceLog);
       next=next.concat(sessions);
     }
     commit(next);onClose();
@@ -17087,7 +17263,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       let tasks=[examTask];
       const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
       if(evExamPlan.proposeSessions){
-        const sessions=buildExamSessionEvents(evTitle.trim(),slot.date,subj,evExamPlan.sessionCount||4,"addtask-exam-"+examTask.id,events.concat([examTask]),routines,getSchedulePreferences(),{dueEventId:examTask.id},evDifficulty);
+        const sessions=buildExamSessionEvents(evTitle.trim(),slot.date,subj,evExamPlan.sessionCount||4,"addtask-exam-"+examTask.id,events.concat([examTask]),routines,getSchedulePreferences(),{dueEventId:examTask.id},evDifficulty,undefined,examTask.examWeight,examTask.confidenceLog);
         tasks=tasks.concat(sessions);
       }
       commitTasks(tasks,{userPinned:true});
@@ -21627,6 +21803,7 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
         ?{...e,quizScores:[...(e.quizScores||[]),{score,total,at:Date.now()}]}
         :e);
       lsSet("events",next);
+      restampSessionPriorities(quizData.linkedExamId);
     }
   };
   const closeQuiz=()=>{setQuizData(null);setQuizAnswers([]);setQuizResult(null);};
@@ -22494,6 +22671,11 @@ function App() {
     const updatedExam={...examEvent,confidenceLog:[...(examEvent.confidenceLog||[]),rating]};
     const nextEvents=events.map(e=>e.id===examEvent.id?updatedExam:e);
     lsSet("events",nextEvents);
+    // The scenario this is for: session 1 just finished and the student
+    // said "solid" -- sessions 2/3 for this same exam need to actually
+    // reflect that (lower priority) right now, not keep whatever they were
+    // stamped with back when the exam was still unknown/shaky.
+    restampSessionPriorities(examEvent.id);
     const suggestion=evaluateExamPrepAdjustment(updatedExam,nextEvents,getSchedulePreferences());
     if(suggestion){
       if(catchUpBanner)queueInsightNudge("examPrep",suggestion);

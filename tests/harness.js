@@ -116,7 +116,9 @@ function loadStudlinModule(options) {
     "getRoutineOverrides","saveRoutineOverrides","expandRoutineOccurrences",
     "getHolidays","saveHolidays","getWakeSleep","saveWakeSleep",
     "isTermRolloverDue","getTermRolloverDismissedFor","dismissTermRollover",
-    "upcomingAssignments","upcomingProjects"];
+    "upcomingAssignments","upcomingProjects",
+    "computeSessionPriority","computePreparedness","restampSessionPriorities",
+    "CONFIDENCE_TO_UNIT","EXAM_WEIGHT_TO_IMPACT"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }
