@@ -3093,7 +3093,7 @@ const SCHEDULE_EXTRACTION_ROBUSTNESS_RULE=
   "Dates can appear in any format -- MM/DD/YYYY, MM/DD/YY, \"Sept 24\", \"September 24th, 2026\", \"24 Sept\", \"Wed 9/24\", ISO YYYY-MM-DD, or spelled out in a sentence -- read all of them the same way. When a date has no year stated, infer it from today's date: if the resulting date (with the current year) would already be more than about 30 days in the past, use next year instead, otherwise use the current year -- this keeps a syllabus scanned mid-term from misdating its own already-past early-term items while still landing a January date correctly for a term that started the previous fall. "+
   "Days of the week can be written many ways -- \"MWF\", \"M/W/F\", \"Mon, Wed, Fri\", full names, or numbers -- read them all the same way. \"TTh\", \"T/Th\", \"TR\", and \"Tu/Th\" all mean Tuesday AND Thursday, never Tuesday twice -- this specific pair is the most common misread, be careful with it. \"MTWRF\" or \"MTWTF\" means all five weekdays (the \"R\" in some academic notation stands for Thursday, not Tuesday). "+
   "Times can be 12-hour with am/pm in any spacing/punctuation (\"9am\", \"9:00 AM\", \"9:00a\"), 24-hour (\"13:00\"), or a range where only the second time states am/pm and it applies to both (\"9-9:50am\" means 9:00am-9:50am). If a class's meeting time genuinely isn't stated anywhere (fully online/asynchronous, or just not listed), omit that meeting time entirely rather than guessing one. "+
-  "If the source shows multiple sections of the same class, or marks something Waitlisted, Dropped, or Not Registered, only extract classes clearly marked as actually registered/enrolled/confirmed -- skip anything explicitly marked otherwise, and skip a duplicate section of a class you already extracted. "+
+  "Only extract classes clearly marked as actually registered/enrolled/confirmed -- skip a section explicitly marked Waitlisted, Dropped, or Not Registered, and skip an exact duplicate listing of a section you already extracted (the identical section shown twice). But a second REAL, registered section of a class you're already extracting -- most commonly a lecture plus its own recitation, lab, or discussion section, each with a different meeting time -- is never a duplicate to discard. It's a normal part of that same class: add its meeting time as a second entry in that class's own \"meetingTimes\" array instead of skipping it or treating it as a separate class. "+
   "Use a clean, human-readable class name a student would actually recognize (e.g. \"Calculus II\", \"Biology 101\") -- strip out CRNs, section numbers, and room/building codes that a course catalog listing bundles into the same line, they don't belong in the name. "+
   "Office hours, tutoring sessions, review sessions, or an instructor's general availability are never the class's own meeting time, even when they're listed right next to it -- only extract the actual scheduled class meeting. ";
 // Returns {items, error} rather than a bare array so the caller can tell
@@ -4450,11 +4450,19 @@ function materialVolumeBonus(materialCharCount){
 // computeReviewOffsets' own daysUntil cap (nothing here needs to duplicate
 // that), and materialCharCount gives a small nudge for a lot of attached
 // material. confidenceLevel must be "shaky"|"okay"|"solid".
-function computeStudyPlanParams(examWeight,baseDuration,confidenceLevel,materialCharCount){
+// Confidence already scales duration (0.8-1.25x above); importance used to
+// only scale session COUNT (via defaultSessionCountFor), leaving a critical
+// final and a minor quiz at identical confidence with the exact same
+// session length. Same additive, backward-compatible shape as the rest of
+// the importance work -- an exam with no importanceLevel yet (or this
+// param simply omitted) is a pure 1.0 no-op, byte-identical to before.
+const IMPORTANCE_TO_DURATION_MULTIPLIER={minor:0.85,moderate:1.0,major:1.15,critical:1.3};
+function computeStudyPlanParams(examWeight,baseDuration,confidenceLevel,materialCharCount,importanceLevel){
   const level=STUDY_PLAN_CONFIDENCE_LEVELS[confidenceLevel]||STUDY_PLAN_CONFIDENCE_LEVELS.okay;
   const base=defaultSessionCountFor(examWeight)+materialVolumeBonus(materialCharCount);
   const sessionCount=Math.max(1,Math.min(6,Math.round(base*level.sessionMultiplier)));
-  const sessionDuration=Math.max(15,Math.round((baseDuration||25)*level.durationMultiplier/5)*5);
+  const importanceMultiplier=importanceLevel?(IMPORTANCE_TO_DURATION_MULTIPLIER[importanceLevel]??1):1;
+  const sessionDuration=Math.max(15,Math.round((baseDuration||25)*level.durationMultiplier*importanceMultiplier/5)*5);
   return {sessionCount,sessionDuration,difficultyValue:level.difficultyValue};
 }
 // The unified Build/Redo study plan flow's optional "how many hours do you
@@ -4474,13 +4482,32 @@ function applyHoursTargetCap(sessionCount,sessionDuration,hoursTarget){
   const cappedCount=Math.max(1,Math.round(targetMins/cappedDuration));
   return {sessionCount:cappedCount,sessionDuration:cappedDuration};
 }
-function suggestDurationFor(subject,kind){
+// difficulty is optional -- when a caller has a real difficulty value in
+// scope (0-1000 scale, same as everywhere else in this file), this also
+// tries a finer median bucketed by difficulty tier (reusing
+// difficultyTierOf, already the reliability-bucketing helper elsewhere --
+// a second consumer, not new logic), gated behind TIER0_MIN_BUCKET_SAMPLE
+// so a handful of samples doesn't get treated as a confident pattern --
+// timeSpent is only ever set via the Lock-In Timer completion path (see
+// its own comment near :1870), never plain checkbox-done, so the sample
+// size here is already thinner than it looks. Falls back to the coarser
+// subject+kind-only median (today's exact behavior) whenever the finer
+// bucket doesn't have enough data yet, or no difficulty was passed at all
+// -- every existing caller that omits the new param is unaffected.
+function suggestDurationFor(subject,kind,difficulty){
   const events=lsGet("events",[]).filter(e=>e.status==="done"&&e.timeSpent&&e.subject===subject&&e.kind===kind);
   if(events.length===0)return null;
-  const sorted=events.map(e=>e.timeSpent).sort((a,b)=>a-b);
-  const mid=Math.floor(sorted.length/2);
-  const median=sorted.length%2?sorted[mid]:Math.round((sorted[mid-1]+sorted[mid])/2);
-  return Math.max(5,Math.round(median/5)*5);
+  const medianOf=(pool)=>{
+    const sorted=pool.map(e=>e.timeSpent).sort((a,b)=>a-b);
+    const mid=Math.floor(sorted.length/2);
+    return sorted.length%2?sorted[mid]:Math.round((sorted[mid-1]+sorted[mid])/2);
+  };
+  if(difficulty!=null){
+    const tier=difficultyTierOf({difficulty});
+    const tiered=events.filter(e=>difficultyTierOf(e)===tier);
+    if(tiered.length>=TIER0_MIN_BUCKET_SAMPLE)return Math.max(5,Math.round(medianOf(tiered)/5)*5);
+  }
+  return Math.max(5,Math.round(medianOf(events)/5)*5);
 }
 // Shared by deck review scheduling (Flashcards) and practice-exam
 // scheduling (Studlin Prep) -- both are "N spaced sessions counting down
@@ -6656,7 +6683,7 @@ function StudlinPrep({setActive=()=>{}}={}){
     setBuildPlanGeneric(!hasMaterial);
     if(hasMaterial)persistBuildPlanMaterial();
     const baseDuration=suggestDurationFor(buildPlanExam.subject,"study block")||25;
-    const params=computeStudyPlanParams(buildPlanExam.examWeight,baseDuration,buildPlanConfidence,buildPlanMaterialText.length);
+    const params=computeStudyPlanParams(buildPlanExam.examWeight,baseDuration,buildPlanConfidence,buildPlanMaterialText.length,buildPlanExam.importanceLevel);
     const {sessionCount,sessionDuration}=applyHoursTargetCap(params.sessionCount,params.sessionDuration,parseFloat(buildPlanHoursTarget));
     const dates=computeReviewDates(buildPlanExam.date,dayKey(),sessionCount);
     setBuildPlanPreview({sessionCount,sessionDuration,difficultyValue:params.difficultyValue,dates});
@@ -13979,7 +14006,7 @@ function WizardHsBuilder({schoolStart,setSchoolStart,schoolEnd,setSchoolEnd,item
 // student to retype the same name a second time before "+ Add" will work.
 // Omit it (existing callers, e.g. RoutineWizardModal) and behavior is
 // unchanged -- an empty, always-visible Title field, exactly as before.
-function WizardCollegeBuilder({items,addItem,removeItem,defaultTitle}){
+function WizardCollegeBuilder({items,addItem,removeItem,defaultTitle,hideHeading}){
   const [title,setTitle]=useState(defaultTitle||"");
   const [kind,setKind]=useState("class");
   const [days,setDays]=useState([]);
@@ -13995,7 +14022,7 @@ function WizardCollegeBuilder({items,addItem,removeItem,defaultTitle}){
   };
   return (
     <div>
-      <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:10}}>Add a class or recurring activity</div>
+      {!hideHeading&&<div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:10}}>Add a class or recurring activity</div>}
       {defaultTitle===undefined&&<Field label="Title"><Input value={title} onChange={e=>setTitle(e.target.value)} style={{flexGrow:1}} /></Field>}
       <div style={{display:"flex",gap:8,marginBottom:10}}>
         <button type="button" onClick={()=>setKind("class")} style={wizardChipStyle(kind==="class")}>Class</button>
@@ -15103,11 +15130,10 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                     show, e.g. from a syllabus scan. */}
                 {!meetingTimeExpandedManually&&review.meetingTimes.length===0?(
                   <button type="button" onClick={()=>setMeetingTimeExpandedManually(true)}
-                    style={{width:"100%",padding:"10px 12px",borderRadius:6,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,textAlign:"left"}}>+ Add a meeting time (optional — or set this later by dragging the class onto your calendar)</button>
+                    style={{width:"100%",padding:"10px 12px",borderRadius:6,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,textAlign:"left"}}>+ Add a meeting time (optional, or set this later by dragging the class onto your calendar)</button>
                 ):(<>
                   <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:8}}>When does it meet?</div>
-                  <WizardCollegeBuilder items={meetingItemsForBuilder} addItem={addMeetingTime} removeItem={removeMeetingTime} defaultTitle={review.subjectName||"Class"} />
-                </>)}
+                  <WizardCollegeBuilder items={meetingItemsForBuilder} addItem={addMeetingTime} removeItem={removeMeetingTime} defaultTitle={review.subjectName||"Class"} hideHeading /></>)}
               </div>
               <div style={{marginBottom:8}}>
                 <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:2}}>Assignments, exams &amp; projects</div>
@@ -18853,10 +18879,6 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         }>
         <Field label="Title"><Input placeholder="e.g. Study Bio chapter 4-6" value={evTitle} onChange={ev=>setEvTitle(ev.target.value)} autoFocus /></Field>
 
-        <Field label="Type" hint={isFixedKind?"Fixed real-world block — Studlin will never move or reschedule this.":"Choose what kind of entry this is"}>
-          <SelectChip options={[{value:"assignment",label:"Assignment"},{value:"project",label:"Project"},"exam","class",{value:"busy block",label:"Activity"},"reminder"]} value={evKind} onChange={onEvKindChange} />
-        </Field>
-
         {/* "No specific time, add to checklist instead" removed (2026-07-30)
             -- a plain checklist item can already be added directly from
             Dashboard, so this was a second, redundant entry point to the
@@ -18869,7 +18891,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
             re-deriving all of them individually is a bigger, riskier
             change than removing this one entry point. */}
 
-        <Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Field label="Type" hint={isFixedKind?"Won't be moved or rescheduled.":undefined}>
+            <SelectChip options={[{value:"assignment",label:"Assignment"},{value:"project",label:"Project"},"exam","class",{value:"busy block",label:"Activity"},"reminder"]} value={evKind} onChange={onEvKindChange} />
+          </Field>
+          <Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field>
+        </div>
         {evSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Drivers ed, SAT prep, club..." value={evCustom} onChange={ev=>setEvCustom(ev.target.value)} /></Field>}
 
         {isChecklistMode&&(
@@ -18983,28 +19010,26 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
 
         {isTaskKind&&!isChecklistMode&&taskMode==="ai"&&(
           evMoreOpen ? (
-            <>
-              <Field label={`Impact: ${Math.round(evPriority/10)}%`} hint="How critical this is, independent of its due date — higher-impact tasks get scheduled earlier">
-                <div style={{display:"flex",alignItems:"center",gap:12}}>
-                  <span style={{fontSize:11,color:T.muted,width:28}}>Low</span>
-                  <div style={{flex:1,position:"relative",paddingTop:24}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <Field label={`Impact: ${Math.round(evPriority/10)}%`} hint="Higher-impact tasks get scheduled earlier.">
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:10.5,color:T.muted,width:22}}>Low</span>
+                  <div style={{flex:1,position:"relative",paddingTop:22}}>
                     <div style={{position:"absolute",top:0,left:`${evPriority/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{prioLabel(evPriority)}</div>
                     <input type="range" min={0} max={1000} value={evPriority} onChange={ev=>setEvPriority(+ev.target.value)} style={{width:"100%",accentColor:T.lime,height:6,borderRadius:3,cursor:"pointer"}} />
                   </div>
-                  <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Urgent</span>
                 </div>
               </Field>
-              <Field label={`Difficulty: ${diffLabel(evDifficulty)}`} hint="How hard this task is for you — helps Studlin schedule it when your energy matches">
-                <div style={{display:"flex",alignItems:"center",gap:12}}>
-                  <span style={{fontSize:11,color:T.muted,width:28}}>Easy</span>
-                  <div style={{flex:1,position:"relative",paddingTop:24}}>
+              <Field label={`Difficulty: ${diffLabel(evDifficulty)}`} hint="Schedules it when your energy matches.">
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:10.5,color:T.muted,width:22}}>Easy</span>
+                  <div style={{flex:1,position:"relative",paddingTop:22}}>
                     <div style={{position:"absolute",top:0,left:`${evDifficulty/10}%`,transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}44`,borderRadius:5,padding:"2px 7px",whiteSpace:"nowrap",pointerEvents:"none"}}>{diffLabel(evDifficulty)}</div>
                     <input type="range" min={0} max={1000} value={evDifficulty} onChange={ev=>setEvDifficulty(+ev.target.value)} style={{width:"100%",accentColor:T.lime,height:6,borderRadius:3,cursor:"pointer"}} />
                   </div>
-                  <span style={{fontSize:11,color:T.muted,width:40,textAlign:"right"}}>Hard</span>
                 </div>
               </Field>
-            </>
+            </div>
           ) : (
             <button type="button" onClick={()=>setEvMoreOpen(true)} style={{background:"none",border:"none",color:T.muted,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:"4px 0",marginBottom:14,textDecoration:"underline"}}>+ More details (impact &amp; difficulty)</button>
           )
