@@ -638,7 +638,11 @@ const TimeInput = ({value,onChange,style,lockedRanges,bare}) => {
   // box is still clickable and opens the native option list either way.
   const selStyle=bare
     ?{width:"auto",flexShrink:0,padding:0,background:"transparent",border:"none",color:T.text,fontSize:14,fontWeight:600,fontFamily:T.font,outline:"none",cursor:"pointer",appearance:"none",WebkitAppearance:"none",MozAppearance:"none"}
-    :{width:30,flexShrink:0,padding:"4px 2px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:5,color:T.text,fontSize:12,fontFamily:T.font,outline:"none",cursor:"pointer",boxSizing:"border-box",textAlign:"center",appearance:"none",WebkitAppearance:"none",MozAppearance:"none"};
+    // width was 30 -- tight enough that a two-digit hour (10/11/12) could
+    // visually clip/look narrower than the always-two-digit minute select
+    // next to it, same class of bug as the preview-step duration field
+    // fixed earlier (commit 6a3383f).
+    :{width:34,flexShrink:0,padding:"4px 2px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:5,color:T.text,fontSize:12,fontFamily:T.font,outline:"none",cursor:"pointer",boxSizing:"border-box",textAlign:"center",appearance:"none",WebkitAppearance:"none",MozAppearance:"none"};
   const apStyle=bare?selStyle:{...selStyle,width:36};
   return (
     <div style={{display:"flex",flexDirection:"row",gap:bare?1:2,alignItems:"center",flexShrink:0,...(style||{})}}>
@@ -2316,6 +2320,15 @@ function computeCatchUpMissedItems(events,today){
     !ev.checklist&&
     !isFixedItem(ev)&&
     !(ev.kind==="deadline"&&!ev.duration)&&
+    // A materialized Habit occurrence (materializeHabitsForDate) carries
+    // routineId and regenerates fresh every day on its own -- that
+    // function's own "skip gracefully, never rolls to tomorrow" already
+    // covers a day with no room. Without this exclusion, a stale missed
+    // occurrence still sitting in `events` as pending gets treated as
+    // catch-up-worthy and relocated into today, landing alongside (not
+    // replacing) today's own already-materialized occurrence of the same
+    // routine -- a visible duplicate.
+    !ev.routineId&&
     ev.date<today&&
     !(ev.deadline&&ev.deadline<today)
   );
@@ -7058,13 +7071,14 @@ function StudlinPrep({setActive=()=>{}}={}){
 
   return(
     <div>
-      <PH title="Studlin Prep" sub="Attach material once. Get flashcards and a practice exam, scheduled to test day." action={
-        <div style={{display:"flex",gap:6}}>
-          {["exams","assignments","projects","flashcards","practiceExams"].map(v=>(
-            <button key={v} onClick={()=>{setTab(v);setSelectedExamId(null);}} style={{padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",background:tab===v?T.lime+"14":"transparent",color:tab===v?T.lime:T.muted,border:`1px solid ${tab===v?T.lime+"44":T.border}`,fontFamily:T.font}}>{v==="exams"?"Exams":v==="assignments"?"Assignments":v==="projects"?"Projects":v==="flashcards"?"Flashcards":"Practice Exams"}</button>
-          ))}
-        </div>
-      } />
+      {/* Page title/subtitle removed -- sidebar nav already says "Studlin
+          Prep", the H1 here was just repeating it above the fold for no
+          reason. Tab pills kept, just no longer counterbalanced by a title. */}
+      <div style={{display:"flex",gap:6,marginBottom:20}}>
+        {["exams","assignments","projects","flashcards","practiceExams"].map(v=>(
+          <button key={v} onClick={()=>{setTab(v);setSelectedExamId(null);}} style={{padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",background:tab===v?T.lime+"14":"transparent",color:tab===v?T.lime:T.muted,border:`1px solid ${tab===v?T.lime+"44":T.border}`,fontFamily:T.font}}>{v==="exams"?"Exams":v==="assignments"?"Assignments":v==="projects"?"Projects":v==="flashcards"?"Flashcards":"Practice Exams"}</button>
+        ))}
+      </div>
 
       {tab==="exams"&&!selectedExam&&(
         exams.length===0
@@ -7472,16 +7486,27 @@ function StudlinPrep({setActive=()=>{}}={}){
                           every session except whichever one was "next" had
                           no way to reach Start at all, only the editor. */}
                       {(isNext||isExpanded)&&!isDone&&(
-                        isEditing?(
-                          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginTop:10}}>
-                            <Input type="date" value={s.date} onChange={e=>patchSession(s.id,{date:e.target.value})} style={{width:130}} />
-                            <TimeInput value={s.time} onChange={v=>patchSession(s.id,{time:v})} />
-                            <NumField min={5} max={240} fallback={25} value={s.duration||25} onChange={v=>patchSession(s.id,{duration:v})} style={{width:56}} />
-                            <span style={{fontSize:10.5,color:T.muted}}>min</span>
-                            <button onClick={()=>{deleteSession(s.id);closeSession();}} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline"}}>Delete</button>
-                            <button onClick={closeSession} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline"}}>Done</button>
+                        isEditing?(()=>{
+                          const conflict=findOverlapConflict(s.date,s.time,minutesToTime(timeToMinutes(s.time)+(s.duration||25)),lsGet("events",[]).filter(e=>e.id!==s.id),getWeeklyRoutine());
+                          return (
+                          <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:10}}>
+                            <Input value={s.title} onChange={e=>patchSession(s.id,{title:e.target.value})} placeholder="Session name" style={{fontSize:12.5}} />
+                            <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                              <Input type="date" value={s.date} onChange={e=>patchSession(s.id,{date:e.target.value})} style={{width:130}} />
+                              <TimeInput value={s.time} onChange={v=>patchSession(s.id,{time:v})} />
+                              <NumField min={5} max={240} fallback={25} value={s.duration||25} onChange={v=>patchSession(s.id,{duration:v})} style={{width:56}} />
+                              <span style={{fontSize:10.5,color:T.muted}}>min</span>
+                              <button onClick={()=>{deleteSession(s.id);closeSession();}} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline"}}>Delete</button>
+                              <button onClick={closeSession} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline"}}>Done</button>
+                            </div>
+                            {conflict&&(
+                              <div style={{fontSize:11,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:7,padding:"6px 9px",lineHeight:1.4}}>
+                                This overlaps with <strong>{conflict.title}</strong> at {(()=>{let h=Math.floor(conflict.start/60),m=conflict.start%60;const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+String(m).padStart(2,"0")+" "+ap;})()}.
+                              </div>
+                            )}
                           </div>
-                        ):(
+                          );
+                        })():(
                           <div style={{display:"flex",gap:8,marginTop:10}}>
                             <BtnSm onClick={(e)=>{e.stopPropagation();if(window._setTimerTask)window._setTimerTask(s);}}>Start</BtnSm>
                             <BtnSm variant="ghost" onClick={(e)=>{e.stopPropagation();setEditingSessionId(s.id);}}>Move</BtnSm>
@@ -10272,8 +10297,8 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
 
   return (
     <div>
-      <PH title="Studlin Network" sub="Study together. Stay in sync." />
-
+      {/* Page title/subtitle removed -- sidebar nav already says "Studlin
+          Network", same reasoning as Studlin Prep's own header removal. */}
       {/* ── INCOMING FRIEND REQUESTS — surfaced first, needs action ── */}
       {incomingReqs.length>0&&(
         <div style={{marginBottom:16}}>
@@ -13430,7 +13455,7 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
 
-function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, previewEvent, highlightedSessionId}) {
+function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize}) {
   // Phase 10b: user-driven zoom (drag handle below), replacing the old
   // fixed constant. Persisted via getCalZoom/saveCalZoom so it's
   // remembered across visits and shared with DayPlanner. Deliberately not
@@ -13469,6 +13494,53 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
     document.body.style.userSelect="none";
   };
   const wkColRefs = useRef({});
+  // Drag-to-resize/drag-to-reposition the still-open New Event preview
+  // block directly on the calendar, before Create -- same document-level
+  // mousemove/mouseup idiom as wkZoomDrag just above, which is the
+  // existing proven pattern in this file for a press-drag-release
+  // interaction. "resize" changes duration only (bottom-edge handle);
+  // "move" changes date+startTime, keeping the original duration.
+  const previewDragRef = useRef(null); // {mode,origDate,origStart,origDur,grabOffsetPx}|null
+  const [previewDragging, setPreviewDragging] = useState(false);
+  useEffect(()=>{
+    if(!previewDragging)return;
+    const onMove=(e)=>{
+      const info=previewDragRef.current;
+      if(!info)return;
+      if(info.mode==="resize"){
+        if(!onPreviewResize)return;
+        const deltaMins=Math.round((e.clientY-info.startClientY)/(WK_PX_HR/60)/15)*15;
+        const newDur=Math.max(15,info.origDur+deltaMins);
+        onPreviewResize(minutesToTime(Math.min(1439,timeToMinutes(info.origStart)+newDur)));
+      }else{
+        if(!onPreviewMove)return;
+        let targetDk=info.origDate;
+        for(const dk in wkColRefs.current){
+          const el=wkColRefs.current[dk];
+          if(!el)continue;
+          const r=el.getBoundingClientRect();
+          if(e.clientX>=r.left&&e.clientX<r.right){targetDk=dk;break;}
+        }
+        const el=wkColRefs.current[targetDk];
+        const r=el?el.getBoundingClientRect():null;
+        let newStartMins=timeToMinutes(info.origStart);
+        if(r){
+          const relY=Math.max(0,e.clientY-r.top-info.grabOffsetPx);
+          newStartMins=Math.min(1440-15,Math.max(0,Math.round(relY/(WK_PX_HR/60)/15)*15));
+        }
+        onPreviewMove(targetDk,minutesToTime(newStartMins),minutesToTime(Math.min(1439,newStartMins+info.origDur)));
+      }
+    };
+    const onUp=()=>{
+      previewDragRef.current=null;
+      setPreviewDragging(false);
+      document.body.style.cursor="";
+      document.body.style.userSelect="";
+    };
+    document.addEventListener("mousemove",onMove);
+    document.addEventListener("mouseup",onUp);
+    return ()=>{ document.removeEventListener("mousemove",onMove); document.removeEventListener("mouseup",onUp); };
+  },[previewDragging,WK_PX_HR,onPreviewMove,onPreviewResize]);
   const weekScrollRef = useRef(null);
   const [wkDragId, setWkDragId] = useState(null);
   // Resolves the design-tokens.js semantic names against the live theme
@@ -13733,9 +13805,32 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
               const p = previewEvent.startTime.split(":").map(Number);
               const pStart = p[0] * 60 + p[1];
               const pDur = Math.max(15, timeToMinutes(previewEvent.endTime) - timeToMinutes(previewEvent.startTime));
+              const draggable = !!(onPreviewMove||onPreviewResize);
+              const startMove=(e)=>{
+                if(!onPreviewMove)return;
+                e.preventDefault();e.stopPropagation();
+                const colEl=wkColRefs.current[dk];
+                const r=colEl?colEl.getBoundingClientRect():null;
+                const blockTopClientY=(r?r.top:e.clientY)+pStart*(WK_PX_HR/60);
+                previewDragRef.current={mode:"move",origDate:dk,origStart:previewEvent.startTime,origDur:pDur,grabOffsetPx:e.clientY-blockTopClientY};
+                setPreviewDragging(true);
+                document.body.style.cursor="grabbing";document.body.style.userSelect="none";
+              };
+              const startResize=(e)=>{
+                if(!onPreviewResize)return;
+                e.preventDefault();e.stopPropagation();
+                previewDragRef.current={mode:"resize",origDate:dk,origStart:previewEvent.startTime,origDur:pDur,startClientY:e.clientY};
+                setPreviewDragging(true);
+                document.body.style.cursor="ns-resize";document.body.style.userSelect="none";
+              };
               previewEl = (
-                <div style={{position:"absolute",top:pStart*(WK_PX_HR/60),left:2,right:2,height:Math.max(22,pDur*(WK_PX_HR/60)),borderRadius:5,padding:"2px 5px 2px 8px",background:previewEvent.color+"22",border:`1.5px dashed ${previewEvent.color}`,zIndex:6,pointerEvents:"none",boxSizing:"border-box",overflow:"hidden"}}>
+                <div onMouseDown={startMove} style={{position:"absolute",top:pStart*(WK_PX_HR/60),left:2,right:2,height:Math.max(22,pDur*(WK_PX_HR/60)),borderRadius:5,padding:"2px 5px 2px 8px",background:previewEvent.color+"22",border:`1.5px dashed ${previewEvent.color}`,zIndex:6,pointerEvents:draggable?"auto":"none",cursor:draggable?"grab":"default",boxSizing:"border-box",overflow:"hidden"}}>
                   <div style={{fontSize:9.5,fontWeight:700,color:previewEvent.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{previewEvent.title||"New event"}</div>
+                  {/* Bottom-edge grab strip to change duration without
+                      moving the start time -- separate handler from the
+                      block body above so a plain drag always means "move"
+                      and only grabbing this specific edge means "resize". */}
+                  {onPreviewResize&&<div onMouseDown={startResize} title="Drag to change duration" style={{position:"absolute",bottom:0,left:0,right:0,height:6,cursor:"ns-resize"}} />}
                 </div>
               );
             }
@@ -14020,6 +14115,20 @@ function WizardCollegeBuilder({items,addItem,removeItem,defaultTitle,hideHeading
     if(defaultTitle===undefined)setTitle("");
     setDays([]);
   };
+  // Click a chip to edit it: pull it back out of the committed list and
+  // load its title/kind/days/time/duration into the form above, so
+  // changing the time or duration is "adjust the form, hit +Add again"
+  // instead of a dead end. Previously the only interaction was
+  // removeItem on click -- delete-only, no way to see or change what a
+  // chip's actual time/duration was without guessing and re-adding blind.
+  const editItem=(it)=>{
+    if(defaultTitle===undefined)setTitle(it.title);
+    setKind(it.kind);
+    setDays([...it.days]);
+    setTime(it.startTime);
+    setDuration(it.duration||50);
+    removeItem(it.id);
+  };
   return (
     <div>
       {!hideHeading&&<div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:10}}>Add a class or recurring activity</div>}
@@ -14046,7 +14155,10 @@ function WizardCollegeBuilder({items,addItem,removeItem,defaultTitle,hideHeading
               <div style={{fontSize:10,fontWeight:700,color:T.muted,textAlign:"center",marginBottom:6,letterSpacing:"0.05em"}}>{d}</div>
               <div style={{display:"flex",flexDirection:"column",gap:4}}>
                 {dayItems.map(it=>(
-                  <div key={it.id} onClick={()=>removeItem(it.id)} title="Click to remove" style={{fontSize:9.5,fontWeight:600,padding:"4px 6px",borderRadius:6,background:it.kind==="class"?T.lime+"22":T.lime+"0F",border:`1px solid ${T.border}`,color:T.text,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.title}</div>
+                  <div key={it.id} onClick={()=>editItem(it)} title="Click to edit" style={{display:"flex",alignItems:"center",gap:3,fontSize:9.5,fontWeight:600,padding:"4px 4px 4px 6px",borderRadius:6,background:it.kind==="class"?T.lime+"22":T.lime+"0F",border:`1px solid ${T.border}`,color:T.text,cursor:"pointer"}}>
+                    <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{it.title}</span>
+                    <button type="button" onClick={e=>{e.stopPropagation();removeItem(it.id);}} title="Remove" style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:11,lineHeight:1,padding:"0 1px",flexShrink:0}}>×</button>
+                  </div>
                 ))}
               </div>
             </div>
@@ -16544,7 +16656,25 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
 // or one-off EVENT (a class meeting, an activity), not a task with a due
 // date. Presentation-only: the caller supplies onCreate and owns the
 // actual commit (CalendarTab already has routines/events in scope).
-function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,anchorY,color,hideRepeat,onPreviewChange,onClose,onCreate}){
+// Plain interval overlap against real events + expanded routine
+// occurrences on one date -- first match only (naming every conflict
+// would clutter an inline warning; the student can already see the rest
+// on the calendar behind this popover). Not used for placement/legality
+// anywhere -- this is purely the "heads up, that's taken" warning inside
+// NewEventModal, non-blocking by design (a manual, explicit placement is
+// the student's own call, unlike automated scheduling elsewhere in the
+// app, which never overlaps silently in the first place).
+function findOverlapConflict(date,startTime,endTime,events,routines){
+  if(!date||!startTime||!endTime)return null;
+  const startMin=timeToMinutes(startTime),endMin=timeToMinutes(endTime);
+  if(endMin<=startMin)return null;
+  const dayEvents=(events||[]).filter(e=>e.date===date&&e.time&&e.status!=="done"&&!e.checklist);
+  const dayRoutines=expandRoutineOccurrences(routines||[],date,date).filter(r=>r.kind!=="free period");
+  const candidates=dayEvents.map(e=>({title:e.title,start:timeToMinutes(e.time),end:timeToMinutes(e.time)+(e.duration||30)}))
+    .concat(dayRoutines.map(r=>({title:r.title,start:timeToMinutes(r.time),end:timeToMinutes(r.time)+(r.duration||30)})));
+  return candidates.find(c=>startMin<c.end&&c.start<endMin)||null;
+}
+function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,anchorY,color,hideRepeat,onPreviewChange,liveOverride,events,routines,onClose,onCreate}){
   const [title,setTitle]=useState("");
   const [date,setDate]=useState("");
   const [startTime,setStartTime]=useState("09:00");
@@ -16598,9 +16728,25 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
     setLocation("");setMovable(false);
   },[open,initialTitle,initialDate,initialStartTime]);
 
+  // Dragging the live preview block on the calendar (WeeklyPlanner's
+  // resize handle / move-the-whole-block) reports back here -- a one-way
+  // override applied on top of whatever the form fields already say,
+  // distinct from the initial* props above (which only ever seed state
+  // once, on open).
+  useEffect(()=>{
+    if(!open||!liveOverride)return;
+    if(liveOverride.date!=null)setDate(liveOverride.date);
+    if(liveOverride.startTime!=null)setStartTime(liveOverride.startTime);
+    if(liveOverride.endTime!=null)setEndTime(liveOverride.endTime);
+  },[open,liveOverride]);
+
   if(!open)return null;
   const toggleRepeatDay=(i)=>setRepeatDays(d=>d.includes(i)?d.filter(x=>x!==i):[...d,i]);
   const invalid=!title.trim()||(!allDay&&timeToMinutes(endTime)<=timeToMinutes(startTime))||(repeat==="selected"&&repeatDays.length===0);
+  // Non-blocking on purpose -- see findOverlapConflict's own comment. The
+  // live preview block on the calendar already visually overlaps
+  // whatever this collides with, but that's easy to miss; this names it.
+  const conflict=allDay?null:findOverlapConflict(date,startTime,endTime,events,routines);
 
   const create=()=>{
     if(invalid)return;
@@ -16635,7 +16781,10 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
   // explicit ask, while maxHeight below still protects very short
   // viewports as a last resort.
   const ESTIMATED_HEIGHT=460;
-  const x=anchorX!=null?anchorX:window.innerWidth/2;
+  // No real drop point to anchor to (e.g. opened some other way than a
+  // drag) -- bias toward the right edge rather than dead center, so it
+  // still reads as "a side panel" instead of a centered dialog.
+  const x=anchorX!=null?anchorX:window.innerWidth-POPOVER_WIDTH-40;
   const y=anchorY!=null?anchorY:window.innerHeight/2;
   const fitsRight=x+10+POPOVER_WIDTH<=window.innerWidth-8;
   const left=fitsRight?Math.max(8,x+10):Math.max(8,x-10-POPOVER_WIDTH);
@@ -16666,6 +16815,11 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
           <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,color:T.muted,cursor:"pointer"}}>
             <input type="checkbox" checked={allDay} onChange={e=>setAllDay(e.target.checked)} /> All day
           </label>
+          {conflict&&(
+            <div style={{fontSize:11,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:7,padding:"6px 9px",lineHeight:1.4}}>
+              This overlaps with <strong>{conflict.title}</strong> at {(()=>{let h=Math.floor(conflict.start/60),m=conflict.start%60;const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+String(m).padStart(2,"0")+" "+ap;})()}.
+            </div>
+          )}
           {/* A single study session recurring weekly the way a class does
               doesn't make sense -- hidden for session drops (Phase 4). */}
           {!hideRepeat&&(<>
@@ -16710,7 +16864,7 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
   ), document.body);
 }
 
-function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,setDetailEventId,registerSetEvents,onTaskCompleted,catchUpPending}={}){
+function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,setDetailEventId,registerSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.muted},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   // Accepts either a real course id or a label, same as StudlinPrep/Notes'
@@ -16763,6 +16917,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // at that exact position -- Cancel/close clears it, Create replaces it
   // with the real committed event.
   const [previewEvent,setPreviewEvent]=useState(null);
+  // Drag-to-resize/reposition the preview block on the calendar (see
+  // WeeklyPlanner's onPreviewMove/onPreviewResize) feeds back into
+  // NewEventModal's own date/startTime/endTime fields via this -- a
+  // one-way override the modal applies whenever it changes, separate
+  // from previewEvent (which flows the OTHER direction: modal -> calendar).
+  const [previewOverride,setPreviewOverride]=useState(null);
   // Phase 7e: set when a routine occurrence was just dropped somewhere new,
   // waiting on the student to pick "just this one" or "every week".
   const [routineDropPending,setRoutineDropPending]=useState(null); // {routineId,fromDate,toDate,toTime}|null
@@ -16846,6 +17006,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // openWizardOnMount) — only its automatic first-run pop-open was removed
   // in favor of ClassSetupWizard above.
   const [routineWizardOpen,setRoutineWizardOpen]=useState(false);
+  // Reports up to App() whenever either setup wizard opens/closes, so
+  // App-level popups (expiredPending's "missed its deadline" prompt) can
+  // suppress themselves the same way weekBalanceNudge does locally --
+  // found stacking on top of Class Setup Wizard mid-flow.
+  useEffect(()=>{
+    if(onWizardOpenChange)onWizardOpenChange(classSetupOpen||routineWizardOpen);
+  },[classSetupOpen,routineWizardOpen]);
   // First-time guided walkthrough — Add Task -> Studlin Reschedule -> chains
   // into ClassSetupWizard once it finishes, via that wizard's own
   // finish/skip handlers below.
@@ -17436,13 +17603,26 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     const rule=routines.find(r=>r.id===routineId);
     if(!rule){setRoutineDropPending(null);return;}
     if(scope==="always"){
-      // Whole-rule edit: shift the time everywhere, and if the drop also
-      // landed on a different weekday, swap that weekday into r.days so
-      // the series moves to the new day going forward.
+      // One rule object holds ONE startTime shared across every day in
+      // `days` -- mutating rule.startTime in place (the old behavior)
+      // silently retimed every other day sharing this rule too (e.g. a
+      // Mon/Tue/Thu/Fri/Sat Workout routine all moving to the new time
+      // just because Monday's occurrence was dragged). Splitting the
+      // dragged day out into its own routine, leaving the rest of the
+      // rule's days on their original time, is what "every week" here
+      // actually needs to mean: every week for THIS day, not every day
+      // this rule happens to also cover.
       const fromDow=(new Date(fromDate+"T12:00:00").getDay()+6)%7;
       const toDow=(new Date(toDate+"T12:00:00").getDay()+6)%7;
-      const newDays=fromDow===toDow?rule.days:Array.from(new Set(rule.days.filter(d=>d!==fromDow).concat([toDow]))).sort((a,b)=>a-b);
-      persistRoutines(routines.map(r=>r.id===routineId?{...r,days:newDays,startTime:toTime}:r));
+      const remainingDays=rule.days.filter(d=>d!==fromDow);
+      if(remainingDays.length===0){
+        // No sibling days left on the original rule -- nothing to protect
+        // from bleed, just retime/move the same rule in place.
+        persistRoutines(routines.map(r=>r.id===routineId?{...r,days:[toDow],startTime:toTime}:r));
+      }else{
+        const movedRoutine={...rule,id:String(Date.now()+Math.random()*1000),days:[toDow],startTime:toTime};
+        persistRoutines(routines.map(r=>r.id===routineId?{...r,days:remainingDays}:r).concat([movedRoutine]));
+      }
     }else{
       // "Just this one" -- same-day only (see getRoutineOverrides' own
       // comment for why a cross-day single-occurrence move isn't
@@ -18670,7 +18850,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
           selDay={selDay} setSelDay={setSelDay} onDeleteEvent={deleteEventWithUndo} catchUpPending={catchUpPending}
           sidebarDragChip={sidebarDragChip} onDropSidebarChip={(dk,time,anchorPoint)=>{openNewEventForDrop(sidebarDragChip,dk,time,anchorPoint);setSidebarDragChip(null);}}
-          onDropRoutineOccurrence={onDropRoutineOccurrence} previewEvent={previewEvent} highlightedSessionId={highlightedSessionId} />
+          onDropRoutineOccurrence={onDropRoutineOccurrence} previewEvent={previewEvent} highlightedSessionId={highlightedSessionId}
+          onPreviewMove={(date,startTime,endTime)=>setPreviewOverride({date,startTime,endTime})}
+          onPreviewResize={(endTime)=>setPreviewOverride(o=>({date:(o&&o.date)||previewEvent.date,startTime:(o&&o.startTime)||previewEvent.startTime,endTime}))} />
       )}
       {calView==="daily"&&(
         <DayPlanner dayEvents={dayEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} />
@@ -18754,8 +18936,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         anchorX={newEventPrefill.anchorX} anchorY={newEventPrefill.anchorY} color={newEventPrefill.color}
         hideRepeat={newEventPrefill.chipKind==="session"}
         onPreviewChange={setPreviewEvent}
-        onClose={()=>{setNewEventOpen(false);setPreviewEvent(null);}}
-        onCreate={(payload)=>{setPreviewEvent(null);commitNewEvent(payload);}} />
+        liveOverride={previewOverride}
+        events={events} routines={routines}
+        onClose={()=>{setNewEventOpen(false);setPreviewEvent(null);setPreviewOverride(null);}}
+        onCreate={(payload)=>{setPreviewEvent(null);setPreviewOverride(null);commitNewEvent(payload);}} />
       {/* Phase 7e: dropped a routine occurrence somewhere new -- ask scope
           before touching anything. "Just this one" only offered when the
           drop landed on the same date it started on (see
@@ -18842,9 +19026,18 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         </div>
       )}
       {fillPrompt&&(
-        <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:360}}>
+        <>
+        {/* Click-anywhere-outside dismisses the same as "Leave it" -- this
+            popup previously had no backdrop at all, so it just sat there
+            indefinitely with no way to close it except the explicit
+            buttons. */}
+        <div onClick={dismissFillPrompt} style={{position:"fixed",inset:0,zIndex:79}} />
+        <div onClick={e=>e.stopPropagation()} style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:360}}>
           <div style={{fontSize:13,color:T.white,marginBottom:10}}>
-            Freed up {fmtMinsDur(fillPrompt.duration)} at {fmtTime(fillPrompt.time)}. Fill it with something?
+            {/* The date wasn't shown at all before -- a delete on a past/
+                future day read as if it happened today, since only the
+                time was ever printed. */}
+            Freed up {fmtMinsDur(fillPrompt.duration)} at {fmtTime(fillPrompt.time)}{fillPrompt.date!==dayKey()?" on "+new Date(fillPrompt.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}):""}. Fill it with something?
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10,maxHeight:160,overflowY:"auto"}}>
             {fillPrompt.suggestions.map(s=>(
@@ -18859,6 +19052,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
             <Btn variant="ghost" onClick={dismissFillPrompt} style={{padding:"7px 14px",fontSize:12,flex:1,justifyContent:"center"}}>Leave it</Btn>
           </div>
         </div>
+        </>
       )}
       {rescheduleTask&&(
         <RescheduleModal task={rescheduleTask} events={events} onClose={()=>setRescheduleTask(null)} commit={(next,evictedCount)=>{
@@ -19400,7 +19594,14 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       {weekBalanceToast&&(
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:99,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {weekBalanceToast}</div>
       )}
-      {weekBalanceNudge&&(
+      {/* Suppressed while a setup wizard is open -- this used to be able
+          to stack on top of Class Setup / Routine Wizard mid-flow (found
+          alongside the "1 task missed its deadline" popup doing the same
+          thing), fighting for attention with whatever the student is
+          actually in the middle of answering. Still fires normally once
+          the wizard closes, since only the render is gated here, not the
+          trigger effect that decided there's something to say. */}
+      {weekBalanceNudge&&!classSetupOpen&&!routineWizardOpen&&(
         <div style={{position:"fixed",bottom:20,left:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           <div style={{fontSize:13,color:T.white,marginBottom:10,lineHeight:1.5}}>Your week's a bit lopsided. Some days are carrying a lot more than others. Want Studlin to spread it out?</div>
           <div style={{display:"flex",gap:8}}>
@@ -23205,6 +23406,11 @@ function App() {
   // undo, and no way to know it happened. Now nothing is deleted until
   // the student explicitly picks "Clear them" on the banner below.
   const [expiredPending,setExpiredPending]=useState([]);
+  // Whether Calendar's own Class Setup / Routine Wizard is currently open
+  // (reported via CalendarTab's onWizardOpenChange) -- used to suppress
+  // the expiredPending popup below so it can't stack on top of a wizard
+  // mid-flow the way it was found doing.
+  const [calendarWizardOpen,setCalendarWizardOpen]=useState(false);
   // Result of reconcileFixedEventConflicts when new external fixed time
   // lands (work-schedule scan, calendar import, Google sync) -- kept
   // separate from tier0Batch on purpose (see surfaceReconcileResult):
@@ -23646,10 +23852,6 @@ function App() {
   };
   const [creditsOpen,setCreditsOpen]=useState(false);
   const [pricingOpen,setPricingOpen]=useState(false);
-  // Nav-bar streak pill + level bar detail modals -- same true-sibling-of-
-  // [data-page] treatment as rescheduleTask below, for the same reason.
-  const [navStreakOpen,setNavStreakOpen]=useState(false);
-  const [navLevelOpen,setNavLevelOpen]=useState(false);
   // Dashboard's "Reschedule" confirm + its toast — lifted up from Dashboard
   // itself: [data-page]'s own entrance animation makes it a containing
   // block for any position:fixed descendant anywhere inside it, so a
@@ -24311,12 +24513,48 @@ function App() {
           // opens (same instinct as Duolingo keeping its flame in the
           // persistent header rather than burying it in a profile tab).
           const streak=Math.max(1,getStreak());
+          // Notifications used to live in the now-removed top bar -- it's
+          // the one thing there that had no other entry point anywhere
+          // else in the app (unlike streak/level/pricing/avatar, all
+          // duplicated elsewhere), so it gets relocated here instead of
+          // just disappearing. Shared between the collapsed/expanded
+          // returns below since both branches are in this same IIFE.
+          const notifBell=(
+            <div style={{position:"relative",flexShrink:0}}>
+              <button onClick={e=>{e.stopPropagation();setNotifOpen(o=>!o);setNotifSeen(true);}} title="Notifications" style={{width:26,height:26,display:"flex",alignItems:"center",justifyContent:"center",background:notifOpen?T.lime+"18":"transparent",border:`1px solid ${notifOpen?T.lime+"55":sidebarBorder}`,borderRadius:6,color:notifOpen?T.lime:sidebarMuted,position:"relative",cursor:"pointer",padding:0}}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                {!notifSeen && notifs.length>0 && <span style={{position:"absolute",top:2,right:2,width:6,height:6,background:T.limeDk,border:`1.5px solid ${sidebarCardBg}`,borderRadius:"50%"}} />}
+              </button>
+              {notifOpen && (<>
+                <div onClick={()=>setNotifOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
+                <div style={{position:"absolute",bottom:0,left:"calc(100% + 8px)",width:340,maxWidth:"86vw",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
+                  <div style={{padding:"13px 16px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <span style={{fontSize:13,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Notifications</span>
+                    <span onClick={()=>setNotifOpen(false)} style={{fontSize:11,color:T.lime,cursor:"pointer",fontWeight:600}}>Mark all read</span>
+                  </div>
+                  <div style={{maxHeight:360,overflowY:"auto"}}>
+                    {notifs.map((n,i)=>(
+                      <div key={i} onClick={()=>{setActive("calendar");setNotifOpen(false);}} style={{display:"flex",gap:11,padding:"12px 16px",borderBottom:i<notifs.length-1?`1px solid ${T.border}`:"none",cursor:"pointer",alignItems:"flex-start"}}>
+                        <span style={{width:30,height:30,borderRadius:8,flexShrink:0,background:n.color+"18",border:`1px solid ${n.color}33`,color:n.color,display:"grid",placeItems:"center"}}>{n.icon}</span>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:12.5,color:T.text,fontWeight:600,lineHeight:1.3}}>{n.title}</div>
+                          <div style={{fontSize:11,color:T.muted,marginTop:2}}>{n.sub}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div onClick={()=>{setActive("settings");setNotifOpen(false);}} style={{padding:"11px 16px",borderTop:`1px solid ${T.border}`,background:T.bg,fontSize:11.5,color:T.muted,cursor:"pointer",textAlign:"center"}}>Notification settings</div>
+                </div>
+              </>)}
+            </div>
+          );
           if(!navExpanded){return(
           <div style={{marginTop:"auto",borderTop:`1px solid ${sidebarBorder}`,paddingTop:10,display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
             <div onClick={()=>setActive("profile")} title={getUserName()} style={{cursor:"pointer",position:"relative"}}>
               <Av initials={getUserInitials()} color={T.lime} size={32} />
               {!seriousMode&&<div title={streak+"-day streak"} style={{position:"absolute",bottom:-4,right:-6,display:"flex",alignItems:"center",gap:2,background:T.amber,color:"#1a1200",borderRadius:8,padding:"1px 4px",fontSize:9,fontWeight:700}}>{streak}</div>}
             </div>
+            {notifBell}
             <div onClick={()=>setCreditsOpen(true)} title={cr+" credits remaining"} style={{cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
               <div style={{width:28,height:3,background:sidebarBorder,borderRadius:99,overflow:"hidden"}}><div style={{height:"100%",width:pct+"%",background:barColor,borderRadius:99,transition:"width 0.4s"}} /></div>
             </div>
@@ -24333,9 +24571,12 @@ function App() {
                 <div style={{fontSize:12.5,fontWeight:600,color:sidebarText,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{getUserName()}</div>
                 <div style={{fontSize:10,color:sidebarMuted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{email}</div>
               </div>
+              <div style={{display:"flex",alignItems:"center",gap:2,flexShrink:0}}>
+              {notifBell}
               <button onClick={e=>{e.stopPropagation();setActive("settings");}} title="Settings" style={{width:26,height:26,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:"none",color:sidebarMuted,cursor:"pointer",borderRadius:6,flexShrink:0}}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
               </button>
+              </div>
             </div>
           </div>);
         })()}
@@ -24343,65 +24584,13 @@ function App() {
 
       {/* MAIN AREA */}
       <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",background:T.bg}}>
-        {/* TOP BAR */}
-        <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 28px",borderBottom:`1px solid ${T.border}`,background:T.bg,position:"sticky",top:0,zIndex:10,flexShrink:0}}>
-          {/* HOME · CALENDAR-style breadcrumb removed (ui/tokens-and-calendar) --
-              global chrome, cut app-wide rather than special-cased per page. */}
-          {/* Streak — moved here from the Dashboard greeting strip, which is
-              gone entirely now (full ranking/focus-stat detail lives in
-              Profile). marginLeft:auto replaces the old search bar's job of
-              pushing everything after it to the right. */}
-          {(()=>{
-            const navStreak=Math.max(1,getStreak());
-            const navLvl=levelInfo();
-            return(
-              <>
-              <div onClick={()=>setNavStreakOpen(true)} title={navStreak+"-day streak — tap to see your streak"} style={{marginLeft:"auto",display:"inline-flex",alignItems:"center",gap:6,padding:"7px 13px",background:T.card,border:`1px solid ${T.border}`,borderRadius:99,fontSize:13,fontWeight:700,color:T.amber,flexShrink:0,cursor:"pointer"}}>
-                <svg width="14" height="14" viewBox="0 0 24 24" stroke="none"><path fill="currentColor" d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
-                {navStreak}
-              </div>
-              <div onClick={()=>setNavLevelOpen(true)} title={navLvl.title+" — tap to see your level roadmap"} style={{display:"inline-flex",alignItems:"center",gap:8,padding:"7px 13px",background:T.card,border:`1px solid ${T.border}`,borderRadius:99,fontSize:12,fontWeight:600,color:T.text,flexShrink:0,cursor:"pointer"}}>
-                <span style={{whiteSpace:"nowrap"}}>{navLvl.title}</span>
-                <div style={{width:44,height:4,background:T.card2,borderRadius:99,overflow:"hidden",flexShrink:0}}><div style={{height:"100%",width:navLvl.tierPct+"%",background:T.lime,borderRadius:99}}/></div>
-              </div>
-              </>
-            );
-          })()}
-          {/* See Pricing button */}
-          <button onClick={()=>setPricingOpen(true)} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"8px 16px",background:T.lime,color:T.ink,border:"none",borderRadius:99,fontSize:13,fontWeight:700,cursor:"pointer",flexShrink:0,fontFamily:T.font,letterSpacing:"-0.005em",boxShadow:`0 4px 14px -4px ${T.lime}80`}}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-            See Pricing
-          </button>
-          <div style={{position:"relative",flexShrink:0}}>
-          <button onClick={()=>{setNotifOpen(o=>!o);setNotifSeen(true);}} style={{width:36,height:36,display:"grid",placeItems:"center",borderRadius:10,background:notifOpen?T.lime+"18":T.card,border:`1px solid ${notifOpen?T.lime+"55":T.border}`,color:notifOpen?T.lime:T.text,position:"relative",cursor:"pointer"}}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-            {!notifSeen && notifs.length>0 && <span style={{position:"absolute",top:7,right:7,width:7,height:7,background:T.limeDk,border:`2px solid ${T.bg}`,borderRadius:"50%"}} />}
-          </button>
-          {notifOpen && (<>
-            <div onClick={()=>setNotifOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
-            <div style={{position:"absolute",top:46,right:0,width:340,maxWidth:"86vw",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
-              <div style={{padding:"13px 16px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <span style={{fontSize:13,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Notifications</span>
-                <span onClick={()=>setNotifOpen(false)} style={{fontSize:11,color:T.lime,cursor:"pointer",fontWeight:600}}>Mark all read</span>
-              </div>
-              <div style={{maxHeight:360,overflowY:"auto"}}>
-                {notifs.map((n,i)=>(
-                  <div key={i} onClick={()=>{setActive("calendar");setNotifOpen(false);}} style={{display:"flex",gap:11,padding:"12px 16px",borderBottom:i<notifs.length-1?`1px solid ${T.border}`:"none",cursor:"pointer",alignItems:"flex-start"}}>
-                    <span style={{width:30,height:30,borderRadius:8,flexShrink:0,background:n.color+"18",border:`1px solid ${n.color}33`,color:n.color,display:"grid",placeItems:"center"}}>{n.icon}</span>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:12.5,color:T.text,fontWeight:600,lineHeight:1.3}}>{n.title}</div>
-                      <div style={{fontSize:11,color:T.muted,marginTop:2}}>{n.sub}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div onClick={()=>{setActive("settings");setNotifOpen(false);}} style={{padding:"11px 16px",borderTop:`1px solid ${T.border}`,background:T.bg,fontSize:11.5,color:T.muted,cursor:"pointer",textAlign:"center"}}>Notification settings</div>
-            </div>
-          </>)}
-          </div>
-          <button onClick={()=>setActive("profile")} style={{width:36,height:36,borderRadius:"50%",background:"linear-gradient(135deg,#FFD7B5,#FFC9D2)",display:"grid",placeItems:"center",fontWeight:600,fontSize:12,color:T.ink,border:`2px solid ${T.bg}`,cursor:"pointer",flexShrink:0,fontFamily:T.font}}>{getUserInitials()}</button>
-        </div>
-
+        {/* Top bar removed (every tab shifts up, more calendar visible) --
+            streak is still on the sidebar avatar's corner badge, full
+            level/ranking detail lives in Profile, pricing is reachable via
+            Settings' "Upgrade to Pro", and the profile avatar duplicated
+            the sidebar's own profile row exactly. Notifications had no
+            other entry point anywhere, so that one moved into the
+            sidebar's bottom profile row instead of just disappearing. */}
         {/* CONTENT */}
         {/* onAnimationEnd clears the animation once the tab-switch entrance
             plays out. A CSS animation that touches `transform` (studlinRise
@@ -24416,7 +24605,7 @@ function App() {
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
           {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} onTaskCompleted={handleTaskCompleted} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} />:
-           active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} />:
+           active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} />:
            active==="notes"?<Notes setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="lectures"?<Lectures setActive={setActive} setPricingOpen={setPricingOpen} />:
@@ -24447,9 +24636,6 @@ function App() {
           commit={(next)=>{lsSet("events",next);if(calendarSetEventsRef.current)calendarSetEventsRef.current(next);}}
           onToast={(msg)=>{setDashToast(msg);setTimeout(()=>setDashToast(""),2800);}} />
       )}
-      <StreakDetailModal open={navStreakOpen} onClose={()=>setNavStreakOpen(false)} streak={Math.max(1,getStreak())} />
-      <LevelRoadmapModal open={navLevelOpen} onClose={()=>setNavLevelOpen(false)} currentMinutes={levelInfo().minutes} />
-
       {/* PRICING MODAL */}
       <Modal open={pricingOpen} onClose={()=>setPricingOpen(false)} title="Studlin plans" sub="Start free. Upgrade when you're ready. Cancel anytime." width={820}>
         <PlanCards billing="monthly" onSelect={(key)=>{
@@ -24874,7 +25060,13 @@ function App() {
           </div>
         </div>
       )}
-      {expiredPending.length>0&&(
+      {/* !calendarWizardOpen: found stacking on top of Class Setup /
+          Routine Wizard mid-flow, alongside the week-balance nudge doing
+          the same thing (see weekBalanceNudge's own render gate). Still
+          set normally by the daily gate regardless of wizard state --
+          only the popup itself waits, so it isn't lost, just deferred
+          until the wizard closes. */}
+      {expiredPending.length>0&&!calendarWizardOpen&&(
         <div style={{position:"fixed",top:76,left:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           <div style={{fontSize:13,color:T.white,marginBottom:10}}>
             <strong style={{color:T.red}}>{expiredPending.length} task{expiredPending.length!==1?"s":""}</strong> missed {expiredPending.length!==1?"their":"its"} deadline without being finished.

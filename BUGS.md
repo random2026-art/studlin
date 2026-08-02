@@ -89,3 +89,16 @@ Grepped the entire repo for `OPENAI_API_KEY` and case-insensitively for `openai`
 **What's fixed:** the new "Build study plan" modal's own material step calls a new `persistBuildPlanMaterial()` before moving to the confidence question, so material added through *that* flow now genuinely survives.
 
 **What's still open:** the older "Add study material" card (in the collapsed "Materials & study kit" section of the exam detail timeline) still doesn't persist — uploading there and generating flashcards/a practice exam/a study kit works for that session, but revisiting the exam later still shows no material. Needs the same one-line fix (write `sourceMaterials`/`referenceLinks` back onto the exam event) applied to that card's own upload handlers.
+
+## 10. Idea: let exam description sharpen the AI session-duration estimate (not built yet)
+
+**Status:** Documented only, per explicit instruction — not scheduled, not built.
+
+**The problem:** `computeStudyPlanParams`'s session duration is currently driven by confidence + exam importance (`IMPORTANCE_TO_DURATION_MULTIPLIER`, added in commit `ab69812`) plus `suggestDurationFor`'s historical per-subject/difficulty-tier median. That's a reasonable default, but importance alone can't distinguish "a comprehensive final with 3 essay questions" from "a 10-question MCQ pop quiz" at the same importance level — both could plausibly need very different session lengths (essay-writing needs longer uninterrupted blocks to reach a working flow state; MCQ recall drills work fine in short bursts).
+
+**The idea:** if the student adds a free-text description of the exam (format, question types, what it covers), feed that description to the AI generation path already used elsewhere in Prep (deck/practice-exam generation) and let it propose a duration adjustment — layered *additively* on top of the existing importance/confidence multipliers, not replacing them, so a description-less exam behaves exactly as it does today.
+
+**Constraints for whoever builds this:**
+- Never silently override the computed duration — always show it and let the student edit it before it's committed, same as every other AI-touched field in this app (per CLAUDE.md's inline-validation/no-silent-writes rules).
+- Missing/thin description should degrade gracefully to the current importance+confidence-only estimate, not error or block session generation.
+- Reuse the existing AI call plumbing (same pattern as flashcard/practice-exam generation's error handling — see item #2 above for what happens when that path fails) rather than adding a new one-off integration.
