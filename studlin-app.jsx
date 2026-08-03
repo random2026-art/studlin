@@ -800,6 +800,69 @@ const saveSubjects=(s)=>lsSet("user-subjects",s);
 // course (e.g. free-typed text). Returning null is the signal that nothing
 // should be stamped, not an error.
 const courseIdForLabel=(label)=>{const s=getSubjects().find(x=>x.label===label);return s?s.id:null;};
+// Same idea as courseIdForLabel above, but tolerant of the exact
+// mismatches that were silently creating duplicate courses: case,
+// surrounding whitespace, and a trailing roman-numeral vs. digit ("Calc
+// II" vs "Calc 2"). Course names are the one place free text keeps
+// entering the system (syllabus AI extraction, typed "Other" entries),
+// so exact-string identity was never going to hold up. Only ever used
+// for *finding* an existing course to attach to -- never for display,
+// which still shows whatever the course's own real label is.
+const ROMAN_TO_ARABIC={i:"1",ii:"2",iii:"3",iv:"4",v:"5",vi:"6",vii:"7",viii:"8",ix:"9",x:"10"};
+function normalizeCourseLabel(label){
+  if(!label)return "";
+  const words=label.trim().toLowerCase().replace(/\s+/g," ").split(" ");
+  const last=words[words.length-1];
+  if(ROMAN_TO_ARABIC[last])words[words.length-1]=ROMAN_TO_ARABIC[last];
+  return words.join(" ");
+}
+const courseIdForLabelFuzzy=(label)=>{
+  if(!label)return null;
+  const subjects=getSubjects();
+  const exact=subjects.find(x=>x.label===label);
+  if(exact)return exact.id;
+  const norm=normalizeCourseLabel(label);
+  const fuzzy=subjects.find(x=>normalizeCourseLabel(x.label)===norm);
+  return fuzzy?fuzzy.id:null;
+};
+// Groups existing courses whose names normalize to the same thing --
+// surfaced as a one-time "merge these?" prompt (Settings) so accounts
+// that already accumulated duplicates before this fix existed have a
+// way out, without Studlin ever silently merging real student data on
+// its own.
+function findDuplicateCourseGroups(){
+  const subjects=getSubjects();
+  const groups={};
+  subjects.forEach(s=>{
+    const norm=normalizeCourseLabel(s.label);
+    (groups[norm]=groups[norm]||[]).push(s);
+  });
+  return Object.values(groups).filter(g=>g.length>1);
+}
+// How many routines+events currently point at a course -- used to pick
+// a sensible default "keep this one" suggestion (the one with more real
+// data attached) without forcing the student to guess.
+function courseItemCount(sub){
+  const matches=(item)=>item.courseId===sub.id||item.subject===sub.label;
+  return getWeeklyRoutine().filter(matches).length+lsGet("events",[]).filter(matches).length;
+}
+// Reassigns everything pointing at any of mergeIds (by courseId, or by
+// label for legacy pre-courseId data) over to keepId, then removes the
+// now-empty duplicate subject records. One-way -- only ever called from
+// an explicit, confirmed student action.
+function mergeCourses(keepId,mergeIds){
+  const subjects=getSubjects();
+  const keep=subjects.find(s=>s.id===keepId);
+  if(!keep)return null;
+  const mergeSubjects=subjects.filter(s=>mergeIds.includes(s.id));
+  if(mergeSubjects.length===0)return null;
+  const mergeLabels=new Set(mergeSubjects.map(s=>s.label));
+  const matches=(item)=>mergeIds.includes(item.courseId)||(!item.courseId&&mergeLabels.has(item.subject));
+  saveWeeklyRoutine(getWeeklyRoutine().map(r=>matches(r)?{...r,courseId:keepId,subject:keep.label}:r));
+  lsSet("events",lsGet("events",[]).map(e=>matches(e)?{...e,courseId:keepId,subject:keep.label}:e));
+  saveSubjects(subjects.filter(s=>!mergeIds.includes(s.id)));
+  return {keep,merged:mergeSubjects};
+}
 
 // ─── SCHOOL DIRECTORY (mock, for the searchable school picker) ──────────────
 // Mock list of selectable schools, each tagged with its type so SchoolSelect
@@ -6559,6 +6622,12 @@ function StudlinPrep({setActive=()=>{}}={}){
   // search box, rather than being a separate feature -- "" means every
   // class.
   const [examClassFilter,setExamClassFilter]=useState("");
+  // Same search+class-filter idiom as Exams above, for parity on the
+  // Assignments/Projects tabs -- Exams was the only one that had it.
+  const [assignSearch,setAssignSearch]=useState("");
+  const [assignClassFilter,setAssignClassFilter]=useState("");
+  const [projectSearch,setProjectSearch]=useState("");
+  const [projectClassFilter,setProjectClassFilter]=useState("");
   // Study/Edit/Send/Add Deck used to hard-navigate to the standalone
   // Flashcards page (setActive("flashcards")), fully unmounting Studlin Prep
   // and leaving no way back except clicking a different sidebar item --
@@ -7143,9 +7212,26 @@ function StudlinPrep({setActive=()=>{}}={}){
                         <div key={ex.id} style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,alignItems:"center"}}>
                           <div onClick={()=>viewPlan(ex)} style={{fontSize:11.5,fontWeight:600,color:T.white,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={ex.title}>{ex.title}</div>
                           <div style={{fontSize:10.5,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ex.subject||"—"}</div>
-                          <select value={ex.examWeight||"major"} onChange={e=>patchExam(ex.id,{examWeight:e.target.value})} style={cellSelStyle}>
+                          {/* Was the legacy Quiz/Major binary, a different
+                              vocabulary than Build Study Plan's own Quiz/
+                              Midterm/Final/Project/Other examType selector
+                              -- setting one here never touched the other,
+                              so an exam's "type" quietly meant two
+                              different things depending which screen you
+                              were on. Blank/unset shows the placeholder
+                              rather than guessing a specific type from the
+                              old examWeight value (major could have been
+                              midterm, final, or project -- picking wrong
+                              would misrepresent it, and "major" alone
+                              carries real weight in priority math that a
+                              wrong guess could silently change). */}
+                          <select value={ex.examType||""} onChange={e=>{const v=e.target.value;const level=EXAM_TYPE_TO_IMPORTANCE[v]||"moderate";patchExam(ex.id,{examType:v,importanceLevel:level,examWeight:examWeightFromImportance(level)});}} style={cellSelStyle}>
+                            <option value="" disabled>Type</option>
                             <option value="quiz">Quiz</option>
-                            <option value="major">Major</option>
+                            <option value="midterm">Midterm</option>
+                            <option value="final">Final</option>
+                            <option value="project">Project</option>
+                            <option value="other">Other</option>
                           </select>
                           {/* sessionsMovable (new field, Phase 9): whether Studlin
                               can auto-shuffle THIS exam's already-scheduled study
@@ -7211,11 +7297,29 @@ function StudlinPrep({setActive=()=>{}}={}){
           assignment, checklist completion for a project -- rather than
           forcing both through the exam's study-session shape. */}
       {tab==="assignments"&&(()=>{
-        const assignments=upcomingAssignments();
+        const allAssignments=upcomingAssignments();
+        const assignClasses=[...new Set(allAssignments.map(a=>a.subject).filter(Boolean))];
+        const assignments=allAssignments.filter(a=>{
+          if(assignClassFilter&&a.subject!==assignClassFilter)return false;
+          if(!assignSearch.trim())return true;
+          const q=assignSearch.trim().toLowerCase();
+          return (a.title||"").toLowerCase().includes(q)||(a.subject||"").toLowerCase().includes(q);
+        });
         const gridCols="minmax(140px,1.8fr) 100px 120px 70px 80px 80px 150px";
         const cellSelStyle={width:"100%",background:"transparent",border:"none",color:T.text,fontSize:10.5,fontFamily:T.font,outline:"none",cursor:"pointer",padding:"2px 0"};
-        return assignments.length===0
-          ?<Card style={{padding:"32px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted}}>No upcoming assignments.</div></Card>
+        return (
+          <div>
+            <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+              <Input placeholder="Search your assignments…" value={assignSearch} onChange={e=>setAssignSearch(e.target.value)} style={{flex:1,minWidth:160}} />
+              {assignClasses.length>1&&(
+                <select value={assignClassFilter} onChange={e=>setAssignClassFilter(e.target.value)} style={{...wizardSelectStyle,width:150}}>
+                  <option value="">All classes</option>
+                  {assignClasses.map(c=><option key={c} value={c}>{c}</option>)}
+                </select>
+              )}
+            </div>
+            {assignments.length===0
+          ?<Card style={{padding:"32px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted}}>{allAssignments.length===0?"No upcoming assignments.":"No assignments match your search."}</div></Card>
           :(
             <div style={{overflowX:"auto",border:`1px solid ${T.border}`,borderRadius:8}}>
               <div style={{minWidth:700}}>
@@ -7253,15 +7357,35 @@ function StudlinPrep({setActive=()=>{}}={}){
                 })}
               </div>
             </div>
-          );
+          )}
+          </div>
+        );
       })()}
 
       {tab==="projects"&&(()=>{
-        const projects=upcomingProjects();
+        const allProjects=upcomingProjects();
+        const projectClasses=[...new Set(allProjects.map(p=>p.subject).filter(Boolean))];
+        const projects=allProjects.filter(p=>{
+          if(projectClassFilter&&p.subject!==projectClassFilter)return false;
+          if(!projectSearch.trim())return true;
+          const q=projectSearch.trim().toLowerCase();
+          return (p.title||"").toLowerCase().includes(q)||(p.subject||"").toLowerCase().includes(q);
+        });
         const gridCols="minmax(140px,1.8fr) 100px 120px 70px 80px 80px 150px";
         const cellSelStyle={width:"100%",background:"transparent",border:"none",color:T.text,fontSize:10.5,fontFamily:T.font,outline:"none",cursor:"pointer",padding:"2px 0"};
-        return projects.length===0
-          ?<Card style={{padding:"32px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted}}>No upcoming projects.</div></Card>
+        return (
+          <div>
+            <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+              <Input placeholder="Search your projects…" value={projectSearch} onChange={e=>setProjectSearch(e.target.value)} style={{flex:1,minWidth:160}} />
+              {projectClasses.length>1&&(
+                <select value={projectClassFilter} onChange={e=>setProjectClassFilter(e.target.value)} style={{...wizardSelectStyle,width:150}}>
+                  <option value="">All classes</option>
+                  {projectClasses.map(c=><option key={c} value={c}>{c}</option>)}
+                </select>
+              )}
+            </div>
+            {projects.length===0
+          ?<Card style={{padding:"32px 20px",textAlign:"center"}}><div style={{fontSize:13,color:T.muted}}>{allProjects.length===0?"No upcoming projects.":"No projects match your search."}</div></Card>
           :(
             <div style={{overflowX:"auto",border:`1px solid ${T.border}`,borderRadius:8}}>
               <div style={{minWidth:700}}>
@@ -7295,7 +7419,9 @@ function StudlinPrep({setActive=()=>{}}={}){
                 })}
               </div>
             </div>
-          );
+          )}
+          </div>
+        );
       })()}
 
       {tab==="exams"&&selectedExam&&(()=>{
@@ -7920,6 +8046,28 @@ function StudlinPrep({setActive=()=>{}}={}){
         )}
         {buildPlanExam&&buildPlanStep==="preview"&&buildPlanPreview&&(
           <div>
+            {/* "Redo" specifically (not a fresh Build) -- show what's
+                actually being replaced before it's gone. Reads straight
+                from storage since commitBuildPlan hasn't run yet at
+                preview time, so these are still the real current
+                sessions, not a stale snapshot. Already-completed sessions
+                are never touched by a redo (removeGenericExamPrepSessions
+                only ever removes pending ones) -- they're not shown here
+                since nothing about them is changing. */}
+            {(()=>{
+              const oldPending=lsGet("events",[]).filter(e=>e.dueEventId===buildPlanExam.id&&e.status==="pending"&&e.isExamPrepSession&&!e.deckId&&!e.practiceExamId);
+              if(oldPending.length===0)return null;
+              return (
+                <div style={{marginBottom:14}}>
+                  <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Replacing {oldPending.length} current session{oldPending.length!==1?"s":""}</div>
+                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                    {oldPending.slice().sort((a,b)=>(a.date+a.time)<(b.date+b.time)?-1:1).map(s=>(
+                      <div key={s.id} style={{fontSize:11.5,color:T.faint,textDecoration:"line-through",padding:"2px 0"}}>{s.date} · {fmtRolloverClock(s.time)} · {s.duration||25}min</div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
             {buildPlanGeneric&&(
               <div style={{fontSize:12,color:T.muted,background:T.card2,borderRadius:8,padding:"10px 12px",marginBottom:14,lineHeight:1.5}}>
                 No material yet, so these are general review blocks, not focused sessions. Add material anytime to unlock real flashcards for this exam.
@@ -9300,7 +9448,7 @@ function Notes({setActive=()=>{}}){
       // asking the student to pick one by hand.
       const today=dayKey();
       const horizon=dayKey(new Date(Date.now()+14*86400000));
-      const linkedExam=subj?lsGet("events",[]).filter(ev=>ev.kind==="exam"&&ev.subject===subj&&ev.date>=today&&ev.date<=horizon).sort((a,b)=>a.date<b.date?-1:1)[0]:null;
+      const linkedExam=subj?lsGet("events",[]).filter(ev=>ev.kind==="exam"&&normalizeCourseLabel(ev.subject)===normalizeCourseLabel(subj)&&ev.date>=today&&ev.date<=horizon).sort((a,b)=>a.date<b.date?-1:1)[0]:null;
       setQuizOverlay({questions,idx:0,picked:null,score:0,done:false,linkedExamId:linkedExam?linkedExam.id:null});
     }catch(e){setPanelMsg("Something went wrong. Try again.");}
     setPanelLoading(null);
@@ -9384,7 +9532,24 @@ function Notes({setActive=()=>{}}){
         )}
         {!viaSyllabusScan&&<Field label="Title"><Input placeholder="e.g. Macbeth Act IV notes" value={newTitle} onChange={ev=>setNewTitle(ev.target.value)} autoFocus /></Field>}
         <Field label="Class"><SelectChip options={tagOptions} value={newTag} onChange={setNewTag} /></Field>
-        {newTag==="Other"&&<Field label="Custom class"><Input placeholder="e.g. Physics, SAT prep..." value={customTag} onChange={ev=>setCustomTag(ev.target.value)} /></Field>}
+        {newTag==="Other"&&(<>
+          <Field label="Custom class"><Input placeholder="e.g. Physics, SAT prep..." value={customTag} onChange={ev=>setCustomTag(ev.target.value)} /></Field>
+          {/* Catches the exact mistake that created duplicate classes
+              before -- typing "Calculus 2" here when "Calculus II"
+              already exists. courseIdForLabelFuzzy backstops this at
+              commit time regardless, but nudging it here means the
+              student never sees two entries in their class list at all. */}
+          {(()=>{
+            const cid=courseIdForLabelFuzzy(customTag);
+            const match=cid?userSubjects.find(s=>s.id===cid):null;
+            return match&&match.label!==customTag.trim()?(
+              <div style={{fontSize:12,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:7,padding:"8px 10px",marginTop:-8,marginBottom:14}}>
+                This looks like <strong>{match.label}</strong>, which you already have.{" "}
+                <span onClick={()=>{setNewTag(match.label);setCustomTag("");}} style={{color:T.lime,cursor:"pointer",fontWeight:600,textDecoration:"underline"}}>Use that instead</span>
+              </div>
+            ):null;
+          })()}
+        </>)}
         {/* No body textarea for "write" — canvas is the editor */}
         {src==="file"&&(
           <Field label="Upload" hint={viaSyllabusScan?"AI reads your file (or a screenshot of your Canvas/syllabus page) and finds every date.":"AI reads your file and builds structured notes."}>
@@ -9412,7 +9577,25 @@ function Notes({setActive=()=>{}}){
           <Btn variant="subtle" onClick={()=>setSyllabusReview(null)}>Skip, just save the note</Btn>
           <Btn disabled={aiLoading||!syllabusReview||syllabusReview.items.filter(i=>i.include).length===0} onClick={()=>{
             const included=syllabusReview.items.filter(i=>i.include);
-            commitSyllabusEvents(syllabusReview.noteId,syllabusReview.tag,included,syllabusReview.sourceText);
+            // This note's class tag never resolved to a real courseId before
+            // -- exams/deadlines it created only ever carried a loose
+            // `subject` string, so a name typed slightly differently than
+            // an existing course ("Calculus 2" vs "Calculus II") silently
+            // produced an untethered duplicate instead of attaching to the
+            // real class. courseIdForLabelFuzzy catches the common near-
+            // misses (case/whitespace/roman-numeral); if it still finds
+            // nothing, this is a genuinely new class typed via "Other" --
+            // create it for real (same shape the schedule wizard uses)
+            // rather than leaving it as an orphan string with no course
+            // record backing it at all.
+            let cid=courseIdForLabelFuzzy(syllabusReview.tag);
+            if(!cid){
+              const subs=getSubjects();
+              const newSubj={id:"subj-"+Date.now()+"-"+Math.round(Math.random()*1000),label:syllabusReview.tag,color:SUBJECT_COLORS[subs.length%SUBJECT_COLORS.length],termEnd:null};
+              saveSubjects([...subs,newSubj]);
+              cid=newSubj.id;
+            }
+            commitSyllabusEvents(syllabusReview.noteId,syllabusReview.tag,included,syllabusReview.sourceText,cid);
             // Fire-and-forget -- the calendar add above already happened
             // and this modal is closing regardless; when it resolves (a
             // few seconds later, background), it's the only feedback a
@@ -10726,7 +10909,12 @@ function setPrepScheduleModeLS(m){lsSet("prepScheduleMode",m);}
 // matching across scans is a fuzzier problem for later); this is just
 // visibility, not prevention.
 function priorSyllabusScanCount(tag,excludeNoteId){
-  return lsGet("events",[]).filter(e=>e.id.startsWith("syl-")&&e.subject===tag&&e.noteId!==excludeNoteId).length;
+  // Normalized, not exact, comparison -- a re-scan tagged "Calculus 2"
+  // needs to find prior scans tagged "Calculus II" as the same class, or
+  // this undercounts and the "scanned N times before" warning silently
+  // stops firing the moment a name is typed even slightly differently.
+  const norm=normalizeCourseLabel(tag);
+  return lsGet("events",[]).filter(e=>e.id.startsWith("syl-")&&normalizeCourseLabel(e.subject)===norm&&e.noteId!==excludeNoteId).length;
 }
 
 // How loaded is the week containing dateKey already, and what's the single
@@ -11383,7 +11571,8 @@ function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routin
   // front, so the marker/attack/session-building passes below can all
   // just skip a duplicate index rather than each re-deriving this.
   const normKind=it=>it.kind==="exam"?"exam":"deadline";
-  const isDuplicate=items.map(it=>existing.some(e=>e.title&&it.title&&e.title.trim().toLowerCase()===it.title.trim().toLowerCase()&&e.subject===tag&&e.date===(it.date||"")&&e.kind===normKind(it)));
+  const tagNorm=normalizeCourseLabel(tag);
+  const isDuplicate=items.map(it=>existing.some(e=>e.title&&it.title&&e.title.trim().toLowerCase()===it.title.trim().toLowerCase()&&normalizeCourseLabel(e.subject)===tagNorm&&e.date===(it.date||"")&&e.kind===normKind(it)));
   const markerEvents=items.map((it,i)=>{
     const syllabusSeed=it.detail&&it.detail.trim()
       ?[{name:"From your syllabus",text:it.detail.trim()}]
@@ -13455,7 +13644,7 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
 
-function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize}) {
+function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange}) {
   // Phase 10b: user-driven zoom (drag handle below), replacing the old
   // fixed constant. Persisted via getCalZoom/saveCalZoom so it's
   // remembered across visits and shared with DayPlanner. Deliberately not
@@ -13502,6 +13691,15 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
   // "move" changes date+startTime, keeping the original duration.
   const previewDragRef = useRef(null); // {mode,origDate,origStart,origDur,grabOffsetPx}|null
   const [previewDragging, setPreviewDragging] = useState(false);
+  // Reports up so the still-open New Event popover can hide itself while
+  // an actual drag is happening -- the popover sitting there fixed in
+  // place while you're trying to see/reach the block underneath it (to
+  // drop it somewhere the popover itself is covering) was the opposite
+  // of helpful. Reappears the instant the drag ends since this is a
+  // plain boolean, not something that needs its own cleanup.
+  useEffect(()=>{
+    if(onPreviewDraggingChange)onPreviewDraggingChange(previewDragging);
+  },[previewDragging]);
   useEffect(()=>{
     if(!previewDragging)return;
     const onMove=(e)=>{
@@ -13706,7 +13904,16 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
     e.preventDefault();
     const time = wkDropTime || '09:00';
     if (sidebarDragChip && onDropSidebarChip) {
-      onDropSidebarChip(dk, time, {x:e.clientX,y:e.clientY});
+      // Anchor to the day COLUMN's right edge, not the raw cursor position
+      // -- the cursor lands somewhere inside the column, which could be
+      // anywhere from its left edge to its right, so anchoring to it
+      // directly could still leave the popover overlapping part of the
+      // very block it just previewed. The column's own right edge is a
+      // fixed point the popover can never cover, regardless of where in
+      // the column the drop happened.
+      const col = wkColRefs.current[dk];
+      const rect = col ? col.getBoundingClientRect() : null;
+      onDropSidebarChip(dk, time, {x:rect?rect.right:e.clientX,y:e.clientY});
     } else if (wkDragRoutineOccurrence && onDropRoutineOccurrence) {
       onDropRoutineOccurrence(wkDragRoutineOccurrence.routineId, wkDragRoutineOccurrence.fromDate, dk, time);
     } else if (wkDragId) {
@@ -13830,7 +14037,16 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                       moving the start time -- separate handler from the
                       block body above so a plain drag always means "move"
                       and only grabbing this specific edge means "resize". */}
-                  {onPreviewResize&&<div onMouseDown={startResize} title="Drag to change duration" style={{position:"absolute",bottom:0,left:0,right:0,height:6,cursor:"ns-resize"}} />}
+                  {/* A plain 6px hit-strip with no visual cue was
+                      functionally there but undiscoverable -- nobody
+                      could tell it existed without already knowing to
+                      look for it. A visible grip bar reads as "grab me"
+                      the way a window's own resize handle does. */}
+                  {onPreviewResize&&(
+                    <div onMouseDown={startResize} title="Drag to change duration" style={{position:"absolute",bottom:0,left:0,right:0,height:9,cursor:"ns-resize",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                      <div style={{width:26,height:3,borderRadius:99,background:previewEvent.color,opacity:0.65}} />
+                    </div>
+                  )}
                 </div>
               );
             }
@@ -14145,6 +14361,23 @@ function WizardCollegeBuilder({items,addItem,removeItem,updateItem,defaultTitle,
         </select>
         <button type="button" onClick={add} style={wizardAddBtnStyle}>+ Add</button>
       </div>
+      {/* Plain at-a-glance summary of what's already committed -- the day
+          pills above are only ever the add-form's own draft state, never
+          a "which days does this meet" indicator (pre-checking them to
+          match existing days risked an accidental duplicate add). Days
+          with more than one meeting time show each time, since a class
+          can legitimately meet twice in one day (lecture + recitation). */}
+      {items.length>0&&(()=>{
+        const fmt12=(t)=>{if(!t)return"";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
+        const parts=ROUTINE_DOW.map((d,i)=>{
+          const dayItems=items.filter(r=>r.days.includes(i)).sort((a,b)=>a.startTime<b.startTime?-1:1);
+          if(dayItems.length===0)return null;
+          return d+" "+dayItems.map(it=>fmt12(it.startTime)).join(", ");
+        }).filter(Boolean);
+        return parts.length>0?(
+          <div style={{fontSize:11.5,color:T.muted,marginTop:12,marginBottom:2}}>Meets: {parts.join(" · ")}</div>
+        ):null;
+      })()}
       <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6,marginTop:18}}>
         {ROUTINE_DOW.map((d,i)=>{
           const dayItems=items.filter(r=>r.days.includes(i)).sort((a,b)=>a.startTime<b.startTime?-1:1);
@@ -16238,7 +16471,7 @@ function RescheduleModal({task,events,commit,onClose}){
 // CalendarTab) decides once what "persist" means for it, instead of six
 // different inline lsSet calls each needing to remember to also sync
 // whatever local state that caller happens to hold.
-function EventDetailModal({eventId,onClose,commit,onToast}){
+function EventDetailModal({eventId,onClose,commit,onToast,setActive}){
   const allEvents=lsGet("events",[]);
   const ev=allEvents.find(e=>e.id===eventId);
   const routines=getWeeklyRoutine();
@@ -16291,6 +16524,18 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
   // same MaterialEditor/buildExamSessionEvents shape used there.
   const [examPlan,setExamPlan]=useState({materialFiles:[],materialLinks:[],materialOpen:false,pasteMaterialMode:false,pasteMaterialText:"",linkDraft:"",linkLabelDraft:"",proposeSessions:false,sessionCount:4});
   const [projectPlan,setProjectPlan]=useState({phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false});
+  // Manual "I'll set my own time" block, an alternative to Attack Block --
+  // a plain event linked back to this assignment via dueEventId, same
+  // field every Attack Block/study session already uses, so it shows up
+  // in the list below and is editable/movable on the calendar exactly
+  // like any other event. Nothing cached on the assignment itself -- the
+  // list below is always just "whatever currently has dueEventId===ev.id",
+  // so moving or deleting it on the calendar is automatically reflected
+  // here next time this opens, no separate sync step needed.
+  const [addManualBlock,setAddManualBlock]=useState(false);
+  const [manualDate,setManualDate]=useState("");
+  const [manualTime,setManualTime]=useState("16:00");
+  const [manualDuration,setManualDuration]=useState(30);
 
   useEffect(()=>{
     if(!ev)return;
@@ -16302,6 +16547,7 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
     setAsProject(isProjectMarker(ev));setAsChecklist(!!ev.checklist);
     setCancelConfirmOpen(false);setDetailErr("");
     setAddAttackBlock(false);setAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);
+    setAddManualBlock(false);setManualDate(ev.date||dayKey());setManualTime("16:00");setManualDuration(30);
     setExamPlan({materialFiles:ev.sourceMaterials||[],materialLinks:ev.referenceLinks||[],materialOpen:false,pasteMaterialMode:false,pasteMaterialText:"",linkDraft:"",linkLabelDraft:"",proposeSessions:false,sessionCount:4});
     setProjectPlan({phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false});
   },[eventId]);
@@ -16310,6 +16556,18 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
 
   const linkedSessions=allEvents.filter(e=>e.dueEventId===ev.id);
   const chainIdForReschedule=(allEvents.find(e=>e.dueEventId===ev.id&&e.attackChainId&&e.status==="pending")||{}).attackChainId||null;
+  const jumpToCalendar=()=>{if(setActive)setActive("calendar");onClose();};
+  const addManualLinkedBlock=()=>{
+    if(!manualDate)return;
+    const block={id:"manual-"+ev.id+"-"+Date.now(),title:"Work on: "+(title.trim()||ev.title),date:manualDate,time:manualTime,
+      subject:ev.subject||"",kind:"study block",notes:"",priority:5,difficulty:5,deadline:ev.deadline||null,
+      duration:manualDuration,status:"pending",timeSpent:0,completedAt:null,dueEventId:ev.id};
+    commit(lsGet("events",[]).concat([block]));
+    setAddManualBlock(false);
+    if(onToast)onToast("Block added");
+  };
+  const deleteLinkedBlock=(id)=>commit(lsGet("events",[]).filter(e=>e.id!==id));
+  const markLinkedBlockDone=(id)=>commit(lsGet("events",[]).map(e=>e.id===id?{...e,status:"done",completedAt:Date.now()}:e));
   // A plain due-date marker OR a plain manually-placed "study block" with
   // nothing scheduled for it yet and no phases of its own -- exactly the
   // "assignment added without Attack Block" gap this closes. "study
@@ -16501,6 +16759,61 @@ function EventDetailModal({eventId,onClose,commit,onToast}){
           </div>
         );
       })()}
+      {/* Real per-block list -- previously just a count, no way to see
+          when/where a block actually landed or act on one individually.
+          Exam study sessions stay managed in Studlin Prep (which already
+          got its own full edit/delete UI) to avoid two places doing the
+          same job differently -- this is for assignment/project blocks. */}
+      {kind!=="exam"&&linkedSessions.length>0&&(
+        <div style={{marginBottom:14}}>
+          <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Scheduled blocks</div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {linkedSessions.slice().sort((a,b)=>(a.date+a.time)<(b.date+b.time)?-1:1).map(s=>{
+              const isPast=s.status==="pending"&&s.date&&s.date<dayKey();
+              return (
+                <div key={s.id} style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+                    <div onClick={jumpToCalendar} style={{cursor:"pointer",flex:1,minWidth:0}} title="Jump to calendar">
+                      <div style={{fontSize:12,fontWeight:600,color:s.status==="done"?T.muted:T.text,textDecoration:s.status==="done"?"line-through":"none"}}>{s.date} · {s.time} · {s.duration||30}min</div>
+                    </div>
+                    <button type="button" onClick={()=>deleteLinkedBlock(s.id)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline",flexShrink:0}}>Delete</button>
+                  </div>
+                  {/* Lightweight progress check-in -- a block whose time
+                      already passed and is still marked pending, asking
+                      once rather than silently leaving it stale forever. */}
+                  {isPast&&(
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6,paddingTop:6,borderTop:`1px solid ${T.border}`}}>
+                      <span style={{fontSize:11,color:T.amber}}>Did you get to this?</span>
+                      <button type="button" onClick={()=>markLinkedBlockDone(s.id)} style={{background:"none",border:"none",color:T.lime,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:T.font,textDecoration:"underline"}}>Mark done</button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {kind!=="exam"&&!ev.isAttackBlock&&!ev.dueEventId&&(
+        <div style={{marginBottom:14}}>
+          {!addManualBlock?(
+            <button type="button" onClick={()=>setAddManualBlock(true)} style={{background:"none",border:"none",color:T.lime,fontSize:12,fontWeight:600,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>+ Add my own time block</button>
+          ):(
+            <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px"}}>
+              <div style={{fontSize:11.5,color:T.muted,marginBottom:8}}>A specific time you'll work on this -- shows up on your calendar like any other block, drag/resize it same as usual.</div>
+              <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                <Input type="date" value={manualDate} onChange={e=>setManualDate(e.target.value)} style={{width:140}} />
+                <TimeInput value={manualTime} onChange={setManualTime} />
+                <NumField min={5} max={480} fallback={30} value={manualDuration} onChange={setManualDuration} style={{width:56}} />
+                <span style={{fontSize:10.5,color:T.muted}}>min</span>
+              </div>
+              <div style={{display:"flex",gap:8,marginTop:10}}>
+                <BtnSm onClick={addManualLinkedBlock} disabled={!manualDate}>Add block</BtnSm>
+                <BtnSm variant="ghost" onClick={()=>setAddManualBlock(false)}>Cancel</BtnSm>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       {ev.phases&&ev.phases.length>0&&(
         <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:14}}>
           <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Phases</div>
@@ -16687,7 +17000,16 @@ function findOverlapConflict(date,startTime,endTime,events,routines){
     .concat(dayRoutines.map(r=>({title:r.title,start:timeToMinutes(r.time),end:timeToMinutes(r.time)+(r.duration||30)})));
   return candidates.find(c=>startMin<c.end&&c.start<endMin)||null;
 }
-function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,anchorY,color,hideRepeat,onPreviewChange,liveOverride,events,routines,onClose,onCreate}){
+// Unified with what used to be the separate "Edit routine block" modal --
+// same form now handles creating a one-off event, creating a recurring
+// one, and editing an existing routine, instead of three different field
+// sets living in two different modals that quietly disagreed about what
+// a "class" or "activity" even needed (Type/Subject/per-day time only
+// existed in one of them, Commute/Location/Fixed only in the other).
+// editRoutine (the rule being edited) is the one thing that switches this
+// between create and edit mode -- present means Save+Delete, absent means
+// Create.
+function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,anchorY,color,hideRepeat,onPreviewChange,liveOverride,events,routines,hidden,editRoutine,subjectOptions,onClose,onCreate,onSave,onDelete}){
   const [title,setTitle]=useState("");
   const [date,setDate]=useState("");
   const [startTime,setStartTime]=useState("09:00");
@@ -16695,6 +17017,24 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
   const [allDay,setAllDay]=useState(false);
   const [repeat,setRepeat]=useState("none"); // none | weekly | selected
   const [repeatDays,setRepeatDays]=useState([]);
+  // Type/Subject only matter once something repeats -- a one-off event
+  // was never asked "class or activity", it just IS whatever its title
+  // says. evKind mirrors the routine kind vocabulary (class/busy/free/
+  // habit) rather than the separate one-off event kind vocabulary
+  // ("busy block" etc.) -- commitNewEvent/saveRoutineEditFromModal each translate
+  // it into whichever their own destination actually expects.
+  const [evKind,setEvKind]=useState("class");
+  const [subject,setSubject]=useState("None");
+  // Per-day time overrides for a repeating item -- {dayIndex:{startTime,
+  // duration}}. Empty/sparse: a day with no entry here just uses the
+  // shared startTime/endTime above. This is the actual fix for "Mon/Wed
+  // at 4pm, Tue/Thu at 6pm, all called Workout" -- previously only
+  // representable by dragging one occurrence and picking "Every week",
+  // which mutated the WHOLE rule's one shared time (see the routine-
+  // split fix from the previous batch); this lets it be set correctly
+  // from the start, or fixed in place, without ever touching sibling days.
+  const [dayTimes,setDayTimes]=useState({});
+  const [dayTimeEditingIdx,setDayTimeEditingIdx]=useState(null);
   // "" (not 0) is the unset state -- a controlled number input whose value
   // defaults to 0 can never actually be cleared by the student (deleting
   // the digit just snaps straight back to "0"). Only coerced to a real
@@ -16715,16 +17055,44 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
   // flicker). The second effect, keyed only on `open` itself, is the only
   // one that ever clears it, and only when the popover actually closes.
   useEffect(()=>{
-    if(!open||!onPreviewChange)return;
+    // No live preview for editRoutine -- a routine has no single date to
+    // preview against (its real occurrences are already visible on the
+    // calendar via the normal weekly expansion), and `date` here is just
+    // an unused placeholder in edit mode, not a real placement.
+    if(!open||!onPreviewChange||editRoutine)return;
     onPreviewChange({title,date,startTime,endTime,allDay,color:color||T.lime});
-  },[open,title,date,startTime,endTime,allDay,color]);
+  },[open,title,date,startTime,endTime,allDay,color,editRoutine]);
   useEffect(()=>{
     if(!open&&onPreviewChange)onPreviewChange(null);
   },[open]);
 
   useEffect(()=>{
     if(!open)return;
+    setDayTimes({});setDayTimeEditingIdx(null);
+    if(editRoutine){
+      // Edit mode: seed everything from the existing rule. Always
+      // "selected days" repeat -- a routine is never a one-off, that's
+      // what an editRoutine even means -- with the rule's own days
+      // pre-checked and its one shared time as the default.
+      setTitle(editRoutine.title||"");
+      setEvKind(editRoutine.kind==="busy"?"busy":editRoutine.kind||"class");
+      setSubject(editRoutine.subject||"None");
+      setRepeat("selected");
+      setRepeatDays(editRoutine.days||[]);
+      const st=editRoutine.startTime||"09:00";
+      setStartTime(st);
+      setEndTime(minutesToTime(timeToMinutes(st)+(editRoutine.duration||30)));
+      setAllDay(false);
+      setDate(dayKey());
+      setCommuteBefore(editRoutine.commuteBefore?String(editRoutine.commuteBefore):"");
+      setCommuteAfter(editRoutine.commuteAfter?String(editRoutine.commuteAfter):"");
+      setLocation(editRoutine.location||"");
+      setMovable(!!editRoutine.movable);
+      return;
+    }
     setTitle(initialTitle||"");
+    setEvKind("class");
+    setSubject("None");
     const d=initialDate||dayKey();
     setDate(d);
     const st=initialStartTime||"09:00";
@@ -16739,7 +17107,7 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
     setRepeatDays([jsDay===0?6:jsDay-1]);
     setCommuteBefore("");setCommuteAfter("");
     setLocation("");setMovable(false);
-  },[open,initialTitle,initialDate,initialStartTime]);
+  },[open,initialTitle,initialDate,initialStartTime,editRoutine]);
 
   // Dragging the live preview block on the calendar (WeeklyPlanner's
   // resize handle / move-the-whole-block) reports back here -- a one-way
@@ -16754,22 +17122,43 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
   },[open,liveOverride]);
 
   if(!open)return null;
+  // Hides the popover while an actual drag (move/resize) is happening on
+  // the calendar -- all state/hooks above still run normally, this just
+  // skips rendering the visible card so it can't sit fixed in place over
+  // whatever the student is trying to see or drop onto underneath it.
+  if(hidden)return null;
   const toggleRepeatDay=(i)=>setRepeatDays(d=>d.includes(i)?d.filter(x=>x!==i):[...d,i]);
   const invalid=!title.trim()||(!allDay&&timeToMinutes(endTime)<=timeToMinutes(startTime))||(repeat==="selected"&&repeatDays.length===0);
   // Non-blocking on purpose -- see findOverlapConflict's own comment. The
   // live preview block on the calendar already visually overlaps
   // whatever this collides with, but that's easy to miss; this names it.
-  const conflict=allDay?null:findOverlapConflict(date,startTime,endTime,events,routines);
+  // Not meaningful for editRoutine -- `date` there is just an unused
+  // placeholder (a routine spans multiple days, not one), so checking
+  // "today" specifically would be misleading rather than helpful.
+  const conflict=allDay||editRoutine?null:findOverlapConflict(date,startTime,endTime,events,routines);
 
-  const create=()=>{
+  const submit=()=>{
     if(invalid)return;
+    const common={
+      commuteBefore:commuteBefore===""?0:Math.max(0,+commuteBefore||0),
+      commuteAfter:commuteAfter===""?0:Math.max(0,+commuteAfter||0),
+      location:location.trim(),movable,
+    };
+    if(editRoutine){
+      onSave({
+        title:title.trim(),kind:evKind,subject:subject==="None"?"":subject,
+        days:repeatDays,startTime,duration:Math.max(5,timeToMinutes(endTime)-timeToMinutes(startTime)),
+        dayTimes,
+        ...common,
+      });
+      return;
+    }
     onCreate({
       title:title.trim(),date,startTime,endTime,allDay,
       repeat,
       repeatDays:repeat==="none"?[]:repeatDays,
-      commuteBefore:commuteBefore===""?0:Math.max(0,+commuteBefore||0),
-      commuteAfter:commuteAfter===""?0:Math.max(0,+commuteAfter||0),
-      location:location.trim(),movable,
+      evKind,subject:subject==="None"?"":subject,dayTimes,
+      ...common,
     });
   };
 
@@ -16807,14 +17196,24 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
       <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:998}} />
       <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top,left,width:POPOVER_WIDTH,maxHeight:"calc(100vh - "+top+"px - 16px)",overflowY:"auto",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:999,animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 12px",borderBottom:`1px solid ${T.border}`}}>
-          <div style={{fontSize:13,fontWeight:700,color:T.white}}>New event</div>
+          <div style={{fontSize:13,fontWeight:700,color:T.white}}>{editRoutine?"Edit event":"New event"}</div>
           <button type="button" onClick={onClose} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,lineHeight:1,padding:0}}>×</button>
         </div>
         <div style={{padding:"10px 12px",display:"flex",flexDirection:"column",gap:6}}>
           <Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Event title" style={{fontSize:13,fontWeight:600,padding:"7px 10px"}} autoFocus />
           <div style={{display:"flex",gap:6}}>
-            <DateField label="Date" value={date} onChange={setDate} />
-            {!allDay&&(
+            {/* A routine has no single date -- it's defined entirely by
+                which days it repeats on, below. */}
+            {!editRoutine&&<DateField label="Date" value={date} onChange={setDate} />}
+            {/* Habit has no fixed time at all -- Studlin fits it in
+                wherever there's room each day -- so it gets a plain
+                duration instead of a start/end pair, same as the old
+                routine editor did. */}
+            {!allDay&&evKind==="habit"?(
+              <div style={{flex:1}}>
+                <NumField min={5} max={480} fallback={30} value={Math.max(5,timeToMinutes(endTime)-timeToMinutes(startTime))} onChange={v=>setEndTime(minutesToTime(timeToMinutes(startTime)+v))} style={{width:"100%"}} />
+              </div>
+            ):(!allDay&&(
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:5,padding:"7px 10px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,boxSizing:"border-box",flexShrink:0}}>
                 <div style={{display:"flex",alignItems:"center",gap:5,minWidth:0}}>
                   <TimeInput value={startTime} onChange={setStartTime} bare />
@@ -16823,11 +17222,14 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
                 </div>
                 <span style={{color:T.muted,flexShrink:0,display:"flex"}}>{ClockIcon}</span>
               </div>
-            )}
+            ))}
           </div>
-          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,color:T.muted,cursor:"pointer"}}>
-            <input type="checkbox" checked={allDay} onChange={e=>setAllDay(e.target.checked)} /> All day
-          </label>
+          {evKind==="habit"&&(editRoutine||repeat==="selected"||repeat==="weekly")&&<div style={{fontSize:11.5,color:T.muted,marginTop:-4}}>No fixed time — Studlin fits it in wherever there's room each day.</div>}
+          {!editRoutine&&(
+            <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,color:T.muted,cursor:"pointer"}}>
+              <input type="checkbox" checked={allDay} onChange={e=>setAllDay(e.target.checked)} /> All day
+            </label>
+          )}
           {conflict&&(
             <div style={{fontSize:11,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:7,padding:"6px 9px",lineHeight:1.4}}>
               This overlaps with <strong>{conflict.title}</strong> at {(()=>{let h=Math.floor(conflict.start/60),m=conflict.start%60;const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+String(m).padStart(2,"0")+" "+ap;})()}.
@@ -16836,16 +17238,58 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
           {/* A single study session recurring weekly the way a class does
               doesn't make sense -- hidden for session drops (Phase 4). */}
           {!hideRepeat&&(<>
-          <select value={repeat} onChange={e=>setRepeat(e.target.value)} style={{...wizardSelectStyle,padding:"6px 8px",fontSize:12}}>
-            <option value="none">Does not repeat</option>
-            <option value="weekly">Repeats weekly</option>
-            <option value="selected">On selected days</option>
-          </select>
-          {repeat==="selected"&&(
+          {!editRoutine&&(
+            <select value={repeat} onChange={e=>setRepeat(e.target.value)} style={{...wizardSelectStyle,padding:"6px 8px",fontSize:12}}>
+              <option value="none">Does not repeat</option>
+              <option value="weekly">Repeats weekly</option>
+              <option value="selected">On selected days</option>
+            </select>
+          )}
+          {(editRoutine||repeat==="selected"||repeat==="weekly")&&(
             <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
               {ROUTINE_DOW.map((d,i)=><button key={i} type="button" onClick={()=>toggleRepeatDay(i)} style={wizardChipStyle(repeatDays.includes(i))}>{d}</button>)}
             </div>
           )}
+          {/* Per-day time override -- this is the actual fix for "meets
+              Mon/Wed at 4pm, Tue/Thu at 6pm, one title." Every selected
+              day defaults to the shared Start/End time above; clicking a
+              day here opens its own time, stored separately, without
+              touching any other day. */}
+          {(editRoutine||repeat==="selected"||repeat==="weekly")&&evKind!=="habit"&&repeatDays.length>1&&(()=>{
+            const fmt12=(t)=>{if(!t)return"";let[h,m]=t.split(":").map(Number);const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+String(m).padStart(2,"0")+" "+ap;};
+            const sharedDur=Math.max(5,timeToMinutes(endTime)-timeToMinutes(startTime));
+            return (
+              <div style={{display:"flex",flexDirection:"column",gap:3,padding:"6px 0"}}>
+                <div style={{fontSize:10,color:T.faint,textTransform:"uppercase",letterSpacing:"0.05em"}}>Time per day (defaults to the time above)</div>
+                {repeatDays.slice().sort((a,b)=>a-b).map(i=>{
+                  const override=dayTimes[i];
+                  const editingThis=dayTimeEditingIdx===i;
+                  return (
+                    <div key={i}>
+                      <div onClick={()=>setDayTimeEditingIdx(x=>x===i?null:i)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 8px",borderRadius:6,background:editingThis?T.lime+"14":T.card2,border:`1px solid ${editingThis?T.lime+"44":"transparent"}`,cursor:"pointer",fontSize:11}}>
+                        <span style={{fontWeight:600,color:T.text}}>{ROUTINE_DOW[i]}</span>
+                        <span style={{color:override?T.lime:T.muted}}>{override?fmt12(override.startTime)+" · "+override.duration+"m":"same as above"}</span>
+                      </div>
+                      {editingThis&&(
+                        <div style={{display:"flex",gap:6,alignItems:"center",padding:"6px 8px",flexWrap:"wrap"}}>
+                          <TimeInput value={(override&&override.startTime)||startTime} onChange={v=>setDayTimes(dt=>({...dt,[i]:{startTime:v,duration:(override&&override.duration)||sharedDur}}))} />
+                          <NumField min={5} max={480} fallback={sharedDur} value={(override&&override.duration)||sharedDur} onChange={v=>setDayTimes(dt=>({...dt,[i]:{startTime:(override&&override.startTime)||startTime,duration:v}}))} style={{width:56}} />
+                          <span style={{fontSize:10.5,color:T.muted}}>min</span>
+                          {override&&<button type="button" onClick={()=>setDayTimes(dt=>{const n={...dt};delete n[i];return n;})} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:10.5,textDecoration:"underline"}}>Reset</button>}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+          {/* Type/Subject only matter once this repeats -- a one-off
+              event is never asked to classify itself. */}
+          {(editRoutine||repeat==="selected"||repeat==="weekly")&&(<>
+            <Field label="Type"><SelectChip options={[{value:"class",label:"Class"},{value:"busy",label:"Activity"},{value:"free",label:"Free Period"},{value:"habit",label:"Habit"}]} value={evKind} onChange={setEvKind} /></Field>
+            {evKind==="class"&&subjectOptions&&<Field label="Subject"><SelectChip options={subjectOptions} value={subject} onChange={setSubject} /></Field>}
+          </>)}
           </>)}
           {/* Inline label+pill row, matching Shovel's own plain-text
               "Commute before: 00h 00m   Commute after: 00h 00m" layout
@@ -16868,9 +17312,12 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
             </div>
           </div>
         </div>
-        <div style={{display:"flex",gap:8,justifyContent:"flex-end",padding:"9px 12px",borderTop:`1px solid ${T.border}`}}>
-          <Btn variant="subtle" onClick={onClose} style={{padding:"6px 13px",fontSize:12}}>Cancel</Btn>
-          <Btn onClick={create} disabled={invalid} style={{padding:"6px 13px",fontSize:12}}>Create</Btn>
+        <div style={{display:"flex",gap:8,justifyContent:editRoutine?"space-between":"flex-end",alignItems:"center",padding:"9px 12px",borderTop:`1px solid ${T.border}`}}>
+          {editRoutine&&<Btn variant="danger" onClick={onDelete} style={{padding:"6px 13px",fontSize:12}}>Delete</Btn>}
+          <div style={{display:"flex",gap:8}}>
+            <Btn variant="subtle" onClick={onClose} style={{padding:"6px 13px",fontSize:12}}>Cancel</Btn>
+            <Btn onClick={submit} disabled={invalid} style={{padding:"6px 13px",fontSize:12}}>{editRoutine?"Save changes":"Create"}</Btn>
+          </div>
         </div>
       </div>
     </>
@@ -16936,6 +17383,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // one-way override the modal applies whenever it changes, separate
   // from previewEvent (which flows the OTHER direction: modal -> calendar).
   const [previewOverride,setPreviewOverride]=useState(null);
+  // Whether the preview block is actively being dragged/resized on the
+  // calendar right now -- NewEventModal hides itself while this is true.
+  const [previewDragActive,setPreviewDragActive]=useState(false);
   // Phase 7e: set when a routine occurrence was just dropped somewhere new,
   // waiting on the student to pick "just this one" or "every week".
   const [routineDropPending,setRoutineDropPending]=useState(null); // {routineId,fromDate,toDate,toTime}|null
@@ -17480,25 +17930,25 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   const [editRoutineMode,setEditRoutineMode]=useState(false);
   const [hoveredRoutineId,setHoveredRoutineId]=useState(null);
   const [routineEditItem,setRoutineEditItem]=useState(null); // the underlying rule being edited, or null
-  const [riTitle,setRiTitle]=useState("");
-  const [riKind,setRiKind]=useState("class");
-  const [riDays,setRiDays]=useState([]);
-  const [riStartTime,setRiStartTime]=useState("09:00");
-  const [riDuration,setRiDuration]=useState(50);
-  const [riSubject,setRiSubject]=useState("None");
-  const openRoutineEdit=(rule)=>{
-    setRoutineEditItem(rule);
-    setRiTitle(rule.title||"");
-    setRiKind(rule.kind||"class");
-    setRiDays(rule.days||[]);
-    setRiStartTime(rule.startTime||"09:00");
-    setRiDuration(rule.duration||50);
-    setRiSubject(rule.subject||"None");
-  };
+  const openRoutineEdit=(rule)=>setRoutineEditItem(rule);
   const closeRoutineEdit=()=>setRoutineEditItem(null);
-  const saveRoutineEdit=()=>{
-    if(!routineEditItem||!riTitle.trim()||riDays.length===0)return;
-    persistRoutines(routines.map(r=>r.id===routineEditItem.id?{...r,title:riTitle.trim(),kind:riKind,days:riDays,startTime:riKind==="habit"?null:riStartTime,duration:riDuration,subject:riSubject==="None"?"":riSubject,courseId:riSubject==="None"?null:courseIdForLabel(riSubject)}:r));
+  // Now the onSave handler for the shared NewEventModal (unified with
+  // "New event" -- see that component's own comment for why). patch is
+  // whatever the modal's Save button sent: title/kind/subject/days/
+  // startTime/duration/dayTimes/commute/location/movable. Splitting via
+  // buildRoutineObjectsForDays replaces the one edited rule with however
+  // many the per-day time overrides actually need -- one object again
+  // when there are none, same shape as before this change.
+  const saveRoutineEditFromModal=(patch)=>{
+    if(!routineEditItem||!patch.title.trim()||patch.days.length===0)return;
+    const isHabit=patch.kind==="habit";
+    const subj=patch.subject&&patch.subject!=="None"?patch.subject:"";
+    const base={title:patch.title.trim(),kind:patch.kind,...(subj?{subject:subj}:{subject:""}),courseId:subj?courseIdForLabel(subj):null,
+      commuteBefore:patch.commuteBefore||undefined,commuteAfter:patch.commuteAfter||undefined,location:patch.location||undefined,movable:patch.movable};
+    const rebuilt=isHabit
+      ?[{...base,id:routineEditItem.id,days:patch.days,startTime:null,duration:patch.duration}]
+      :buildRoutineObjectsForDays({...base,id:routineEditItem.id},patch.days,patch.startTime,patch.duration,patch.dayTimes);
+    persistRoutines([...routines.filter(r=>r.id!==routineEditItem.id),...rebuilt]);
     closeRoutineEdit();
   };
   const deleteRoutineEdit=()=>{
@@ -17574,8 +18024,27 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       anchorX:(anchorPoint&&anchorPoint.x)||null,anchorY:(anchorPoint&&anchorPoint.y)||null});
     setNewEventOpen(true);
   };
+  // Builds one-or-more routine objects for a repeating item from its
+  // shared days/startTime/duration plus any per-day time overrides --
+  // days with no override share ONE object (today's normal, single-time-
+  // block shape); each distinct override time gets split into its own
+  // object, same reasoning as applyRoutineDropScope's "always" branch
+  // (a single routine can only ever hold one shared startTime across all
+  // its days, so a genuinely different per-day time has to be a
+  // different routine object, not a field on the same one).
+  const buildRoutineObjectsForDays=(base,days,startTime,duration,dayTimes)=>{
+    const withOverride=days.filter(d=>dayTimes&&dayTimes[d]);
+    const shared=days.filter(d=>!(dayTimes&&dayTimes[d]));
+    const out=[];
+    if(shared.length>0)out.push({...base,id:base.id||"rt-"+Date.now()+"-"+Math.round(Math.random()*1000),days:shared,startTime,duration});
+    withOverride.forEach(d=>{
+      const ov=dayTimes[d];
+      out.push({...base,id:"rt-"+Date.now()+"-"+Math.round(Math.random()*1000)+"-"+d,days:[d],startTime:ov.startTime,duration:ov.duration});
+    });
+    return out;
+  };
   const commitNewEvent=(payload)=>{
-    const {title,date,startTime,endTime,allDay,repeat,repeatDays,commuteBefore,commuteAfter,location,notes,movable}=payload;
+    const {title,date,startTime,endTime,allDay,repeat,repeatDays,commuteBefore,commuteAfter,location,notes,movable,evKind,subject,dayTimes}=payload;
     const duration=allDay?null:Math.max(5,timeToMinutes(endTime)-timeToMinutes(startTime));
     const common={commuteBefore:commuteBefore||undefined,commuteAfter:commuteAfter||undefined,location:location||undefined,notes:notes||undefined,movable};
     const {chipKind,courseId,routineId,sessionId}=newEventPrefill;
@@ -17600,8 +18069,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         kind:isCourse?"class":"busy block",status:"pending",...(isCourse?{courseId,subject:title}:{}),...common}]);
     }else{
       const isCourse=chipKind==="course"&&courseId;
-      persistRoutines([...routines,{id:"rt-"+Date.now()+"-"+Math.round(Math.random()*1000),title,kind:isCourse?"class":"busy",
-        days:repeatDays,startTime,duration:duration||60,...(isCourse?{courseId,subject:title}:{}),...common}]);
+      // evKind/subject come from the modal's own Type/Subject fields
+      // (shown whenever something repeats) -- isCourse (a course chip
+      // dragged straight from the sidebar) still wins when present, same
+      // as before, since that's a stronger signal than the generic form.
+      const kind=isCourse?"class":(evKind||"busy");
+      const subj=isCourse?title:(kind==="class"?(subject||""):"");
+      const cid=isCourse?courseId:(kind==="class"&&subj?courseIdForLabelFuzzy(subj):null);
+      const base={title,kind,...(subj?{subject:subj}:{}),...(cid?{courseId:cid}:{}),...common};
+      persistRoutines([...routines,...buildRoutineObjectsForDays(base,repeatDays,startTime,duration||60,dayTimes)]);
     }
     setNewEventOpen(false);
     setSidebarDragChip(null);
@@ -18865,7 +19341,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           sidebarDragChip={sidebarDragChip} onDropSidebarChip={(dk,time,anchorPoint)=>{openNewEventForDrop(sidebarDragChip,dk,time,anchorPoint);setSidebarDragChip(null);}}
           onDropRoutineOccurrence={onDropRoutineOccurrence} previewEvent={previewEvent} highlightedSessionId={highlightedSessionId}
           onPreviewMove={(date,startTime,endTime)=>setPreviewOverride({date,startTime,endTime})}
-          onPreviewResize={(endTime)=>setPreviewOverride(o=>({date:(o&&o.date)||previewEvent.date,startTime:(o&&o.startTime)||previewEvent.startTime,endTime}))} />
+          onPreviewResize={(endTime)=>setPreviewOverride(o=>({date:(o&&o.date)||previewEvent.date,startTime:(o&&o.startTime)||previewEvent.startTime,endTime}))}
+          onPreviewDraggingChange={setPreviewDragActive} />
       )}
       {calView==="daily"&&(
         <DayPlanner dayEvents={dayEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} />
@@ -18945,13 +19422,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           );
         })()}
       </Modal>
-      <NewEventModal open={newEventOpen} initialTitle={newEventPrefill.title} initialDate={newEventPrefill.date} initialStartTime={newEventPrefill.startTime}
+      <NewEventModal open={newEventOpen||!!routineEditItem} initialTitle={newEventPrefill.title} initialDate={newEventPrefill.date} initialStartTime={newEventPrefill.startTime}
         anchorX={newEventPrefill.anchorX} anchorY={newEventPrefill.anchorY} color={newEventPrefill.color}
         hideRepeat={newEventPrefill.chipKind==="session"}
         onPreviewChange={setPreviewEvent}
         liveOverride={previewOverride}
-        events={events} routines={routines}
-        onClose={()=>{setNewEventOpen(false);setPreviewEvent(null);setPreviewOverride(null);}}
+        events={events} routines={routines} hidden={previewDragActive}
+        editRoutine={routineEditItem} subjectOptions={SUBJ}
+        onSave={saveRoutineEditFromModal} onDelete={deleteRoutineEdit}
+        onClose={()=>{setNewEventOpen(false);setPreviewEvent(null);setPreviewOverride(null);closeRoutineEdit();}}
         onCreate={(payload)=>{setPreviewEvent(null);setPreviewOverride(null);commitNewEvent(payload);}} />
       {/* Phase 7e: dropped a routine occurrence somewhere new -- ask scope
           before touching anything. "Just this one" only offered when the
@@ -19628,33 +20107,6 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         onEditRoutine={openRoutineEdit} onDeleteRoutine={deleteRoutineItem}
         onAddRoutine={(rule)=>persistRoutines([...routines,{id:String(Date.now()+Math.random()*1000),...rule,subject:""}])}
         onEditOnCalendar={()=>{setRoutineCenterOpen(false);setEditRoutineMode(true);}} />
-      <Modal open={!!routineEditItem} onClose={closeRoutineEdit} title="Edit routine block" sub="Changes apply to every week this repeats." width={480}
-        footer={
-          <div style={{display:"flex",width:"100%",justifyContent:"space-between",alignItems:"center"}}>
-            <Btn variant="danger" onClick={deleteRoutineEdit}>Delete</Btn>
-            <div style={{display:"flex",gap:10}}>
-              <Btn variant="subtle" onClick={closeRoutineEdit}>Cancel</Btn>
-              <Btn onClick={saveRoutineEdit} disabled={!riTitle.trim()||riDays.length===0} style={{opacity:!riTitle.trim()||riDays.length===0?0.45:1}}>Save changes</Btn>
-            </div>
-          </div>
-        }>
-        <Field label="Title"><Input value={riTitle} onChange={e=>setRiTitle(e.target.value)} autoFocus /></Field>
-        <Field label="Type"><SelectChip options={[{value:"class",label:"Class"},{value:"busy",label:"Activity"},{value:"free",label:"Free Period"},{value:"habit",label:"Habit"}]} value={riKind} onChange={setRiKind} /></Field>
-        {riKind==="habit"&&<div style={{fontSize:11.5,color:T.muted,marginTop:-6,marginBottom:14}}>No fixed time — Studlin fits it in wherever there's room each day.</div>}
-        <Field label="Repeats on" hint={riDays.length===0?"Pick at least one day":undefined}>
-          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-            {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((d,i)=>{
-              const sel=riDays.includes(i);
-              return <button key={i} type="button" onClick={()=>setRiDays(sel?riDays.filter(x=>x!==i):[...riDays,i])} style={{padding:"6px 12px",borderRadius:7,fontSize:12,fontWeight:sel?600:400,cursor:"pointer",border:`1px solid ${sel?T.lime+"66":T.border}`,background:sel?T.lime+"14":"transparent",color:sel?T.lime:T.muted,fontFamily:T.font}}>{d}</button>;
-            })}
-          </div>
-        </Field>
-        <div style={{display:"grid",gridTemplateColumns:riKind==="habit"?"1fr":"1fr 1fr",gap:12}}>
-          {riKind!=="habit"&&<Field label="Start time"><TimeInput value={riStartTime} onChange={setRiStartTime} /></Field>}
-          <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={30} value={riDuration} onChange={setRiDuration} /></Field>
-        </div>
-        <Field label="Subject"><SelectChip options={SUBJ} value={riSubject} onChange={setRiSubject} /></Field>
-      </Modal>
     </>
   );
 }
@@ -20461,6 +20913,17 @@ function AiHumanizer() {
 function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineWizard=()=>{}, setScheduleSettingsOpen=()=>{}, setPricingOpen=()=>{}}) {
   const [active,setActive]=useState("General");
   const [prepScheduleMode,setPrepScheduleMode]=useState(()=>getPrepScheduleMode());
+  // One-time cleanup surface for courses that duplicated before the
+  // name-matching fix existed -- recomputed on mount only (a merge
+  // updates this via its own setter below, not a live subscription).
+  const [dupGroups,setDupGroups]=useState(()=>findDuplicateCourseGroups());
+  const [mergeConfirm,setMergeConfirm]=useState(null); // {keep,mergeIds,mergeLabels}|null
+  const confirmMergeCourses=()=>{
+    if(!mergeConfirm)return;
+    mergeCourses(mergeConfirm.keep.id,mergeConfirm.mergeIds);
+    setDupGroups(findDuplicateCourseGroups());
+    setMergeConfirm(null);
+  };
   const [canvasTipOpen,setCanvasTipOpen]=useState(false);
   const [canvasSeeding,setCanvasSeeding]=useState(false);
   const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,sr:true,auto:true,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false},...lsGet("settings",{})}));
@@ -21032,6 +21495,36 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Field label="Email"><Input value={profile.email} onChange={e=>updProfile({email:e.target.value})} type="email" /></Field>
               <Field label="School or affiliation"><SchoolSelect value={profile.school} onChange={v=>updProfile({school:v})} onCommit={name=>ensureSchoolInDirectory(name,profile.status)} placeholder="Search or type your school" statusFilter={profile.status} /></Field>
             </Card>
+            {dupGroups.length>0&&(
+              <Card style={{marginBottom:12,border:`1px solid ${T.amber}44`}}>
+                <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Possible duplicate classes</div>
+                <div style={{fontSize:12,color:T.muted,marginBottom:16}}>These look like the same class under slightly different names -- pick which one to keep, and everything from the others moves over to it.</div>
+                {dupGroups.map((group,gi)=>{
+                  const withCounts=group.map(s=>({...s,count:courseItemCount(s)})).sort((a,b)=>b.count-a.count);
+                  return (
+                    <div key={gi} style={{padding:"10px 0",borderTop:gi>0?`1px solid ${T.border}`:"none"}}>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                        {withCounts.map(s=>(
+                          <button key={s.id} type="button" onClick={()=>setMergeConfirm({keep:s,mergeIds:group.filter(x=>x.id!==s.id).map(x=>x.id),mergeLabels:group.filter(x=>x.id!==s.id).map(x=>x.label)})}
+                            style={{padding:"8px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:T.text,cursor:"pointer",fontFamily:T.font,fontSize:12.5,textAlign:"left"}}>
+                            <div style={{fontWeight:600}}>Keep "{s.label}"</div>
+                            <div style={{fontSize:10.5,color:T.muted,marginTop:2}}>{s.count} item{s.count!==1?"s":""} -- merges {group.length-1} other{group.length-1!==1?"s":""} into this</div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </Card>
+            )}
+            <Modal open={!!mergeConfirm} onClose={()=>setMergeConfirm(null)} title="Merge these classes?" width={420}
+              footer={<><Btn variant="subtle" onClick={()=>setMergeConfirm(null)}>Cancel</Btn><Btn variant="danger" onClick={confirmMergeCourses}>Merge</Btn></>}>
+              {mergeConfirm&&(
+                <div style={{fontSize:13,color:T.text,lineHeight:1.5}}>
+                  Everything under <strong>{mergeConfirm.mergeLabels.join(", ")}</strong> moves to <strong>{mergeConfirm.keep.label}</strong>. {mergeConfirm.mergeLabels.length===1?"That class is":"Those classes are"} removed. This can't be undone.
+                </div>
+              )}
+            </Modal>
             <Card style={{marginBottom:12}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <div>
@@ -22641,7 +23134,7 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
     if(!r.subject)return;
     const today=dayKey();
     const horizon=dayKey(new Date(Date.now()+14*86400000));
-    const upcoming=lsGet("events",[]).filter(ev=>ev.kind==="exam"&&ev.subject===r.subject&&ev.date>=today&&ev.date<=horizon).sort((a,b)=>a.date<b.date?-1:1);
+    const upcoming=lsGet("events",[]).filter(ev=>ev.kind==="exam"&&normalizeCourseLabel(ev.subject)===normalizeCourseLabel(r.subject)&&ev.date>=today&&ev.date<=horizon).sort((a,b)=>a.date<b.date?-1:1);
     if(upcoming.length>0)setStudySessionOffer({subject:r.subject,examDate:upcoming[0].date,deckId:newDeckId});
   };
 
@@ -22676,7 +23169,7 @@ function Lectures({setActive=()=>{},setPricingOpen=()=>{}}) {
     // student to pick one by hand.
     const today=dayKey();
     const horizon=dayKey(new Date(Date.now()+14*86400000));
-    const linkedExam=forSubject?lsGet("events",[]).filter(ev=>ev.kind==="exam"&&ev.subject===forSubject&&ev.date>=today&&ev.date<=horizon).sort((a,b)=>a.date<b.date?-1:1)[0]:null;
+    const linkedExam=forSubject?lsGet("events",[]).filter(ev=>ev.kind==="exam"&&normalizeCourseLabel(ev.subject)===normalizeCourseLabel(forSubject)&&ev.date>=today&&ev.date<=horizon).sort((a,b)=>a.date<b.date?-1:1)[0]:null;
     setQuizData({subject:forSubject,questions,linkedExamId:linkedExam?linkedExam.id:null,linkedExamTitle:linkedExam?linkedExam.title:null});
     setQuizAnswers(Array(questions.length).fill(null));
     setQuizResult(null);
@@ -24647,7 +25140,8 @@ function App() {
       {detailEventId&&(
         <EventDetailModal eventId={detailEventId} onClose={()=>setDetailEventId(null)}
           commit={(next)=>{lsSet("events",next);if(calendarSetEventsRef.current)calendarSetEventsRef.current(next);}}
-          onToast={(msg)=>{setDashToast(msg);setTimeout(()=>setDashToast(""),2800);}} />
+          onToast={(msg)=>{setDashToast(msg);setTimeout(()=>setDashToast(""),2800);}}
+          setActive={setActive} />
       )}
       {/* PRICING MODAL */}
       <Modal open={pricingOpen} onClose={()=>setPricingOpen(false)} title="Studlin plans" sub="Start free. Upgrade when you're ready. Cancel anytime." width={820}>
