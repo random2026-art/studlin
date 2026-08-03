@@ -14101,12 +14101,20 @@ function WizardHsBuilder({schoolStart,setSchoolStart,schoolEnd,setSchoolEnd,item
 // student to retype the same name a second time before "+ Add" will work.
 // Omit it (existing callers, e.g. RoutineWizardModal) and behavior is
 // unchanged -- an empty, always-visible Title field, exactly as before.
-function WizardCollegeBuilder({items,addItem,removeItem,defaultTitle,hideHeading}){
+function WizardCollegeBuilder({items,addItem,removeItem,updateItem,defaultTitle,hideHeading}){
   const [title,setTitle]=useState(defaultTitle||"");
   const [kind,setKind]=useState("class");
   const [days,setDays]=useState([]);
   const [time,setTime]=useState("10:00");
   const [duration,setDuration]=useState(50);
+  // Which committed chip (if any) has its inline time/duration editor
+  // open. Deliberately NOT "pull it out of the list, drop it back on
+  // +Add" (the previous approach) -- that read as an outright delete the
+  // moment you clicked a chip, and if you clicked away without noticing
+  // the form had quietly loaded it, the edit (and the chip) was gone for
+  // real. A chip's own membership in `items` never changes just from
+  // clicking it now -- only × (removeItem) ever removes one.
+  const [editingId,setEditingId]=useState(null);
   useEffect(()=>{ if(defaultTitle!==undefined)setTitle(defaultTitle); },[defaultTitle]);
   const toggleDay=(i)=>setDays(days.includes(i)?days.filter(d=>d!==i):[...days,i]);
   const add=()=>{
@@ -14114,20 +14122,6 @@ function WizardCollegeBuilder({items,addItem,removeItem,defaultTitle,hideHeading
     addItem({title:title.trim(),kind,days:[...days],startTime:time,duration});
     if(defaultTitle===undefined)setTitle("");
     setDays([]);
-  };
-  // Click a chip to edit it: pull it back out of the committed list and
-  // load its title/kind/days/time/duration into the form above, so
-  // changing the time or duration is "adjust the form, hit +Add again"
-  // instead of a dead end. Previously the only interaction was
-  // removeItem on click -- delete-only, no way to see or change what a
-  // chip's actual time/duration was without guessing and re-adding blind.
-  const editItem=(it)=>{
-    if(defaultTitle===undefined)setTitle(it.title);
-    setKind(it.kind);
-    setDays([...it.days]);
-    setTime(it.startTime);
-    setDuration(it.duration||50);
-    removeItem(it.id);
   };
   return (
     <div>
@@ -14137,6 +14131,10 @@ function WizardCollegeBuilder({items,addItem,removeItem,defaultTitle,hideHeading
         <button type="button" onClick={()=>setKind("class")} style={wizardChipStyle(kind==="class")}>Class</button>
         <button type="button" onClick={()=>setKind("busy")} style={wizardChipStyle(kind==="busy")}>Activity</button>
       </div>
+      {/* Checking an already-covered day here doesn't touch that day's
+          existing chip(s) -- this row is only ever for a brand new entry,
+          so the same day can carry more than one meeting time (e.g. a
+          lecture and a separate recitation), each its own chip below. */}
       <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
         {ROUTINE_DOW.map((d,i)=><button key={i} type="button" onClick={()=>toggleDay(i)} style={wizardChipStyle(days.includes(i))}>{d}</button>)}
       </div>
@@ -14154,12 +14152,25 @@ function WizardCollegeBuilder({items,addItem,removeItem,defaultTitle,hideHeading
             <div key={i} style={{minHeight:50}}>
               <div style={{fontSize:10,fontWeight:700,color:T.muted,textAlign:"center",marginBottom:6,letterSpacing:"0.05em"}}>{d}</div>
               <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                {dayItems.map(it=>(
-                  <div key={it.id} onClick={()=>editItem(it)} title="Click to edit" style={{display:"flex",alignItems:"center",gap:3,fontSize:9.5,fontWeight:600,padding:"4px 4px 4px 6px",borderRadius:6,background:it.kind==="class"?T.lime+"22":T.lime+"0F",border:`1px solid ${T.border}`,color:T.text,cursor:"pointer"}}>
-                    <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{it.title}</span>
-                    <button type="button" onClick={e=>{e.stopPropagation();removeItem(it.id);}} title="Remove" style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:11,lineHeight:1,padding:"0 1px",flexShrink:0}}>×</button>
+                {dayItems.map(it=>{
+                  const isEditing=editingId===it.id;
+                  return (
+                  <div key={it.id}>
+                    <div onClick={()=>setEditingId(id=>id===it.id?null:it.id)} title="Click to see/edit its time" style={{display:"flex",alignItems:"center",gap:3,fontSize:9.5,fontWeight:600,padding:"4px 4px 4px 6px",borderRadius:isEditing?"6px 6px 0 0":6,background:isEditing?T.lime+"33":it.kind==="class"?T.lime+"22":T.lime+"0F",border:`1px solid ${isEditing?T.lime+"66":T.border}`,color:T.text,cursor:"pointer"}}>
+                      <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{it.title}</span>
+                      <button type="button" onClick={e=>{e.stopPropagation();if(isEditing)setEditingId(null);removeItem(it.id);}} title="Remove" style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:11,lineHeight:1,padding:"0 1px",flexShrink:0}}>×</button>
+                    </div>
+                    {isEditing&&(
+                      <div onClick={e=>e.stopPropagation()} style={{display:"flex",flexDirection:"column",gap:4,padding:"5px 5px 6px",borderRadius:"0 0 6px 6px",border:`1px solid ${T.lime}66`,borderTop:"none",background:T.card2}}>
+                        <TimeInput value={it.startTime} onChange={v=>updateItem(it.id,{startTime:v})} style={{width:"fit-content"}} />
+                        <select value={it.duration||50} onChange={e=>updateItem(it.id,{duration:+e.target.value})} style={{...wizardSelectStyle,fontSize:9.5,padding:"3px 4px"}}>
+                          {[30,45,50,60,75,90,120].map(m=><option key={m} value={m}>{m} min</option>)}
+                        </select>
+                      </div>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           );
@@ -15218,6 +15229,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
             const setMeetingTimes=(updater)=>setReview(r=>({...r,meetingTimes:typeof updater==="function"?updater(r.meetingTimes):updater}));
             const addMeetingTime=(item)=>setMeetingTimes(mts=>[...mts,{id:"mt-"+Date.now()+"-"+Math.random(),days:item.days,startTime:item.startTime,duration:item.duration}]);
             const removeMeetingTime=(id)=>setMeetingTimes(mts=>mts.filter(x=>x.id!==id));
+            const updateMeetingTime=(id,patch)=>setMeetingTimes(mts=>mts.map(x=>x.id===id?{...x,...patch}:x));
             const meetingItemsForBuilder=review.meetingTimes.map(mt=>({id:mt.id,title:review.subjectName||"Class",kind:"class",days:mt.days,startTime:mt.startTime,duration:mt.duration}));
             const setItem=(i,patch)=>setReview(r=>({...r,items:r.items.map((x,xi)=>xi===i?{...x,...patch}:x)}));
             const addManualItem=()=>setReview(r=>({...r,items:[...r.items,{id:"cd-manual-"+Date.now(),title:"",date:dayKey(),kind:"assignment",include:true,noDate:false,attackBlock:true,proposeSessions:false,sessionCount:4,detail:"",detailOpen:false,estimatedHours:null,difficulty:500,phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false,materialFiles:[],materialLinks:[],materialOpen:false,linkDraft:"",linkLabelDraft:"",pasteMaterialMode:false,pasteMaterialText:""}]}));
@@ -15245,7 +15257,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                     style={{width:"100%",padding:"10px 12px",borderRadius:6,border:`1px dashed ${T.borderHover}`,background:"transparent",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,textAlign:"left"}}>+ Add a meeting time (optional, or set this later by dragging the class onto your calendar)</button>
                 ):(<>
                   <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:8}}>When does it meet?</div>
-                  <WizardCollegeBuilder items={meetingItemsForBuilder} addItem={addMeetingTime} removeItem={removeMeetingTime} defaultTitle={review.subjectName||"Class"} hideHeading /></>)}
+                  <WizardCollegeBuilder items={meetingItemsForBuilder} addItem={addMeetingTime} removeItem={removeMeetingTime} updateItem={updateMeetingTime} defaultTitle={review.subjectName||"Class"} hideHeading /></>)}
               </div>
               <div style={{marginBottom:8}}>
                 <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:2}}>Assignments, exams &amp; projects</div>
@@ -15543,6 +15555,7 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
 
   const addItem=(item)=>setItems(prev=>[...prev,{id:String(Date.now()+Math.random()*1000),...item}]);
   const removeItem=(id)=>setItems(prev=>prev.filter(x=>x.id!==id));
+  const updateItem=(id,patch)=>setItems(prev=>prev.map(x=>x.id===id?{...x,...patch}:x));
 
   const goToWindowStep=()=>{
     if(status==="highschool"&&workStart==="10:00"){
@@ -15593,7 +15606,7 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
           </div>
         )}
         {wizStep==="build"&&status==="highschool"&&<WizardHsBuilder schoolStart={schoolStart} setSchoolStart={setSchoolStart} schoolEnd={schoolEnd} setSchoolEnd={setSchoolEnd} items={items.filter(i=>i.id!=="hs-school")} addItem={addItem} removeItem={removeItem} />}
-        {wizStep==="build"&&status==="college"&&<WizardCollegeBuilder items={items} addItem={addItem} removeItem={removeItem} />}
+        {wizStep==="build"&&status==="college"&&<WizardCollegeBuilder items={items} addItem={addItem} removeItem={removeItem} updateItem={updateItem} />}
         {wizStep==="window"&&(
           <div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
