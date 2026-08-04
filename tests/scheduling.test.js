@@ -292,6 +292,52 @@ describe("buildSyllabusEventBatch / commitSyllabusEvents (Class Setup Wizard's e
     const stored = lsGet("events", []);
     assert.equal(stored.length, 2);
   });
+
+  test("re-scanning the same syllabus does not duplicate an exam already on the calendar", () => {
+    const { buildSyllabusEventBatch, getWeeklyRoutine, getSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const examItem = syllabusItem({ title: "Quiz 7", date: "2026-08-09", kind: "exam", proposeSessions: false, examWeight: "quiz" });
+    const existingExam = { id: "syl-old-0", title: "Quiz 7", date: "2026-08-09", subject: "Chemistry", kind: "exam", status: "pending" };
+    const { markerEvents } = buildSyllabusEventBatch([existingExam], "wiz-dup", "Chemistry", [examItem], null, getWeeklyRoutine(), getSchedulePreferences());
+    assert.equal(markerEvents.length, 0, "already-existing exam should be skipped, not duplicated");
+  });
+
+  test("re-scanning the same syllabus does not duplicate the exam's own study sessions either", () => {
+    const { buildSyllabusEventBatch, getWeeklyRoutine, getSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const examItem = syllabusItem({ title: "Quiz 7", date: "2026-08-09", kind: "exam", proposeSessions: true, sessionCount: 2, examWeight: "quiz" });
+    const existingExam = { id: "syl-old-0", title: "Quiz 7", date: "2026-08-09", subject: "Chemistry", kind: "exam", status: "pending" };
+    const { markerEvents, examSessionEvents } = buildSyllabusEventBatch([existingExam], "wiz-dup2", "Chemistry", [examItem], null, getWeeklyRoutine(), getSchedulePreferences());
+    assert.equal(markerEvents.length, 0);
+    assert.equal(examSessionEvents.length, 0, "no fresh sessions should be built for a marker that was skipped as a duplicate");
+  });
+
+  test("an exam item carrying examType/importanceLevel/gradeWeightPercent (from syllabus extraction or the review screen) passes through onto the committed marker", () => {
+    const { buildSyllabusEventBatch, getWeeklyRoutine, getSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const examItem = syllabusItem({ title: "Final Exam", date: "2026-08-09", kind: "exam", proposeSessions: false, examWeight: "major", examType: "final", importanceLevel: "critical", gradeWeightPercent: 30 });
+    const { markerEvents } = buildSyllabusEventBatch([], "wiz-imp", "Chemistry", [examItem], null, getWeeklyRoutine(), getSchedulePreferences());
+    assert.equal(markerEvents[0].examType, "final");
+    assert.equal(markerEvents[0].importanceLevel, "critical");
+    assert.equal(markerEvents[0].gradeWeightPercent, 30);
+  });
+
+  test("an exam item with no examType (legacy path) never gets importanceLevel/gradeWeightPercent fields at all", () => {
+    const { buildSyllabusEventBatch, getWeeklyRoutine, getSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const examItem = syllabusItem({ title: "Quiz 9", date: "2026-08-09", kind: "exam", proposeSessions: false, examWeight: "quiz" });
+    const { markerEvents } = buildSyllabusEventBatch([], "wiz-legacy", "Chemistry", [examItem], null, getWeeklyRoutine(), getSchedulePreferences());
+    assert.equal(markerEvents[0].importanceLevel, undefined);
+    assert.equal(markerEvents[0].gradeWeightPercent, undefined);
+    assert.equal(markerEvents[0].examWeight, "quiz", "legacy examWeight still comes through unchanged");
+  });
+
+  test("dedup is case-insensitive and scoped to matching subject+date+kind -- a different date or class is not a duplicate", () => {
+    const { buildSyllabusEventBatch, getWeeklyRoutine, getSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const existingExam = { id: "syl-old-0", title: "quiz 7", date: "2026-08-09", subject: "Chemistry", kind: "exam", status: "pending" };
+    const sameTitleDifferentDate = syllabusItem({ title: "Quiz 7", date: "2026-08-16", kind: "exam", proposeSessions: false, examWeight: "quiz" });
+    const sameTitleDifferentClass = syllabusItem({ title: "Quiz 7", date: "2026-08-09", kind: "exam", proposeSessions: false, examWeight: "quiz" });
+    const { markerEvents: m1 } = buildSyllabusEventBatch([existingExam], "wiz-dup3", "Chemistry", [sameTitleDifferentDate], null, getWeeklyRoutine(), getSchedulePreferences());
+    assert.equal(m1.length, 1, "different date is a genuinely new exam, not a duplicate");
+    const { markerEvents: m2 } = buildSyllabusEventBatch([existingExam], "wiz-dup4", "Physics", [sameTitleDifferentClass], null, getWeeklyRoutine(), getSchedulePreferences());
+    assert.equal(m2.length, 1, "different subject is a genuinely new exam, not a duplicate");
+  });
 });
 
 describe("buildPendingSchedulePreview (Class Setup Wizard's multi-class drill-down review)", () => {
@@ -643,6 +689,37 @@ describe("school term awareness (class routines suppressed outside term dates)",
   });
 });
 
+describe("per-routine color passthrough (Phase 2: course color picker)", () => {
+  const dow = (new Date("2026-07-20T12:00:00").getDay() + 6) % 7;
+
+  test("a routine with an explicit color produces an occurrence carrying that same color", () => {
+    const m = loadStudlinModule();
+    const routine = { id: "r-gym", title: "Gym", kind: "busy", days: [dow], startTime: "17:00", duration: 60, subject: "", color: "#3D6D9E" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([routine]));
+    const occurrences = m.getRoutineOccurrencesForDate("2026-07-20");
+    assert.equal(occurrences.length, 1);
+    assert.equal(occurrences[0].color, "#3D6D9E");
+  });
+
+  test("a routine with no color produces an occurrence with color null, not some placeholder", () => {
+    const m = loadStudlinModule();
+    const routine = { id: "r-chem", title: "Chemistry", kind: "class", days: [dow], startTime: "08:00", duration: 50, subject: "Chemistry" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([routine]));
+    const occurrences = m.getRoutineOccurrencesForDate("2026-07-20");
+    assert.equal(occurrences.length, 1);
+    assert.equal(occurrences[0].color, null);
+  });
+
+  test("a habit's materialized event carries its routine's color the same way", () => {
+    const m = loadStudlinModule();
+    const routine = { id: "r-run", title: "Run", kind: "habit", days: [dow], duration: 30, subject: "", color: "#2E8C6B" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([routine]));
+    const created = m.materializeHabitsForDate("2026-07-20", []);
+    assert.equal(created.length, 1);
+    assert.equal(created[0].color, "#2E8C6B");
+  });
+});
+
 describe("findFixedEventSlot (regression: silently double-booked a fixed event when the short search horizon ran out)", () => {
   test("still lands on a genuinely free day when the desired day, and many days after it, are fully booked", () => {
     const m = loadStudlinModule();
@@ -775,6 +852,90 @@ describe("findSlotWithEviction", () => {
         assert.ok(!overlap, `placement at ${result.placement.date} ${result.placement.time} overlaps event ${iv.id}`);
       });
     }
+  });
+
+  test("evicts the lowest-priority candidate even when a higher-priority one has a farther-off deadline (priority now wins over deadline distance)", () => {
+    const m = loadStudlinModule();
+    const today = m.dayKey();
+    const addDays = (n) => m.dayKey(new Date(Date.now() + n * 86400000));
+    // Pack the whole work+catch-up window solid so eviction must engage,
+    // same fixture shape as the first test in this block. Two of the
+    // candidates are deliberately distinguishable: one low-priority with a
+    // CLOSER (but still >7-day, so eviction-eligible) deadline, one
+    // high-priority with a FARTHER deadline. The old furthest-deadline-only
+    // sort would evict the high-priority one first; priority-aware sorting
+    // must evict the low-priority one first instead.
+    const packed = [];
+    let t = 9 * 60;
+    let idx = 0;
+    while (t + 30 <= 20 * 60) {
+      const time = `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+      if (idx === 0) {
+        packed.push({ id: "low-pri-close-deadline", title: "Low priority", date: today, time, kind: "study block", duration: 30, status: "pending", deadline: addDays(10), priority: 100 });
+      } else if (idx === 1) {
+        packed.push({ id: "high-pri-far-deadline", title: "High priority", date: today, time, kind: "study block", duration: 30, status: "pending", deadline: addDays(30), priority: 900 });
+      } else {
+        packed.push({ id: "pack-" + idx, title: "Filler " + idx, date: today, time, kind: "study block", duration: 30, status: "pending", deadline: null, priority: 500 });
+      }
+      t += 30; idx++;
+    }
+    const result = m.findSlotWithEviction(packed, [], DEFAULT_PREFS, today, "09:00", 30, today);
+    const evictedIds = result.events.filter((e) => e.movedByStudlin).map((e) => e.id);
+    assert.ok(evictedIds.includes("low-pri-close-deadline"), "the low-priority candidate should have been evicted");
+    assert.ok(!evictedIds.includes("high-pri-far-deadline"), "the higher-priority candidate should NOT have been evicted just because its deadline is farther off");
+  });
+
+  test("a session already reshuffled twice is protected over a never-moved lower-priority one (reshuffle penalty flips plain-priority ordering)", () => {
+    const m = loadStudlinModule();
+    const today = m.dayKey();
+    // Without the reshuffle penalty, "already-moved" (priority 100) would
+    // be evicted first purely on raw priority. With RESHUFFLE_PENALTY
+    // added on top of its reshuffleCount, its effective score should
+    // exceed "never-moved" (priority 150, reshuffleCount 0), flipping who
+    // gets evicted.
+    const packed = [];
+    let t = 9 * 60;
+    let idx = 0;
+    while (t + 30 <= 20 * 60) {
+      const time = `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+      if (idx === 0) {
+        packed.push({ id: "already-moved", title: "Already moved twice", date: today, time, kind: "study block", duration: 30, status: "pending", deadline: null, priority: 100, reshuffleCount: 2 });
+      } else if (idx === 1) {
+        packed.push({ id: "never-moved", title: "Never moved", date: today, time, kind: "study block", duration: 30, status: "pending", deadline: null, priority: 150, reshuffleCount: 0 });
+      } else {
+        packed.push({ id: "pack-" + idx, title: "Filler " + idx, date: today, time, kind: "study block", duration: 30, status: "pending", deadline: null, priority: 500 });
+      }
+      t += 30; idx++;
+    }
+    const result = m.findSlotWithEviction(packed, [], DEFAULT_PREFS, today, "09:00", 30, today);
+    const evictedIds = result.events.filter((e) => e.movedByStudlin).map((e) => e.id);
+    assert.ok(evictedIds.includes("never-moved"), "the never-moved lower-effective-score candidate should be evicted");
+    assert.ok(!evictedIds.includes("already-moved"), "a session already reshuffled twice should be protected by the penalty despite its lower raw priority");
+  });
+
+  test("a session at or above RESHUFFLE_ESCALATE_THRESHOLD moves is excluded from eviction candidates entirely", () => {
+    const m = loadStudlinModule();
+    const today = m.dayKey();
+    const packed = [];
+    let t = 9 * 60;
+    let idx = 0;
+    while (t + 30 <= 20 * 60) {
+      const time = `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+      if (idx === 0) {
+        // Lowest raw priority of all, but at the escalation threshold --
+        // must never be picked even though it would otherwise be the
+        // obvious first candidate.
+        packed.push({ id: "escalated", title: "Escalated", date: today, time, kind: "study block", duration: 30, status: "pending", deadline: null, priority: 10, reshuffleCount: m.RESHUFFLE_ESCALATE_THRESHOLD });
+      } else if (idx === 1) {
+        packed.push({ id: "eligible", title: "Still eligible", date: today, time, kind: "study block", duration: 30, status: "pending", deadline: null, priority: 400, reshuffleCount: 0 });
+      } else {
+        packed.push({ id: "pack-" + idx, title: "Filler " + idx, date: today, time, kind: "study block", duration: 30, status: "pending", deadline: null, priority: 500 });
+      }
+      t += 30; idx++;
+    }
+    const result = m.findSlotWithEviction(packed, [], DEFAULT_PREFS, today, "09:00", 30, today);
+    const evictedIds = result.events.filter((e) => e.movedByStudlin).map((e) => e.id);
+    assert.ok(!evictedIds.includes("escalated"), "a session at the escalation threshold must never be silently evicted again");
   });
 });
 
@@ -1379,7 +1540,7 @@ describe("detectStrugglingBucket (proactive miss-pattern nudge)", () => {
   });
 });
 
-describe("detectPeakHourInsight (all-time gap between declared peak and actual reliability)", () => {
+describe("detectPeakHourInsight (all-time gap between two real, well-sampled buckets -- no declared baseline required)", () => {
   function seedLog(m, bucket, doneCount, missedCount) {
     const log = JSON.parse(m.localStorage.getItem("studlin-completionLog") || "[]");
     for (let i = 0; i < missedCount; i++) log.push({ bucket, outcome: "missed", t: Date.now() - i * 3600000 });
@@ -1387,32 +1548,32 @@ describe("detectPeakHourInsight (all-time gap between declared peak and actual r
     m.localStorage.setItem("studlin-completionLog", JSON.stringify(log));
   }
 
-  test("returns null when nothing is declared -- nothing to correct", () => {
+  test("returns null with only one well-sampled bucket -- nothing to compare it against", () => {
     const m = loadStudlinModule();
-    seedLog(m, "morning", 1, 7);
-    seedLog(m, "afternoon", 7, 1);
+    seedLog(m, "morning", 7, 1);
     assert.equal(m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: [] }), null);
   });
 
-  test("returns null when the declared bucket has no data yet -- not a fair baseline", () => {
+  test("returns null when a bucket has real data but not enough samples to be a fair baseline", () => {
     const m = loadStudlinModule();
-    seedLog(m, "afternoon", 8, 0); // only the non-declared bucket has data
-    assert.equal(m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: ["morning"] }), null);
+    seedLog(m, "afternoon", 8, 0);
+    seedLog(m, "morning", 1, 1); // only 2 samples, well under TIER0_MIN_BUCKET_SAMPLE
+    assert.equal(m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: [] }), null);
   });
 
   test("returns null when the gap is real but below the meaningful-difference margin", () => {
     const m = loadStudlinModule();
     seedLog(m, "morning", 6, 2); // 75%
     seedLog(m, "afternoon", 7, 1); // 87.5% -- only a 12.5pt gap, under the 15pt bar
-    assert.equal(m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: ["morning"] }), null);
+    assert.equal(m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: [] }), null);
   });
 
-  test("suggests switching when a non-declared bucket meaningfully beats the declared one", () => {
+  test("suggests switching to whichever well-sampled bucket meaningfully beats the weakest one -- no declaration needed", () => {
     const m = loadStudlinModule();
     seedLog(m, "morning", 3, 5); // 37.5%
     seedLog(m, "afternoon", 7, 1); // 87.5%
-    const result = m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: ["morning"] });
-    assert.ok(result, "a 50pt gap should surface a suggestion");
+    const result = m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: [] });
+    assert.ok(result, "a 50pt gap should surface a suggestion straight from real data");
     assert.equal(result.currentBucket, "morning");
     assert.equal(result.suggestedBucket, "afternoon");
     assert.equal(Math.round(result.currentPct * 100), 38);
@@ -1423,15 +1584,23 @@ describe("detectPeakHourInsight (all-time gap between declared peak and actual r
     const m = loadStudlinModule();
     seedLog(m, "morning", 0, 8); // 0%
     seedLog(m, "evening", 8, 0); // 100%, but 18:00-22:00 barely overlaps the default 09:00-18:00 window
-    const result = m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: ["morning"] });
+    const result = m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: [] });
     assert.equal(result, null, "evening isn't reachable under the default work window, so there's nothing legal to suggest");
+  });
+
+  test("a bucket already adopted as the declared peak (from a prior accepted suggestion) is never re-suggested to itself", () => {
+    const m = loadStudlinModule();
+    seedLog(m, "morning", 3, 5); // 37.5%
+    seedLog(m, "afternoon", 7, 1); // 87.5% -- already declared, so nothing left to suggest switching to
+    const result = m.detectPeakHourInsight({ ...DEFAULT_PREFS, peakHourBuckets: ["afternoon"] });
+    assert.equal(result, null);
   });
 
   test("dismissPeakHourInsight suppresses re-suggesting the same bucket right after", () => {
     const m = loadStudlinModule();
     seedLog(m, "morning", 3, 5);
     seedLog(m, "afternoon", 7, 1);
-    const prefs = { ...DEFAULT_PREFS, peakHourBuckets: ["morning"] };
+    const prefs = { ...DEFAULT_PREFS, peakHourBuckets: [] };
     const first = m.detectPeakHourInsight(prefs);
     assert.ok(first, "should suggest before dismissal");
     m.dismissPeakHourInsight(first.suggestedBucket);
@@ -1590,6 +1759,68 @@ describe("computeExamReadiness (fuses days-to-exam + linked review-session compl
     const events = [session({ id: "s1", date: "2026-07-15", status: "done" })];
     const result = m.computeExamReadiness(exam(), events, TODAY); // default date is 7 days out
     assert.ok(!result.sentence.toLowerCase().includes("no practice quiz"));
+  });
+
+  test("'tight' when nothing is overdue/shaky/critically-behind but real capacity slack is thin", () => {
+    const m = loadStudlinModule();
+    // Exam in 2 days, one session done, one 45-min session still pending --
+    // the finish-buffer already eats into what little runway is left, so
+    // realistic capacity for the remaining work is essentially zero.
+    const events = [
+      session({ id: "s1", date: "2026-07-19", status: "done" }),
+      session({ id: "s2", date: "2026-07-21", status: "pending", duration: 45 }),
+    ];
+    const result = m.computeExamReadiness(exam({ date: "2026-07-22" }), events, TODAY);
+    assert.equal(result.state, "tight");
+  });
+
+  test("plenty of runway does not get flagged 'tight' even with pending work left", () => {
+    const m = loadStudlinModule();
+    // Same 1-done/1-pending shape, but the exam is 3 weeks out -- ample
+    // capacity, should read as ordinary on-track, not tight.
+    const events = [
+      session({ id: "s1", date: "2026-07-19", status: "done" }),
+      session({ id: "s2", date: "2026-07-22", status: "pending", duration: 45 }),
+    ];
+    const result = m.computeExamReadiness(exam({ date: "2026-08-10" }), events, TODAY);
+    assert.notEqual(result.state, "tight");
+  });
+
+  test("a session with no duration set contributes zero pending minutes -- never spuriously 'tight'", () => {
+    const m = loadStudlinModule();
+    const events = [
+      session({ id: "s1", date: "2026-07-19", status: "done" }),
+      session({ id: "s2", date: "2026-07-21", status: "pending" }), // no duration field at all
+    ];
+    const result = m.computeExamReadiness(exam({ date: "2026-07-22" }), events, TODAY);
+    assert.notEqual(result.state, "tight");
+  });
+});
+
+describe("computeCapacitySlack (shared 'is there realistically enough time left' math)", () => {
+  test("plentiful runway relative to pending work yields a low slack ratio", () => {
+    const m = loadStudlinModule();
+    const { slackRatio } = m.computeCapacitySlack(30, "2026-09-01", "2026-07-20", 4, 210);
+    assert.ok(slackRatio < 1, "expected slackRatio < 1, got " + slackRatio);
+  });
+
+  test("pending work exceeding capacity yields a slack ratio above 1", () => {
+    const m = loadStudlinModule();
+    const { slackRatio } = m.computeCapacitySlack(1000, "2026-07-25", "2026-07-20", 4, 210);
+    assert.ok(slackRatio > 1, "expected slackRatio > 1, got " + slackRatio);
+  });
+
+  test("zero capacity with real pending work still left returns Infinity, not a divide-by-zero NaN", () => {
+    const m = loadStudlinModule();
+    const { slackRatio, capacityMins } = m.computeCapacitySlack(45, "2026-07-21", "2026-07-20", 4, 210);
+    assert.equal(capacityMins, 0);
+    assert.equal(slackRatio, Infinity);
+  });
+
+  test("zero pending minutes is zero slack regardless of capacity", () => {
+    const m = loadStudlinModule();
+    const { slackRatio } = m.computeCapacitySlack(0, "2026-09-01", "2026-07-20", 4, 210);
+    assert.equal(slackRatio, 0);
   });
 });
 
@@ -2700,5 +2931,66 @@ describe("computeWeekBalancePlan (manually-triggered 'Balance my week')", () => 
     const heavy = Array.from({ length: 5 }, (_, i) => realTask({ id: "h" + i, date: days[0], time: `${9 + i}:00`, duration: 60, deadline: soonDeadline }));
     const result = m.computeWeekBalancePlan(heavy, [], DEFAULT_PREFS, MONDAY);
     assert.equal(result.moves.length, 0);
+  });
+
+  test("sheds the lowest-priority task on a heavy day first, even when a higher-priority task is bigger", () => {
+    const m = loadStudlinModule();
+    // "big-important" is the largest single block but high priority (900);
+    // "small-unimportant" is smaller but low priority (100). The old
+    // duration-only sort would pick big-important first purely for being
+    // biggest; priority-aware selection must pick small-unimportant first.
+    const heavy = [
+      realTask({ id: "big-important", date: days[0], time: "09:00", duration: 90, deadline: null, priority: 900 }),
+      realTask({ id: "small-unimportant", date: days[0], time: "10:30", duration: 45, deadline: null, priority: 100 }),
+      realTask({ id: "h1", date: days[0], time: "11:15", duration: 60, deadline: null, priority: 500 }),
+      realTask({ id: "h2", date: days[0], time: "12:15", duration: 60, deadline: null, priority: 500 }),
+    ];
+    const result = m.computeWeekBalancePlan(heavy, [], DEFAULT_PREFS, MONDAY);
+    assert.ok(result.moves.length > 0, "expected at least one move");
+    assert.equal(result.moves[0].id, "small-unimportant", "the lowest-priority candidate should be the first one shed, not the biggest one");
+  });
+
+  test("every move carries a non-empty, factual reason", () => {
+    const m = loadStudlinModule();
+    const heavy = Array.from({ length: 5 }, (_, i) => realTask({ id: "h" + i, date: days[0], time: `${9 + i}:00`, duration: 60, deadline: null }));
+    const result = m.computeWeekBalancePlan(heavy, [], DEFAULT_PREFS, MONDAY);
+    assert.ok(result.moves.length > 0);
+    result.moves.forEach((mv) => {
+      assert.ok(typeof mv.reason === "string" && mv.reason.length > 0, "every move must carry a real reason string");
+    });
+  });
+
+  test("a task already reshuffled twice is protected over a never-moved lower-priority one (reshuffle penalty flips plain-priority ordering)", () => {
+    const m = loadStudlinModule();
+    // Without the reshuffle penalty, "already-moved" (priority 100) would
+    // be shed first purely on raw priority. With RESHUFFLE_PENALTY added
+    // on top of its reshuffleCount, its effective score should exceed
+    // "never-moved" (priority 150, reshuffleCount 0), flipping which one
+    // gets shed first.
+    const heavy = [
+      realTask({ id: "already-moved", date: days[0], time: "09:00", duration: 60, deadline: null, priority: 100, reshuffleCount: 2 }),
+      realTask({ id: "never-moved", date: days[0], time: "10:00", duration: 60, deadline: null, priority: 150, reshuffleCount: 0 }),
+      realTask({ id: "h1", date: days[0], time: "11:00", duration: 60, deadline: null, priority: 500 }),
+      realTask({ id: "h2", date: days[0], time: "12:00", duration: 60, deadline: null, priority: 500 }),
+    ];
+    const result = m.computeWeekBalancePlan(heavy, [], DEFAULT_PREFS, MONDAY);
+    assert.ok(result.moves.length > 0, "expected at least one move");
+    assert.equal(result.moves[0].id, "never-moved", "the never-moved lower-effective-score task should be shed first");
+    assert.ok(!result.moves.some((mv) => mv.id === "already-moved"), "a task already reshuffled twice should be protected by the penalty despite its lower raw priority");
+  });
+
+  test("a task at or above RESHUFFLE_ESCALATE_THRESHOLD moves is excluded from rebalance candidates entirely", () => {
+    const m = loadStudlinModule();
+    const heavy = [
+      // Lowest raw priority of all, but at the escalation threshold --
+      // must never be picked even though it would otherwise be the
+      // obvious first candidate.
+      realTask({ id: "escalated", date: days[0], time: "09:00", duration: 60, deadline: null, priority: 10, reshuffleCount: m.RESHUFFLE_ESCALATE_THRESHOLD }),
+      realTask({ id: "eligible", date: days[0], time: "10:00", duration: 60, deadline: null, priority: 400, reshuffleCount: 0 }),
+      realTask({ id: "h1", date: days[0], time: "11:00", duration: 60, deadline: null, priority: 500 }),
+      realTask({ id: "h2", date: days[0], time: "12:00", duration: 60, deadline: null, priority: 500 }),
+    ];
+    const result = m.computeWeekBalancePlan(heavy, [], DEFAULT_PREFS, MONDAY);
+    assert.ok(!result.moves.some((mv) => mv.id === "escalated"), "a task at the escalation threshold must never be silently reshuffled again");
   });
 });

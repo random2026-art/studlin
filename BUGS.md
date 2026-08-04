@@ -36,13 +36,13 @@ Open issues tracked in one place instead of memory. Remove an item once it's fix
 
 ## 4. App-open can fire three stacked popups after missed blocks
 
-**Status:** Confirmed real via code read. Deliberately not fixed piecemeal — folded into the Catch Me Up work.
+**Status:** Fixed on `feat/catch-me-up` (unmerged — nothing merges until Today and Prep are also converted, per explicit instruction). Visually unverified on preview so far.
 
-**Where:** `studlin-app.jsx`, the dashboard's floating-panel state: `tier0Batch` (auto-moved tasks, top-left), `rolloverPending` (Tier 1 yesterday's-tasks prompt, top-right), and `strugglingBucketOffer`/`peakInsightOffer` (peak-hour insight nudges, bottom-left).
+**Where:** `studlin-app.jsx`, the dashboard's floating-panel state: `tier0Batch` (auto-moved tasks, top-left), `rolloverPending` (Tier 1 yesterday's-tasks prompt, top-right), and `strugglingBucketOffer`/`peakInsightOffer` (peak-hour insight nudges, bottom-left) — plus a fourth, `examPrepSuggestion` (bottom-right), found during the Catch Me Up review and not in the original bug description.
 
-**Root cause:** the two insight nudges (`strugglingBucketOffer`/`peakInsightOffer`) already have explicit mutual exclusion — the code picks at most one of those two per load ("one nudge at a time, not a stack fighting for the same spot"). But that exclusion doesn't extend to `tier0Batch` or `rolloverPending`, which are set independently in the same daily-gate pass. A day with both an auto-moved task and an overdue-from-yesterday task and a ready insight nudge shows all three panels at once — different corners of the screen, so they don't overlap pixel-for-pixel, but it's three simultaneous asks on one app open, which is the "stacked popups" complaint.
+**Root cause:** the two insight nudges (`strugglingBucketOffer`/`peakInsightOffer`) already had explicit mutual exclusion, but that never extended to `tier0Batch`, `rolloverPending`, or `examPrepSuggestion`, which could each fire independently on the same load.
 
-**Decision:** not a targeted fix. This gets solved properly as part of Catch Me Up, where Tier 0 and Tier 1 merge into a single recovery banner and insight nudges move off app-open entirely. No standalone patch (staggering, capping panel count, etc.) until that work happens.
+**Fix:** `tier0Batch`/`rolloverPending` replaced with one `catchUpBanner` (2+ missed items triggers it; below that, Tier 0 still relocates silently with no banner at all now, not even for one item). `strugglingBucketOffer`/`peakInsightOffer`/`examPrepSuggestion` are now queued to storage (`queuedInsightNudges`) instead of rendering whenever recovery is pending — see item #8 below, since nothing reads that queue yet.
 
 ## 5. Integrations panel can show a stuck "Syncing…" state
 
@@ -61,3 +61,44 @@ Open issues tracked in one place instead of memory. Remove an item once it's fix
 **Status:** Resolved. Deleted from Vercel.
 
 Grepped the entire repo for `OPENAI_API_KEY` and case-insensitively for `openai` — zero matches, in `api/*.js` or anywhere else. Nothing read it, so removing it from Vercel's environment variables was safe.
+
+## 7. findFixedEventSlot's midnight-scan fallback — verified NOT reachable from Catch Me Up
+
+**Status:** Closed. Verified by code reading and a real test, not just inference.
+
+**Where:** `studlin-app.jsx`, `findFixedEventSlot` (its fallback scans from midnight and returns the first open 15-min slot anywhere in the day — see `tests/slot-finders-characterization.test.js`).
+
+**Why this was worth checking:** if the rebuild preview could propose a 3am study session because of this fallback, it would look broken and undermine trust in the whole feature.
+
+**Finding:** `findFixedEventSlot` has exactly one caller anywhere in the file — `computePausePlan`'s `move_event` intent, the unrelated "Studlin Reschedule" (Tier 3) flow for relocating a single fixed event by explicit request. `computeCatchUpPlan`'s entire call graph (`findTier0Slot` → `findSlotWithEviction` → `findLegalSlotOrNull` → `findOpenSlotFor`, plus its own direct `findLegalSlotOrNull`/`compressExamPrepForRoom` fallbacks) never touches it. `findLegalSlotOrNull` also independently re-validates any candidate slot against real work hours and conflicts before accepting it, so even `findOpenSlotFor`'s own (much milder) raw-fallback behavior can't slip through as a bad proposal — it becomes `null` (reported unplaceable) instead. Backed by a real test (`tests/catch-me-up.test.js`): a 25-day fully-booked window with no deadline never produces an off-hours time.
+
+## 8. queuedInsightNudges is write-only — needs a read side when Dashboard/Today is built
+
+**Status:** Open, expected, tracked so it isn't forgotten.
+
+**Where:** `studlin-app.jsx`, `queueInsightNudge` (App()) writes to `localStorage["studlin-queuedInsightNudges"]` whenever a `strugglingBucketOffer`/`peakInsightOffer`/`examPrepSuggestion` would have fired while a Catch Me Up recovery banner is pending. Verified this is genuine `localStorage.setItem` persistence (via `lsSet`/`lsGet`, the app's standard wrapper) — it survives reloads/new sessions on the same device, it is not lost. It is not synced to Firestore (no `syncWriteHooks` entry registered for this key), so it's local-only, which is fine for its purpose.
+
+**What's missing:** nothing reads this queue yet. Insight nudges that get deferred this way are captured but currently never shown to the student anywhere — they just accumulate in storage. This is expected and intentional for now (Dashboard/Today isn't converted on this branch), but needs a real read side — surfacing the queued nudges somewhere reasonable (Dashboard, once it exists) and clearing them once shown — or they'll silently pile up forever with no user-facing effect.
+
+## 9. Studlin Prep: uploading material for an already-created exam doesn't persist (partially fixed)
+
+**Status:** Found during the Prep redesign (`ui/prep-redesign`). Fixed in the new "Build study plan" modal's own upload step; the older "Add study material" card (now under the collapsed "Materials & study kit" section) still has the original gap.
+
+**Where:** `studlin-app.jsx`, `StudlinPrep`. `handlePrepFile`/the material-links UI only ever update the component's local `fileTexts`/`materialLinks` state — nothing writes `sourceMaterials`/`referenceLinks` back onto an exam event that already exists (only exam *creation* forms, e.g. `examPlan`/`evExamPlan`/syllabus commit, ever set that field). `doGenDeckForExam`/`doGenPracticeExamForExam`/`buildStudyKit` all read `materialText` from that same local state, so generation works fine in the moment, but the material itself was never actually saved to the exam — reopen the exam later (or reload the page) and it's gone, only re-derivable by re-uploading.
+
+**What's fixed:** the new "Build study plan" modal's own material step calls a new `persistBuildPlanMaterial()` before moving to the confidence question, so material added through *that* flow now genuinely survives.
+
+**What's still open:** the older "Add study material" card (in the collapsed "Materials & study kit" section of the exam detail timeline) still doesn't persist — uploading there and generating flashcards/a practice exam/a study kit works for that session, but revisiting the exam later still shows no material. Needs the same one-line fix (write `sourceMaterials`/`referenceLinks` back onto the exam event) applied to that card's own upload handlers.
+
+## 10. Idea: let exam description sharpen the AI session-duration estimate (not built yet)
+
+**Status:** Documented only, per explicit instruction — not scheduled, not built.
+
+**The problem:** `computeStudyPlanParams`'s session duration is currently driven by confidence + exam importance (`IMPORTANCE_TO_DURATION_MULTIPLIER`, added in commit `ab69812`) plus `suggestDurationFor`'s historical per-subject/difficulty-tier median. That's a reasonable default, but importance alone can't distinguish "a comprehensive final with 3 essay questions" from "a 10-question MCQ pop quiz" at the same importance level — both could plausibly need very different session lengths (essay-writing needs longer uninterrupted blocks to reach a working flow state; MCQ recall drills work fine in short bursts).
+
+**The idea:** if the student adds a free-text description of the exam (format, question types, what it covers), feed that description to the AI generation path already used elsewhere in Prep (deck/practice-exam generation) and let it propose a duration adjustment — layered *additively* on top of the existing importance/confidence multipliers, not replacing them, so a description-less exam behaves exactly as it does today.
+
+**Constraints for whoever builds this:**
+- Never silently override the computed duration — always show it and let the student edit it before it's committed, same as every other AI-touched field in this app (per CLAUDE.md's inline-validation/no-silent-writes rules).
+- Missing/thin description should degrade gracefully to the current importance+confidence-only estimate, not error or block session generation.
+- Reuse the existing AI call plumbing (same pattern as flashcard/practice-exam generation's error handling — see item #2 above for what happens when that path fails) rather than adding a new one-off integration.
