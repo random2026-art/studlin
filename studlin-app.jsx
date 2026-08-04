@@ -5273,6 +5273,13 @@ function computeClassSkipPlan(skippedIds,date){
 // sort, not a search. Pure/no side effects — the caller decides
 // whether/how to actually place one.
 function computeFillSuggestions(freedDate,freedTime,freedDuration){
+  // A freed slot earlier today that's already elapsed isn't something to
+  // fill retroactively -- deleting an 8am task while it's actually 6pm
+  // shouldn't prompt "Fill 8:00 AM?". Only suppress for TODAY; a freed slot
+  // on a future date is always still fillable regardless of the current
+  // clock.
+  const nowMins=(()=>{const n=new Date();return n.getHours()*60+n.getMinutes();})();
+  if(freedDate===dayKey()&&timeToMinutes(freedTime)+freedDuration<=nowMins)return [];
   const all=lsGet("events",[]);
   return all.filter(ev=>isQualifying(ev)&&ev.date>=freedDate&&(ev.duration||30)<=freedDuration)
     .sort((a,b)=>{
