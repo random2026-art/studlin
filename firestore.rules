@@ -16,8 +16,10 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['status','affiliation','school','workStartTime','workEndTime','bedtime','bedtimeGuardEnabled','difficultyPreference','taskDifficultyPreference','bufferMarginStrategy','onboarded','onboardedAt','updatedAt','preferences','fcmTokens']);
 
-      // Personal-content migration (events/notes/decks/essays/lectures/
-      // timerLogs/practiceExams -- see DataStore module). Ownership is
+      // Personal-content migration (events/notes/decks/timerLogs/
+      // practiceExams -- see DataStore module; essays and lectures were
+      // dropped from this migration when both features were cut from the
+      // app entirely, see chore/remove-dead-features). Ownership is
       // expressed by the path segment (userId), not a data field, so
       // unlike courses/assignments below it can't be spoofed by putting a
       // different uid inside the document body. Each subcollection is
@@ -45,16 +47,6 @@ service cloud.firestore {
         allow delete: if false;
       }
       match /decks/{itemId} {
-        allow read: if isOwnerContent();
-        allow create, update: if isOwnerContent() && hasUpdatedAt();
-        allow delete: if false;
-      }
-      match /essays/{itemId} {
-        allow read: if isOwnerContent();
-        allow create, update: if isOwnerContent() && hasUpdatedAt();
-        allow delete: if false;
-      }
-      match /lectures/{itemId} {
         allow read: if isOwnerContent();
         allow create, update: if isOwnerContent() && hasUpdatedAt();
         allow delete: if false;

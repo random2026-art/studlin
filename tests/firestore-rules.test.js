@@ -36,7 +36,10 @@ test.beforeEach(async () => {
 
 const USER_A = 'user-a';
 const USER_B = 'user-b';
-const PERSONAL_TYPES = ['events', 'notes', 'decks', 'essays', 'lectures', 'timerLogs', 'practiceExams'];
+// essays and lectures dropped -- both features were cut from the app
+// entirely (see chore/remove-dead-features), so their rules were removed
+// too rather than left claiming collections that will never exist.
+const PERSONAL_TYPES = ['events', 'notes', 'decks', 'timerLogs', 'practiceExams'];
 
 for (const type of PERSONAL_TYPES) {
   test(`${type}: owner can create/read/update their own item`, async () => {
