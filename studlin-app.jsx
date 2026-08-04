@@ -2963,6 +2963,60 @@ function isPhaseDecompositionCandidate(estimatedHours,deadlineKey,todayKey){
   const gate=computeAttackBlockStartDate(deadlineKey,(estimatedHours||0)*60,todayKey);
   return !!gate&&gate.weeksNeeded>=PHASE_DECOMPOSITION_MIN_WEEKS;
 }
+// Real "behind pace" check for an assignment -- compares actual logged
+// work (timeSpent, from the Lock-In Timer -- real minutes actually
+// worked, not a self-reported guess) against where a straight-line pace
+// through the SAME startDate/finishByDate window Attack Block's own gate
+// already computes would put you by today. Deliberately reuses that gate
+// instead of a second, possibly-disagreeing definition of "when should
+// this have started" -- there's already exactly one place in this file
+// that decides that.
+// Returns null (nothing to say) when: not a real assignment/study-block
+// item, already done, no date to judge against, or still before the
+// gate's own start date -- too early to call anything "behind" when
+// nothing was expected yet. Otherwise {behind,loggedMins,expectedMins,
+// totalMins,gate}.
+const ASSIGNMENT_BEHIND_THRESHOLD=0.5; // logged under half of expected-by-now counts as behind
+function computeAssignmentPace(ev,allEvents,todayKey){
+  if(!ev||ev.checklist||ev.status!=="pending"||!ev.date)return null;
+  if(ev.kind!=="deadline"&&ev.kind!=="study block")return null;
+  const totalMins=(ev.estimatedHours||ATTACK_BLOCK_DEFAULT_ESTIMATE_HOURS)*60;
+  const deadlineKey=ev.deadline||ev.date;
+  // Deliberately NOT computeAttackBlockStartDate(deadlineKey,totalMins,
+  // todayKey) -- passing the same todayKey being evaluated triggers its
+  // "compressed" branch (idealStart already past today -> collapse
+  // startDate to today itself) essentially always, which would make
+  // elapsedFraction permanently 0 and "behind" undetectable. Pace needs
+  // the TRUE, fixed ideal window regardless of how late "today" already
+  // is -- a sentinel far enough in the past guarantees idealStartKey
+  // never precedes it, so compressed is always false here and startDate/
+  // finishByDate are the real, stable target window.
+  const gate=computeAttackBlockStartDate(deadlineKey,totalMins,"2000-01-01");
+  if(!gate||todayKey<gate.startDate)return null;
+  const linked=allEvents.filter(e=>e.dueEventId===ev.id);
+  const loggedMins=linked.reduce((sum,e)=>sum+(e.timeSpent||0),0);
+  const startMs=new Date(gate.startDate+"T12:00:00").getTime();
+  const finishMs=new Date(gate.finishByDate+"T12:00:00").getTime();
+  const todayMs=new Date(todayKey+"T12:00:00").getTime();
+  const span=Math.max(1,finishMs-startMs);
+  const elapsedFraction=Math.min(1,Math.max(0,(todayMs-startMs)/span));
+  const expectedMins=elapsedFraction*totalMins;
+  return {behind:loggedMins<expectedMins*ASSIGNMENT_BEHIND_THRESHOLD,loggedMins,expectedMins,totalMins,gate};
+}
+// Same dismissible-cooldown idiom as weekBalanceNudge (3 days -- "behind
+// pace" is a slow-moving signal, a dismissal shouldn't need re-earning
+// every single time the assignment is reopened, but also shouldn't be
+// silenced forever off one dismissal from a week ago).
+const PACE_NUDGE_COOLDOWN_MS=3*86400000;
+function isPaceNudgeDismissed(evId){
+  const m=lsGet("paceNudgeDismissed",{});
+  return !!(m[evId]&&Date.now()-m[evId]<PACE_NUDGE_COOLDOWN_MS);
+}
+function dismissPaceNudge(evId){
+  const m=lsGet("paceNudgeDismissed",{});
+  m[evId]=Date.now();
+  lsSet("paceNudgeDismissed",m);
+}
 // AI phase-NAME proposal for a genuinely large project (gated by
 // isPhaseDecompositionCandidate above) — deliberately narrow: only ever
 // asks for an ordered list of names, never durations or dates. A duration
@@ -7332,9 +7386,14 @@ function StudlinPrep({setActive=()=>{}}={}){
                   const today=dayKey();
                   const daysUntil=a.date?Math.round((new Date(a.date+"T12:00:00")-new Date(today+"T12:00:00"))/86400000):null;
                   const daysLabel=daysUntil==null?"No date":daysUntil<=0?"Today":daysUntil+"d";
-                  const chainId=(lsGet("events",[]).find(e=>e.dueEventId===a.id&&e.attackChainId)||{}).attackChainId||null;
-                  const pending=chainId?lsGet("events",[]).filter(e=>e.attackChainId===chainId&&e.status!=="done"):[];
-                  const statusLabel=pending.length===0?"no blocks yet":pending.length+" block"+(pending.length!==1?"s":"")+" scheduled";
+                  const allEventsForRow=lsGet("events",[]);
+                  const chainId=(allEventsForRow.find(e=>e.dueEventId===a.id&&e.attackChainId)||{}).attackChainId||null;
+                  const pending=chainId?allEventsForRow.filter(e=>e.attackChainId===chainId&&e.status!=="done"):[];
+                  // Same computeAssignmentPace check as the detail modal --
+                  // one glance at the table shows what used to need opening
+                  // every row to know.
+                  const rowPace=computeAssignmentPace(a,allEventsForRow,today);
+                  const statusLabel=rowPace&&rowPace.behind?"behind pace":pending.length===0?"no blocks yet":pending.length+" block"+(pending.length!==1?"s":"")+" scheduled";
                   return (
                     <div key={a.id} style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,alignItems:"center"}}>
                       <div onClick={()=>setDetailEventId(a.id)} style={{fontSize:11.5,fontWeight:600,color:T.white,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={a.title}>{a.title}</div>
@@ -7351,7 +7410,7 @@ function StudlinPrep({setActive=()=>{}}={}){
                       <select value={bucketOf(a.difficulty)} onChange={e=>patchExam(a.id,{difficulty:BUCKET_VALS[e.target.value]})} style={cellSelStyle}>
                         <option value="low">Easy</option><option value="medium">Med</option><option value="high">Hard</option>
                       </select>
-                      <div onClick={()=>setDetailEventId(a.id)} style={{fontSize:10.5,color:T.muted,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title="Click to open">{statusLabel}</div>
+                      <div onClick={()=>setDetailEventId(a.id)} style={{fontSize:10.5,fontWeight:rowPace&&rowPace.behind?700:400,color:rowPace&&rowPace.behind?T.amber:T.muted,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title="Click to open">{statusLabel}</div>
                     </div>
                   );
                 })}
@@ -16536,6 +16595,12 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive}){
   const [manualDate,setManualDate]=useState("");
   const [manualTime,setManualTime]=useState("16:00");
   const [manualDuration,setManualDuration]=useState(30);
+  // A single proposed catch-up slot for the "behind pace" nudge below --
+  // computed on demand (not automatically) via the same findLegalSlotOrNull
+  // every other real placement in this file uses, shown for the student
+  // to confirm or reject rather than added straight to the calendar.
+  const [paceProposal,setPaceProposal]=useState(null); // {date,time,duration}|null
+  const [paceDismissed,setPaceDismissedState]=useState(false);
 
   useEffect(()=>{
     if(!ev)return;
@@ -16548,6 +16613,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive}){
     setCancelConfirmOpen(false);setDetailErr("");
     setAddAttackBlock(false);setAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);
     setAddManualBlock(false);setManualDate(ev.date||dayKey());setManualTime("16:00");setManualDuration(30);
+    setPaceProposal(null);setPaceDismissedState(isPaceNudgeDismissed(ev.id));
     setExamPlan({materialFiles:ev.sourceMaterials||[],materialLinks:ev.referenceLinks||[],materialOpen:false,pasteMaterialMode:false,pasteMaterialText:"",linkDraft:"",linkLabelDraft:"",proposeSessions:false,sessionCount:4});
     setProjectPlan({phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false});
   },[eventId]);
@@ -16568,6 +16634,21 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive}){
   };
   const deleteLinkedBlock=(id)=>commit(lsGet("events",[]).filter(e=>e.id!==id));
   const markLinkedBlockDone=(id)=>commit(lsGet("events",[]).map(e=>e.id===id?{...e,status:"done",completedAt:Date.now()}:e));
+  const pace=computeAssignmentPace(ev,allEvents,dayKey());
+  const proposePaceBlock=()=>{
+    const slot=findLegalSlotOrNull(allEvents,getWeeklyRoutine(),getSchedulePreferences(),dayKey(),getSchedulePreferences().workStartTime,30,ev.deadline||ev.date);
+    setPaceProposal(slot?{date:slot.date,time:slot.time,duration:30}:{date:null});
+  };
+  const confirmPaceProposal=()=>{
+    if(!paceProposal||!paceProposal.date)return;
+    const block={id:"pace-"+ev.id+"-"+Date.now(),title:"Catch up: "+(title.trim()||ev.title),date:paceProposal.date,time:paceProposal.time,
+      subject:ev.subject||"",kind:"study block",notes:"",priority:5,difficulty:5,deadline:ev.deadline||null,
+      duration:paceProposal.duration,status:"pending",timeSpent:0,completedAt:null,dueEventId:ev.id};
+    commit(lsGet("events",[]).concat([block]));
+    setPaceProposal(null);
+    if(onToast)onToast("Catch-up block added");
+  };
+  const dismissPaceOffer=()=>{dismissPaceNudge(ev.id);setPaceDismissedState(true);setPaceProposal(null);};
   // A plain due-date marker OR a plain manually-placed "study block" with
   // nothing scheduled for it yet and no phases of its own -- exactly the
   // "assignment added without Attack Block" gap this closes. "study
@@ -16791,6 +16872,38 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive}){
               );
             })}
           </div>
+        </div>
+      )}
+      {/* Behind-pace nudge -- compares real logged minutes (Lock-In Timer)
+          against a straight-line pace through Attack Block's own start/
+          finish-by window, not a guess or a self-report. Dismissible with
+          a real cooldown (see PACE_NUDGE_COOLDOWN_MS) so declining once
+          doesn't mean never seeing it again, and doesn't mean seeing it
+          every single time this reopens either. */}
+      {pace&&pace.behind&&!paceDismissed&&(
+        <div style={{background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+          <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:2}}>Behind pace on this one</div>
+          <div style={{fontSize:11.5,color:T.muted,marginBottom:8}}>
+            {Math.round(pace.loggedMins)} of an expected {Math.round(pace.expectedMins)} min logged so far, aiming to finish by {pace.gate.finishByDate}.
+          </div>
+          {paceProposal?(
+            paceProposal.date?(
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                <span style={{fontSize:12,color:T.text}}>{paceProposal.date} · {paceProposal.time} · {paceProposal.duration}min</span>
+                <div style={{display:"flex",gap:8}}>
+                  <BtnSm onClick={confirmPaceProposal}>Add it</BtnSm>
+                  <BtnSm variant="ghost" onClick={()=>setPaceProposal(null)}>Never mind</BtnSm>
+                </div>
+              </div>
+            ):(
+              <div style={{fontSize:11.5,color:T.muted}}>Couldn't find an open slot before the deadline -- try adding a time manually below.</div>
+            )
+          ):(
+            <div style={{display:"flex",gap:10}}>
+              <BtnSm onClick={proposePaceBlock}>Propose a catch-up block</BtnSm>
+              <BtnSm variant="ghost" onClick={dismissPaceOffer}>Not now</BtnSm>
+            </div>
+          )}
         </div>
       )}
       {kind!=="exam"&&!ev.isAttackBlock&&!ev.dueEventId&&(

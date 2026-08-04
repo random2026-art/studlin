@@ -124,7 +124,9 @@ function loadStudlinModule(options) {
     "derivePerformanceConfidence","performanceConfidenceSuggestion","dismissPerformanceConfidence",
     "CONFIDENCE_TO_UNIT","EXAM_WEIGHT_TO_IMPACT",
     "computeCapacitySlack","EXAM_READINESS_TIGHT_SLACK_RATIO",
-    "applyHoursTargetCap"];
+    "applyHoursTargetCap",
+    "computeAssignmentPace","ASSIGNMENT_BEHIND_THRESHOLD","ATTACK_BLOCK_DEFAULT_ESTIMATE_HOURS",
+    "isPaceNudgeDismissed","dismissPaceNudge","PACE_NUDGE_COOLDOWN_MS"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }
