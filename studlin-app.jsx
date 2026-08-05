@@ -13350,16 +13350,6 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
   },[previewDragging,WK_PX_HR,onPreviewMove,onPreviewResize]);
   const weekScrollRef = useRef(null);
   const [wkDragId, setWkDragId] = useState(null);
-  // Day header used to list up to 2 due-item title pills inline, pushing
-  // the header taller on a busy day and giving every day column a
-  // different height. Shovel's "N tasks due" chip pattern (ui/chrome-and-
-  // density Addition #4) keeps every header the same fixed height; the
-  // actual items are one tap away in this small popover instead of always
-  // being on screen. Portaled + position:fixed off the chip's own rect
-  // (not position:absolute inside the header cell) -- this Card renders
-  // with overflow:hidden, which would clip a popover trying to open past
-  // its edge, same reasoning as every other anchored popover in this file.
-  const [dueChipAnchor, setDueChipAnchor] = useState(null); // {dayKey, rect, items} | null
   // Resolves the design-tokens.js semantic names against the live theme
   // object -- following whatever light/dark + accent the user actually has
   // set, per the ui/tokens-and-calendar Part 1 correction. Cheap to
@@ -13561,20 +13551,16 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
           const isToday = dk === todayK;
           const isSel = selDay!=null && dk === selDay;
           const duePills = (byDay[dk] || []).filter(isDuePill);
-          const chipOpen = dueChipAnchor && dueChipAnchor.dayKey === dk;
           return (
-            <div key={i} onClick={()=>{if(setSelDay)setSelDay(dk);}} style={{textAlign:"center",padding:"7px 4px 9px",borderLeft:`1px solid ${T.border}`,cursor:setSelDay?"pointer":"default",background:isSel?T.card2:"transparent",minWidth:0,height:76}}>
+            <div key={i} onClick={()=>{if(setSelDay)setSelDay(dk);}} style={{textAlign:"center",padding:"7px 4px 9px",borderLeft:`1px solid ${T.border}`,cursor:setSelDay?"pointer":"default",background:isSel?T.card2:"transparent",minWidth:0}}>
               <div style={{fontSize:9,fontWeight:700,letterSpacing:"0.1em",color:T.muted,marginBottom:4}}>{DAY_NAMES[i]}</div>
               <div onDoubleClick={(e)=>{e.stopPropagation();openNew(dk);}} style={{width:28,height:28,borderRadius:"50%",background:isToday?T.lime:"transparent",color:isToday?T.ink:T.white,fontSize:13,fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>{d.getDate()}</div>
               {/* Phase 10b: a compact "N due" bar instead of listing each
                   due-marker title, matching the monthly grid's same
                   change and Shovel's own header row. */}
               {duePills.length>0&&(
-                <div onClick={(e)=>{
-                  e.stopPropagation();
-                  if(chipOpen){setDueChipAnchor(null);return;}
-                  setDueChipAnchor({dayKey:dk,rect:e.currentTarget.getBoundingClientRect(),items:duePills});
-                }} style={{display:"inline-flex",alignItems:"center",gap:3,marginTop:5,padding:"2px 7px",borderRadius:99,background:T.card2,border:`1px solid ${T.border}`,fontSize:9.5,fontWeight:700,color:T.muted,cursor:"pointer"}}>
+                <div onClick={(e)=>{e.stopPropagation();if(setSelDay)setSelDay(dk);}}
+                  style={{marginTop:5,fontSize:9,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}33`,borderRadius:4,padding:"2px 6px",cursor:"pointer",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
                   {duePills.length} due
                 </div>
               )}
@@ -13582,22 +13568,6 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
           );
         })}
       </div>
-      {dueChipAnchor&&ReactDOM.createPortal((
-        <>
-          <div onClick={()=>setDueChipAnchor(null)} style={{position:"fixed",inset:0,zIndex:998}} />
-          <div style={{position:"fixed",top:dueChipAnchor.rect.bottom+4,left:Math.min(Math.max(8,dueChipAnchor.rect.left-70),window.innerWidth-188),width:180,background:T.card,border:`1px solid ${T.border}`,borderRadius:10,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:999,overflow:"hidden",padding:6,display:"flex",flexDirection:"column",gap:3,textAlign:"left"}}>
-            {dueChipAnchor.items.map((ev,j)=>{
-              const isExam=ev.kind==="exam";
-              const tagColor=colorOf(ev.subject);
-              return (
-                <div key={j} onClick={()=>{setDueChipAnchor(null);openEdit(ev);}} title={ev.title} style={{fontSize:10.5,fontWeight:600,color:tagColor,background:tagColor+(isExam?"22":"16"),border:isExam?`1px solid ${tagColor}`:"none",borderRadius:6,padding:"4px 7px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",cursor:"pointer"}}>
-                  {ev.title}
-                </div>
-              );
-            })}
-          </div>
-        </>
-      ),document.body)}
       {/* Fixed estimate for the chrome above this grid (global top bar + the
           slim Calendar toolbar) now that there's no more agenda-collapse
           state to branch on -- this page never has an agenda panel. */}
@@ -13799,11 +13769,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                           behind" now, not a per-item red dot competing with it. */}
                       {!catchUpPending&&over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:"0 0 0 1.5px rgba(255,255,255,0.9)",zIndex:1}} />}
                       <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"EXAM · ":""}{ev.title}</div>
-                      {/* Time range on every block regardless of height
-                          (ui/chrome-and-density Addition #5) -- used to be
-                          gated on heightPx>34 and only ever showed the
-                          start time, not a real range. */}
-                      {heightPx > 16 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isWarningKind?tokens.color.warning:tokens.color.textSecondary,marginTop:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{fmtTime(ev.time)}{dur ? "–"+fmtTime(minutesToTime(timeToMinutes(ev.time)+dur)) : ""}</div>}
+                      {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isWarningKind?tokens.color.warning:tokens.color.textSecondary,marginTop:1}}>{fmtTime(String(Math.floor(effStartMin/60)).padStart(2,"0")+":"+String(effStartMin%60).padStart(2,"0"))}{effDuration ? " · "+effDuration+"m" : ""}</div>}
                       {/* Drag-to-resize edge handles -- real events only (see
                           wkResize's own comment for why routines are excluded).
                           draggable={false} stops the parent block's native
@@ -15650,7 +15616,7 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
                   style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:6,padding:"4px 8px",cursor:"pointer",overflow:"hidden",zIndex:3,opacity:isDone?0.6:1,boxSizing:"border-box",...kindStyle}}>
                   {!catchUpPending&&over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:`0 0 0 1.5px ${isExam?T.ink:"#fff"}`,zIndex:1}} />}
                   <div style={{fontSize:11.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:isDone?"line-through":"none"}}>{isExam?"EXAM · ":""}{ev.title}</div>
-                  {heightPx>16&&<div style={{fontSize:9.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{fmtTime(ev.time)}{dur?"–"+fmtTime(minutesToTime(timeToMinutes(ev.time)+dur)):""}</div>}
+                  {heightPx>34&&<div style={{fontSize:9.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:2}}>{fmtTime(ev.time)}{dur?" · "+dur+"m":""}</div>}
                 </div>
                 {ev.commuteAfter>0 && (
                   <div title={ev.commuteAfter+" min commute"} style={commuteStripStyle(ev.commuteAfter,"after")}>
@@ -15738,7 +15704,7 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
                     <span style={{color,display:"flex",flexShrink:0}}>{iconFor(ev.kind)}</span>
                     <span style={{fontSize:12,fontWeight:700,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</span>
                   </div>
-                  {heightPx>16&&<div style={{fontSize:10,color:T.muted,marginTop:2,marginLeft:19,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{fmtTime(ev.time)}{dur?"–"+fmtTime(minutesToTime(timeToMinutes(ev.time)+dur)):""}</div>}
+                  {heightPx>30&&<div style={{fontSize:10,color:T.muted,marginTop:2,marginLeft:19}}>{fmtTime(ev.time)}{dur?" · "+dur+"m":""}</div>}
                 </div>
               );
             })}
@@ -17209,14 +17175,6 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // modal that tries to be all four at once.
   const [addMenuOpen,setAddMenuOpen]=useState(false);
   const [toolsMenuOpen,setToolsMenuOpen]=useState(false);
-  // Side agenda drawer -- default-closed (ui/chrome-and-density Addition
-  // #6), bringing back the "what's coming up" panel that was cut when the
-  // agenda-collapse state was removed from the Weekly grid. Row content
-  // here is a placeholder (title + subject color + time range) -- Today's
-  // real row design doesn't exist yet (ui/today-home hasn't shipped), so
-  // this reuses the simplest existing block-row convention rather than
-  // inventing a one-off. Revisit this row's look once Today ships.
-  const [agendaDrawerOpen,setAgendaDrawerOpen]=useState(false);
   useEffect(()=>{
     if(openWizardOnMount){setRoutineWizardOpen(true);if(onWizardOpenedFromSettings)onWizardOpenedFromSettings();}
   },[openWizardOnMount]);
@@ -18942,9 +18900,6 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
               <button key={v.id} onClick={()=>setCalView(v.id)} style={{padding:"3px 9px",borderRadius:4,fontSize:11.5,fontWeight:calView===v.id?500:400,cursor:"pointer",background:calView===v.id?T.card:"transparent",color:calView===v.id?T.text:T.muted,border:"none",fontFamily:T.font,transition:"all 0.15s"}}>{v.label}</button>
             ))}
           </div>
-          <button onClick={()=>setAgendaDrawerOpen(o=>!o)} title="Upcoming" style={{width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",background:agendaDrawerOpen?T.lime+"18":"transparent",border:`1px solid ${agendaDrawerOpen?T.lime+"55":T.border}`,borderRadius:4,color:agendaDrawerOpen?T.lime:T.muted,cursor:"pointer"}}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
-          </button>
           <div style={{position:"relative"}} ref={rescheduleBtnRef}>
             <button onClick={()=>setToolsMenuOpen(o=>!o)} title="More tools" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:editRoutineMode?T.lime+"18":"transparent",border:`1px solid ${editRoutineMode?T.lime+"55":T.border}`,borderRadius:4,color:editRoutineMode?T.lime:T.muted,cursor:"pointer",fontSize:13,lineHeight:1}}>⋯</button>
             {toolsMenuOpen&&(<>
@@ -19815,54 +19770,6 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         onEditRoutine={openRoutineEdit} onDeleteRoutine={deleteRoutineItem}
         onAddRoutine={(rule)=>persistRoutines([...routines,{id:String(Date.now()+Math.random()*1000),...rule,subject:""}])}
         onEditOnCalendar={()=>{setRoutineCenterOpen(false);setEditRoutineMode(true);}} />
-      {/* Side agenda drawer -- see agendaDrawerOpen above. Portaled + a real
-          transform-based slide (not conditional mounting) so the close
-          animation actually plays, matching ChatDrawer/ClassPreviewDrawer's
-          own pattern elsewhere in this file. */}
-      {ReactDOM.createPortal((
-        <>
-          <div onClick={()=>setAgendaDrawerOpen(false)} style={{position:"fixed",inset:0,background:"rgba(8,12,10,0.5)",zIndex:410,opacity:agendaDrawerOpen?1:0,pointerEvents:agendaDrawerOpen?"auto":"none",transition:"opacity 0.25s"}} />
-          <div style={{position:"fixed",top:0,right:0,height:"100vh",width:380,maxWidth:"92vw",background:T.surface,borderLeft:`1px solid ${T.border}`,boxShadow:"-24px 0 60px -20px rgba(0,0,0,0.5)",zIndex:411,display:"flex",flexDirection:"column",transform:agendaDrawerOpen?"translateX(0)":"translateX(100%)",transition:"transform 0.28s cubic-bezier(.2,.85,.3,1)"}}>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 20px",borderBottom:`1px solid ${T.border}`,flexShrink:0}}>
-              <span style={{fontSize:15,fontWeight:700,color:T.white}}>Upcoming</span>
-              <button onClick={()=>setAgendaDrawerOpen(false)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:18,lineHeight:1,padding:4}}>×</button>
-            </div>
-            <div style={{flex:1,overflowY:"auto",padding:"12px 16px"}}>
-              {(()=>{
-                const today=dayKey();
-                const days=Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()+i);return dayKey(d);});
-                const groups=days.map(dk=>({
-                  dk,
-                  label:dk===today?"Today":new Date(dk+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"}),
-                  items:events.filter(ev=>ev.date===dk&&ev.kind!=="free period"&&ev.status!=="done").sort((a,b)=>(a.time||"99:99").localeCompare(b.time||"99:99")),
-                })).filter(g=>g.items.length>0);
-                if(groups.length===0)return <div style={{fontSize:12.5,color:T.muted,textAlign:"center",padding:"24px 0"}}>Nothing scheduled this week.</div>;
-                return groups.map(g=>(
-                  <div key={g.dk} style={{marginBottom:16}}>
-                    <div style={{fontSize:10.5,fontWeight:700,letterSpacing:"0.06em",textTransform:"uppercase",color:T.muted,marginBottom:6}}>{g.label}</div>
-                    <div style={{display:"flex",flexDirection:"column",gap:5}}>
-                      {g.items.map(ev=>{
-                        const c=colorOf(ev.subject);
-                        const dur=ev.duration||0;
-                        const endT=dur?fmtTime(minutesToTime(timeToMinutes(ev.time||"09:00")+dur)):null;
-                        return (
-                          <div key={ev.id} onClick={()=>{openEdit(ev);setAgendaDrawerOpen(false);}} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 9px",borderRadius:8,cursor:"pointer",background:T.card}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background=T.card}>
-                            <div style={{width:3,alignSelf:"stretch",borderRadius:2,background:c,flexShrink:0}} />
-                            <div style={{flex:1,minWidth:0}}>
-                              <div style={{fontSize:12.5,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.kind==="exam"?"EXAM · ":""}{ev.title}</div>
-                              <div style={{fontSize:10.5,color:T.muted,marginTop:1}}>{ev.time?fmtTime(ev.time)+(endT?"–"+endT:""):"No time set"}</div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ));
-              })()}
-            </div>
-          </div>
-        </>
-      ),document.body)}
     </>
   );
 }
@@ -21558,24 +21465,6 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
     <>
     <div style={{display:"flex",flexDirection:"column",gap:16,paddingBottom:40}}>
 
-      {/* Streak + level -- moved here from the global top bar, which is
-          gone entirely now (ui/chrome-and-density). This is a minimal
-          placeholder, not the real "three stat cards" redesign (that's
-          ui/dashboard's job, coming after Today ships) -- just making sure
-          this data doesn't disappear from view in the meantime. Full
-          ranking/focus-stat detail still lives in Profile. */}
-      <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-        <div style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 13px",background:T.card,border:`1px solid ${T.border}`,borderRadius:99,fontSize:13,fontWeight:700,color:T.amber}}>
-          <svg width="14" height="14" viewBox="0 0 24 24" stroke="none"><path fill="currentColor" d="M12 2s4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 1-3s-3 2-3 6a6 6 0 0 0 12 0c0-5-6-12-6-12z"/></svg>
-          {realStreak}
-        </div>
-        <div style={{display:"inline-flex",alignItems:"center",gap:8,padding:"7px 13px",background:T.card,border:`1px solid ${T.border}`,borderRadius:99,fontSize:12,fontWeight:600,color:T.text}}>
-          <span style={{whiteSpace:"nowrap"}}>{lvl.title}</span>
-          <div style={{width:44,height:4,background:T.card2,borderRadius:99,overflow:"hidden",flexShrink:0}}><div style={{height:"100%",width:lvl.tierPct+"%",background:T.lime,borderRadius:99}}/></div>
-        </div>
-        <button onClick={()=>setActive("profile")} style={{fontSize:11.5,color:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>Full stats →</button>
-      </div>
-
       {/* Needs-attention — Attack Block project running behind its runway */}
       {attackOverrun&&(
         <div style={{background:T.card,border:`1px solid ${T.red}55`,borderRadius:8,padding:"18px 20px",display:"flex",alignItems:"flex-start",gap:16}}>
@@ -22894,13 +22783,7 @@ function App() {
       if(calendarSetEventsRef.current)calendarSetEventsRef.current(lsGet("events",[]));
     });
   },[]);
-  // Anchor rect of the rail's avatar-menu trigger, captured on click --
-  // null means closed. Portaled (position:fixed) rather than a plain
-  // position:absolute child of the rail, since the rail itself has
-  // overflowX:"hidden" and would clip a popover trying to escape past its
-  // right edge -- same reasoning as every other anchored popover in this
-  // file (see WeeklyPlanner's popoverAnchor).
-  const [avatarMenuAnchor,setAvatarMenuAnchor]=useState(null);
+  const [notifOpen,setNotifOpen]=useState(false);
   const [seriousMode,setSeriousMode]=useState(()=>lsGet("settings",{}).seriousMode||false);
   // Fresh accounts skip this forced first-run prompt permanently — they get
   // the new in-Calendar guided tour instead, and Google Calendar connect is
@@ -23511,84 +23394,84 @@ function App() {
         <div style={{margin:"14px 0 5px"}}>
           {bottomItems.map(item=><NavItem key={item.id} item={item} />)}
         </div>
-        {/* Bottom rail: avatar menu -- replaces the old top bar entirely
-            (ui/chrome-and-density). Streak/level pills moved to Dashboard;
-            "See Pricing" and Notifications (both top-bar residents before)
-            now live inside this one menu alongside Settings, so the avatar
-            is the single entry point instead of three separate top-bar
-            affordances. Profile itself is still one tap away, from the
-            menu's own header row. */}
+        {/* Bottom profile + usage — Claude-style */}
         {(()=>{
-          const cr=getCredits();const lim=getCreditLimit();
+          const cr=getCredits();const lim=getCreditLimit();const plan=getPlan();
           const used=Math.max(0,lim-cr);const pct=Math.min(100,Math.round(used/lim*100));
           const barColor=pct<50?T.lime:pct<80?"#F5A623":"#E05252";
+          const daysLeft=(()=>{const n=new Date();const e=new Date(n.getFullYear(),n.getMonth()+1,1);return Math.ceil((e-n)/86400000);})();
           const email=firebase.auth().currentUser?.email||"";
-          const hasUnread=!notifSeen&&notifs.length>0;
-          const openAvatarMenu=(e)=>{
-            const rect=e.currentTarget.getBoundingClientRect();
-            setAvatarMenuAnchor(rect);
-            setNotifSeen(true);
-          };
-          const avatarMenuEl=avatarMenuAnchor&&ReactDOM.createPortal((
-            <>
-              <div onClick={()=>setAvatarMenuAnchor(null)} style={{position:"fixed",inset:0,zIndex:998}} />
-              <div style={{position:"fixed",left:Math.min(avatarMenuAnchor.right+8,window.innerWidth-276),bottom:Math.max(8,window.innerHeight-avatarMenuAnchor.bottom),width:268,background:T.card,border:`1px solid ${T.border}`,borderRadius:14,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:999,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
-                <div onClick={()=>{setActive("profile");setAvatarMenuAnchor(null);}} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",cursor:"pointer",borderBottom:`1px solid ${T.border}`}}>
-                  <Av initials={getUserInitials()} color={T.lime} size={32} />
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:12.5,fontWeight:600,color:T.white,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{getUserName()}</div>
-                    <div style={{fontSize:10,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{email}</div>
+          // Persistent streak badge — the full stats picture moved to
+          // Profile once Dashboard was removed, but the streak's whole
+          // motivational pull comes from being seen every time the app
+          // opens (same instinct as Duolingo keeping its flame in the
+          // persistent header rather than burying it in a profile tab).
+          const streak=Math.max(1,getStreak());
+          // Notifications used to live in the now-removed top bar -- it's
+          // the one thing there that had no other entry point anywhere
+          // else in the app (unlike streak/level/pricing/avatar, all
+          // duplicated elsewhere), so it gets relocated here instead of
+          // just disappearing. Shared between the collapsed/expanded
+          // returns below since both branches are in this same IIFE.
+          const notifBell=(
+            <div style={{position:"relative",flexShrink:0}}>
+              <button onClick={e=>{e.stopPropagation();setNotifOpen(o=>!o);setNotifSeen(true);}} title="Notifications" style={{width:26,height:26,display:"flex",alignItems:"center",justifyContent:"center",background:notifOpen?T.lime+"18":"transparent",border:`1px solid ${notifOpen?T.lime+"55":sidebarBorder}`,borderRadius:6,color:notifOpen?T.lime:sidebarMuted,position:"relative",cursor:"pointer",padding:0}}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                {!notifSeen && notifs.length>0 && <span style={{position:"absolute",top:2,right:2,width:6,height:6,background:T.limeDk,border:`1.5px solid ${sidebarCardBg}`,borderRadius:"50%"}} />}
+              </button>
+              {notifOpen && (<>
+                <div onClick={()=>setNotifOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
+                <div style={{position:"absolute",bottom:0,left:"calc(100% + 8px)",width:340,maxWidth:"86vw",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
+                  <div style={{padding:"13px 16px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <span style={{fontSize:13,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Notifications</span>
+                    <span onClick={()=>setNotifOpen(false)} style={{fontSize:11,color:T.lime,cursor:"pointer",fontWeight:600}}>Mark all read</span>
                   </div>
-                </div>
-                <div style={{padding:"8px 0",borderBottom:`1px solid ${T.border}`}}>
-                  <div style={{fontSize:10.5,fontWeight:700,letterSpacing:"0.06em",textTransform:"uppercase",color:T.muted,padding:"4px 14px"}}>Notifications</div>
-                  {notifs.length===0?(
-                    <div style={{fontSize:11.5,color:T.muted,padding:"2px 14px 10px"}}>Nothing new.</div>
-                  ):notifs.slice(0,4).map((n,i)=>(
-                    <div key={i} onClick={()=>{setActive("calendar");setAvatarMenuAnchor(null);}} style={{display:"flex",gap:9,padding:"7px 14px",cursor:"pointer",alignItems:"flex-start"}}>
-                      <span style={{width:24,height:24,borderRadius:7,flexShrink:0,background:n.color+"18",border:`1px solid ${n.color}33`,color:n.color,display:"grid",placeItems:"center"}}>{n.icon}</span>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:11.5,color:T.text,fontWeight:600,lineHeight:1.3}}>{n.title}</div>
-                        <div style={{fontSize:10.5,color:T.muted,marginTop:1}}>{n.sub}</div>
+                  <div style={{maxHeight:360,overflowY:"auto"}}>
+                    {notifs.map((n,i)=>(
+                      <div key={i} onClick={()=>{setActive("calendar");setNotifOpen(false);}} style={{display:"flex",gap:11,padding:"12px 16px",borderBottom:i<notifs.length-1?`1px solid ${T.border}`:"none",cursor:"pointer",alignItems:"flex-start"}}>
+                        <span style={{width:30,height:30,borderRadius:8,flexShrink:0,background:n.color+"18",border:`1px solid ${n.color}33`,color:n.color,display:"grid",placeItems:"center"}}>{n.icon}</span>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:12.5,color:T.text,fontWeight:600,lineHeight:1.3}}>{n.title}</div>
+                          <div style={{fontSize:11,color:T.muted,marginTop:2}}>{n.sub}</div>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
+                  <div onClick={()=>{setActive("settings");setNotifOpen(false);}} style={{padding:"11px 16px",borderTop:`1px solid ${T.border}`,background:T.bg,fontSize:11.5,color:T.muted,cursor:"pointer",textAlign:"center"}}>Notification settings</div>
                 </div>
-                <div onClick={()=>{setPricingOpen(true);setAvatarMenuAnchor(null);}} style={{display:"flex",alignItems:"center",gap:9,padding:"10px 14px",cursor:"pointer",fontSize:12.5,color:T.text,fontWeight:600}}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                  See Pricing
-                </div>
-                <div onClick={()=>{setActive("settings");setAvatarMenuAnchor(null);}} style={{display:"flex",alignItems:"center",gap:9,padding:"10px 14px",cursor:"pointer",fontSize:12.5,color:T.text,fontWeight:600,borderTop:`1px solid ${T.border}`}}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-                  Settings
-                </div>
-              </div>
-            </>
-          ),document.body);
+              </>)}
+            </div>
+          );
           if(!navExpanded){return(
           <div style={{marginTop:"auto",borderTop:`1px solid ${sidebarBorder}`,paddingTop:10,display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
-            <div onClick={openAvatarMenu} title={getUserName()} style={{cursor:"pointer",position:"relative"}}>
+            <div onClick={()=>setActive("profile")} title={getUserName()} style={{cursor:"pointer",position:"relative"}}>
               <Av initials={getUserInitials()} color={T.lime} size={32} />
-              {hasUnread&&<div style={{position:"absolute",top:-1,right:-1,width:9,height:9,background:T.limeDk,border:`2px solid ${sidebarCardBg}`,borderRadius:"50%"}} />}
+              {!seriousMode&&<div title={streak+"-day streak"} style={{position:"absolute",bottom:-4,right:-6,display:"flex",alignItems:"center",gap:2,background:T.amber,color:"#1a1200",borderRadius:8,padding:"1px 4px",fontSize:9,fontWeight:700}}>{streak}</div>}
             </div>
+            {notifBell}
             <div onClick={()=>setCreditsOpen(true)} title={cr+" credits remaining"} style={{cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
               <div style={{width:28,height:3,background:sidebarBorder,borderRadius:99,overflow:"hidden"}}><div style={{height:"100%",width:pct+"%",background:barColor,borderRadius:99,transition:"width 0.4s"}} /></div>
             </div>
-            {avatarMenuEl}
           </div>);}
           return(
           <div style={{marginTop:"auto",borderTop:`1px solid ${sidebarBorder}`,paddingTop:10}}>
-            <div onClick={openAvatarMenu} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:9,cursor:"pointer",marginBottom:2,transition:"background 0.15s"}} onMouseEnter={e=>e.currentTarget.style.background=sidebarCardBg} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+            {/* Profile row */}
+            <div onClick={()=>setActive("profile")} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:9,cursor:"pointer",marginBottom:2,transition:"background 0.15s"}} onMouseEnter={e=>e.currentTarget.style.background=sidebarCardBg} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
               <div style={{position:"relative",flexShrink:0}}>
                 <Av initials={getUserInitials()} color={T.lime} size={32} />
-                {hasUnread&&<div style={{position:"absolute",top:-1,right:-1,width:9,height:9,background:T.limeDk,border:`2px solid ${sidebarCardBg}`,borderRadius:"50%"}} />}
+                {!seriousMode&&<div title={streak+"-day streak"} style={{position:"absolute",bottom:-4,right:-6,display:"flex",alignItems:"center",gap:2,background:T.amber,color:"#1a1200",borderRadius:8,padding:"1px 4px",fontSize:9,fontWeight:700}}>{streak}</div>}
               </div>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:12.5,fontWeight:600,color:sidebarText,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{getUserName()}</div>
                 <div style={{fontSize:10,color:sidebarMuted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{email}</div>
               </div>
+              <div style={{display:"flex",alignItems:"center",gap:2,flexShrink:0}}>
+              {notifBell}
+              <button onClick={e=>{e.stopPropagation();setActive("settings");}} title="Settings" style={{width:26,height:26,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:"none",color:sidebarMuted,cursor:"pointer",borderRadius:6,flexShrink:0}}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              </button>
+              </div>
             </div>
-            {avatarMenuEl}
           </div>);
         })()}
       </div>
@@ -23600,8 +23483,8 @@ function App() {
             level/ranking detail lives in Profile, pricing is reachable via
             Settings' "Upgrade to Pro", and the profile avatar duplicated
             the sidebar's own profile row exactly. Notifications had no
-            other entry point anywhere, so that one moved into the avatar
-            menu instead of just disappearing. */}
+            other entry point anywhere, so that one moved into the
+            sidebar's bottom profile row instead of just disappearing. */}
         {/* CONTENT */}
         {/* onAnimationEnd clears the animation once the tab-switch entrance
             plays out. A CSS animation that touches `transform` (studlinRise
@@ -23902,26 +23785,12 @@ function App() {
                       <div style={{fontSize:14,fontWeight:600,color:T.text}}>{m.title}</div>
                       {statusLine&&<div style={{fontSize:12,color:T.muted,marginTop:2}}>{statusLine}</div>}
                     </div>
+                    {!override.skip&&(
+                      <div style={{flexShrink:0,fontSize:12,color:T.muted,textAlign:"right",whiteSpace:"nowrap"}}>
+                        {m.from.date===dayKey()?"Today":dayOfWeekLabel(m.from.date).slice(0,3)} {fmtRolloverClock(m.from.time)} → {effectiveTo.date===dayKey()?"Today":dayOfWeekLabel(effectiveTo.date).slice(0,3)} {fmtRolloverClock(effectiveTo.time)}
+                      </div>
+                    )}
                   </div>
-                  {/* Visual before/after -- a plain "→" text line used to be
-                      the whole story here; this is the ghost-block visual
-                      requested for the rebuild preview (ui/chrome-and-
-                      density Addition #7), reusing the same faded-old/
-                      highlighted-new treatment WeeklyPlanner's own drag
-                      ghost already uses, just as two small pills instead of
-                      a full calendar overlay -- cheaper to build, same
-                      "here's what's about to change" read. */}
-                  {!override.skip&&(
-                    <div style={{display:"flex",alignItems:"center",gap:8,marginTop:8}}>
-                      <span style={{fontSize:11,fontWeight:600,color:T.muted,background:T.card2,border:`1px dashed ${T.border}`,borderRadius:99,padding:"3px 10px",textDecoration:"line-through",whiteSpace:"nowrap"}}>
-                        {m.from.date===dayKey()?"Today":dayOfWeekLabel(m.from.date).slice(0,3)} {fmtRolloverClock(m.from.time)}
-                      </span>
-                      <span style={{color:T.faint,fontSize:12,flexShrink:0}}>→</span>
-                      <span style={{fontSize:11,fontWeight:700,color:T.lime,background:T.lime+"14",border:`1px solid ${T.lime}55`,borderRadius:99,padding:"3px 10px",whiteSpace:"nowrap"}}>
-                        {effectiveTo.date===dayKey()?"Today":dayOfWeekLabel(effectiveTo.date).slice(0,3)} {fmtRolloverClock(effectiveTo.time)}
-                      </span>
-                    </div>
-                  )}
                   {expanded&&(
                     <div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap"}}>
                       <BtnSm variant="ghost" onClick={()=>{setCatchUpMoveDraft({date:effectiveTo.date,time:effectiveTo.time});setCatchUpMoveError("");setCatchUpExpandedId("moving-"+m.id);}}>Move it myself</BtnSm>
