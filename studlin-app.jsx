@@ -21621,19 +21621,71 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
         <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:80,background:T.lime,color:T.ink,fontSize:12.5,fontWeight:600,padding:"10px 18px",borderRadius:7,boxShadow:"0 14px 30px -10px rgba(0,0,0,0.5)",display:"flex",alignItems:"center",gap:8}}>{Icon.check} {overrunToast}</div>
       )}
 
-      {/* ROW 2: Checklist. Today's plan (the actual "what do I do right
-          now" task list + Begin) moved out entirely -- that's Today's job
-          now (ui/today-home), and two screens both answering that question
-          was exactly the confusion being removed. Checklist stays: it's
-          plain to-dos with no inherent duration/time, deliberately kept out
-          of both Calendar and Today.
-          BUG NOTE: this used to be a 2-col row with a "Today's plan" panel
-          here too, referencing plan/planDoneCount/planCountable/
-          isPlanPrimaryRow/scOf -- those only exist in the separate Today
-          component below, not in Dashboard's own scope, so that panel threw
-          a ReferenceError on every single Dashboard render. Removed. */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr",gap:16}}>
-        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:22,padding:22}}>
+      {/* ROW 2: Today's plan + Checklist (Ask Studlin/aichat card removed
+          along with the standalone Studlin AI tab -- see Phase 2 of the
+          Magic-Calendar plan). Comes before Your Classes -- "what do I do
+          right now" leads on a calendar app's dashboard, a browsable
+          everything-assigned reference comes after. */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+        {/* Today's plan */}
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:20,display:"flex",flexDirection:"column"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8,flexWrap:"wrap"}}>
+            <span style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:T.text}}>Today's plan</span>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.1em",padding:"4px 9px",borderRadius:5,background:T.card2,color:T.muted,fontWeight:600}}>{planDoneCount} / {planCountable.length} DONE</span>
+              <button onClick={()=>setActive("calendar")} style={{fontSize:12,color:T.muted,display:"inline-flex",alignItems:"center",gap:3,cursor:"pointer",background:"none",border:"none",fontFamily:T.font,fontWeight:500}}>Calendar <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
+            </div>
+          </div>
+          {plan.length>0&&<div style={{height:3,background:T.card2,borderRadius:99,marginBottom:14,overflow:"hidden"}}><div style={{height:"100%",width:Math.round(planDoneCount/Math.max(planCountable.length,1)*100)+"%",background:`linear-gradient(90deg,${T.limeDk},${T.lime})`,borderRadius:99,transition:"width 0.5s ease"}} /></div>}
+          {plan.length===0
+            ?<div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 8px",textAlign:"center"}}>
+              <div style={{fontSize:13,color:T.muted,marginBottom:18,lineHeight:1.6}}>Nothing scheduled for today. Add events to your calendar and they appear here automatically.</div>
+              <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
+                <button onClick={()=>setActive("calendar")} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",background:T.lime,color:T.ink,border:"none",borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Add a task</button>
+                <button onClick={()=>{lsSet("pendingBrainDump",true);setActive("calendar");}} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"9px 18px",background:"transparent",color:T.text,border:`1px solid ${T.border}`,borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Brain dump everything</button>
+              </div>
+            </div>
+            :plan.map((t)=>{
+              const c=scOf(t.subject);
+              // A chunk past the first, or a "Break" row, is a display-only
+              // continuation of the real session above it -- its id doesn't
+              // point at a real events[] entry (see chunkTasksWithBreaks),
+              // so it renders as a plain, non-clickable sub-row instead of
+              // reusing the checkbox/Reschedule affordances that need a
+              // real id to act on.
+              if(!isPlanPrimaryRow(t)){
+                return(
+                  <div key={t.id} style={{display:"flex",alignItems:"center",gap:12,padding:"7px 14px 7px 34px",marginBottom:8,opacity:0.55}}>
+                    <span style={{fontSize:12,color:t.done?T.faint:T.muted,textDecoration:t.done?"line-through":"none",fontStyle:t.isBreak?"italic":"normal"}}>{t.title}</span>
+                    <span style={{flex:1}} />
+                    <span style={{fontFamily:T.mono,fontSize:10,color:T.faint}}>{fmtClock(t.time)}</span>
+                  </div>
+                );
+              }
+              return(
+                <div key={t.id} onClick={()=>{if(t.done)uncrossEventDone(t.id);else{markEventDone(t.id);onTaskCompleted&&onTaskCompleted(t.id);}forcePlan(x=>x+1);}} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer",background:T.card2}}>
+                  <div style={{width:20,height:20,borderRadius:"50%",border:`1.5px solid ${t.done?T.text:T.border}`,background:t.done?T.text:"transparent",flex:"none",display:"grid",placeItems:"center"}}>
+                    {t.done&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={T.lime} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <span style={{fontSize:13.5,color:t.done?T.faint:T.text,textDecoration:t.done?"line-through":"none",fontWeight:500}}>{t.title}</span>
+                    <div style={{fontSize:11,color:T.muted,marginTop:1}}>{t.subject}{t.kind?" · "+t.kind:""}</div>
+                  </div>
+                  <span style={{fontFamily:T.mono,fontSize:10,color:T.faint}}>{fmtClock(t.time)}</span>
+                  {!t.done&&t.duration&&(t.kind==="study block"||t.kind==="deadline")&&(
+                    <button onClick={(e)=>{e.stopPropagation();setRescheduleTask(t.isChunk?{...t,duration:t.fullDuration}:t);}} style={{flexShrink:0,padding:"3px 7px",borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Reschedule</button>
+                  )}
+                </div>
+              );
+            })}
+        </div>
+
+        {/* Checklist — plain to-dos with no inherent duration/time (e.g.
+            "send AP scores to college"). Deliberately kept out of the
+            calendar/Today's-plan entirely; this is the only place they live.
+            Restored here after briefly being removed — replaces "Jump back
+            in", which just duplicated what the sidebar nav already does. */}
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:20}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <span style={{fontFamily:T.hand,fontSize:22,fontWeight:700,color:T.text}}>Checklist</span>
