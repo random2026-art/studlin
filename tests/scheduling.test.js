@@ -267,6 +267,36 @@ describe("buildSyllabusEventBatch / commitSyllabusEvents (Class Setup Wizard's e
     assert.equal(markerEvents[0].referenceLinks[1].url, "https://example.com/slides");
   });
 
+  test("regression: a project item's materialFiles/materialLinks are no longer silently dropped", () => {
+    // Bug: materialEntries/referenceLinks used to be gated to kind==="exam"
+    // only, even though the review UI collects materialFiles/materialLinks
+    // for project items too (e.g. a teacher's PDF with the project's
+    // deadlines/requirements) -- a student could upload it during syllabus
+    // review and have it silently vanish on commit.
+    const { buildSyllabusEventBatch, getWeeklyRoutine, getSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const projectItem = syllabusItem({
+      kind: "project", proposeSessions: false, attackBlock: false,
+      materialFiles: [{ name: "project-brief.pdf", text: "final project requirements" }],
+      materialLinks: [{ label: "Rubric", url: "https://example.com/rubric" }],
+    });
+    const { markerEvents } = buildSyllabusEventBatch([], "wiz-proj", "Chemistry", [projectItem], null, getWeeklyRoutine(), getSchedulePreferences());
+    assert.equal(markerEvents[0].sourceMaterials.length, 1);
+    assert.equal(markerEvents[0].sourceMaterials[0].name, "project-brief.pdf");
+    assert.equal(markerEvents[0].referenceLinks.length, 1);
+    assert.equal(markerEvents[0].referenceLinks[0].url, "https://example.com/rubric");
+  });
+
+  test("an assignment (plain kind:\"deadline\") still never gets material attached -- only exam/project do", () => {
+    const { buildSyllabusEventBatch, getWeeklyRoutine, getSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T09:00:00" });
+    const assignmentItem = syllabusItem({
+      materialFiles: [{ name: "notes.pdf", text: "should not attach" }],
+      materialLinks: [{ label: "x", url: "https://example.com/x" }],
+    });
+    const { markerEvents } = buildSyllabusEventBatch([], "wiz-assign", "Chemistry", [assignmentItem], null, getWeeklyRoutine(), getSchedulePreferences());
+    assert.equal(markerEvents[0].sourceMaterials, undefined);
+    assert.equal(markerEvents[0].referenceLinks, undefined);
+  });
+
   test("an exam with no explicit material still gets the class-level sourceMaterial as its one entry", () => {
     const { buildSyllabusEventBatch, getWeeklyRoutine, getSchedulePreferences } = loadStudlinModule({ now: "2026-07-20T09:00:00" });
     const examItem = syllabusItem({ kind: "exam", proposeSessions: false });

@@ -115,7 +115,7 @@ function loadStudlinModule(options) {
     "deriveFreePeriodsFromPeriods","getHsSchoolHours","saveHsSchoolHours",
     "subtractIntervals","effectiveLeadIn","effectiveTrailOut","isLeadInFixed",
     "getRoutineOverrides","saveRoutineOverrides","expandRoutineOccurrences",
-    "getHolidays","saveHolidays","getWakeSleep","saveWakeSleep",
+    "getHolidays","saveHolidays","isHoliday","getWakeSleep","saveWakeSleep",
     "isTermRolloverDue","getTermRolloverDismissedFor","dismissTermRollover",
     "upcomingAssignments","upcomingProjects",
     "computeSessionPriority","computePreparedness","restampSessionPriorities",

@@ -1289,11 +1289,22 @@ const saveCalZoom=(px)=>lsSet("calZoomPxPerHr",clampCalZoom(px));
 const getHsSchoolHours=()=>lsGet("hsSchoolHours",null);
 const saveHsSchoolHours=(t)=>lsSet("hsSchoolHours",t);
 // Phase 8: black-out date ranges the term pauses (spring break, etc.) --
-// [{start,end,label}], collected during onboarding. Not consulted by the
-// scheduling engine yet (same "opt-in, additive" spirit as getSchoolTerm
-// when it first shipped) -- this phase just captures and shows them.
+// [{start,end,label}], collected during onboarding.
 const getHolidays=()=>lsGet("holidays",[]);
 const saveHolidays=(h)=>lsSet("holidays",h);
+// Bug fix: onboarding's own copy promises "Studlin won't plan study
+// sessions during these," but nothing ever checked -- consulted by the
+// core auto-placement day-loops (findOpenSlotFor, findTier0Slot,
+// dayHasRoomFor) so a holiday date is treated the same as a fully-booked
+// day: skipped over, never a landing spot for a new study session. Does
+// NOT touch fixed/manually-placed events, routine generation, or display
+// (a holiday still shows normally on the calendar) -- purely a "don't
+// auto-schedule here" signal, same scope as the copy promises.
+function isHoliday(dateKey){
+  const list=getHolidays();
+  if(!list||list.length===0)return false;
+  return list.some(h=>h.start&&h.end&&dateKey>=h.start&&dateKey<=h.end);
+}
 // Phase 8: a student's actual wake/sleep hours, genuinely distinct from
 // workStartTime/workEndTime (schedulePrefs) which is a STUDY-hours
 // preference, not "when am I awake at all" -- today those get conflated
@@ -1592,6 +1603,7 @@ function findOpenSlotFor(events,routines,prefs,desiredDate,desiredTime,duration,
     // Assignment-linked callers (scheduleAssignmentExtension) pass a deadline
     // so we never place a block past it — plain callers omit it, no-op.
     if(deadlineKey&&dk>deadlineKey)break;
+    if(isHoliday(dk))continue;
     const {start:prefStartMins,end:prefEndMins}=getWorkWindowMinsFor(prefs,dk);
     // Free periods are preferred landing spots, not blocks — never treat them
     // as occupied (matches the Dashboard's scheduling engine).
@@ -1669,6 +1681,7 @@ function findLegalSlotOrNull(events,routines,prefs,desiredDate,desiredTime,durat
 // never looks before desiredTime on the target day) can't find that same
 // gap, silently rolling to a worse day or worse.
 function dayHasRoomFor(events,routines,prefs,dateKey,duration,desiredTime){
+  if(isHoliday(dateKey))return false;
   const dayWindow=getWorkWindowMinsFor(prefs,dateKey);
   const prefStartMins=desiredTime?Math.max(dayWindow.start,timeToMinutes(desiredTime)):dayWindow.start;
   // Same today-only catch-up allowance findOpenSlotFor/findLegalSlotOrNull
@@ -2262,6 +2275,7 @@ function findTier0Slot(task,events,routines,prefs,todayKey){
     const d=(()=>{const x=new Date(todayKey+"T12:00:00");x.setDate(x.getDate()+i);return dayKey(x);})();
     if(deadlineKey&&d>deadlineKey)break;
     if(!withinExamPrepTolerance(d))continue;
+    if(isHoliday(d))continue;
     const{start:winStart,end:winEnd}=getWorkWindowMinsFor(prefs,d);
     const anchorTimes=Array.from(new Set([desiredTime,...bucketAnchorMinsInWindow(winStart).map(minutesToTime)]))
       .filter(t=>{const m=timeToMinutes(t);return m>=winStart&&m<winEnd;});
@@ -6116,7 +6130,7 @@ async function extractFileText(file){
 // elsewhere (generateFlashcardsFromText/generateQuizFromText,
 // linkDeckToExamStorage, buildSpacedSessionPreviews, computeExamReadiness)
 // instead of inventing a parallel system.
-function StudlinPrep({setActive=()=>{}}={}){
+function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   const [tab,setTab]=useState("exams"); // exams | flashcards | practiceExams
   // One-shot deep-link handoff -- same pattern openNoteId already uses
   // elsewhere: a caller (Dashboard's Exams master
@@ -11186,7 +11200,13 @@ function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routin
     const syllabusSeed=it.detail&&it.detail.trim()
       ?[{name:"From your syllabus",text:it.detail.trim()}]
       :(sourceMaterial?[{name:"From your syllabus",text:sourceMaterial}]:[]);
-    const materialEntries=it.kind==="exam"?[...syllabusSeed,...(it.materialFiles||[])]:[];
+    // Bug fix: this used to be gated to kind==="exam" only, silently
+    // dropping whatever a student uploaded/pasted for a project item during
+    // syllabus review even though the review UI itself collects
+    // materialFiles/materialLinks for projects too (e.g. a teacher's PDF
+    // with the project's deadlines/requirements). "project" still carries
+    // kind:"project" here, same as wantsAttack above -- see its comment.
+    const materialEntries=(it.kind==="exam"||it.kind==="project")?[...syllabusSeed,...(it.materialFiles||[])]:[];
     // "Don't know the date yet" -- same shape the plain Checklist card's
     // own items use (see addChecklistItem in Dashboard): no date/time, no
     // scheduling of any kind, just a checkbox that stays put until the
@@ -11210,7 +11230,7 @@ function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routin
         noteId,
         checklist:true,
         ...(materialEntries.length>0?{sourceMaterials:materialEntries}:{}),
-        ...(it.kind==="exam"&&it.materialLinks&&it.materialLinks.length>0?{referenceLinks:it.materialLinks}:{}),
+        ...((it.kind==="exam"||it.kind==="project")&&it.materialLinks&&it.materialLinks.length>0?{referenceLinks:it.materialLinks}:{}),
       };
     }
     const wantsAttack=(it.kind==="deadline"||it.kind==="project")&&it.attackBlock;
@@ -11264,7 +11284,7 @@ function buildSyllabusEventBatch(existing,noteId,tag,items,sourceMaterial,routin
       // alone rather than risk touching it.
       ...(it.kind==="exam"?{difficulty:it.difficulty??500}:{}),
       ...(materialEntries.length>0?{sourceMaterials:materialEntries}:{}),
-      ...(it.kind==="exam"&&it.materialLinks&&it.materialLinks.length>0?{referenceLinks:it.materialLinks}:{}),
+      ...((it.kind==="exam"||it.kind==="project")&&it.materialLinks&&it.materialLinks.length>0?{referenceLinks:it.materialLinks}:{}),
     };
   });
   // Opted-in deadline items that are already close enough get a real Attack
@@ -14295,7 +14315,7 @@ const WizardStepper=({step})=>{
   );
 };
 
-function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCourseId}){
+function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCourseId,onPartialSync}){
   const [step,setStep]=useState("status"); // timezone | term | holidays | awake | status | classes | activities | calendarSync | window | finalReview
   const [status,setStatus]=useState(initialStatus||"");
   // Classes fully reviewed this session, staged -- nothing in here touches
@@ -14349,6 +14369,12 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   const [schoolStart,setSchoolStart]=useState("08:00");
   const [schoolEnd,setSchoolEnd]=useState("15:00");
   const [justAdded,setJustAdded]=useState("");
+  // HS whole-schedule commits go straight to storage instead of staging
+  // into pendingClasses (see commitHsSchedule), so the "classes" step's
+  // Continue button can't tell from pendingClasses.length alone whether
+  // classes were actually added this session -- without this it always
+  // showed "Skip, I'll add classes later" even right after a successful add.
+  const [hsClassesCommitted,setHsClassesCommitted]=useState(0);
   // Real inline connect for the calendarSync step -- same module-level,
   // popup-based (not page-navigation) connectGoogleCalendar() Settings
   // itself calls, initialized from whatever's already in storage so a
@@ -14733,14 +14759,27 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // persisting it via saveSchoolTerm -- an HS account's answer to that
     // step was silently discarded.
     if(termStart&&termEnd)saveSchoolTerm({start:termStart,end:termEnd});
+    // Same gap as termStart/termEnd above -- holidays is collected by the
+    // shared "holidays" wizard step for every account, but only
+    // commitAllToCalendar ever persisted it. An HS account whole-schedule
+    // committing here had its holiday answer silently discarded.
+    if(holidays.length>0)saveHolidays(holidays);
     if(status)saveProfile({...getProfile(),status});
     // Whole-schedule photo/paste import has no deadlines to review, so
     // there's nothing to stage -- it commits immediately, same as it always has.
     setJustAdded(valid.length+" classes");
     setTimeout(()=>setJustAdded(""),3000);
+    setHsClassesCommitted(c=>c+valid.length);
     setHsReview(null);
     setHsFreeReview([]);
     setAddMode(null);
+    // Bug fix: unlike commitAllToCalendar (which stages into pendingClasses
+    // and only writes on "Add to Calendar," triggering onFinish's resync),
+    // this commits straight to storage mid-wizard -- so the Courses
+    // sidebar/Calendar's own React state (owned by the parent CalendarTab)
+    // never found out. Without this, the classes are correctly saved but
+    // invisible until a full page reload.
+    if(onPartialSync)onPartialSync();
   };
 
   // Nothing here is real yet, so removing/editing a staged class is just
@@ -14965,7 +15004,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
           </>)}
 
           {step==="classes"&&addMode==="scan"&&(<>
-            <TitleSub title="Scan a syllabus" sub="PDF, Word doc, text, or a photo/screenshot — Studlin reads it and fills in the review below." />
+            <TitleSub title={status==="highschool"?"Scan assignments":"Scan a syllabus"} sub={status==="highschool"?"A unit calendar, worksheet, handout, whatever your teacher gave you -- PDF, Word doc, text, or a photo. Studlin reads it and fills in the review below.":"PDF, Word doc, text, or a photo/screenshot — Studlin reads it and fills in the review below."} />
             {scanning
               ? <div style={{padding:"40px 0",textAlign:"center",color:T.muted,fontSize:13}}>Reading your syllabus…</div>
               : pasteMode ? (
@@ -15334,7 +15373,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
             </>)}
             {step==="awake"&&(<Btn onClick={()=>setStep("status")} disabled={windowInvalid} style={{opacity:windowInvalid?0.45:1}}>Continue</Btn>)}
             {step==="classes"&&addMode===null&&(
-              <Btn onClick={()=>quickScan?setStep("finalReview"):setStep("activities")}>{pendingClasses.length>0?"Done adding classes":"Skip, I'll add classes later"}</Btn>
+              <Btn onClick={()=>quickScan?setStep("finalReview"):setStep("activities")}>{(pendingClasses.length>0||hsClassesCommitted>0)?"Done adding classes":"Skip, I'll add classes later"}</Btn>
             )}
             {step==="classes"&&addMode==="review"&&reviewSub==="items"&&(
               <Btn onClick={()=>setReviewSub("sessions")} disabled={!review.subjectName.trim()} style={{opacity:review.subjectName.trim()?1:0.45}}>Continue</Btn>
@@ -17190,27 +17229,39 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // (each class's own scan already sees every class added before it), and
   // strictly better than the old flow, which never reconciled subjects
   // against routine at all.
+  // Re-reads subjects/routine/events from storage into this component's own
+  // live state, without closing the wizard or touching onboarding flags --
+  // for a commit that happens mid-wizard (commitHsSchedule fires from
+  // inside the "classes" step, not the wizard's actual last step), so the
+  // Courses sidebar/Calendar grid reflect what was just added immediately
+  // instead of only after a page reload.
+  const syncClassSetupState=()=>{
+    setUserSubjectsState(getSubjects());
+    persistRoutines(getWeeklyRoutine());
+    setEvents(lsGet("events",[]).filter(e=>!e.id.startsWith("seed-")));
+  };
   const finishClassSetup=()=>{
     lsSet("subjects-configured",true);
     lsSet("hasConfiguredRoutine",true);
     setClassSetupOpen(false);
-    setUserSubjectsState(getSubjects());
-    persistRoutines(getWeeklyRoutine());
-    setEvents(lsGet("events",[]).filter(e=>!e.id.startsWith("seed-")));
+    syncClassSetupState();
   };
   const skipClassSetup=()=>{
     lsSet("subjects-configured",true);
     lsSet("hasConfiguredRoutine",true);
     setClassSetupOpen(false);
+    // Defensive: "Skip all" is a real exit path after an HS whole-schedule
+    // commit (commitHsSchedule saves straight to storage mid-wizard rather
+    // than staging through pendingClasses), so this needs the same resync
+    // finishClassSetup does, not just the onboarding flags.
+    syncClassSetupState();
   };
   // Same re-sync finishClassSetup does, minus the onboarding flags (already
   // true by the time an existing user reaches this from the Tools menu).
   const finishQuickScan=()=>{
     setQuickScanOpen(false);
     setQuickScanTargetCourseId(null);
-    setUserSubjectsState(getSubjects());
-    persistRoutines(getWeeklyRoutine());
-    setEvents(lsGet("events",[]).filter(e=>!e.id.startsWith("seed-")));
+    syncClassSetupState();
   };
   // RoutineWizardModal's own finish/skip -- reachable now only via "Manage
   // Routine" (openWizardOnMount above), not as a first-run auto-trigger.
@@ -18655,9 +18706,16 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           <div onMouseLeave={()=>setCourseMenuOpenId(null)} style={{position:"absolute",top:"100%",right:0,zIndex:40,marginTop:4,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 12px 28px -12px rgba(0,0,0,0.5)",overflow:"hidden",minWidth:150}}>
             <button onClick={()=>startRenameCourse(sub)} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Rename</button>
             <button onClick={()=>{setCourseMenuOpenId(null);setActive("settings");}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Change color</button>
-            {getProfile().status==="highschool"?(
-              <button onClick={()=>{setCourseMenuOpenId(null);openWeeklyContent(sub.id);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Weekly schedule</button>
-            ):(
+            {getProfile().status==="highschool"?(<>
+              {/* Renamed from "Weekly schedule" -- this is a per-day text
+                  note, not a scan or a time editor, and the old label read
+                  like it was one. "Scan assignments" below is the real,
+                  newly-added scan entry point HS classes were missing --
+                  reuses the exact same quickScan wizard college's "Import
+                  syllabus" already uses (status-agnostic underneath). */}
+              <button onClick={()=>{setCourseMenuOpenId(null);openWeeklyContent(sub.id);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Class notes</button>
+              <button onClick={()=>{setCourseMenuOpenId(null);setQuickScanTargetCourseId(sub.id);setQuickScanOpen(true);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Scan assignments</button>
+            </>):(
               <button onClick={()=>{setCourseMenuOpenId(null);setQuickScanTargetCourseId(sub.id);setQuickScanOpen(true);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Import syllabus</button>
             )}
             <button onClick={()=>{setCourseMenuOpenId(null);setConfirmDeleteCourseId(sub.id);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.red,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Delete</button>
@@ -19067,9 +19125,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         <TourStep {...CAL_TOUR_STEPS[calTourStep]} step={calTourStep} total={CAL_TOUR_STEPS.length}
           isLast={calTourStep===CAL_TOUR_STEPS.length-1} onNext={advanceCalTour} onSkip={skipCalTour} />
       )}
-      <ClassSetupWizard open={classSetupOpen} initialStatus={getProfile().status} onFinish={finishClassSetup} onSkip={skipClassSetup} />
-      <ClassSetupWizard open={quickScanOpen} quickScan targetCourseId={quickScanTargetCourseId} initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>{setQuickScanOpen(false);setQuickScanTargetCourseId(null);}} />
-      <Modal open={!!weeklyContentCourseId} onClose={()=>setWeeklyContentCourseId(null)} title="Weekly schedule" sub="A short note for each day this class meets -- lecture, lab, homework due, whatever's useful." width={460}
+      <ClassSetupWizard open={classSetupOpen} initialStatus={getProfile().status} onFinish={finishClassSetup} onSkip={skipClassSetup} onPartialSync={syncClassSetupState} />
+      <ClassSetupWizard open={quickScanOpen} quickScan targetCourseId={quickScanTargetCourseId} initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>{setQuickScanOpen(false);setQuickScanTargetCourseId(null);syncClassSetupState();}} onPartialSync={syncClassSetupState} />
+      <Modal open={!!weeklyContentCourseId} onClose={()=>setWeeklyContentCourseId(null)} title="Class notes" sub="A short note for each day this class meets -- lecture, lab, homework due, whatever's useful." width={460}
         footer={<><Btn variant="subtle" onClick={()=>setWeeklyContentCourseId(null)}>Cancel</Btn><Btn onClick={saveWeeklyContent}>Save</Btn></>}>
         {(()=>{
           const r=routines.find(rt=>rt.kind==="class"&&rt.courseId===weeklyContentCourseId);
@@ -23503,7 +23561,7 @@ function App() {
            active==="notes"?<Notes setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="profile"?<Profile setActive={setActive} seriousMode={seriousMode} />:
-           active==="prep"?<StudlinPrep setActive={setActive} />:
+           active==="prep"?<StudlinPrep setActive={setActive} setDetailEventId={setDetailEventId} />:
            ActivePage?<ActivePage />:null}
         </div>
       </div>
