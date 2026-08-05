@@ -82,6 +82,7 @@ function loadStudlinModule(options) {
     "getTimerCheckpoint","checkpointTimerSession","clearTimerCheckpoint",
     "resolveOrphanedCheckpoint","mergeImportedEvents","detectCalendarSourceType",
     "getDayOccupiedIntervals","checkManualStudyTime","dayHasRoomFor","undoTier0Move",
+    "checkTimeOffImpact",
     "getWorkWindowMinsFor","detectPeakHourInsight","dismissPeakHourInsight",
     "logCompletionOutcome","getBucketReliability","setSchedulePreferences",
     "applyCheckInRating","computeExamReadiness","canGenQuiz","recordQuizGen",

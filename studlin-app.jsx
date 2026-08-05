@@ -2866,33 +2866,52 @@ function scheduleStudyBlockExtension(task,totalMins){
 // Folds a synthetic busy block over the requested window into a scratch
 // copy of events (same synthetic-busy-block trick the shared-project
 // mutual-availability check already uses), then checks whether every
-// pending exam-prep/deadline-bound session that actually overlaps that
-// window could still legally be placed somewhere before its own deadline.
-// Only ever reports a consequence; nothing here schedules or moves
-// anything for real — a real gap only ever shows up later on its own, the
-// same honest-degrade precedent findSharedStudyWindow already set.
-function checkTimeOffImpact(hours){
+// pending item that actually overlaps that window could still legally be
+// placed somewhere else. Only ever reports a consequence; nothing here
+// schedules or moves anything for real — a real gap only ever shows up
+// later on its own, the same honest-degrade precedent findSharedStudyWindow
+// already set.
+// opts: {date, startTime} — both optional, default to "right now, today"
+// (the original, still-default behavior). Passing a future date lets a
+// student ask "can I go Saturday afternoon" instead of only ever "now".
+// Evaluates EVERY affected item, not just the first — a single early
+// return used to silently hide every task after the first one it found.
+// Broadened from isExamPrepSession||deadline to any pending, timed,
+// non-free-period event: a plain scheduled study block with no linked
+// deadline used to be invisible to this check entirely.
+function checkTimeOffImpact(hours,opts){
   const events=lsGet("events",[]);
   const routines=getWeeklyRoutine();
   const prefs=getSchedulePreferences();
-  const today=dayKey();
   const now=new Date();
-  const startTime=minutesToTime(now.getHours()*60+now.getMinutes());
+  const date=(opts&&opts.date)||dayKey();
+  const startTime=(opts&&opts.startTime)||minutesToTime(now.getHours()*60+now.getMinutes());
   const startMins=timeToMinutes(startTime);
   const endMins=startMins+hours*60;
-  const affected=events.filter(e=>e.date===today&&e.time&&e.status==="pending"&&(e.isExamPrepSession||e.deadline)).filter(e=>{
+  const affected=events.filter(e=>e.date===date&&e.time&&e.status==="pending"&&e.kind!=="free period").filter(e=>{
     const s=timeToMinutes(e.time),en=s+(e.duration||30);
     return !(endMins<=s||startMins>=en);
   });
   if(affected.length===0)return {ok:true};
-  const synthetic={id:"timeoff-sim",date:today,time:startTime,duration:hours*60,kind:"busy block",status:"pending"};
+  const synthetic={id:"timeoff-sim",date,time:startTime,duration:hours*60,kind:"busy block",status:"pending"};
+  const blocked=[];
+  const displaced=[];
+  // Threaded forward so a later affected item's own check sees an earlier
+  // one's tentative new slot too -- otherwise two affected items could each
+  // independently report "moves to the same opening" when only one of them
+  // actually could. Still never touches real storage.
+  let scratch=events.concat([synthetic]);
   for(const task of affected){
-    const others=events.filter(x=>x.id!==task.id).concat([synthetic]);
-    const slot=findLegalSlotOrNull(others,routines,prefs,today,prefs.workStartTime,task.duration||30,task.deadline||null);
-    if(!slot)return {ok:false,blocked:true,title:task.title};
-    if(slot.date!==task.date||slot.time!==task.time)return {ok:false,blocked:false,title:task.title,newDate:slot.date};
+    const others=scratch.filter(x=>x.id!==task.id);
+    const slot=findLegalSlotOrNull(others,routines,prefs,date,prefs.workStartTime,task.duration||30,task.deadline||null);
+    if(!slot){blocked.push(task.title);continue;}
+    if(slot.date!==task.date||slot.time!==task.time){
+      displaced.push({title:task.title,newDate:slot.date});
+      scratch=others.concat([{...task,date:slot.date,time:slot.time}]);
+    }
   }
-  return {ok:true};
+  if(blocked.length===0&&displaced.length===0)return {ok:true};
+  return {ok:false,blocked,displaced};
 }
 // Attack Block — calibration-based duration estimation. Instead of asking a
 // student to guess how long an ambiguous task takes (the exact skill they're
@@ -17165,6 +17184,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   const [timeOffOpen,setTimeOffOpen]=useState(false);
   const [timeOffHours,setTimeOffHours]=useState(2);
   const [timeOffResult,setTimeOffResult]=useState(null);
+  // Gap fix: "Can I go?" used to only ever check "right now, today" -- no
+  // way to ask about a future outing. null means "now" (the original,
+  // still-default behavior); set means a specific future date/time.
+  const [timeOffFuture,setTimeOffFuture]=useState(false);
+  const [timeOffDate,setTimeOffDate]=useState(()=>dayKey());
+  const [timeOffTime,setTimeOffTime]=useState("18:00");
 
   // RoutineWizardModal itself is untouched and still reachable later via
   // "Manage Routine" (Settings > Calendar Preferences, arrives here via
@@ -18964,12 +18989,22 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
               <div onClick={()=>setToolsMenuOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
               <div style={{position:"absolute",top:"calc(100% + 6px)",right:0,width:220,background:T.card,border:`1px solid ${T.border}`,borderRadius:6,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
                 {[
-                  {icon:Icon.zap,label:"Balance my week",sub:"Rebalance an overloaded week",onClick:()=>{setToolsMenuOpen(false);openWeekBalance();}},
+                  // Brain Dump leads -- it's the "get everything out of your
+                  // head first" action and doesn't presuppose anything is
+                  // scheduled yet, unlike the reschedule/balance options
+                  // below (which only make sense once there's something
+                  // already on the calendar to redistribute). The more
+                  // foundational, more frequently-needed action goes first.
+                  {icon:Icon.sparkles,label:"Brain dump",sub:"Tell Studlin everything at once",onClick:()=>{setToolsMenuOpen(false);resetForm();setBrainDumpOpen(true);}},
                   {icon:Icon.file,label:"Scan syllabus",sub:"Upload a doc, AI extracts dates",onClick:()=>{setToolsMenuOpen(false);setQuickScanOpen(true);}},
                   {icon:Icon.cal,label:"Routine",sub:"Manage your weekly schedule",onClick:()=>{setToolsMenuOpen(false);setRoutineCenterOpen(true);}},
                   {icon:Icon.check,label:"Can I go?",sub:"See if free time now is safe",onClick:()=>{setToolsMenuOpen(false);setTimeOffResult(null);setTimeOffOpen(true);}},
-                  {icon:Icon.sparkles,label:"Brain dump",sub:"Tell Studlin everything at once",onClick:()=>{setToolsMenuOpen(false);resetForm();setBrainDumpOpen(true);}},
-                  {icon:Icon.refresh,label:"Studlin Reschedule",sub:"Emergency: push back today's plan",onClick:()=>{setToolsMenuOpen(false);setPauseOpen(true);setPauseError("");setPausePreview(null);},danger:true},
+                  // Balance My Week used to be its own separate item here --
+                  // folded into Reschedule as one of its modes instead,
+                  // since both are the same underlying job (redistribute
+                  // what's already scheduled). See the picker list inside
+                  // the pauseOpen modal below.
+                  {icon:Icon.refresh,label:"Reschedule",sub:"Push back, clear, or balance your week",onClick:()=>{setToolsMenuOpen(false);setPauseOpen(true);setPauseError("");setPausePreview(null);},danger:true},
                 ].map(item=>(
                   <div key={item.label} onClick={item.onClick} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 14px",cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                     <span style={{width:16,color:item.danger?T.red:T.muted,display:"flex",marginTop:2}}>{item.icon}</span>
@@ -19178,8 +19213,18 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           writes to the calendar. See checkTimeOffImpact's own comment for
           why: it's the exact same "compute, don't commit" approach the
           shared-project mutual-availability check already uses. ── */}
-      <Modal open={timeOffOpen} onClose={()=>setTimeOffOpen(false)} title="Can I go?" sub="Pick how long, starting now — Studlin checks what's actually at risk." width={400}
-        footer={<><Btn variant="subtle" onClick={()=>setTimeOffOpen(false)}>Close</Btn><Btn onClick={()=>setTimeOffResult(checkTimeOffImpact(timeOffHours))}>Check</Btn></>}>
+      <Modal open={timeOffOpen} onClose={()=>setTimeOffOpen(false)} title="Can I go?" sub={timeOffFuture?"Pick how long, and when — Studlin checks what's actually at risk.":"Pick how long, starting now — Studlin checks what's actually at risk."} width={400}
+        footer={<><Btn variant="subtle" onClick={()=>setTimeOffOpen(false)}>Close</Btn><Btn onClick={()=>setTimeOffResult(checkTimeOffImpact(timeOffHours,timeOffFuture?{date:timeOffDate,startTime:timeOffTime}:undefined))}>Check</Btn></>}>
+        <div style={{display:"flex",gap:8,marginBottom:12}}>
+          <button type="button" onClick={()=>{setTimeOffFuture(false);setTimeOffResult(null);}} style={{flex:1,padding:"7px",borderRadius:8,border:`1px solid ${!timeOffFuture?T.lime+"66":T.border}`,background:!timeOffFuture?T.lime+"14":T.card2,color:!timeOffFuture?T.lime:T.text,cursor:"pointer",fontFamily:T.font,fontSize:12.5,fontWeight:600}}>Now</button>
+          <button type="button" onClick={()=>{setTimeOffFuture(true);setTimeOffResult(null);}} style={{flex:1,padding:"7px",borderRadius:8,border:`1px solid ${timeOffFuture?T.lime+"66":T.border}`,background:timeOffFuture?T.lime+"14":T.card2,color:timeOffFuture?T.lime:T.text,cursor:"pointer",fontFamily:T.font,fontSize:12.5,fontWeight:600}}>Pick a time</button>
+        </div>
+        {timeOffFuture&&(
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+            <DateField label="Date" value={timeOffDate} onChange={v=>{setTimeOffDate(v);setTimeOffResult(null);}} min={dayKey()} />
+            <TimeField label="Starting at" value={timeOffTime} onChange={v=>{setTimeOffTime(v);setTimeOffResult(null);}} />
+          </div>
+        )}
         <div style={{display:"flex",gap:8,marginBottom:16}}>
           {[1,2,3].map(h=>(
             <button key={h} type="button" onClick={()=>{setTimeOffHours(h);setTimeOffResult(null);}} style={{flex:1,padding:"9px",borderRadius:8,border:`1px solid ${timeOffHours===h?T.lime+"66":T.border}`,background:timeOffHours===h?T.lime+"14":T.card2,color:timeOffHours===h?T.lime:T.text,cursor:"pointer",fontFamily:T.font,fontSize:13,fontWeight:600}}>{h}h</button>
@@ -19190,10 +19235,16 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           </div>
         </div>
         {timeOffResult&&(
-          <div style={{fontSize:13,lineHeight:1.5,padding:"12px 14px",borderRadius:10,background:timeOffResult.ok?T.teal+"14":timeOffResult.blocked?T.red+"14":T.amber+"14",border:`1px solid ${timeOffResult.ok?T.teal+"33":timeOffResult.blocked?T.red+"33":T.amber+"33"}`,color:T.text}}>
+          <div style={{fontSize:13,lineHeight:1.5,padding:"12px 14px",borderRadius:10,background:timeOffResult.ok?T.teal+"14":timeOffResult.blocked&&timeOffResult.blocked.length>0?T.red+"14":T.amber+"14",border:`1px solid ${timeOffResult.ok?T.teal+"33":timeOffResult.blocked&&timeOffResult.blocked.length>0?T.red+"33":T.amber+"33"}`,color:T.text}}>
             {timeOffResult.ok?"Go ahead — nothing's at risk."
-              :timeOffResult.blocked?"I'd hold off — \""+timeOffResult.title+"\" doesn't have room to recover if you take this now."
-              :"Cutting it close — \""+timeOffResult.title+"\" would need to move to "+timeOffResult.newDate+"."}
+              :(<>
+                {timeOffResult.blocked.map(title=>(
+                  <div key={title} style={{marginBottom:4}}>I'd hold off — "{title}" doesn't have room to recover if you take this.</div>
+                ))}
+                {timeOffResult.displaced.map(d=>(
+                  <div key={d.title} style={{marginBottom:4}}>Cutting it close — "{d.title}" would need to move to {d.newDate}.</div>
+                ))}
+              </>)}
           </div>
         )}
       </Modal>
@@ -19710,7 +19761,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           EventDetailModal (see openEdit above) -- this component used to
           own a private copy of the same modal here. */}
       <Modal open={pauseOpen} onClose={()=>{setPauseOpen(false);setPausePreview(null);setPauseError("");}}
-        title={pausePreview?pausePreview.label:"Studlin Reschedule"}
+        title={pausePreview?pausePreview.label:"Reschedule"}
         sub={pausePreview?(
           pausePreview.disambiguate?"A few things match that name — pick the right one.":
           pausePreview.noMatch?"Try a different name, or reschedule it from the calendar instead.":
@@ -19728,6 +19779,14 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           <Btn onClick={submitPauseCommand} disabled={!pauseText.trim()||pauseLoading} style={{marginTop:12,width:"100%",justifyContent:"center",opacity:!pauseText.trim()||pauseLoading?0.5:1}}>{pauseLoading?"Thinking…":"Go"}</Btn>
           <div style={{fontSize:11,color:T.muted,marginTop:20,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>Or pick one</div>
           <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {/* Balance My Week folded in here as a mode (used to be its own
+                separate Tools-menu entry) -- same underlying job as
+                everything else in this list (redistribute what's already on
+                the calendar), it just used a smarter, workload-ranked
+                engine instead of a flat day-offset. Opens its own richer
+                preview/confirm modal (weekBalanceOpen), same as it always
+                has -- this only unifies the entry point, not the engine. */}
+            <Btn variant="subtle" onClick={()=>{setPauseOpen(false);openWeekBalance();}}>Balance my week (spread out an overloaded week)</Btn>
             <Btn variant="subtle" onClick={()=>applyPausePreset({intent:"shift",days:1})}>Push everything back 1 day</Btn>
             <Btn variant="subtle" onClick={()=>applyPausePreset({intent:"shift",days:3})}>Push everything back 3 days</Btn>
             <Btn variant="subtle" onClick={()=>applyPausePreset({intent:"clear_day",date:dayKey()})}>Clear today</Btn>
