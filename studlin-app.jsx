@@ -590,6 +590,20 @@ const TimeField = ({label, value, onChange, lockedRanges}) => (
     <span style={{color:T.muted,flexShrink:0,display:"flex"}}>{ClockIcon}</span>
   </div>
 );
+// For a Start Time that already sits under its own <Field> label (paired
+// with a Date field in a 2-col grid) -- TimeField above bakes in its own
+// label+icon, wrong shape there. A font-size tweak on default TimeInput
+// wasn't enough to make it read as the same weight as the Date input next
+// to it: three individually-boxed selects are structurally never going to
+// look like "one field" the way a single continuous input does, no matter
+// the font size. This wraps "bare" TimeInput in the exact same box chrome
+// Input uses (same background/border/radius/padding), so Start Time reads
+// as one field, same as Date.
+const BoxedTimeInput = (props) => (
+  <div style={{display:"flex",alignItems:"center",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",boxSizing:"border-box"}}>
+    <TimeInput {...props} bare />
+  </div>
+);
 // Custom Hour / Minute / AM-PM dropdown trio — mobile-friendly native
 // <select> controls, no typing required. Same 24h "HH:MM" value/onChange
 // contract as before, so every call site is unaffected.
@@ -16523,7 +16537,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive}){
       <Field label="Subject"><SelectChip options={SUBJ} value={subject} onChange={setSubject} /></Field>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
         <Field label="Scheduled date"><Input type="date" value={date} onChange={e=>{setDate(e.target.value);setDeadlineErr("");}} /></Field>
-        <Field label={kind==="reminder"?"Reminder time":"Start time"}><TimeInput value={time} onChange={setTime} /></Field>
+        <Field label={kind==="reminder"?"Reminder time":"Start time"}><BoxedTimeInput value={time} onChange={setTime} /></Field>
       </div>
       {ev.userPinned&&(
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:T.muted}}>
@@ -19541,6 +19555,27 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         }>
         <Field label="Title"><Input placeholder="e.g. Study Bio chapter 4-6" value={evTitle} onChange={ev=>setEvTitle(ev.target.value)} autoFocus /></Field>
 
+        {/* Manual vs AI-schedule used to only be picked once, from the "+"
+            menu, before this form even opened -- nothing inside the modal
+            itself showed which one you were in, so Type's label silently
+            changing between "Study Session" and "Assignment" looked like a
+            type had gone missing instead of a mode having changed. Same
+            segmented-control look Studlin Prep's own tab switcher uses.
+            Only meaningful for Assignment/Project (isTaskKind) -- exam/
+            class/reminder/Activity already always use exact Date+Start
+            Time regardless of mode, so the toggle would do nothing there. */}
+        {isTaskKind&&!isChecklistMode&&(
+          <Field label="Scheduling">
+            <div style={{display:"flex",gap:2,background:T.card2,padding:2,borderRadius:4,width:"fit-content"}}>
+              {[{id:"manual",label:"I'll pick the time"},{id:"ai",label:"Studlin finds the time"}].map(v=>(
+                <button key={v.id} type="button" onClick={()=>setTaskMode(v.id)}
+                  style={{padding:"6px 12px",borderRadius:4,fontSize:12,fontWeight:taskMode===v.id?600:400,cursor:"pointer",
+                    background:taskMode===v.id?T.card:"transparent",color:taskMode===v.id?T.text:T.muted,border:"none",fontFamily:T.font,transition:"all 0.15s",whiteSpace:"nowrap"}}>{v.label}</button>
+              ))}
+            </div>
+          </Field>
+        )}
+
         {/* "No specific time, add to checklist instead" removed (2026-07-30)
             -- a plain checklist item can already be added directly from
             Dashboard, so this was a second, redundant entry point to the
@@ -19588,7 +19623,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         {!isTaskKind&&(
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
             <Field label="Date"><Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} /></Field>
-            <Field label={isReminderKind?"Reminder time":"Start time"}><TimeInput value={evTime} onChange={setEvTime} /></Field>
+            <Field label={isReminderKind?"Reminder time":"Start time"}><BoxedTimeInput value={evTime} onChange={setEvTime} /></Field>
           </div>
         )}
 
@@ -19673,7 +19708,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         {isTaskKind&&!isChecklistMode&&taskMode==="manual"&&(
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
             <Field label="Date"><Input type="date" value={evDate} onChange={ev=>setEvDate(ev.target.value)} /></Field>
-            <Field label="Start Time"><TimeInput value={evTime} onChange={setEvTime} /></Field>
+            <Field label="Start Time"><BoxedTimeInput value={evTime} onChange={setEvTime} /></Field>
           </div>
         )}
 
@@ -19682,7 +19717,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
             <Field label="Due Date & Time" hint="When this must be done by">
               <Input type="date" value={evDeadline} onChange={ev=>setEvDeadline(ev.target.value)} />
             </Field>
-            <Field label="Due time"><TimeInput value={evDeadlineTime} onChange={setEvDeadlineTime} /></Field>
+            <Field label="Due time"><BoxedTimeInput value={evDeadlineTime} onChange={setEvDeadlineTime} /></Field>
           </div>
         )}
 
