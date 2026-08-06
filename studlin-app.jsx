@@ -5836,6 +5836,34 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
     peakBuckets.includes(b.id)&&!(b.startMin<timeToMinutes(workEnd)&&b.endMin>timeToMinutes(workStart))
   ):[];
 
+  // Gap fix: Work Hours vs. the student's actual weekly class schedule
+  // could conflict with no warning at all -- if class meeting times
+  // swallow nearly all of a declared Work Hours window on some weekday,
+  // findOpenSlotFor effectively has nowhere left to place anything that
+  // day (and, in the worst case, could fall through to its own unguarded
+  // last-resort fallback -- see findOpenSlotFor's own comment). Flags a
+  // weekday where class time covers 90%+ of the Work Hours window. Purely
+  // informational, matches the peak-bucket warning above (never blocks
+  // Save) -- a real conflict is still a legitimate situation (Work Hours
+  // is meant to be the AFTER-school study window for a day school
+  // already occupies most of), this only makes sure the student can see
+  // it rather than wondering why nothing gets scheduled some days.
+  const DAY_NAMES_FULL=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+  const classHeavyDays=!workHoursInvalid?(()=>{
+    const winStart=timeToMinutes(workStart),winEnd=timeToMinutes(workEnd);
+    const winSize=winEnd-winStart;
+    if(winSize<=0)return [];
+    const routines=getWeeklyRoutine();
+    return [0,1,2,3,4,5,6].filter(dow=>{
+      const occupied=routines.filter(r=>r.kind==="class"&&Array.isArray(r.days)&&r.days.includes(dow)).reduce((sum,r)=>{
+        const s=timeToMinutes(r.startTime),e=s+(r.duration||0);
+        const overlap=Math.min(e,winEnd)-Math.max(s,winStart);
+        return sum+Math.max(0,overlap);
+      },0);
+      return occupied>=winSize*0.9;
+    }).map(dow=>DAY_NAMES_FULL[dow]);
+  })():[];
+
   const handleSave=()=>{
     if(!canSave)return;
     const newPrefs={
@@ -5879,6 +5907,11 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
           {workHoursInvalid
             ?<div style={{fontSize:11.5,color:T.red,marginTop:6}}>End time must be after start time.</div>
             :<div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>Tasks will be scheduled within this window. Your study schedule respects these hours.</div>}
+          {classHeavyDays.length>0&&(
+            <div style={{fontSize:11.5,color:T.amber,marginTop:8,lineHeight:1.4}}>
+              Your classes take up almost all of this window on {classHeavyDays.join(", ")} — Studlin will have little to no room to schedule anything those days. If Work Hours is meant to be your after-school study time, consider narrowing it to when class actually lets out.
+            </div>
+          )}
         </div>
 
         <div style={{marginBottom:22}}>
@@ -18202,8 +18235,17 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       // quiet about it.
       if(kind==="study"&&it.immediate&&!it.needsDuration){
         const duration=Math.max(5,it.durationMin||30);
-        const slot=findOpenSlotFor(events,routines,prefs,todayKeyNow,prefs.workStartTime,duration,it.dueDate||null);
-        if(slot.date!==todayKeyNow||timeToMinutes(slot.time)-nowMins>20){
+        // findLegalSlotOrNull, not findOpenSlotFor directly -- the latter's
+        // own last-resort fallback (nothing legal found in 21 days -> hand
+        // back the raw desired time verbatim, unchecked) could make this
+        // silently show NO warning for a genuinely fully-booked 3-week
+        // window: the bogus fallback slot is todayKeyNow at workStartTime,
+        // which can easily land within the same-day/20min check below by
+        // coincidence, the opposite of what this check exists to catch.
+        const slot=findLegalSlotOrNull(events,routines,prefs,todayKeyNow,prefs.workStartTime,duration,it.dueDate||null);
+        if(!slot){
+          clarify="No open time in the next few weeks — you may need to reschedule something else first.";
+        }else if(slot.date!==todayKeyNow||timeToMinutes(slot.time)-nowMins>20){
           clarify="No open time right now — the next slot that fits is "+fmtClock12(slot.time)+(slot.date!==todayKeyNow?" on "+slot.date:"")+".";
         }
       }
