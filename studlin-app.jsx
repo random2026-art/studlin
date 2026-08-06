@@ -15699,10 +15699,13 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
         <div style={{fontSize:15,fontWeight:700,color:T.white}}>{niceDayLabel}</div>
         <div style={{fontSize:11,color:T.muted,marginTop:1}}>{visibleEvs.length} scheduled item{visibleEvs.length!==1?"s":""}</div>
       </div>
-      <div style={{display:"flex",gap:6}}>
-        <BtnSm variant="ghost" onClick={()=>stepDay(-1)}>Prev</BtnSm>
+      <div style={{display:"flex",gap:6,alignItems:"center"}}>
+        {/* Same ‹/› glyph-in-a-square style as the toolbar's own date-range
+            nav above -- "Prev"/"Next" text buttons read as a second,
+            differently-styled day nav competing with that one. */}
+        <button onClick={()=>stepDay(-1)} title="Previous day" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11,fontFamily:T.font}}>‹</button>
         <BtnSm variant="ghost" onClick={()=>setSelDay(todayK)}>Today</BtnSm>
-        <BtnSm variant="ghost" onClick={()=>stepDay(1)}>Next</BtnSm>
+        <button onClick={()=>stepDay(1)} title="Next day" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,color:T.muted,cursor:"pointer",fontSize:11,fontFamily:T.font}}>›</button>
         <BtnSm variant="subtle" onClick={()=>setDayPreviewOpen(true)}>Day Preview</BtnSm>
       </div>
     </div>
@@ -15760,8 +15763,8 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
                   </div>
                 )}
                 <div onDoubleClick={()=>openEdit(ev)}
-                  onClick={()=>{isDone?uncrossDone(ev.id):markDone(ev.id);}}
-                  title="Click to toggle done, double-click to edit"
+                  onClick={()=>{if(ev.isRoutine)return;isDone?uncrossDone(ev.id):markDone(ev.id);}}
+                  title={ev.isRoutine?"Double-click to edit":"Click to toggle done, double-click to edit"}
                   style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:6,padding:"4px 8px",cursor:"pointer",overflow:"hidden",zIndex:3,opacity:isDone?0.6:1,boxSizing:"border-box",...kindStyle}}>
                   {!catchUpPending&&over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:`0 0 0 1.5px ${isExam?T.ink:"#fff"}`,zIndex:1}} />}
                   <div style={{fontSize:11.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:isDone?"line-through":"none"}}>{isExam?"EXAM · ":""}{ev.title}</div>
@@ -15829,8 +15832,15 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
         ?<div style={{textAlign:"center",padding:"24px 0",color:T.muted,fontSize:13}}>Nothing scheduled this day.</div>
         :<div style={{maxHeight:"62vh",overflowY:"auto"}}>
           <div style={{position:"relative",height:totalHeightPx,marginLeft:54}}>
+            {/* Hour gridlines used to be dashed too, same as the free-time
+                markers below -- both dashed meant neither one read as more
+                meaningful than the other, just visual noise repeating
+                every hour. Solid + the faintest border token now, so they
+                recede into the background as plain structure; dashed is
+                reserved for the one thing actually worth noticing (free
+                time). */}
             {Array.from({length:Math.max(1,hourEnd-hourStart)},(_,i)=>hourStart+i).map(h=>(
-              <div key={h} style={{position:"absolute",top:(h*60-spanStart)*(pxPerHr/60),left:0,right:0,borderTop:`1px dashed ${T.borderHover}`,boxSizing:"border-box"}}>
+              <div key={h} style={{position:"absolute",top:(h*60-spanStart)*(pxPerHr/60),left:0,right:0,borderTop:`1px solid ${T.border}`,boxSizing:"border-box"}}>
                 <span style={{position:"absolute",left:-54,top:-7,width:46,textAlign:"right",fontSize:10,color:T.faint,fontFamily:T.mono}}>{fmtHourLabel(h*60)}</span>
               </div>
             ))}
@@ -20000,7 +20010,14 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
                   const canReslot = !isDone && !ev.checklist && ev.time && ev.duration && !isLeadInFixed(ev);
                   return (
                     <div key={ev.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",background:T.card2,borderRadius:10,border:`1px solid ${T.border}`,opacity:isDone?0.55:1}}>
-                      {!ev.checklist && ev.time && (
+                      {/* isRoutine (a class period, Lunch, Nutrition...) is excluded --
+                          marking it "done" doesn't just cross it off, it also logs a
+                          completion outcome into the same hour-by-hour reliability
+                          signal Tier 0 uses to judge when a student is good at
+                          finishing things. A period checked off by habit, not actual
+                          completion, would quietly inflate "reliable at this hour" for
+                          a slot that has nothing to do with real work. */}
+                      {!ev.checklist && !ev.isRoutine && ev.time && (
                         <input type="checkbox" checked={isDone} onChange={() => isDone ? uncrossDone(ev.id) : markDone(ev.id)}
                           style={{width:16,height:16,flexShrink:0,cursor:"pointer",accentColor:T.lime}} />
                       )}
@@ -20171,7 +20188,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
 }
 
 // ─── SETTINGS ─────────────────────────────────────────────────────────────────
-function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineWizard=()=>{}, setScheduleSettingsOpen=()=>{}, setPricingOpen=()=>{}}) {
+// setActivePage (top-level tab switcher, e.g. to jump to Profile) --
+// deliberately not called setActive: this component already has its own
+// local `active`/`setActive` state for switching between General/
+// Appearance/Notifications/etc, and shadowing that with a same-named prop
+// would be a silent, easy-to-miss bug (or a hard compile error, since both
+// are declared with const in the same scope).
+function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineWizard=()=>{}, setScheduleSettingsOpen=()=>{}, setPricingOpen=()=>{}, setActivePage=()=>{}}) {
   const [active,setActive]=useState("General");
   const [prepScheduleMode,setPrepScheduleMode]=useState(()=>getPrepScheduleMode());
   // One-time cleanup surface for courses that duplicated before the
@@ -20753,7 +20776,19 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <div style={{fontSize:12,color:T.muted,marginBottom:16}}>How you appear across Studlin.</div>
               <Field label="Display name"><Input value={profile.name} onChange={e=>updProfile({name:e.target.value})} /></Field>
               <Field label="Email"><Input value={profile.email} onChange={e=>updProfile({email:e.target.value})} type="email" /></Field>
-              <Field label="School or affiliation"><SchoolSelect value={profile.school} onChange={v=>updProfile({school:v})} onCommit={name=>ensureSchoolInDirectory(name,profile.status)} placeholder="Search or type your school" statusFilter={profile.status} /></Field>
+              {/* School/affiliation used to be editable here too, a second
+                  control silently writing the same profile.school field
+                  Profile's own "Your profile" card already owns -- and that
+                  one also has the Status (High School/College) toggle this
+                  page never exposed at all, so it was the strictly weaker
+                  of the two duplicate controls. Pointing here instead of
+                  keeping a second copy in sync. */}
+              <Field label="School / status">
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8}}>
+                  <span style={{fontSize:12.5,color:T.text}}>{profile.school||"Not set"}{profile.status?" · "+(profile.status==="highschool"?"High School":"College"):""}</span>
+                  <button type="button" onClick={()=>setActivePage("profile")} style={{background:"none",border:"none",color:T.lime,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",padding:0,flexShrink:0}}>Edit in Profile</button>
+                </div>
+              </Field>
             </Card>
             {dupGroups.length>0&&(
               <Card style={{marginBottom:12,border:`1px solid ${T.amber}44`}}>
@@ -23180,6 +23215,13 @@ function App() {
     });
   },[]);
   const [notifOpen,setNotifOpen]=useState(false);
+  // {bottom,left}|null, captured on open -- the sidebar column has
+  // overflowX:"hidden" (it's a fixed-width rail), which was clipping this
+  // popover down to a barely-visible sliver since it used to be a plain
+  // position:absolute descendant of that column. Portaled to document.body
+  // instead, same fix ColorSelect already uses for the same class of bug.
+  const [notifAnchor,setNotifAnchor]=useState(null);
+  const notifBtnRef=useRef(null);
   const [seriousMode,setSeriousMode]=useState(()=>lsGet("settings",{}).seriousMode||false);
   // Fresh accounts skip this forced first-run prompt permanently — they get
   // the new in-Calendar guided tour instead, and Google Calendar connect is
@@ -23809,15 +23851,20 @@ function App() {
           // duplicated elsewhere), so it gets relocated here instead of
           // just disappearing. Shared between the collapsed/expanded
           // returns below since both branches are in this same IIFE.
+          const openNotif=()=>{
+            const r=notifBtnRef.current&&notifBtnRef.current.getBoundingClientRect();
+            setNotifAnchor(r?{bottom:window.innerHeight-r.bottom,left:r.right+8}:{bottom:20,left:20});
+            setNotifOpen(o=>!o);setNotifSeen(true);
+          };
           const notifBell=(
             <div style={{position:"relative",flexShrink:0}}>
-              <button onClick={e=>{e.stopPropagation();setNotifOpen(o=>!o);setNotifSeen(true);}} title="Notifications" style={{width:26,height:26,display:"flex",alignItems:"center",justifyContent:"center",background:notifOpen?T.lime+"18":"transparent",border:`1px solid ${notifOpen?T.lime+"55":sidebarBorder}`,borderRadius:6,color:notifOpen?T.lime:sidebarMuted,position:"relative",cursor:"pointer",padding:0}}>
+              <button ref={notifBtnRef} onClick={e=>{e.stopPropagation();openNotif();}} title="Notifications" style={{width:26,height:26,display:"flex",alignItems:"center",justifyContent:"center",background:notifOpen?T.lime+"18":"transparent",border:`1px solid ${notifOpen?T.lime+"55":sidebarBorder}`,borderRadius:6,color:notifOpen?T.lime:sidebarMuted,position:"relative",cursor:"pointer",padding:0}}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
                 {!notifSeen && notifs.length>0 && <span style={{position:"absolute",top:2,right:2,width:6,height:6,background:T.limeDk,border:`1.5px solid ${sidebarCardBg}`,borderRadius:"50%"}} />}
               </button>
-              {notifOpen && (<>
-                <div onClick={()=>setNotifOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
-                <div style={{position:"absolute",bottom:0,left:"calc(100% + 8px)",width:340,maxWidth:"86vw",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
+              {notifOpen && notifAnchor && ReactDOM.createPortal((<>
+                <div onClick={()=>setNotifOpen(false)} style={{position:"fixed",inset:0,zIndex:998}} />
+                <div style={{position:"fixed",bottom:notifAnchor.bottom,left:notifAnchor.left,width:340,maxWidth:"86vw",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:999,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
                   <div style={{padding:"13px 16px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                     <span style={{fontSize:13,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Notifications</span>
                     <span onClick={()=>setNotifOpen(false)} style={{fontSize:11,color:T.lime,cursor:"pointer",fontWeight:600}}>Mark all read</span>
@@ -23835,7 +23882,7 @@ function App() {
                   </div>
                   <div onClick={()=>{setActive("settings");setNotifOpen(false);}} style={{padding:"11px 16px",borderTop:`1px solid ${T.border}`,background:T.bg,fontSize:11.5,color:T.muted,cursor:"pointer",textAlign:"center"}}>Notification settings</div>
                 </div>
-              </>)}
+              </>),document.body)}
             </div>
           );
           if(!navExpanded){return(
@@ -23894,7 +23941,7 @@ function App() {
             keeps the entrance animation but stops that side effect. */}
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
           {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} onTaskCompleted={handleTaskCompleted} />:
-           active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} />:
+           active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} setActivePage={setActive} />:
            active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} />:
            active==="notes"?<Notes setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
