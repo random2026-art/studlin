@@ -642,8 +642,12 @@ const TimeInput = ({value,onChange,style,lockedRanges,bare}) => {
     // visually clip/look narrower than the always-two-digit minute select
     // next to it, same class of bug as the preview-step duration field
     // fixed earlier (commit 6a3383f).
-    :{width:34,flexShrink:0,padding:"4px 2px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:5,color:T.text,fontSize:12,fontFamily:T.font,outline:"none",cursor:"pointer",boxSizing:"border-box",textAlign:"center",appearance:"none",WebkitAppearance:"none",MozAppearance:"none"};
-  const apStyle=bare?selStyle:{...selStyle,width:36};
+    // fontSize was 12 with 4px/2px padding -- next to a same-row Date field
+    // (Input, fontSize 13.5, 10px/12px padding) it read visibly smaller and
+    // more cramped than everything else in the same form despite being the
+    // same importance field. Bumped closer to Input's sizing.
+    :{width:36,flexShrink:0,padding:"6px 3px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:5,color:T.text,fontSize:13,fontFamily:T.font,outline:"none",cursor:"pointer",boxSizing:"border-box",textAlign:"center",appearance:"none",WebkitAppearance:"none",MozAppearance:"none"};
+  const apStyle=bare?selStyle:{...selStyle,width:40};
   return (
     <div style={{display:"flex",flexDirection:"row",gap:bare?1:2,alignItems:"center",flexShrink:0,...(style||{})}}>
       <select value={h} onChange={e=>commit(+e.target.value,m,ap)} style={selStyle}>
@@ -16216,7 +16220,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive}){
   const ev=allEvents.find(e=>e.id===eventId);
   const routines=getWeeklyRoutine();
   const userSubjects=getSubjects();
-  const SUBJ=[{value:"None",label:"None",color:T.muted},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
+  const SUBJ=[{value:"None",label:"None",color:T.lime},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   const toSliderVal=(v,def)=>{const n=v!=null?v:def;return n>10?n:n*100;};
 
   const [title,setTitle]=useState("");
@@ -16263,6 +16267,13 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive}){
   // existing exam the same way Add Task now offers it for a new one --
   // same MaterialEditor/buildExamSessionEvents shape used there.
   const [examPlan,setExamPlan]=useState({materialFiles:[],materialLinks:[],materialOpen:false,pasteMaterialMode:false,pasteMaterialText:"",linkDraft:"",linkLabelDraft:"",proposeSessions:false,sessionCount:4});
+  // Same confidence calibration Add Task and Studlin Prep's Build Study
+  // Plan both use (computeStudyPlanParams) -- this retrofit path used to
+  // build sessions with difficulty locked at a flat neutral 500 and no
+  // question asked at all, the least-calibrated of the three exam-plan
+  // entry points despite doing the exact same thing.
+  const [examConfidence,setExamConfidence]=useState("okay");
+  const [examSessionCountTouched,setExamSessionCountTouched]=useState(false);
   const [projectPlan,setProjectPlan]=useState({phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false});
   // Manual "I'll set my own time" block, an alternative to Attack Block --
   // a plain event linked back to this assignment via dueEventId, same
@@ -16296,8 +16307,18 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive}){
     setAddManualBlock(false);setManualDate(ev.date||dayKey());setManualTime("16:00");setManualDuration(30);
     setPaceProposal(null);setPaceDismissedState(isPaceNudgeDismissed(ev.id));
     setExamPlan({materialFiles:ev.sourceMaterials||[],materialLinks:ev.referenceLinks||[],materialOpen:false,pasteMaterialMode:false,pasteMaterialText:"",linkDraft:"",linkLabelDraft:"",proposeSessions:false,sessionCount:4});
+    setExamConfidence("okay");setExamSessionCountTouched(false);
     setProjectPlan({phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false});
   },[eventId]);
+  // Same "derive a default, never overwrite a manual edit" convention as
+  // Add Task's identical effect -- confidence (+ attached material) sets
+  // the suggested session count; the NumField below stays a real override.
+  useEffect(()=>{
+    if(!ev||kind!=="exam"||!examPlan.proposeSessions||examSessionCountTouched)return;
+    const materialCharCount=examPlan.materialFiles.map(f=>f.text||"").join("\n\n").length;
+    const params=computeStudyPlanParams(ev.examWeight,25,examConfidence,materialCharCount,ev.importanceLevel);
+    if(params.sessionCount!==examPlan.sessionCount)setExamPlan(m=>({...m,sessionCount:params.sessionCount}));
+  },[ev,kind,examPlan.proposeSessions,examPlan.materialFiles,examConfidence,examSessionCountTouched]);
 
   if(!eventId||!ev)return null;
 
@@ -16463,7 +16484,10 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive}){
     let next=date?rebalanceDay(date,updated,routines,prefs):updated;
     if(attackPair)next=next.concat([attackPair.task]);
     if(kind==="exam"&&examPlan.proposeSessions&&linkedSessions.length===0){
-      const sessions=buildExamSessionEvents(title.trim(),date,subject,examPlan.sessionCount||4,"edittask-exam-"+ev.id,next,routines,prefs,{dueEventId:ev.id},difficulty,undefined,ev.examWeight,ev.confidenceLog);
+      const baseDuration=suggestDurationFor(subject,"study block")||25;
+      const materialCharCount=examPlan.materialFiles.map(f=>f.text||"").join("\n\n").length;
+      const planParams=computeStudyPlanParams(ev.examWeight,baseDuration,examConfidence,materialCharCount,ev.importanceLevel);
+      const sessions=buildExamSessionEvents(title.trim(),date,subject,examPlan.sessionCount||planParams.sessionCount,"edittask-exam-"+ev.id,next,routines,prefs,{dueEventId:ev.id},planParams.difficultyValue,planParams.sessionDuration,ev.examWeight,ev.confidenceLog);
       next=next.concat(sessions);
     }
     commit(next);onClose();
@@ -16704,17 +16728,31 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive}){
           <MaterialEditor item={examPlan} onChange={patch=>setExamPlan(m=>({...m,...patch}))} label={title.trim()||"Untitled exam"} idPrefix={"edittask-"+ev.id} />
         </Field>
         {linkedSessions.length===0&&(
-          <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
+          <div style={{background:T.lime+"0A",border:`1px solid ${T.lime}33`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
             <div onClick={()=>setExamPlan(m=>({...m,proposeSessions:!m.proposeSessions}))} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
-              <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Have Studlin make your study plan</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Spaced study sessions counting down to the exam date, added the moment you save.</div></div>
-              <div style={{width:36,height:20,borderRadius:10,background:examPlan.proposeSessions?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer"}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:examPlan.proposeSessions?18:2,transition:"left 0.2s"}} /></div>
+              <div style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+                <span style={{color:T.lime,flexShrink:0,marginTop:1}}>{Icon.zap}</span>
+                <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Have Studlin make your study plan</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Spaced study sessions counting down to the exam date, added the moment you save.</div></div>
+              </div>
+              <div style={{width:36,height:20,borderRadius:10,background:examPlan.proposeSessions?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer",flexShrink:0}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:examPlan.proposeSessions?18:2,transition:"left 0.2s"}} /></div>
             </div>
             {examPlan.proposeSessions&&(()=>{
               const dates=date?computeReviewDates(date,dayKey(),examPlan.sessionCount||4):[];
               return (
-                <div style={{display:"flex",alignItems:"center",gap:8,marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
-                  <NumField min={1} max={6} fallback={4} value={examPlan.sessionCount||4} onChange={v=>setExamPlan(m=>({...m,sessionCount:v}))} style={{width:48}} />
-                  <span style={{fontSize:10.5,color:T.muted}}>{dates.length===0?"Too close to the exam to fit a session":dates.length+" session"+(dates.length!==1?"s":"")+": "+dates.join(", ")}</span>
+                <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
+                  <div style={{fontSize:10.5,color:T.muted,marginBottom:6}}>How confident are you on this material?</div>
+                  <div style={{display:"flex",gap:6,marginBottom:12}}>
+                    {["shaky","okay","solid"].map(level=>(
+                      <button key={level} type="button" onClick={()=>setExamConfidence(level)}
+                        style={{flex:1,padding:"7px",borderRadius:7,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,textTransform:"capitalize",
+                          background:examConfidence===level?T.lime+"14":T.card,color:examConfidence===level?T.lime:T.muted,
+                          border:`1px solid ${examConfidence===level?T.lime+"44":T.border}`}}>{level}</button>
+                    ))}
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <NumField min={1} max={6} fallback={4} value={examPlan.sessionCount||4} onChange={v=>{setExamSessionCountTouched(true);setExamPlan(m=>({...m,sessionCount:v}));}} style={{width:48}} />
+                    <span style={{fontSize:10.5,color:T.muted}}>{dates.length===0?"Too close to the exam to fit a session":dates.length+" session"+(dates.length!==1?"s":"")+": "+dates.join(", ")}</span>
+                  </div>
                 </div>
               );
             })()}
@@ -17145,11 +17183,14 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
 
 function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,setDetailEventId,registerSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
-  const SUBJ=[{value:"None",label:"None",color:T.muted},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
+  const SUBJ=[{value:"None",label:"None",color:T.lime},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   // Accepts either a real course id or a label, same as StudlinPrep/Notes'
   // colorOf -- id match preferred when the caller has one, label fallback
-  // otherwise.
-  const colorOf=(sub)=>{if(!sub||sub==="None"||sub==="")return T.muted;const x=userSubjects.find(s=>s.id===sub||s.label===sub);return x?x.color:T.lime;};
+  // otherwise. Untagged (None) and unmatched (Other, before a custom color
+  // is picked) both fall through to the same lime default as every other
+  // colorOf in the file -- gray used to mean "no subject," which read as a
+  // dead/disabled task on the calendar instead of just an untagged one.
+  const colorOf=(sub)=>{const x=userSubjects.find(s=>s.id===sub||s.label===sub);return x?x.color:T.lime;};
   // ── Phase 5: Courses/Activities sidebar (Shovel-inspired) ──
   // Own collapse state, independent of the global icon rail's.
   const [calSidebarCollapsed,setCalSidebarCollapsedState]=useState(()=>lsGet("calSidebarCollapsed",false));
@@ -17427,10 +17468,17 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   const [newOpen,setNewOpen]=useState(false);
   const [evTitle,setEvTitle]=useState("");
   const [evDate,setEvDate]=useState("");
-  const [evTime,setEvTime]=useState("");
+  // Defaults to "09:00", not "" -- TimeInput always visually shows 9:00 AM
+  // regardless of the underlying value (see TimeInput's own h=9,m=0 default
+  // above), so an empty string here meant the field looked filled in but
+  // Save's !evTime.trim() check still blocked submission until the student
+  // touched it. Matching the displayed default to the real default means
+  // what's shown is what actually saves.
+  const [evTime,setEvTime]=useState("09:00");
   const [evPrefillDate,setEvPrefillDate]=useState(dayKey());
   const [evSubject,setEvSubject]=useState("None");
   const [evCustom,setEvCustom]=useState("");
+  const [evCustomColor,setEvCustomColor]=useState(T.lime);
   // "assignment" folds the old separate "study block"/"deadline" (To-Do)
   // type picks into one -- which real kind actually gets written is now
   // inferred at save time (see buildTask/saveManual/aiArrange) instead of
@@ -17446,6 +17494,16 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // Class Setup Wizard's per-item state, just a single object here since
   // Add Task only ever creates one exam at a time.
   const [evExamPlan,setEvExamPlan]=useState({materialFiles:[],materialLinks:[],materialOpen:false,pasteMaterialMode:false,pasteMaterialText:"",linkDraft:"",linkLabelDraft:"",proposeSessions:false,sessionCount:4});
+  // "How confident are you on this material?" -- the exact same single
+  // question (and shaky/okay/solid vocabulary) Studlin Prep's Build Study
+  // Plan flow already asks, feeding the same computeStudyPlanParams this
+  // used to leave to Prep alone. Add Task previously asked something
+  // different for the same decision (a generic Easy/Hard slider + a manual
+  // session-count stepper with no relationship to each other), which was
+  // the actual inconsistency -- not that Add Task lacked calibration, but
+  // that it had its own competing one.
+  const [evConfidence,setEvConfidence]=useState("okay");
+  const [evSessionCountTouched,setEvSessionCountTouched]=useState(false);
   // Project phases/checklist -- same shape PhasesOutlineEditor expects.
   const [evProjectPlan,setEvProjectPlan]=useState({phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false});
   // Add-collaborators picker for a project being created right now -- same
@@ -17471,6 +17529,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   const toggleEvCollabSelected=(uid)=>setEvCollabSelected(s=>s.includes(uid)?s.filter(x=>x!==uid):[...s,uid]);
   const resetTypeExtras=()=>{
     setEvExamPlan({materialFiles:[],materialLinks:[],materialOpen:false,pasteMaterialMode:false,pasteMaterialText:"",linkDraft:"",linkLabelDraft:"",proposeSessions:false,sessionCount:4});
+    setEvConfidence("okay");setEvSessionCountTouched(false);
     setEvProjectPlan({phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false});
     setEvCollabPickerOpen(false);setEvCollabCandidates([]);setEvCollabSelected([]);setEvCollabLoading(false);
   };
@@ -18014,7 +18073,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // "let AI schedule this". The clicked day is remembered so fixed-time kinds
   // (exam/class/reminder), which always need a real date, can still default
   // to it once the user picks one of those types.
-  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("");setEvSubject("None");setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);resetTypeExtras();setNewOpen(true);};
+  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("09:00");setEvSubject("None");setEvCustomColor(T.lime);setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);resetTypeExtras();setNewOpen(true);};
   // Same form as openNew, just arriving with the scheduling mode already
   // decided by which "Add task" menu option was tapped -- the in-modal
   // manual/AI toggle stays visible so it's correctable, not a dead end.
@@ -18034,7 +18093,18 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     const suggested=suggestDurationFor(evSubject,resolveAssignmentKind());
     if(suggested)setEvDuration(suggested);
   },[evSubject,evKind,taskMode,newOpen]);
-  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvDate("");setEvTime("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setAiLoading(false);setAsChecklist(false);resetTypeExtras();};
+  // Same "derive a default, but never overwrite what the student actually
+  // touched" convention as evDuration's own effect just above -- confidence
+  // (and how much material is attached) drives the suggested session count,
+  // same computeStudyPlanParams call Studlin Prep's Build Study Plan uses,
+  // but the NumField stays a real override once the student edits it.
+  useEffect(()=>{
+    if(!newOpen||evKind!=="exam"||!evExamPlan.proposeSessions||evSessionCountTouched)return;
+    const materialCharCount=evExamPlan.materialFiles.map(f=>f.text||"").join("\n\n").length;
+    const params=computeStudyPlanParams(undefined,25,evConfidence,materialCharCount,undefined);
+    if(params.sessionCount!==evExamPlan.sessionCount)setEvExamPlan(m=>({...m,sessionCount:params.sessionCount}));
+  },[newOpen,evKind,evExamPlan.proposeSessions,evExamPlan.materialFiles,evConfidence,evSessionCountTouched]);
+  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvCustomColor(T.lime);setEvDate("");setEvTime("09:00");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setAiLoading(false);setAsChecklist(false);resetTypeExtras();};
   const onEvKindChange=(k)=>{
     setEvKind(k);
     const willBeFixed=(k==="exam"||k==="class"||k==="reminder"||k==="busy block");
@@ -18076,6 +18146,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     const projectPhases=evKind==="project"&&evProjectPlan.phases?evProjectPlan.phases.map(p=>p.trim()).filter(Boolean):[];
     const projectOutline=evKind==="project"&&evProjectPlan.outline?normalizeOutlineDraft(evProjectPlan.outline):[];
     return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,courseId:courseIdForLabel(subj),kind:resolveAssignmentKind(),notes:evNotes,priority:evPriority,difficulty:evDifficulty,deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,
+      // Other has no matching entry in userSubjects for colorOf to find, so
+      // without this every "Other" task would silently fall back to the
+      // same default lime as an untagged one -- an explicit color here is
+      // what colorOf(ev.color||...) checks first, giving Other tasks the
+      // student's actual chosen color instead of losing the choice.
+      ...(evSubject==="Other"?{color:evCustomColor}:{}),
       ...(projectPhases.length>0?{phases:projectPhases.map((name,pi)=>({name,status:pi===0?"active":"pending"}))}:{}),
       ...(projectOutline.length>0?{outline:projectOutline}:{}),
       ...(splitInfo||{})};
@@ -18365,7 +18441,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       let tasks=[examTask];
       const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
       if(evExamPlan.proposeSessions){
-        const sessions=buildExamSessionEvents(evTitle.trim(),slot.date,subj,evExamPlan.sessionCount||4,"addtask-exam-"+examTask.id,events.concat([examTask]),routines,getSchedulePreferences(),{dueEventId:examTask.id},evDifficulty,undefined,examTask.examWeight,examTask.confidenceLog);
+        // Same computeStudyPlanParams calibration Studlin Prep's Build Study
+        // Plan uses -- confidence (+ how much material is attached) sets both
+        // per-session duration and difficulty together, replacing the old
+        // generic Easy/Hard slider that had no relationship to the session
+        // count next to it.
+        const baseDuration=suggestDurationFor(subj,"study block")||25;
+        const materialCharCount=evExamPlan.materialFiles.map(f=>f.text||"").join("\n\n").length;
+        const planParams=computeStudyPlanParams(examTask.examWeight,baseDuration,evConfidence,materialCharCount,examTask.importanceLevel);
+        const sessions=buildExamSessionEvents(evTitle.trim(),slot.date,subj,evExamPlan.sessionCount||planParams.sessionCount,"addtask-exam-"+examTask.id,events.concat([examTask]),routines,getSchedulePreferences(),{dueEventId:examTask.id},planParams.difficultyValue,planParams.sessionDuration,examTask.examWeight,examTask.confidenceLog);
         tasks=tasks.concat(sessions);
       }
       commitTasks(tasks,{userPinned:true});
@@ -19469,13 +19553,33 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
             re-deriving all of them individually is a bigger, riskier
             change than removing this one entry point. */}
 
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <Field label="Type" hint={isFixedKind?"Won't be moved or rescheduled.":undefined}>
-            <SelectChip options={[{value:"assignment",label:"Assignment"},{value:"project",label:"Project"},"exam","class",{value:"busy block",label:"Activity"},"reminder"]} value={evKind} onChange={onEvKindChange} />
+        {/* Type (6 options) and Subject (up to 11: None + every period/class +
+            Other) used to be forced into equal 1fr/1fr columns -- fine for
+            Type, but it crammed Subject's much longer chip list into a
+            narrow 3-per-row block while Type sat there with empty space.
+            Full-width stacked rows let each list wrap at its own natural
+            width instead of fighting the other for room. */}
+        {/* "Assignment" resolves to a real wire kind at save time
+            (resolveAssignmentKind): manual mode writes "study block" -- a
+            session at the exact time you picked, the same concept Brain
+            Dump's review screen calls "Study Session" -- while AI mode
+            writes "deadline" and lets Studlin pick the time before it's
+            due. Labeling/hinting it per-mode instead of a flat "Assignment"
+            answers "where's Study Session as a type" with Studlin's own
+            existing vocabulary instead of introducing a second, competing
+            type that would also need its own resolution logic. */}
+        <Field label="Type" hint={isFixedKind?"Won't be moved or rescheduled.":evKind==="assignment"?(taskMode==="manual"?"A study session at this exact time.":"Studlin finds the time before it's due."):undefined}>
+          <SelectChip options={[{value:"assignment",label:taskMode==="manual"?"Study Session":"Assignment"},{value:"project",label:"Project"},"exam","class",{value:"busy block",label:"Activity"},"reminder"]} value={evKind} onChange={onEvKindChange} />
+        </Field>
+        <Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field>
+        {evSubject==="Other"&&(
+          <Field label="Custom subject" hint="Pick a color so it doesn't get lost on the calendar.">
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <ColorSelect value={evCustomColor} onChange={setEvCustomColor} />
+              <Input placeholder="e.g. Drivers ed, SAT prep, club..." value={evCustom} onChange={ev=>setEvCustom(ev.target.value)} style={{flex:1}} />
+            </div>
           </Field>
-          <Field label="Subject"><SelectChip options={SUBJ} value={evSubject} onChange={setEvSubject} /></Field>
-        </div>
-        {evSubject==="Other"&&<Field label="Custom subject"><Input placeholder="e.g. Drivers ed, SAT prep, club..." value={evCustom} onChange={ev=>setEvCustom(ev.target.value)} /></Field>}
+        )}
 
         {isChecklistMode&&(
           <Field label="Due date (optional)"><Input type="date" value={evDeadline} onChange={ev=>setEvDeadline(ev.target.value)} /></Field>
@@ -19503,23 +19607,43 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           <Field label="Study material (optional)" hint="Upload files, paste notes, or drop a link — you can always add more later in Studlin Prep.">
             <MaterialEditor item={evExamPlan} onChange={patch=>setEvExamPlan(m=>({...m,...patch}))} label={evTitle.trim()||"Untitled exam"} idPrefix="addtask-exam" />
           </Field>
-          <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
+          {/* Deliberately styled a step heavier than Attack Block/Split into
+              sessions below -- a lime-tinted card instead of plain gray.
+              Those two just nudge how an already-placed task gets scheduled;
+              this one generates a whole new set of calendar events on save.
+              Giving every toggle in the form the identical gray-card
+              treatment regardless of what it actually does was flattening
+              real differences in stakes into visual sameness. */}
+          <div style={{background:T.lime+"0A",border:`1px solid ${T.lime}33`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
             <div onClick={()=>setEvExamPlan(m=>({...m,proposeSessions:!m.proposeSessions}))} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
-              <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Have Studlin make your study plan</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Spaced study sessions counting down to the exam date. Leave this off to plan it yourself.</div></div>
-              <div style={{width:36,height:20,borderRadius:10,background:evExamPlan.proposeSessions?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer"}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:evExamPlan.proposeSessions?18:2,transition:"left 0.2s"}} /></div>
+              <div style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+                <span style={{color:T.lime,flexShrink:0,marginTop:1}}>{Icon.zap}</span>
+                <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Have Studlin make your study plan</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Spaced study sessions counting down to the exam date. Leave this off to plan it yourself.</div></div>
+              </div>
+              <div style={{width:36,height:20,borderRadius:10,background:evExamPlan.proposeSessions?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer",flexShrink:0}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:evExamPlan.proposeSessions?18:2,transition:"left 0.2s"}} /></div>
             </div>
             {evExamPlan.proposeSessions&&(()=>{
               const dates=evDate?computeReviewDates(evDate,dayKey(),evExamPlan.sessionCount||4):[];
               return (
                 <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
-                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-                    <NumField min={1} max={6} fallback={4} value={evExamPlan.sessionCount||4} onChange={v=>setEvExamPlan(m=>({...m,sessionCount:v}))} style={{width:48}} />
-                    <span style={{fontSize:10.5,color:T.muted}}>{!evDate?"Pick a date above first":dates.length===0?"Too close to the exam to fit a session":dates.length+" session"+(dates.length!==1?"s":"")+": "+dates.join(", ")}</span>
+                  {/* Same "How confident are you on this material?" question
+                      Studlin Prep's Build Study Plan asks -- used to be a
+                      generic Easy/Hard slider here with no relationship to
+                      the session count next to it. Confidence now drives
+                      both count and per-session length together
+                      (computeStudyPlanParams), same as Prep. */}
+                  <div style={{fontSize:10.5,color:T.muted,marginBottom:6}}>How confident are you on this material?</div>
+                  <div style={{display:"flex",gap:6,marginBottom:12}}>
+                    {["shaky","okay","solid"].map(level=>(
+                      <button key={level} type="button" onClick={()=>setEvConfidence(level)}
+                        style={{flex:1,padding:"7px",borderRadius:7,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,textTransform:"capitalize",
+                          background:evConfidence===level?T.lime+"14":T.card,color:evConfidence===level?T.lime:T.muted,
+                          border:`1px solid ${evConfidence===level?T.lime+"44":T.border}`}}>{level}</button>
+                    ))}
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:8}}>
-                    <span style={{fontSize:10.5,color:T.muted}}>Easy</span>
-                    <input type="range" min={0} max={1000} value={evDifficulty} onChange={ev=>setEvDifficulty(+ev.target.value)} style={{flex:1,accentColor:T.lime,height:5,borderRadius:3,cursor:"pointer"}} />
-                    <span style={{fontSize:10.5,color:T.muted}}>Hard</span>
+                    <NumField min={1} max={6} fallback={4} value={evExamPlan.sessionCount||4} onChange={v=>{setEvSessionCountTouched(true);setEvExamPlan(m=>({...m,sessionCount:v}));}} style={{width:48}} />
+                    <span style={{fontSize:10.5,color:T.muted}}>{!evDate?"Pick a date above first":dates.length===0?"Too close to the exam to fit a session":dates.length+" session"+(dates.length!==1?"s":"")+": "+dates.join(", ")}</span>
                   </div>
                 </div>
               );
