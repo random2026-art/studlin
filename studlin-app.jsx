@@ -3007,10 +3007,14 @@ function isPhaseDecompositionCandidate(estimatedHours,deadlineKey,todayKey){
 // Returns null (nothing to say) when: not a real assignment/study-block
 // item, already done, no date to judge against, or still before the
 // gate's own start date -- too early to call anything "behind" when
-// nothing was expected yet. Otherwise {behind,loggedMins,expectedMins,
-// totalMins,gate}.
+// nothing was expected yet. Otherwise {behind,ahead,loggedMins,
+// expectedMins,totalMins,gate}.
 const ASSIGNMENT_BEHIND_THRESHOLD=0.5; // logged under half of expected-by-now counts as behind
-function computeAssignmentPace(ev,allEvents,todayKey){
+// logged at least 50% more than expected-by-now counts as ahead -- mirrors
+// BEHIND_THRESHOLD's own margin (0.5 either direction) rather than
+// inventing a separate number.
+const ASSIGNMENT_AHEAD_THRESHOLD=1.5;
+function computeAssignmentPace(ev,allEvents,todayKey,prefs){
   if(!ev||ev.checklist||ev.status!=="pending"||!ev.date)return null;
   if(ev.kind!=="deadline"&&ev.kind!=="study block")return null;
   const totalMins=(ev.estimatedHours||ATTACK_BLOCK_DEFAULT_ESTIMATE_HOURS)*60;
@@ -3028,13 +3032,38 @@ function computeAssignmentPace(ev,allEvents,todayKey){
   if(!gate||todayKey<gate.startDate)return null;
   const linked=allEvents.filter(e=>e.dueEventId===ev.id);
   const loggedMins=linked.reduce((sum,e)=>sum+(e.timeSpent||0),0);
-  const startMs=new Date(gate.startDate+"T12:00:00").getTime();
-  const finishMs=new Date(gate.finishByDate+"T12:00:00").getTime();
-  const todayMs=new Date(todayKey+"T12:00:00").getTime();
-  const span=Math.max(1,finishMs-startMs);
-  const elapsedFraction=Math.min(1,Math.max(0,(todayMs-startMs)/span));
+  // Bug fix: this used to be a flat calendar-day ratio (todayMs-startMs)/
+  // span, silently assuming every day in the gate window offers the same
+  // amount of study time -- disagreeing with weekPrepLoad, which already
+  // correctly weighs by each day's real getWorkWindowMinsFor capacity (a
+  // shorter or disabled weekend contributes less). Now sums real per-day
+  // capacity across the window instead of just counting days, so a gate
+  // window spanning a lighter weekend sets a correspondingly lower "should
+  // have done X by now" bar instead of expecting weekend-rate progress on
+  // a day the student never actually has that many hours available.
+  // Half-open [startDate,finishByDate) on both sides, matching the old
+  // formula's own convention (today itself never counts as elapsed until
+  // the day after; span was finishMs-startMs, not +1 day).
+  const effectivePrefs=prefs||getSchedulePreferences();
+  const dayCapacity=(dk)=>{const w=getWorkWindowMinsFor(effectivePrefs,dk);return Math.max(0,w.end-w.start);};
+  const daysInSpan=[];
+  {
+    const cursor=new Date(gate.startDate+"T12:00:00");
+    const end=new Date(gate.finishByDate+"T12:00:00");
+    while(cursor<end){daysInSpan.push(dayKey(cursor));cursor.setDate(cursor.getDate()+1);}
+  }
+  const totalCapacity=Math.max(1,daysInSpan.reduce((s,dk)=>s+dayCapacity(dk),0));
+  const elapsedCapacity=daysInSpan.filter(dk=>dk<todayKey).reduce((s,dk)=>s+dayCapacity(dk),0);
+  const elapsedFraction=Math.min(1,Math.max(0,elapsedCapacity/totalCapacity));
   const expectedMins=elapsedFraction*totalMins;
-  return {behind:loggedMins<expectedMins*ASSIGNMENT_BEHIND_THRESHOLD,loggedMins,expectedMins,totalMins,gate};
+  // Gap fix: this used to be behind-only -- a student genuinely ahead of
+  // schedule (not just self-reporting "solid" confidence, actually logging
+  // real minutes faster than expected) got no positive signal at all,
+  // identical treatment to exactly-on-pace. Only surfaces once there's a
+  // real expectedMins to compare against (elapsedFraction>0) -- day one of
+  // the gate window logging anything at all isn't meaningfully "ahead."
+  const ahead=elapsedFraction>0&&loggedMins>=expectedMins*ASSIGNMENT_AHEAD_THRESHOLD;
+  return {behind:loggedMins<expectedMins*ASSIGNMENT_BEHIND_THRESHOLD,ahead,loggedMins,expectedMins,totalMins,gate};
 }
 // Same dismissible-cooldown idiom as weekBalanceNudge (3 days -- "behind
 // pace" is a slow-moving signal, a dismissal shouldn't need re-earning
@@ -7005,7 +7034,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                   // one glance at the table shows what used to need opening
                   // every row to know.
                   const rowPace=computeAssignmentPace(a,allEventsForRow,today);
-                  const statusLabel=rowPace&&rowPace.behind?"behind pace":pending.length===0?"no blocks yet":pending.length+" block"+(pending.length!==1?"s":"")+" scheduled";
+                  const statusLabel=rowPace&&rowPace.behind?"behind pace":rowPace&&rowPace.ahead?"ahead of pace":pending.length===0?"no blocks yet":pending.length+" block"+(pending.length!==1?"s":"")+" scheduled";
                   return (
                     <div key={a.id} style={{display:"grid",gridTemplateColumns:gridCols,gap:8,padding:"7px 10px",borderBottom:`1px solid ${T.border}`,alignItems:"center"}}>
                       <div onClick={()=>setDetailEventId(a.id)} style={{fontSize:11.5,fontWeight:600,color:T.white,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={a.title}>{a.title}</div>
@@ -7022,7 +7051,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                       <select value={bucketOf(a.difficulty)} onChange={e=>patchExam(a.id,{difficulty:BUCKET_VALS[e.target.value]})} style={cellSelStyle}>
                         <option value="low">Easy</option><option value="medium">Med</option><option value="high">Hard</option>
                       </select>
-                      <div onClick={()=>setDetailEventId(a.id)} style={{fontSize:10.5,fontWeight:rowPace&&rowPace.behind?700:400,color:rowPace&&rowPace.behind?T.amber:T.muted,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title="Click to open">{statusLabel}</div>
+                      <div onClick={()=>setDetailEventId(a.id)} style={{fontSize:10.5,fontWeight:rowPace&&(rowPace.behind||rowPace.ahead)?700:400,color:rowPace&&rowPace.behind?T.amber:rowPace&&rowPace.ahead?T.teal:T.muted,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title="Click to open">{statusLabel}</div>
                     </div>
                   );
                 })}
@@ -16512,6 +16541,20 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive}){
               <BtnSm variant="ghost" onClick={dismissPaceOffer}>Not now</BtnSm>
             </div>
           )}
+        </div>
+      )}
+      {/* Ahead-of-pace acknowledgment -- the counterpart to the behind-pace
+          nudge above, using the same real logged-minutes signal. This used
+          to be a behind-only system (an ahead-of-pace student got no
+          feedback at all, identical to exactly-on-pace); nothing to
+          propose here since there's no action to take, just a plain
+          positive signal, so no dismiss/cooldown needed. */}
+      {pace&&pace.ahead&&(
+        <div style={{background:T.teal+"14",border:`1px solid ${T.teal}33`,borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+          <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:2}}>Ahead of pace on this one</div>
+          <div style={{fontSize:11.5,color:T.muted}}>
+            {Math.round(pace.loggedMins)} of an expected {Math.round(pace.expectedMins)} min logged so far — nice work.
+          </div>
         </div>
       )}
       {kind!=="exam"&&!ev.isAttackBlock&&!ev.dueEventId&&(

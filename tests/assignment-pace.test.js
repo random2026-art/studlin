@@ -90,6 +90,58 @@ describe("computeAssignmentPace", () => {
     const b = m.computeAssignmentPace(withDefault, [], "2026-09-13");
     assert.deepEqual(a, b);
   });
+
+  test("regression: with uniform hours (the default), an explicit prefs arg matches the no-prefs fallback exactly", () => {
+    const m = loadStudlinModule();
+    const withoutPrefs = m.computeAssignmentPace(BASE_EV, [], "2026-09-13");
+    const withDefaultPrefs = m.computeAssignmentPace(BASE_EV, [], "2026-09-13", m.getSchedulePreferences());
+    assert.equal(Math.round(withDefaultPrefs.expectedMins), Math.round(withoutPrefs.expectedMins));
+    assert.equal(Math.round(withoutPrefs.expectedMins), 360);
+  });
+
+  test("regression: a lighter weekend window lowers the expected-by-now bar instead of assuming every day is equally productive", () => {
+    const m = loadStudlinModule();
+    // Same 35-day gate window (2026-08-23 to 2026-09-27). 2026-08-31 is 8
+    // days in -- deliberately NOT a checkpoint that's a whole multiple of 7
+    // days (unlike the 21/35 elapsed/total split used elsewhere in this
+    // file), because when both the elapsed and total windows are exact
+    // week multiples the weekend ratio is identical in each and a
+    // capacity-weighted average degenerates back to the flat day-count
+    // fraction by coincidence -- this date was chosen specifically to make
+    // the elapsed portion more weekend-heavy than the window as a whole,
+    // so the two calculations must actually diverge.
+    const uniformResult = m.computeAssignmentPace(BASE_EV, [], "2026-08-31", m.getSchedulePreferences());
+    const lightWeekendPrefs = { ...m.getSchedulePreferences(), weekendEnabled: true, weekendStartTime: "10:00", weekendEndTime: "12:00" };
+    const weightedResult = m.computeAssignmentPace(BASE_EV, [], "2026-08-31", lightWeekendPrefs);
+    assert.ok(
+      weightedResult.expectedMins < uniformResult.expectedMins,
+      `expected weighted (${weightedResult.expectedMins}) < uniform (${uniformResult.expectedMins})`
+    );
+  });
+
+  test("ahead:true when logged well over the ASSIGNMENT_AHEAD_THRESHOLD multiple of expected-by-now pace", () => {
+    const m = loadStudlinModule();
+    // expectedMins=360, AHEAD_THRESHOLD=1.5 -> need >540 logged.
+    const linked = [{ id: "b1", dueEventId: "ev1", timeSpent: 600 }];
+    const result = m.computeAssignmentPace(BASE_EV, linked, "2026-09-13");
+    assert.equal(result.ahead, true);
+    assert.equal(result.behind, false);
+  });
+
+  test("ahead:false when logged is close to expected but under the ahead threshold", () => {
+    const m = loadStudlinModule();
+    const linked = [{ id: "b1", dueEventId: "ev1", timeSpent: 400 }];
+    const result = m.computeAssignmentPace(BASE_EV, linked, "2026-09-13");
+    assert.equal(result.ahead, false);
+    assert.equal(result.behind, false);
+  });
+
+  test("regression: a genuinely behind-pace case is never also reported ahead", () => {
+    const m = loadStudlinModule();
+    const result = m.computeAssignmentPace(BASE_EV, [], "2026-09-13");
+    assert.equal(result.behind, true);
+    assert.equal(result.ahead, false);
+  });
 });
 
 describe("isPaceNudgeDismissed / dismissPaceNudge", () => {
