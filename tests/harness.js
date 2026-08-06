@@ -81,6 +81,8 @@ function loadStudlinModule(options) {
     "examAlreadyPassedToday","getSchoolTerm","saveSchoolTerm",
     "getTimerCheckpoint","checkpointTimerSession","clearTimerCheckpoint",
     "resolveOrphanedCheckpoint","mergeImportedEvents","detectCalendarSourceType",
+    "isAcademicCalendarSource","classifyImportedCalendarEvents","PLATFORM_HELP",
+    "parseCalendarClassificationReply",
     "getDayOccupiedIntervals","checkManualStudyTime","dayHasRoomFor","undoTier0Move",
     "checkTimeOffImpact",
     "getWorkWindowMinsFor","detectPeakHourInsight","dismissPeakHourInsight",
@@ -162,6 +164,14 @@ function loadStudlinModule(options) {
     module: { exports: {} },
     exports: {},
     require,
+    // vm.createContext's sandbox is a genuinely separate global object --
+    // it gets the real ECMAScript intrinsics for free, but URL is a
+    // WHATWG/Node API, not one of those, so any exported function that
+    // does `new URL(...)` (detectCalendarSourceType, isAllowedCalendarHost-
+    // style hostname checks) would otherwise silently hit its own
+    // catch-block fallback for every input, never actually exercising the
+    // real logic.
+    URL,
   };
   sandbox.global = sandbox;
   vm.createContext(sandbox);

@@ -2,12 +2,59 @@
 // Avoids browser CORS restrictions when importing iCloud / other calendar links.
 const { withSentry } = require('./_lib/sentry');
 
+// Schoology and Canvas are safe to allow with the same suffix-match check
+// as everything else here: both are SaaS platforms where the calendar-feed
+// hostname is always vendor-controlled DNS (*.schoology.com,
+// *.instructure.com) -- no school or district ever gets a subdomain outside
+// that zone, so the suffix can't be spoofed the way a fake lookalike domain
+// could be. PowerSchool and Infinite Campus are deliberately NOT here yet --
+// both are commonly self-hosted on arbitrary district-owned domains
+// (ps.somedistrict.k12.state.us, etc.), so there's no static suffix that
+// covers "any real instance" without either missing most real districts or
+// being so broad it stops meaning anything. That needs a different
+// validation approach (e.g. SSRF-hardened IP-based checks), not this list.
 const ALLOWED_DOMAINS = [
   'icloud.com',
   'calendar.google.com',
   'outlook.live.com',
   'outlook.office365.com',
+  'schoology.com',
+  'instructure.com',
 ];
+
+function isAllowedCalendarHost(hostname) {
+  return ALLOWED_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d));
+}
+
+// Re-validates the hostname on every hop instead of a bare
+// fetch(...,{redirect:'follow'}) -- the allowlist above is only as strong
+// as "every URL this proxy actually fetches passes it," and a plain
+// redirect:'follow' never re-checks that after the first hop. Capped at 3
+// redirects (real calendar feeds don't chain more than that) plus a 10s
+// timeout so a slow/hanging upstream can't tie up the function indefinitely.
+async function fetchCalendarRevalidated(url, maxRedirects = 3) {
+  let current = url;
+  for (let i = 0; i <= maxRedirects; i++) {
+    const parsed = new URL(current);
+    if (!isAllowedCalendarHost(parsed.hostname)) {
+      throw Object.assign(new Error('Domain not allowed. Only iCloud, Google, Outlook, Schoology, and Canvas calendar feeds are supported.'), { status: 403 });
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    let r;
+    try {
+      r = await fetch(current, { headers: { Accept: 'text/calendar, */*' }, redirect: 'manual', signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (r.status >= 300 && r.status < 400 && r.headers.get('location')) {
+      current = new URL(r.headers.get('location'), current).toString();
+      continue;
+    }
+    return r;
+  }
+  throw Object.assign(new Error('Too many redirects'), { status: 400 });
+}
 
 module.exports = withSentry(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -20,18 +67,18 @@ module.exports = withSentry(async (req, res) => {
   let parsed;
   try { parsed = new URL(url); } catch { return res.status(400).json({ error: 'Invalid URL' }); }
 
-  const hostname = parsed.hostname;
-  const allowed = ALLOWED_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d));
-  if (!allowed) return res.status(403).json({ error: 'Domain not allowed. Only iCloud and major calendar providers are supported.' });
+  if (!isAllowedCalendarHost(parsed.hostname)) {
+    return res.status(403).json({ error: 'Domain not allowed. Only iCloud, Google, Outlook, Schoology, and Canvas calendar feeds are supported.' });
+  }
 
   try {
-    const r = await fetch(url, { headers: { Accept: 'text/calendar, */*' }, redirect: 'follow' });
+    const r = await fetchCalendarRevalidated(url);
     if (!r.ok) return res.status(r.status).json({ error: 'Calendar server returned ' + r.status });
     const ics = await r.text();
     const { events, skippedAllDay } = parseICS(ics);
     return res.status(200).json({ ok: true, events, count: events.length, skippedAllDay });
   } catch (e) {
-    return res.status(500).json({ error: e.message || 'Server error' });
+    return res.status(e.status || 500).json({ error: e.message || 'Server error' });
   }
 });
 
@@ -118,6 +165,11 @@ function parseICS(text) {
       time: e.dtstart.slice(11, 16),
       duration,
       title: e.summary || 'Untitled',
+      // Kept (truncated) so the client-side Schoology/Canvas classification
+      // pass has more than a bare title to work with -- every other caller
+      // (Google/Outlook/iCloud/work-schedule imports) already ignores
+      // fields it doesn't use, so this is additive, not a behavior change.
+      description: e.description ? e.description.slice(0, 300) : '',
       subject: 'General',
       kind: 'busy block',
     };
@@ -128,3 +180,4 @@ function parseICS(text) {
 
 module.exports.parseICS = parseICS;
 module.exports.normalizeCalendarUrl = normalizeCalendarUrl;
+module.exports.isAllowedCalendarHost = isAllowedCalendarHost;

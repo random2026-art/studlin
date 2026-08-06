@@ -1340,8 +1340,42 @@ const detectCalendarSourceType=(url)=>{
     if(h.endsWith("icloud.com"))return "iCloud";
     if(h==="calendar.google.com"||h.endsWith(".calendar.google.com"))return "Google Calendar";
     if(h.startsWith("outlook."))return "Outlook";
+    if(h==="schoology.com"||h.endsWith(".schoology.com"))return "Schoology";
+    if(h==="instructure.com"||h.endsWith(".instructure.com"))return "Canvas";
     return "Work schedule";
   }catch(e){return "Calendar";}
+};
+// Schoology/Canvas is the one case where "what kind of import is this"
+// isn't just a display label -- it's also what tells fetchCalendarPreview
+// below to run the AI classification pass (see classifyImportedCalendarEvents)
+// instead of leaving every imported item as a generic "busy block."
+const isAcademicCalendarSource=(sourceType)=>sourceType==="Schoology"||sourceType==="Canvas";
+// Step-by-step, platform-specific instructions shown inside the connect
+// modal itself (not a separate help page, not a hover tooltip -- the old
+// Canvas tooltip was hover-only, which doesn't work on touch and collapses
+// the instant a student tabs away to actually go copy their link, exactly
+// the moment they need it visible). Keyed by the same lowercase hint
+// openImportCalModal takes.
+const PLATFORM_HELP={
+  schoology:{
+    label:"Schoology",
+    steps:[
+      "Log into Schoology and click your name in the top right",
+      "Account Settings",
+      "Find \"Share Your Schoology Calendar\" and click Enable",
+      "Copy the link it gives you and paste it below",
+    ],
+    note:"Schoology only generates this link once you have at least one thing on your personal Schoology calendar. Its feed also has a couple of known quirks — timed assignments sometimes show an extra hour of duration, and all-day items can show as 7:59pm–7:59pm. That's Schoology's own feed, not something wrong on Studlin's end.",
+  },
+  canvas:{
+    label:"Canvas",
+    steps:[
+      "Log into Canvas and click Calendar in the left sidebar",
+      "Find the \"Calendar Feed\" link in the bottom-right of the calendar view",
+      "Copy the link and paste it below",
+    ],
+    note:null,
+  },
 };
 // Reconciles one imported subscription's freshly-fetched events against
 // whatever's already in the student's calendar for that subscription.
@@ -1356,7 +1390,14 @@ const detectCalendarSourceType=(url)=>{
 // external source of truth, not something the student typed in by hand.
 // Events belonging to other subscriptions or created manually are never
 // touched.
-function mergeImportedEvents(existingEvents,subId,fetchedEvents){
+// classifications (optional, keyed by uid -> {kind,subject,examWeight}):
+// set only by the Schoology/Canvas connect flow after
+// classifyImportedCalendarEvents runs -- every other caller (Google/
+// Outlook/iCloud/work-schedule imports, and every existing test) omits it
+// and gets byte-identical behavior to before: everything lands as a
+// generic occupied "busy block", correct for a personal calendar where
+// there's no "exam vs assignment" distinction to make.
+function mergeImportedEvents(existingEvents,subId,fetchedEvents,classifications){
   const fetchedByUid=new Map(fetchedEvents.filter(e=>e.uid).map(e=>[e.uid,e]));
   const kept=existingEvents.filter(ev=>{
     if(ev.importSubId!==subId)return true;
@@ -1367,16 +1408,106 @@ function mergeImportedEvents(existingEvents,subId,fetchedEvents){
     if(ev.importSubId!==subId||!ev.externalUid)return ev;
     const fresh=fetchedByUid.get(ev.externalUid);
     if(!fresh)return ev;
-    return {...ev,title:fresh.title,date:fresh.date,time:fresh.time,duration:fresh.duration};
+    // A classified deadline (kind:"deadline", duration:null -- see below)
+    // stays a non-occupying marker across a resync too; only a real
+    // occupied-time import (busy block/class/exam) tracks the feed's own
+    // duration on refresh.
+    return {...ev,title:fresh.title,date:fresh.date,time:fresh.time,duration:ev.kind==="deadline"?null:fresh.duration};
   });
-  const added=fetchedEvents.filter(e=>e.uid&&!keptUids.has(e.uid)).map(e=>({
-    id:"import-"+subId+"-"+e.uid.replace(/[^a-z0-9]+/gi,"").slice(0,24)+"-"+Math.random().toString(36).slice(2,6),
-    title:e.title,date:e.date,time:e.time,duration:e.duration,
-    subject:"General",kind:"busy block",notes:"",priority:5,difficulty:5,
-    deadline:null,status:"pending",timeSpent:0,completedAt:null,
-    source:"import",importSubId:subId,externalUid:e.uid,
-  }));
+  const added=fetchedEvents.filter(e=>e.uid&&!keptUids.has(e.uid)).map(e=>{
+    const c=classifications&&classifications[e.uid];
+    // "assignment"/"project" become Studlin's existing "deadline" kind --
+    // the same real kind an AI-scheduled Add Task assignment already
+    // resolves to (see resolveAssignmentKind) -- not a fixed occupied
+    // block. "other" (announcements, general events with no real
+    // schoolwork shape) falls back to the pre-existing generic behavior.
+    const kind=!c?"busy block":(c.kind==="assignment"||c.kind==="project")?"deadline":c.kind==="other"?"busy block":c.kind;
+    return {
+      id:"import-"+subId+"-"+e.uid.replace(/[^a-z0-9]+/gi,"").slice(0,24)+"-"+Math.random().toString(36).slice(2,6),
+      title:e.title,date:e.date,time:e.time,
+      // A deadline marker with no duration doesn't occupy calendar time
+      // (see TIER0_FIXED_KINDS/isDuePill) -- Studlin finds real study time
+      // for it separately, instead of blocking whatever timestamp the
+      // feed happened to give the due date (often 11:59pm). An exam/class
+      // import keeps its real timed slot and the feed's duration.
+      duration:kind==="deadline"?null:e.duration,
+      subject:c?c.subject:"General",kind,
+      // Matches the shape every other exam-creation path in the app
+      // already gives a fresh exam (see Brain Dump's own exam construction)
+      // -- confidenceLog starts empty so the exam-prep check-in flow works
+      // on it exactly like any other exam the moment it lands.
+      ...(c&&c.kind==="exam"?{examWeight:c.examWeight||"major",confidenceLog:[]}:{}),
+      notes:"",priority:5,difficulty:5,
+      deadline:null,status:"pending",timeSpent:0,completedAt:null,
+      source:"import",importSubId:subId,externalUid:e.uid,
+    };
+  });
   return updated.concat(added);
+}
+// AI classification pass for a Schoology/Canvas calendar-feed import -- the
+// raw feed only has a title/date/time (see parseICS in api/cal-proxy.js),
+// nothing marking "this is an exam" vs "a project" vs a regular assignment,
+// so without this every imported item would land as mergeImportedEvents'
+// own default: a generic fixed "busy block." That's fine for a personal
+// calendar, but wrong for schoolwork -- an assignment due date should be a
+// deadline Studlin can schedule study time around, and an exam should be
+// recognized as one so it gets the same confidence-driven study plan every
+// other exam in the app already gets.
+// Pure request-shaping + response-parsing, same "AI attempt with a safe
+// fallback" shape as parseBrainDump -- a failed/malformed response returns
+// {} rather than blocking or erroring the import; the caller's default
+// (generic "busy block") still applies to every item.
+function buildCalendarClassificationPrompt(capped,platformLabel,existingSubjectLabels){
+  const list=capped.map((e,i)=>String(i)+". "+e.title+(e.description?" — "+e.description:"")).join("\n");
+  const subjHint=(existingSubjectLabels&&existingSubjectLabels.length>0)
+    ?"The student's existing classes: "+existingSubjectLabels.join(", ")+". Match an item to one of these whenever the course is clearly the same class (course codes/abbreviations count, e.g. \"BIO 301\" matches \"Biology\"). "
+    :"";
+  return "These are raw calendar entries pulled from a student's "+platformLabel+" calendar feed. For each numbered item, return:\n"+
+    "\"kind\", one of: \"exam\" (a quiz, test, midterm, or final), \"project\" (a large multi-step assignment -- a paper, presentation, or group project), \"assignment\" (a regular homework/assignment due date -- the default when unsure), \"class\" (an actual class meeting/session, not a due date), \"other\" (anything that doesn't fit -- announcements, general events). "+
+    "\"subject\", the matched existing class label if one clearly fits, otherwise your best guess at the real course name from the title, otherwise \"Other\". "+subjHint+
+    "\"examWeight\", ONLY when kind is \"exam\": \"quiz\" for a minor/short one, \"major\" for a midterm/final/unit exam.\n"+
+    "Respond with ONLY valid JSON, no markdown fences, no commentary: {\"items\":[{\"i\":0,\"kind\":\"assignment\",\"subject\":\"Biology\"},{\"i\":1,\"kind\":\"exam\",\"subject\":\"Biology\",\"examWeight\":\"major\"}]} -- one entry per numbered item, in the same order, \"i\" matching its number.\n\n"+list;
+}
+// Pure parsing/validation, split out from the network call below
+// specifically so it's unit-testable without hitting /api/chat -- same
+// "AI attempt with a safe fallback" split every other extraction in this
+// file uses (e.g. parseICS/normalizeCalendarUrl vs the fetch handler in
+// api/cal-proxy.js). A malformed/missing reply, an out-of-range "i", or an
+// event with no uid all degrade to being skipped rather than throwing --
+// the caller's own default (generic "busy block") covers whatever this
+// doesn't return an entry for.
+function parseCalendarClassificationReply(rawReply,capped){
+  const raw=(rawReply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
+  let parsed=null;
+  try{parsed=JSON.parse(raw);}catch(e){parsed=null;}
+  if(!parsed||!Array.isArray(parsed.items))return {};
+  const validKinds=["exam","project","assignment","class","other"];
+  const byUid={};
+  parsed.items.forEach(it=>{
+    const ev=capped[it.i];
+    if(!ev||!ev.uid)return;
+    byUid[ev.uid]={
+      kind:validKinds.includes(it.kind)?it.kind:"assignment",
+      subject:(it.subject&&String(it.subject).trim())||"Other",
+      examWeight:it.kind==="exam"&&(it.examWeight==="quiz"||it.examWeight==="major")?it.examWeight:undefined,
+    };
+  });
+  return byUid;
+}
+async function classifyImportedCalendarEvents(events,platformLabel,existingSubjectLabels){
+  if(!events||events.length===0)return {};
+  // Capped at 120 -- a semester's worth of due dates comfortably fits; this
+  // is one batch classification call, not a per-item one.
+  const capped=events.slice(0,120);
+  const prompt=buildCalendarClassificationPrompt(capped,platformLabel,existingSubjectLabels);
+  try{
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",format:"json"})});
+    if(!res.ok)return {};
+    const data=await res.json().catch(()=>({}));
+    return parseCalendarClassificationReply(data.reply,capped);
+  }catch(e){
+    return {};
+  }
 }
 const ROUTINE_KIND_TO_EVENT_KIND={class:"class",busy:"busy block",free:"free period"};
 function expandRoutineOccurrences(routines,startDateKey,endDateKey){
@@ -20208,7 +20339,6 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     setDupGroups(findDuplicateCourseGroups());
     setMergeConfirm(null);
   };
-  const [canvasTipOpen,setCanvasTipOpen]=useState(false);
   const [canvasSeeding,setCanvasSeeding]=useState(false);
   const [toggles,setToggles]=useState(()=>({...{push:true,sound:true,streak:true,deadline:true,sr:true,auto:true,analytics:false,onlineStatus:true,incognito:false,emails:false,profile:true,share:true,twofa:false,collect:false,motion:false,hand:true,wrapped:true,squad:true,autoSession:false,block:false,notifMaster:true,sysPush:false,chatChimes:true,shareAvailability:false},...lsGet("settings",{})}));
   const tog=k=>setToggles(t=>{const n={...t,[k]:!t[k]};lsSet("settings",n);return n;});
@@ -20493,11 +20623,23 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const [importCalLabel,setImportCalLabel]=useState("");
   const [importCalError,setImportCalError]=useState("");
   const [importCalLoading,setImportCalLoading]=useState(false);
-  const [importCalReview,setImportCalReview]=useState(null); // {subId,label,sourceType,events,skippedAllDay}
+  // classifying is a separate loading state from importCalLoading -- the
+  // fetch step and the AI classification step are two different waits
+  // (network fetch vs an AI call), each worth its own status line, and
+  // classifying only ever happens for a Schoology/Canvas connect.
+  const [importCalClassifying,setImportCalClassifying]=useState(false);
+  const [importCalReview,setImportCalReview]=useState(null); // {subId,label,sourceType,events,skippedAllDay,classified}
+  // 'schoology'|'canvas'|null -- set when opened from one of those rows'
+  // Connect button, drives both the default-expanded PLATFORM_HELP
+  // instructions and whether fetchCalendarPreview runs the classification
+  // pass below. Generic "Calendar or work schedule" connect (no hint)
+  // behaves exactly as before.
+  const [importCalPlatformHint,setImportCalPlatformHint]=useState(null);
   const [removeCalConfirm,setRemoveCalConfirm]=useState(null); // subscription pending removal
 
-  const openImportCalModal=()=>{
+  const openImportCalModal=(hint)=>{
     setImportCalUrl("");setImportCalLabel("");setImportCalError("");setImportCalReview(null);
+    setImportCalPlatformHint(hint||null);
     setImportCalOpen(true);
   };
   const onImportCalUrlChange=(v)=>{
@@ -20512,22 +20654,45 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
       const res=await fetch("/api/cal-proxy?url="+encodeURIComponent(url));
       const data=await res.json();
       if(!res.ok||!data.ok)throw new Error(data.error||"Couldn't read that calendar link.");
+      const label=importCalLabel||detectCalendarSourceType(url);
+      const classified=isAcademicCalendarSource(label);
+      let events=data.events;
+      if(classified&&events.length>0){
+        setImportCalLoading(false);setImportCalClassifying(true);
+        const classifications=await classifyImportedCalendarEvents(events,label,mgmtSubjs.map(s=>s.label));
+        setImportCalClassifying(false);
+        // Every item still gets a real, editable kind/subject even when the
+        // AI call itself failed outright (classifyImportedCalendarEvents
+        // returns {} rather than throwing) -- "assignment"/"Other" is the
+        // same safe default mergeImportedEvents would fall back to anyway,
+        // just made visible and correctable here instead of silent.
+        events=events.map(e=>{
+          const c=e.uid&&classifications[e.uid];
+          return {...e,kind:c?c.kind:"assignment",subjectGuess:c?c.subject:"Other",examWeight:c&&c.examWeight,include:true};
+        });
+      }
       setImportCalReview({
         subId:"cal-"+Date.now().toString(36),
-        url,label:importCalLabel||detectCalendarSourceType(url),
-        sourceType:importCalLabel||detectCalendarSourceType(url),
-        events:data.events,skippedAllDay:data.skippedAllDay||0,
+        url,label,sourceType:label,
+        events,skippedAllDay:data.skippedAllDay||0,
+        classified,
       });
     }catch(e){
       setImportCalError(e.message||"Couldn't read that calendar link. Double-check it's a public/secret calendar URL.");
     }finally{
-      setImportCalLoading(false);
+      setImportCalLoading(false);setImportCalClassifying(false);
     }
   };
   const confirmImportCalendar=()=>{
     if(!importCalReview)return;
-    const {subId,url,label,sourceType,events:fetched}=importCalReview;
-    const merged=mergeImportedEvents(lsGet("events",[]),subId,fetched);
+    const {subId,url,label,sourceType,events:reviewEvents,classified}=importCalReview;
+    // Unchecked rows never make it to mergeImportedEvents at all -- "skip
+    // this one" has to mean it's not on the calendar, not just untagged.
+    const fetched=classified?reviewEvents.filter(e=>e.include!==false):reviewEvents;
+    const classifications=classified?Object.fromEntries(
+      fetched.filter(e=>e.uid).map(e=>[e.uid,{kind:e.kind,subject:e.subjectGuess,examWeight:e.examWeight}])
+    ):undefined;
+    const merged=mergeImportedEvents(lsGet("events",[]),subId,fetched,classifications);
     const result=reconcileFixedEventConflicts(merged.filter(e=>e.importSubId===subId));
     surfaceReconcileResult(result);
     const sub={id:subId,url,label,sourceType,lastSyncedAt:Date.now()};
@@ -20539,13 +20704,24 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   // Shared by the manual "Sync now" action and the once-a-day silent
   // auto-resync below -- no review gate here, since re-confirming a
   // subscription that's already been approved once would defeat the
-  // point of "syncs automatically."
+  // point of "syncs automatically." Still classifies genuinely NEW items
+  // on a Schoology/Canvas subscription (a new assignment posted mid-
+  // semester, say) -- otherwise only the initial connect would ever be
+  // classified and everything discovered afterward would quietly fall
+  // back to a generic "busy block" again. Scoped to only the new uids so
+  // a day with nothing new triggers no AI call at all.
   const resyncCalendar=async(sub)=>{
     try{
       const res=await fetch("/api/cal-proxy?url="+encodeURIComponent(sub.url));
       const data=await res.json();
       if(!res.ok||!data.ok)return;
-      const merged=mergeImportedEvents(lsGet("events",[]),sub.id,data.events);
+      let classifications;
+      if(isAcademicCalendarSource(sub.sourceType)){
+        const existingUids=new Set(lsGet("events",[]).filter(e=>e.importSubId===sub.id).map(e=>e.externalUid));
+        const newEvents=data.events.filter(e=>e.uid&&!existingUids.has(e.uid));
+        if(newEvents.length>0)classifications=await classifyImportedCalendarEvents(newEvents,sub.sourceType,mgmtSubjs.map(s=>s.label));
+      }
+      const merged=mergeImportedEvents(lsGet("events",[]),sub.id,data.events,classifications);
       const result=reconcileFixedEventConflicts(merged.filter(e=>e.importSubId===sub.id));
       surfaceReconcileResult(result);
       const nextSubs=importedCals.map(s=>s.id===sub.id?{...s,lastSyncedAt:Date.now()}:s);
@@ -21135,7 +21311,11 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                       {importedCals.length>0?importedCals.length+" connected · Google, Outlook, iCloud, or a shift-scheduling app":"Paste any calendar link: Google, Outlook, iCloud, or your work shift schedule"}
                     </div>
                   </div>
-                  <BtnSm variant={importedCals.length>0?"subtle":"lime"} onClick={openImportCalModal} style={{flexShrink:0}}>{importedCals.length>0?"Manage":"Connect"}</BtnSm>
+                  {/* onClick wraps the call (not a bare openImportCalModal
+                      reference) -- openImportCalModal now takes an optional
+                      platform hint, and a bare reference would otherwise
+                      hand it the click SyntheticEvent as that first arg. */}
+                  <BtnSm variant={importedCals.length>0?"subtle":"lime"} onClick={()=>openImportCalModal()} style={{flexShrink:0}}>{importedCals.length>0?"Manage":"Connect"}</BtnSm>
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${T.border}`}}>
                   <div style={{width:40,height:40,borderRadius:10,background:T.lime+"14",border:`1px solid ${T.lime}33`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:T.lime}}>
@@ -21157,24 +21337,45 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   </div>
                   <BtnSm variant="subtle" disabled style={{flexShrink:0,cursor:"not-allowed"}}>Connect</BtnSm>
                 </div>
-                <div style={{position:"relative"}}
-                  onMouseEnter={()=>setCanvasTipOpen(true)} onMouseLeave={()=>setCanvasTipOpen(false)}>
-                  <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${T.border}`,opacity:0.5}}>
+                {/* Canvas's full REST API genuinely does need a district/
+                    university-issued developer key -- that part of the old
+                    copy was true. But the personal calendar feed (Calendar
+                    > "Calendar Feed" in Canvas's own UI) needs none of
+                    that: any student can generate one themselves, no IT
+                    involvement. This row (and Schoology's below) run
+                    through the exact same connect-a-calendar flow as
+                    "Calendar or work schedule" above, just with a platform
+                    hint that shows the right instructions and classifies
+                    what comes back into real Assignments/Exams/Projects
+                    instead of one generic "busy block."  */}
+                {(()=>{const canvasConnected=importedCals.filter(c=>c.sourceType==="Canvas");return(
+                  <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${canvasConnected.length>0?T.teal+"44":T.border}`,transition:"border-color 0.2s"}}>
                     <div style={{width:40,height:40,borderRadius:10,background:"rgba(226,80,45,0.10)",border:"1px solid rgba(226,80,45,0.22)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#E2502D" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
                     </div>
                     <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:13,fontWeight:600,color:T.white}}>Canvas LMS<span style={{marginLeft:8,fontSize:10.5,fontWeight:600,color:T.faint}}>(Coming Soon)</span></div>
-                      <div style={{fontSize:11,color:T.muted,marginTop:2}}>Institutional Partner Feature</div>
+                      <div style={{fontSize:13,fontWeight:600,color:T.white}}>Canvas LMS</div>
+                      <div style={{fontSize:11,color:canvasConnected.length>0?T.teal:T.muted,marginTop:2}}>
+                        {canvasConnected.length>0?canvasConnected.length+" connected · syncs automatically":"Personal calendar feed — no school IT setup required"}
+                      </div>
                     </div>
-                    <BtnSm variant="subtle" disabled style={{flexShrink:0,cursor:"not-allowed"}}>Connect</BtnSm>
+                    <BtnSm variant={canvasConnected.length>0?"subtle":"lime"} onClick={()=>openImportCalModal("canvas")} style={{flexShrink:0}}>{canvasConnected.length>0?"Manage":"Connect"}</BtnSm>
                   </div>
-                  {canvasTipOpen&&(
-                    <div style={{position:"absolute",top:"100%",left:0,right:0,marginTop:8,padding:"12px 14px",borderRadius:10,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",fontSize:11.5,color:T.muted,lineHeight:1.6,zIndex:10}}>
-                      Studlin integrates securely via enterprise OAuth 2.0 developer keys issued directly by university IT administrations to ensure strict FERPA compliance and data security.
+                );})()}
+                {(()=>{const schoologyConnected=importedCals.filter(c=>c.sourceType==="Schoology");return(
+                  <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${schoologyConnected.length>0?T.teal+"44":T.border}`,transition:"border-color 0.2s"}}>
+                    <div style={{width:40,height:40,borderRadius:10,background:T.lime+"14",border:`1px solid ${T.lime}33`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:T.lime}}>
+                      {Icon.link}
                     </div>
-                  )}
-                </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:600,color:T.white}}>Schoology</div>
+                      <div style={{fontSize:11,color:schoologyConnected.length>0?T.teal:T.muted,marginTop:2}}>
+                        {schoologyConnected.length>0?schoologyConnected.length+" connected · syncs automatically":"Personal calendar feed — no school IT setup required"}
+                      </div>
+                    </div>
+                    <BtnSm variant={schoologyConnected.length>0?"subtle":"lime"} onClick={()=>openImportCalModal("schoology")} style={{flexShrink:0}}>{schoologyConnected.length>0?"Manage":"Connect"}</BtnSm>
+                  </div>
+                );})()}
               </div>
               {(calGoogleLinked||calAppleLinked)&&(
                 <div style={{marginTop:14,padding:"10px 14px",borderRadius:8,background:T.teal+"10",border:`1px solid ${T.teal}25`,fontSize:12,color:T.teal,lineHeight:1.6}}>
@@ -21194,24 +21395,33 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>Notion integration is in development. It'll appear here when ready.</div>
             </Card>
             <Modal open={importCalOpen} onClose={()=>setImportCalOpen(false)}
-              title={importCalReview?"Review "+importCalReview.label:"Connect a calendar or work schedule"}
-              sub={importCalReview?"These will be added as fixed, occupied time — Studlin will plan around them.":"Paste a calendar or work-schedule link (Google, Outlook, iCloud, or your shift-scheduling app's calendar feed)."}
+              title={importCalReview?"Review "+importCalReview.label:importCalPlatformHint?"Connect "+PLATFORM_HELP[importCalPlatformHint].label:"Connect a calendar or work schedule"}
+              sub={importCalReview?(importCalReview.classified?"Studlin sorted these into assignments, exams, and projects — check anything that looks off before adding.":"These will be added as fixed, occupied time — Studlin will plan around them."):(importCalPlatformHint?"Paste your personal "+PLATFORM_HELP[importCalPlatformHint].label+" calendar feed link — see how below.":"Paste a calendar or work-schedule link (Google, Outlook, iCloud, or your shift-scheduling app's calendar feed).")}
               width={520}
               footer={importCalReview?(
                 <>
                   <Btn variant="subtle" onClick={()=>setImportCalReview(null)}>Back</Btn>
                   <Btn onClick={confirmImportCalendar} disabled={importCalReview.events.length===0} style={{opacity:importCalReview.events.length===0?0.45:1}}>
-                    Add {importCalReview.events.length} to Calendar →
+                    Add {importCalReview.classified?importCalReview.events.filter(e=>e.include!==false).length:importCalReview.events.length} to Calendar →
                   </Btn>
                 </>
               ):(
                 <>
                   <Btn variant="subtle" onClick={()=>setImportCalOpen(false)}>Cancel</Btn>
-                  <Btn onClick={fetchCalendarPreview} disabled={importCalLoading} style={{opacity:importCalLoading?0.6:1}}>{importCalLoading?"Checking…":"Continue"}</Btn>
+                  <Btn onClick={fetchCalendarPreview} disabled={importCalLoading||importCalClassifying} style={{opacity:(importCalLoading||importCalClassifying)?0.6:1}}>{importCalClassifying?"Sorting into assignments/exams…":importCalLoading?"Checking…":"Continue"}</Btn>
                 </>
               )}>
               {!importCalReview?(
                 <>
+                  {importCalPlatformHint&&PLATFORM_HELP[importCalPlatformHint]&&(()=>{const help=PLATFORM_HELP[importCalPlatformHint];return(
+                    <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
+                      <div style={{fontSize:11,fontWeight:700,color:T.text,marginBottom:8}}>How to find your {help.label} calendar link</div>
+                      <ol style={{margin:0,paddingLeft:18,fontSize:11.5,color:T.muted,lineHeight:1.8}}>
+                        {help.steps.map((s,i)=><li key={i}>{s}</li>)}
+                      </ol>
+                      {help.note&&<div style={{fontSize:10.5,color:T.faint,marginTop:8,lineHeight:1.5}}>{help.note}</div>}
+                    </div>
+                  );})()}
                   <Field label="Calendar link">
                     <Input value={importCalUrl} onChange={e=>onImportCalUrlChange(e.target.value)} placeholder="https://calendar.google.com/calendar/ical/…" autoFocus />
                     {importCalError&&<div style={{fontSize:11.5,color:T.red,marginTop:6}}>{importCalError}</div>}
@@ -21247,6 +21457,34 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   </div>
                   {importCalReview.events.length===0?(
                     <div style={{padding:"24px 16px",textAlign:"center",color:T.muted,fontSize:12.5}}>Nothing to import from this link right now.</div>
+                  ):importCalReview.classified?(
+                    <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:400,overflowY:"auto"}}>
+                      {/* Editable per-item review, Schoology/Canvas only --
+                          the AI's guess at kind/subject is a starting point,
+                          not a verdict, same "confirm before it commits"
+                          discipline every other AI-extraction flow in the
+                          app already uses (syllabus scan, Brain Dump). */}
+                      {importCalReview.events.map((ev,i)=>(
+                        <div key={i} style={{padding:"10px 12px",borderRadius:9,background:T.card2,border:`1px solid ${T.border}`,opacity:ev.include===false?0.5:1}}>
+                          <div style={{display:"flex",alignItems:"flex-start",gap:9}}>
+                            <input type="checkbox" checked={ev.include!==false} onChange={()=>setImportCalReview(r=>({...r,events:r.events.map((x,xi)=>xi===i?{...x,include:!x.include}:x)}))} style={{marginTop:11,cursor:"pointer",flexShrink:0}} />
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{display:"flex",justifyContent:"space-between",gap:10,marginBottom:6}}>
+                                <span style={{fontSize:12.5,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</span>
+                                <span style={{fontSize:11,color:T.muted,flexShrink:0}}>{new Date(ev.date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})} · {fmtClock12(ev.time)}</span>
+                              </div>
+                              <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                                <SelectChip options={[{value:"assignment",label:"Assignment"},{value:"exam",label:"Exam"},{value:"project",label:"Project"},{value:"class",label:"Class"}]}
+                                  value={ev.kind==="other"?"assignment":ev.kind}
+                                  onChange={v=>setImportCalReview(r=>({...r,events:r.events.map((x,xi)=>xi===i?{...x,kind:v}:x)}))} />
+                                <Input value={ev.subjectGuess||""} onChange={e=>setImportCalReview(r=>({...r,events:r.events.map((x,xi)=>xi===i?{...x,subjectGuess:e.target.value}:x)}))}
+                                  placeholder="Subject" style={{width:130,padding:"6px 9px",fontSize:11.5}} />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   ):(
                     <div style={{display:"flex",flexDirection:"column",gap:6}}>
                       {importCalReview.events.map((ev,i)=>(

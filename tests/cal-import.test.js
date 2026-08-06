@@ -5,7 +5,7 @@
 const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
 const { loadStudlinModule } = require("./harness.js");
-const { parseICS, normalizeCalendarUrl } = require("../api/cal-proxy.js");
+const { parseICS, normalizeCalendarUrl, isAllowedCalendarHost } = require("../api/cal-proxy.js");
 
 function pad(n) { return String(n).padStart(2, "0"); }
 // Builds an ICS timestamp for N days from now at a fixed hour, so fixtures
@@ -94,6 +94,33 @@ describe("parseICS (api/cal-proxy.js)", () => {
   });
 });
 
+describe("isAllowedCalendarHost (Schoology/Canvas unlock -- suffix-match must not be spoofable)", () => {
+  test("allows Schoology's own domain and subdomains", () => {
+    assert.equal(isAllowedCalendarHost("schoology.com"), true);
+    assert.equal(isAllowedCalendarHost("app.schoology.com"), true);
+  });
+  test("allows Canvas's own domain and any school's *.instructure.com subdomain", () => {
+    assert.equal(isAllowedCalendarHost("instructure.com"), true);
+    assert.equal(isAllowedCalendarHost("myschool.instructure.com"), true);
+  });
+  test("rejects an unrelated domain that merely contains the name", () => {
+    assert.equal(isAllowedCalendarHost("notschoology.com"), false);
+  });
+  test("rejects a lookalike suffix trick (schoology.com.evil.tld)", () => {
+    assert.equal(isAllowedCalendarHost("schoology.com.evil.tld"), false);
+  });
+  test("still rejects PowerSchool/Infinite Campus -- district-hosted domains aren't a static suffix this list can safely cover yet", () => {
+    assert.equal(isAllowedCalendarHost("powerschool.com"), false);
+    assert.equal(isAllowedCalendarHost("ps.somedistrict.k12.state.us"), false);
+    assert.equal(isAllowedCalendarHost("infinitecampus.org"), false);
+  });
+  test("still allows the pre-existing providers", () => {
+    assert.equal(isAllowedCalendarHost("icloud.com"), true);
+    assert.equal(isAllowedCalendarHost("calendar.google.com"), true);
+    assert.equal(isAllowedCalendarHost("outlook.live.com"), true);
+  });
+});
+
 describe("normalizeCalendarUrl (regression: iCloud's own Public Calendar link defaults to webcal://, which the HTTP client can't fetch as-is)", () => {
   test("rewrites a webcal:// iCloud link to https://", () => {
     assert.equal(
@@ -114,6 +141,163 @@ describe("normalizeCalendarUrl (regression: iCloud's own Public Calendar link de
       normalizeCalendarUrl("WEBCAL://p01-calendars.icloud.com/published/2/abc123"),
       "https://p01-calendars.icloud.com/published/2/abc123"
     );
+  });
+});
+
+describe("detectCalendarSourceType / isAcademicCalendarSource (Schoology/Canvas recognition)", () => {
+  test("labels a Schoology feed link", () => {
+    const { detectCalendarSourceType } = loadStudlinModule();
+    assert.equal(detectCalendarSourceType("https://app.schoology.com/calendar/feed/abc123.ics"), "Schoology");
+  });
+  test("labels a school-branded Canvas feed link", () => {
+    const { detectCalendarSourceType } = loadStudlinModule();
+    assert.equal(detectCalendarSourceType("https://myschool.instructure.com/feeds/calendars/user_XXXX.ics"), "Canvas");
+  });
+  test("an unrelated link still falls back to the pre-existing generic label", () => {
+    const { detectCalendarSourceType } = loadStudlinModule();
+    assert.equal(detectCalendarSourceType("https://scheduling.homebase.com/ical/abc"), "Work schedule");
+  });
+  test("isAcademicCalendarSource is true only for Schoology/Canvas, not any other connected calendar", () => {
+    const { isAcademicCalendarSource } = loadStudlinModule();
+    assert.equal(isAcademicCalendarSource("Schoology"), true);
+    assert.equal(isAcademicCalendarSource("Canvas"), true);
+    assert.equal(isAcademicCalendarSource("Google Calendar"), false);
+    assert.equal(isAcademicCalendarSource("Work schedule"), false);
+  });
+});
+
+describe("parseCalendarClassificationReply (Schoology/Canvas AI classification -- pure parsing, no network)", () => {
+  const capped = [
+    { uid: "u1", title: "Ch. 4 problem set" },
+    { uid: "u2", title: "Unit 2 midterm" },
+    { uid: "u3", title: "Group presentation" },
+  ];
+
+  test("maps a well-formed reply back onto the right uid by index", () => {
+    const { parseCalendarClassificationReply } = loadStudlinModule();
+    const reply = JSON.stringify({ items: [
+      { i: 0, kind: "assignment", subject: "Biology" },
+      { i: 1, kind: "exam", subject: "Biology", examWeight: "major" },
+      { i: 2, kind: "project", subject: "History" },
+    ]});
+    const result = parseCalendarClassificationReply(reply, capped);
+    assert.equal(result.u1.kind, "assignment");
+    assert.equal(result.u2.kind, "exam");
+    assert.equal(result.u2.examWeight, "major");
+    assert.equal(result.u3.kind, "project");
+    assert.equal(result.u3.subject, "History");
+  });
+
+  test("strips markdown fences before parsing", () => {
+    const { parseCalendarClassificationReply } = loadStudlinModule();
+    const reply = "```json\n" + JSON.stringify({ items: [{ i: 0, kind: "exam", subject: "Chem" }] }) + "\n```";
+    const result = parseCalendarClassificationReply(reply, capped);
+    assert.equal(result.u1.kind, "exam");
+  });
+
+  test("an unrecognized kind falls back to assignment rather than throwing or being dropped", () => {
+    const { parseCalendarClassificationReply } = loadStudlinModule();
+    const reply = JSON.stringify({ items: [{ i: 0, kind: "homework_thing", subject: "Biology" }] });
+    const result = parseCalendarClassificationReply(reply, capped);
+    assert.equal(result.u1.kind, "assignment");
+  });
+
+  test("a missing subject falls back to \"Other\" rather than empty/undefined", () => {
+    const { parseCalendarClassificationReply } = loadStudlinModule();
+    const reply = JSON.stringify({ items: [{ i: 0, kind: "assignment" }] });
+    const result = parseCalendarClassificationReply(reply, capped);
+    assert.equal(result.u1.subject, "Other");
+  });
+
+  test("examWeight is only kept for kind:exam, and only a real value", () => {
+    const { parseCalendarClassificationReply } = loadStudlinModule();
+    const reply = JSON.stringify({ items: [
+      { i: 0, kind: "assignment", subject: "Bio", examWeight: "major" }, // not an exam, should be dropped
+      { i: 1, kind: "exam", subject: "Bio", examWeight: "extra-credit" }, // not a real value, should be dropped
+    ]});
+    const result = parseCalendarClassificationReply(reply, capped);
+    assert.equal(result.u1.examWeight, undefined);
+    assert.equal(result.u2.examWeight, undefined);
+  });
+
+  test("an out-of-range index or an event with no uid is silently skipped, not thrown", () => {
+    const { parseCalendarClassificationReply } = loadStudlinModule();
+    const reply = JSON.stringify({ items: [{ i: 99, kind: "exam", subject: "Bio" }] });
+    const result = parseCalendarClassificationReply(reply, capped);
+    assert.deepEqual(Object.keys(result), []);
+  });
+
+  test("malformed JSON returns {} instead of throwing", () => {
+    // Not assert.deepEqual against a literal {} -- loadStudlinModule runs
+    // the app in its own vm realm, so an object it returns and a literal
+    // {} from this file's realm have different prototypes and always
+    // false-fail a deep-equality check even when "empty" either way.
+    // Object.keys sidesteps that by only comparing plain data.
+    const { parseCalendarClassificationReply } = loadStudlinModule();
+    assert.equal(Object.keys(parseCalendarClassificationReply("not json at all", capped)).length, 0);
+  });
+
+  test("a reply with no items array returns {}", () => {
+    const { parseCalendarClassificationReply } = loadStudlinModule();
+    assert.equal(Object.keys(parseCalendarClassificationReply(JSON.stringify({ foo: "bar" }), capped)).length, 0);
+  });
+});
+
+describe("mergeImportedEvents classifications param (Schoology/Canvas: exam/assignment/project get real kinds instead of a generic busy block)", () => {
+  const fetched = [
+    { uid: "u1", title: "Ch. 4 problem set", date: "2026-08-01", time: "23:59", duration: 60 },
+    { uid: "u2", title: "Unit 2 midterm", date: "2026-08-05", time: "09:00", duration: 50 },
+  ];
+  const classifications = {
+    u1: { kind: "assignment", subject: "Biology" },
+    u2: { kind: "exam", subject: "Biology", examWeight: "major" },
+  };
+
+  test("an assignment/project becomes a non-occupying deadline (duration:null), not a fixed block", () => {
+    const { mergeImportedEvents } = loadStudlinModule();
+    const result = mergeImportedEvents([], "sub-1", fetched, classifications);
+    const assignment = result.find((e) => e.externalUid === "u1");
+    assert.equal(assignment.kind, "deadline");
+    assert.equal(assignment.duration, null);
+    assert.equal(assignment.subject, "Biology");
+  });
+
+  test("an exam keeps its real timed slot, gets examWeight + an empty confidenceLog", () => {
+    const { mergeImportedEvents } = loadStudlinModule();
+    const result = mergeImportedEvents([], "sub-1", fetched, classifications);
+    const exam = result.find((e) => e.externalUid === "u2");
+    assert.equal(exam.kind, "exam");
+    assert.equal(exam.duration, 50);
+    assert.equal(exam.examWeight, "major");
+    // Not assert.deepEqual against a literal [] -- same vm-realm caveat as
+    // the parseCalendarClassificationReply tests above.
+    assert.equal(exam.confidenceLog.length, 0);
+  });
+
+  test("an unclassified uid (no matching classification entry) falls back to the pre-existing generic busy block", () => {
+    const { mergeImportedEvents } = loadStudlinModule();
+    const result = mergeImportedEvents([], "sub-1", [{ uid: "u3", title: "Unmatched", date: "2026-08-01", time: "10:00", duration: 30 }], classifications);
+    assert.equal(result[0].kind, "busy block");
+    assert.equal(result[0].subject, "General");
+  });
+
+  test("omitting classifications entirely (every pre-existing caller) is byte-identical to before", () => {
+    const { mergeImportedEvents } = loadStudlinModule();
+    const result = mergeImportedEvents([], "sub-1", fetched);
+    for (const ev of result) {
+      assert.equal(ev.kind, "busy block");
+      assert.equal(ev.subject, "General");
+    }
+  });
+
+  test("resyncing a classified deadline never has its duration overwritten back to the feed's own value", () => {
+    const { mergeImportedEvents } = loadStudlinModule();
+    const first = mergeImportedEvents([], "sub-1", fetched, classifications);
+    // Upstream feed still reports its own (irrelevant) duration on resync.
+    const resynced = mergeImportedEvents(first, "sub-1", fetched);
+    const assignment = resynced.find((e) => e.externalUid === "u1");
+    assert.equal(assignment.kind, "deadline");
+    assert.equal(assignment.duration, null);
   });
 });
 
