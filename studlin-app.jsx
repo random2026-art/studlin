@@ -6212,23 +6212,12 @@ async function extractFileText(file){
 // linkDeckToExamStorage, buildSpacedSessionPreviews, computeExamReadiness)
 // instead of inventing a parallel system.
 function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
-  const [tab,setTab]=useState("work"); // work | flashcards | practiceExams
-  // Redesign: Exams/Assignments/Projects used to be 3 separate mutually-
-  // exclusive tab buttons -- folded into one "Work" tab with a multi-select
-  // filter instead (can show e.g. Exams+Projects together), each section
-  // keeping its own native table shape (their columns are genuinely
-  // different -- readiness pills for exams, priority/difficulty/pace for
-  // assignments, checklist progress for projects -- so this doesn't merge
-  // the ROWS into one table, just which sections render). Flashcards and
-  // Practice Exams stay their own tabs since they're structurally
-  // different content, not filterable rows of the same kind of thing.
-  const [workFilter,setWorkFilter]=useState(()=>new Set(["exams"]));
-  const toggleWorkFilter=(id)=>setWorkFilter(prev=>{
-    const next=new Set(prev);
-    if(next.has(id)){if(next.size>1)next.delete(id);} // always keep at least one selected
-    else next.add(id);
-    return next;
-  });
+  const [tab,setTab]=useState("exams"); // exams | assignments | projects | flashcards | practiceExams
+  // Single-select, one at a time -- an earlier pass tried a multi-select
+  // filter here (pick Exams+Projects together), reverted per direct
+  // feedback: only one section visible at once, same as it always was,
+  // just restyled below as one segmented control instead of 5 separately-
+  // bordered buttons.
   // One-shot deep-link handoff -- same pattern openNoteId already uses
   // elsewhere: a caller (Dashboard's Exams master
   // list) sets this before navigating here, consumed once on mount then
@@ -6889,29 +6878,17 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
           reason. Redesign: same compact segmented control Calendar's own
           Day/Week/Month switcher uses (one shared background, borderless
           buttons) instead of the old row of separately-bordered, heavier
-          pill buttons. */}
-      <div style={{display:"flex",gap:2,background:T.card2,padding:2,borderRadius:4,width:"fit-content",marginBottom:10}}>
-        {[{id:"work",label:"Work"},{id:"flashcards",label:"Flashcards"},{id:"practiceExams",label:"Practice Exams"}].map(v=>(
-          <button key={v.id} onClick={()=>{setTab(v.id);setSelectedExamId(null);}} style={{padding:"5px 12px",borderRadius:4,fontSize:12,fontWeight:tab===v.id?600:400,cursor:"pointer",background:tab===v.id?T.card:"transparent",color:tab===v.id?T.text:T.muted,border:"none",fontFamily:T.font,transition:"all 0.15s"}}>{v.label}</button>
+          pill buttons. Single-select, one section visible at a time --
+          a multi-select filter was tried here and reverted per direct
+          feedback (didn't like being able to have Exams+Assignments both
+          up at once). */}
+      <div style={{display:"flex",gap:2,background:T.card2,padding:2,borderRadius:4,width:"fit-content",marginBottom:20,flexWrap:"wrap"}}>
+        {[{id:"exams",label:"Exams"},{id:"assignments",label:"Assignments"},{id:"projects",label:"Projects"},{id:"flashcards",label:"Flashcards"},{id:"practiceExams",label:"Practice Exams"}].map(v=>(
+          <button key={v.id} onClick={()=>{setTab(v.id);setSelectedExamId(null);}} style={{padding:"5px 12px",borderRadius:4,fontSize:12,fontWeight:tab===v.id?600:400,cursor:"pointer",background:tab===v.id?T.card:"transparent",color:tab===v.id?T.text:T.muted,border:"none",fontFamily:T.font,transition:"all 0.15s",whiteSpace:"nowrap"}}>{v.label}</button>
         ))}
       </div>
-      {/* Multi-select filter for Work's 3 sections -- can show e.g. just
-          Exams, or Exams+Projects together. Deliberately a different,
-          lighter pill style than the segmented control above it, so the
-          two controls (single-select mode vs multi-select filter) read as
-          visually distinct rather than looking like one confused row. */}
-      {tab==="work"&&!selectedExam&&(
-        <div style={{display:"flex",gap:6,marginBottom:20}}>
-          {[{id:"exams",label:"Exams"},{id:"assignments",label:"Assignments"},{id:"projects",label:"Projects"}].map(v=>{
-            const active=workFilter.has(v.id);
-            return (
-              <button key={v.id} onClick={()=>toggleWorkFilter(v.id)} aria-pressed={active} style={{padding:"6px 13px",borderRadius:99,fontSize:11.5,fontWeight:600,cursor:"pointer",background:active?T.lime+"14":"transparent",color:active?T.lime:T.muted,border:`1px solid ${active?T.lime+"44":T.border}`,fontFamily:T.font}}>{active?"✓ ":""}{v.label}</button>
-            );
-          })}
-        </div>
-      )}
 
-      {tab==="work"&&workFilter.has("exams")&&!selectedExam&&(
+      {tab==="exams"&&!selectedExam&&(
         exams.length===0
           ?<Card style={{padding:"32px 20px",textAlign:"center"}}>
             <div style={{fontSize:13,color:T.muted,marginBottom:14}}>No upcoming exams yet — add one from your calendar to start building material for it.</div>
@@ -7058,7 +7035,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
           reusing "sessions" verbatim -- Attack Block count for an
           assignment, checklist completion for a project -- rather than
           forcing both through the exam's study-session shape. */}
-      {tab==="work"&&workFilter.has("assignments")&&!selectedExam&&(()=>{
+      {tab==="assignments"&&(()=>{
         const allAssignments=upcomingAssignments();
         const assignClasses=[...new Set(allAssignments.map(a=>a.subject).filter(Boolean))];
         const assignments=allAssignments.filter(a=>{
@@ -7129,7 +7106,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
         );
       })()}
 
-      {tab==="work"&&workFilter.has("projects")&&!selectedExam&&(()=>{
+      {tab==="projects"&&(()=>{
         const allProjects=upcomingProjects();
         const projectClasses=[...new Set(allProjects.map(p=>p.subject).filter(Boolean))];
         const projects=allProjects.filter(p=>{
@@ -7191,7 +7168,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
         );
       })()}
 
-      {tab==="work"&&selectedExam&&(()=>{
+      {tab==="exams"&&selectedExam&&(()=>{
         const readiness=computeExamReadiness(selectedExam,lsGet("events",[]),dayKey());
         const deck=allDecks.find(d=>deckLinkedToExam(d,selectedExam.id));
         const pes=allPracticeExams.filter(p=>p.examEventId===selectedExam.id);
