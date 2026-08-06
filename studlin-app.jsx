@@ -16326,7 +16326,18 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive}){
 
   const linkedSessions=allEvents.filter(e=>e.dueEventId===ev.id);
   const chainIdForReschedule=(allEvents.find(e=>e.dueEventId===ev.id&&e.attackChainId&&e.status==="pending")||{}).attackChainId||null;
-  const jumpToCalendar=()=>{if(setActive)setActive("calendar");onClose();};
+  // Used to just switch tabs generically, landing wherever Calendar
+  // happened to default to (today) instead of the block's actual date --
+  // now sets the same one-shot deep-link flag pendingBrainDump already
+  // established the pattern for (see CalendarTab's own consuming effect),
+  // so this lands the grid on the right week and briefly outlines the
+  // exact block (CalendarTab's existing jumpToSession, already used for
+  // its own in-Calendar sidebar clicks -- this just reaches it cross-tab).
+  const jumpToCalendar=(sessionId)=>{
+    if(sessionId)lsSet("pendingCalendarJumpSessionId",sessionId);
+    if(setActive)setActive("calendar");
+    onClose();
+  };
   const addManualLinkedBlock=()=>{
     if(!manualDate)return;
     const block={id:"manual-"+ev.id+"-"+Date.now(),title:"Work on: "+(title.trim()||ev.title),date:manualDate,time:manualTime,
@@ -16558,7 +16569,7 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive}){
               return (
                 <div key={s.id} style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
-                    <div onClick={jumpToCalendar} style={{cursor:"pointer",flex:1,minWidth:0}} title="Jump to calendar">
+                    <div onClick={()=>jumpToCalendar(s.id)} style={{cursor:"pointer",flex:1,minWidth:0}} title="Jump to calendar">
                       <div style={{fontSize:12,fontWeight:600,color:s.status==="done"?T.muted:T.text,textDecoration:s.status==="done"?"line-through":"none"}}>{s.date} · {s.time} · {s.duration||30}min</div>
                     </div>
                     <button type="button" onClick={()=>deleteLinkedBlock(s.id)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline",flexShrink:0}}>Delete</button>
@@ -17542,6 +17553,19 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     if(!lsGet("pendingBrainDump",false))return;
     try{localStorage.removeItem("studlin-pendingBrainDump");}catch(e){}
     setBrainDumpOpen(true);
+  },[]);
+  // Same one-shot deep-link pattern as pendingBrainDump above -- set by
+  // EventDetailModal's jumpToCalendar (a manual/Attack Block session row's
+  // "Jump to calendar" click) from anywhere in the app, consumed here so
+  // arriving on Calendar actually lands the grid on that session's real
+  // date and briefly highlights it (jumpToSession, defined below), instead
+  // of just switching tabs and leaving the student to go find it.
+  useEffect(()=>{
+    const sessionId=lsGet("pendingCalendarJumpSessionId",null);
+    if(!sessionId)return;
+    try{localStorage.removeItem("studlin-pendingCalendarJumpSessionId");}catch(e){}
+    const target=events.find(e=>e.id===sessionId);
+    if(target)jumpToSession(target);
   },[]);
   // Explicit AI-Schedule vs Manual-Placement fork for task-kind entries —
   // replaces the old implicit "fill in Target Date to go manual" behavior,
