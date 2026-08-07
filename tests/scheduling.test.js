@@ -2963,3 +2963,125 @@ describe("computeWeekBalancePlan (manually-triggered 'Balance my week')", () => 
     assert.ok(!result.moves.some((mv) => mv.id === "escalated"), "a task at the escalation threshold must never be silently reshuffled again");
   });
 });
+
+describe("isNearDuplicateCourseLabel (regression: S6 -- exact-normalized matching missed realistic pairs like 'AP Bio' / 'AP Biology')", () => {
+  test("an identical label matches", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isNearDuplicateCourseLabel("Biology", "Biology"), true);
+  });
+
+  test("an abbreviation vs the full word, same word count, matches (the audit's own example)", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isNearDuplicateCourseLabel("AP Bio", "AP Biology"), true);
+  });
+
+  test("case and whitespace differences alone still match", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isNearDuplicateCourseLabel("ap  bio", "AP BIOLOGY"), true);
+  });
+
+  test("a genuinely different course does not match", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isNearDuplicateCourseLabel("AP Biology", "AP Chemistry"), false);
+  });
+
+  test("differently-numbered courses (a real distinction, not an abbreviation) do not match", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isNearDuplicateCourseLabel("AP Physics 1", "AP Physics 2"), false);
+  });
+
+  test("a too-short shared prefix does not count as an abbreviation match", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isNearDuplicateCourseLabel("A Class", "A Completely Different Thing"), false);
+  });
+
+  test("a different word count never matches, even with a shared prefix word", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isNearDuplicateCourseLabel("Biology", "Biology Lab Extra"), false);
+  });
+
+  test("empty/missing labels never match", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isNearDuplicateCourseLabel("", "Biology"), false);
+    assert.equal(m.isNearDuplicateCourseLabel(null, null), false);
+  });
+});
+
+describe("findDuplicateCourseGroups (regression: S6 -- now groups near-duplicates, not just exact-normalized matches)", () => {
+  test("a near-duplicate pair (not exact) is grouped together", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([{ id: "s1", label: "AP Bio" }, { id: "s2", label: "AP Biology" }]);
+    const groups = m.findDuplicateCourseGroups();
+    assert.equal(groups.length, 1);
+    assert.equal(groups[0].length, 2);
+  });
+
+  test("genuinely distinct subjects never group", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([{ id: "s1", label: "Biology" }, { id: "s2", label: "Chemistry" }]);
+    assert.equal(m.findDuplicateCourseGroups().length, 0);
+  });
+
+  test("a lone subject with no duplicate is never grouped", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([{ id: "s1", label: "Biology" }]);
+    assert.equal(m.findDuplicateCourseGroups().length, 0);
+  });
+});
+
+describe("ensureSubjectsForClassRoutines (regression: S5 -- Weekly Routine's class builders never touched getSubjects/saveSubjects at all)", () => {
+  test("a class routine with no courseId gets a brand-new subject created and linked", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([]);
+    const result = m.ensureSubjectsForClassRoutines([{ id: "r1", kind: "class", title: "Biology", days: [0], startTime: "09:00", duration: 50 }]);
+    assert.equal(result[0].subject, "Biology");
+    assert.ok(!!result[0].courseId);
+    const subjects = m.getSubjects();
+    assert.equal(subjects.length, 1);
+    assert.equal(subjects[0].label, "Biology");
+  });
+
+  test("two meeting times for the same brand-new class in one batch share one subject, not two", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([]);
+    const result = m.ensureSubjectsForClassRoutines([
+      { id: "r1", kind: "class", title: "Biology", days: [0], startTime: "09:00", duration: 50 },
+      { id: "r2", kind: "class", title: "Biology", days: [2], startTime: "09:00", duration: 50 },
+    ]);
+    assert.equal(result[0].courseId, result[1].courseId);
+    assert.equal(m.getSubjects().length, 1);
+  });
+
+  test("a class matching an already-existing subject links to it instead of creating a duplicate", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([{ id: "existing-1", label: "Biology", color: "#000" }]);
+    const result = m.ensureSubjectsForClassRoutines([{ id: "r1", kind: "class", title: "Biology", days: [0], startTime: "09:00", duration: 50 }]);
+    assert.equal(result[0].courseId, "existing-1");
+    assert.equal(m.getSubjects().length, 1);
+  });
+
+  test("an item that already has a courseId is left completely untouched -- idempotent on every ordinary routine edit", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([{ id: "s1", label: "Biology" }]);
+    const before = { id: "r1", kind: "class", title: "Biology", courseId: "some-other-id", subject: "Different Label" };
+    const result = m.ensureSubjectsForClassRoutines([before]);
+    assert.equal(result[0].courseId, "some-other-id");
+    assert.equal(result[0].subject, "Different Label");
+    assert.equal(m.getSubjects().length, 1, "no new subject created for an already-linked item");
+  });
+
+  test("busy/free/habit kinds are never touched -- only real classes need a subject", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([]);
+    const result = m.ensureSubjectsForClassRoutines([{ id: "r1", kind: "busy", title: "Soccer practice", days: [1], startTime: "16:00", duration: 90 }]);
+    assert.equal(result[0].courseId, undefined);
+    assert.equal(m.getSubjects().length, 0);
+  });
+
+  test("empty input is a harmless no-op", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([]);
+    assert.equal(m.ensureSubjectsForClassRoutines([]).length, 0);
+    assert.equal(m.getSubjects().length, 0);
+  });
+});

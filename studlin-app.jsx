@@ -843,19 +843,86 @@ const courseIdForLabelFuzzy=(label)=>{
   const fuzzy=subjects.find(x=>normalizeCourseLabel(x.label)===norm);
   return fuzzy?fuzzy.id:null;
 };
-// Groups existing courses whose names normalize to the same thing --
+// S6 in the audit: exact-normalized-string matching missed realistic
+// near-duplicates like "AP Bio" / "AP Biology" -- a very plausible pair
+// from two different import flows (one typed by hand, one scanned off a
+// syllabus) that never grouped, so the merge prompt below never fired for
+// them. Word-level, not a raw substring check: same word count, and each
+// word pair either matches exactly or one is a real prefix of the other
+// (>=3 chars, so "a"/"algebra" or "ap physics 1"/"ap physics 2" -- a
+// genuinely different course, not an abbreviation -- don't false-positive).
+// Deliberately NOT used by courseIdForLabelFuzzy (which auto-attaches
+// real student data to a course with no human confirmation) -- only this
+// suggestion surface, which a student always has to explicitly approve.
+function isNearDuplicateCourseLabel(labelA,labelB){
+  const a=normalizeCourseLabel(labelA),b=normalizeCourseLabel(labelB);
+  if(!a||!b)return false;
+  if(a===b)return true;
+  const wordsA=a.split(" "),wordsB=b.split(" ");
+  if(wordsA.length!==wordsB.length)return false;
+  return wordsA.every((w,i)=>{
+    const w2=wordsB[i];
+    if(w===w2)return true;
+    const shorter=w.length<w2.length?w:w2,longer=w.length<w2.length?w2:w;
+    return shorter.length>=3&&longer.startsWith(shorter);
+  });
+}
+// Groups existing courses whose names are the same or a near-duplicate --
 // surfaced as a one-time "merge these?" prompt (Settings) so accounts
 // that already accumulated duplicates before this fix existed have a
 // way out, without Studlin ever silently merging real student data on
 // its own.
 function findDuplicateCourseGroups(){
   const subjects=getSubjects();
-  const groups={};
+  const groups=[];
   subjects.forEach(s=>{
-    const norm=normalizeCourseLabel(s.label);
-    (groups[norm]=groups[norm]||[]).push(s);
+    const existing=groups.find(g=>g.some(m=>isNearDuplicateCourseLabel(m.label,s.label)));
+    if(existing)existing.push(s);
+    else groups.push([s]);
   });
-  return Object.values(groups).filter(g=>g.length>1);
+  return groups.filter(g=>g.length>1);
+}
+// S5 in the audit: Weekly Routine's own class builders (WizardCollegeBuilder,
+// WizardHsBuilder) captured title/days/time only -- no subject/color field,
+// and never touched getSubjects/saveSubjects -- so a student with 7-8
+// classes typed the full list twice: once here, once again in Subjects &
+// Labels just to get color-coding. Called once, right before a routine
+// actually commits (finishRoutineWizard), instead of baked into
+// saveWeeklyRoutine itself -- several other callers (mergeCourses,
+// undoCourseDelete, the backfills) intentionally rewrite routine data
+// that's already subject-consistent, and re-scanning on every one of
+// those risks minting spurious duplicate subjects during what should be a
+// pure data move. courseIdForLabelFuzzy (exact/roman-numeral match only,
+// deliberately not the looser near-duplicate check above) reuses an
+// existing subject when one genuinely matches; otherwise a real one is
+// created with the next unused color, same convention Subjects & Labels'
+// own "+ Add" button already uses.
+function ensureSubjectsForClassRoutines(routineItems){
+  let subjects=getSubjects();
+  let subjectsChanged=false;
+  // Matches against this function's own running `subjects` (not a fresh
+  // getSubjects() read, which courseIdForLabelFuzzy would use) -- two
+  // meeting times for the same class committed in one batch (MWF lecture +
+  // TTh recitation, both with no courseId yet) need the second one to see
+  // the subject the first one just created a moment ago in this same loop,
+  // not mint a duplicate because storage hasn't been written yet.
+  const findMatch=(title)=>{
+    const exact=subjects.find(s=>s.label===title);
+    if(exact)return exact;
+    const norm=normalizeCourseLabel(title);
+    return subjects.find(s=>normalizeCourseLabel(s.label)===norm)||null;
+  };
+  const next=routineItems.map(r=>{
+    if(r.kind!=="class"||r.courseId||!r.title)return r;
+    const match=findMatch(r.title);
+    if(match)return {...r,courseId:match.id,subject:match.label};
+    const newSubj={id:"subj-"+Date.now()+"-"+Math.round(Math.random()*10000),label:r.title,color:SUBJECT_COLORS[subjects.length%SUBJECT_COLORS.length]};
+    subjects=[...subjects,newSubj];
+    subjectsChanged=true;
+    return {...r,courseId:newSubj.id,subject:newSubj.label};
+  });
+  if(subjectsChanged)saveSubjects(subjects);
+  return next;
 }
 // How many routines+events currently point at a course -- used to pick
 // a sensible default "keep this one" suggestion (the one with more real
@@ -17968,7 +18035,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       setTimeout(()=>setReconcileToast(""),3400);
     }
   };
-  const persistRoutines=(r)=>{setRoutinesState(r);saveWeeklyRoutine(r);reconcileRoutineConflicts(r);};
+  // S5 in the audit: ensureSubjectsForClassRoutines is a no-op for any
+  // item that already has a courseId (every routine edit/move/resize call
+  // site below passes those through), so it's safe to run on every commit
+  // here rather than chasing down each individual "a brand new class just
+  // got added" call site separately -- this is the one real choke point
+  // all of them already share.
+  const persistRoutines=(r)=>{const next=ensureSubjectsForClassRoutines(r);setRoutinesState(next);saveWeeklyRoutine(next);reconcileRoutineConflicts(next);};
   // Reconciliation above only fires on a routine *change* — it never touches
   // tasks that were already conflicting before this logic existed, or that
   // drifted into conflict for any other reason. Run it once on every Calendar
