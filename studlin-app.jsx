@@ -3457,7 +3457,7 @@ async function extractSyllabusDeadlinesFromImage(base64Data,mediaType){
       "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
       "{\"deadlines\":[{\"title\":\"Problem Set 3\",\"date\":\"2026-09-22\",\"kind\":\"deadline\",\"confidence\":\"high\",\"estimatedHours\":2}]}. "+
       "If you find no dates at all in the image, respond with {\"deadlines\":[]}.";
-    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt,image:{mediaType,data:base64Data}}],model:"standard"})});
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt,image:{mediaType,data:base64Data}}],model:"standard",format:"json"})});
     const data=await res.json();
     if(!res.ok)return{items:[],error:data.error||"Couldn't read that image. Try again."};
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
@@ -3495,7 +3495,7 @@ async function extractClassSyllabusText(text){
       "Today's date is "+dayKey()+". If a deadline date has no year, infer the most likely upcoming year given today's date. "+
       "Extract the class's name, its recurring weekly meeting time(s), and every deadline/due date/exam date mentioned. "+
       CLASS_SYLLABUS_JSON_CONTRACT+"\n\n"+text.slice(0,30000);
-    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",format:"json"})});
     const data=await res.json();
     if(!res.ok)return{subject:null,meetingTimes:[],deadlines:[],error:data.error||"Couldn't read that file. Try again."};
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
@@ -3515,7 +3515,7 @@ async function extractClassSyllabusImage(base64Data,mediaType){
       "Extract the class's name, its recurring weekly meeting time(s), and every deadline/due date/exam date visible. "+
       "Never invent a URL or link -- a screenshot's visible text has no way to reveal what an actual link points to. "+
       CLASS_SYLLABUS_JSON_CONTRACT;
-    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt,image:{mediaType,data:base64Data}}],model:"standard"})});
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt,image:{mediaType,data:base64Data}}],model:"standard",format:"json"})});
     const data=await res.json();
     if(!res.ok)return{subject:null,meetingTimes:[],deadlines:[],error:data.error||"Couldn't read that image. Try again."};
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
@@ -3557,7 +3557,7 @@ async function extractCollegeScheduleText(text){
       "Today's date is "+dayKey()+". If a date has no year, infer the most likely upcoming year given today's date. "+
       "Extract every class, its recurring weekly meeting time(s), and every deadline/exam date mentioned for each one. "+
       COLLEGE_SCHEDULE_JSON_CONTRACT+"\n\n"+text.slice(0,30000);
-    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",format:"json"})});
     const data=await res.json();
     if(!res.ok)return{classes:[],error:data.error||"Couldn't read that. Try again."};
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
@@ -3577,7 +3577,7 @@ async function extractCollegeScheduleImage(base64Data,mediaType){
       "Extract every class, its recurring weekly meeting time(s), and every deadline/exam date visible for each one. "+
       "Never invent a URL or link -- a screenshot's visible text has no way to reveal what an actual link points to. "+
       COLLEGE_SCHEDULE_JSON_CONTRACT;
-    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt,image:{mediaType,data:base64Data}}],model:"standard"})});
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt,image:{mediaType,data:base64Data}}],model:"standard",format:"json"})});
     const data=await res.json();
     if(!res.ok)return{classes:[],error:data.error||"Couldn't read that image. Try again."};
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
@@ -3611,7 +3611,7 @@ async function extractHsScheduleFromImage(base64Data,mediaType){
       "Extract every period you can see. "+
       HS_SCHEDULE_JSON_CONTRACT+
       "If you can't make out any periods at all, respond with {\"periods\":[]}.";
-    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt,image:{mediaType,data:base64Data}}],model:"standard"})});
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt,image:{mediaType,data:base64Data}}],model:"standard",format:"json"})});
     const data=await res.json();
     if(!res.ok)return{periods:[],error:data.error||"Couldn't read that image. Try again."};
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
@@ -3631,7 +3631,7 @@ async function extractHsScheduleFromText(text){
       "Extract every period you can find. "+
       HS_SCHEDULE_JSON_CONTRACT+
       "If you can't find any periods at all, respond with {\"periods\":[]}.\n\n"+text.slice(0,30000);
-    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",format:"json"})});
     const data=await res.json();
     if(!res.ok)return{periods:[],error:data.error||"Couldn't read that text. Try again."};
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
@@ -3657,7 +3657,7 @@ async function extractWorkScheduleFromImage(base64Data,mediaType){
       "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
       "{\"shifts\":[{\"date\":\"2026-07-24\",\"startTime\":\"09:00\",\"endTime\":\"17:00\",\"label\":\"Barista\"}]}. "+
       "If you can't make out any shifts at all, respond with {\"shifts\":[]}.";
-    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt,image:{mediaType,data:base64Data}}],model:"standard"})});
+    const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt,image:{mediaType,data:base64Data}}],model:"standard",format:"json"})});
     const data=await res.json();
     if(!res.ok)return{shifts:[],error:data.error||"Couldn't read that image. Try again."};
     const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
@@ -9131,7 +9131,7 @@ function Notes({setActive=()=>{}}){
         "Respond with ONLY valid JSON, no markdown fences, no commentary: "+
         "{\"deadlines\":[{\"title\":\"Problem Set 3\",\"date\":\"2026-09-22\",\"kind\":\"deadline\",\"confidence\":\"high\",\"estimatedHours\":2},{\"title\":\"Unit 2 Midterm\",\"date\":\"2026-10-03\",\"kind\":\"exam\",\"examType\":\"midterm\",\"confidence\":\"high\",\"detail\":\"Covers chapters 4-6, bring a calculator\"}]}. "+
         "If you find no dates at all, respond with {\"deadlines\":[]}.\n\n"+text.slice(0,30000);
-      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard"})});
+      const res=await authFetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:[{r:"user",t:prompt}],model:"standard",format:"json"})});
       const data=await res.json();
       const raw=(data.reply||"").replace(/```json?\n?/gi,"").replace(/```/g,"").trim();
       const parsed=JSON.parse(raw);

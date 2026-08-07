@@ -8,6 +8,14 @@ const MODEL_MAP = {
 };
 
 const MAX_TOKENS = { standard: 2048, flash: 512 };
+// A dense real syllabus (25-30 graded items, each with a title, date,
+// kind, confidence, and a `detail` sentence) can plausibly run past the
+// plain 2048-token chat budget above -- and a cut-off JSON response isn't
+// a partial extraction, it's just invalid JSON, silently degrading to the
+// caller's empty-result fallback. Only format:"json" + the standard model
+// gets the larger budget; flash's structured calls (Reschedule's intent
+// classifier) return a handful of fields and never need it.
+const MAX_TOKENS_JSON_STANDARD = 4096;
 
 const SYSTEM_PROMPT = `You are Studlin AI.
 
@@ -297,7 +305,7 @@ module.exports = withSentry(async (req, res) => {
 
     const claudeModel = MODEL_MAP[model] || MODEL_MAP.standard;
     let systemPrompt = format === 'json' ? EXTRACTION_PROMPT : (model === 'flash' ? FLASH_PROMPT : SYSTEM_PROMPT);
-    const maxTokens = MAX_TOKENS[model] || 2048;
+    const maxTokens = (format === 'json' && model !== 'flash') ? MAX_TOKENS_JSON_STANDARD : (MAX_TOKENS[model] || 2048);
 
     // Only genuine chat/tutoring surfaces send verbosity/tutorStyle — every
     // other call site (citations, grammar, essay feedback, flashcard/quiz
@@ -339,6 +347,20 @@ module.exports = withSentry(async (req, res) => {
     // what caused the raw "Unexpected token..." crash in Studlin AI. Aborting
     // a few seconds early guarantees our own try/catch below always gets to
     // return clean JSON instead.
+    // format:"json" callers (syllabus/schedule extraction, Brain Dump,
+    // calendar-import classification, ...) want consistent, literal
+    // output, not conversational variety -- the API's own default
+    // temperature is tuned for chat, and was silently applying to these
+    // structured calls too. Real chat/tutoring is untouched (still no
+    // temperature field, same default as always).
+    const requestBody = {
+      model: claudeModel,
+      max_tokens: maxTokens,
+      system: systemPrompt,
+      messages: claudeMessages,
+    };
+    if (format === 'json') requestBody.temperature = 0.2;
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 25000);
     let response;
@@ -350,12 +372,7 @@ module.exports = withSentry(async (req, res) => {
           'x-api-key': apiKey,
           'anthropic-version': '2023-06-01',
         },
-        body: JSON.stringify({
-          model: claudeModel,
-          max_tokens: maxTokens,
-          system: systemPrompt,
-          messages: claudeMessages,
-        }),
+        body: JSON.stringify(requestBody),
         signal: controller.signal,
       });
     } catch (fetchErr) {
@@ -379,7 +396,63 @@ module.exports = withSentry(async (req, res) => {
     }
 
     const data = await response.json();
-    const reply = data.content?.find(b => b.type === 'text')?.text || 'No response.';
+    let reply = data.content?.find(b => b.type === 'text')?.text || 'No response.';
+
+    // format:"json" self-correction: every extractor strips code fences
+    // and JSON.parses client-side, then silently falls back to an
+    // empty/error result on failure -- for a multi-class whole-schedule
+    // scan especially, one malformed field used to throw the entire
+    // batch away. One best-effort retry, showing the model its own
+    // broken output plus the real parse error, converts a chunk of those
+    // failures into successes. Purely additive: any failure here (parse
+    // still bad, retry call itself errors or times out) just falls
+    // through to returning the original reply, exactly today's behavior.
+    if (format === 'json') {
+      const stripFences = (s) => (s || '').replace(/```json?\n?/gi, '').replace(/```/g, '').trim();
+      let parseErr = null;
+      try { JSON.parse(stripFences(reply)); } catch (e) { parseErr = e; }
+      if (parseErr) {
+        try {
+          const retryController = new AbortController();
+          const retryTimeout = setTimeout(() => retryController.abort(), 20000);
+          let retryResponse;
+          try {
+            retryResponse = await fetch('https://api.anthropic.com/v1/messages', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': apiKey,
+                'anthropic-version': '2023-06-01',
+              },
+              body: JSON.stringify({
+                model: claudeModel,
+                max_tokens: maxTokens,
+                system: systemPrompt,
+                temperature: 0.2,
+                messages: [
+                  ...claudeMessages,
+                  { role: 'assistant', content: reply },
+                  { role: 'user', content: `That wasn't valid JSON (parse error: ${parseErr.message}). Reply with ONLY the corrected, complete, valid JSON -- no commentary, no code fences.` },
+                ],
+              }),
+              signal: retryController.signal,
+            });
+          } finally {
+            clearTimeout(retryTimeout);
+          }
+          if (retryResponse.ok) {
+            const retryData = await retryResponse.json();
+            const retryReply = retryData.content?.find(b => b.type === 'text')?.text || '';
+            JSON.parse(stripFences(retryReply)); // only accept it if this parses clean
+            reply = retryReply;
+          }
+        } catch (retryErr) {
+          // Retry failed or was itself invalid -- fall through with the
+          // original reply, same as before this fix existed.
+        }
+      }
+    }
+
     return res.status(200).json({ reply, credits: creditsAfter });
   } catch (err) {
     return res.status(500).json({ error: err.message || 'Server error.' });
