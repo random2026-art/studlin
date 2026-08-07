@@ -2963,3 +2963,39 @@ describe("computeWeekBalancePlan (manually-triggered 'Balance my week')", () => 
     assert.ok(!result.moves.some((mv) => mv.id === "escalated"), "a task at the escalation threshold must never be silently reshuffled again");
   });
 });
+
+describe("classNeedsSyllabus (regression: a whole-schedule/bell-schedule scan can only ever produce classes + meeting times, never real assignments)", () => {
+  test("no items at all (a manually 'choose'-added class) still needs a syllabus", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.classNeedsSyllabus([]), true);
+    assert.equal(m.classNeedsSyllabus(null), true);
+  });
+
+  test("exam-only items (all a schedule-grid scan can ever extract) still need a syllabus", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.classNeedsSyllabus([{ kind: "exam" }, { kind: "exam" }]), true);
+  });
+
+  test("a real syllabus scan's assignment items satisfy it", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.classNeedsSyllabus([{ kind: "exam" }, { kind: "assignment" }]), false);
+  });
+
+  test("a real syllabus scan's project items satisfy it too", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.classNeedsSyllabus([{ kind: "project" }]), false);
+  });
+});
+
+describe("shouldShowSyllabusNudge / dismissSyllabusNudge (Courses sidebar 'missing a syllabus' banner cooldown)", () => {
+  test("shows by default with no prior dismissal", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.shouldShowSyllabusNudge(), true);
+  });
+
+  test("stays quiet right after a dismissal", () => {
+    const m = loadStudlinModule();
+    m.dismissSyllabusNudge();
+    assert.equal(m.shouldShowSyllabusNudge(), false);
+  });
+});

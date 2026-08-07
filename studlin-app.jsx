@@ -5416,6 +5416,33 @@ function shouldShowWeekBalanceNudge(){
 function dismissWeekBalanceNudge(){
   lsSet("weekBalanceNudgeDismissedAt",Date.now());
 }
+// "Scan my whole schedule" (college) and the HS bulk-schedule import both
+// read a schedule GRID -- class names + meeting times, plus any exam dates
+// that happen to be printed on it. Neither can pull assignments/projects,
+// because a schedule grid genuinely doesn't contain them (that's a
+// syllabus, a different document). Subjects created either way are tagged
+// needsSyllabus so a nudge can point back at the same quickScan+
+// targetCourseId "Import syllabus"/"Scan assignments" flow already
+// reachable from each course's own menu, instead of leaving assignments
+// as a dead end with no path back except manual entry. Cooldown (not
+// permanent dismiss) since new bulk-scanned classes can show up later and
+// still deserve the nudge, same reasoning as shouldShowWeekBalanceNudge above.
+const SYLLABUS_NUDGE_COOLDOWN_MS=3*86400000;
+function shouldShowSyllabusNudge(){
+  const dismissedAt=lsGet("syllabusNudgeDismissedAt",0);
+  return Date.now()-dismissedAt>=SYLLABUS_NUDGE_COOLDOWN_MS;
+}
+function dismissSyllabusNudge(){
+  lsSet("syllabusNudgeDismissedAt",Date.now());
+}
+// A class only needs the nudge if nothing it was given so far actually
+// came from a syllabus -- exam-only items (all a schedule-grid scan can
+// ever produce) or no items at all (a manually "choose"-added class)
+// both still qualify; a real syllabus scan's assignment/project items
+// satisfy it, whichever flow originally produced them.
+function classNeedsSyllabus(items){
+  return !(items||[]).some(it=>it.kind==="assignment"||it.kind==="project");
+}
 
 // Studlin Reschedule's actual planning engine ("push everything back N
 // days" / "clear this day" / "clear this week" / "skip class today").
@@ -14978,7 +15005,11 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // term is configured -- an untagged course always counts as current,
     // matching this codebase's usual "additive, backward compatible" rule
     // for a new optional field.
-    const newSubjects=valid.map(p=>({id:"subj-"+Date.now()+"-"+Math.round(Math.random()*1000),label:p.subjectName.trim(),color:p.color,termEnd:termEnd||null}));
+    // Same gap as the college whole-schedule scan (see needsSyllabus in
+    // commitAllToCalendar below) -- a bell-schedule photo/paste has no
+    // assignment data in it at all, so every class committed here still
+    // needs a real syllabus/assignment scan of its own.
+    const newSubjects=valid.map(p=>({id:"subj-"+Date.now()+"-"+Math.round(Math.random()*1000),label:p.subjectName.trim(),color:p.color,termEnd:termEnd||null,needsSyllabus:true}));
     saveSubjects([...getSubjects(),...newSubjects]);
     const routineItems=valid.map((p,i)=>{
       const dur=Math.max(15,timeToMinutes(p.endTime)-timeToMinutes(p.startTime));
@@ -15047,8 +15078,22 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     const withIds=pendingClasses.map((cls,i)=>({...cls,subjId:(targetCourseId&&i===0)?targetCourseId:("subj-"+Date.now()+"-"+Math.round(Math.random()*1000)+"-"+cls.id)}));
     let routine=getWeeklyRoutine();
     withIds.forEach(cls=>{
-      if(cls.subjId===targetCourseId)return; // already exists -- don't duplicate the subject or its meeting time, only the deadlines/sessions below are new
-      subjects=[...subjects,{id:cls.subjId,label:cls.name,color:cls.color,termEnd:termEnd||null}];
+      if(cls.subjId===targetCourseId){
+        // Attaching a syllabus scan to a course that already exists (the
+        // quickScan+targetCourseId path from "Import syllabus"/"Scan
+        // assignments") -- don't duplicate the subject or its meeting
+        // time, just clear the needsSyllabus nudge flag now that real
+        // deadlines/sessions are about to be committed for it below.
+        subjects=subjects.map(s=>s.id===cls.subjId?{...s,needsSyllabus:false}:s);
+        return;
+      }
+      // A whole-schedule scan only ever asks the AI for exam dates (see
+      // COLLEGE_SCHEDULE_JSON_CONTRACT) -- it structurally can't produce
+      // assignment/project items, so a class committed here with none of
+      // those still needs its own syllabus scanned separately. A manually
+      // "choose"-added class with zero items qualifies too, correctly --
+      // it hasn't had any deadlines added yet either.
+      subjects=[...subjects,{id:cls.subjId,label:cls.name,color:cls.color,termEnd:termEnd||null,needsSyllabus:classNeedsSyllabus(cls.items)}];
       const routineItems=(cls.meetingTimes||[]).filter(mt=>mt.days.length>0).map(mt=>({id:"rt-"+Date.now()+"-"+Math.round(Math.random()*1000),title:cls.name,kind:"class",subject:cls.name,courseId:cls.subjId,days:mt.days,startTime:mt.startTime,duration:mt.duration}));
       routine=[...routine,...routineItems];
     });
@@ -17458,6 +17503,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // anything to the one actually clicked (found live, see
   // ClassSetupWizard's commitAllToCalendar).
   const [quickScanTargetCourseId,setQuickScanTargetCourseId]=useState(null);
+  // Local mirror of the syllabus-nudge cooldown so dismissing it hides the
+  // banner immediately, same pattern weekBalanceNudge uses -- lsSet alone
+  // wouldn't re-render anything since nothing here reads localStorage
+  // reactively.
+  const [syllabusNudgeDismissed,setSyllabusNudgeDismissed]=useState(false);
   // High-school course menu's "Weekly schedule" -- a short note per
   // weekday a class meets (lecture vs. lab vs. homework due), stored on
   // that course's own routine "class" entry. New concept, no prior field
@@ -19222,6 +19272,30 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
             <span style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Courses</span>
             <button type="button" onClick={()=>setQuickScanOpen(true)} style={{background:"none",border:"none",color:T.lime,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0}}>+ Add new</button>
           </div>
+          {(()=>{
+            // A "Scan my whole schedule" (or HS bell-schedule) import can
+            // only ever produce classes + meeting times, never real
+            // assignments -- see needsSyllabus in commitAllToCalendar.
+            // Surface that gap right where "Import syllabus"/"Scan
+            // assignments" already lives per-course, instead of leaving it
+            // undiscoverable until someone happens to open a course's menu.
+            const needSyllabus=currentTermSubjects.filter(s=>s.needsSyllabus);
+            if(needSyllabus.length===0||syllabusNudgeDismissed||!shouldShowSyllabusNudge())return null;
+            return (
+              <div style={{padding:"9px 10px",borderRadius:8,border:`1px solid ${T.lime}33`,background:T.lime+"0f",marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:6}}>
+                  <div style={{fontSize:11,color:T.text,lineHeight:1.4}}>{needSyllabus.length===1?"1 class is":needSyllabus.length+" classes are"} missing a syllabus scan -- add one to auto-fill assignments and exams.</div>
+                  <button type="button" onClick={()=>{dismissSyllabusNudge();setSyllabusNudgeDismissed(true);}} title="Dismiss" style={{background:"none",border:"none",color:T.faint,fontSize:13,lineHeight:1,cursor:"pointer",padding:0,flexShrink:0}}>×</button>
+                </div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:7}}>
+                  {needSyllabus.map(s=>(
+                    <button key={s.id} type="button" onClick={()=>{setQuickScanTargetCourseId(s.id);setQuickScanOpen(true);}}
+                      style={{fontSize:10.5,fontWeight:600,padding:"4px 8px",borderRadius:6,border:`1px solid ${s.color}55`,background:s.color+"18",color:T.text,cursor:"pointer",fontFamily:T.font}}>{s.label}</button>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
           <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:18}}>
             {currentTermSubjects.length===0&&<div style={{fontSize:11,color:T.faint,padding:"4px 0 8px"}}>No courses yet.</div>}
             {currentTermSubjects.map(renderCourseRow)}
