@@ -4655,8 +4655,86 @@ function readabilityOf(html){
   var lvl=gradeNum<=6?"Grade 6 or below":gradeNum>=16?"College level":"Grade "+Math.max(1,Math.round(gradeNum));
   return{grade:letter,level:lvl};
 }
-function touchStreak(){const days=lsGet("days",[]);const t=dayKey();if(!days.includes(t)){days.push(t);lsSet("days",days);upsertProfile();}}
-function getStreak(){const days=new Set(lsGet("days",[]));let n=0;const d=new Date();while(days.has(dayKey(d))){n++;d.setDate(d.getDate()-1);}return n;}
+// D11 in the audit: the streak had no grace mechanic at all -- a single
+// day genuinely not opened (illness, travel, finals) reset it to zero
+// with no recovery path, despite the app's own copy ("study today to
+// keep it alive") implying more than the mechanic actually checked.
+// Decided mechanic (Duolingo-style, not invented on this branch --
+// confirmed with the product owner): earn one freeze token per
+// STREAK_FREEZE_MILESTONE_DAYS of streak, banked up to STREAK_FREEZE_MAX,
+// auto-spent on a day that turns out to have been missed instead of
+// breaking the streak.
+const STREAK_FREEZE_MILESTONE_DAYS=7;
+const STREAK_FREEZE_MAX=2;
+// Pure so the token math is testable without faking the clock across
+// multiple real days. Walks backward from `today` through the open-days
+// set; a day that's neither opened nor already frozen consumes one
+// available token (recorded in newlyFrozen) to keep the streak alive,
+// and the walk stops the moment neither applies. Read-only -- callers
+// decide whether/what to actually persist from newlyFrozen/remainingTokens.
+function computeStreakWithFreezes(openDays,frozenDays,tokens,today){
+  const openSet=new Set(openDays||[]);
+  const frozenSet=new Set(frozenDays||[]);
+  // Without this floor, a token would keep getting spent walking backward
+  // past the account's actual earliest real day -- treating "no data
+  // because the account didn't exist yet" as if it were a missed day,
+  // inflating the streak for as many extra days as there happened to be
+  // spare tokens. A gap can only ever be real between two days that
+  // genuinely have (or could have had) activity.
+  const earliestRealDay=(openDays&&openDays.length>0)?openDays.reduce((min,k)=>k<min?k:min):null;
+  let remainingTokens=tokens||0;
+  const newlyFrozen=[];
+  let streak=0;
+  const d=new Date(today+"T12:00:00");
+  for(;;){
+    const k=dayKey(d);
+    if(openSet.has(k)||frozenSet.has(k)){
+      streak++;
+    }else if(remainingTokens>0&&earliestRealDay&&k>=earliestRealDay){
+      remainingTokens--;
+      newlyFrozen.push(k);
+      streak++;
+    }else{
+      break;
+    }
+    d.setDate(d.getDate()-1);
+  }
+  return {streak,remainingTokens,newlyFrozen};
+}
+// Awards one freeze token the moment the streak actually crosses a new
+// STREAK_FREEZE_MILESTONE_DAYS multiple (comparing before/after, not just
+// "is newStreak a multiple of 7") so it's granted exactly once per
+// milestone rather than every single day the streak happens to stay past
+// it. Never exceeds STREAK_FREEZE_MAX.
+function awardFreezeTokenIfMilestone(prevStreak,newStreak,currentTokens){
+  if((currentTokens||0)>=STREAK_FREEZE_MAX)return currentTokens||0;
+  const prevMilestones=Math.floor((prevStreak||0)/STREAK_FREEZE_MILESTONE_DAYS);
+  const newMilestones=Math.floor((newStreak||0)/STREAK_FREEZE_MILESTONE_DAYS);
+  if(newMilestones>prevMilestones)return Math.min(STREAK_FREEZE_MAX,(currentTokens||0)+1);
+  return currentTokens||0;
+}
+const getStreakFreezeTokens=()=>lsGet("streakFreezeTokens",0);
+function touchStreak(){
+  const days=lsGet("days",[]);
+  const t=dayKey();
+  if(days.includes(t))return; // already touched today -- nothing to resolve
+  const frozenDays=lsGet("streakFrozenDays",[]);
+  const tokens=lsGet("streakFreezeTokens",0);
+  // Read-only comparison point: what the streak was, as of yesterday,
+  // under the state that existed before today's open -- used only to
+  // detect whether today's open crosses a new milestone, never persisted.
+  const yesterday=(()=>{const d=new Date(t+"T12:00:00");d.setDate(d.getDate()-1);return dayKey(d);})();
+  const before=computeStreakWithFreezes(days,frozenDays,tokens,yesterday);
+  const nextDays=[...days,t];
+  const after=computeStreakWithFreezes(nextDays,frozenDays,tokens,t);
+  lsSet("days",nextDays);
+  if(after.newlyFrozen.length>0)lsSet("streakFrozenDays",[...frozenDays,...after.newlyFrozen]);
+  lsSet("streakFreezeTokens",awardFreezeTokenIfMilestone(before.streak,after.streak,after.remainingTokens));
+  upsertProfile();
+}
+function getStreak(){
+  return computeStreakWithFreezes(lsGet("days",[]),lsGet("streakFrozenDays",[]),lsGet("streakFreezeTokens",0),dayKey()).streak;
+}
 // Shared 91-day heatmap data — used by both Profile/nav's StreakDetailModal
 // and (previously) Dashboard's inline streak card, so the two never disagree
 // about what counts as an active day.
@@ -21673,7 +21751,7 @@ function Profile({setActive,seriousMode=false}={}) {
   const camInputRef=useRef(null);
   const [prefSaved,setPrefSaved]=useState(false);
   const lvl=levelInfo();
-  const streak=Math.max(1,getStreak());
+  const streak=getStreak(); // D12: a genuine 0-day streak now honestly shows 0, not a floored "1"
   const ps=profileStats();
   const initials=((prof.name||"").split(" ").map(x=>x[0]).join("").slice(0,2).toUpperCase())||"S";
   const firstName=(prof.name||"there").split(" ")[0];
@@ -21927,6 +22005,7 @@ function LevelRoadmapModal({open,onClose,currentMinutes}){
 function StreakDetailModal({open,onClose,streak}){
   if(!open)return null;
   const {cells,longest}=computeStreakHeatmap();
+  const freezeTokens=getStreakFreezeTokens();
   return(
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
       <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:460,background:T.card,borderRadius:10,border:`1px solid ${T.border}`,overflow:"hidden",boxShadow:"0 28px 70px -20px rgba(0,0,0,0.55)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
@@ -21942,7 +22021,17 @@ function StreakDetailModal({open,onClose,streak}){
             <span style={{fontFamily:T.hand,fontSize:38,fontWeight:600,color:T.text}}>{streak}</span>
             <span style={{fontSize:13,color:T.muted}}>day streak</span>
           </div>
-          <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.10em",color:T.muted,marginBottom:18}}>LONGEST: {longest}</div>
+          <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.10em",color:T.muted,marginBottom:10}}>LONGEST: {longest}</div>
+          {/* D11 in the audit: the freeze-token mechanic needs to actually
+              be visible to mean anything -- same "earn a token every 7
+              days, bank up to 2, auto-spent on a missed day" idea
+              Duolingo uses, surfaced here so a student can see why a real
+              gap day didn't reset their count. */}
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:18,padding:"8px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,fontSize:12,color:T.text}}>
+            <span style={{fontSize:14}}>🧊</span>
+            <span>{freezeTokens} freeze token{freezeTokens!==1?"s":""} banked</span>
+            <span style={{color:T.muted,marginLeft:"auto",fontSize:11}}>1 earned every {STREAK_FREEZE_MILESTONE_DAYS} days, up to {STREAK_FREEZE_MAX}</span>
+          </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(26,1fr)",gap:3}}>
             {cells.map((lv,i)=>(
               <div key={i} style={{aspectRatio:"1",borderRadius:3,background:streakCellColor(lv)}} />
@@ -21957,7 +22046,7 @@ function StreakDetailModal({open,onClose,streak}){
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleTask, dashToast, setDashToast, setDetailEventId, onTaskCompleted}) {
   const realStats=sessionStats();
-  const realStreak=Math.max(1,getStreak());
+  const realStreak=getStreak(); // D12: a genuine 0-day streak now honestly shows 0, not a floored "1"
   const lvl=levelInfo();
   const [,forcePlan]=useState(0);
   const plan=todaysPlan();
@@ -24082,7 +24171,7 @@ function App() {
           // motivational pull comes from being seen every time the app
           // opens (same instinct as Duolingo keeping its flame in the
           // persistent header rather than burying it in a profile tab).
-          const streak=Math.max(1,getStreak());
+          const streak=getStreak(); // D12: a genuine 0-day streak now honestly shows 0, not a floored "1"
           // Notifications used to live in the now-removed top bar -- it's
           // the one thing there that had no other entry point anywhere
           // else in the app (unlike streak/level/pricing/avatar, all

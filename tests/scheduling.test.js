@@ -2963,3 +2963,148 @@ describe("computeWeekBalancePlan (manually-triggered 'Balance my week')", () => 
     assert.ok(!result.moves.some((mv) => mv.id === "escalated"), "a task at the escalation threshold must never be silently reshuffled again");
   });
 });
+
+describe("computeStreakWithFreezes (regression: D11 -- the streak had no grace mechanic, a single missed day reset it to zero)", () => {
+  test("all days open, no gaps: streak is a plain consecutive count, no tokens touched", () => {
+    const m = loadStudlinModule();
+    const days = ["2026-08-05", "2026-08-06", "2026-08-07"];
+    const r = m.computeStreakWithFreezes(days, [], 2, "2026-08-07");
+    assert.equal(r.streak, 3);
+    assert.equal(r.remainingTokens, 2);
+    assert.equal(r.newlyFrozen.length, 0);
+  });
+
+  test("a single missed day with a token available is auto-covered, streak continues", () => {
+    const m = loadStudlinModule();
+    // 08-05 open, 08-06 missed, 08-07 open
+    const days = ["2026-08-05", "2026-08-07"];
+    const r = m.computeStreakWithFreezes(days, [], 1, "2026-08-07");
+    assert.equal(r.streak, 3, "the gap day is covered, so the streak spans all 3 days");
+    assert.equal(r.remainingTokens, 0);
+    assert.equal(r.newlyFrozen.length, 1);
+    assert.equal(r.newlyFrozen[0], "2026-08-06");
+  });
+
+  test("a missed day with zero tokens genuinely breaks the streak -- this is the real fix's honest floor, not infinite forgiveness", () => {
+    const m = loadStudlinModule();
+    const days = ["2026-08-05", "2026-08-07"];
+    const r = m.computeStreakWithFreezes(days, [], 0, "2026-08-07");
+    assert.equal(r.streak, 1, "only today counts -- the gap with no token stops the backward walk");
+    assert.equal(r.newlyFrozen.length, 0);
+  });
+
+  test("an already-frozen day (from a prior touchStreak call) counts without spending a second token", () => {
+    const m = loadStudlinModule();
+    const days = ["2026-08-05", "2026-08-07"];
+    const r = m.computeStreakWithFreezes(days, ["2026-08-06"], 2, "2026-08-07");
+    assert.equal(r.streak, 3);
+    assert.equal(r.remainingTokens, 2, "the day was already frozen, so no new token gets spent re-covering it");
+    assert.equal(r.newlyFrozen.length, 0);
+  });
+
+  test("two consecutive missed days with two tokens are both covered", () => {
+    const m = loadStudlinModule();
+    const days = ["2026-08-04", "2026-08-07"];
+    const r = m.computeStreakWithFreezes(days, [], 2, "2026-08-07");
+    assert.equal(r.streak, 4);
+    assert.equal(r.remainingTokens, 0);
+    const sortedFrozen = Array.from(r.newlyFrozen).sort();
+    assert.equal(sortedFrozen.length, 2);
+    assert.equal(sortedFrozen[0], "2026-08-05");
+    assert.equal(sortedFrozen[1], "2026-08-06");
+  });
+
+  test("two consecutive missed days with only one token: the streak still breaks at the second, uncovered gap", () => {
+    const m = loadStudlinModule();
+    const days = ["2026-08-04", "2026-08-07"];
+    const r = m.computeStreakWithFreezes(days, [], 1, "2026-08-07");
+    // Walking backward from 08-07: today open (1), 08-06 missed but a
+    // token covers it (2), 08-05 missed with no tokens left -- stop.
+    assert.equal(r.streak, 2);
+    assert.equal(r.remainingTokens, 0);
+    assert.equal(r.newlyFrozen.length, 1);
+    assert.equal(r.newlyFrozen[0], "2026-08-06");
+  });
+
+  test("today itself not yet in the open-days list still counts if genuinely open (caller adds it first)", () => {
+    const m = loadStudlinModule();
+    const r = m.computeStreakWithFreezes(["2026-08-07"], [], 0, "2026-08-07");
+    assert.equal(r.streak, 1);
+  });
+
+  test("no history at all is a clean 0-streak, not a throw", () => {
+    const m = loadStudlinModule();
+    const r = m.computeStreakWithFreezes([], [], 0, "2026-08-07");
+    assert.equal(r.streak, 0);
+  });
+});
+
+describe("awardFreezeTokenIfMilestone (regression: D11 -- tokens must be earned exactly once per milestone, never every day past it)", () => {
+  test("crossing from below to exactly the milestone (7) awards a token", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.awardFreezeTokenIfMilestone(6, 7, 0), 1);
+  });
+
+  test("staying at the same milestone (streak grows but doesn't cross 14/21/etc) awards nothing", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.awardFreezeTokenIfMilestone(7, 8, 1), 1, "still just past the 7-day milestone, not a new one yet");
+  });
+
+  test("never exceeds the bank cap even when a fresh milestone is crossed", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.awardFreezeTokenIfMilestone(13, 14, m.STREAK_FREEZE_MAX), m.STREAK_FREEZE_MAX);
+  });
+
+  test("crossing two milestones in one jump (e.g. a big backfill) still only awards one token, not two", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.awardFreezeTokenIfMilestone(0, 15, 0), 1);
+  });
+
+  test("a fresh 0/undefined streak history awards nothing at day 0", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.awardFreezeTokenIfMilestone(undefined, 0, 0), 0);
+  });
+});
+
+describe("touchStreak / getStreak end-to-end (regression: D11 -- simulated real days, not just the pure math in isolation)", () => {
+  test("7 real consecutive days earns exactly one freeze token, not zero and not more", () => {
+    // loadStudlinModule gives each call its own fresh vm realm/localStorage,
+    // so a real multi-day simulation can't drive one continuous instance
+    // across reloads -- instead, 6 prior real days are built by hand
+    // (exactly what touchStreak would already have persisted from days
+    // 1-6), then a single touchStreak call on day 7 does the real
+    // milestone-crossing work end-to-end, the actual code path.
+    const m = loadStudlinModule({ now: "2026-08-07T09:00:00" });
+    m.lsSet("days", ["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06"]);
+    m.touchStreak();
+    assert.equal(m.getStreak(), 7);
+    assert.equal(m.getStreakFreezeTokens(), 1);
+  });
+
+  test("a real missed day is auto-covered by a banked token when the app reopens", () => {
+    const m = loadStudlinModule({ now: "2026-08-08T09:00:00" });
+    // 7 real days already banked one token; 08-07 (yesterday) was missed.
+    m.lsSet("days", ["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06"]);
+    m.lsSet("streakFreezeTokens", 1);
+    m.touchStreak();
+    assert.equal(m.getStreak(), 8, "the missed day is covered, so the streak spans through today");
+    assert.equal(m.getStreakFreezeTokens(), 0, "the one token banked was spent covering the gap, and day 7's milestone was already awarded before this call -- no new one to cross yet");
+  });
+
+  test("a real missed day with zero tokens genuinely breaks the streak down to just today", () => {
+    const m = loadStudlinModule({ now: "2026-08-08T09:00:00" });
+    m.lsSet("days", ["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06"]);
+    m.lsSet("streakFreezeTokens", 0);
+    m.touchStreak();
+    assert.equal(m.getStreak(), 1);
+  });
+
+  test("touchStreak is a no-op the second time it's called the same day (idempotent)", () => {
+    const m = loadStudlinModule({ now: "2026-08-07T09:00:00" });
+    m.lsSet("days", ["2026-08-06"]);
+    m.touchStreak();
+    const daysAfterFirst = m.lsGet("days", []).length;
+    m.touchStreak();
+    assert.equal(m.lsGet("days", []).length, daysAfterFirst);
+  });
+});

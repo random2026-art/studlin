@@ -129,7 +129,9 @@ function loadStudlinModule(options) {
     "applyHoursTargetCap",
     "computeAssignmentPace","ASSIGNMENT_BEHIND_THRESHOLD","ATTACK_BLOCK_DEFAULT_ESTIMATE_HOURS",
     "isPaceNudgeDismissed","dismissPaceNudge","PACE_NUDGE_COOLDOWN_MS",
-    "computeFillSuggestions"];
+    "computeFillSuggestions","computeStreakWithFreezes","awardFreezeTokenIfMilestone",
+    "getStreakFreezeTokens","STREAK_FREEZE_MILESTONE_DAYS","STREAK_FREEZE_MAX",
+    "touchStreak","getStreak"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }
@@ -159,7 +161,15 @@ function loadStudlinModule(options) {
     navigator: { serviceWorker: undefined },
     document: undefined,
     window: undefined,
-    firebase: undefined,
+    // undefined here used to mean any exported function reaching
+    // firebase.auth() (e.g. upsertProfile, called fire-and-forget by
+    // touchStreak) threw synchronously inside its own async body, turning
+    // into an unhandled promise rejection well after the test that
+    // triggered it had already finished -- confusing failures with no
+    // connection back to the real assertion. currentUser:null makes that
+    // same real code path's own "if(!u)return" guard just no-op cleanly,
+    // same as a real signed-out browser tab.
+    firebase: { auth: () => ({ currentUser: null }) },
     location: { hostname: "test", search: "", href: "http://test/" },
     module: { exports: {} },
     exports: {},
