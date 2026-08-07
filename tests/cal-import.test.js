@@ -357,3 +357,75 @@ describe("mergeImportedEvents (regression: reconciling an imported calendar must
     assert.ok(result.some((e) => e.id === "manual-1"));
   });
 });
+
+describe("mergeImportedEvents order-independent dedup (regression: connecting Canvas/Schoology AFTER a syllabus scan created real duplicates)", () => {
+  test("a syllabus-scanned exam already on the calendar is not duplicated when Canvas later reports the same one", () => {
+    const { mergeImportedEvents } = loadStudlinModule();
+    const alreadyThere = { id: "syl-1", title: "Unit 2 midterm", date: "2026-08-05", time: "09:00", duration: 50, kind: "exam", status: "pending", noteId: "syl-note-1" };
+    const classifications = { u1: { kind: "exam", subject: "Biology", examWeight: "major" } };
+    const fetched = [{ uid: "u1", title: "Unit 2 midterm", date: "2026-08-05", time: "09:00", duration: 50 }];
+    const result = mergeImportedEvents([alreadyThere], "sub-1", fetched, classifications);
+    assert.equal(result.length, 1, "the Canvas item should be recognized as the same exam, not added a second time");
+    assert.equal(result[0].id, "syl-1", "the original syllabus-scanned event survives untouched, not replaced");
+  });
+
+  test("a manually-typed assignment already on the calendar is not duplicated by a later Canvas sync", () => {
+    const { mergeImportedEvents } = loadStudlinModule();
+    const alreadyThere = { id: "manual-1", title: "Ch. 4 problem set", date: "2026-08-01", time: "23:59", duration: null, kind: "deadline", status: "pending" };
+    const classifications = { u1: { kind: "assignment", subject: "Biology" } };
+    const fetched = [{ uid: "u1", title: "Ch. 4 problem set", date: "2026-08-01", time: "23:59", duration: 60 }];
+    const result = mergeImportedEvents([alreadyThere], "sub-1", fetched, classifications);
+    assert.equal(result.length, 1);
+  });
+
+  test("the reverse order (syllabus scan after Canvas already imported it) was already safe -- still is", () => {
+    const { mergeImportedEvents } = loadStudlinModule();
+    const classifications = { u1: { kind: "exam", subject: "Biology", examWeight: "major" } };
+    const fetched = [{ uid: "u1", title: "Unit 2 midterm", date: "2026-08-05", time: "09:00", duration: 50 }];
+    const afterCanvasImport = mergeImportedEvents([], "sub-1", fetched, classifications);
+    assert.equal(afterCanvasImport.length, 1);
+    // buildSyllabusEventBatch's own isDuplicate check (not exercised here,
+    // it lives in a different function) is what protects this direction --
+    // this test just documents the existing import stays put, unaffected
+    // by this branch's change.
+    assert.equal(afterCanvasImport[0].kind, "exam");
+  });
+
+  test("a genuinely different item with a coincidentally matching title is NOT falsely deduped away", () => {
+    const { mergeImportedEvents } = loadStudlinModule();
+    // Different date -- a real, separate assignment that just happens to
+    // share a title (e.g. a recurring weekly problem set).
+    const alreadyThere = { id: "manual-1", title: "Weekly reading response", date: "2026-08-01", time: "23:59", duration: null, kind: "deadline", status: "pending" };
+    const classifications = { u1: { kind: "assignment", subject: "English" } };
+    const fetched = [{ uid: "u1", title: "Weekly reading response", date: "2026-08-08", time: "23:59", duration: 60 }];
+    const result = mergeImportedEvents([alreadyThere], "sub-1", fetched, classifications);
+    assert.equal(result.length, 2, "a later week's genuinely separate item must still be added");
+  });
+
+  test("still dedupes correctly against its own prior imports on resync (unchanged behavior)", () => {
+    const { mergeImportedEvents } = loadStudlinModule();
+    const fetched = [{ uid: "u1", title: "Closing shift", date: "2026-08-01", time: "17:00", duration: 240 }];
+    const first = mergeImportedEvents([], "sub-1", fetched);
+    const second = mergeImportedEvents(first, "sub-1", fetched);
+    assert.equal(second.length, 1);
+  });
+});
+
+describe("mergeImportedEvents classified projects (regression: a 'project' classification used to collapse to a plain deadline, never actually qualifying as a real Project)", () => {
+  test("a classified project gets a real, non-empty outline, unlike a plain assignment", () => {
+    const { mergeImportedEvents } = loadStudlinModule();
+    const classifications = { u1: { kind: "project", subject: "History" } };
+    const fetched = [{ uid: "u1", title: "Research paper", date: "2026-08-20", time: "23:59", duration: 60 }];
+    const result = mergeImportedEvents([], "sub-1", fetched, classifications);
+    assert.equal(result[0].kind, "deadline");
+    assert.equal(result[0].outline.length, 1, "needs a real outline entry for isProjectMarker to ever fire");
+  });
+
+  test("a plain assignment classification gets no outline at all -- stays a genuine non-project deadline", () => {
+    const { mergeImportedEvents } = loadStudlinModule();
+    const classifications = { u1: { kind: "assignment", subject: "History" } };
+    const fetched = [{ uid: "u1", title: "Problem set", date: "2026-08-20", time: "23:59", duration: 60 }];
+    const result = mergeImportedEvents([], "sub-1", fetched, classifications);
+    assert.equal(result[0].outline, undefined);
+  });
+});
