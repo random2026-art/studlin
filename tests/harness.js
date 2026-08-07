@@ -134,7 +134,8 @@ function loadStudlinModule(options) {
     "applyHoursTargetCap",
     "computeAssignmentPace","ASSIGNMENT_BEHIND_THRESHOLD","ATTACK_BLOCK_DEFAULT_ESTIMATE_HOURS",
     "isPaceNudgeDismissed","dismissPaceNudge","PACE_NUDGE_COOLDOWN_MS",
-    "computeFillSuggestions"];
+    "computeFillSuggestions","shouldFireStreakNudge","getStreakNudgeSentDate","markStreakNudgeSent",
+    "reminderCategoryAllowed"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }

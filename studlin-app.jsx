@@ -5129,6 +5129,29 @@ function getTotalMinutesFocused(){
   const s=lsGet("sessions",[]);
   return s.reduce((acc,x)=>acc+(x.m||0),0);
 }
+// "Streak reminders" in Settings used to be a toggle with no engine behind
+// it at all -- "a nudge if you haven't studied by 8pm" described a feature
+// that didn't exist anywhere in the codebase (see S2 in the audit). Pure
+// decision so it's testable without faking Notification/timers/clock: given
+// the current hour, whether today's nudge already went out, and today's
+// logged sessions, decides whether to fire one right now.
+function shouldFireStreakNudge(hour,alreadySentToday,todaySessions){
+  if(alreadySentToday)return false;
+  if(hour<20)return false;
+  if((todaySessions||[]).some(s=>(s.m||0)>0))return false;
+  return true;
+}
+const getStreakNudgeSentDate=()=>lsGet("streak-nudge-sent-date",null);
+const markStreakNudgeSent=(dateKey)=>lsSet("streak-nudge-sent-date",dateKey);
+// "Deadline alerts" was the same story -- a toggle nothing read, so there
+// was no way to say "only notify me about exams/assignments" the way the
+// audit's S2 finding put it. Scoped narrowly: due-date kinds need this
+// toggle on; every other kind's start-time reminder is unaffected by it,
+// still gated only by the master switch exactly as before.
+function reminderCategoryAllowed(evKind,deadlineAlertsOn){
+  if(evKind==="deadline"||evKind==="exam")return deadlineAlertsOn!==false;
+  return true;
+}
 function applyOverduePenalties(){
   const today=dayKey();
   const events=lsGet("events",[]);
@@ -21335,9 +21358,16 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Reminders</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Choose what wakes you up.</div>
-              <Row label="Push notifications" sub="Deadline reminders, streak alerts, squad activity." k="push" />
-              <Row label="Deadline alerts" sub="Get notified 24 hours, 1 hour, and 10 minutes before due time." k="deadline" />
-              <Row label="Streak reminders" sub="A nudge if you haven't studied by 8pm." k="streak" />
+              {/* "Push notifications" used to sit here too, describing the
+                  exact same scope as "Task & App Notifications" above --
+                  a second master switch, and neither it nor Deadline/Streak
+                  below actually gated anything (see S2 in the audit). Removed
+                  as a pure duplicate rather than wiring a third redundant
+                  kill switch; Deadline alerts and Streak reminders below are
+                  now real, independent category filters under that one
+                  master switch. */}
+              <Row label="Deadline alerts" sub="Get a heads-up before an assignment or exam's own start time." k="deadline" />
+              <Row label="Streak reminders" sub="A nudge if you haven't logged any study time by 8pm." k="streak" />
               <Row label="Focus sound alerts" sub="Audio cue when Pomodoro sessions complete." k="sound" />
             </Card>
             <Card>
@@ -22983,13 +23013,23 @@ function App() {
       // Respect the "Task & App Notifications" master toggle in Settings
       // (defaults on) — read fresh each poll so turning it off mid-session
       // takes effect immediately instead of needing a reload.
-      if(lsGet("settings",{}).notifMaster===false)return;
+      const settings=lsGet("settings",{});
+      if(settings.notifMaster===false)return;
       const events=lsGet("events",[]);
       const todayK=dayKey();
       const now=Date.now();
       const MISSED_NUDGE_MIN=15; // minutes late before a "still doing this?" nudge
+      // Real per-day, once-only nudge (see shouldFireStreakNudge) -- the
+      // "Streak reminders" toggle used to gate nothing, since no engine like
+      // this existed at all. Persisted (not just in notifiedRef) so a reload
+      // after 8pm doesn't send a second one the same day.
+      if(settings.streak!==false&&shouldFireStreakNudge(new Date().getHours(),getStreakNudgeSentDate()===todayK,lsGet("sessions",[]).filter(s=>s.d===todayK))){
+        markStreakNudgeSent(todayK);
+        try{new Notification("Studlin",{body:"Haven't studied yet today — a quick session keeps your streak alive."});}catch(e){}
+      }
       events.forEach(ev=>{
         if(!ev.time||ev.date!==todayK||ev.checklist||ev.status==="done")return;
+        if(!reminderCategoryAllowed(ev.kind,settings.deadline))return;
         // Already actively locked in on this exact task (started early, or
         // right on time) -- neither "starts in N minutes" nor "still doing
         // this?" makes sense to nag about something the student is

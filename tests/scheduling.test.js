@@ -3215,3 +3215,74 @@ describe("dayWorkloadMinutes / dayWorkloadTier (regression: Month view showed on
     assert.equal(m.dayWorkloadTier(m.DAY_WORKLOAD_HEAVY_MINS - 1), "moderate");
   });
 });
+
+describe("shouldFireStreakNudge (real engine behind the 'Streak reminders' Settings toggle, previously nothing)", () => {
+  test("fires at/after 8pm when nothing's been logged today and it hasn't already gone out", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.shouldFireStreakNudge(20, false, []), true);
+    assert.equal(m.shouldFireStreakNudge(23, false, []), true);
+  });
+
+  test("stays quiet before 8pm regardless of today's sessions", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.shouldFireStreakNudge(19, false, []), false);
+    assert.equal(m.shouldFireStreakNudge(0, false, []), false);
+  });
+
+  test("stays quiet once already sent today, even if still unstudied", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.shouldFireStreakNudge(21, true, []), false);
+  });
+
+  test("stays quiet once any real minutes are logged today", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.shouldFireStreakNudge(21, false, [{ d: "2026-08-07", m: 25 }]), false);
+  });
+
+  test("a logged session with zero/no minutes doesn't count as having studied", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.shouldFireStreakNudge(21, false, [{ d: "2026-08-07", m: 0 }]), true);
+  });
+});
+
+describe("getStreakNudgeSentDate / markStreakNudgeSent (persisted, not just in-memory -- survives a reload the same day)", () => {
+  test("defaults to null when never sent", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.getStreakNudgeSentDate(), null);
+  });
+
+  test("round-trips exactly the date it was marked for", () => {
+    const m = loadStudlinModule();
+    m.markStreakNudgeSent("2026-08-07");
+    assert.equal(m.getStreakNudgeSentDate(), "2026-08-07");
+  });
+});
+
+describe("reminderCategoryAllowed (real category gate behind the 'Deadline alerts' Settings toggle, previously nothing)", () => {
+  test("a deadline is blocked when the toggle is explicitly off", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.reminderCategoryAllowed("deadline", false), false);
+  });
+
+  test("an exam is blocked when the toggle is explicitly off", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.reminderCategoryAllowed("exam", false), false);
+  });
+
+  test("a deadline/exam is allowed when the toggle is on", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.reminderCategoryAllowed("deadline", true), true);
+    assert.equal(m.reminderCategoryAllowed("exam", true), true);
+  });
+
+  test("undefined (never-set toggle, defaults on) allows deadline/exam reminders -- opt-out, not opt-in", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.reminderCategoryAllowed("deadline", undefined), true);
+  });
+
+  test("a study block is never gated by this toggle at all, on or off", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.reminderCategoryAllowed("study block", false), true);
+    assert.equal(m.reminderCategoryAllowed("study block", true), true);
+  });
+});
