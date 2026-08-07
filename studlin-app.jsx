@@ -14833,7 +14833,14 @@ function PhasesOutlineEditor({item,onChange,subject}){
             );
           })}
           <button type="button" onClick={()=>onChange({outline:[...item.outline,""]})} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add step</button>
-          <div style={{fontSize:10,color:T.faint}}>Add a date on any step your professor gave its own due date for -- optional, only tightens scheduling for that step.</div>
+          {/* O11 in the audit: this component is shared across HS and
+              college contexts (New Task's Project type, syllabus-scan
+              review) but had no status awareness at all -- reads
+              getProfile().status directly rather than threading a new
+              prop through all 3 call sites, matching how the course menu
+              already branches "Scan assignments" vs "Import syllabus"
+              copy elsewhere in this file. */}
+          <div style={{fontSize:10,color:T.faint}}>Add a date on any step your {getProfile().status==="highschool"?"teacher":"professor"} gave its own due date for -- optional, only tightens scheduling for that step.</div>
         </div>
       )}
     </div>
@@ -14857,7 +14864,12 @@ function PhasesOutlineEditor({item,onChange,subject}){
 // after already picking one). Doesn't include addMode's own sub-steps
 // inside "classes" (scan/review/hsSchedule/hsReview) -- those already have
 // their own correct "<- Back" links returning to addMode=null/"choose".
-const WIZARD_STEP_ORDER=["timezone","term","holidays","awake","status","classes","activities","calendarSync","finalReview"];
+// O9 in the audit: "awake" (which sets the default study window) used to
+// come before "status", so an HS student's study start/end got asked
+// with no school-hours context to sanity-check against yet -- status now
+// comes first, so a future "that overlaps your school day" check has
+// something real to compare against instead of nothing.
+const WIZARD_STEP_ORDER=["term","holidays","status","awake","classes","activities","calendarSync","finalReview"];
 // Phase 8: the 6 named steps a fresh account walks through, shown as a
 // top progress stepper. "status" (HS/college fork) isn't its own labeled
 // step -- Shovel doesn't show one either -- it's the entry to "Courses",
@@ -14865,7 +14877,6 @@ const WIZARD_STEP_ORDER=["timezone","term","holidays","awake","status","classes"
 // named steps but aren't part of the stepper (same as "window" wasn't,
 // before it got merged into "awake").
 const WIZARD_STEPPER=[
-  {key:"timezone",label:"Timezone"},
   {key:"term",label:"End of Term"},
   {key:"holidays",label:"Holidays"},
   {key:"awake",label:"Awake time"},
@@ -15001,10 +15012,15 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     setStatus(initialStatus||"");
     // quickScan (Import syllabus from a course's 3-dot menu) and a
     // returning user with an already-known status both skip straight to
-    // "classes", same shortcut this wizard already had -- the 4 new
-    // Phase 8 steps ahead of "status" are only for a brand-new account's
-    // very first full pass.
-    setStep(quickScan?"classes":(initialStatus?"classes":"timezone"));
+    // "classes", same shortcut this wizard already had -- the Phase 8
+    // steps ahead of "status" are only for a brand-new account's very
+    // first full pass. O10 in the audit: this used to start at "timezone",
+    // a step with no input at all beyond a mandatory Continue (its own
+    // copy says "nothing to set here") -- every brand-new account paid
+    // that extra screen for zero actual configuration. Starts at "term"
+    // now; timezone is still detected live via detectTz() wherever it's
+    // actually used, same as before, just never shown as its own step.
+    setStep(quickScan?"classes":(initialStatus?"classes":"term"));
     setTimezone(detectTz());
     const term=getSchoolTerm();
     setTermStart((term&&term.start)||"");
@@ -15412,7 +15428,13 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       }
     });
     if(activities.length>0)saveWeeklyRoutine([...getWeeklyRoutine(),...activities]);
-    setSchedulePreferences({...getSchedulePreferences(),workStartTime:workStart,workEndTime:workEnd,peakHourBuckets:peakBuckets});
+    // O5 in the audit: the "when do you sleep" answer persisted to its own
+    // wakeSleep storage key (below), but the scheduler's actual late-
+    // session cutoff reads a completely separate prefs.bedtime field with
+    // a hardcoded "23:00" default -- so a stated "asleep at 2am" changed
+    // nothing about how late Studlin would actually schedule. bedtime now
+    // saved alongside the rest of this same commit.
+    setSchedulePreferences({...getSchedulePreferences(),workStartTime:workStart,workEndTime:workEnd,peakHourBuckets:peakBuckets,bedtime:sleepTime});
     // Latent bug fix (Phase 9d): `status` was a purely local UI branch
     // before this -- chosen at the very first step of this wizard, then
     // never actually written to the real profile, so Settings' own
@@ -15445,13 +15467,6 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       <div style={{width:"100%",maxWidth:620,maxHeight:"88vh",display:"flex",flexDirection:"column",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease"}}>
         <WizardStepper step={step} />
         <div style={{padding:"28px 32px 0",overflowY:"auto",flex:1,minHeight:0}}>
-
-          {step==="timezone"&&(<>
-            <TitleSub title="Your timezone" sub="Detected automatically from your device, and kept up to date if you travel -- nothing to set here." />
-            <div style={{...subjectRowStyle(T.lime),justifyContent:"center",padding:"16px 12px"}}>
-              <span style={{fontSize:14,fontWeight:600,color:T.text}}>{timezone||detectTz()}</span>
-            </div>
-          </>)}
 
           {step==="term"&&(<>
             <TitleSub title="When does this term run?" sub="Studlin stops expecting your classes outside these dates -- summer, before the term starts. You can always change this later in Settings." />
@@ -15520,8 +15535,8 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
           {step==="status"&&(<>
             <TitleSub title="What best describes you?" sub="Studlin builds your week differently for school hours vs. a college schedule." />
             <div style={{display:"flex",gap:10}}>
-              <button type="button" onClick={()=>{setStatus("highschool");setStep("classes");}} style={wizardStatusChipStyle(status==="highschool")}>High School</button>
-              <button type="button" onClick={()=>{setStatus("college");setStep("classes");}} style={wizardStatusChipStyle(status==="college")}>College</button>
+              <button type="button" onClick={()=>{setStatus("highschool");setStep("awake");}} style={wizardStatusChipStyle(status==="highschool")}>High School</button>
+              <button type="button" onClick={()=>{setStatus("college");setStep("awake");}} style={wizardStatusChipStyle(status==="college")}>College</button>
             </div>
           </>)}
 
@@ -15972,16 +15987,15 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
             <button type="button" onClick={onSkip} style={{fontSize:12.5,color:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>Skip all</button>
           </div>
           <div style={{display:"flex",gap:10}}>
-            {step==="timezone"&&(<Btn onClick={()=>setStep("term")}>Continue</Btn>)}
             {step==="term"&&(<>
               <Btn variant="subtle" onClick={()=>setStep("holidays")}>Skip</Btn>
               <Btn onClick={()=>setStep("holidays")}>Continue</Btn>
             </>)}
             {step==="holidays"&&(<>
-              <Btn variant="subtle" onClick={()=>setStep("awake")}>Skip</Btn>
-              <Btn onClick={()=>setStep("awake")}>Continue</Btn>
+              <Btn variant="subtle" onClick={()=>setStep("status")}>Skip</Btn>
+              <Btn onClick={()=>setStep("status")}>Continue</Btn>
             </>)}
-            {step==="awake"&&(<Btn onClick={()=>setStep("status")} disabled={windowInvalid} style={{opacity:windowInvalid?0.45:1}}>Continue</Btn>)}
+            {step==="awake"&&(<Btn onClick={()=>setStep("classes")} disabled={windowInvalid} style={{opacity:windowInvalid?0.45:1}}>Continue</Btn>)}
             {step==="classes"&&addMode===null&&(
               <Btn onClick={()=>quickScan?setStep("finalReview"):setStep("activities")}>{(pendingClasses.length>0||hsClassesCommitted>0)?"Done adding classes":"Skip, I'll add classes later"}</Btn>
             )}
