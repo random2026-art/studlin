@@ -19579,23 +19579,34 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
               const evs=(byDay[c.key]||[]).filter(ev=>ev.kind!=="free period");
               const isToday=c.key===todayK;
               const isSel=c.key===selDay;
-              // Subtle workload strip along the cell's bottom edge -- light
-              // days get nothing (no need to flag an easy day), moderate
-              // gets a thin amber line, heavy gets a thicker, more solid
-              // one. Deliberately a plain border, not new text/a number, so
-              // a 7x5 grid doesn't get louder than it already is.
+              // Capacity meter along the cell's bottom edge -- light days
+              // get nothing (no need to flag an easy day). Deliberately
+              // neutral (not amber/red): color in this cell is already
+              // spoken for by the "N tasks due" pill below (red=overdue,
+              // lime=on track), and an amber line sitting right next to
+              // that red pill read as a second, competing warning signal
+              // instead of a separate "how full is this day" one. A plain
+              // 2px border-width delta between moderate/heavy was also too
+              // subtle to actually perceive at this size -- a fill bar
+              // whose WIDTH scales with real minutes scheduled reads much
+              // faster at a glance.
               const workloadTier=dayWorkloadTier(dayWorkloadMinutes(evs));
-              const workloadBorder=workloadTier==="heavy"?`3px solid ${T.amber}99`:workloadTier==="moderate"?`2px solid ${T.amber}55`:"none";
+              const workloadPct=Math.max(0,Math.min(100,Math.round(dayWorkloadMinutes(evs)/DAY_WORKLOAD_HEAVY_MINS*100)));
               return (
                 <div key={i} onClick={()=>{setSelDay(c.key);}} onDoubleClick={()=>setDayDetailKey(c.key)}
                   onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(sidebarDragChip){openNewEventForDrop(sidebarDragChip,c.key,"09:00",{x:e.clientX,y:e.clientY});setSidebarDragChip(null);}else if(dragId){moveEvent(dragId,c.key);setDragId(null);}}}
                   title={workloadTier!=="light"?dayWorkloadMinutes(evs)+" minutes scheduled":undefined}
-                  style={{position:"relative",minHeight:64,minWidth:0,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.card2:"transparent",border:"1px solid "+(isSel?T.lime+"55":"transparent"),borderBottom:workloadBorder,transition:"all 0.12s",opacity:c.out?0.35:1}}>
+                  style={{position:"relative",minHeight:64,minWidth:0,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.card2:"transparent",border:"1px solid "+(isSel?T.lime+"55":"transparent"),transition:"all 0.12s",opacity:c.out?0.35:1}}>
                   <div style={{display:"flex",justifyContent:"flex-start"}}>
                     <span style={{width:22,height:22,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:isToday?700:500,background:isToday?T.lime:"transparent",color:isToday?T.ink:c.out?T.faint:T.text}}>{c.d}</span>
                   </div>
                   {isSel && <button type="button" onClick={(e)=>{e.stopPropagation();openNew(c.key);}} title="Add a task on this day"
                     style={{position:"absolute",top:4,right:4,width:16,height:16,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.muted,fontSize:11,lineHeight:1,cursor:"pointer",display:"grid",placeItems:"center",padding:0}}>+</button>}
+                  {workloadTier!=="light"&&(
+                    <div style={{position:"absolute",left:7,right:7,bottom:5,height:3,borderRadius:2,background:T.border,overflow:"hidden"}}>
+                      <div style={{width:workloadPct+"%",height:"100%",borderRadius:2,background:T.muted}} />
+                    </div>
+                  )}
                   {/* Phase 10b: a single compact "N tasks due" bar instead
                       of listing individual event chips -- matches Shovel's
                       day-cell header exactly, and directly addresses the
