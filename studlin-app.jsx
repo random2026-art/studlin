@@ -8150,6 +8150,26 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
         )}
         {buildPlanExam&&buildPlanStep==="preview"&&buildPlanPreview&&(
           <div>
+            {/* P1 in the audit: weekPrepLoad/pressuredExamItems already
+                exist and work in Syllabus Review and Brain Dump, but this
+                flow -- Studlin Prep's own Build Study Plan, one of the two
+                primary ways a student actually schedules exam prep -- never
+                called either one. A student building plans for 3 exams the
+                same week got each one generated in total isolation. Same
+                "Spread out" affordance Syllabus Review uses, reusing the
+                count-adjust action this modal already has. */}
+            {buildPlanPreview.dates.length>0&&(()=>{
+              const pressure=weekPrepLoad(buildPlanPreview.dates[0],buildPlanExam,lsGet("events",[]),getSchedulePreferences());
+              if(!pressure.isPressured)return null;
+              return (
+                <div style={{fontSize:12,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:8,padding:"8px 12px",marginBottom:14,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+                  <span>{pressure.competingTitle?"The week this starts in is already busy with "+pressure.competingTitle+".":"The week this starts in is already busy."} You can build it as planned, or spread it out.</span>
+                  {buildPlanPreview.sessionCount>1&&(
+                    <button type="button" onClick={()=>adjustBuildPlanCount(buildPlanPreview.sessionCount-1)} style={{background:"none",border:"none",color:T.amber,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",flexShrink:0,padding:0}}>Spread out</button>
+                  )}
+                </div>
+              );
+            })()}
             {/* "Redo" specifically (not a fresh Build) -- show what's
                 actually being replaced before it's gone. Reads straight
                 from storage since commitBuildPlan hasn't run yet at
@@ -18114,11 +18134,18 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // "Balance my week" modal can never disagree about whether there's
   // anything to balance.
   const [weekBalanceNudge,setWeekBalanceNudge]=useState(false);
+  // C6 in the audit: this used to be a mount-only effect ([] deps), so
+  // adding several tasks while staying on the Calendar tab never
+  // re-triggered it -- only the next full tab visit would. events in the
+  // dependency array re-runs the same check whenever this tab's own task
+  // list actually changes; it only ever sets the nudge to true, so an
+  // already-dismissed or not-yet-warranted week can't get spuriously
+  // re-shown by an unrelated edit.
   useEffect(()=>{
     if(!shouldShowWeekBalanceNudge())return;
-    const plan=computeWeekBalancePlan(lsGet("events",[]),routines,getSchedulePreferences(),dayKey());
+    const plan=computeWeekBalancePlan(events,routines,getSchedulePreferences(),dayKey());
     if(plan.moves.length>0)setWeekBalanceNudge(true);
-  },[]);
+  },[events]);
   const declineWeekBalanceNudge=()=>{logSuggestionDecision("weekBalanceNudge","dismissed",{});dismissWeekBalanceNudge();setWeekBalanceNudge(false);};
   const acceptWeekBalanceNudge=()=>{logSuggestionDecision("weekBalanceNudge","accepted",{});setWeekBalanceNudge(false);openWeekBalance();};
   const confirmWeekBalance=()=>{
@@ -20142,6 +20169,27 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
                     <NumField min={1} max={6} fallback={4} value={evExamPlan.sessionCount||4} onChange={v=>{setEvSessionCountTouched(true);setEvExamPlan(m=>({...m,sessionCount:v}));}} style={{width:48}} />
                     <span style={{fontSize:10.5,color:T.muted}}>{!evDate?"Pick a date above first":dates.length===0?"Too close to the exam to fit a session":dates.length+" session"+(dates.length!==1?"s":"")+": "+dates.join(", ")}</span>
                   </div>
+                  {/* C5 in the audit: weekPrepLoad already exists and works
+                      in Syllabus Review and Brain Dump, but this toggle --
+                      the New Task modal's own exam-plan flow, one of the two
+                      primary ways a student actually schedules exam prep --
+                      never called it. A student could stack three exams'
+                      worth of sessions into one already-packed week with
+                      zero warning. {id:"__preview__"} matches how
+                      pressuredExamItems computes this same check for a
+                      not-yet-saved item elsewhere in this file. */}
+                  {dates.length>0&&(()=>{
+                    const pressure=weekPrepLoad(dates[0],{id:"__preview__"},events,getSchedulePreferences());
+                    if(!pressure.isPressured)return null;
+                    return (
+                      <div style={{fontSize:11,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:7,padding:"7px 10px",marginTop:8,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                        <span>{pressure.competingTitle?"That week's already busy with "+pressure.competingTitle+".":"That week's already busy."}</span>
+                        {(evExamPlan.sessionCount||4)>1&&(
+                          <button type="button" onClick={()=>{setEvSessionCountTouched(true);setEvExamPlan(m=>({...m,sessionCount:(m.sessionCount||4)-1}));}} style={{background:"none",border:"none",color:T.amber,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",flexShrink:0,padding:0}}>Spread out</button>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })()}
