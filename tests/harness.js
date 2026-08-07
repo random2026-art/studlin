@@ -138,7 +138,8 @@ function loadStudlinModule(options) {
     "reminderCategoryAllowed","pickLatestQueuedNudgesByKind","CATCHUP_RECOVERY_THRESHOLD",
     "notifSignatureOf","bottomRightNotifSlot","computeStreakWithFreezes","awardFreezeTokenIfMilestone",
     "getStreakFreezeTokens","STREAK_FREEZE_MILESTONE_DAYS","STREAK_FREEZE_MAX",
-    "touchStreak","getStreak"];
+    "touchStreak","getStreak","isNearDuplicateCourseLabel","findDuplicateCourseGroups",
+    "ensureSubjectsForClassRoutines"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }
