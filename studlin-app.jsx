@@ -2559,6 +2559,27 @@ function computeCatchUpMissedItems(events,today){
     !(ev.deadline&&ev.deadline<today)
   );
 }
+// The Catch Me Up banner used to always say "yesterday" regardless of how
+// stale the backlog actually was -- computeCatchUpMissedItems only checks
+// date<today with no bound, so a student behind for several days (exam
+// week, sick days) got a banner that understated it in its own words. This
+// finds the oldest missed item's actual gap so the copy can say so honestly.
+function catchUpStalenessDays(missedItems,today){
+  if(!missedItems||missedItems.length===0)return 0;
+  const todayMs=new Date(today+"T12:00:00").getTime();
+  let maxDays=0;
+  missedItems.forEach(ev=>{
+    if(!ev.date)return;
+    const gap=Math.round((todayMs-new Date(ev.date+"T12:00:00").getTime())/86400000);
+    if(gap>maxDays)maxDays=gap;
+  });
+  return maxDays;
+}
+function catchUpStalenessLabel(days){
+  if(days<=1)return "yesterday";
+  if(days<=6)return "the last "+days+" days";
+  return "over a week ago";
+}
 const CATCHUP_EXAM_URGENT_DAYS=7; // an exam this close or closer makes its prep sessions time-sensitive
 function dayOfWeekLabel(dateKey){return new Date(dateKey+"T12:00:00").toLocaleDateString("en-US",{weekday:"long"});}
 function ordinalDay(dateKey){
@@ -4922,6 +4943,50 @@ function deckLinkedToExam(deck,examId){
 // exact definition, so it lives here once instead of three drifting copies.
 function isProjectMarker(ev){
   return !!((ev.phases&&ev.phases.length>0)||(ev.outline&&ev.outline.length>0));
+}
+// Splitting a Project into N sessions used to give every session its own
+// copy of phases/outline, so each one independently satisfied
+// isProjectMarker above -- "Project + Split into 3" produced 3 separate,
+// fully duplicate project cards on Dashboard instead of one project with 3
+// linked work sessions (checking a checklist item off one never touched the
+// others). Fix: only session 1 is the marker; every session after it links
+// back via dueEventId, the same convention exam-prep sessions already use.
+// Pure so the fix's actual data-shape contract is unit-testable without
+// needing the full CalendarTab closure buildTask lives in.
+function projectSplitLinkFields(evKind,splitIndex,markerId){
+  if(evKind!=="project"||!markerId)return {};
+  return splitIndex===1?{id:markerId}:{dueEventId:markerId};
+}
+// "Split into sessions" had no floor -- a short task split into the max
+// session count (10) could produce ~2-minute "study sessions," short enough
+// to not be worth opening the app for. Below the floor, sessions run longer
+// than an even split of the original duration rather than staying uselessly
+// short; the total naturally exceeds the original evDuration in that case,
+// which is the right tradeoff (a few minutes of extra scheduled time beats
+// a session too short to do anything in).
+// Month view's day cells used to show only a task COUNT ("6 tasks due"),
+// with no signal for how heavy the day actually is -- a day with one
+// 15-minute task and a day with 6 hours of stacked exam prep looked
+// identical except for the number. Pure so the tier thresholds are
+// unit-testable on their own, independent of the cell's render logic.
+// Deliberately a simple sum of every event's own duration (not
+// computeWeekBalancePlan's minutesFor, which is flex-only for its own
+// reshuffle-candidate purpose) -- this is asking "how full does today
+// look," which should count fixed classes/exams too, not just flexible
+// study time.
+const DAY_WORKLOAD_MODERATE_MINS=90;
+const DAY_WORKLOAD_HEAVY_MINS=240;
+function dayWorkloadMinutes(evs){
+  return (evs||[]).reduce((sum,ev)=>sum+(ev.duration||0),0);
+}
+function dayWorkloadTier(minutes){
+  if(minutes>=DAY_WORKLOAD_HEAVY_MINS)return "heavy";
+  if(minutes>=DAY_WORKLOAD_MODERATE_MINS)return "moderate";
+  return "light";
+}
+const SPLIT_SESSION_MIN_MINUTES=10;
+function splitSessionDuration(totalDuration,splitCount){
+  return Math.max(SPLIT_SESSION_MIN_MINUTES,Math.round((totalDuration||0)/Math.max(1,splitCount||1)));
 }
 function buildSpacedSessionPreviews(examDate,subject,count,duration){
   const dates=computeReviewDates(examDate,dayKey(),count);
@@ -13464,6 +13529,20 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
 // two things landing in the same window (e.g. a class overlapping a
 // manually-added study block) would render on top of one another, clipping
 // whichever card ended up underneath.
+// A cluster of same-time overlaps used to split into as many equal-width
+// columns as there were overlapping events, uncapped -- real schedule
+// conflicts are legal (fixed-kind events are explicitly exempt from
+// conflict-avoidance, see resolveManualSlot), so a genuinely busy cluster
+// (several after-school activities, a real double-booking) rendered as an
+// increasing number of illegibly thin slivers with no way to see or reach
+// the ones squeezed out. Columns 0..(MAX-2) stay individually visible;
+// column MAX-1 becomes one "+N more" slot for everything past that --
+// the earliest-starting overflow item renders (carrying the count of the
+// rest via overflowCount), the rest are flagged hidden:true so a caller
+// knows not to render them as their own card. displayCol/displayTotalCols
+// are what layout math should use; col/totalCols (the real, uncapped
+// values) are kept unchanged for any caller that doesn't care about the cap.
+const MAX_VISIBLE_DAY_COLUMNS=4;
 function layoutDayEvents(evs) {
   const items = evs.map(ev => {
     const [hh, mm] = ev.time.split(":").map(Number);
@@ -13494,7 +13573,21 @@ function layoutDayEvents(evs) {
       item.col = col;
     });
     const totalCols = columnEnds.length;
-    cluster.forEach(item => laidOut.push({ ...item, totalCols }));
+    if(totalCols<=MAX_VISIBLE_DAY_COLUMNS){
+      cluster.forEach(item=>laidOut.push({...item,totalCols,displayCol:item.col,displayTotalCols:totalCols,hidden:false,overflowCount:0}));
+      return;
+    }
+    const overflowCol=MAX_VISIBLE_DAY_COLUMNS-1;
+    const overflowItems=cluster.filter(item=>item.col>=overflowCol).sort((a,b)=>a.start-b.start);
+    cluster.forEach(item=>{
+      if(item.col<overflowCol){
+        laidOut.push({...item,totalCols,displayCol:item.col,displayTotalCols:MAX_VISIBLE_DAY_COLUMNS,hidden:false,overflowCount:0});
+      }else if(item===overflowItems[0]){
+        laidOut.push({...item,totalCols,displayCol:overflowCol,displayTotalCols:MAX_VISIBLE_DAY_COLUMNS,hidden:false,overflowCount:overflowItems.length-1});
+      }else{
+        laidOut.push({...item,totalCols,displayCol:overflowCol,displayTotalCols:MAX_VISIBLE_DAY_COLUMNS,hidden:true,overflowCount:0});
+      }
+    });
   });
   return laidOut;
 }
@@ -13949,7 +14042,17 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                     <div style={{borderTop:"2px solid #E5484D"}} />
                   </div>
                 )}
-                {(() => { const dayLaidOut = layoutDayEvents(visibleEvs); return dayLaidOut.map(({ev, col, totalCols, start}) => {
+                {(() => { const dayLaidOut = layoutDayEvents(visibleEvs); return dayLaidOut.map(({ev, col, totalCols, displayCol, displayTotalCols, start, hidden, overflowCount}) => {
+                  // A real schedule conflict (fixed-kind events are exempt
+                  // from conflict-avoidance -- see resolveManualSlot) used
+                  // to split into as many equal-width columns as there
+                  // were overlapping events, with no cap -- 6+ things at
+                  // the same time rendered as illegibly thin slivers.
+                  // layoutDayEvents now caps visible columns and flags
+                  // anything past the cap hidden:true; that one just isn't
+                  // rendered as its own card here (its neighbor in the
+                  // overflow slot carries a "+N" badge instead, see below).
+                  if(hidden)return null;
                   const timeParts = ev.time.split(":").map(Number);
                   const hh = timeParts[0]; const mm = timeParts[1];
                   const origStartMin = hh * 60 + mm;
@@ -13992,8 +14095,8 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   const dimmedByRoutineMode = editRoutineMode && !isRoutine;
                   const highlightedByRoutineMode = editRoutineMode && isRoutine;
                   const isSelected = !isRoutine && selectedEventId === ev.id;
-                  const leftPct = (col / totalCols) * 100;
-                  const widthPct = 100 / totalCols;
+                  const leftPct = (displayCol / displayTotalCols) * 100;
+                  const widthPct = 100 / displayTotalCols;
                   // Commute buffer strips (2026-07-30) -- effectiveLeadIn/
                   // effectiveTrailOut already reserve this time in the real
                   // conflict math (see their own comment), but nothing ever
@@ -14029,6 +14132,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                           one recovery banner is the single source of "you're
                           behind" now, not a per-item red dot competing with it. */}
                       {!catchUpPending&&over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:"0 0 0 1.5px rgba(255,255,255,0.9)",zIndex:1}} />}
+                      {overflowCount>0&&<span title={overflowCount+" more at this time — open the day to see them"} style={{position:"absolute",bottom:2,right:2,fontSize:8,fontWeight:800,color:kindStyle.color,background:"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>+{overflowCount}</span>}
                       <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                       {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isWarningKind?tokens.color.warning:tokens.color.textSecondary,marginTop:1}}>{fmtTime(String(Math.floor(effStartMin/60)).padStart(2,"0")+":"+String(effStartMin%60).padStart(2,"0"))}{effDuration ? " · "+effDuration+"m" : ""}</div>}
                       {/* Drag-to-resize edge handles -- real events only (see
@@ -15771,7 +15875,7 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
 // illegibility on a packed day and clamp to a narrow window on a light
 // one). The container just scrolls, same as any normal calendar, landing
 // near the current time or the first real event on open.
-function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending}) {
+function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew}) {
   const scrollRef=useRef(null);
   const [dayPreviewOpen,setDayPreviewOpen]=useState(false);
   const stepDay=(n)=>{const d=new Date(selDay+"T12:00:00");d.setDate(d.getDate()+n);setSelDay(dayKey(d));};
@@ -15863,7 +15967,11 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
                 <div style={{borderTop:"2px solid #E5484D"}} />
               </div>
             )}
-            {dayLaidOut.map(({ev,col,totalCols,start})=>{
+            {dayLaidOut.map(({ev,col,totalCols,displayCol,displayTotalCols,start,hidden,overflowCount})=>{
+              // See the matching comment in WeeklyPlanner -- layoutDayEvents
+              // caps visible columns and flags overflow items hidden:true
+              // instead of rendering an ever-thinner sliver per conflict.
+              if(hidden)return null;
               const topPx=(start-spanStart)*(pxPerHr/60);
               const dur=ev.duration||30;
               const nextInCol=dayLaidOut.filter(o=>o.col===col&&o.start>start).sort((a,b)=>a.start-b.start)[0];
@@ -15880,8 +15988,8 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
                 :isExam
                   ?{background:T.ink,border:`2px solid ${color}`,borderLeft:`2px solid ${color}`,boxShadow:`0 0 10px -1px ${color}, inset 0 0 10px ${color}22`,color:T.cream}
                   :{background:color+"1E",borderLeft:`3px solid ${color}`,color};
-              const leftPct=(col/totalCols)*100;
-              const widthPct=100/totalCols;
+              const leftPct=(displayCol/displayTotalCols)*100;
+              const widthPct=100/displayTotalCols;
               // Commute buffer strips -- same treatment as WeeklyPlanner's
               // (see its own comment), so a real commute stays visible
               // whichever view a student happens to be looking at.
@@ -15898,6 +16006,7 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
                   title={ev.isRoutine?"Double-click to edit":"Click to toggle done, double-click to edit"}
                   style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:6,padding:"4px 8px",cursor:"pointer",overflow:"hidden",zIndex:3,opacity:isDone?0.6:1,boxSizing:"border-box",...kindStyle}}>
                   {!catchUpPending&&over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:`0 0 0 1.5px ${isExam?T.ink:"#fff"}`,zIndex:1}} />}
+                  {overflowCount>0&&<span title={overflowCount+" more at this time"} style={{position:"absolute",bottom:2,right:2,fontSize:8,fontWeight:800,color:kindStyle.color,background:"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>+{overflowCount}</span>}
                   <div style={{fontSize:11.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:isDone?"line-through":"none"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                   {heightPx>34&&<div style={{fontSize:9.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:2}}>{fmtTime(ev.time)}{dur?" · "+dur+"m":""}</div>}
                 </div>
@@ -15913,7 +16022,7 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
         </div>
       </div>
     </Card>
-    <DayPreviewModal open={dayPreviewOpen} onClose={()=>setDayPreviewOpen(false)} dayEvents={dayEvents} selDay={selDay} dayLabel={niceDayLabel} colorOf={colorOf} fmtTime={fmtTime} catchUpPending={catchUpPending} />
+    <DayPreviewModal open={dayPreviewOpen} onClose={()=>setDayPreviewOpen(false)} dayEvents={dayEvents} selDay={selDay} dayLabel={niceDayLabel} colorOf={colorOf} fmtTime={fmtTime} catchUpPending={catchUpPending} openNew={openNew} />
     </>
   );
 }
@@ -15927,7 +16036,7 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
 // DayPlanner) and colorOf (so a class's color here always matches its
 // color everywhere else in the app -- never a fresh palette).
 const DAY_PREVIEW_ICON_BY_KIND={"class":Icon.cal,"study block":Icon.brain,"exam":Icon.zap,"deadline":Icon.file,"reminder":Icon.clock};
-function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime,catchUpPending}){
+function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime,catchUpPending,openNew}){
   if(!open)return null;
   const visibleEvs=(dayEvents||[]).filter(ev=>ev.kind!=="free period"&&ev.time);
   const starts=visibleEvs.map(ev=>{const p=ev.time.split(":").map(Number);return p[0]*60+p[1];});
@@ -15958,7 +16067,11 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
   if(spanEnd-cursor>=20)freeGaps.push({start:cursor,end:spanEnd});
   const iconFor=(kind)=>DAY_PREVIEW_ICON_BY_KIND[kind]||Icon.dot;
   return(
-    <Modal open={open} onClose={onClose} title={dayLabel} sub={visibleEvs.length+" scheduled item"+(visibleEvs.length!==1?"s":"")} width={520}>
+    <Modal open={open} onClose={onClose} title={dayLabel} sub={visibleEvs.length+" scheduled item"+(visibleEvs.length!==1?"s":"")} width={520}
+      // Every sibling empty state (Dashboard, the day-detail modal) offers
+      // "+ Add task" -- this was the one glance-and-close surface with no
+      // next action at all when a day was empty.
+      footer={visibleEvs.length===0&&openNew?<Btn onClick={()=>{onClose();openNew(selDay);}} style={{flex:1,justifyContent:"center"}}>+ Add task</Btn>:undefined}>
       {visibleEvs.length===0
         ?<div style={{textAlign:"center",padding:"24px 0",color:T.muted,fontSize:13}}>Nothing scheduled this day.</div>
         :<div style={{maxHeight:"62vh",overflowY:"auto"}}>
@@ -15980,14 +16093,16 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
                 <div style={{width:"100%",borderTop:`1.5px dashed ${T.faint}`,fontSize:10.5,color:T.faint,paddingLeft:8}}>{fmtGapLabel(g.start)}–{fmtGapLabel(g.end)} Free Time</div>
               </div>
             ))}
-            {dayLaidOut.map(({ev,col,totalCols,start})=>{
+            {dayLaidOut.map(({ev,col,totalCols,displayCol,displayTotalCols,start,hidden,overflowCount})=>{
+              // See the matching comment in WeeklyPlanner.
+              if(hidden)return null;
               const topPx=(start-spanStart)*(pxPerHr/60);
               const dur=ev.duration||30;
               const nextInCol=dayLaidOut.filter(o=>o.col===col&&o.start>start).sort((a,b)=>a.start-b.start)[0];
               const heightPx=computeEventBlockHeightPx(dur,nextInCol?nextInCol.start-start:null,pxPerHr);
               const color=ev.color||colorOf(ev.courseId||ev.subject);
-              const leftPct=(col/totalCols)*100;
-              const widthPct=100/totalCols;
+              const leftPct=(displayCol/displayTotalCols)*100;
+              const widthPct=100/displayTotalCols;
               return(
                 <div key={ev.id} style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:8,padding:"6px 10px",overflow:"hidden",zIndex:3,boxSizing:"border-box",background:color+"22",border:`1px solid ${color}55`,display:"flex",flexDirection:"column",justifyContent:"center"}}>
                   <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -15995,6 +16110,7 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
                     <span style={{fontSize:12,fontWeight:700,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</span>
                   </div>
                   {heightPx>30&&<div style={{fontSize:10,color:T.muted,marginTop:2,marginLeft:19}}>{fmtTime(ev.time)}{dur?" · "+dur+"m":""}</div>}
+                  {overflowCount>0&&<div style={{fontSize:9.5,fontWeight:700,color,marginTop:1,marginLeft:19}}>+{overflowCount} more at this time</div>}
                 </div>
               );
             })}
@@ -18298,8 +18414,17 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   const resolveAssignmentKind=()=>evKind==="assignment"?(taskMode==="ai"?"deadline":"study block"):(evKind==="project"?"deadline":evKind);
   const buildTask=(date,time,titleSuffix,splitInfo)=>{
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
-    const projectPhases=evKind==="project"&&evProjectPlan.phases?evProjectPlan.phases.map(p=>p.trim()).filter(Boolean):[];
-    const projectOutline=evKind==="project"&&evProjectPlan.outline?normalizeOutlineDraft(evProjectPlan.outline):[];
+    // Split session 2+ of a Project never gets its own copy of phases/
+    // outline -- without this guard, every split event independently
+    // satisfied isProjectMarker (phases.length>0||outline.length>0),
+    // so "Project + Split into 3 sessions" produced 3 separate, fully
+    // duplicate project cards on Dashboard instead of one project with
+    // 3 linked work sessions. Only the first session is the marker;
+    // callers stamp splitInfo.dueEventId on sessions 2+ to link them back
+    // to it, the same dueEventId convention exam-prep sessions already use.
+    const isSplitFollowup=splitInfo&&splitInfo.splitIndex>1;
+    const projectPhases=evKind==="project"&&evProjectPlan.phases&&!isSplitFollowup?evProjectPlan.phases.map(p=>p.trim()).filter(Boolean):[];
+    const projectOutline=evKind==="project"&&evProjectPlan.outline&&!isSplitFollowup?normalizeOutlineDraft(evProjectPlan.outline):[];
     return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,courseId:courseIdForLabel(subj),kind:resolveAssignmentKind(),notes:evNotes,priority:evPriority,difficulty:evDifficulty,deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,
       // Other has no matching entry in userSubjects for colorOf to find, so
       // without this every "Other" task would silently fall back to the
@@ -18608,6 +18733,24 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         tasks=tasks.concat(sessions);
       }
       commitTasks(tasks,{userPinned:true});
+      // resolveManualSlot (above) deliberately never conflict-checks a fixed
+      // kind like exam -- the student typed this exact time on purpose, so
+      // Studlin shouldn't second-guess it. But that meant nothing ever
+      // checked the OTHER direction: an existing flexible study block
+      // already sitting in that slot just stayed there, silently
+      // double-booked against the new exam (confirmed live in the real
+      // account -- an exam and an unrelated study session both at 10:00
+      // AM). reconcileFixedEventConflicts is the same relocate-or-flag
+      // function every calendar-import path already runs for exactly this
+      // "new fixed time might collide with an existing flexible one" case
+      // (Google Calendar sync, Schoology/Canvas import, work-schedule
+      // scans) -- exams created directly through Add Task just never called
+      // it. surfaceReconcileResult queues the result into the same
+      // scheduleChangeAlerts banner those paths already use, so a moved
+      // session shows up the normal way instead of silently relocating.
+      const examReconcile=reconcileFixedEventConflicts([examTask]);
+      surfaceReconcileResult(examReconcile);
+      if(examReconcile.moved.length>0)setEvents(examReconcile.events);
       // Fire-and-forget, same pattern attachSessionFocusesToSyllabusExams
       // uses for the syllabus-scan path -- material was already collected
       // in this same form, so a session shouldn't have to wait for a
@@ -18634,17 +18777,32 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     if(!evSplitEnabled){
       const slot=resolveManualSlot(evDate,evTime,evDuration);
       if(!slot){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
-      commitTasks([{...buildTask(slot.date,slot.time),placementReason:slot.reason||null}],{userPinned:true});
+      const fixedTask={...buildTask(slot.date,slot.time),placementReason:slot.reason||null};
+      commitTasks([fixedTask],{userPinned:true});
+      // Same reconcile as the exam path above -- Class and Activity are the
+      // other two kinds resolveManualSlot never conflict-checks (it trusts
+      // the exact time the student typed for any fixed real-world block),
+      // so they have the identical silent-double-booking gap exams did.
+      if(isFixedKind){
+        const fixedReconcile=reconcileFixedEventConflicts([fixedTask]);
+        surfaceReconcileResult(fixedReconcile);
+        if(fixedReconcile.moved.length>0)setEvents(fixedReconcile.events);
+      }
       return;
     }
     const groupId="split-"+Date.now();
-    const perSession=Math.round(evDuration/evSplitCount);
+    // A stable, predictable id for the Project marker (session 1) instead of
+    // buildTask's own random one -- lets sessions 2+ link back to it via
+    // dueEventId without needing to read session 1's generated id first.
+    const projectMarkerId=groupId+"-marker";
+    const perSession=splitSessionDuration(evDuration,evSplitCount);
     const tasks=[];
     for(let i=0;i<evSplitCount;i++){
       const d=new Date(evDate);d.setDate(d.getDate()+i);
       const slot=resolveManualSlot(dayKey(d),evTime,perSession);
       if(!slot)break;
-      tasks.push({...buildTask(slot.date,slot.time," ("+(i+1)+"/"+evSplitCount+")",{splitGroup:groupId,splitIndex:i+1,splitTotal:evSplitCount,duration:perSession}),placementReason:slot.reason||null});
+      tasks.push({...buildTask(slot.date,slot.time," ("+(i+1)+"/"+evSplitCount+")",{splitGroup:groupId,splitIndex:i+1,splitTotal:evSplitCount,duration:perSession,
+        ...projectSplitLinkFields(evKind,i+1,projectMarkerId)}),placementReason:slot.reason||null});
     }
     if(tasks.length===0){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
     commitTasks(tasks,{userPinned:true});
@@ -18671,7 +18829,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     const bufMins=now.getHours()*60+now.getMinutes()+15;
     const earliestTodayMins=Math.max(desiredStartMins,Math.ceil(bufMins/15)*15);
     const earliestTodayTime=minutesToTime(earliestTodayMins);
-    const perSession=Math.round(evDuration/(evSplitEnabled?evSplitCount:1));
+    const perSession=splitSessionDuration(evDuration,evSplitEnabled?evSplitCount:1);
     const splitCount=evSplitEnabled?evSplitCount:1;
     const isDesiredToday=desiredStartDate===tk;
     const windowStart=isDesiredToday?earliestTodayMins:desiredStartMins;
@@ -18711,12 +18869,18 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     // saveManual() isn't usable here.
     const fallbackSchedule=()=>{
       const groupId=splitCount>1?"split-"+Date.now():null;
+      // See the identical marker-id comment in saveManual's split loop --
+      // same fix, same reason: session 1 of a split Project is the real
+      // marker, sessions 2+ link back to it via dueEventId instead of each
+      // carrying their own duplicate copy of phases/outline.
+      const projectMarkerId=groupId?groupId+"-marker":null;
       const tasks=[];
       let cursorDate=firstAvailDate,cursorTime=windowStartTime;
       for(let i=0;i<splitCount;i++){
         const slot=findOpenSlot(cursorDate,cursorTime,perSession);
         if(!slot)break;
-        tasks.push({...buildTask(slot.date,slot.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})),placementReason:slot.reason||null});
+        tasks.push({...buildTask(slot.date,slot.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession,
+          ...projectSplitLinkFields(evKind,i+1,projectMarkerId)}:{duration:evDuration})),placementReason:slot.reason||null});
         const d=new Date(slot.date+"T12:00:00");d.setDate(d.getDate()+1);
         cursorDate=dayKey(d);cursorTime=minutesToTime(getWorkWindowMinsFor(prefs,cursorDate).start);
       }
@@ -18752,7 +18916,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         if(sanitized.length===0){fallbackSchedule();}
         else{
           const groupId=splitCount>1?"split-"+Date.now():null;
-          const tasks=sanitized.slice(0,splitCount).map((s,i)=>({...buildTask(s.date,s.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})),placementReason:s.reason||null}));
+          // Same marker-id fix as fallbackSchedule/saveManual above.
+          const projectMarkerId=groupId?groupId+"-marker":null;
+          const tasks=sanitized.slice(0,splitCount).map((s,i)=>({...buildTask(s.date,s.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession,
+            ...projectSplitLinkFields(evKind,i+1,projectMarkerId)}:{duration:evDuration})),placementReason:s.reason||null}));
           commitTasks(tasks);
         }
       }else{fallbackSchedule();}
@@ -19412,10 +19579,18 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
               const evs=(byDay[c.key]||[]).filter(ev=>ev.kind!=="free period");
               const isToday=c.key===todayK;
               const isSel=c.key===selDay;
+              // Subtle workload strip along the cell's bottom edge -- light
+              // days get nothing (no need to flag an easy day), moderate
+              // gets a thin amber line, heavy gets a thicker, more solid
+              // one. Deliberately a plain border, not new text/a number, so
+              // a 7x5 grid doesn't get louder than it already is.
+              const workloadTier=dayWorkloadTier(dayWorkloadMinutes(evs));
+              const workloadBorder=workloadTier==="heavy"?`3px solid ${T.amber}99`:workloadTier==="moderate"?`2px solid ${T.amber}55`:"none";
               return (
                 <div key={i} onClick={()=>{setSelDay(c.key);}} onDoubleClick={()=>setDayDetailKey(c.key)}
                   onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(sidebarDragChip){openNewEventForDrop(sidebarDragChip,c.key,"09:00",{x:e.clientX,y:e.clientY});setSidebarDragChip(null);}else if(dragId){moveEvent(dragId,c.key);setDragId(null);}}}
-                  style={{position:"relative",minHeight:64,minWidth:0,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.card2:"transparent",border:"1px solid "+(isSel?T.lime+"55":"transparent"),transition:"all 0.12s",opacity:c.out?0.35:1}}>
+                  title={workloadTier!=="light"?dayWorkloadMinutes(evs)+" minutes scheduled":undefined}
+                  style={{position:"relative",minHeight:64,minWidth:0,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.card2:"transparent",border:"1px solid "+(isSel?T.lime+"55":"transparent"),borderBottom:workloadBorder,transition:"all 0.12s",opacity:c.out?0.35:1}}>
                   <div style={{display:"flex",justifyContent:"flex-start"}}>
                     <span style={{width:22,height:22,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:isToday?700:500,background:isToday?T.lime:"transparent",color:isToday?T.ink:c.out?T.faint:T.text}}>{c.d}</span>
                   </div>
@@ -19460,7 +19635,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           onPreviewDraggingChange={setPreviewDragActive} />
       )}
       {calView==="daily"&&(
-        <DayPlanner dayEvents={dayEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} />
+        <DayPlanner dayEvents={dayEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} openNew={openNew} />
       )}
     </div>
       {/* Right-hand column (Phase 5e) -- upcoming across everything by
@@ -19871,7 +20046,14 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           </Field>
         )}
 
-        {isTaskKind&&!isChecklistMode&&!evSplitEnabled&&(<>
+        {/* Attack Block and Split into sessions used to just silently vanish
+            when the other was on, with nothing explaining why -- a student
+            enabling Split first had no way to know why "I don't know how
+            long this takes" disappeared. Each side now leaves a short note
+            in its place instead of a bare gap. */}
+        {isTaskKind&&!isChecklistMode&&(evSplitEnabled?(
+          <div style={{fontSize:11,color:T.faint,marginBottom:14}}>"I don't know how long this takes" isn't available while Split into sessions is on — turn Split off below to use it instead.</div>
+        ):(<>
           <AttackBlockExplainer />
           <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
             <div onClick={()=>setEvAttackBlock(a=>!a)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
@@ -19884,7 +20066,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
               </div>
             )}
           </div>
-        </>)}
+        </>))}
 
         {isTaskKind&&!isChecklistMode&&taskMode==="ai"&&(
           evMoreOpen ? (
@@ -19913,7 +20095,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           )
         )}
 
-        {isTaskKind&&!isChecklistMode&&!evAttackBlock&&(
+        {isTaskKind&&!isChecklistMode&&(evAttackBlock?(
+          <div style={{fontSize:11,color:T.faint,marginBottom:14}}>Split into sessions isn't available while "I don't know how long this takes" is on — turn that off above to use Split instead.</div>
+        ):(
           <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
             <div onClick={()=>setEvSplitEnabled(s=>!s)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
               <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Split into sessions</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Spread this task across multiple days</div></div>
@@ -19922,11 +20106,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
             {evSplitEnabled&&(
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
                 <Field label="Number of sessions"><NumField min={2} max={10} fallback={2} value={evSplitCount} onChange={setEvSplitCount} /></Field>
-                <Field label="Per session"><div style={{fontSize:14,fontWeight:600,color:T.lime,padding:"10px 0"}}>{Math.round(evDuration/evSplitCount)} min each</div></Field>
+                <Field label="Per session"><div style={{fontSize:14,fontWeight:600,color:T.lime,padding:"10px 0"}}>{splitSessionDuration(evDuration,evSplitCount)} min each{splitSessionDuration(evDuration,evSplitCount)>Math.round(evDuration/evSplitCount)?" (extended to a minimum length)":""}</div></Field>
               </div>
             )}
           </div>
-        )}
+        ))}
 
         {!isProjectKind&&(
           <Field label="Notes (optional)"><Textarea placeholder="e.g. Bring calculator, covers chapters 4 to 6." value={evNotes} onChange={ev=>setEvNotes(ev.target.value)} /></Field>
@@ -22227,7 +22411,17 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                   </div>
                   <div style={{flex:1,minWidth:0}}>
                     <span style={{fontSize:13.5,color:t.done?T.faint:T.text,textDecoration:t.done?"line-through":"none",fontWeight:500}}>{t.title}</span>
-                    <div style={{fontSize:11,color:T.muted,marginTop:1}}>{t.subject}{t.kind?" · "+t.kind:""}</div>
+                    {/* A deadline marker and its own AI-scheduled study
+                        session share the exact same title (see
+                        buildExamSessionEvents/resolveAssignmentKind) --
+                        showing raw internal kind names ("study block",
+                        "deadline") side by side with no other distinction
+                        made it look like the same thing listed twice by
+                        mistake. Plain student-facing words instead, and the
+                        due-date row gets a color cue since it's the one
+                        that actually needs to stand out (nothing to click
+                        Reschedule on, it's the real deadline). */}
+                    <div style={{fontSize:11,color:t.kind==="deadline"?T.amber:T.muted,marginTop:1}}>{t.subject}{t.kind==="deadline"?" · Due":t.kind==="study block"?" · Your study session":t.kind?" · "+t.kind:""}</div>
                   </div>
                   <span style={{fontFamily:T.mono,fontSize:10,color:T.faint}}>{fmtClock(t.time)}</span>
                   {!t.done&&t.duration&&(t.kind==="study block"||t.kind==="deadline")&&(
@@ -24000,7 +24194,7 @@ function App() {
     // missedItems is still exactly as missed as it was; the banner names
     // the count, "Rebuild my week" computes the actual plan on tap.
     if(recoveryPending){
-      setCatchUpBanner({count:missedItems.length});
+      setCatchUpBanner({count:missedItems.length,staleDays:catchUpStalenessDays(missedItems,today)});
       logCatchUpEvent("recovery_banner_shown",{count:missedItems.length});
     }
   },[]);
@@ -24428,7 +24622,7 @@ function App() {
         return (
           <div style={{position:"fixed",top:76,left:"50%",transform:"translateX(-50%)",zIndex:999,width:"min(480px, calc(100vw - 40px))",padding:"16px 20px",borderRadius:tokens.radius.card,background:tokens.color.accentSubtle,border:`1px solid ${tokens.color.accent}55`,boxShadow:"0 8px 24px rgba(0,0,0,0.25)",animation:"studlinPop 0.2s ease",display:"flex",alignItems:"center",gap:16}}>
             <div style={{flex:1,fontSize:tokens.type.size.itemTitle,color:tokens.color.textPrimary}}>
-              {catchUpBanner.count} thing{catchUpBanner.count!==1?"s":""} from yesterday didn't get done.
+              {catchUpBanner.count} thing{catchUpBanner.count!==1?"s":""} from {catchUpStalenessLabel(catchUpBanner.staleDays||1)} didn't get done.
             </div>
             <Btn onClick={openCatchUpPreview} style={{flexShrink:0}}>Rebuild my week</Btn>
           </div>

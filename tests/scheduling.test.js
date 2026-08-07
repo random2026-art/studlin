@@ -1951,6 +1951,57 @@ describe("layoutDayEvents (Weekly grid same-day column layout)", () => {
     assert.equal(la.totalCols, 2);
     assert.notEqual(la.col, lb.col);
   });
+
+  test("a cluster at or under the visible column cap is untouched -- displayCol/displayTotalCols match the real col/totalCols, nothing hidden", () => {
+    const m = loadStudlinModule();
+    const items = [0, 1, 2, 3].map((i) => realTask({ id: "t" + i, time: "10:0" + i, duration: 30 }));
+    const laidOut = m.layoutDayEvents(items);
+    assert.equal(laidOut.length, 4);
+    laidOut.forEach((x) => {
+      assert.equal(x.hidden, false);
+      assert.equal(x.overflowCount, 0);
+      assert.equal(x.displayCol, x.col);
+      assert.equal(x.displayTotalCols, x.totalCols);
+    });
+  });
+
+  test("regression: a cluster past the column cap used to render one ever-thinner sliver per item -- now caps at MAX_VISIBLE_DAY_COLUMNS and hides the rest", () => {
+    const m = loadStudlinModule();
+    // 6 real conflicts at the exact same time -- a legal scenario (fixed
+    // kinds are exempt from conflict-avoidance), previously rendered as 6
+    // equal ultra-thin columns with no way to see/reach the squeezed-out ones.
+    const items = [0, 1, 2, 3, 4, 5].map((i) => realTask({ id: "t" + i, time: "10:00", duration: 30 }));
+    const laidOut = m.layoutDayEvents(items);
+    assert.equal(laidOut.length, 6, "every item must still be present in the result, even if not individually rendered");
+    const visible = laidOut.filter((x) => !x.hidden);
+    const hidden = laidOut.filter((x) => x.hidden);
+    assert.equal(visible.length, m.MAX_VISIBLE_DAY_COLUMNS, "no more than the cap should ever be individually visible");
+    assert.equal(hidden.length, 6 - m.MAX_VISIBLE_DAY_COLUMNS);
+    visible.forEach((x) => assert.ok(x.displayCol < m.MAX_VISIBLE_DAY_COLUMNS));
+    // Exactly one visible item carries the overflow count for the rest.
+    const withCount = visible.filter((x) => x.overflowCount > 0);
+    assert.equal(withCount.length, 1);
+    assert.equal(withCount[0].overflowCount, hidden.length);
+  });
+
+  test("the overflow-carrying item is the earliest-starting one in the overflow slot, not an arbitrary one", () => {
+    const m = loadStudlinModule();
+    const items = [0, 1, 2, 3, 4].map((i) => realTask({ id: "t" + i, time: "10:0" + i, duration: 30 }));
+    const laidOut = m.layoutDayEvents(items);
+    const withCount = laidOut.find((x) => x.overflowCount > 0);
+    const hiddenStarts = laidOut.filter((x) => x.hidden).map((x) => x.start);
+    assert.ok(hiddenStarts.every((s) => s >= withCount.start), "the visible overflow item must start no later than anything it's absorbing");
+  });
+
+  test("a hidden item still carries its own real ev/col/totalCols -- a caller falling back to the uncapped fields isn't broken", () => {
+    const m = loadStudlinModule();
+    const items = [0, 1, 2, 3, 4, 5].map((i) => realTask({ id: "t" + i, time: "10:00", duration: 30 }));
+    const laidOut = m.layoutDayEvents(items);
+    const hidden = laidOut.find((x) => x.hidden);
+    assert.ok(hidden.ev);
+    assert.equal(typeof hidden.col, "number");
+    assert.equal(hidden.totalCols, 6);
+  });
 });
 
 describe("computeEventBlockHeightPx (Weekly grid block height, regression: a short block's minimum-visibility floor could visually overlap the next block stacked right after it)", () => {
@@ -2961,5 +3012,206 @@ describe("computeWeekBalancePlan (manually-triggered 'Balance my week')", () => 
     ];
     const result = m.computeWeekBalancePlan(heavy, [], DEFAULT_PREFS, MONDAY);
     assert.ok(!result.moves.some((mv) => mv.id === "escalated"), "a task at the escalation threshold must never be silently reshuffled again");
+  });
+});
+
+describe("projectSplitLinkFields (regression: Project + Split into sessions used to create N duplicate, disconnected project cards)", () => {
+  test("session 1 of a split project becomes the marker (gets the stable id, no dueEventId)", () => {
+    const m = loadStudlinModule();
+    const result = m.projectSplitLinkFields("project", 1, "marker-123");
+    assert.equal(result.id, "marker-123");
+    assert.equal(result.dueEventId, undefined);
+  });
+
+  test("sessions 2+ link back to the marker via dueEventId, and never get their own id override", () => {
+    const m = loadStudlinModule();
+    const second = m.projectSplitLinkFields("project", 2, "marker-123");
+    assert.equal(second.dueEventId, "marker-123");
+    assert.equal(second.id, undefined);
+    const third = m.projectSplitLinkFields("project", 3, "marker-123");
+    assert.equal(third.dueEventId, "marker-123");
+  });
+
+  test("non-project kinds (assignment, exam, ...) are untouched -- returns {} regardless of split index", () => {
+    const m = loadStudlinModule();
+    assert.equal(Object.keys(m.projectSplitLinkFields("assignment", 1, "marker-123")).length, 0);
+    assert.equal(Object.keys(m.projectSplitLinkFields("assignment", 2, "marker-123")).length, 0);
+    assert.equal(Object.keys(m.projectSplitLinkFields("exam", 2, "marker-123")).length, 0);
+  });
+
+  test("a non-split project (no markerId, e.g. splitCount===1 so groupId is null) is a no-op", () => {
+    const m = loadStudlinModule();
+    assert.equal(Object.keys(m.projectSplitLinkFields("project", 1, null)).length, 0);
+  });
+});
+
+describe("splitSessionDuration (regression: Split into sessions had no minimum, could produce ~2-minute sessions)", () => {
+  test("a normal split divides evenly with no flooring needed", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.splitSessionDuration(90, 3), 30);
+  });
+
+  test("a short task split into many sessions is floored to the minimum instead of going below it", () => {
+    const m = loadStudlinModule();
+    const result = m.splitSessionDuration(20, 10); // even split would be 2min
+    assert.ok(result >= m.SPLIT_SESSION_MIN_MINUTES, "must never go below the floor");
+    assert.equal(result, m.SPLIT_SESSION_MIN_MINUTES);
+  });
+
+  test("rounds to the nearest minute when already above the floor", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.splitSessionDuration(100, 3), 33); // 33.33 -> 33
+  });
+
+  test("a zero split count never divides by zero -- falls back to 1 session", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.splitSessionDuration(60, 0), 60);
+  });
+
+  test("an undefined split count falls back to 1 session of the full duration", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.splitSessionDuration(60, undefined), 60);
+  });
+});
+
+describe("catchUpStalenessDays / catchUpStalenessLabel (regression: Catch Me Up always said 'yesterday' regardless of real staleness)", () => {
+  test("a single item missed yesterday reports a 1-day gap", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.catchUpStalenessDays([{date:"2026-08-05"}], "2026-08-06"), 1);
+  });
+
+  test("uses the OLDEST missed item, not the newest, when several are missed across different days", () => {
+    const m = loadStudlinModule();
+    const items = [{date:"2026-08-05"}, {date:"2026-08-02"}, {date:"2026-08-06"}];
+    assert.equal(m.catchUpStalenessDays(items, "2026-08-06"), 4);
+  });
+
+  test("no missed items is a 0-day gap", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.catchUpStalenessDays([], "2026-08-06"), 0);
+  });
+
+  test("label copy: 1 day still reads 'yesterday', not 'the last 1 days'", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.catchUpStalenessLabel(1), "yesterday");
+  });
+
+  test("label copy: a mid-range gap names the real day count instead of understating it", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.catchUpStalenessLabel(4), "the last 4 days");
+  });
+
+  test("label copy: a week or more doesn't imply a specific (possibly wrong) day count", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.catchUpStalenessLabel(9), "over a week ago");
+  });
+});
+
+describe("reconcileFixedEventConflicts (regression: a new fixed exam/class/activity could silently double-book an existing flexible study block sitting in that slot)", () => {
+  function seedEvents(m, events) { m.lsSet("events", events); }
+
+  test("a new fixed exam relocates an existing flexible study block that collides with it", () => {
+    const m = loadStudlinModule();
+    seedEvents(m, [
+      { id: "study-1", title: "Study: Calc", kind: "study block", date: "2026-08-06", time: "10:00", duration: 30, status: "pending" },
+    ]);
+    const exam = { id: "exam-1", title: "math 101", kind: "exam", date: "2026-08-06", time: "10:00", duration: 60 };
+    const result = m.reconcileFixedEventConflicts([exam]);
+    const moved = result.events.find((e) => e.id === "study-1");
+    assert.ok(moved, "the flexible session must still exist, just relocated");
+    assert.equal(result.moved.length, 1);
+    assert.equal(result.moved[0].id, "study-1");
+    // Either the date or the time actually changed -- it didn't just get
+    // relabeled movedByStudlin while staying at the exact colliding slot.
+    assert.ok(moved.date !== "2026-08-06" || moved.time !== "10:00");
+    assert.equal(moved.movedByStudlin, true);
+  });
+
+  test("the new fixed event itself is preserved unmodified in the result", () => {
+    const m = loadStudlinModule();
+    seedEvents(m, []);
+    const exam = { id: "exam-1", title: "math 101", kind: "exam", date: "2026-08-06", time: "10:00", duration: 60 };
+    const result = m.reconcileFixedEventConflicts([exam]);
+    const kept = result.events.find((e) => e.id === "exam-1");
+    assert.equal(kept.time, "10:00");
+    assert.equal(kept.date, "2026-08-06");
+  });
+
+  test("no collision at all is a no-op -- nothing in moved, nothing relocated", () => {
+    const m = loadStudlinModule();
+    seedEvents(m, [
+      { id: "study-1", title: "Study: Calc", kind: "study block", date: "2026-08-06", time: "14:00", duration: 30, status: "pending" },
+    ]);
+    const exam = { id: "exam-1", title: "math 101", kind: "exam", date: "2026-08-06", time: "10:00", duration: 60 };
+    const result = m.reconcileFixedEventConflicts([exam]);
+    assert.equal(result.moved.length, 0);
+    const untouched = result.events.find((e) => e.id === "study-1");
+    assert.equal(untouched.time, "14:00");
+    assert.equal(untouched.movedByStudlin, undefined);
+  });
+
+  test("two fixed events colliding (neither can move) goes to needsAttention, not silently dropped", () => {
+    const m = loadStudlinModule();
+    seedEvents(m, [
+      { id: "class-1", title: "Period 3", kind: "class", date: "2026-08-06", time: "10:00", duration: 50, status: "pending" },
+    ]);
+    const exam = { id: "exam-1", title: "math 101", kind: "exam", date: "2026-08-06", time: "10:00", duration: 60 };
+    const result = m.reconcileFixedEventConflicts([exam]);
+    assert.equal(result.moved.length, 0);
+    assert.equal(result.needsAttention.length, 1);
+    // The pre-existing fixed class must still be there, untouched, not lost.
+    const stillThere = result.events.find((e) => e.id === "class-1");
+    assert.ok(stillThere);
+    assert.equal(stillThere.time, "10:00");
+  });
+
+  test("a done, checklist, or userPinned flexible block is exempt -- never auto-relocated even if it collides", () => {
+    const m = loadStudlinModule();
+    seedEvents(m, [
+      { id: "done-1", title: "Already done", kind: "study block", date: "2026-08-06", time: "10:00", duration: 30, status: "done" },
+      { id: "pinned-1", title: "Pinned by student", kind: "study block", date: "2026-08-06", time: "10:00", duration: 30, status: "pending", userPinned: true },
+    ]);
+    const exam = { id: "exam-1", title: "math 101", kind: "exam", date: "2026-08-06", time: "10:00", duration: 60 };
+    const result = m.reconcileFixedEventConflicts([exam]);
+    assert.equal(result.moved.length, 0);
+    assert.equal(result.events.find((e) => e.id === "done-1").time, "10:00");
+    assert.equal(result.events.find((e) => e.id === "pinned-1").time, "10:00");
+  });
+});
+
+describe("dayWorkloadMinutes / dayWorkloadTier (regression: Month view showed only a task count, never how heavy a day actually is)", () => {
+  test("sums every event's own duration, including fixed classes/exams -- not just flexible study time", () => {
+    const m = loadStudlinModule();
+    const evs = [
+      { kind: "class", duration: 50 },
+      { kind: "exam", duration: 60 },
+      { kind: "study block", duration: 30 },
+    ];
+    assert.equal(m.dayWorkloadMinutes(evs), 140);
+  });
+
+  test("an event with no duration contributes 0, not NaN", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.dayWorkloadMinutes([{ kind: "deadline", duration: null }]), 0);
+  });
+
+  test("empty/no events is 0 minutes", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.dayWorkloadMinutes([]), 0);
+    assert.equal(m.dayWorkloadMinutes(undefined), 0);
+  });
+
+  test("tier thresholds: a light day (one 15-minute task) and a packed exam-cram day are not the same tier", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.dayWorkloadTier(15), "light");
+    assert.equal(m.dayWorkloadTier(360), "heavy");
+  });
+
+  test("tier boundaries are inclusive at the documented threshold constants", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.dayWorkloadTier(m.DAY_WORKLOAD_MODERATE_MINS), "moderate");
+    assert.equal(m.dayWorkloadTier(m.DAY_WORKLOAD_MODERATE_MINS - 1), "light");
+    assert.equal(m.dayWorkloadTier(m.DAY_WORKLOAD_HEAVY_MINS), "heavy");
+    assert.equal(m.dayWorkloadTier(m.DAY_WORKLOAD_HEAVY_MINS - 1), "moderate");
   });
 });
