@@ -20651,6 +20651,20 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     document.body.appendChild(a);a.click();document.body.removeChild(a);
   };
   const [chatHistoryLoading,setChatHistoryLoading]=useState(false);
+  const [passwordResetLoading,setPasswordResetLoading]=useState(false);
+  const [passwordResetSent,setPasswordResetSent]=useState(false);
+  const sendPasswordReset=async()=>{
+    if(passwordResetLoading||!profile.email)return;
+    setPasswordResetLoading(true);
+    try{
+      await firebase.auth().sendPasswordResetEmail(profile.email);
+      setPasswordResetSent(true);
+      showToast("Password reset link sent to "+profile.email+".");
+    }catch(e){
+      showToast("Couldn't send that -- try again in a moment.","error");
+    }
+    setPasswordResetLoading(false);
+  };
   const [deleteAccountOpen,setDeleteAccountOpen]=useState(false);
   const [deleteConfirmText,setDeleteConfirmText]=useState("");
   const [deleteAccountLoading,setDeleteAccountLoading]=useState(false);
@@ -21065,6 +21079,11 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   );
   const [verb,setVerb]=useState(()=>lsGet("pref-verb","Balanced"));
   const [tutorStyle,setTutorStyle]=useState(()=>lsGet("pref-tutorStyle","Socratic"));
+  // Used to be an uncontrolled input with a defaultValue -- looked saved,
+  // never wrote anywhere, reset to 180/30 on every reload. Real state now,
+  // same immediate-persist-on-change pattern as verb/tutorStyle above.
+  const [dailyFocusTarget,setDailyFocusTarget]=useState(()=>lsGet("pref-dailyFocusTarget",180));
+  const [dailyFlashcardTarget,setDailyFlashcardTarget]=useState(()=>lsGet("pref-dailyFlashcardTarget",30));
   const accents=[{n:"Lime",c:"#AECE5E"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"}];
   const [mgmtSubjs,setMgmtSubjs]=useState(()=>getSubjects().map(s=>({...s})));
   const [mgmtSaved,setMgmtSaved]=useState(false);
@@ -21192,12 +21211,20 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Connected accounts</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Sync your calendar and cloud notes.</div>
-              {[["Google Calendar","Synced",true,true],["Apple Calendar","Connect",false,false],["Notion workspace","Connect",false,false],["Dropbox","Connect",false,false]].map(([n,st,on,live],i)=>(
-                <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 0",borderBottom:i<3?`1px solid ${T.border}`:"none"}}>
-                  <div style={{fontSize:13,color:T.text,fontWeight:500}}>{n}{!live&&<span style={{marginLeft:8,fontSize:10.5,fontWeight:600,color:T.faint}}>(Coming Soon)</span>}</div>
-                  <BtnSm variant={on?"subtle":"lime"} disabled={!live} style={!live?{opacity:0.4,cursor:"not-allowed"}:undefined}>{st}</BtnSm>
-                </div>
-              ))}
+              {/* This used to be a hardcoded, always-"Synced" duplicate of the
+                  real Integrations tab (fake state for Apple Calendar/Notion/
+                  Dropbox too) -- a student had no way to tell it wasn't real.
+                  Now it reads the same calGoogleLinked/importedCals state
+                  Integrations itself uses, and points there for the actual
+                  connect/disconnect actions instead of duplicating them. */}
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8}}>
+                <span style={{fontSize:12.5,color:T.text}}>
+                  {calGoogleLinked||importedCals.length>0
+                    ?[calGoogleLinked?"Google Calendar":null,importedCals.length>0?importedCals.length+" calendar feed"+(importedCals.length!==1?"s":""):null].filter(Boolean).join(" · ")+" connected"
+                    :"Nothing connected yet"}
+                </span>
+                <button type="button" onClick={()=>setActive("Integrations")} style={{background:"none",border:"none",color:T.lime,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",padding:0,flexShrink:0}}>Manage in Integrations</button>
+              </div>
             </Card>
             <Card style={{border:"1px solid rgba(224,90,71,0.22)"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:18}}>
@@ -21316,7 +21343,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             <Card>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Email</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Studlin will only email you when it matters.</div>
-              <Row label="Weekly Wrapped digest" sub="Your stats, every Sunday evening." k="wrapped" right={<Toggle k="emails" />} />
+              <Row label="Weekly Wrapped digest" sub="Your stats, every Sunday evening." k="wrapped" />
               <Row label="Study milestones" sub="When you hit a streak milestone or level up." k="squad" />
               <Row label="Product updates" sub="Occasional notes about new features and tips." k="emails" />
             </Card>
@@ -21362,9 +21389,17 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             </Card>
             <Card>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:10}}>Account security</div>
-              <Row label="Two-factor authentication" sub="Add a one-time code on every sign in." k="twofa" />
-              <Row label="Active sessions" sub="3 devices currently signed in." k="sessions" right={<BtnSm variant="subtle">View sessions</BtnSm>} />
-              <Row label="Change password" sub="Last changed 3 months ago." k="pw" right={<BtnSm variant="subtle">Change</BtnSm>} />
+              {/* Two-factor and active-sessions used to be a toggle and a
+                  button that looked real -- flipping/clicking them changed
+                  nothing, and the device count and "last changed" date were
+                  fabricated strings, not real data. Honest disabled state
+                  now, same "(Coming Soon)" convention already used for Apple
+                  Calendar/Notion in Integrations, instead of pretending. */}
+              <Row label="Two-factor authentication" sub="Add a one-time code on every sign in." k="twofa" right={<BtnSm variant="subtle" disabled style={{opacity:0.4,cursor:"not-allowed"}}>Coming Soon</BtnSm>} />
+              <Row label="Active sessions" sub="See and sign out other signed-in devices." k="sessions" right={<BtnSm variant="subtle" disabled style={{opacity:0.4,cursor:"not-allowed"}}>Coming Soon</BtnSm>} />
+              <Row label="Change password" sub={passwordResetSent?"Reset link sent to "+profile.email+".":"We'll email you a secure link to set a new one."} k="pw" right={
+                <BtnSm variant="subtle" disabled={passwordResetLoading} onClick={sendPasswordReset}>{passwordResetLoading?"Sending…":passwordResetSent?"Resend":"Email reset link"}</BtnSm>
+              } />
             </Card>
           </>)}
 
@@ -21380,8 +21415,8 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             </Card>
             <Card>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>Daily targets</div>
-              <Field label="Daily focus target (minutes)"><Input type="number" defaultValue="180" /></Field>
-              <Field label="Daily flashcard target"><Input type="number" defaultValue="30" /></Field>
+              <Field label="Daily focus target (minutes)"><Input type="number" value={dailyFocusTarget} onChange={e=>{const n=Math.max(0,parseInt(e.target.value,10)||0);setDailyFocusTarget(n);lsSet("pref-dailyFocusTarget",n);}} /></Field>
+              <Field label="Daily flashcard target"><Input type="number" value={dailyFlashcardTarget} onChange={e=>{const n=Math.max(0,parseInt(e.target.value,10)||0);setDailyFlashcardTarget(n);lsSet("pref-dailyFlashcardTarget",n);}} /></Field>
             </Card>
           </>)}
 
@@ -21932,7 +21967,11 @@ function Profile({setActive,seriousMode=false}={}) {
           <div style={{fontSize:22,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:3}}>{prof.name}</div>
           <div style={{fontSize:13,color:T.muted,marginBottom:12}}>{affiliation||prof.school||"No affiliation set"}</div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            <Badge color={T.lime}>Pro</Badge>
+            {/* Used to be a literal "Pro" string, shown to every user
+                regardless of actual plan -- the Subscription tab already
+                reads the real plan correctly (account.plan||getPlan()),
+                just needed the same check here. */}
+            <Badge color={getPlan()==="Max"?T.purple:T.lime}>{getPlan()}</Badge>
             {!seriousMode&&<span onClick={()=>setStreakModalOpen(true)} style={{cursor:"pointer"}}><Badge color={T.amber}>{streak}-day streak</Badge></span>}
             {!seriousMode&&<Badge color={T.blue}>{lvl.title}</Badge>}
             {status&&<Badge color={T.teal}>{status==="highschool"?"High School":"College"}</Badge>}
