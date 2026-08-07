@@ -2540,6 +2540,10 @@ function findReliableSlotFor(events,routines,prefs,desiredDate,desiredTime,durat
 // Same shape as isTier0Missed minus its !ev.time requirement, so a
 // timeless overdue task is still included the way the old Tier 1 filter
 // (and thus this replacement for it) always did.
+// Shared with Dashboard's own attackOverrun card (see D9 in the audit) so
+// the two never independently drift on what counts as "a rough week" --
+// previously a bare `2` lived inline only in App()'s daily sweep.
+const CATCHUP_RECOVERY_THRESHOLD=2;
 function computeCatchUpMissedItems(events,today){
   return events.filter(ev=>
     ev.status==="pending"&&
@@ -2559,6 +2563,47 @@ function computeCatchUpMissedItems(events,today){
     !(ev.deadline&&ev.deadline<today)
   );
 }
+// D10 in the audit: queueInsightNudge (in App()) wrote every deferred
+// struggling-bucket/peak-hour/exam-prep/prep-batch insight to this queue
+// while a Catch Me Up recovery banner was pending, but nothing ever read
+// it back -- confirmed by a full-file search, the code's own comment
+// admitted "write-only for now." Once recovery resolves, whatever queued
+// up needs to actually surface instead of vanishing. Pure so "which one
+// wins if the same kind queued more than once" is testable: later entries
+// overwrite earlier ones of the same kind, so the most recent survives.
+function pickLatestQueuedNudgesByKind(queued){
+  const out={};
+  (queued||[]).forEach(q=>{ if(q&&q.kind)out[q.kind]=q.payload; });
+  return out;
+}
+// D8 in the audit: the notification bell's unread dot was plain component
+// state, unconditionally starting "unseen" on every mount/reload -- opening
+// the bell cleared it for that tab's lifetime, but a refresh brought it
+// right back even with nothing new to see, and "Mark all read" didn't
+// persist anything either. Pure so the actual comparison is testable:
+// stable per-item ids, so it stays quiet across a reload showing the exact
+// same notifs, but flags unread again the moment the set genuinely changes.
+function notifSignatureOf(notifs){
+  return (notifs||[]).map(n=>n.id||n.title).join("|");
+}
+// P9 in the audit: prepPromptBatch, prepAutoToast, lockInErrorToast, and
+// examPrepSuggestion all render at the identical fixed bottom-right
+// position -- if more than one is truthy at once (a real possibility: an
+// auto-scheduled toast can land right as a Lock-In error fires, or a
+// prep-batch decision sits pending while an exam-prep suggestion arrives)
+// they'd stack literally on top of each other with no coordination at
+// all. Pure priority order: an active error outranks a just-finished
+// auto-action, which outranks a pending decision, which outranks a
+// general suggestion -- most time-sensitive/interruptive wins the slot.
+function bottomRightNotifSlot(lockInErrorToast,prepAutoToast,prepPromptBatchLength,examPrepSuggestion){
+  if(lockInErrorToast)return "error";
+  if(prepAutoToast)return "autoToast";
+  if(prepPromptBatchLength>0)return "promptBatch";
+  if(examPrepSuggestion)return "suggestion";
+  return null;
+}
+const getNotifSeenSignature=()=>lsGet("notif-seen-signature","");
+const setNotifSeenSignature=(sig)=>lsSet("notif-seen-signature",sig);
 const CATCHUP_EXAM_URGENT_DAYS=7; // an exam this close or closer makes its prep sessions time-sensitive
 function dayOfWeekLabel(dateKey){return new Date(dateKey+"T12:00:00").toLocaleDateString("en-US",{weekday:"long"});}
 function ordinalDay(dateKey){
@@ -22052,7 +22097,12 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   // the exact same computeWeekBalancePlan engine underneath, so the two
   // never disagree about what's actually movable, they just each own their
   // own preview-then-confirm UI.
-  const attackOverrun=detectAttackBlockOverruns(allEvents,today).filter(o=>!isAttackOverrunDismissedToday(o.chainId))[0]||null;
+  // D9 in the audit: this card and the App()-level Catch Me Up recovery
+  // banner are independently triggered and could stack when viewing
+  // Dashboard during a genuinely rough week -- same CATCHUP_RECOVERY_THRESHOLD
+  // used there, computed fresh here since this card has no other way to
+  // know recovery is pending (App() owns that state, not Dashboard).
+  const attackOverrun=computeCatchUpMissedItems(allEvents,today).length>=CATCHUP_RECOVERY_THRESHOLD?null:(detectAttackBlockOverruns(allEvents,today).filter(o=>!isAttackOverrunDismissedToday(o.chainId))[0]||null);
   const [overrunModalOpen,setOverrunModalOpen]=useState(false);
   const [overrunPlan,setOverrunPlan]=useState(null);
   const [overrunToast,setOverrunToast]=useState("");
@@ -23093,13 +23143,31 @@ function App() {
   // Queues an insight-style nudge to storage instead of showing it live
   // while a Catch Me Up recovery banner is pending, per Part 2's "insight
   // nudges never render while recovery is pending" rule -- covers
-  // strugglingBucketOffer/peakInsightOffer (mount effect below) and
-  // examPrepSuggestion (submitExamCheckIn below), which can each fire
-  // independently and would otherwise recreate the exact multi-prompt
-  // problem Catch Me Up exists to fix. Write-only for now: nothing reads
-  // this yet since Dashboard/Today isn't converted on this branch.
+  // strugglingBucketOffer/peakInsightOffer (mount effect below),
+  // examPrepSuggestion (submitExamCheckIn below), and prepPromptBatch
+  // (the daily sweep effect), which can each fire independently and would
+  // otherwise recreate the exact multi-prompt problem Catch Me Up exists
+  // to fix. Drained back out by drainQueuedInsightNudges once recovery
+  // actually resolves -- see D10 in the audit for why this used to be
+  // write-only (nothing ever read it back, so everything queued here was
+  // silently lost).
   const queueInsightNudge=(kind,payload)=>{
     lsSet("queuedInsightNudges",[...lsGet("queuedInsightNudges",[]),{kind,payload,queuedAt:Date.now()}]);
+  };
+  // The other half of the fix above: pulls whatever queued up while
+  // recovery was pending back out, most-recent-per-kind, and routes each
+  // into the exact slot it would have used if it had fired live. Called
+  // once recovery is actually resolved (see the rebuild-confirm handler
+  // below, where setCatchUpBanner(null) fires).
+  const drainQueuedInsightNudges=()=>{
+    const queued=lsGet("queuedInsightNudges",[]);
+    if(queued.length===0)return;
+    const latest=pickLatestQueuedNudgesByKind(queued);
+    if(latest.strugglingBucket)setStrugglingBucketOffer(latest.strugglingBucket);
+    if(latest.peakInsight)setPeakInsightOffer(latest.peakInsight);
+    if(latest.examPrep)setExamPrepSuggestion(latest.examPrep);
+    if(latest.prepPromptBatch)setPrepPromptBatch(latest.prepPromptBatch);
+    lsSet("queuedInsightNudges",[]);
   };
   const submitExamCheckIn=(rating)=>{
     if(!examCheckIn)return;
@@ -23272,6 +23340,7 @@ function App() {
     lsSet("events",next);
     setCatchUpLastConfirmed(applied);
     setCatchUpBanner(null);
+    drainQueuedInsightNudges();
     setCatchUpPreviewOpen(false);
     setCatchUpPlan(null);
     setCatchUpExpandedId(null);
@@ -23797,11 +23866,27 @@ function App() {
   const notifs=(()=>{
     const ev=lsGet("events",[]); const tk=dayKey();
     const rel=(k)=>{const tomorrow=dayKey(new Date(Date.now()+86400000));if(k===tk)return"Today";if(k===tomorrow)return"Tomorrow";const p=k.split("-");return MON_SHORT[+p[1]-1]+" "+(+p[2]);};
-    const up=ev.filter(e=>e.date>=tk).sort((a,b)=>a.date===b.date?((a.time||"")<(b.time||"")?-1:1):(a.date<b.date?-1:1)).slice(0,4)
-      .map(e=>({icon:Icon.cal,title:e.title,sub:rel(e.date)+" · "+e.subject,color:T.blue}));
-    const list=[{icon:Icon.flame,title:getStreak()+"-day streak going",sub:"Study today to keep it alive",color:T.amber}].concat(up);
+    // D7 in the audit: this used to have no status filter and no cap at
+    // all, so a task marked done early with a future date could show here
+    // but not on Dashboard's own Upcoming card, and an event 40+ days out
+    // could appear here (nothing closer to fill the top-4) but never on
+    // that card (14-day cap). Same three conditions as Dashboard's
+    // upcomingEvents filter now, so the two can't disagree about what's
+    // actually upcoming.
+    const in14days=dayKey(new Date(Date.now()+14*86400000));
+    const up=ev.filter(e=>!e.checklist&&e.status!=="done"&&e.date>=tk&&e.date<=in14days).sort((a,b)=>a.date===b.date?((a.time||"")<(b.time||"")?-1:1):(a.date<b.date?-1:1)).slice(0,4)
+      .map(e=>({id:e.id,icon:Icon.cal,title:e.title,sub:rel(e.date)+" · "+e.subject,color:T.blue}));
+    const list=[{id:"streak",icon:Icon.flame,title:getStreak()+"-day streak going",sub:"Study today to keep it alive",color:T.amber}].concat(up);
     return list;
   })();
+  // D8 in the audit: notifSeen used to start false on every mount
+  // regardless of whether this exact set of notifications had already
+  // been opened before. Compares against what was last persisted as seen
+  // (see notifSignatureOf) -- only stays "unseen" when something actually
+  // changed since the last time the bell was opened.
+  useEffect(()=>{
+    if(notifSignatureOf(notifs)===getNotifSeenSignature())setNotifSeen(true);
+  },[]);
   useEffect(()=>{ touchStreak(); },[]);
   useEffect(()=>{ try{localStorage.setItem("studlin-active-tab",active);}catch(e){} },[active]);
   // Google Calendar's background sync (api/me.js google-calendar-pull)
@@ -23879,7 +23964,7 @@ function App() {
     // insight nudges below are gated on the same count so they can't fire
     // on top of (or right after dismissing) the recovery banner.
     const missedItems=computeCatchUpMissedItems(evs,today);
-    const recoveryPending=missedItems.length>=2;
+    const recoveryPending=missedItems.length>=CATCHUP_RECOVERY_THRESHOLD;
     // Proactive nudge — a RECENT run of misses in one bucket, checked right
     // after the log write above so today's data (if any landed here) is
     // already included. Independent of tier0Enabled below: this is about
@@ -23971,7 +24056,14 @@ function App() {
           setPrepAutoToast("Studlin scheduled prep time for "+scheduledTitles.length+" assignment"+(scheduledTitles.length!==1?"s":"")+" due soon");
           setTimeout(()=>setPrepAutoToast(""),4200);
         }else{
-          setPrepPromptBatch(nowActionable.map(ev=>({id:ev.id,title:ev.title,date:ev.date,noteId:ev.noteId,priority:ev.priority,difficulty:ev.difficulty,phases:ev.phases?ev.phases.map(p=>p.name):null})));
+          // D9 in the audit: this used to fire unconditionally, unlike the
+          // strugglingBucket/peakInsight nudges just above which already
+          // deferred to queueInsightNudge while recovery is pending -- a
+          // rough week could show this alongside the catch-up banner with
+          // no coordination at all. Same pattern now, same queue.
+          const batch=nowActionable.map(ev=>({id:ev.id,title:ev.title,date:ev.date,noteId:ev.noteId,priority:ev.priority,difficulty:ev.difficulty,phases:ev.phases?ev.phases.map(p=>p.name):null}));
+          if(recoveryPending)queueInsightNudge("prepPromptBatch",batch);
+          else setPrepPromptBatch(batch);
         }
       }
     }
@@ -24038,6 +24130,10 @@ function App() {
       </div>
     );
   };
+  // P9 in the audit: see bottomRightNotifSlot's own comment -- computed
+  // once here so all four render blocks below agree on the single winner
+  // instead of each independently deciding it's the one to show.
+  const bottomRightSlot=bottomRightNotifSlot(lockInErrorToast,prepAutoToast,prepPromptBatch.length,examPrepSuggestion);
   return (
     <div style={{display:"flex",height:"100vh",overflow:"hidden",background:isLight?T.bg:`radial-gradient(1200px 600px at 78% -8%, ${T.glow}, transparent 60%), ${T.bg}`,fontFamily:T.font,color:T.text}}>
       {/* SIDEBAR -- collapses to a ~48px icon rail by default (navCollapsed),
@@ -24092,7 +24188,7 @@ function App() {
           const openNotif=()=>{
             const r=notifBtnRef.current&&notifBtnRef.current.getBoundingClientRect();
             setNotifAnchor(r?{bottom:window.innerHeight-r.bottom,left:r.right+8}:{bottom:20,left:20});
-            setNotifOpen(o=>!o);setNotifSeen(true);
+            setNotifOpen(o=>!o);setNotifSeen(true);setNotifSeenSignature(notifSignatureOf(notifs));
           };
           const notifBell=(
             <div style={{position:"relative",flexShrink:0}}>
@@ -24105,7 +24201,7 @@ function App() {
                 <div style={{position:"fixed",bottom:notifAnchor.bottom,left:notifAnchor.left,width:340,maxWidth:"86vw",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:999,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
                   <div style={{padding:"13px 16px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                     <span style={{fontSize:13,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Notifications</span>
-                    <span onClick={()=>setNotifOpen(false)} style={{fontSize:11,color:T.lime,cursor:"pointer",fontWeight:600}}>Mark all read</span>
+                    <span onClick={()=>{setNotifSeenSignature(notifSignatureOf(notifs));setNotifOpen(false);}} style={{fontSize:11,color:T.lime,cursor:"pointer",fontWeight:600}}>Mark all read</span>
                   </div>
                   <div style={{maxHeight:360,overflowY:"auto"}}>
                     {notifs.map((n,i)=>(
@@ -24558,7 +24654,11 @@ function App() {
           </div>
         </div>
       )}
-      {prepPromptBatch.length>0&&(
+      {/* P9 in the audit: these four all rendered at the same fixed
+          bottom-right position with no coordination -- bottomRightSlot
+          (computed once, above, from bottomRightNotifSlot) picks one
+          winner instead of letting them stack on top of each other. */}
+      {bottomRightSlot==="promptBatch"&&(
         <div style={{position:"fixed",bottom:20,right:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           <div style={{fontSize:13,color:T.white,marginBottom:10}}>
             Due soon. Want Studlin to find prep time for these?
@@ -24580,12 +24680,12 @@ function App() {
           <Btn variant="ghost" onClick={declineAllPrepPrompts} style={{padding:"7px 14px",fontSize:12,width:"100%",justifyContent:"center"}}>Dismiss all</Btn>
         </div>
       )}
-      {prepAutoToast&&(
+      {bottomRightSlot==="autoToast"&&(
         <div style={{position:"fixed",bottom:20,right:20,zIndex:999,padding:"11px 18px",borderRadius:10,background:T.teal,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           {prepAutoToast}
         </div>
       )}
-      {lockInErrorToast&&(
+      {bottomRightSlot==="error"&&(
         <div style={{position:"fixed",bottom:20,right:20,zIndex:1001,padding:"11px 18px",borderRadius:10,background:T.red,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           {lockInErrorToast}
         </div>
@@ -24598,7 +24698,7 @@ function App() {
         </div>
       </Modal>
       <ProjectCheckInModal taskId={projectCheckInTaskId} onClose={()=>setProjectCheckInTaskId(null)} onToast={(msg)=>{setDashToast(msg);setTimeout(()=>setDashToast(""),2800);}} />
-      {examPrepSuggestion&&(
+      {bottomRightSlot==="suggestion"&&(
         <div style={{position:"fixed",bottom:20,right:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:360}}>
           <div style={{fontSize:13,color:T.text,marginBottom:12,lineHeight:1.5}}>{examPrepSuggestion.reason}</div>
           <div style={{display:"flex",gap:8}}>
@@ -24657,7 +24757,13 @@ function App() {
           </div>
         </div>
       )}
-      {headsUpEvent&&(
+      {/* N4 in the audit: this banner (and liveInvite below) rendered at
+          zIndex:999, above the fullscreen Lock-In overlay's zIndex:600 --
+          both could visibly pop up mid-session, contradicting Rule 4
+          ("lock-in overrules everything") already enforced for chat chimes
+          elsewhere in this file. !timerTask keeps both consistent with
+          that same rule instead of interrupting an active session. */}
+      {headsUpEvent&&!timerTask&&(
         <div style={{position:"fixed",bottom:20,left:20,zIndex:999,padding:"12px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:300,display:"flex",alignItems:"center",gap:12}}>
           <div style={{fontSize:12.5,color:T.text,flex:1}}>
             <strong>{headsUpEvent.title}</strong> starts soon — {fmtRolloverClock(headsUpEvent.time)}.
@@ -24669,7 +24775,7 @@ function App() {
         </div>
       )}
 
-      {liveInvite&&(
+      {liveInvite&&!timerTask&&(
         <div style={{position:"fixed",bottom:headsUpEvent?110:20,left:20,zIndex:999,padding:"12px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.teal}55`,boxShadow:`0 8px 24px rgba(0,0,0,0.35), 0 0 0 1px ${T.teal}22`,animation:"studlinPop 0.2s ease",maxWidth:300,display:"flex",alignItems:"center",gap:12}}>
           <div style={{fontSize:12.5,color:T.text,flex:1}}>
             <strong>{liveInvite.title}</strong> is locking in right now — join?
