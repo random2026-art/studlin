@@ -3286,3 +3286,95 @@ describe("reminderCategoryAllowed (real category gate behind the 'Deadline alert
     assert.equal(m.reminderCategoryAllowed("study block", true), true);
   });
 });
+
+describe("pickLatestQueuedNudgesByKind (regression: D10 -- queueInsightNudge was write-only, nothing ever read this back)", () => {
+  test("empty/no queue returns an empty object, not a throw", () => {
+    const m = loadStudlinModule();
+    assert.equal(Object.keys(m.pickLatestQueuedNudgesByKind([])).length, 0);
+    assert.equal(Object.keys(m.pickLatestQueuedNudgesByKind(undefined)).length, 0);
+  });
+
+  test("one entry per kind is returned by its own kind key", () => {
+    const m = loadStudlinModule();
+    const out = m.pickLatestQueuedNudgesByKind([
+      { kind: "strugglingBucket", payload: { a: 1 } },
+      { kind: "peakInsight", payload: { b: 2 } },
+    ]);
+    assert.deepStrictEqual(out.strugglingBucket, { a: 1 });
+    assert.deepStrictEqual(out.peakInsight, { b: 2 });
+  });
+
+  test("two entries of the same kind -- the later one wins, not the first", () => {
+    const m = loadStudlinModule();
+    const out = m.pickLatestQueuedNudgesByKind([
+      { kind: "examPrep", payload: { v: "old" } },
+      { kind: "examPrep", payload: { v: "new" } },
+    ]);
+    assert.equal(out.examPrep.v, "new");
+  });
+
+  test("a malformed entry with no kind is skipped rather than throwing", () => {
+    const m = loadStudlinModule();
+    const out = m.pickLatestQueuedNudgesByKind([{ payload: { x: 1 } }, null, { kind: "prepPromptBatch", payload: [1, 2] }]);
+    assert.deepStrictEqual(out.prepPromptBatch, [1, 2]);
+    assert.equal(Object.keys(out).length, 1);
+  });
+});
+
+describe("notifSignatureOf (regression: D8 -- the unread dot never persisted, always restarted 'unseen' on reload)", () => {
+  test("empty list has a stable, non-throwing signature", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.notifSignatureOf([]), "");
+    assert.equal(m.notifSignatureOf(undefined), "");
+  });
+
+  test("the same notif set produces the identical signature every time (idempotent)", () => {
+    const m = loadStudlinModule();
+    const notifs = [{ id: "streak" }, { id: "ev1" }, { id: "ev2" }];
+    assert.equal(m.notifSignatureOf(notifs), m.notifSignatureOf(notifs));
+  });
+
+  test("a genuinely different notif set produces a different signature", () => {
+    const m = loadStudlinModule();
+    const before = m.notifSignatureOf([{ id: "streak" }, { id: "ev1" }]);
+    const after = m.notifSignatureOf([{ id: "streak" }, { id: "ev1" }, { id: "ev3" }]);
+    assert.notEqual(before, after);
+  });
+
+  test("falls back to title when an item has no id (shouldn't normally happen, but never throws)", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.notifSignatureOf([{ title: "Math exam" }]), "Math exam");
+  });
+});
+
+describe("bottomRightNotifSlot (regression: P9 -- 4 different banners rendered at the identical fixed position with no coordination)", () => {
+  test("nothing truthy returns null -- no slot claimed", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.bottomRightNotifSlot(null, null, 0, null), null);
+  });
+
+  test("an active Lock-In error always wins, even with everything else also present", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.bottomRightNotifSlot("Couldn't save", "Auto-scheduled!", 2, { reason: "x" }), "error");
+  });
+
+  test("an auto-toast outranks a pending prompt batch and a suggestion", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.bottomRightNotifSlot(null, "Auto-scheduled!", 2, { reason: "x" }), "autoToast");
+  });
+
+  test("a pending prompt batch outranks a general suggestion", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.bottomRightNotifSlot(null, null, 2, { reason: "x" }), "promptBatch");
+  });
+
+  test("a suggestion only wins when nothing else is present", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.bottomRightNotifSlot(null, null, 0, { reason: "x" }), "suggestion");
+  });
+
+  test("an empty prompt batch (length 0) does not claim the slot", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.bottomRightNotifSlot(null, null, 0, null), null);
+  });
+});
