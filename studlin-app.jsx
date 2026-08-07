@@ -1414,6 +1414,19 @@ function mergeImportedEvents(existingEvents,subId,fetchedEvents,classifications)
     // duration on refresh.
     return {...ev,title:fresh.title,date:fresh.date,time:fresh.time,duration:ev.kind==="deadline"?null:fresh.duration};
   });
+  // Order-independent dedup fix: a syllabus scan or manual entry may have
+  // already created this exact item before this subscription ever synced
+  // it -- previously this function only ever checked keptUids (its own
+  // prior imports), so connecting Canvas/Schoology AFTER a syllabus scan
+  // created real duplicates. The reverse order was already safe, since
+  // buildSyllabusEventBatch's own dedup checks against every existing
+  // event regardless of source -- matched here the same way (title+date+
+  // kind; subject deliberately excluded since a classified import's guess
+  // ("General") can genuinely differ from a syllabus scan's real subject
+  // for the identical item, which would otherwise defeat the whole point
+  // of this check).
+  const dupNorm=t=>(t||"").trim().toLowerCase();
+  const isAlreadyPresent=(title,date,kind)=>existingEvents.some(ev=>ev.title&&dupNorm(ev.title)===dupNorm(title)&&ev.date===date&&ev.kind===kind);
   const added=fetchedEvents.filter(e=>e.uid&&!keptUids.has(e.uid)).map(e=>{
     const c=classifications&&classifications[e.uid];
     // "assignment"/"project" become Studlin's existing "deadline" kind --
@@ -1437,11 +1450,21 @@ function mergeImportedEvents(existingEvents,subId,fetchedEvents,classifications)
       // -- confidenceLog starts empty so the exam-prep check-in flow works
       // on it exactly like any other exam the moment it lands.
       ...(c&&c.kind==="exam"?{examWeight:c.examWeight||"major",confidenceLog:[]}:{}),
+      // Second real bug from the same live discussion: a classified
+      // "project" used to collapse to plain kind:"deadline" with no
+      // phases/outline, so isProjectMarker() never fired and it silently
+      // landed in Prep's Assignments table instead of Projects, with none
+      // of the phase/collaborator treatment a real project gets -- the
+      // classification was computed and then discarded. A minimal real
+      // outline is enough to genuinely qualify; the student can expand it
+      // in Studlin Prep from there, same as any other auto-generated
+      // starting point in this app.
+      ...(c&&c.kind==="project"?{outline:[{text:"Break down the plan in Studlin Prep",done:false}]}:{}),
       notes:"",priority:5,difficulty:5,
       deadline:null,status:"pending",timeSpent:0,completedAt:null,
       source:"import",importSubId:subId,externalUid:e.uid,
     };
-  });
+  }).filter(candidate=>!isAlreadyPresent(candidate.title,candidate.date,candidate.kind));
   return updated.concat(added);
 }
 // AI classification pass for a Schoology/Canvas calendar-feed import -- the
@@ -20715,23 +20738,26 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
       const res=await fetch("/api/cal-proxy?url="+encodeURIComponent(sub.url));
       const data=await res.json();
       if(!res.ok||!data.ok)return;
+      // Computed unconditionally now (used to live only inside the
+      // isAcademicCalendarSource branch, purely for classification) --
+      // third fix from the same live discussion: this count was already
+      // being thrown away in favor of a generic "synced" toast, and the
+      // once-a-day silent auto-resync below (which calls this exact same
+      // function) told the student literally nothing even when a
+      // professor had genuinely added something new.
+      const existingUids=new Set(lsGet("events",[]).filter(e=>e.importSubId===sub.id).map(e=>e.externalUid));
+      const newEvents=data.events.filter(e=>e.uid&&!existingUids.has(e.uid));
       let classifications;
-      if(isAcademicCalendarSource(sub.sourceType)){
-        const existingUids=new Set(lsGet("events",[]).filter(e=>e.importSubId===sub.id).map(e=>e.externalUid));
-        const newEvents=data.events.filter(e=>e.uid&&!existingUids.has(e.uid));
-        if(newEvents.length>0)classifications=await classifyImportedCalendarEvents(newEvents,sub.sourceType,mgmtSubjs.map(s=>s.label));
+      if(isAcademicCalendarSource(sub.sourceType)&&newEvents.length>0){
+        classifications=await classifyImportedCalendarEvents(newEvents,sub.sourceType,mgmtSubjs.map(s=>s.label));
       }
       const merged=mergeImportedEvents(lsGet("events",[]),sub.id,data.events,classifications);
       const result=reconcileFixedEventConflicts(merged.filter(e=>e.importSubId===sub.id));
       surfaceReconcileResult(result);
       const nextSubs=importedCals.map(s=>s.id===sub.id?{...s,lastSyncedAt:Date.now()}:s);
       setImportedCals(nextSubs);saveImportedCalendars(nextSubs);
-      // Neither this manual click nor the once-a-day silent auto-resync
-      // below used to surface anything on success, unlike both sibling
-      // actions (confirmImportCalendar, removeImportedCalendar) which do —
-      // short status wording, not an event count, since a resync's fetched
-      // count doesn't mean "N new/changed" the way it does on first import.
-      showToast(sub.label+" synced."+reconcileToastSuffix(result));
+      const newCount=merged.filter(e=>e.importSubId===sub.id&&!existingUids.has(e.externalUid)).length;
+      showToast(sub.label+(newCount>0?": "+newCount+" new item"+(newCount!==1?"s":"")+" found.":" synced.")+reconcileToastSuffix(result));
     }catch(e){}
   };
   const removeImportedCalendar=(sub)=>{
