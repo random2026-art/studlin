@@ -15375,7 +15375,20 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // class 2's scheduling correctly sees class 1's just-committed sessions,
   // same threading a single sequential commit always had.
   const commitAllToCalendar=()=>{
-    if(windowInvalid||pendingClasses.length===0)return;
+    if(windowInvalid)return;
+    // O4 in the audit: this used to bail out entirely whenever
+    // pendingClasses was empty, which is *always* true on a pure HS
+    // whole-schedule commit (commitHsSchedule writes straight to storage,
+    // never through pendingClasses -- see O1 above) -- so "Add to
+    // Calendar" silently did nothing and the only way through the wizard
+    // was "Skip all," which reads as abandoning the flow, not finishing
+    // it. hsClassesCommitted>0 means there really is something to
+    // finish: everything below this guard is already a safe no-op on an
+    // empty pendingClasses (subjects/routine just get re-saved unchanged),
+    // so nothing here risks re-committing or duplicating those classes --
+    // it just lets the shared finish housekeeping (schedule prefs, term,
+    // holidays, wake/sleep, onFinish) actually run.
+    if(pendingClasses.length===0&&hsClassesCommitted===0)return;
     let subjects=getSubjects();
     // Opened from an existing course's own "Import syllabus" action
     // (targetCourseId set) -- attach to that exact course instead of
@@ -15514,6 +15527,16 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
 
           {step==="classes"&&addMode===null&&(<>
             <TitleSub title="Add your classes" sub="Scan a syllabus and Studlin reads the class, its meeting time, and its assignments, exams, and projects. Nothing goes on your calendar until you review everything and hit Add to Calendar at the end. Double-click a class to edit it." />
+            {/* O1 in the audit: a whole-schedule HS scan commits straight to
+                storage instead of staging into pendingClasses (see
+                commitHsSchedule) -- this screen used to show nothing at all
+                afterward beyond a 3-second toast, reading as if the scan had
+                failed even though it succeeded. Persistent, not fading. */}
+            {hsClassesCommitted>0&&pendingClasses.length===0&&(
+              <div style={{fontSize:12.5,color:T.lime,background:T.lime+"10",border:`1px solid ${T.lime}30`,borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+                {hsClassesCommitted} class{hsClassesCommitted!==1?"es":""} already added from your schedule scan. Add more below, or continue when you're done.
+              </div>
+            )}
             {pendingClasses.length>0&&(
               <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:18}}>
                 {pendingClasses.map(cls=>(
@@ -15855,7 +15878,16 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
             return (<>
               <TitleSub title="Review everything before it goes on your calendar" sub="Click a class to see what's in it. Click an assignment, exam, or project for exactly when it's scheduled — edit, remove, or add more before you commit." />
               {pendingClasses.length===0?(
-                <div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"24px 0"}}>No classes staged yet — go back and add one.</div>
+                // O1/O4 in the audit: this read as "nothing happened" even
+                // right after a successful HS whole-schedule scan, since
+                // that path commits straight to storage instead of staging
+                // here (see commitHsSchedule) -- hsClassesCommitted tells
+                // the honest story instead of a blanket "go back."
+                <div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"24px 0"}}>
+                  {hsClassesCommitted>0
+                    ?hsClassesCommitted+" class"+(hsClassesCommitted!==1?"es":"")+" already added from your schedule scan — nothing else staged. Hit Finish below, or go back to add more."
+                    :"No classes staged yet — go back and add one."}
+                </div>
               ):pendingClasses.map(cls=>{
                 const clsPreview=finalPreview.find(p=>p.classId===cls.id);
                 const included=cls.items.filter(it=>it.include);
@@ -15966,9 +15998,10 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
             {step==="calendarSync"&&(
               <Btn onClick={()=>setStep("finalReview")}>Continue</Btn>
             )}
-            {step==="finalReview"&&(
-              <Btn onClick={commitAllToCalendar} disabled={pendingClasses.length===0} style={{opacity:pendingClasses.length===0?0.45:1}}>Add to Calendar</Btn>
-            )}
+            {step==="finalReview"&&(()=>{
+              const hasSomethingToFinish=pendingClasses.length>0||hsClassesCommitted>0;
+              return <Btn onClick={commitAllToCalendar} disabled={!hasSomethingToFinish} style={{opacity:hasSomethingToFinish?1:0.45}}>{pendingClasses.length>0?"Add to Calendar":"Finish"}</Btn>;
+            })()}
           </div>
         </div>
       </div>
