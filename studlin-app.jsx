@@ -22345,7 +22345,10 @@ function StreakDetailModal({open,onClose,streak}){
 function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleTask, dashToast, setDashToast, setDetailEventId, onTaskCompleted}) {
   const realStats=sessionStats();
   const realStreak=getStreak(); // D12: a genuine 0-day streak now honestly shows 0, not a floored "1"
-  const lvl=levelInfo();
+  // D5 in the audit: levelInfo() used to be computed here (const lvl=...)
+  // but never rendered anywhere in Dashboard -- dead since whatever level
+  // badge it fed got moved to Profile at some point, leaving this call
+  // behind.
   const [,forcePlan]=useState(0);
   const plan=todaysPlan();
   // A single real session can now expand into several display rows (see
@@ -22389,9 +22392,15 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   const allEvents=lsGet("events",[]);
   const today=dayKey();
   const in14days=new Date();in14days.setDate(in14days.getDate()+14);
-  const upcomingEvents=allEvents
+  // D2 in the audit: this used to silently cap at 5 with no indication
+  // anything was hidden -- a student with 12 things due this week saw the
+  // identical card as one with 2. upcomingEventsTotal (pre-slice) drives
+  // a real "+N more" below.
+  const upcomingEventsFiltered=allEvents
     .filter(ev=>!ev.checklist&&ev.date>=today&&ev.date<=dayKey(in14days)&&ev.status!=="done")
-    .sort((a,b)=>a.date.localeCompare(b.date)||((a.time||"").localeCompare(b.time||"")))
+    .sort((a,b)=>a.date.localeCompare(b.date)||((a.time||"").localeCompare(b.time||"")));
+  const upcomingEventsTotal=upcomingEventsFiltered.length;
+  const upcomingEvents=upcomingEventsFiltered
     .slice(0,5)
     .map(ev=>{
       const evDate=new Date(ev.date+"T12:00:00");
@@ -22657,14 +22666,19 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               placeholder="e.g. Send AP scores" style={{flex:1,minWidth:0,background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"9px 10px",color:T.text,fontSize:12.5,fontFamily:T.font,outline:"none"}} />
             <button onClick={addChecklistItem} disabled={!checklistDraft.trim()} style={{padding:"9px 12px",background:T.lime,color:T.ink,border:"none",borderRadius:10,fontSize:12.5,fontWeight:600,cursor:checklistDraft.trim()?"pointer":"default",fontFamily:T.font,opacity:checklistDraft.trim()?1:0.45,flexShrink:0}}>Add</button>
           </div>
+          {/* D3 in the audit: this used to have no cap and no scroll
+              container at all -- every other Dashboard list caps at 4-5
+              items, so an unbounded Checklist could grow arbitrarily tall
+              next to Today's Plan in a fixed two-column grid row. Same
+              maxHeight/overflowY pattern the other lists already use. */}
           {checklistItems.length===0
             ? <div style={{fontSize:12.5,color:T.muted,padding:"6px 0 4px",textAlign:"center"}}>Nothing on your checklist.</div>
-            : checklistItems.map(item=>(
+            : <div style={{maxHeight:300,overflowY:"auto"}}>{checklistItems.map(item=>(
               <div key={item.id} onClick={()=>toggleChecklistItem(item.id)} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"9px 12px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer"}}>
                 <div style={{width:18,height:18,borderRadius:"50%",border:`1.5px solid ${T.faint}`,background:"transparent",flex:"none",marginTop:1,display:"grid",placeItems:"center"}} />
                 <div style={{flex:1,minWidth:0,fontSize:12.5,color:T.text,fontWeight:500,lineHeight:1.4,overflowWrap:"break-word"}}>{item.title}</div>
               </div>
-            ))}
+            ))}</div>}
         </div>
 
       </div>
@@ -22682,7 +22696,11 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
           {upcomingEvents.length===0
             ?<div style={{fontSize:13,color:T.muted,padding:"18px 0",textAlign:"center"}}>Nothing on the horizon. Add deadlines to your calendar.</div>
             :upcomingEvents.map((ev,i)=>(
-              <div key={ev.id} onClick={()=>setActive("calendar")} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 0",borderBottom:i<upcomingEvents.length-1?`1px solid ${T.border}`:"none",cursor:"pointer"}}>
+              // D4 in the audit: this used to just switch tabs generically
+              // -- setDetailEventId is the exact prop Prep/Calendar already
+              // use to jump straight to an event's own detail view, it was
+              // just never called here.
+              <div key={ev.id} onClick={()=>setDetailEventId(ev.id)} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 0",borderBottom:i<upcomingEvents.length-1?`1px solid ${T.border}`:"none",cursor:"pointer"}}>
                 <div style={{width:44,height:44,borderRadius:10,background:ev.urgent?T.lime:T.card2,color:ev.urgent?T.ink:T.text,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                   <span style={{fontSize:15,fontWeight:800,lineHeight:1}}>{ev.d}</span>
                   <span style={{fontSize:8.5,fontWeight:700,letterSpacing:"0.04em"}}>{ev.mo}</span>
@@ -22694,6 +22712,11 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                 <span style={{fontSize:10.5,fontWeight:700,padding:"4px 9px",borderRadius:5,background:ev.urgent?"rgba(224,48,48,0.10)":T.card2,color:ev.urgent?"#E03030":T.muted,flexShrink:0}}>{ev.cd}</span>
               </div>
             ))}
+          {upcomingEventsTotal>upcomingEvents.length&&(
+            <button onClick={()=>setActive("calendar")} style={{width:"100%",marginTop:4,padding:"8px 0",background:"none",border:"none",color:T.muted,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,textAlign:"center"}}>
+              +{upcomingEventsTotal-upcomingEvents.length} more this week
+            </button>
+          )}
         </div>
         <div style={{background:T.card,borderRadius:8,padding:20,border:`1px solid ${T.border}`}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
