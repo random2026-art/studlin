@@ -18046,6 +18046,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // users unsure which one they were supposed to fill in.
   const [taskMode,setTaskMode]=useState("ai");
   const [evDuration,setEvDuration]=useState(60);
+  // C9 in the audit: commuteBefore/commuteAfter already existed as real,
+  // scheduler-respected fields (effectiveLeadIn/effectiveTrailOut), but
+  // the only UI for them was the recurring-routine edit modal -- a one-off
+  // appointment across town (a doctor's visit, not a weekly class) had no
+  // path to a buffer at all unless marked recurring first. "" (not 0) so
+  // an untouched field renders as empty, matching evCommuteBefore/After's
+  // own placeholder="0" convention below.
+  const [evCommuteBefore,setEvCommuteBefore]=useState("");
+  const [evCommuteAfter,setEvCommuteAfter]=useState("");
   // Tracks whether the student has actually touched the Duration field on
   // THIS open of the form — suggestDurationFor already existed as a
   // dismissible "use this" suggestion the student had to notice and click;
@@ -18517,7 +18526,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // "let AI schedule this". The clicked day is remembered so fixed-time kinds
   // (exam/class/reminder), which always need a real date, can still default
   // to it once the user picks one of those types.
-  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("09:00");setEvSubject("None");setEvCustomColor(T.lime);setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);resetTypeExtras();setNewOpen(true);};
+  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("09:00");setEvSubject("None");setEvCustomColor(T.lime);setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvCommuteBefore("");setEvCommuteAfter("");resetTypeExtras();setNewOpen(true);};
   // Same form as openNew, just arriving with the scheduling mode already
   // decided by which "Add task" menu option was tapped -- the in-modal
   // manual/AI toggle stays visible so it's correctable, not a dead end.
@@ -18548,7 +18557,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     const params=computeStudyPlanParams(undefined,25,evConfidence,materialCharCount,undefined);
     if(params.sessionCount!==evExamPlan.sessionCount)setEvExamPlan(m=>({...m,sessionCount:params.sessionCount}));
   },[newOpen,evKind,evExamPlan.proposeSessions,evExamPlan.materialFiles,evConfidence,evSessionCountTouched]);
-  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvCustomColor(T.lime);setEvDate("");setEvTime("09:00");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setAiLoading(false);setAsChecklist(false);resetTypeExtras();};
+  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvCustomColor(T.lime);setEvDate("");setEvTime("09:00");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvCommuteBefore("");setEvCommuteAfter("");setAiLoading(false);setAsChecklist(false);resetTypeExtras();};
   const onEvKindChange=(k)=>{
     setEvKind(k);
     const willBeFixed=(k==="exam"||k==="class"||k==="reminder"||k==="busy block");
@@ -18607,6 +18616,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       ...(evSubject==="Other"?{color:evCustomColor}:{}),
       ...(projectPhases.length>0?{phases:projectPhases.map((name,pi)=>({name,status:pi===0?"active":"pending"}))}:{}),
       ...(projectOutline.length>0?{outline:projectOutline}:{}),
+      // C9 in the audit: only meaningful for fixed-time kinds (an "exam"
+      // due at 11:59pm has nothing to commute to) -- effectiveLeadIn/
+      // effectiveTrailOut already read commuteBefore/commuteAfter off any
+      // event, just needed a real value to read.
+      ...(isFixedKind&&(+evCommuteBefore>0||+evCommuteAfter>0)?{commuteBefore:Math.max(0,+evCommuteBefore||0),commuteAfter:Math.max(0,+evCommuteAfter||0)}:{}),
       ...(splitInfo||{})};
   };
   const commitTasks=(newTasks,opts)=>{
@@ -20119,6 +20133,20 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         {isFixedKind&&(
           <>
             <Field label="Duration (minutes)" hint="How long this occupies on your calendar"><NumField min={5} max={480} fallback={5} value={evDuration} onChange={setEvDuration} /></Field>
+            {/* C9 in the audit: same inline label+pill commute row the
+                recurring-routine edit modal already has -- this is the one
+                place a one-off appointment (not marked "Save to Weekly
+                Routine") could otherwise never get a buffer at all. */}
+            <div style={{display:"flex",alignItems:"center",gap:10,fontSize:11,color:T.muted,flexWrap:"wrap",marginBottom:12}}>
+              <span style={{display:"flex",alignItems:"center",gap:5}}>Commute before:
+                <input type="number" min={0} placeholder="0" value={evCommuteBefore} onChange={e=>setEvCommuteBefore(e.target.value)}
+                  style={{width:42,background:T.card2,border:`1px solid ${T.border}`,borderRadius:5,padding:"2px 5px",color:T.text,fontSize:11,fontFamily:T.font,outline:"none"}} /> min
+              </span>
+              <span style={{display:"flex",alignItems:"center",gap:5}}>after:
+                <input type="number" min={0} placeholder="0" value={evCommuteAfter} onChange={e=>setEvCommuteAfter(e.target.value)}
+                  style={{width:42,background:T.card2,border:`1px solid ${T.border}`,borderRadius:5,padding:"2px 5px",color:T.text,fontSize:11,fontFamily:T.font,outline:"none"}} /> min
+              </span>
+            </div>
             <label className="checkbox" onClick={()=>setEvSaveToRoutine(s=>!s)} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:14,fontSize:12.5,color:T.text}}>
               <span style={{width:16,height:16,borderRadius:4,border:`1.5px solid ${evSaveToRoutine?T.lime:T.border}`,background:evSaveToRoutine?T.lime:"transparent",display:"grid",placeItems:"center",flexShrink:0,color:T.ink}}>{evSaveToRoutine&&Icon.check}</span>
               Save to my Weekly Routine
