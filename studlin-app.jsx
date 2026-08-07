@@ -6763,6 +6763,14 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   const patchExam=(examId,patch)=>{
     const all=lsGet("events",[]);
     lsSet("events",all.map(e=>e.id===examId?{...e,...patch}:e));
+    // P4 in the audit: this fast inline edit path only ever patched the
+    // exam itself -- unlike confidence check-ins and practice-exam
+    // completion, it never restamped already-scheduled sessions, so the
+    // exam's own field and its sessions' priority could quietly diverge.
+    // Scoped to the fields computeSessionPriority actually reads, so
+    // patching something unrelated (title, notes) doesn't trigger a
+    // pointless restamp pass.
+    if(["priority","difficulty","examWeight","importanceLevel"].some(k=>k in patch))restampSessionPriorities(examId);
     refresh();
   };
   // Bucketed edit for priority("urgency")/difficulty -- both already exist
@@ -7039,8 +7047,14 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
 
       {tab==="exams"&&!selectedExam&&(
         exams.length===0
+          // P7 in the audit: Flashcards' and Practice Exams' empty states
+          // in this same component both include a real action button --
+          // this one was text-only. Exams are added through Calendar's own
+          // Add Task flow, not here, so the button takes you there instead
+          // of duplicating that form.
           ?<Card style={{padding:"32px 20px",textAlign:"center"}}>
             <div style={{fontSize:13,color:T.muted,marginBottom:14}}>No upcoming exams yet — add one from your calendar to start building material for it.</div>
+            <BtnSm onClick={()=>setActive("calendar")}>{Icon.plus} Go to Calendar</BtnSm>
           </Card>
           :(()=>{
               const viewPlan=(ex)=>{
@@ -7409,8 +7423,12 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
               const prepColor=prep&&prep.score!=null?(prep.score>=70?T.lime:prep.score<40?T.red:T.amber):T.faint;
               return (
                 <div style={{marginBottom:20}}>
-                  <span onMouseEnter={()=>setReadinessExpanded(true)} onMouseLeave={()=>setReadinessExpanded(false)}
-                    style={{display:"inline-flex",fontSize:11,fontWeight:700,color:stateColor,background:stateColor+"14",border:`1px solid ${stateColor}44`,borderRadius:6,padding:"4px 10px",cursor:"default"}}>
+                  {/* P3 in the audit: this was mouseenter/mouseleave only --
+                      structurally unreachable on touch, the primary target
+                      device for an iOS-first app. onClick toggles it too,
+                      hover still works for desktop/trackpad. */}
+                  <span onMouseEnter={()=>setReadinessExpanded(true)} onMouseLeave={()=>setReadinessExpanded(false)} onClick={()=>setReadinessExpanded(e=>!e)}
+                    style={{display:"inline-flex",fontSize:11,fontWeight:700,color:stateColor,background:stateColor+"14",border:`1px solid ${stateColor}44`,borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>
                     {readiness.state.toUpperCase().replace("-"," ")}
                   </span>
                   <div style={{fontSize:13,color:T.text,lineHeight:1.5,marginTop:8}}>{readiness.sentence}</div>
@@ -11033,9 +11051,24 @@ function computeSessionPriority(examLike,todayKey){
   // importanceLevel (new, richer signal) is checked first when present;
   // anything without it (every exam that predates this field) computes
   // byte-identically to before via the legacy examWeight table.
-  const impact=examLike.importanceLevel
+  const baseImpact=examLike.importanceLevel
     ?(IMPORTANCE_TO_IMPACT[examLike.importanceLevel]??IMPORTANCE_TO_IMPACT.major)
     :(EXAM_WEIGHT_TO_IMPACT[examLike.examWeight]??EXAM_WEIGHT_TO_IMPACT.major);
+  // P5 in the audit: gradeWeightPercent was collected in three different
+  // places (Build Study Plan, Syllabus Review) and stored on the exam,
+  // but never actually read anywhere -- pure busywork for whoever typed
+  // it in. A precise teacher-stated percentage nudges the coarser
+  // importanceLevel/examWeight bucket rather than replacing it (an exam
+  // explicitly worth 40% of the grade should outrank one at 5% even if
+  // both self-reported the same generic "major"), bounded to a modest
+  // ±0.15 so one number can't overwhelm the tuned base signal. Missing
+  // (the common case, since it's optional) leaves impact completely
+  // unchanged -- every exam predating this field, or without a stated
+  // percentage, computes byte-identically to before.
+  const gradeWeightNudge=examLike.gradeWeightPercent!=null
+    ?Math.max(-0.15,Math.min(0.15,(examLike.gradeWeightPercent-20)/200))
+    :0;
+  const impact=Math.max(0,Math.min(1,baseImpact+gradeWeightNudge));
   const log=examLike.confidenceLog||[];
   const lastRating=log[log.length-1];
   // No check-in yet (very common right after an exam is first created) ->
@@ -23088,7 +23121,13 @@ function App() {
     const task=events.find(e=>e.id===taskId);
     if(!task)return;
     if(shouldOfferProjectCheckIn(task,events))setProjectCheckInTaskId(taskId);
-    else if(task.kind==="study block")setExamCheckIn(task);
+    // P2 in the audit: this already deliberately fires beyond just
+    // exam-prep sessions (see the comment on the Lock-In completion path
+    // below) -- routineId is the one case that genuinely doesn't belong:
+    // a materialized daily habit (materializeHabitsForDate) also carries
+    // kind:"study block", but "how'd it go, how confident do you feel"
+    // has no real meaning for a recurring habit with no material at all.
+    else if(task.kind==="study block"&&!task.routineId)setExamCheckIn(task);
   };
   // Queues an insight-style nudge to storage instead of showing it live
   // while a Catch Me Up recovery banner is pending, per Part 2's "insight
@@ -24397,8 +24436,12 @@ function App() {
         // this doesn't double up with it). The deliberate, already-modal
         // Timer flow is where this fits without adding friction; a plain
         // checkbox-click completion (markDone) deliberately does NOT get
-        // this prompt — see submitExamCheckIn below.
-        if(timerTask.kind==="study block")setExamCheckIn(timerTask);
+        // this prompt — see submitExamCheckIn below. P2 in the audit:
+        // !routineId excludes a materialized daily habit -- same
+        // kind:"study block", but no real "confidence in material" concept
+        // applies to a recurring habit, matching handleTaskCompleted's own
+        // identical exclusion above.
+        if(timerTask.kind==="study block"&&!timerTask.routineId)setExamCheckIn(timerTask);
         // Modal stays open to show the XP/leaderboard reward summary — it
         // closes itself (setTimerTask(null) via onClose) once dismissed.
       }} />}
