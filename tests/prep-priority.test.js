@@ -82,6 +82,47 @@ describe("computeSessionPriority", () => {
   });
 });
 
+describe("computeSessionPriority + gradeWeightPercent (regression: P5 -- collected in 3 places, stored on the exam, but never actually read anywhere)", () => {
+  test("no gradeWeightPercent set computes byte-identically to before this field existed", () => {
+    const m = loadStudlinModule({ now: "2026-08-08T12:00:00" });
+    const e = exam({ date: "2026-08-10", examWeight: "major", confidenceLog: ["okay"], difficulty: 500 });
+    assert.equal(e.gradeWeightPercent, undefined, "sanity check -- this fixture predates the field");
+    const withField = { ...e, gradeWeightPercent: null };
+    assert.equal(m.computeSessionPriority(e, "2026-08-08"), m.computeSessionPriority(withField, "2026-08-08"));
+  });
+
+  test("a high percentage (worth a lot of the grade) outranks the same importance at a low percentage", () => {
+    const m = loadStudlinModule({ now: "2026-08-08T12:00:00" });
+    const heavy = exam({ date: "2026-08-10", importanceLevel: "major", gradeWeightPercent: 40, confidenceLog: ["okay"], difficulty: 500 });
+    const light = exam({ date: "2026-08-10", importanceLevel: "major", gradeWeightPercent: 5, confidenceLog: ["okay"], difficulty: 500 });
+    const pHeavy = m.computeSessionPriority(heavy, "2026-08-08");
+    const pLight = m.computeSessionPriority(light, "2026-08-08");
+    assert.ok(pHeavy > pLight, "a 40%-of-grade exam should outrank a 5%-of-grade exam with the same self-reported importance");
+  });
+
+  test("a typical/baseline percentage (~20%) barely nudges the score at all", () => {
+    const m = loadStudlinModule({ now: "2026-08-08T12:00:00" });
+    const noField = exam({ date: "2026-08-10", importanceLevel: "major", confidenceLog: ["okay"], difficulty: 500 });
+    const baseline = exam({ date: "2026-08-10", importanceLevel: "major", gradeWeightPercent: 20, confidenceLog: ["okay"], difficulty: 500 });
+    assert.equal(m.computeSessionPriority(noField, "2026-08-08"), m.computeSessionPriority(baseline, "2026-08-08"));
+  });
+
+  test("an extreme percentage never blows past the score's own 0-1000 bounds", () => {
+    const m = loadStudlinModule({ now: "2026-08-08T12:00:00" });
+    const e = exam({ date: "2026-08-10", importanceLevel: "critical", gradeWeightPercent: 100, confidenceLog: ["shaky"], difficulty: 1000 });
+    const p = m.computeSessionPriority(e, "2026-08-08");
+    assert.ok(p >= 0 && p <= 1000, "got " + p);
+  });
+
+  test("a zero percentage never crashes or goes negative", () => {
+    const m = loadStudlinModule();
+    const e = exam({ importanceLevel: "minor", gradeWeightPercent: 0 });
+    assert.doesNotThrow(() => m.computeSessionPriority(e, "2026-08-08"));
+    const p = m.computeSessionPriority(e, "2026-08-08");
+    assert.ok(p >= 0);
+  });
+});
+
 describe("richer exam importance (examType -> importanceLevel -> legacy examWeight)", () => {
   test("EXAM_TYPE_TO_IMPORTANCE covers every exam type with a sane default", () => {
     const m = loadStudlinModule();

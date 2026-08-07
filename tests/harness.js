@@ -82,7 +82,12 @@ function loadStudlinModule(options) {
     "getTimerCheckpoint","checkpointTimerSession","clearTimerCheckpoint",
     "resolveOrphanedCheckpoint","mergeImportedEvents","detectCalendarSourceType",
     "isAcademicCalendarSource","classifyImportedCalendarEvents","PLATFORM_HELP",
-    "parseCalendarClassificationReply",
+    "parseCalendarClassificationReply","projectSplitLinkFields",
+    "splitSessionDuration","SPLIT_SESSION_MIN_MINUTES",
+    "catchUpStalenessDays","catchUpStalenessLabel",
+    "reconcileFixedEventConflicts","surfaceReconcileResult",
+    "dayWorkloadMinutes","dayWorkloadTier","DAY_WORKLOAD_MODERATE_MINS","DAY_WORKLOAD_HEAVY_MINS",
+    "MAX_VISIBLE_DAY_COLUMNS",
     "getDayOccupiedIntervals","checkManualStudyTime","dayHasRoomFor","undoTier0Move",
     "checkTimeOffImpact",
     "getWorkWindowMinsFor","detectPeakHourInsight","dismissPeakHourInsight",
@@ -129,7 +134,13 @@ function loadStudlinModule(options) {
     "applyHoursTargetCap",
     "computeAssignmentPace","ASSIGNMENT_BEHIND_THRESHOLD","ATTACK_BLOCK_DEFAULT_ESTIMATE_HOURS",
     "isPaceNudgeDismissed","dismissPaceNudge","PACE_NUDGE_COOLDOWN_MS",
-    "computeFillSuggestions"];
+    "computeFillSuggestions","shouldFireStreakNudge","getStreakNudgeSentDate","markStreakNudgeSent",
+    "reminderCategoryAllowed","pickLatestQueuedNudgesByKind","CATCHUP_RECOVERY_THRESHOLD",
+    "notifSignatureOf","bottomRightNotifSlot","computeStreakWithFreezes","awardFreezeTokenIfMilestone",
+    "getStreakFreezeTokens","STREAK_FREEZE_MILESTONE_DAYS","STREAK_FREEZE_MAX",
+    "touchStreak","getStreak","isNearDuplicateCourseLabel","findDuplicateCourseGroups",
+    "ensureSubjectsForClassRoutines","shouldShowSyllabusNudge","dismissSyllabusNudge",
+    "SYLLABUS_NUDGE_COOLDOWN_MS","classNeedsSyllabus"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }
@@ -159,7 +170,15 @@ function loadStudlinModule(options) {
     navigator: { serviceWorker: undefined },
     document: undefined,
     window: undefined,
-    firebase: undefined,
+    // undefined here used to mean any exported function reaching
+    // firebase.auth() (e.g. upsertProfile, called fire-and-forget by
+    // touchStreak) threw synchronously inside its own async body, turning
+    // into an unhandled promise rejection well after the test that
+    // triggered it had already finished -- confusing failures with no
+    // connection back to the real assertion. currentUser:null makes that
+    // same real code path's own "if(!u)return" guard just no-op cleanly,
+    // same as a real signed-out browser tab.
+    firebase: { auth: () => ({ currentUser: null }) },
     location: { hostname: "test", search: "", href: "http://test/" },
     module: { exports: {} },
     exports: {},

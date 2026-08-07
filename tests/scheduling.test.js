@@ -1951,6 +1951,57 @@ describe("layoutDayEvents (Weekly grid same-day column layout)", () => {
     assert.equal(la.totalCols, 2);
     assert.notEqual(la.col, lb.col);
   });
+
+  test("a cluster at or under the visible column cap is untouched -- displayCol/displayTotalCols match the real col/totalCols, nothing hidden", () => {
+    const m = loadStudlinModule();
+    const items = [0, 1, 2, 3].map((i) => realTask({ id: "t" + i, time: "10:0" + i, duration: 30 }));
+    const laidOut = m.layoutDayEvents(items);
+    assert.equal(laidOut.length, 4);
+    laidOut.forEach((x) => {
+      assert.equal(x.hidden, false);
+      assert.equal(x.overflowCount, 0);
+      assert.equal(x.displayCol, x.col);
+      assert.equal(x.displayTotalCols, x.totalCols);
+    });
+  });
+
+  test("regression: a cluster past the column cap used to render one ever-thinner sliver per item -- now caps at MAX_VISIBLE_DAY_COLUMNS and hides the rest", () => {
+    const m = loadStudlinModule();
+    // 6 real conflicts at the exact same time -- a legal scenario (fixed
+    // kinds are exempt from conflict-avoidance), previously rendered as 6
+    // equal ultra-thin columns with no way to see/reach the squeezed-out ones.
+    const items = [0, 1, 2, 3, 4, 5].map((i) => realTask({ id: "t" + i, time: "10:00", duration: 30 }));
+    const laidOut = m.layoutDayEvents(items);
+    assert.equal(laidOut.length, 6, "every item must still be present in the result, even if not individually rendered");
+    const visible = laidOut.filter((x) => !x.hidden);
+    const hidden = laidOut.filter((x) => x.hidden);
+    assert.equal(visible.length, m.MAX_VISIBLE_DAY_COLUMNS, "no more than the cap should ever be individually visible");
+    assert.equal(hidden.length, 6 - m.MAX_VISIBLE_DAY_COLUMNS);
+    visible.forEach((x) => assert.ok(x.displayCol < m.MAX_VISIBLE_DAY_COLUMNS));
+    // Exactly one visible item carries the overflow count for the rest.
+    const withCount = visible.filter((x) => x.overflowCount > 0);
+    assert.equal(withCount.length, 1);
+    assert.equal(withCount[0].overflowCount, hidden.length);
+  });
+
+  test("the overflow-carrying item is the earliest-starting one in the overflow slot, not an arbitrary one", () => {
+    const m = loadStudlinModule();
+    const items = [0, 1, 2, 3, 4].map((i) => realTask({ id: "t" + i, time: "10:0" + i, duration: 30 }));
+    const laidOut = m.layoutDayEvents(items);
+    const withCount = laidOut.find((x) => x.overflowCount > 0);
+    const hiddenStarts = laidOut.filter((x) => x.hidden).map((x) => x.start);
+    assert.ok(hiddenStarts.every((s) => s >= withCount.start), "the visible overflow item must start no later than anything it's absorbing");
+  });
+
+  test("a hidden item still carries its own real ev/col/totalCols -- a caller falling back to the uncapped fields isn't broken", () => {
+    const m = loadStudlinModule();
+    const items = [0, 1, 2, 3, 4, 5].map((i) => realTask({ id: "t" + i, time: "10:00", duration: 30 }));
+    const laidOut = m.layoutDayEvents(items);
+    const hidden = laidOut.find((x) => x.hidden);
+    assert.ok(hidden.ev);
+    assert.equal(typeof hidden.col, "number");
+    assert.equal(hidden.totalCols, 6);
+  });
 });
 
 describe("computeEventBlockHeightPx (Weekly grid block height, regression: a short block's minimum-visibility floor could visually overlap the next block stacked right after it)", () => {
@@ -2961,5 +3012,672 @@ describe("computeWeekBalancePlan (manually-triggered 'Balance my week')", () => 
     ];
     const result = m.computeWeekBalancePlan(heavy, [], DEFAULT_PREFS, MONDAY);
     assert.ok(!result.moves.some((mv) => mv.id === "escalated"), "a task at the escalation threshold must never be silently reshuffled again");
+  });
+});
+
+describe("projectSplitLinkFields (regression: Project + Split into sessions used to create N duplicate, disconnected project cards)", () => {
+  test("session 1 of a split project becomes the marker (gets the stable id, no dueEventId)", () => {
+    const m = loadStudlinModule();
+    const result = m.projectSplitLinkFields("project", 1, "marker-123");
+    assert.equal(result.id, "marker-123");
+    assert.equal(result.dueEventId, undefined);
+  });
+
+  test("sessions 2+ link back to the marker via dueEventId, and never get their own id override", () => {
+    const m = loadStudlinModule();
+    const second = m.projectSplitLinkFields("project", 2, "marker-123");
+    assert.equal(second.dueEventId, "marker-123");
+    assert.equal(second.id, undefined);
+    const third = m.projectSplitLinkFields("project", 3, "marker-123");
+    assert.equal(third.dueEventId, "marker-123");
+  });
+
+  test("non-project kinds (assignment, exam, ...) are untouched -- returns {} regardless of split index", () => {
+    const m = loadStudlinModule();
+    assert.equal(Object.keys(m.projectSplitLinkFields("assignment", 1, "marker-123")).length, 0);
+    assert.equal(Object.keys(m.projectSplitLinkFields("assignment", 2, "marker-123")).length, 0);
+    assert.equal(Object.keys(m.projectSplitLinkFields("exam", 2, "marker-123")).length, 0);
+  });
+
+  test("a non-split project (no markerId, e.g. splitCount===1 so groupId is null) is a no-op", () => {
+    const m = loadStudlinModule();
+    assert.equal(Object.keys(m.projectSplitLinkFields("project", 1, null)).length, 0);
+  });
+});
+
+describe("splitSessionDuration (regression: Split into sessions had no minimum, could produce ~2-minute sessions)", () => {
+  test("a normal split divides evenly with no flooring needed", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.splitSessionDuration(90, 3), 30);
+  });
+
+  test("a short task split into many sessions is floored to the minimum instead of going below it", () => {
+    const m = loadStudlinModule();
+    const result = m.splitSessionDuration(20, 10); // even split would be 2min
+    assert.ok(result >= m.SPLIT_SESSION_MIN_MINUTES, "must never go below the floor");
+    assert.equal(result, m.SPLIT_SESSION_MIN_MINUTES);
+  });
+
+  test("rounds to the nearest minute when already above the floor", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.splitSessionDuration(100, 3), 33); // 33.33 -> 33
+  });
+
+  test("a zero split count never divides by zero -- falls back to 1 session", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.splitSessionDuration(60, 0), 60);
+  });
+
+  test("an undefined split count falls back to 1 session of the full duration", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.splitSessionDuration(60, undefined), 60);
+  });
+});
+
+describe("catchUpStalenessDays / catchUpStalenessLabel (regression: Catch Me Up always said 'yesterday' regardless of real staleness)", () => {
+  test("a single item missed yesterday reports a 1-day gap", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.catchUpStalenessDays([{date:"2026-08-05"}], "2026-08-06"), 1);
+  });
+
+  test("uses the OLDEST missed item, not the newest, when several are missed across different days", () => {
+    const m = loadStudlinModule();
+    const items = [{date:"2026-08-05"}, {date:"2026-08-02"}, {date:"2026-08-06"}];
+    assert.equal(m.catchUpStalenessDays(items, "2026-08-06"), 4);
+  });
+
+  test("no missed items is a 0-day gap", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.catchUpStalenessDays([], "2026-08-06"), 0);
+  });
+
+  test("label copy: 1 day still reads 'yesterday', not 'the last 1 days'", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.catchUpStalenessLabel(1), "yesterday");
+  });
+
+  test("label copy: a mid-range gap names the real day count instead of understating it", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.catchUpStalenessLabel(4), "the last 4 days");
+  });
+
+  test("label copy: a week or more doesn't imply a specific (possibly wrong) day count", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.catchUpStalenessLabel(9), "over a week ago");
+  });
+});
+
+describe("reconcileFixedEventConflicts (regression: a new fixed exam/class/activity could silently double-book an existing flexible study block sitting in that slot)", () => {
+  function seedEvents(m, events) { m.lsSet("events", events); }
+
+  test("a new fixed exam relocates an existing flexible study block that collides with it", () => {
+    const m = loadStudlinModule();
+    seedEvents(m, [
+      { id: "study-1", title: "Study: Calc", kind: "study block", date: "2026-08-06", time: "10:00", duration: 30, status: "pending" },
+    ]);
+    const exam = { id: "exam-1", title: "math 101", kind: "exam", date: "2026-08-06", time: "10:00", duration: 60 };
+    const result = m.reconcileFixedEventConflicts([exam]);
+    const moved = result.events.find((e) => e.id === "study-1");
+    assert.ok(moved, "the flexible session must still exist, just relocated");
+    assert.equal(result.moved.length, 1);
+    assert.equal(result.moved[0].id, "study-1");
+    // Either the date or the time actually changed -- it didn't just get
+    // relabeled movedByStudlin while staying at the exact colliding slot.
+    assert.ok(moved.date !== "2026-08-06" || moved.time !== "10:00");
+    assert.equal(moved.movedByStudlin, true);
+  });
+
+  test("the new fixed event itself is preserved unmodified in the result", () => {
+    const m = loadStudlinModule();
+    seedEvents(m, []);
+    const exam = { id: "exam-1", title: "math 101", kind: "exam", date: "2026-08-06", time: "10:00", duration: 60 };
+    const result = m.reconcileFixedEventConflicts([exam]);
+    const kept = result.events.find((e) => e.id === "exam-1");
+    assert.equal(kept.time, "10:00");
+    assert.equal(kept.date, "2026-08-06");
+  });
+
+  test("no collision at all is a no-op -- nothing in moved, nothing relocated", () => {
+    const m = loadStudlinModule();
+    seedEvents(m, [
+      { id: "study-1", title: "Study: Calc", kind: "study block", date: "2026-08-06", time: "14:00", duration: 30, status: "pending" },
+    ]);
+    const exam = { id: "exam-1", title: "math 101", kind: "exam", date: "2026-08-06", time: "10:00", duration: 60 };
+    const result = m.reconcileFixedEventConflicts([exam]);
+    assert.equal(result.moved.length, 0);
+    const untouched = result.events.find((e) => e.id === "study-1");
+    assert.equal(untouched.time, "14:00");
+    assert.equal(untouched.movedByStudlin, undefined);
+  });
+
+  test("two fixed events colliding (neither can move) goes to needsAttention, not silently dropped", () => {
+    const m = loadStudlinModule();
+    seedEvents(m, [
+      { id: "class-1", title: "Period 3", kind: "class", date: "2026-08-06", time: "10:00", duration: 50, status: "pending" },
+    ]);
+    const exam = { id: "exam-1", title: "math 101", kind: "exam", date: "2026-08-06", time: "10:00", duration: 60 };
+    const result = m.reconcileFixedEventConflicts([exam]);
+    assert.equal(result.moved.length, 0);
+    assert.equal(result.needsAttention.length, 1);
+    // The pre-existing fixed class must still be there, untouched, not lost.
+    const stillThere = result.events.find((e) => e.id === "class-1");
+    assert.ok(stillThere);
+    assert.equal(stillThere.time, "10:00");
+  });
+
+  test("a done, checklist, or userPinned flexible block is exempt -- never auto-relocated even if it collides", () => {
+    const m = loadStudlinModule();
+    seedEvents(m, [
+      { id: "done-1", title: "Already done", kind: "study block", date: "2026-08-06", time: "10:00", duration: 30, status: "done" },
+      { id: "pinned-1", title: "Pinned by student", kind: "study block", date: "2026-08-06", time: "10:00", duration: 30, status: "pending", userPinned: true },
+    ]);
+    const exam = { id: "exam-1", title: "math 101", kind: "exam", date: "2026-08-06", time: "10:00", duration: 60 };
+    const result = m.reconcileFixedEventConflicts([exam]);
+    assert.equal(result.moved.length, 0);
+    assert.equal(result.events.find((e) => e.id === "done-1").time, "10:00");
+    assert.equal(result.events.find((e) => e.id === "pinned-1").time, "10:00");
+  });
+});
+
+describe("dayWorkloadMinutes / dayWorkloadTier (regression: Month view showed only a task count, never how heavy a day actually is)", () => {
+  test("sums every event's own duration, including fixed classes/exams -- not just flexible study time", () => {
+    const m = loadStudlinModule();
+    const evs = [
+      { kind: "class", duration: 50 },
+      { kind: "exam", duration: 60 },
+      { kind: "study block", duration: 30 },
+    ];
+    assert.equal(m.dayWorkloadMinutes(evs), 140);
+  });
+
+  test("an event with no duration contributes 0, not NaN", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.dayWorkloadMinutes([{ kind: "deadline", duration: null }]), 0);
+  });
+
+  test("empty/no events is 0 minutes", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.dayWorkloadMinutes([]), 0);
+    assert.equal(m.dayWorkloadMinutes(undefined), 0);
+  });
+
+  test("tier thresholds: a light day (one 15-minute task) and a packed exam-cram day are not the same tier", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.dayWorkloadTier(15), "light");
+    assert.equal(m.dayWorkloadTier(360), "heavy");
+  });
+
+  test("tier boundaries are inclusive at the documented threshold constants", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.dayWorkloadTier(m.DAY_WORKLOAD_MODERATE_MINS), "moderate");
+    assert.equal(m.dayWorkloadTier(m.DAY_WORKLOAD_MODERATE_MINS - 1), "light");
+    assert.equal(m.dayWorkloadTier(m.DAY_WORKLOAD_HEAVY_MINS), "heavy");
+    assert.equal(m.dayWorkloadTier(m.DAY_WORKLOAD_HEAVY_MINS - 1), "moderate");
+  });
+});
+
+describe("shouldFireStreakNudge (real engine behind the 'Streak reminders' Settings toggle, previously nothing)", () => {
+  test("fires at/after 8pm when nothing's been logged today and it hasn't already gone out", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.shouldFireStreakNudge(20, false, []), true);
+    assert.equal(m.shouldFireStreakNudge(23, false, []), true);
+  });
+
+  test("stays quiet before 8pm regardless of today's sessions", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.shouldFireStreakNudge(19, false, []), false);
+    assert.equal(m.shouldFireStreakNudge(0, false, []), false);
+  });
+
+  test("stays quiet once already sent today, even if still unstudied", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.shouldFireStreakNudge(21, true, []), false);
+  });
+
+  test("stays quiet once any real minutes are logged today", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.shouldFireStreakNudge(21, false, [{ d: "2026-08-07", m: 25 }]), false);
+  });
+
+  test("a logged session with zero/no minutes doesn't count as having studied", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.shouldFireStreakNudge(21, false, [{ d: "2026-08-07", m: 0 }]), true);
+  });
+});
+
+describe("getStreakNudgeSentDate / markStreakNudgeSent (persisted, not just in-memory -- survives a reload the same day)", () => {
+  test("defaults to null when never sent", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.getStreakNudgeSentDate(), null);
+  });
+
+  test("round-trips exactly the date it was marked for", () => {
+    const m = loadStudlinModule();
+    m.markStreakNudgeSent("2026-08-07");
+    assert.equal(m.getStreakNudgeSentDate(), "2026-08-07");
+  });
+});
+
+describe("reminderCategoryAllowed (real category gate behind the 'Deadline alerts' Settings toggle, previously nothing)", () => {
+  test("a deadline is blocked when the toggle is explicitly off", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.reminderCategoryAllowed("deadline", false), false);
+  });
+
+  test("an exam is blocked when the toggle is explicitly off", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.reminderCategoryAllowed("exam", false), false);
+  });
+
+  test("a deadline/exam is allowed when the toggle is on", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.reminderCategoryAllowed("deadline", true), true);
+    assert.equal(m.reminderCategoryAllowed("exam", true), true);
+  });
+
+  test("undefined (never-set toggle, defaults on) allows deadline/exam reminders -- opt-out, not opt-in", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.reminderCategoryAllowed("deadline", undefined), true);
+  });
+
+  test("a study block is never gated by this toggle at all, on or off", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.reminderCategoryAllowed("study block", false), true);
+    assert.equal(m.reminderCategoryAllowed("study block", true), true);
+  });
+});
+
+describe("pickLatestQueuedNudgesByKind (regression: D10 -- queueInsightNudge was write-only, nothing ever read this back)", () => {
+  test("empty/no queue returns an empty object, not a throw", () => {
+    const m = loadStudlinModule();
+    assert.equal(Object.keys(m.pickLatestQueuedNudgesByKind([])).length, 0);
+    assert.equal(Object.keys(m.pickLatestQueuedNudgesByKind(undefined)).length, 0);
+  });
+
+  test("one entry per kind is returned by its own kind key", () => {
+    const m = loadStudlinModule();
+    const out = m.pickLatestQueuedNudgesByKind([
+      { kind: "strugglingBucket", payload: { a: 1 } },
+      { kind: "peakInsight", payload: { b: 2 } },
+    ]);
+    assert.deepStrictEqual(out.strugglingBucket, { a: 1 });
+    assert.deepStrictEqual(out.peakInsight, { b: 2 });
+  });
+
+  test("two entries of the same kind -- the later one wins, not the first", () => {
+    const m = loadStudlinModule();
+    const out = m.pickLatestQueuedNudgesByKind([
+      { kind: "examPrep", payload: { v: "old" } },
+      { kind: "examPrep", payload: { v: "new" } },
+    ]);
+    assert.equal(out.examPrep.v, "new");
+  });
+
+  test("a malformed entry with no kind is skipped rather than throwing", () => {
+    const m = loadStudlinModule();
+    const out = m.pickLatestQueuedNudgesByKind([{ payload: { x: 1 } }, null, { kind: "prepPromptBatch", payload: [1, 2] }]);
+    assert.deepStrictEqual(out.prepPromptBatch, [1, 2]);
+    assert.equal(Object.keys(out).length, 1);
+  });
+});
+
+describe("notifSignatureOf (regression: D8 -- the unread dot never persisted, always restarted 'unseen' on reload)", () => {
+  test("empty list has a stable, non-throwing signature", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.notifSignatureOf([]), "");
+    assert.equal(m.notifSignatureOf(undefined), "");
+  });
+
+  test("the same notif set produces the identical signature every time (idempotent)", () => {
+    const m = loadStudlinModule();
+    const notifs = [{ id: "streak" }, { id: "ev1" }, { id: "ev2" }];
+    assert.equal(m.notifSignatureOf(notifs), m.notifSignatureOf(notifs));
+  });
+
+  test("a genuinely different notif set produces a different signature", () => {
+    const m = loadStudlinModule();
+    const before = m.notifSignatureOf([{ id: "streak" }, { id: "ev1" }]);
+    const after = m.notifSignatureOf([{ id: "streak" }, { id: "ev1" }, { id: "ev3" }]);
+    assert.notEqual(before, after);
+  });
+
+  test("falls back to title when an item has no id (shouldn't normally happen, but never throws)", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.notifSignatureOf([{ title: "Math exam" }]), "Math exam");
+  });
+});
+
+describe("bottomRightNotifSlot (regression: P9 -- 4 different banners rendered at the identical fixed position with no coordination)", () => {
+  test("nothing truthy returns null -- no slot claimed", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.bottomRightNotifSlot(null, null, 0, null), null);
+  });
+
+  test("an active Lock-In error always wins, even with everything else also present", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.bottomRightNotifSlot("Couldn't save", "Auto-scheduled!", 2, { reason: "x" }), "error");
+  });
+
+  test("an auto-toast outranks a pending prompt batch and a suggestion", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.bottomRightNotifSlot(null, "Auto-scheduled!", 2, { reason: "x" }), "autoToast");
+  });
+
+  test("a pending prompt batch outranks a general suggestion", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.bottomRightNotifSlot(null, null, 2, { reason: "x" }), "promptBatch");
+  });
+
+  test("a suggestion only wins when nothing else is present", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.bottomRightNotifSlot(null, null, 0, { reason: "x" }), "suggestion");
+  });
+
+  test("an empty prompt batch (length 0) does not claim the slot", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.bottomRightNotifSlot(null, null, 0, null), null);
+  });
+});
+
+describe("computeStreakWithFreezes (regression: D11 -- the streak had no grace mechanic, a single missed day reset it to zero)", () => {
+  test("all days open, no gaps: streak is a plain consecutive count, no tokens touched", () => {
+    const m = loadStudlinModule();
+    const days = ["2026-08-05", "2026-08-06", "2026-08-07"];
+    const r = m.computeStreakWithFreezes(days, [], 2, "2026-08-07");
+    assert.equal(r.streak, 3);
+    assert.equal(r.remainingTokens, 2);
+    assert.equal(r.newlyFrozen.length, 0);
+  });
+
+  test("a single missed day with a token available is auto-covered, streak continues", () => {
+    const m = loadStudlinModule();
+    // 08-05 open, 08-06 missed, 08-07 open
+    const days = ["2026-08-05", "2026-08-07"];
+    const r = m.computeStreakWithFreezes(days, [], 1, "2026-08-07");
+    assert.equal(r.streak, 3, "the gap day is covered, so the streak spans all 3 days");
+    assert.equal(r.remainingTokens, 0);
+    assert.equal(r.newlyFrozen.length, 1);
+    assert.equal(r.newlyFrozen[0], "2026-08-06");
+  });
+
+  test("a missed day with zero tokens genuinely breaks the streak -- this is the real fix's honest floor, not infinite forgiveness", () => {
+    const m = loadStudlinModule();
+    const days = ["2026-08-05", "2026-08-07"];
+    const r = m.computeStreakWithFreezes(days, [], 0, "2026-08-07");
+    assert.equal(r.streak, 1, "only today counts -- the gap with no token stops the backward walk");
+    assert.equal(r.newlyFrozen.length, 0);
+  });
+
+  test("an already-frozen day (from a prior touchStreak call) counts without spending a second token", () => {
+    const m = loadStudlinModule();
+    const days = ["2026-08-05", "2026-08-07"];
+    const r = m.computeStreakWithFreezes(days, ["2026-08-06"], 2, "2026-08-07");
+    assert.equal(r.streak, 3);
+    assert.equal(r.remainingTokens, 2, "the day was already frozen, so no new token gets spent re-covering it");
+    assert.equal(r.newlyFrozen.length, 0);
+  });
+
+  test("two consecutive missed days with two tokens are both covered", () => {
+    const m = loadStudlinModule();
+    const days = ["2026-08-04", "2026-08-07"];
+    const r = m.computeStreakWithFreezes(days, [], 2, "2026-08-07");
+    assert.equal(r.streak, 4);
+    assert.equal(r.remainingTokens, 0);
+    const sortedFrozen = Array.from(r.newlyFrozen).sort();
+    assert.equal(sortedFrozen.length, 2);
+    assert.equal(sortedFrozen[0], "2026-08-05");
+    assert.equal(sortedFrozen[1], "2026-08-06");
+  });
+
+  test("two consecutive missed days with only one token: the streak still breaks at the second, uncovered gap", () => {
+    const m = loadStudlinModule();
+    const days = ["2026-08-04", "2026-08-07"];
+    const r = m.computeStreakWithFreezes(days, [], 1, "2026-08-07");
+    // Walking backward from 08-07: today open (1), 08-06 missed but a
+    // token covers it (2), 08-05 missed with no tokens left -- stop.
+    assert.equal(r.streak, 2);
+    assert.equal(r.remainingTokens, 0);
+    assert.equal(r.newlyFrozen.length, 1);
+    assert.equal(r.newlyFrozen[0], "2026-08-06");
+  });
+
+  test("today itself not yet in the open-days list still counts if genuinely open (caller adds it first)", () => {
+    const m = loadStudlinModule();
+    const r = m.computeStreakWithFreezes(["2026-08-07"], [], 0, "2026-08-07");
+    assert.equal(r.streak, 1);
+  });
+
+  test("no history at all is a clean 0-streak, not a throw", () => {
+    const m = loadStudlinModule();
+    const r = m.computeStreakWithFreezes([], [], 0, "2026-08-07");
+    assert.equal(r.streak, 0);
+  });
+});
+
+describe("awardFreezeTokenIfMilestone (regression: D11 -- tokens must be earned exactly once per milestone, never every day past it)", () => {
+  test("crossing from below to exactly the milestone (7) awards a token", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.awardFreezeTokenIfMilestone(6, 7, 0), 1);
+  });
+
+  test("staying at the same milestone (streak grows but doesn't cross 14/21/etc) awards nothing", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.awardFreezeTokenIfMilestone(7, 8, 1), 1, "still just past the 7-day milestone, not a new one yet");
+  });
+
+  test("never exceeds the bank cap even when a fresh milestone is crossed", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.awardFreezeTokenIfMilestone(13, 14, m.STREAK_FREEZE_MAX), m.STREAK_FREEZE_MAX);
+  });
+
+  test("crossing two milestones in one jump (e.g. a big backfill) still only awards one token, not two", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.awardFreezeTokenIfMilestone(0, 15, 0), 1);
+  });
+
+  test("a fresh 0/undefined streak history awards nothing at day 0", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.awardFreezeTokenIfMilestone(undefined, 0, 0), 0);
+  });
+});
+
+describe("touchStreak / getStreak end-to-end (regression: D11 -- simulated real days, not just the pure math in isolation)", () => {
+  test("7 real consecutive days earns exactly one freeze token, not zero and not more", () => {
+    // loadStudlinModule gives each call its own fresh vm realm/localStorage,
+    // so a real multi-day simulation can't drive one continuous instance
+    // across reloads -- instead, 6 prior real days are built by hand
+    // (exactly what touchStreak would already have persisted from days
+    // 1-6), then a single touchStreak call on day 7 does the real
+    // milestone-crossing work end-to-end, the actual code path.
+    const m = loadStudlinModule({ now: "2026-08-07T09:00:00" });
+    m.lsSet("days", ["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06"]);
+    m.touchStreak();
+    assert.equal(m.getStreak(), 7);
+    assert.equal(m.getStreakFreezeTokens(), 1);
+  });
+
+  test("a real missed day is auto-covered by a banked token when the app reopens", () => {
+    const m = loadStudlinModule({ now: "2026-08-08T09:00:00" });
+    // 7 real days already banked one token; 08-07 (yesterday) was missed.
+    m.lsSet("days", ["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06"]);
+    m.lsSet("streakFreezeTokens", 1);
+    m.touchStreak();
+    assert.equal(m.getStreak(), 8, "the missed day is covered, so the streak spans through today");
+    assert.equal(m.getStreakFreezeTokens(), 0, "the one token banked was spent covering the gap, and day 7's milestone was already awarded before this call -- no new one to cross yet");
+  });
+
+  test("a real missed day with zero tokens genuinely breaks the streak down to just today", () => {
+    const m = loadStudlinModule({ now: "2026-08-08T09:00:00" });
+    m.lsSet("days", ["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06"]);
+    m.lsSet("streakFreezeTokens", 0);
+    m.touchStreak();
+    assert.equal(m.getStreak(), 1);
+  });
+
+  test("touchStreak is a no-op the second time it's called the same day (idempotent)", () => {
+    const m = loadStudlinModule({ now: "2026-08-07T09:00:00" });
+    m.lsSet("days", ["2026-08-06"]);
+    m.touchStreak();
+    const daysAfterFirst = m.lsGet("days", []).length;
+    m.touchStreak();
+    assert.equal(m.lsGet("days", []).length, daysAfterFirst);
+  });
+});
+
+describe("isNearDuplicateCourseLabel (regression: S6 -- exact-normalized matching missed realistic pairs like 'AP Bio' / 'AP Biology')", () => {
+  test("an identical label matches", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isNearDuplicateCourseLabel("Biology", "Biology"), true);
+  });
+
+  test("an abbreviation vs the full word, same word count, matches (the audit's own example)", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isNearDuplicateCourseLabel("AP Bio", "AP Biology"), true);
+  });
+
+  test("case and whitespace differences alone still match", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isNearDuplicateCourseLabel("ap  bio", "AP BIOLOGY"), true);
+  });
+
+  test("a genuinely different course does not match", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isNearDuplicateCourseLabel("AP Biology", "AP Chemistry"), false);
+  });
+
+  test("differently-numbered courses (a real distinction, not an abbreviation) do not match", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isNearDuplicateCourseLabel("AP Physics 1", "AP Physics 2"), false);
+  });
+
+  test("a too-short shared prefix does not count as an abbreviation match", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isNearDuplicateCourseLabel("A Class", "A Completely Different Thing"), false);
+  });
+
+  test("a different word count never matches, even with a shared prefix word", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isNearDuplicateCourseLabel("Biology", "Biology Lab Extra"), false);
+  });
+
+  test("empty/missing labels never match", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.isNearDuplicateCourseLabel("", "Biology"), false);
+    assert.equal(m.isNearDuplicateCourseLabel(null, null), false);
+  });
+});
+
+describe("findDuplicateCourseGroups (regression: S6 -- now groups near-duplicates, not just exact-normalized matches)", () => {
+  test("a near-duplicate pair (not exact) is grouped together", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([{ id: "s1", label: "AP Bio" }, { id: "s2", label: "AP Biology" }]);
+    const groups = m.findDuplicateCourseGroups();
+    assert.equal(groups.length, 1);
+    assert.equal(groups[0].length, 2);
+  });
+
+  test("genuinely distinct subjects never group", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([{ id: "s1", label: "Biology" }, { id: "s2", label: "Chemistry" }]);
+    assert.equal(m.findDuplicateCourseGroups().length, 0);
+  });
+
+  test("a lone subject with no duplicate is never grouped", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([{ id: "s1", label: "Biology" }]);
+    assert.equal(m.findDuplicateCourseGroups().length, 0);
+  });
+});
+
+describe("ensureSubjectsForClassRoutines (regression: S5 -- Weekly Routine's class builders never touched getSubjects/saveSubjects at all)", () => {
+  test("a class routine with no courseId gets a brand-new subject created and linked", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([]);
+    const result = m.ensureSubjectsForClassRoutines([{ id: "r1", kind: "class", title: "Biology", days: [0], startTime: "09:00", duration: 50 }]);
+    assert.equal(result[0].subject, "Biology");
+    assert.ok(!!result[0].courseId);
+    const subjects = m.getSubjects();
+    assert.equal(subjects.length, 1);
+    assert.equal(subjects[0].label, "Biology");
+  });
+
+  test("two meeting times for the same brand-new class in one batch share one subject, not two", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([]);
+    const result = m.ensureSubjectsForClassRoutines([
+      { id: "r1", kind: "class", title: "Biology", days: [0], startTime: "09:00", duration: 50 },
+      { id: "r2", kind: "class", title: "Biology", days: [2], startTime: "09:00", duration: 50 },
+    ]);
+    assert.equal(result[0].courseId, result[1].courseId);
+    assert.equal(m.getSubjects().length, 1);
+  });
+
+  test("a class matching an already-existing subject links to it instead of creating a duplicate", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([{ id: "existing-1", label: "Biology", color: "#000" }]);
+    const result = m.ensureSubjectsForClassRoutines([{ id: "r1", kind: "class", title: "Biology", days: [0], startTime: "09:00", duration: 50 }]);
+    assert.equal(result[0].courseId, "existing-1");
+    assert.equal(m.getSubjects().length, 1);
+  });
+
+  test("an item that already has a courseId is left completely untouched -- idempotent on every ordinary routine edit", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([{ id: "s1", label: "Biology" }]);
+    const before = { id: "r1", kind: "class", title: "Biology", courseId: "some-other-id", subject: "Different Label" };
+    const result = m.ensureSubjectsForClassRoutines([before]);
+    assert.equal(result[0].courseId, "some-other-id");
+    assert.equal(result[0].subject, "Different Label");
+    assert.equal(m.getSubjects().length, 1, "no new subject created for an already-linked item");
+  });
+
+  test("busy/free/habit kinds are never touched -- only real classes need a subject", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([]);
+    const result = m.ensureSubjectsForClassRoutines([{ id: "r1", kind: "busy", title: "Soccer practice", days: [1], startTime: "16:00", duration: 90 }]);
+    assert.equal(result[0].courseId, undefined);
+    assert.equal(m.getSubjects().length, 0);
+  });
+
+  test("empty input is a harmless no-op", () => {
+    const m = loadStudlinModule();
+    m.saveSubjects([]);
+    assert.equal(m.ensureSubjectsForClassRoutines([]).length, 0);
+    assert.equal(m.getSubjects().length, 0);
+  });
+});
+
+describe("classNeedsSyllabus (regression: a whole-schedule/bell-schedule scan can only ever produce classes + meeting times, never real assignments)", () => {
+  test("no items at all (a manually 'choose'-added class) still needs a syllabus", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.classNeedsSyllabus([]), true);
+    assert.equal(m.classNeedsSyllabus(null), true);
+  });
+
+  test("exam-only items (all a schedule-grid scan can ever extract) still need a syllabus", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.classNeedsSyllabus([{ kind: "exam" }, { kind: "exam" }]), true);
+  });
+
+  test("a real syllabus scan's assignment items satisfy it", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.classNeedsSyllabus([{ kind: "exam" }, { kind: "assignment" }]), false);
+  });
+
+  test("a real syllabus scan's project items satisfy it too", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.classNeedsSyllabus([{ kind: "project" }]), false);
+  });
+});
+
+describe("shouldShowSyllabusNudge / dismissSyllabusNudge (Courses sidebar 'missing a syllabus' banner cooldown)", () => {
+  test("shows by default with no prior dismissal", () => {
+    const m = loadStudlinModule();
+    assert.equal(m.shouldShowSyllabusNudge(), true);
+  });
+
+  test("stays quiet right after a dismissal", () => {
+    const m = loadStudlinModule();
+    m.dismissSyllabusNudge();
+    assert.equal(m.shouldShowSyllabusNudge(), false);
   });
 });

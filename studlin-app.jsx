@@ -843,19 +843,86 @@ const courseIdForLabelFuzzy=(label)=>{
   const fuzzy=subjects.find(x=>normalizeCourseLabel(x.label)===norm);
   return fuzzy?fuzzy.id:null;
 };
-// Groups existing courses whose names normalize to the same thing --
+// S6 in the audit: exact-normalized-string matching missed realistic
+// near-duplicates like "AP Bio" / "AP Biology" -- a very plausible pair
+// from two different import flows (one typed by hand, one scanned off a
+// syllabus) that never grouped, so the merge prompt below never fired for
+// them. Word-level, not a raw substring check: same word count, and each
+// word pair either matches exactly or one is a real prefix of the other
+// (>=3 chars, so "a"/"algebra" or "ap physics 1"/"ap physics 2" -- a
+// genuinely different course, not an abbreviation -- don't false-positive).
+// Deliberately NOT used by courseIdForLabelFuzzy (which auto-attaches
+// real student data to a course with no human confirmation) -- only this
+// suggestion surface, which a student always has to explicitly approve.
+function isNearDuplicateCourseLabel(labelA,labelB){
+  const a=normalizeCourseLabel(labelA),b=normalizeCourseLabel(labelB);
+  if(!a||!b)return false;
+  if(a===b)return true;
+  const wordsA=a.split(" "),wordsB=b.split(" ");
+  if(wordsA.length!==wordsB.length)return false;
+  return wordsA.every((w,i)=>{
+    const w2=wordsB[i];
+    if(w===w2)return true;
+    const shorter=w.length<w2.length?w:w2,longer=w.length<w2.length?w2:w;
+    return shorter.length>=3&&longer.startsWith(shorter);
+  });
+}
+// Groups existing courses whose names are the same or a near-duplicate --
 // surfaced as a one-time "merge these?" prompt (Settings) so accounts
 // that already accumulated duplicates before this fix existed have a
 // way out, without Studlin ever silently merging real student data on
 // its own.
 function findDuplicateCourseGroups(){
   const subjects=getSubjects();
-  const groups={};
+  const groups=[];
   subjects.forEach(s=>{
-    const norm=normalizeCourseLabel(s.label);
-    (groups[norm]=groups[norm]||[]).push(s);
+    const existing=groups.find(g=>g.some(m=>isNearDuplicateCourseLabel(m.label,s.label)));
+    if(existing)existing.push(s);
+    else groups.push([s]);
   });
-  return Object.values(groups).filter(g=>g.length>1);
+  return groups.filter(g=>g.length>1);
+}
+// S5 in the audit: Weekly Routine's own class builders (WizardCollegeBuilder,
+// WizardHsBuilder) captured title/days/time only -- no subject/color field,
+// and never touched getSubjects/saveSubjects -- so a student with 7-8
+// classes typed the full list twice: once here, once again in Subjects &
+// Labels just to get color-coding. Called once, right before a routine
+// actually commits (finishRoutineWizard), instead of baked into
+// saveWeeklyRoutine itself -- several other callers (mergeCourses,
+// undoCourseDelete, the backfills) intentionally rewrite routine data
+// that's already subject-consistent, and re-scanning on every one of
+// those risks minting spurious duplicate subjects during what should be a
+// pure data move. courseIdForLabelFuzzy (exact/roman-numeral match only,
+// deliberately not the looser near-duplicate check above) reuses an
+// existing subject when one genuinely matches; otherwise a real one is
+// created with the next unused color, same convention Subjects & Labels'
+// own "+ Add" button already uses.
+function ensureSubjectsForClassRoutines(routineItems){
+  let subjects=getSubjects();
+  let subjectsChanged=false;
+  // Matches against this function's own running `subjects` (not a fresh
+  // getSubjects() read, which courseIdForLabelFuzzy would use) -- two
+  // meeting times for the same class committed in one batch (MWF lecture +
+  // TTh recitation, both with no courseId yet) need the second one to see
+  // the subject the first one just created a moment ago in this same loop,
+  // not mint a duplicate because storage hasn't been written yet.
+  const findMatch=(title)=>{
+    const exact=subjects.find(s=>s.label===title);
+    if(exact)return exact;
+    const norm=normalizeCourseLabel(title);
+    return subjects.find(s=>normalizeCourseLabel(s.label)===norm)||null;
+  };
+  const next=routineItems.map(r=>{
+    if(r.kind!=="class"||r.courseId||!r.title)return r;
+    const match=findMatch(r.title);
+    if(match)return {...r,courseId:match.id,subject:match.label};
+    const newSubj={id:"subj-"+Date.now()+"-"+Math.round(Math.random()*10000),label:r.title,color:SUBJECT_COLORS[subjects.length%SUBJECT_COLORS.length]};
+    subjects=[...subjects,newSubj];
+    subjectsChanged=true;
+    return {...r,courseId:newSubj.id,subject:newSubj.label};
+  });
+  if(subjectsChanged)saveSubjects(subjects);
+  return next;
 }
 // How many routines+events currently point at a course -- used to pick
 // a sensible default "keep this one" suggestion (the one with more real
@@ -1414,6 +1481,19 @@ function mergeImportedEvents(existingEvents,subId,fetchedEvents,classifications)
     // duration on refresh.
     return {...ev,title:fresh.title,date:fresh.date,time:fresh.time,duration:ev.kind==="deadline"?null:fresh.duration};
   });
+  // Order-independent dedup fix: a syllabus scan or manual entry may have
+  // already created this exact item before this subscription ever synced
+  // it -- previously this function only ever checked keptUids (its own
+  // prior imports), so connecting Canvas/Schoology AFTER a syllabus scan
+  // created real duplicates. The reverse order was already safe, since
+  // buildSyllabusEventBatch's own dedup checks against every existing
+  // event regardless of source -- matched here the same way (title+date+
+  // kind; subject deliberately excluded since a classified import's guess
+  // ("General") can genuinely differ from a syllabus scan's real subject
+  // for the identical item, which would otherwise defeat the whole point
+  // of this check).
+  const dupNorm=t=>(t||"").trim().toLowerCase();
+  const isAlreadyPresent=(title,date,kind)=>existingEvents.some(ev=>ev.title&&dupNorm(ev.title)===dupNorm(title)&&ev.date===date&&ev.kind===kind);
   const added=fetchedEvents.filter(e=>e.uid&&!keptUids.has(e.uid)).map(e=>{
     const c=classifications&&classifications[e.uid];
     // "assignment"/"project" become Studlin's existing "deadline" kind --
@@ -1437,11 +1517,21 @@ function mergeImportedEvents(existingEvents,subId,fetchedEvents,classifications)
       // -- confidenceLog starts empty so the exam-prep check-in flow works
       // on it exactly like any other exam the moment it lands.
       ...(c&&c.kind==="exam"?{examWeight:c.examWeight||"major",confidenceLog:[]}:{}),
+      // Second real bug from the same live discussion: a classified
+      // "project" used to collapse to plain kind:"deadline" with no
+      // phases/outline, so isProjectMarker() never fired and it silently
+      // landed in Prep's Assignments table instead of Projects, with none
+      // of the phase/collaborator treatment a real project gets -- the
+      // classification was computed and then discarded. A minimal real
+      // outline is enough to genuinely qualify; the student can expand it
+      // in Studlin Prep from there, same as any other auto-generated
+      // starting point in this app.
+      ...(c&&c.kind==="project"?{outline:[{text:"Break down the plan in Studlin Prep",done:false}]}:{}),
       notes:"",priority:5,difficulty:5,
       deadline:null,status:"pending",timeSpent:0,completedAt:null,
       source:"import",importSubId:subId,externalUid:e.uid,
     };
-  });
+  }).filter(candidate=>!isAlreadyPresent(candidate.title,candidate.date,candidate.kind));
   return updated.concat(added);
 }
 // AI classification pass for a Schoology/Canvas calendar-feed import -- the
@@ -1988,8 +2078,8 @@ function findSlotWithEviction(events,routines,prefs,desiredDate,desiredTime,dura
 // date-less items, and anything the student has pinned are never eligible,
 // mirroring rebalanceDay's isFlexPending exclusions. Deliberately does not
 // introduce a new task.status value ("missed") — several existing filters
-// (findSlotWithEviction, computePausePlan, applyOverduePenalties, the daily
-// rollover detection itself) do exact-equality checks on status that a new
+// (findSlotWithEviction, computePausePlan, the daily rollover detection
+// itself) do exact-equality checks on status that a new
 // enum value would silently break; status stays "pending"|"done".
 const TIER0_FIXED_KINDS=new Set(["exam","class","busy block","reminder"]);
 // A task can be started through the Lock-In Timer -- and therefore can
@@ -2540,6 +2630,10 @@ function findReliableSlotFor(events,routines,prefs,desiredDate,desiredTime,durat
 // Same shape as isTier0Missed minus its !ev.time requirement, so a
 // timeless overdue task is still included the way the old Tier 1 filter
 // (and thus this replacement for it) always did.
+// Shared with Dashboard's own attackOverrun card (see D9 in the audit) so
+// the two never independently drift on what counts as "a rough week" --
+// previously a bare `2` lived inline only in App()'s daily sweep.
+const CATCHUP_RECOVERY_THRESHOLD=2;
 function computeCatchUpMissedItems(events,today){
   return events.filter(ev=>
     ev.status==="pending"&&
@@ -2559,6 +2653,68 @@ function computeCatchUpMissedItems(events,today){
     !(ev.deadline&&ev.deadline<today)
   );
 }
+// The Catch Me Up banner used to always say "yesterday" regardless of how
+// stale the backlog actually was -- computeCatchUpMissedItems only checks
+// date<today with no bound, so a student behind for several days (exam
+// week, sick days) got a banner that understated it in its own words. This
+// finds the oldest missed item's actual gap so the copy can say so honestly.
+function catchUpStalenessDays(missedItems,today){
+  if(!missedItems||missedItems.length===0)return 0;
+  const todayMs=new Date(today+"T12:00:00").getTime();
+  let maxDays=0;
+  missedItems.forEach(ev=>{
+    if(!ev.date)return;
+    const gap=Math.round((todayMs-new Date(ev.date+"T12:00:00").getTime())/86400000);
+    if(gap>maxDays)maxDays=gap;
+  });
+  return maxDays;
+}
+function catchUpStalenessLabel(days){
+  if(days<=1)return "yesterday";
+  if(days<=6)return "the last "+days+" days";
+  return "over a week ago";
+}
+// D10 in the audit: queueInsightNudge (in App()) wrote every deferred
+// struggling-bucket/peak-hour/exam-prep/prep-batch insight to this queue
+// while a Catch Me Up recovery banner was pending, but nothing ever read
+// it back -- confirmed by a full-file search, the code's own comment
+// admitted "write-only for now." Once recovery resolves, whatever queued
+// up needs to actually surface instead of vanishing. Pure so "which one
+// wins if the same kind queued more than once" is testable: later entries
+// overwrite earlier ones of the same kind, so the most recent survives.
+function pickLatestQueuedNudgesByKind(queued){
+  const out={};
+  (queued||[]).forEach(q=>{ if(q&&q.kind)out[q.kind]=q.payload; });
+  return out;
+}
+// D8 in the audit: the notification bell's unread dot was plain component
+// state, unconditionally starting "unseen" on every mount/reload -- opening
+// the bell cleared it for that tab's lifetime, but a refresh brought it
+// right back even with nothing new to see, and "Mark all read" didn't
+// persist anything either. Pure so the actual comparison is testable:
+// stable per-item ids, so it stays quiet across a reload showing the exact
+// same notifs, but flags unread again the moment the set genuinely changes.
+function notifSignatureOf(notifs){
+  return (notifs||[]).map(n=>n.id||n.title).join("|");
+}
+// P9 in the audit: prepPromptBatch, prepAutoToast, lockInErrorToast, and
+// examPrepSuggestion all render at the identical fixed bottom-right
+// position -- if more than one is truthy at once (a real possibility: an
+// auto-scheduled toast can land right as a Lock-In error fires, or a
+// prep-batch decision sits pending while an exam-prep suggestion arrives)
+// they'd stack literally on top of each other with no coordination at
+// all. Pure priority order: an active error outranks a just-finished
+// auto-action, which outranks a pending decision, which outranks a
+// general suggestion -- most time-sensitive/interruptive wins the slot.
+function bottomRightNotifSlot(lockInErrorToast,prepAutoToast,prepPromptBatchLength,examPrepSuggestion){
+  if(lockInErrorToast)return "error";
+  if(prepAutoToast)return "autoToast";
+  if(prepPromptBatchLength>0)return "promptBatch";
+  if(examPrepSuggestion)return "suggestion";
+  return null;
+}
+const getNotifSeenSignature=()=>lsGet("notif-seen-signature","");
+const setNotifSeenSignature=(sig)=>lsSet("notif-seen-signature",sig);
 const CATCHUP_EXAM_URGENT_DAYS=7; // an exam this close or closer makes its prep sessions time-sensitive
 function dayOfWeekLabel(dateKey){return new Date(dateKey+"T12:00:00").toLocaleDateString("en-US",{weekday:"long"});}
 function ordinalDay(dateKey){
@@ -4655,8 +4811,86 @@ function readabilityOf(html){
   var lvl=gradeNum<=6?"Grade 6 or below":gradeNum>=16?"College level":"Grade "+Math.max(1,Math.round(gradeNum));
   return{grade:letter,level:lvl};
 }
-function touchStreak(){const days=lsGet("days",[]);const t=dayKey();if(!days.includes(t)){days.push(t);lsSet("days",days);upsertProfile();}}
-function getStreak(){const days=new Set(lsGet("days",[]));let n=0;const d=new Date();while(days.has(dayKey(d))){n++;d.setDate(d.getDate()-1);}return n;}
+// D11 in the audit: the streak had no grace mechanic at all -- a single
+// day genuinely not opened (illness, travel, finals) reset it to zero
+// with no recovery path, despite the app's own copy ("study today to
+// keep it alive") implying more than the mechanic actually checked.
+// Decided mechanic (Duolingo-style, not invented on this branch --
+// confirmed with the product owner): earn one freeze token per
+// STREAK_FREEZE_MILESTONE_DAYS of streak, banked up to STREAK_FREEZE_MAX,
+// auto-spent on a day that turns out to have been missed instead of
+// breaking the streak.
+const STREAK_FREEZE_MILESTONE_DAYS=7;
+const STREAK_FREEZE_MAX=2;
+// Pure so the token math is testable without faking the clock across
+// multiple real days. Walks backward from `today` through the open-days
+// set; a day that's neither opened nor already frozen consumes one
+// available token (recorded in newlyFrozen) to keep the streak alive,
+// and the walk stops the moment neither applies. Read-only -- callers
+// decide whether/what to actually persist from newlyFrozen/remainingTokens.
+function computeStreakWithFreezes(openDays,frozenDays,tokens,today){
+  const openSet=new Set(openDays||[]);
+  const frozenSet=new Set(frozenDays||[]);
+  // Without this floor, a token would keep getting spent walking backward
+  // past the account's actual earliest real day -- treating "no data
+  // because the account didn't exist yet" as if it were a missed day,
+  // inflating the streak for as many extra days as there happened to be
+  // spare tokens. A gap can only ever be real between two days that
+  // genuinely have (or could have had) activity.
+  const earliestRealDay=(openDays&&openDays.length>0)?openDays.reduce((min,k)=>k<min?k:min):null;
+  let remainingTokens=tokens||0;
+  const newlyFrozen=[];
+  let streak=0;
+  const d=new Date(today+"T12:00:00");
+  for(;;){
+    const k=dayKey(d);
+    if(openSet.has(k)||frozenSet.has(k)){
+      streak++;
+    }else if(remainingTokens>0&&earliestRealDay&&k>=earliestRealDay){
+      remainingTokens--;
+      newlyFrozen.push(k);
+      streak++;
+    }else{
+      break;
+    }
+    d.setDate(d.getDate()-1);
+  }
+  return {streak,remainingTokens,newlyFrozen};
+}
+// Awards one freeze token the moment the streak actually crosses a new
+// STREAK_FREEZE_MILESTONE_DAYS multiple (comparing before/after, not just
+// "is newStreak a multiple of 7") so it's granted exactly once per
+// milestone rather than every single day the streak happens to stay past
+// it. Never exceeds STREAK_FREEZE_MAX.
+function awardFreezeTokenIfMilestone(prevStreak,newStreak,currentTokens){
+  if((currentTokens||0)>=STREAK_FREEZE_MAX)return currentTokens||0;
+  const prevMilestones=Math.floor((prevStreak||0)/STREAK_FREEZE_MILESTONE_DAYS);
+  const newMilestones=Math.floor((newStreak||0)/STREAK_FREEZE_MILESTONE_DAYS);
+  if(newMilestones>prevMilestones)return Math.min(STREAK_FREEZE_MAX,(currentTokens||0)+1);
+  return currentTokens||0;
+}
+const getStreakFreezeTokens=()=>lsGet("streakFreezeTokens",0);
+function touchStreak(){
+  const days=lsGet("days",[]);
+  const t=dayKey();
+  if(days.includes(t))return; // already touched today -- nothing to resolve
+  const frozenDays=lsGet("streakFrozenDays",[]);
+  const tokens=lsGet("streakFreezeTokens",0);
+  // Read-only comparison point: what the streak was, as of yesterday,
+  // under the state that existed before today's open -- used only to
+  // detect whether today's open crosses a new milestone, never persisted.
+  const yesterday=(()=>{const d=new Date(t+"T12:00:00");d.setDate(d.getDate()-1);return dayKey(d);})();
+  const before=computeStreakWithFreezes(days,frozenDays,tokens,yesterday);
+  const nextDays=[...days,t];
+  const after=computeStreakWithFreezes(nextDays,frozenDays,tokens,t);
+  lsSet("days",nextDays);
+  if(after.newlyFrozen.length>0)lsSet("streakFrozenDays",[...frozenDays,...after.newlyFrozen]);
+  lsSet("streakFreezeTokens",awardFreezeTokenIfMilestone(before.streak,after.streak,after.remainingTokens));
+  upsertProfile();
+}
+function getStreak(){
+  return computeStreakWithFreezes(lsGet("days",[]),lsGet("streakFrozenDays",[]),lsGet("streakFreezeTokens",0),dayKey()).streak;
+}
 // Shared 91-day heatmap data — used by both Profile/nav's StreakDetailModal
 // and (previously) Dashboard's inline streak card, so the two never disagree
 // about what counts as an active day.
@@ -4923,6 +5157,50 @@ function deckLinkedToExam(deck,examId){
 function isProjectMarker(ev){
   return !!((ev.phases&&ev.phases.length>0)||(ev.outline&&ev.outline.length>0));
 }
+// Splitting a Project into N sessions used to give every session its own
+// copy of phases/outline, so each one independently satisfied
+// isProjectMarker above -- "Project + Split into 3" produced 3 separate,
+// fully duplicate project cards on Dashboard instead of one project with 3
+// linked work sessions (checking a checklist item off one never touched the
+// others). Fix: only session 1 is the marker; every session after it links
+// back via dueEventId, the same convention exam-prep sessions already use.
+// Pure so the fix's actual data-shape contract is unit-testable without
+// needing the full CalendarTab closure buildTask lives in.
+function projectSplitLinkFields(evKind,splitIndex,markerId){
+  if(evKind!=="project"||!markerId)return {};
+  return splitIndex===1?{id:markerId}:{dueEventId:markerId};
+}
+// "Split into sessions" had no floor -- a short task split into the max
+// session count (10) could produce ~2-minute "study sessions," short enough
+// to not be worth opening the app for. Below the floor, sessions run longer
+// than an even split of the original duration rather than staying uselessly
+// short; the total naturally exceeds the original evDuration in that case,
+// which is the right tradeoff (a few minutes of extra scheduled time beats
+// a session too short to do anything in).
+// Month view's day cells used to show only a task COUNT ("6 tasks due"),
+// with no signal for how heavy the day actually is -- a day with one
+// 15-minute task and a day with 6 hours of stacked exam prep looked
+// identical except for the number. Pure so the tier thresholds are
+// unit-testable on their own, independent of the cell's render logic.
+// Deliberately a simple sum of every event's own duration (not
+// computeWeekBalancePlan's minutesFor, which is flex-only for its own
+// reshuffle-candidate purpose) -- this is asking "how full does today
+// look," which should count fixed classes/exams too, not just flexible
+// study time.
+const DAY_WORKLOAD_MODERATE_MINS=90;
+const DAY_WORKLOAD_HEAVY_MINS=240;
+function dayWorkloadMinutes(evs){
+  return (evs||[]).reduce((sum,ev)=>sum+(ev.duration||0),0);
+}
+function dayWorkloadTier(minutes){
+  if(minutes>=DAY_WORKLOAD_HEAVY_MINS)return "heavy";
+  if(minutes>=DAY_WORKLOAD_MODERATE_MINS)return "moderate";
+  return "light";
+}
+const SPLIT_SESSION_MIN_MINUTES=10;
+function splitSessionDuration(totalDuration,splitCount){
+  return Math.max(SPLIT_SESSION_MIN_MINUTES,Math.round((totalDuration||0)/Math.max(1,splitCount||1)));
+}
 function buildSpacedSessionPreviews(examDate,subject,count,duration){
   const dates=computeReviewDates(examDate,dayKey(),count);
   const d=duration||suggestDurationFor(subject,"study block")||25;
@@ -5064,31 +5342,43 @@ function getTotalMinutesFocused(){
   const s=lsGet("sessions",[]);
   return s.reduce((acc,x)=>acc+(x.m||0),0);
 }
-function applyOverduePenalties(){
-  const today=dayKey();
-  const events=lsGet("events",[]);
-  const penalized=lsGet("penalizedTasks",{});
-  let added=0;
-  events.forEach(ev=>{
-    if(penalized[ev.id])return;
-    if(ev.status!=="pending")return;
-    if(ev.date>=today)return;
-    if(ev.deadline&&ev.deadline<today)return;
-    // Two live scales coexist in the same events array (legacy raw 0-10,
-    // current Add/Edit Task slider 0-1000) -- reading .priority/.difficulty
-    // raw here made this penalty's magnitude differ by ~18,000x between two
-    // functionally-identical overdue tasks depending only on which UI
-    // created them. normalizeTaskVal (0-1) *10 puts both back on the same
-    // ~1-10 magnitude this formula's constants were originally tuned
-    // around, instead of collapsing every legacy-scale task's penalty
-    // toward near-zero.
-    const p=normalizeTaskVal(ev.priority,1)*10;
-    const d=normalizeTaskVal(ev.difficulty,1)*10;
-    const pen=Math.round((ev.duration||25)*p*d);
-    added+=pen;
-    penalized[ev.id]=true;
-  });
-  if(added>0){lsSet("xpPenaltyTotal",(lsGet("xpPenaltyTotal",0)+added));lsSet("penalizedTasks",penalized);}
+// "Streak reminders" in Settings used to be a toggle with no engine behind
+// it at all -- "a nudge if you haven't studied by 8pm" described a feature
+// that didn't exist anywhere in the codebase (see S2 in the audit). Pure
+// decision so it's testable without faking Notification/timers/clock: given
+// the current hour, whether today's nudge already went out, and today's
+// logged sessions, decides whether to fire one right now.
+function shouldFireStreakNudge(hour,alreadySentToday,todaySessions){
+  if(alreadySentToday)return false;
+  if(hour<20)return false;
+  if((todaySessions||[]).some(s=>(s.m||0)>0))return false;
+  return true;
+}
+const getStreakNudgeSentDate=()=>lsGet("streak-nudge-sent-date",null);
+const markStreakNudgeSent=(dateKey)=>lsSet("streak-nudge-sent-date",dateKey);
+// "Deadline alerts" was the same story -- a toggle nothing read, so there
+// was no way to say "only notify me about exams/assignments" the way the
+// audit's S2 finding put it. Scoped narrowly: due-date kinds need this
+// toggle on; every other kind's start-time reminder is unaffected by it,
+// still gated only by the master switch exactly as before.
+function reminderCategoryAllowed(evKind,deadlineAlertsOn){
+  if(evKind==="deadline"||evKind==="exam")return deadlineAlertsOn!==false;
+  return true;
+}
+// N9/N10 in the audit: this used to compute a real per-task XP penalty
+// and accumulate it into xpPenaltyTotal on every load, with penalizedTasks
+// growing by one entry per overdue task forever, no cleanup -- but
+// nothing anywhere (levelInfo, profileStats) ever actually read
+// xpPenaltyTotal, so the computation was pure overhead with zero visible
+// effect. Actually making it punish students would be a real product
+// decision (Studlin's whole brand personality is motivating, not
+// punishing -- see CLAUDE.md), not something to decide unilaterally here,
+// so removed rather than wired up. cleanupOrphanedPenaltyStorage (called
+// once below) clears out what already accumulated in existing accounts.
+function cleanupOrphanedPenaltyStorage(){
+  if(lsGet("penaltyStorageCleaned",false))return;
+  try{localStorage.removeItem("studlin-xpPenaltyTotal");localStorage.removeItem("studlin-penalizedTasks");}catch(e){}
+  lsSet("penaltyStorageCleaned",true);
 }
 function levelInfo(){const minutes=getTotalMinutesFocused();const per=300;const level=Math.floor(minutes/per)+1;const into=minutes-(level-1)*per;const title=getProfTitle(minutes);const nextTier=PROF_TIERS.find(t=>t.minMinutes>minutes)||null;const curTierMinutes=(PROF_TIERS.slice().reverse().find(t=>minutes>=t.minMinutes)||PROF_TIERS[0]).minMinutes;const tierPct=nextTier?Math.round(Math.max(0,Math.min(100,(minutes-curTierMinutes)/(nextTier.minMinutes-curTierMinutes)*100))):100;return {minutes,level,into,per,toNext:per-into,pct:Math.round(into/per*100),title,nextTier,tierPct};}
 function weekStreak(){const days=new Set(lsGet("days",[]));const now=new Date();const dow=(now.getDay()+6)%7;const mon=new Date(now);mon.setDate(now.getDate()-dow);return ["M","T","W","T","F","S","S"].map((lab,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);const k=dayKey(d);const today=k===dayKey(now);return {lab,on:days.has(k),today,future:d>now&&!today};});}
@@ -5415,6 +5705,33 @@ function shouldShowWeekBalanceNudge(){
 }
 function dismissWeekBalanceNudge(){
   lsSet("weekBalanceNudgeDismissedAt",Date.now());
+}
+// "Scan my whole schedule" (college) and the HS bulk-schedule import both
+// read a schedule GRID -- class names + meeting times, plus any exam dates
+// that happen to be printed on it. Neither can pull assignments/projects,
+// because a schedule grid genuinely doesn't contain them (that's a
+// syllabus, a different document). Subjects created either way are tagged
+// needsSyllabus so a nudge can point back at the same quickScan+
+// targetCourseId "Import syllabus"/"Scan assignments" flow already
+// reachable from each course's own menu, instead of leaving assignments
+// as a dead end with no path back except manual entry. Cooldown (not
+// permanent dismiss) since new bulk-scanned classes can show up later and
+// still deserve the nudge, same reasoning as shouldShowWeekBalanceNudge above.
+const SYLLABUS_NUDGE_COOLDOWN_MS=3*86400000;
+function shouldShowSyllabusNudge(){
+  const dismissedAt=lsGet("syllabusNudgeDismissedAt",0);
+  return Date.now()-dismissedAt>=SYLLABUS_NUDGE_COOLDOWN_MS;
+}
+function dismissSyllabusNudge(){
+  lsSet("syllabusNudgeDismissedAt",Date.now());
+}
+// A class only needs the nudge if nothing it was given so far actually
+// came from a syllabus -- exam-only items (all a schedule-grid scan can
+// ever produce) or no items at all (a manually "choose"-added class)
+// both still qualify; a real syllabus scan's assignment/project items
+// satisfy it, whichever flow originally produced them.
+function classNeedsSyllabus(items){
+  return !(items||[]).some(it=>it.kind==="assignment"||it.kind==="project");
 }
 
 // Studlin Reschedule's actual planning engine ("push everything back N
@@ -6763,6 +7080,14 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   const patchExam=(examId,patch)=>{
     const all=lsGet("events",[]);
     lsSet("events",all.map(e=>e.id===examId?{...e,...patch}:e));
+    // P4 in the audit: this fast inline edit path only ever patched the
+    // exam itself -- unlike confidence check-ins and practice-exam
+    // completion, it never restamped already-scheduled sessions, so the
+    // exam's own field and its sessions' priority could quietly diverge.
+    // Scoped to the fields computeSessionPriority actually reads, so
+    // patching something unrelated (title, notes) doesn't trigger a
+    // pointless restamp pass.
+    if(["priority","difficulty","examWeight","importanceLevel"].some(k=>k in patch))restampSessionPriorities(examId);
     refresh();
   };
   // Bucketed edit for priority("urgency")/difficulty -- both already exist
@@ -7039,8 +7364,14 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
 
       {tab==="exams"&&!selectedExam&&(
         exams.length===0
+          // P7 in the audit: Flashcards' and Practice Exams' empty states
+          // in this same component both include a real action button --
+          // this one was text-only. Exams are added through Calendar's own
+          // Add Task flow, not here, so the button takes you there instead
+          // of duplicating that form.
           ?<Card style={{padding:"32px 20px",textAlign:"center"}}>
             <div style={{fontSize:13,color:T.muted,marginBottom:14}}>No upcoming exams yet — add one from your calendar to start building material for it.</div>
+            <BtnSm onClick={()=>setActive("calendar")}>{Icon.plus} Go to Calendar</BtnSm>
           </Card>
           :(()=>{
               const viewPlan=(ex)=>{
@@ -7409,8 +7740,12 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
               const prepColor=prep&&prep.score!=null?(prep.score>=70?T.lime:prep.score<40?T.red:T.amber):T.faint;
               return (
                 <div style={{marginBottom:20}}>
-                  <span onMouseEnter={()=>setReadinessExpanded(true)} onMouseLeave={()=>setReadinessExpanded(false)}
-                    style={{display:"inline-flex",fontSize:11,fontWeight:700,color:stateColor,background:stateColor+"14",border:`1px solid ${stateColor}44`,borderRadius:6,padding:"4px 10px",cursor:"default"}}>
+                  {/* P3 in the audit: this was mouseenter/mouseleave only --
+                      structurally unreachable on touch, the primary target
+                      device for an iOS-first app. onClick toggles it too,
+                      hover still works for desktop/trackpad. */}
+                  <span onMouseEnter={()=>setReadinessExpanded(true)} onMouseLeave={()=>setReadinessExpanded(false)} onClick={()=>setReadinessExpanded(e=>!e)}
+                    style={{display:"inline-flex",fontSize:11,fontWeight:700,color:stateColor,background:stateColor+"14",border:`1px solid ${stateColor}44`,borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>
                     {readiness.state.toUpperCase().replace("-"," ")}
                   </span>
                   <div style={{fontSize:13,color:T.text,lineHeight:1.5,marginTop:8}}>{readiness.sentence}</div>
@@ -7939,6 +8274,26 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
         )}
         {buildPlanExam&&buildPlanStep==="preview"&&buildPlanPreview&&(
           <div>
+            {/* P1 in the audit: weekPrepLoad/pressuredExamItems already
+                exist and work in Syllabus Review and Brain Dump, but this
+                flow -- Studlin Prep's own Build Study Plan, one of the two
+                primary ways a student actually schedules exam prep -- never
+                called either one. A student building plans for 3 exams the
+                same week got each one generated in total isolation. Same
+                "Spread out" affordance Syllabus Review uses, reusing the
+                count-adjust action this modal already has. */}
+            {buildPlanPreview.dates.length>0&&(()=>{
+              const pressure=weekPrepLoad(buildPlanPreview.dates[0],buildPlanExam,lsGet("events",[]),getSchedulePreferences());
+              if(!pressure.isPressured)return null;
+              return (
+                <div style={{fontSize:12,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:8,padding:"8px 12px",marginBottom:14,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+                  <span>{pressure.competingTitle?"The week this starts in is already busy with "+pressure.competingTitle+".":"The week this starts in is already busy."} You can build it as planned, or spread it out.</span>
+                  {buildPlanPreview.sessionCount>1&&(
+                    <button type="button" onClick={()=>adjustBuildPlanCount(buildPlanPreview.sessionCount-1)} style={{background:"none",border:"none",color:T.amber,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",flexShrink:0,padding:0}}>Spread out</button>
+                  )}
+                </div>
+              );
+            })()}
             {/* "Redo" specifically (not a fresh Build) -- show what's
                 actually being replaced before it's gone. Reads straight
                 from storage since commitBuildPlan hasn't run yet at
@@ -10413,8 +10768,15 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
           <button onClick={()=>{resetCreateGroup();setCreateGroupOpen(true);}} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:T.lime,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>{Icon.plus} Create Group</button>
         </div>
         <Card style={{padding:0,overflow:"hidden"}}>
+          {/* N6 in the audit: this used to be passive text with no button,
+              unlike every other empty state in this component. */}
           {inboxShown.length===0
-            ?<div style={{padding:20,fontSize:12.5,color:T.muted,lineHeight:1.6}}>{inboxTab==="Groups"?"No groups yet. Create one to start a project chat.":"No friends or groups yet. Search below to add classmates."}</div>
+            ?<div style={{padding:20,textAlign:"center"}}>
+                <div style={{fontSize:12.5,color:T.muted,lineHeight:1.6,marginBottom:12}}>{inboxTab==="Groups"?"No groups yet. Create one to start a project chat.":"No friends or groups yet. Search below to add classmates."}</div>
+                {inboxTab==="Groups"
+                  ?<BtnSm onClick={()=>{resetCreateGroup();setCreateGroupOpen(true);}}>{Icon.plus} Create Group</BtnSm>
+                  :<BtnSm onClick={()=>setInviteOpen(true)}>{Icon.mail} Invite classmates</BtnSm>}
+              </div>
             :inboxShown.map((row,i)=>{
                 if(row.kind==="group"){
                   const g=row.group;
@@ -10490,13 +10852,27 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
                       <div style={{width:34,height:34,borderRadius:9,background:T.lime+"18",border:`1px solid ${T.lime}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,flexShrink:0}}>{Icon.zap}</div>
                       <div>
                         <div style={{fontSize:13,fontWeight:700,color:T.white}}>Be the pioneer on your campus.</div>
-                        <div style={{fontSize:11,color:T.muted}}>Invite classmates to auto-sync routines and conquer the leaderboard!</div>
+                        {/* N3 in the audit: "conquer the leaderboard" -- no
+                            leaderboard exists anywhere in the app anymore.
+                            Matches the real value prop (see the Growth
+                            Banner right below: auto-synced routines +
+                            shared scheduling). */}
+                        <div style={{fontSize:11,color:T.muted}}>Invite classmates to auto-sync routines and study together.</div>
                       </div>
                     </div>
                     <Btn onClick={()=>setInviteOpen(true)} style={{width:"100%",justifyContent:"center"}}>{Icon.mail} Invite classmates</Btn>
                   </div>
             }
           </Card>
+        </div>
+      )}
+      {/* N7 in the audit: this whole section used to just not render at
+          all when Profile's school field was empty -- more likely for a
+          first-time HS student than a college one, leaving a barer page
+          right where the most inviting pitch on it would otherwise be. */}
+      {!mySchool&&(
+        <div style={{marginBottom:24,padding:"16px 18px",borderRadius:10,background:T.card,border:`1px solid ${T.border}`,fontSize:12,color:T.muted,lineHeight:1.6}}>
+          Add your school in Profile to find and connect with classmates automatically.
         </div>
       )}
 
@@ -11033,9 +11409,24 @@ function computeSessionPriority(examLike,todayKey){
   // importanceLevel (new, richer signal) is checked first when present;
   // anything without it (every exam that predates this field) computes
   // byte-identically to before via the legacy examWeight table.
-  const impact=examLike.importanceLevel
+  const baseImpact=examLike.importanceLevel
     ?(IMPORTANCE_TO_IMPACT[examLike.importanceLevel]??IMPORTANCE_TO_IMPACT.major)
     :(EXAM_WEIGHT_TO_IMPACT[examLike.examWeight]??EXAM_WEIGHT_TO_IMPACT.major);
+  // P5 in the audit: gradeWeightPercent was collected in three different
+  // places (Build Study Plan, Syllabus Review) and stored on the exam,
+  // but never actually read anywhere -- pure busywork for whoever typed
+  // it in. A precise teacher-stated percentage nudges the coarser
+  // importanceLevel/examWeight bucket rather than replacing it (an exam
+  // explicitly worth 40% of the grade should outrank one at 5% even if
+  // both self-reported the same generic "major"), bounded to a modest
+  // ±0.15 so one number can't overwhelm the tuned base signal. Missing
+  // (the common case, since it's optional) leaves impact completely
+  // unchanged -- every exam predating this field, or without a stated
+  // percentage, computes byte-identically to before.
+  const gradeWeightNudge=examLike.gradeWeightPercent!=null
+    ?Math.max(-0.15,Math.min(0.15,(examLike.gradeWeightPercent-20)/200))
+    :0;
+  const impact=Math.max(0,Math.min(1,baseImpact+gradeWeightNudge));
   const log=examLike.confidenceLog||[];
   const lastRating=log[log.length-1];
   // No check-in yet (very common right after an exam is first created) ->
@@ -13464,6 +13855,20 @@ function TaskTimerModal({task,onClose,onComplete,onAssignmentComplete,onAssignme
 // two things landing in the same window (e.g. a class overlapping a
 // manually-added study block) would render on top of one another, clipping
 // whichever card ended up underneath.
+// A cluster of same-time overlaps used to split into as many equal-width
+// columns as there were overlapping events, uncapped -- real schedule
+// conflicts are legal (fixed-kind events are explicitly exempt from
+// conflict-avoidance, see resolveManualSlot), so a genuinely busy cluster
+// (several after-school activities, a real double-booking) rendered as an
+// increasing number of illegibly thin slivers with no way to see or reach
+// the ones squeezed out. Columns 0..(MAX-2) stay individually visible;
+// column MAX-1 becomes one "+N more" slot for everything past that --
+// the earliest-starting overflow item renders (carrying the count of the
+// rest via overflowCount), the rest are flagged hidden:true so a caller
+// knows not to render them as their own card. displayCol/displayTotalCols
+// are what layout math should use; col/totalCols (the real, uncapped
+// values) are kept unchanged for any caller that doesn't care about the cap.
+const MAX_VISIBLE_DAY_COLUMNS=4;
 function layoutDayEvents(evs) {
   const items = evs.map(ev => {
     const [hh, mm] = ev.time.split(":").map(Number);
@@ -13494,7 +13899,21 @@ function layoutDayEvents(evs) {
       item.col = col;
     });
     const totalCols = columnEnds.length;
-    cluster.forEach(item => laidOut.push({ ...item, totalCols }));
+    if(totalCols<=MAX_VISIBLE_DAY_COLUMNS){
+      cluster.forEach(item=>laidOut.push({...item,totalCols,displayCol:item.col,displayTotalCols:totalCols,hidden:false,overflowCount:0}));
+      return;
+    }
+    const overflowCol=MAX_VISIBLE_DAY_COLUMNS-1;
+    const overflowItems=cluster.filter(item=>item.col>=overflowCol).sort((a,b)=>a.start-b.start);
+    cluster.forEach(item=>{
+      if(item.col<overflowCol){
+        laidOut.push({...item,totalCols,displayCol:item.col,displayTotalCols:MAX_VISIBLE_DAY_COLUMNS,hidden:false,overflowCount:0});
+      }else if(item===overflowItems[0]){
+        laidOut.push({...item,totalCols,displayCol:overflowCol,displayTotalCols:MAX_VISIBLE_DAY_COLUMNS,hidden:false,overflowCount:overflowItems.length-1});
+      }else{
+        laidOut.push({...item,totalCols,displayCol:overflowCol,displayTotalCols:MAX_VISIBLE_DAY_COLUMNS,hidden:true,overflowCount:0});
+      }
+    });
   });
   return laidOut;
 }
@@ -13962,7 +14381,17 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                     <div style={{borderTop:"2px solid #E5484D"}} />
                   </div>
                 )}
-                {(() => { const dayLaidOut = layoutDayEvents(visibleEvs); return dayLaidOut.map(({ev, col, totalCols, start}) => {
+                {(() => { const dayLaidOut = layoutDayEvents(visibleEvs); return dayLaidOut.map(({ev, col, totalCols, displayCol, displayTotalCols, start, hidden, overflowCount}) => {
+                  // A real schedule conflict (fixed-kind events are exempt
+                  // from conflict-avoidance -- see resolveManualSlot) used
+                  // to split into as many equal-width columns as there
+                  // were overlapping events, with no cap -- 6+ things at
+                  // the same time rendered as illegibly thin slivers.
+                  // layoutDayEvents now caps visible columns and flags
+                  // anything past the cap hidden:true; that one just isn't
+                  // rendered as its own card here (its neighbor in the
+                  // overflow slot carries a "+N" badge instead, see below).
+                  if(hidden)return null;
                   const timeParts = ev.time.split(":").map(Number);
                   const hh = timeParts[0]; const mm = timeParts[1];
                   const origStartMin = hh * 60 + mm;
@@ -14005,8 +14434,8 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   const dimmedByRoutineMode = editRoutineMode && !isRoutine;
                   const highlightedByRoutineMode = editRoutineMode && isRoutine;
                   const isSelected = !isRoutine && selectedEventId === ev.id;
-                  const leftPct = (col / totalCols) * 100;
-                  const widthPct = 100 / totalCols;
+                  const leftPct = (displayCol / displayTotalCols) * 100;
+                  const widthPct = 100 / displayTotalCols;
                   // Commute buffer strips (2026-07-30) -- effectiveLeadIn/
                   // effectiveTrailOut already reserve this time in the real
                   // conflict math (see their own comment), but nothing ever
@@ -14042,6 +14471,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                           one recovery banner is the single source of "you're
                           behind" now, not a per-item red dot competing with it. */}
                       {!catchUpPending&&over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:"0 0 0 1.5px rgba(255,255,255,0.9)",zIndex:1}} />}
+                      {overflowCount>0&&<span title={overflowCount+" more at this time — open the day to see them"} style={{position:"absolute",bottom:2,right:2,fontSize:8,fontWeight:800,color:kindStyle.color,background:"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>+{overflowCount}</span>}
                       <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                       {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isWarningKind?tokens.color.warning:tokens.color.textSecondary,marginTop:1}}>{fmtTime(String(Math.floor(effStartMin/60)).padStart(2,"0")+":"+String(effStartMin%60).padStart(2,"0"))}{effDuration ? " · "+effDuration+"m" : ""}</div>}
                       {/* Drag-to-resize edge handles -- routine occurrences
@@ -14326,7 +14756,13 @@ function RosterList({items,setItems,makeNewItem,addLabel}){
           </div>
         ))}
       </div>
-      <button type="button" onClick={addRow} style={{background:"none",border:"none",color:T.lime,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0}}>+ Add another{addLabel?" "+addLabel:""}</button>
+      {/* "Another" only reads right once something already exists -- on
+          an empty list (e.g. the Activities step, sitting right below its
+          own separate "Start with default activities" button) it made
+          this look like a secondary add-on to that button instead of an
+          equally valid way to build a fully custom list from scratch,
+          which addRow already supports either way. */}
+      <button type="button" onClick={addRow} style={{background:"none",border:"none",color:T.lime,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0}}>{items.length===0?"+ Add"+(addLabel?" an "+addLabel:" one"):"+ Add another"+(addLabel?" "+addLabel:"")}</button>
     </div>
   );
 }
@@ -14508,7 +14944,14 @@ function PhasesOutlineEditor({item,onChange,subject}){
             );
           })}
           <button type="button" onClick={()=>onChange({outline:[...item.outline,""]})} style={{background:"none",border:"none",color:T.muted,fontSize:10.5,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline",textAlign:"left"}}>+ Add step</button>
-          <div style={{fontSize:10,color:T.faint}}>Add a date on any step your professor gave its own due date for -- optional, only tightens scheduling for that step.</div>
+          {/* O11 in the audit: this component is shared across HS and
+              college contexts (New Task's Project type, syllabus-scan
+              review) but had no status awareness at all -- reads
+              getProfile().status directly rather than threading a new
+              prop through all 3 call sites, matching how the course menu
+              already branches "Scan assignments" vs "Import syllabus"
+              copy elsewhere in this file. */}
+          <div style={{fontSize:10,color:T.faint}}>Add a date on any step your {getProfile().status==="highschool"?"teacher":"professor"} gave its own due date for -- optional, only tightens scheduling for that step.</div>
         </div>
       )}
     </div>
@@ -14532,7 +14975,12 @@ function PhasesOutlineEditor({item,onChange,subject}){
 // after already picking one). Doesn't include addMode's own sub-steps
 // inside "classes" (scan/review/hsSchedule/hsReview) -- those already have
 // their own correct "<- Back" links returning to addMode=null/"choose".
-const WIZARD_STEP_ORDER=["timezone","term","holidays","awake","status","classes","activities","calendarSync","finalReview"];
+// O9 in the audit: "awake" (which sets the default study window) used to
+// come before "status", so an HS student's study start/end got asked
+// with no school-hours context to sanity-check against yet -- status now
+// comes first, so a future "that overlaps your school day" check has
+// something real to compare against instead of nothing.
+const WIZARD_STEP_ORDER=["term","holidays","status","awake","classes","activities","calendarSync","finalReview"];
 // Phase 8: the 6 named steps a fresh account walks through, shown as a
 // top progress stepper. "status" (HS/college fork) isn't its own labeled
 // step -- Shovel doesn't show one either -- it's the entry to "Courses",
@@ -14540,7 +14988,6 @@ const WIZARD_STEP_ORDER=["timezone","term","holidays","awake","status","classes"
 // named steps but aren't part of the stepper (same as "window" wasn't,
 // before it got merged into "awake").
 const WIZARD_STEPPER=[
-  {key:"timezone",label:"Timezone"},
   {key:"term",label:"End of Term"},
   {key:"holidays",label:"Holidays"},
   {key:"awake",label:"Awake time"},
@@ -14676,10 +15123,15 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     setStatus(initialStatus||"");
     // quickScan (Import syllabus from a course's 3-dot menu) and a
     // returning user with an already-known status both skip straight to
-    // "classes", same shortcut this wizard already had -- the 4 new
-    // Phase 8 steps ahead of "status" are only for a brand-new account's
-    // very first full pass.
-    setStep(quickScan?"classes":(initialStatus?"classes":"timezone"));
+    // "classes", same shortcut this wizard already had -- the Phase 8
+    // steps ahead of "status" are only for a brand-new account's very
+    // first full pass. O10 in the audit: this used to start at "timezone",
+    // a step with no input at all beyond a mandatory Continue (its own
+    // copy says "nothing to set here") -- every brand-new account paid
+    // that extra screen for zero actual configuration. Starts at "term"
+    // now; timezone is still detected live via detectTz() wherever it's
+    // actually used, same as before, just never shown as its own step.
+    setStep(quickScan?"classes":(initialStatus?"classes":"term"));
     setTimezone(detectTz());
     const term=getSchoolTerm();
     setTermStart((term&&term.start)||"");
@@ -14990,7 +15442,11 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     // term is configured -- an untagged course always counts as current,
     // matching this codebase's usual "additive, backward compatible" rule
     // for a new optional field.
-    const newSubjects=valid.map(p=>({id:"subj-"+Date.now()+"-"+Math.round(Math.random()*1000),label:p.subjectName.trim(),color:p.color,termEnd:termEnd||null}));
+    // Same gap as the college whole-schedule scan (see needsSyllabus in
+    // commitAllToCalendar below) -- a bell-schedule photo/paste has no
+    // assignment data in it at all, so every class committed here still
+    // needs a real syllabus/assignment scan of its own.
+    const newSubjects=valid.map(p=>({id:"subj-"+Date.now()+"-"+Math.round(Math.random()*1000),label:p.subjectName.trim(),color:p.color,termEnd:termEnd||null,needsSyllabus:true}));
     saveSubjects([...getSubjects(),...newSubjects]);
     const routineItems=valid.map((p,i)=>{
       const dur=Math.max(15,timeToMinutes(p.endTime)-timeToMinutes(p.startTime));
@@ -15050,7 +15506,20 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // class 2's scheduling correctly sees class 1's just-committed sessions,
   // same threading a single sequential commit always had.
   const commitAllToCalendar=()=>{
-    if(windowInvalid||pendingClasses.length===0)return;
+    if(windowInvalid)return;
+    // O4 in the audit: this used to bail out entirely whenever
+    // pendingClasses was empty, which is *always* true on a pure HS
+    // whole-schedule commit (commitHsSchedule writes straight to storage,
+    // never through pendingClasses -- see O1 above) -- so "Add to
+    // Calendar" silently did nothing and the only way through the wizard
+    // was "Skip all," which reads as abandoning the flow, not finishing
+    // it. hsClassesCommitted>0 means there really is something to
+    // finish: everything below this guard is already a safe no-op on an
+    // empty pendingClasses (subjects/routine just get re-saved unchanged),
+    // so nothing here risks re-committing or duplicating those classes --
+    // it just lets the shared finish housekeeping (schedule prefs, term,
+    // holidays, wake/sleep, onFinish) actually run.
+    if(pendingClasses.length===0&&hsClassesCommitted===0)return;
     let subjects=getSubjects();
     // Opened from an existing course's own "Import syllabus" action
     // (targetCourseId set) -- attach to that exact course instead of
@@ -15059,8 +15528,22 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     const withIds=pendingClasses.map((cls,i)=>({...cls,subjId:(targetCourseId&&i===0)?targetCourseId:("subj-"+Date.now()+"-"+Math.round(Math.random()*1000)+"-"+cls.id)}));
     let routine=getWeeklyRoutine();
     withIds.forEach(cls=>{
-      if(cls.subjId===targetCourseId)return; // already exists -- don't duplicate the subject or its meeting time, only the deadlines/sessions below are new
-      subjects=[...subjects,{id:cls.subjId,label:cls.name,color:cls.color,termEnd:termEnd||null}];
+      if(cls.subjId===targetCourseId){
+        // Attaching a syllabus scan to a course that already exists (the
+        // quickScan+targetCourseId path from "Import syllabus"/"Scan
+        // assignments") -- don't duplicate the subject or its meeting
+        // time, just clear the needsSyllabus nudge flag now that real
+        // deadlines/sessions are about to be committed for it below.
+        subjects=subjects.map(s=>s.id===cls.subjId?{...s,needsSyllabus:false}:s);
+        return;
+      }
+      // A whole-schedule scan only ever asks the AI for exam dates (see
+      // COLLEGE_SCHEDULE_JSON_CONTRACT) -- it structurally can't produce
+      // assignment/project items, so a class committed here with none of
+      // those still needs its own syllabus scanned separately. A manually
+      // "choose"-added class with zero items qualifies too, correctly --
+      // it hasn't had any deadlines added yet either.
+      subjects=[...subjects,{id:cls.subjId,label:cls.name,color:cls.color,termEnd:termEnd||null,needsSyllabus:classNeedsSyllabus(cls.items)}];
       const routineItems=(cls.meetingTimes||[]).filter(mt=>mt.days.length>0).map(mt=>({id:"rt-"+Date.now()+"-"+Math.round(Math.random()*1000),title:cls.name,kind:"class",subject:cls.name,courseId:cls.subjId,days:mt.days,startTime:mt.startTime,duration:mt.duration}));
       routine=[...routine,...routineItems];
     });
@@ -15074,7 +15557,13 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       }
     });
     if(activities.length>0)saveWeeklyRoutine([...getWeeklyRoutine(),...activities]);
-    setSchedulePreferences({...getSchedulePreferences(),workStartTime:workStart,workEndTime:workEnd,peakHourBuckets:peakBuckets});
+    // O5 in the audit: the "when do you sleep" answer persisted to its own
+    // wakeSleep storage key (below), but the scheduler's actual late-
+    // session cutoff reads a completely separate prefs.bedtime field with
+    // a hardcoded "23:00" default -- so a stated "asleep at 2am" changed
+    // nothing about how late Studlin would actually schedule. bedtime now
+    // saved alongside the rest of this same commit.
+    setSchedulePreferences({...getSchedulePreferences(),workStartTime:workStart,workEndTime:workEnd,peakHourBuckets:peakBuckets,bedtime:sleepTime});
     // Latent bug fix (Phase 9d): `status` was a purely local UI branch
     // before this -- chosen at the very first step of this wizard, then
     // never actually written to the real profile, so Settings' own
@@ -15107,13 +15596,6 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       <div style={{width:"100%",maxWidth:620,maxHeight:"88vh",display:"flex",flexDirection:"column",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease"}}>
         <WizardStepper step={step} />
         <div style={{padding:"28px 32px 0",overflowY:"auto",flex:1,minHeight:0}}>
-
-          {step==="timezone"&&(<>
-            <TitleSub title="Your timezone" sub="Detected automatically from your device, and kept up to date if you travel -- nothing to set here." />
-            <div style={{...subjectRowStyle(T.lime),justifyContent:"center",padding:"16px 12px"}}>
-              <span style={{fontSize:14,fontWeight:600,color:T.text}}>{timezone||detectTz()}</span>
-            </div>
-          </>)}
 
           {step==="term"&&(<>
             <TitleSub title="When does this term run?" sub="Studlin stops expecting your classes outside these dates -- summer, before the term starts. You can always change this later in Settings." />
@@ -15182,13 +15664,23 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
           {step==="status"&&(<>
             <TitleSub title="What best describes you?" sub="Studlin builds your week differently for school hours vs. a college schedule." />
             <div style={{display:"flex",gap:10}}>
-              <button type="button" onClick={()=>{setStatus("highschool");setStep("classes");}} style={wizardStatusChipStyle(status==="highschool")}>High School</button>
-              <button type="button" onClick={()=>{setStatus("college");setStep("classes");}} style={wizardStatusChipStyle(status==="college")}>College</button>
+              <button type="button" onClick={()=>{setStatus("highschool");setStep("awake");}} style={wizardStatusChipStyle(status==="highschool")}>High School</button>
+              <button type="button" onClick={()=>{setStatus("college");setStep("awake");}} style={wizardStatusChipStyle(status==="college")}>College</button>
             </div>
           </>)}
 
           {step==="classes"&&addMode===null&&(<>
             <TitleSub title="Add your classes" sub="Scan a syllabus and Studlin reads the class, its meeting time, and its assignments, exams, and projects. Nothing goes on your calendar until you review everything and hit Add to Calendar at the end. Double-click a class to edit it." />
+            {/* O1 in the audit: a whole-schedule HS scan commits straight to
+                storage instead of staging into pendingClasses (see
+                commitHsSchedule) -- this screen used to show nothing at all
+                afterward beyond a 3-second toast, reading as if the scan had
+                failed even though it succeeded. Persistent, not fading. */}
+            {hsClassesCommitted>0&&pendingClasses.length===0&&(
+              <div style={{fontSize:12.5,color:T.lime,background:T.lime+"10",border:`1px solid ${T.lime}30`,borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+                {hsClassesCommitted} class{hsClassesCommitted!==1?"es":""} already added from your schedule scan. Add more below, or continue when you're done.
+              </div>
+            )}
             {pendingClasses.length>0&&(
               <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:18}}>
                 {pendingClasses.map(cls=>(
@@ -15396,7 +15888,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
               <div style={{marginBottom:8}}>
                 <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:2}}>Assignments, exams &amp; projects</div>
                 <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>
-                  {review.items.length===0?"None found — add one if you know of any.":"AI dates and detail are guesses — check them. Anything already past its date is unchecked."}
+                  {review.items.length===0?"None found — add one if you know of any. You can also add a syllabus for this class anytime from Courses.":"AI dates and detail are guesses — check them. Anything already past its date is unchecked."}
                 </div>
                 <div style={{display:"flex",flexDirection:"column",gap:8}}>
                   {review.items.map((it,i)=>(
@@ -15530,7 +16022,16 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
             return (<>
               <TitleSub title="Review everything before it goes on your calendar" sub="Click a class to see what's in it. Click an assignment, exam, or project for exactly when it's scheduled — edit, remove, or add more before you commit." />
               {pendingClasses.length===0?(
-                <div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"24px 0"}}>No classes staged yet — go back and add one.</div>
+                // O1/O4 in the audit: this read as "nothing happened" even
+                // right after a successful HS whole-schedule scan, since
+                // that path commits straight to storage instead of staging
+                // here (see commitHsSchedule) -- hsClassesCommitted tells
+                // the honest story instead of a blanket "go back."
+                <div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"24px 0"}}>
+                  {hsClassesCommitted>0
+                    ?hsClassesCommitted+" class"+(hsClassesCommitted!==1?"es":"")+" already added from your schedule scan — nothing else staged. Hit Finish below, or go back to add more."
+                    :"No classes staged yet — go back and add one."}
+                </div>
               ):pendingClasses.map(cls=>{
                 const clsPreview=finalPreview.find(p=>p.classId===cls.id);
                 const included=cls.items.filter(it=>it.include);
@@ -15615,16 +16116,15 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
             <button type="button" onClick={onSkip} style={{fontSize:12.5,color:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>Skip all</button>
           </div>
           <div style={{display:"flex",gap:10}}>
-            {step==="timezone"&&(<Btn onClick={()=>setStep("term")}>Continue</Btn>)}
             {step==="term"&&(<>
               <Btn variant="subtle" onClick={()=>setStep("holidays")}>Skip</Btn>
               <Btn onClick={()=>setStep("holidays")}>Continue</Btn>
             </>)}
             {step==="holidays"&&(<>
-              <Btn variant="subtle" onClick={()=>setStep("awake")}>Skip</Btn>
-              <Btn onClick={()=>setStep("awake")}>Continue</Btn>
+              <Btn variant="subtle" onClick={()=>setStep("status")}>Skip</Btn>
+              <Btn onClick={()=>setStep("status")}>Continue</Btn>
             </>)}
-            {step==="awake"&&(<Btn onClick={()=>setStep("status")} disabled={windowInvalid} style={{opacity:windowInvalid?0.45:1}}>Continue</Btn>)}
+            {step==="awake"&&(<Btn onClick={()=>setStep("classes")} disabled={windowInvalid} style={{opacity:windowInvalid?0.45:1}}>Continue</Btn>)}
             {step==="classes"&&addMode===null&&(
               <Btn onClick={()=>quickScan?setStep("finalReview"):setStep("activities")}>{(pendingClasses.length>0||hsClassesCommitted>0)?"Done adding classes":"Skip, I'll add classes later"}</Btn>
             )}
@@ -15641,9 +16141,10 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
             {step==="calendarSync"&&(
               <Btn onClick={()=>setStep("finalReview")}>Continue</Btn>
             )}
-            {step==="finalReview"&&(
-              <Btn onClick={commitAllToCalendar} disabled={pendingClasses.length===0} style={{opacity:pendingClasses.length===0?0.45:1}}>Add to Calendar</Btn>
-            )}
+            {step==="finalReview"&&(()=>{
+              const hasSomethingToFinish=pendingClasses.length>0||hsClassesCommitted>0;
+              return <Btn onClick={commitAllToCalendar} disabled={!hasSomethingToFinish} style={{opacity:hasSomethingToFinish?1:0.45}}>{pendingClasses.length>0?"Add to Calendar":"Finish"}</Btn>;
+            })()}
           </div>
         </div>
       </div>
@@ -15783,7 +16284,7 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
 // illegibility on a packed day and clamp to a narrow window on a light
 // one). The container just scrolls, same as any normal calendar, landing
 // near the current time or the first real event on open.
-function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending}) {
+function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew}) {
   const scrollRef=useRef(null);
   const [dayPreviewOpen,setDayPreviewOpen]=useState(false);
   const stepDay=(n)=>{const d=new Date(selDay+"T12:00:00");d.setDate(d.getDate()+n);setSelDay(dayKey(d));};
@@ -15875,7 +16376,11 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
                 <div style={{borderTop:"2px solid #E5484D"}} />
               </div>
             )}
-            {dayLaidOut.map(({ev,col,totalCols,start})=>{
+            {dayLaidOut.map(({ev,col,totalCols,displayCol,displayTotalCols,start,hidden,overflowCount})=>{
+              // See the matching comment in WeeklyPlanner -- layoutDayEvents
+              // caps visible columns and flags overflow items hidden:true
+              // instead of rendering an ever-thinner sliver per conflict.
+              if(hidden)return null;
               const topPx=(start-spanStart)*(pxPerHr/60);
               const dur=ev.duration||30;
               const nextInCol=dayLaidOut.filter(o=>o.col===col&&o.start>start).sort((a,b)=>a.start-b.start)[0];
@@ -15892,8 +16397,8 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
                 :isExam
                   ?{background:T.ink,border:`2px solid ${color}`,borderLeft:`2px solid ${color}`,boxShadow:`0 0 10px -1px ${color}, inset 0 0 10px ${color}22`,color:T.cream}
                   :{background:color+"1E",borderLeft:`3px solid ${color}`,color};
-              const leftPct=(col/totalCols)*100;
-              const widthPct=100/totalCols;
+              const leftPct=(displayCol/displayTotalCols)*100;
+              const widthPct=100/displayTotalCols;
               // Commute buffer strips -- same treatment as WeeklyPlanner's
               // (see its own comment), so a real commute stays visible
               // whichever view a student happens to be looking at.
@@ -15910,6 +16415,7 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
                   title={ev.isRoutine?"Double-click to edit":"Click to toggle done, double-click to edit"}
                   style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:6,padding:"4px 8px",cursor:"pointer",overflow:"hidden",zIndex:3,opacity:isDone?0.6:1,boxSizing:"border-box",...kindStyle}}>
                   {!catchUpPending&&over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:`0 0 0 1.5px ${isExam?T.ink:"#fff"}`,zIndex:1}} />}
+                  {overflowCount>0&&<span title={overflowCount+" more at this time"} style={{position:"absolute",bottom:2,right:2,fontSize:8,fontWeight:800,color:kindStyle.color,background:"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>+{overflowCount}</span>}
                   <div style={{fontSize:11.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:isDone?"line-through":"none"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                   {heightPx>34&&<div style={{fontSize:9.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:2}}>{fmtTime(ev.time)}{dur?" · "+dur+"m":""}</div>}
                 </div>
@@ -15925,7 +16431,7 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
         </div>
       </div>
     </Card>
-    <DayPreviewModal open={dayPreviewOpen} onClose={()=>setDayPreviewOpen(false)} dayEvents={dayEvents} selDay={selDay} dayLabel={niceDayLabel} colorOf={colorOf} fmtTime={fmtTime} catchUpPending={catchUpPending} />
+    <DayPreviewModal open={dayPreviewOpen} onClose={()=>setDayPreviewOpen(false)} dayEvents={dayEvents} selDay={selDay} dayLabel={niceDayLabel} colorOf={colorOf} fmtTime={fmtTime} catchUpPending={catchUpPending} openNew={openNew} />
     </>
   );
 }
@@ -15939,7 +16445,7 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
 // DayPlanner) and colorOf (so a class's color here always matches its
 // color everywhere else in the app -- never a fresh palette).
 const DAY_PREVIEW_ICON_BY_KIND={"class":Icon.cal,"study block":Icon.brain,"exam":Icon.zap,"deadline":Icon.file,"reminder":Icon.clock};
-function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime,catchUpPending}){
+function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime,catchUpPending,openNew}){
   if(!open)return null;
   const visibleEvs=(dayEvents||[]).filter(ev=>ev.kind!=="free period"&&ev.time);
   const starts=visibleEvs.map(ev=>{const p=ev.time.split(":").map(Number);return p[0]*60+p[1];});
@@ -15970,7 +16476,11 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
   if(spanEnd-cursor>=20)freeGaps.push({start:cursor,end:spanEnd});
   const iconFor=(kind)=>DAY_PREVIEW_ICON_BY_KIND[kind]||Icon.dot;
   return(
-    <Modal open={open} onClose={onClose} title={dayLabel} sub={visibleEvs.length+" scheduled item"+(visibleEvs.length!==1?"s":"")} width={520}>
+    <Modal open={open} onClose={onClose} title={dayLabel} sub={visibleEvs.length+" scheduled item"+(visibleEvs.length!==1?"s":"")} width={520}
+      // Every sibling empty state (Dashboard, the day-detail modal) offers
+      // "+ Add task" -- this was the one glance-and-close surface with no
+      // next action at all when a day was empty.
+      footer={visibleEvs.length===0&&openNew?<Btn onClick={()=>{onClose();openNew(selDay);}} style={{flex:1,justifyContent:"center"}}>+ Add task</Btn>:undefined}>
       {visibleEvs.length===0
         ?<div style={{textAlign:"center",padding:"24px 0",color:T.muted,fontSize:13}}>Nothing scheduled this day.</div>
         :<div style={{maxHeight:"62vh",overflowY:"auto"}}>
@@ -15992,14 +16502,16 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
                 <div style={{width:"100%",borderTop:`1.5px dashed ${T.faint}`,fontSize:10.5,color:T.faint,paddingLeft:8}}>{fmtGapLabel(g.start)}–{fmtGapLabel(g.end)} Free Time</div>
               </div>
             ))}
-            {dayLaidOut.map(({ev,col,totalCols,start})=>{
+            {dayLaidOut.map(({ev,col,totalCols,displayCol,displayTotalCols,start,hidden,overflowCount})=>{
+              // See the matching comment in WeeklyPlanner.
+              if(hidden)return null;
               const topPx=(start-spanStart)*(pxPerHr/60);
               const dur=ev.duration||30;
               const nextInCol=dayLaidOut.filter(o=>o.col===col&&o.start>start).sort((a,b)=>a.start-b.start)[0];
               const heightPx=computeEventBlockHeightPx(dur,nextInCol?nextInCol.start-start:null,pxPerHr);
               const color=ev.color||colorOf(ev.courseId||ev.subject);
-              const leftPct=(col/totalCols)*100;
-              const widthPct=100/totalCols;
+              const leftPct=(displayCol/displayTotalCols)*100;
+              const widthPct=100/displayTotalCols;
               return(
                 <div key={ev.id} style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:8,padding:"6px 10px",overflow:"hidden",zIndex:3,boxSizing:"border-box",background:color+"22",border:`1px solid ${color}55`,display:"flex",flexDirection:"column",justifyContent:"center"}}>
                   <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -16007,6 +16519,7 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
                     <span style={{fontSize:12,fontWeight:700,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</span>
                   </div>
                   {heightPx>30&&<div style={{fontSize:10,color:T.muted,marginTop:2,marginLeft:19}}>{fmtTime(ev.time)}{dur?" · "+dur+"m":""}</div>}
+                  {overflowCount>0&&<div style={{fontSize:9.5,fontWeight:700,color,marginTop:1,marginLeft:19}}>+{overflowCount} more at this time</div>}
                 </div>
               );
             })}
@@ -17470,6 +17983,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // anything to the one actually clicked (found live, see
   // ClassSetupWizard's commitAllToCalendar).
   const [quickScanTargetCourseId,setQuickScanTargetCourseId]=useState(null);
+  // Local mirror of the syllabus-nudge cooldown so dismissing it hides the
+  // banner immediately, same pattern weekBalanceNudge uses -- lsSet alone
+  // wouldn't re-render anything since nothing here reads localStorage
+  // reactively.
+  const [syllabusNudgeDismissed,setSyllabusNudgeDismissed]=useState(false);
   // High-school course menu's "Weekly schedule" -- a short note per
   // weekday a class meets (lecture vs. lab vs. homework due), stored on
   // that course's own routine "class" entry. New concept, no prior field
@@ -17776,6 +18294,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // users unsure which one they were supposed to fill in.
   const [taskMode,setTaskMode]=useState("ai");
   const [evDuration,setEvDuration]=useState(60);
+  // C9 in the audit: commuteBefore/commuteAfter already existed as real,
+  // scheduler-respected fields (effectiveLeadIn/effectiveTrailOut), but
+  // the only UI for them was the recurring-routine edit modal -- a one-off
+  // appointment across town (a doctor's visit, not a weekly class) had no
+  // path to a buffer at all unless marked recurring first. "" (not 0) so
+  // an untouched field renders as empty, matching evCommuteBefore/After's
+  // own placeholder="0" convention below.
+  const [evCommuteBefore,setEvCommuteBefore]=useState("");
+  const [evCommuteAfter,setEvCommuteAfter]=useState("");
   // Tracks whether the student has actually touched the Duration field on
   // THIS open of the form — suggestDurationFor already existed as a
   // dismissible "use this" suggestion the student had to notice and click;
@@ -17864,11 +18391,18 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // "Balance my week" modal can never disagree about whether there's
   // anything to balance.
   const [weekBalanceNudge,setWeekBalanceNudge]=useState(false);
+  // C6 in the audit: this used to be a mount-only effect ([] deps), so
+  // adding several tasks while staying on the Calendar tab never
+  // re-triggered it -- only the next full tab visit would. events in the
+  // dependency array re-runs the same check whenever this tab's own task
+  // list actually changes; it only ever sets the nudge to true, so an
+  // already-dismissed or not-yet-warranted week can't get spuriously
+  // re-shown by an unrelated edit.
   useEffect(()=>{
     if(!shouldShowWeekBalanceNudge())return;
-    const plan=computeWeekBalancePlan(lsGet("events",[]),routines,getSchedulePreferences(),dayKey());
+    const plan=computeWeekBalancePlan(events,routines,getSchedulePreferences(),dayKey());
     if(plan.moves.length>0)setWeekBalanceNudge(true);
-  },[]);
+  },[events]);
   const declineWeekBalanceNudge=()=>{logSuggestionDecision("weekBalanceNudge","dismissed",{});dismissWeekBalanceNudge();setWeekBalanceNudge(false);};
   const acceptWeekBalanceNudge=()=>{logSuggestionDecision("weekBalanceNudge","accepted",{});setWeekBalanceNudge(false);openWeekBalance();};
   const confirmWeekBalance=()=>{
@@ -17980,7 +18514,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       setTimeout(()=>setReconcileToast(""),3400);
     }
   };
-  const persistRoutines=(r)=>{setRoutinesState(r);saveWeeklyRoutine(r);reconcileRoutineConflicts(r);};
+  // S5 in the audit: ensureSubjectsForClassRoutines is a no-op for any
+  // item that already has a courseId (every routine edit/move/resize call
+  // site below passes those through), so it's safe to run on every commit
+  // here rather than chasing down each individual "a brand new class just
+  // got added" call site separately -- this is the one real choke point
+  // all of them already share.
+  const persistRoutines=(r)=>{const next=ensureSubjectsForClassRoutines(r);setRoutinesState(next);saveWeeklyRoutine(next);reconcileRoutineConflicts(next);};
   // Reconciliation above only fires on a routine *change* — it never touches
   // tasks that were already conflicting before this logic existed, or that
   // drifted into conflict for any other reason. Run it once on every Calendar
@@ -18248,7 +18788,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // "let AI schedule this". The clicked day is remembered so fixed-time kinds
   // (exam/class/reminder), which always need a real date, can still default
   // to it once the user picks one of those types.
-  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("09:00");setEvSubject("None");setEvCustomColor(T.lime);setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);resetTypeExtras();setNewOpen(true);};
+  const openNew=(dateK)=>{setEvPrefillDate(dateK||selDay);setEvTime("09:00");setEvSubject("None");setEvCustomColor(T.lime);setEvDate("");setEvDeadline("");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvCommuteBefore("");setEvCommuteAfter("");resetTypeExtras();setNewOpen(true);};
   // Same form as openNew, just arriving with the scheduling mode already
   // decided by which "Add task" menu option was tapped -- the in-modal
   // manual/AI toggle stays visible so it's correctable, not a dead end.
@@ -18279,7 +18819,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     const params=computeStudyPlanParams(undefined,25,evConfidence,materialCharCount,undefined);
     if(params.sessionCount!==evExamPlan.sessionCount)setEvExamPlan(m=>({...m,sessionCount:params.sessionCount}));
   },[newOpen,evKind,evExamPlan.proposeSessions,evExamPlan.materialFiles,evConfidence,evSessionCountTouched]);
-  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvCustomColor(T.lime);setEvDate("");setEvTime("09:00");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setAiLoading(false);setAsChecklist(false);resetTypeExtras();};
+  const resetForm=()=>{setNewOpen(false);setEvTitle("");setEvNotes("");setEvCustom("");setEvCustomColor(T.lime);setEvDate("");setEvTime("09:00");setEvPriority(500);setEvDifficulty(500);setEvMoreOpen(false);setEvDeadline("");setEvDeadlineTime("23:59");setTaskMode("ai");setEvDuration(60);setEvDurationTouched(false);setEvSaveToRoutine(false);setEvSplitEnabled(false);setEvSplitCount(2);setEvAttackBlock(false);setEvAttackProbeMins(ATTACK_BLOCK_DEFAULT_PROBE_MINS);setEvCommuteBefore("");setEvCommuteAfter("");setAiLoading(false);setAsChecklist(false);resetTypeExtras();};
   const onEvKindChange=(k)=>{
     setEvKind(k);
     const willBeFixed=(k==="exam"||k==="class"||k==="reminder"||k==="busy block");
@@ -18318,8 +18858,17 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   const resolveAssignmentKind=()=>evKind==="assignment"?(taskMode==="ai"?"deadline":"study block"):(evKind==="project"?"deadline":evKind);
   const buildTask=(date,time,titleSuffix,splitInfo)=>{
     const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
-    const projectPhases=evKind==="project"&&evProjectPlan.phases?evProjectPlan.phases.map(p=>p.trim()).filter(Boolean):[];
-    const projectOutline=evKind==="project"&&evProjectPlan.outline?normalizeOutlineDraft(evProjectPlan.outline):[];
+    // Split session 2+ of a Project never gets its own copy of phases/
+    // outline -- without this guard, every split event independently
+    // satisfied isProjectMarker (phases.length>0||outline.length>0),
+    // so "Project + Split into 3 sessions" produced 3 separate, fully
+    // duplicate project cards on Dashboard instead of one project with
+    // 3 linked work sessions. Only the first session is the marker;
+    // callers stamp splitInfo.dueEventId on sessions 2+ to link them back
+    // to it, the same dueEventId convention exam-prep sessions already use.
+    const isSplitFollowup=splitInfo&&splitInfo.splitIndex>1;
+    const projectPhases=evKind==="project"&&evProjectPlan.phases&&!isSplitFollowup?evProjectPlan.phases.map(p=>p.trim()).filter(Boolean):[];
+    const projectOutline=evKind==="project"&&evProjectPlan.outline&&!isSplitFollowup?normalizeOutlineDraft(evProjectPlan.outline):[];
     return {id:String(Date.now()+Math.random()*1000),title:evTitle.trim()+(titleSuffix||""),date,time,subject:subj,courseId:courseIdForLabel(subj),kind:resolveAssignmentKind(),notes:evNotes,priority:evPriority,difficulty:evDifficulty,deadline:evDeadline||null,duration:splitInfo?Math.round(evDuration/evSplitCount):evDuration,status:"pending",timeSpent:0,completedAt:null,
       // Other has no matching entry in userSubjects for colorOf to find, so
       // without this every "Other" task would silently fall back to the
@@ -18329,6 +18878,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       ...(evSubject==="Other"?{color:evCustomColor}:{}),
       ...(projectPhases.length>0?{phases:projectPhases.map((name,pi)=>({name,status:pi===0?"active":"pending"}))}:{}),
       ...(projectOutline.length>0?{outline:projectOutline}:{}),
+      // C9 in the audit: only meaningful for fixed-time kinds (an "exam"
+      // due at 11:59pm has nothing to commute to) -- effectiveLeadIn/
+      // effectiveTrailOut already read commuteBefore/commuteAfter off any
+      // event, just needed a real value to read.
+      ...(isFixedKind&&(+evCommuteBefore>0||+evCommuteAfter>0)?{commuteBefore:Math.max(0,+evCommuteBefore||0),commuteAfter:Math.max(0,+evCommuteAfter||0)}:{}),
       ...(splitInfo||{})};
   };
   const commitTasks=(newTasks,opts)=>{
@@ -18628,6 +19182,24 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         tasks=tasks.concat(sessions);
       }
       commitTasks(tasks,{userPinned:true});
+      // resolveManualSlot (above) deliberately never conflict-checks a fixed
+      // kind like exam -- the student typed this exact time on purpose, so
+      // Studlin shouldn't second-guess it. But that meant nothing ever
+      // checked the OTHER direction: an existing flexible study block
+      // already sitting in that slot just stayed there, silently
+      // double-booked against the new exam (confirmed live in the real
+      // account -- an exam and an unrelated study session both at 10:00
+      // AM). reconcileFixedEventConflicts is the same relocate-or-flag
+      // function every calendar-import path already runs for exactly this
+      // "new fixed time might collide with an existing flexible one" case
+      // (Google Calendar sync, Schoology/Canvas import, work-schedule
+      // scans) -- exams created directly through Add Task just never called
+      // it. surfaceReconcileResult queues the result into the same
+      // scheduleChangeAlerts banner those paths already use, so a moved
+      // session shows up the normal way instead of silently relocating.
+      const examReconcile=reconcileFixedEventConflicts([examTask]);
+      surfaceReconcileResult(examReconcile);
+      if(examReconcile.moved.length>0)setEvents(examReconcile.events);
       // Fire-and-forget, same pattern attachSessionFocusesToSyllabusExams
       // uses for the syllabus-scan path -- material was already collected
       // in this same form, so a session shouldn't have to wait for a
@@ -18654,17 +19226,32 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     if(!evSplitEnabled){
       const slot=resolveManualSlot(evDate,evTime,evDuration);
       if(!slot){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
-      commitTasks([{...buildTask(slot.date,slot.time),placementReason:slot.reason||null}],{userPinned:true});
+      const fixedTask={...buildTask(slot.date,slot.time),placementReason:slot.reason||null};
+      commitTasks([fixedTask],{userPinned:true});
+      // Same reconcile as the exam path above -- Class and Activity are the
+      // other two kinds resolveManualSlot never conflict-checks (it trusts
+      // the exact time the student typed for any fixed real-world block),
+      // so they have the identical silent-double-booking gap exams did.
+      if(isFixedKind){
+        const fixedReconcile=reconcileFixedEventConflicts([fixedTask]);
+        surfaceReconcileResult(fixedReconcile);
+        if(fixedReconcile.moved.length>0)setEvents(fixedReconcile.events);
+      }
       return;
     }
     const groupId="split-"+Date.now();
-    const perSession=Math.round(evDuration/evSplitCount);
+    // A stable, predictable id for the Project marker (session 1) instead of
+    // buildTask's own random one -- lets sessions 2+ link back to it via
+    // dueEventId without needing to read session 1's generated id first.
+    const projectMarkerId=groupId+"-marker";
+    const perSession=splitSessionDuration(evDuration,evSplitCount);
     const tasks=[];
     for(let i=0;i<evSplitCount;i++){
       const d=new Date(evDate);d.setDate(d.getDate()+i);
       const slot=resolveManualSlot(dayKey(d),evTime,perSession);
       if(!slot)break;
-      tasks.push({...buildTask(slot.date,slot.time," ("+(i+1)+"/"+evSplitCount+")",{splitGroup:groupId,splitIndex:i+1,splitTotal:evSplitCount,duration:perSession}),placementReason:slot.reason||null});
+      tasks.push({...buildTask(slot.date,slot.time," ("+(i+1)+"/"+evSplitCount+")",{splitGroup:groupId,splitIndex:i+1,splitTotal:evSplitCount,duration:perSession,
+        ...projectSplitLinkFields(evKind,i+1,projectMarkerId)}),placementReason:slot.reason||null});
     }
     if(tasks.length===0){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
     commitTasks(tasks,{userPinned:true});
@@ -18691,7 +19278,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     const bufMins=now.getHours()*60+now.getMinutes()+15;
     const earliestTodayMins=Math.max(desiredStartMins,Math.ceil(bufMins/15)*15);
     const earliestTodayTime=minutesToTime(earliestTodayMins);
-    const perSession=Math.round(evDuration/(evSplitEnabled?evSplitCount:1));
+    const perSession=splitSessionDuration(evDuration,evSplitEnabled?evSplitCount:1);
     const splitCount=evSplitEnabled?evSplitCount:1;
     const isDesiredToday=desiredStartDate===tk;
     const windowStart=isDesiredToday?earliestTodayMins:desiredStartMins;
@@ -18731,12 +19318,18 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     // saveManual() isn't usable here.
     const fallbackSchedule=()=>{
       const groupId=splitCount>1?"split-"+Date.now():null;
+      // See the identical marker-id comment in saveManual's split loop --
+      // same fix, same reason: session 1 of a split Project is the real
+      // marker, sessions 2+ link back to it via dueEventId instead of each
+      // carrying their own duplicate copy of phases/outline.
+      const projectMarkerId=groupId?groupId+"-marker":null;
       const tasks=[];
       let cursorDate=firstAvailDate,cursorTime=windowStartTime;
       for(let i=0;i<splitCount;i++){
         const slot=findOpenSlot(cursorDate,cursorTime,perSession);
         if(!slot)break;
-        tasks.push({...buildTask(slot.date,slot.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})),placementReason:slot.reason||null});
+        tasks.push({...buildTask(slot.date,slot.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession,
+          ...projectSplitLinkFields(evKind,i+1,projectMarkerId)}:{duration:evDuration})),placementReason:slot.reason||null});
         const d=new Date(slot.date+"T12:00:00");d.setDate(d.getDate()+1);
         cursorDate=dayKey(d);cursorTime=minutesToTime(getWorkWindowMinsFor(prefs,cursorDate).start);
       }
@@ -18772,7 +19365,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         if(sanitized.length===0){fallbackSchedule();}
         else{
           const groupId=splitCount>1?"split-"+Date.now():null;
-          const tasks=sanitized.slice(0,splitCount).map((s,i)=>({...buildTask(s.date,s.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession}:{duration:evDuration})),placementReason:s.reason||null}));
+          // Same marker-id fix as fallbackSchedule/saveManual above.
+          const projectMarkerId=groupId?groupId+"-marker":null;
+          const tasks=sanitized.slice(0,splitCount).map((s,i)=>({...buildTask(s.date,s.time,splitCount>1?" ("+(i+1)+"/"+splitCount+")":"",(groupId?{splitGroup:groupId,splitIndex:i+1,splitTotal:splitCount,duration:perSession,
+            ...projectSplitLinkFields(evKind,i+1,projectMarkerId)}:{duration:evDuration})),placementReason:s.reason||null}));
           commitTasks(tasks);
         }
       }else{fallbackSchedule();}
@@ -19242,6 +19838,30 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
             <span style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.05em"}}>Courses</span>
             <button type="button" onClick={()=>setQuickScanOpen(true)} style={{background:"none",border:"none",color:T.lime,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0}}>+ Add new</button>
           </div>
+          {(()=>{
+            // A "Scan my whole schedule" (or HS bell-schedule) import can
+            // only ever produce classes + meeting times, never real
+            // assignments -- see needsSyllabus in commitAllToCalendar.
+            // Surface that gap right where "Import syllabus"/"Scan
+            // assignments" already lives per-course, instead of leaving it
+            // undiscoverable until someone happens to open a course's menu.
+            const needSyllabus=currentTermSubjects.filter(s=>s.needsSyllabus);
+            if(needSyllabus.length===0||syllabusNudgeDismissed||!shouldShowSyllabusNudge())return null;
+            return (
+              <div style={{padding:"9px 10px",borderRadius:8,border:`1px solid ${T.lime}33`,background:T.lime+"0f",marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:6}}>
+                  <div style={{fontSize:11,color:T.text,lineHeight:1.4}}>{needSyllabus.length===1?"1 class is":needSyllabus.length+" classes are"} missing a syllabus scan -- add one to auto-fill assignments and exams.</div>
+                  <button type="button" onClick={()=>{dismissSyllabusNudge();setSyllabusNudgeDismissed(true);}} title="Dismiss" style={{background:"none",border:"none",color:T.faint,fontSize:13,lineHeight:1,cursor:"pointer",padding:0,flexShrink:0}}>×</button>
+                </div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:7}}>
+                  {needSyllabus.map(s=>(
+                    <button key={s.id} type="button" onClick={()=>{setQuickScanTargetCourseId(s.id);setQuickScanOpen(true);}}
+                      style={{fontSize:10.5,fontWeight:600,padding:"4px 8px",borderRadius:6,border:`1px solid ${s.color}55`,background:s.color+"18",color:T.text,cursor:"pointer",fontFamily:T.font}}>{s.label}</button>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
           <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:18}}>
             {currentTermSubjects.length===0&&<div style={{fontSize:11,color:T.faint,padding:"4px 0 8px"}}>No courses yet.</div>}
             {currentTermSubjects.map(renderCourseRow)}
@@ -19432,15 +20052,34 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
               const evs=(byDay[c.key]||[]).filter(ev=>ev.kind!=="free period");
               const isToday=c.key===todayK;
               const isSel=c.key===selDay;
+              // Capacity meter along the cell's bottom edge -- light days
+              // get nothing (no need to flag an easy day). Deliberately
+              // neutral (not amber/red): color in this cell is already
+              // spoken for by the "N tasks due" pill below (red=overdue,
+              // lime=on track), and an amber line sitting right next to
+              // that red pill read as a second, competing warning signal
+              // instead of a separate "how full is this day" one. A plain
+              // 2px border-width delta between moderate/heavy was also too
+              // subtle to actually perceive at this size -- a fill bar
+              // whose WIDTH scales with real minutes scheduled reads much
+              // faster at a glance.
+              const workloadTier=dayWorkloadTier(dayWorkloadMinutes(evs));
+              const workloadPct=Math.max(0,Math.min(100,Math.round(dayWorkloadMinutes(evs)/DAY_WORKLOAD_HEAVY_MINS*100)));
               return (
                 <div key={i} onClick={()=>{setSelDay(c.key);}} onDoubleClick={()=>setDayDetailKey(c.key)}
                   onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(sidebarDragChip){openNewEventForDrop(sidebarDragChip,c.key,"09:00",{x:e.clientX,y:e.clientY});setSidebarDragChip(null);}else if(dragId){moveEvent(dragId,c.key);setDragId(null);}}}
+                  title={workloadTier!=="light"?dayWorkloadMinutes(evs)+" minutes scheduled":undefined}
                   style={{position:"relative",minHeight:64,minWidth:0,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.card2:"transparent",border:"1px solid "+(isSel?T.lime+"55":"transparent"),transition:"all 0.12s",opacity:c.out?0.35:1}}>
                   <div style={{display:"flex",justifyContent:"flex-start"}}>
                     <span style={{width:22,height:22,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:isToday?700:500,background:isToday?T.lime:"transparent",color:isToday?T.ink:c.out?T.faint:T.text}}>{c.d}</span>
                   </div>
                   {isSel && <button type="button" onClick={(e)=>{e.stopPropagation();openNew(c.key);}} title="Add a task on this day"
                     style={{position:"absolute",top:4,right:4,width:16,height:16,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.muted,fontSize:11,lineHeight:1,cursor:"pointer",display:"grid",placeItems:"center",padding:0}}>+</button>}
+                  {workloadTier!=="light"&&(
+                    <div style={{position:"absolute",left:7,right:7,bottom:5,height:3,borderRadius:2,background:T.border,overflow:"hidden"}}>
+                      <div style={{width:workloadPct+"%",height:"100%",borderRadius:2,background:T.muted}} />
+                    </div>
+                  )}
                   {/* Phase 10b: a single compact "N tasks due" bar instead
                       of listing individual event chips -- matches Shovel's
                       day-cell header exactly, and directly addresses the
@@ -19480,7 +20119,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           onPreviewDraggingChange={setPreviewDragActive} />
       )}
       {calView==="daily"&&(
-        <DayPlanner dayEvents={dayEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} />
+        <DayPlanner dayEvents={dayEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} openNew={openNew} />
       )}
     </div>
       {/* Right-hand column (Phase 5e) -- upcoming across everything by
@@ -19791,6 +20430,20 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         {isFixedKind&&(
           <>
             <Field label="Duration (minutes)" hint="How long this occupies on your calendar"><NumField min={5} max={480} fallback={5} value={evDuration} onChange={setEvDuration} /></Field>
+            {/* C9 in the audit: same inline label+pill commute row the
+                recurring-routine edit modal already has -- this is the one
+                place a one-off appointment (not marked "Save to Weekly
+                Routine") could otherwise never get a buffer at all. */}
+            <div style={{display:"flex",alignItems:"center",gap:10,fontSize:11,color:T.muted,flexWrap:"wrap",marginBottom:12}}>
+              <span style={{display:"flex",alignItems:"center",gap:5}}>Commute before:
+                <input type="number" min={0} placeholder="0" value={evCommuteBefore} onChange={e=>setEvCommuteBefore(e.target.value)}
+                  style={{width:42,background:T.card2,border:`1px solid ${T.border}`,borderRadius:5,padding:"2px 5px",color:T.text,fontSize:11,fontFamily:T.font,outline:"none"}} /> min
+              </span>
+              <span style={{display:"flex",alignItems:"center",gap:5}}>after:
+                <input type="number" min={0} placeholder="0" value={evCommuteAfter} onChange={e=>setEvCommuteAfter(e.target.value)}
+                  style={{width:42,background:T.card2,border:`1px solid ${T.border}`,borderRadius:5,padding:"2px 5px",color:T.text,fontSize:11,fontFamily:T.font,outline:"none"}} /> min
+              </span>
+            </div>
             <label className="checkbox" onClick={()=>setEvSaveToRoutine(s=>!s)} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:14,fontSize:12.5,color:T.text}}>
               <span style={{width:16,height:16,borderRadius:4,border:`1.5px solid ${evSaveToRoutine?T.lime:T.border}`,background:evSaveToRoutine?T.lime:"transparent",display:"grid",placeItems:"center",flexShrink:0,color:T.ink}}>{evSaveToRoutine&&Icon.check}</span>
               Save to my Weekly Routine
@@ -19841,6 +20494,27 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
                     <NumField min={1} max={6} fallback={4} value={evExamPlan.sessionCount||4} onChange={v=>{setEvSessionCountTouched(true);setEvExamPlan(m=>({...m,sessionCount:v}));}} style={{width:48}} />
                     <span style={{fontSize:10.5,color:T.muted}}>{!evDate?"Pick a date above first":dates.length===0?"Too close to the exam to fit a session":dates.length+" session"+(dates.length!==1?"s":"")+": "+dates.join(", ")}</span>
                   </div>
+                  {/* C5 in the audit: weekPrepLoad already exists and works
+                      in Syllabus Review and Brain Dump, but this toggle --
+                      the New Task modal's own exam-plan flow, one of the two
+                      primary ways a student actually schedules exam prep --
+                      never called it. A student could stack three exams'
+                      worth of sessions into one already-packed week with
+                      zero warning. {id:"__preview__"} matches how
+                      pressuredExamItems computes this same check for a
+                      not-yet-saved item elsewhere in this file. */}
+                  {dates.length>0&&(()=>{
+                    const pressure=weekPrepLoad(dates[0],{id:"__preview__"},events,getSchedulePreferences());
+                    if(!pressure.isPressured)return null;
+                    return (
+                      <div style={{fontSize:11,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:7,padding:"7px 10px",marginTop:8,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                        <span>{pressure.competingTitle?"That week's already busy with "+pressure.competingTitle+".":"That week's already busy."}</span>
+                        {(evExamPlan.sessionCount||4)>1&&(
+                          <button type="button" onClick={()=>{setEvSessionCountTouched(true);setEvExamPlan(m=>({...m,sessionCount:(m.sessionCount||4)-1}));}} style={{background:"none",border:"none",color:T.amber,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",flexShrink:0,padding:0}}>Spread out</button>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })()}
@@ -19891,7 +20565,14 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           </Field>
         )}
 
-        {isTaskKind&&!isChecklistMode&&!evSplitEnabled&&(<>
+        {/* Attack Block and Split into sessions used to just silently vanish
+            when the other was on, with nothing explaining why -- a student
+            enabling Split first had no way to know why "I don't know how
+            long this takes" disappeared. Each side now leaves a short note
+            in its place instead of a bare gap. */}
+        {isTaskKind&&!isChecklistMode&&(evSplitEnabled?(
+          <div style={{fontSize:11,color:T.faint,marginBottom:14}}>"I don't know how long this takes" isn't available while Split into sessions is on — turn Split off below to use it instead.</div>
+        ):(<>
           <AttackBlockExplainer />
           <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
             <div onClick={()=>setEvAttackBlock(a=>!a)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
@@ -19904,7 +20585,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
               </div>
             )}
           </div>
-        </>)}
+        </>))}
 
         {isTaskKind&&!isChecklistMode&&taskMode==="ai"&&(
           evMoreOpen ? (
@@ -19933,7 +20614,9 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           )
         )}
 
-        {isTaskKind&&!isChecklistMode&&!evAttackBlock&&(
+        {isTaskKind&&!isChecklistMode&&(evAttackBlock?(
+          <div style={{fontSize:11,color:T.faint,marginBottom:14}}>Split into sessions isn't available while "I don't know how long this takes" is on — turn that off above to use Split instead.</div>
+        ):(
           <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
             <div onClick={()=>setEvSplitEnabled(s=>!s)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
               <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Split into sessions</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Spread this task across multiple days</div></div>
@@ -19942,11 +20625,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
             {evSplitEnabled&&(
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
                 <Field label="Number of sessions"><NumField min={2} max={10} fallback={2} value={evSplitCount} onChange={setEvSplitCount} /></Field>
-                <Field label="Per session"><div style={{fontSize:14,fontWeight:600,color:T.lime,padding:"10px 0"}}>{Math.round(evDuration/evSplitCount)} min each</div></Field>
+                <Field label="Per session"><div style={{fontSize:14,fontWeight:600,color:T.lime,padding:"10px 0"}}>{splitSessionDuration(evDuration,evSplitCount)} min each{splitSessionDuration(evDuration,evSplitCount)>Math.round(evDuration/evSplitCount)?" (extended to a minimum length)":""}</div></Field>
               </div>
             )}
           </div>
-        )}
+        ))}
 
         {!isProjectKind&&(
           <Field label="Notes (optional)"><Textarea placeholder="e.g. Bring calculator, covers chapters 4 to 6." value={evNotes} onChange={ev=>setEvNotes(ev.target.value)} /></Field>
@@ -20487,6 +21170,20 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     document.body.appendChild(a);a.click();document.body.removeChild(a);
   };
   const [chatHistoryLoading,setChatHistoryLoading]=useState(false);
+  const [passwordResetLoading,setPasswordResetLoading]=useState(false);
+  const [passwordResetSent,setPasswordResetSent]=useState(false);
+  const sendPasswordReset=async()=>{
+    if(passwordResetLoading||!profile.email)return;
+    setPasswordResetLoading(true);
+    try{
+      await firebase.auth().sendPasswordResetEmail(profile.email);
+      setPasswordResetSent(true);
+      showToast("Password reset link sent to "+profile.email+".");
+    }catch(e){
+      showToast("Couldn't send that -- try again in a moment.","error");
+    }
+    setPasswordResetLoading(false);
+  };
   const [deleteAccountOpen,setDeleteAccountOpen]=useState(false);
   const [deleteConfirmText,setDeleteConfirmText]=useState("");
   const [deleteAccountLoading,setDeleteAccountLoading]=useState(false);
@@ -20735,23 +21432,26 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
       const res=await fetch("/api/cal-proxy?url="+encodeURIComponent(sub.url));
       const data=await res.json();
       if(!res.ok||!data.ok)return;
+      // Computed unconditionally now (used to live only inside the
+      // isAcademicCalendarSource branch, purely for classification) --
+      // third fix from the same live discussion: this count was already
+      // being thrown away in favor of a generic "synced" toast, and the
+      // once-a-day silent auto-resync below (which calls this exact same
+      // function) told the student literally nothing even when a
+      // professor had genuinely added something new.
+      const existingUids=new Set(lsGet("events",[]).filter(e=>e.importSubId===sub.id).map(e=>e.externalUid));
+      const newEvents=data.events.filter(e=>e.uid&&!existingUids.has(e.uid));
       let classifications;
-      if(isAcademicCalendarSource(sub.sourceType)){
-        const existingUids=new Set(lsGet("events",[]).filter(e=>e.importSubId===sub.id).map(e=>e.externalUid));
-        const newEvents=data.events.filter(e=>e.uid&&!existingUids.has(e.uid));
-        if(newEvents.length>0)classifications=await classifyImportedCalendarEvents(newEvents,sub.sourceType,mgmtSubjs.map(s=>s.label));
+      if(isAcademicCalendarSource(sub.sourceType)&&newEvents.length>0){
+        classifications=await classifyImportedCalendarEvents(newEvents,sub.sourceType,mgmtSubjs.map(s=>s.label));
       }
       const merged=mergeImportedEvents(lsGet("events",[]),sub.id,data.events,classifications);
       const result=reconcileFixedEventConflicts(merged.filter(e=>e.importSubId===sub.id));
       surfaceReconcileResult(result);
       const nextSubs=importedCals.map(s=>s.id===sub.id?{...s,lastSyncedAt:Date.now()}:s);
       setImportedCals(nextSubs);saveImportedCalendars(nextSubs);
-      // Neither this manual click nor the once-a-day silent auto-resync
-      // below used to surface anything on success, unlike both sibling
-      // actions (confirmImportCalendar, removeImportedCalendar) which do —
-      // short status wording, not an event count, since a resync's fetched
-      // count doesn't mean "N new/changed" the way it does on first import.
-      showToast(sub.label+" synced."+reconcileToastSuffix(result));
+      const newCount=merged.filter(e=>e.importSubId===sub.id&&!existingUids.has(e.externalUid)).length;
+      showToast(sub.label+(newCount>0?": "+newCount+" new item"+(newCount!==1?"s":"")+" found.":" synced.")+reconcileToastSuffix(result));
     }catch(e){}
   };
   const removeImportedCalendar=(sub)=>{
@@ -20901,6 +21601,11 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   );
   const [verb,setVerb]=useState(()=>lsGet("pref-verb","Balanced"));
   const [tutorStyle,setTutorStyle]=useState(()=>lsGet("pref-tutorStyle","Socratic"));
+  // Used to be an uncontrolled input with a defaultValue -- looked saved,
+  // never wrote anywhere, reset to 180/30 on every reload. Real state now,
+  // same immediate-persist-on-change pattern as verb/tutorStyle above.
+  const [dailyFocusTarget,setDailyFocusTarget]=useState(()=>lsGet("pref-dailyFocusTarget",180));
+  const [dailyFlashcardTarget,setDailyFlashcardTarget]=useState(()=>lsGet("pref-dailyFlashcardTarget",30));
   const accents=[{n:"Lime",c:"#AECE5E"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"}];
   const [mgmtSubjs,setMgmtSubjs]=useState(()=>getSubjects().map(s=>({...s})));
   const [mgmtSaved,setMgmtSaved]=useState(false);
@@ -21028,12 +21733,20 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Connected accounts</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Sync your calendar and cloud notes.</div>
-              {[["Google Calendar","Synced",true,true],["Apple Calendar","Connect",false,false],["Notion workspace","Connect",false,false],["Dropbox","Connect",false,false]].map(([n,st,on,live],i)=>(
-                <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 0",borderBottom:i<3?`1px solid ${T.border}`:"none"}}>
-                  <div style={{fontSize:13,color:T.text,fontWeight:500}}>{n}{!live&&<span style={{marginLeft:8,fontSize:10.5,fontWeight:600,color:T.faint}}>(Coming Soon)</span>}</div>
-                  <BtnSm variant={on?"subtle":"lime"} disabled={!live} style={!live?{opacity:0.4,cursor:"not-allowed"}:undefined}>{st}</BtnSm>
-                </div>
-              ))}
+              {/* This used to be a hardcoded, always-"Synced" duplicate of the
+                  real Integrations tab (fake state for Apple Calendar/Notion/
+                  Dropbox too) -- a student had no way to tell it wasn't real.
+                  Now it reads the same calGoogleLinked/importedCals state
+                  Integrations itself uses, and points there for the actual
+                  connect/disconnect actions instead of duplicating them. */}
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8}}>
+                <span style={{fontSize:12.5,color:T.text}}>
+                  {calGoogleLinked||importedCals.length>0
+                    ?[calGoogleLinked?"Google Calendar":null,importedCals.length>0?importedCals.length+" calendar feed"+(importedCals.length!==1?"s":""):null].filter(Boolean).join(" · ")+" connected"
+                    :"Nothing connected yet"}
+                </span>
+                <button type="button" onClick={()=>setActive("Integrations")} style={{background:"none",border:"none",color:T.lime,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",padding:0,flexShrink:0}}>Manage in Integrations</button>
+              </div>
             </Card>
             <Card style={{border:"1px solid rgba(224,90,71,0.22)"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:18}}>
@@ -21144,15 +21857,22 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Reminders</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Choose what wakes you up.</div>
-              <Row label="Push notifications" sub="Deadline reminders, streak alerts, squad activity." k="push" />
-              <Row label="Deadline alerts" sub="Get notified 24 hours, 1 hour, and 10 minutes before due time." k="deadline" />
-              <Row label="Streak reminders" sub="A nudge if you haven't studied by 8pm." k="streak" />
+              {/* "Push notifications" used to sit here too, describing the
+                  exact same scope as "Task & App Notifications" above --
+                  a second master switch, and neither it nor Deadline/Streak
+                  below actually gated anything (see S2 in the audit). Removed
+                  as a pure duplicate rather than wiring a third redundant
+                  kill switch; Deadline alerts and Streak reminders below are
+                  now real, independent category filters under that one
+                  master switch. */}
+              <Row label="Deadline alerts" sub="Get a heads-up before an assignment or exam's own start time." k="deadline" />
+              <Row label="Streak reminders" sub="A nudge if you haven't logged any study time by 8pm." k="streak" />
               <Row label="Focus sound alerts" sub="Audio cue when Pomodoro sessions complete." k="sound" />
             </Card>
             <Card>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Email</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Studlin will only email you when it matters.</div>
-              <Row label="Weekly Wrapped digest" sub="Your stats, every Sunday evening." k="wrapped" right={<Toggle k="emails" />} />
+              <Row label="Weekly Wrapped digest" sub="Your stats, every Sunday evening." k="wrapped" />
               <Row label="Study milestones" sub="When you hit a streak milestone or level up." k="squad" />
               <Row label="Product updates" sub="Occasional notes about new features and tips." k="emails" />
             </Card>
@@ -21162,7 +21882,12 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Private Account · Serious Mode</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Strip gamification and go heads-down. Focus minutes, levels, and Weekly Wrapped are hidden. Chat, calendar sharing, and notes stay fully accessible.</div>
-              <Row label="Private Account / Serious Mode" sub="Hides focus minutes, tiers, and leaderboard on Dashboard and Profile. Calendar stays a clean task grid either way." k="_" right={
+              {/* N3 in the audit: no leaderboard exists anywhere in the
+                  app, and this toggle doesn't affect Dashboard at all
+                  (only Profile actually reads seriousMode) -- matches the
+                  card's own accurate description just above instead of
+                  contradicting it. */}
+              <Row label="Private Account / Serious Mode" sub="Hides focus minutes and tiers on Profile. Calendar stays a clean task grid either way." k="_" right={
                 <div onClick={()=>{const next=!seriousMode;setSeriousMode(next);const s=lsGet("settings",{});lsSet("settings",{...s,seriousMode:next});}} style={{width:38,height:20,borderRadius:10,background:seriousMode?T.purple:T.card2,border:`1px solid ${seriousMode?T.purple:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
                   <div style={{width:14,height:14,borderRadius:"50%",background:seriousMode?T.bg:"#fff",position:"absolute",top:2,left:seriousMode?21:2,transition:"left 0.2s"}} />
                 </div>
@@ -21198,9 +21923,17 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             </Card>
             <Card>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:10}}>Account security</div>
-              <Row label="Two-factor authentication" sub="Add a one-time code on every sign in." k="twofa" />
-              <Row label="Active sessions" sub="3 devices currently signed in." k="sessions" right={<BtnSm variant="subtle">View sessions</BtnSm>} />
-              <Row label="Change password" sub="Last changed 3 months ago." k="pw" right={<BtnSm variant="subtle">Change</BtnSm>} />
+              {/* Two-factor and active-sessions used to be a toggle and a
+                  button that looked real -- flipping/clicking them changed
+                  nothing, and the device count and "last changed" date were
+                  fabricated strings, not real data. Honest disabled state
+                  now, same "(Coming Soon)" convention already used for Apple
+                  Calendar/Notion in Integrations, instead of pretending. */}
+              <Row label="Two-factor authentication" sub="Add a one-time code on every sign in." k="twofa" right={<BtnSm variant="subtle" disabled style={{opacity:0.4,cursor:"not-allowed"}}>Coming Soon</BtnSm>} />
+              <Row label="Active sessions" sub="See and sign out other signed-in devices." k="sessions" right={<BtnSm variant="subtle" disabled style={{opacity:0.4,cursor:"not-allowed"}}>Coming Soon</BtnSm>} />
+              <Row label="Change password" sub={passwordResetSent?"Reset link sent to "+profile.email+".":"We'll email you a secure link to set a new one."} k="pw" right={
+                <BtnSm variant="subtle" disabled={passwordResetLoading} onClick={sendPasswordReset}>{passwordResetLoading?"Sending…":passwordResetSent?"Resend":"Email reset link"}</BtnSm>
+              } />
             </Card>
           </>)}
 
@@ -21216,8 +21949,8 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             </Card>
             <Card>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>Daily targets</div>
-              <Field label="Daily focus target (minutes)"><Input type="number" defaultValue="180" /></Field>
-              <Field label="Daily flashcard target"><Input type="number" defaultValue="30" /></Field>
+              <Field label="Daily focus target (minutes)"><Input type="number" value={dailyFocusTarget} onChange={e=>{const n=Math.max(0,parseInt(e.target.value,10)||0);setDailyFocusTarget(n);lsSet("pref-dailyFocusTarget",n);}} /></Field>
+              <Field label="Daily flashcard target"><Input type="number" value={dailyFlashcardTarget} onChange={e=>{const n=Math.max(0,parseInt(e.target.value,10)||0);setDailyFlashcardTarget(n);lsSet("pref-dailyFlashcardTarget",n);}} /></Field>
             </Card>
           </>)}
 
@@ -21693,7 +22426,7 @@ function Profile({setActive,seriousMode=false}={}) {
   const camInputRef=useRef(null);
   const [prefSaved,setPrefSaved]=useState(false);
   const lvl=levelInfo();
-  const streak=Math.max(1,getStreak());
+  const streak=getStreak(); // D12: a genuine 0-day streak now honestly shows 0, not a floored "1"
   const ps=profileStats();
   const initials=((prof.name||"").split(" ").map(x=>x[0]).join("").slice(0,2).toUpperCase())||"S";
   const firstName=(prof.name||"there").split(" ")[0];
@@ -21768,7 +22501,11 @@ function Profile({setActive,seriousMode=false}={}) {
           <div style={{fontSize:22,fontWeight:700,color:T.white,letterSpacing:"-0.02em",marginBottom:3}}>{prof.name}</div>
           <div style={{fontSize:13,color:T.muted,marginBottom:12}}>{affiliation||prof.school||"No affiliation set"}</div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            <Badge color={T.lime}>Pro</Badge>
+            {/* Used to be a literal "Pro" string, shown to every user
+                regardless of actual plan -- the Subscription tab already
+                reads the real plan correctly (account.plan||getPlan()),
+                just needed the same check here. */}
+            <Badge color={getPlan()==="Max"?T.purple:T.lime}>{getPlan()}</Badge>
             {!seriousMode&&<span onClick={()=>setStreakModalOpen(true)} style={{cursor:"pointer"}}><Badge color={T.amber}>{streak}-day streak</Badge></span>}
             {!seriousMode&&<Badge color={T.blue}>{lvl.title}</Badge>}
             {status&&<Badge color={T.teal}>{status==="highschool"?"High School":"College"}</Badge>}
@@ -21947,6 +22684,7 @@ function LevelRoadmapModal({open,onClose,currentMinutes}){
 function StreakDetailModal({open,onClose,streak}){
   if(!open)return null;
   const {cells,longest}=computeStreakHeatmap();
+  const freezeTokens=getStreakFreezeTokens();
   return(
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
       <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:460,background:T.card,borderRadius:10,border:`1px solid ${T.border}`,overflow:"hidden",boxShadow:"0 28px 70px -20px rgba(0,0,0,0.55)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
@@ -21962,7 +22700,17 @@ function StreakDetailModal({open,onClose,streak}){
             <span style={{fontFamily:T.hand,fontSize:38,fontWeight:600,color:T.text}}>{streak}</span>
             <span style={{fontSize:13,color:T.muted}}>day streak</span>
           </div>
-          <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.10em",color:T.muted,marginBottom:18}}>LONGEST: {longest}</div>
+          <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.10em",color:T.muted,marginBottom:10}}>LONGEST: {longest}</div>
+          {/* D11 in the audit: the freeze-token mechanic needs to actually
+              be visible to mean anything -- same "earn a token every 7
+              days, bank up to 2, auto-spent on a missed day" idea
+              Duolingo uses, surfaced here so a student can see why a real
+              gap day didn't reset their count. */}
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:18,padding:"8px 12px",background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,fontSize:12,color:T.text}}>
+            <span style={{fontSize:14}}>🧊</span>
+            <span>{freezeTokens} freeze token{freezeTokens!==1?"s":""} banked</span>
+            <span style={{color:T.muted,marginLeft:"auto",fontSize:11}}>1 earned every {STREAK_FREEZE_MILESTONE_DAYS} days, up to {STREAK_FREEZE_MAX}</span>
+          </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(26,1fr)",gap:3}}>
             {cells.map((lv,i)=>(
               <div key={i} style={{aspectRatio:"1",borderRadius:3,background:streakCellColor(lv)}} />
@@ -21977,8 +22725,11 @@ function StreakDetailModal({open,onClose,streak}){
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleTask, dashToast, setDashToast, setDetailEventId, onTaskCompleted}) {
   const realStats=sessionStats();
-  const realStreak=Math.max(1,getStreak());
-  const lvl=levelInfo();
+  const realStreak=getStreak(); // D12: a genuine 0-day streak now honestly shows 0, not a floored "1"
+  // D5 in the audit: levelInfo() used to be computed here (const lvl=...)
+  // but never rendered anywhere in Dashboard -- dead since whatever level
+  // badge it fed got moved to Profile at some point, leaving this call
+  // behind.
   const [,forcePlan]=useState(0);
   const plan=todaysPlan();
   // A single real session can now expand into several display rows (see
@@ -22022,9 +22773,15 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   const allEvents=lsGet("events",[]);
   const today=dayKey();
   const in14days=new Date();in14days.setDate(in14days.getDate()+14);
-  const upcomingEvents=allEvents
+  // D2 in the audit: this used to silently cap at 5 with no indication
+  // anything was hidden -- a student with 12 things due this week saw the
+  // identical card as one with 2. upcomingEventsTotal (pre-slice) drives
+  // a real "+N more" below.
+  const upcomingEventsFiltered=allEvents
     .filter(ev=>!ev.checklist&&ev.date>=today&&ev.date<=dayKey(in14days)&&ev.status!=="done")
-    .sort((a,b)=>a.date.localeCompare(b.date)||((a.time||"").localeCompare(b.time||"")))
+    .sort((a,b)=>a.date.localeCompare(b.date)||((a.time||"").localeCompare(b.time||"")));
+  const upcomingEventsTotal=upcomingEventsFiltered.length;
+  const upcomingEvents=upcomingEventsFiltered
     .slice(0,5)
     .map(ev=>{
       const evDate=new Date(ev.date+"T12:00:00");
@@ -22072,7 +22829,12 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
   // the exact same computeWeekBalancePlan engine underneath, so the two
   // never disagree about what's actually movable, they just each own their
   // own preview-then-confirm UI.
-  const attackOverrun=detectAttackBlockOverruns(allEvents,today).filter(o=>!isAttackOverrunDismissedToday(o.chainId))[0]||null;
+  // D9 in the audit: this card and the App()-level Catch Me Up recovery
+  // banner are independently triggered and could stack when viewing
+  // Dashboard during a genuinely rough week -- same CATCHUP_RECOVERY_THRESHOLD
+  // used there, computed fresh here since this card has no other way to
+  // know recovery is pending (App() owns that state, not Dashboard).
+  const attackOverrun=computeCatchUpMissedItems(allEvents,today).length>=CATCHUP_RECOVERY_THRESHOLD?null:(detectAttackBlockOverruns(allEvents,today).filter(o=>!isAttackOverrunDismissedToday(o.chainId))[0]||null);
   const [overrunModalOpen,setOverrunModalOpen]=useState(false);
   const [overrunPlan,setOverrunPlan]=useState(null);
   const [overrunToast,setOverrunToast]=useState("");
@@ -22247,7 +23009,17 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                   </div>
                   <div style={{flex:1,minWidth:0}}>
                     <span style={{fontSize:13.5,color:t.done?T.faint:T.text,textDecoration:t.done?"line-through":"none",fontWeight:500}}>{t.title}</span>
-                    <div style={{fontSize:11,color:T.muted,marginTop:1}}>{t.subject}{t.kind?" · "+t.kind:""}</div>
+                    {/* A deadline marker and its own AI-scheduled study
+                        session share the exact same title (see
+                        buildExamSessionEvents/resolveAssignmentKind) --
+                        showing raw internal kind names ("study block",
+                        "deadline") side by side with no other distinction
+                        made it look like the same thing listed twice by
+                        mistake. Plain student-facing words instead, and the
+                        due-date row gets a color cue since it's the one
+                        that actually needs to stand out (nothing to click
+                        Reschedule on, it's the real deadline). */}
+                    <div style={{fontSize:11,color:t.kind==="deadline"?T.amber:T.muted,marginTop:1}}>{t.subject}{t.kind==="deadline"?" · Due":t.kind==="study block"?" · Your study session":t.kind?" · "+t.kind:""}</div>
                   </div>
                   <span style={{fontFamily:T.mono,fontSize:10,color:T.faint}}>{fmtClock(t.time)}</span>
                   {!t.done&&t.duration&&(t.kind==="study block"||t.kind==="deadline")&&(
@@ -22275,14 +23047,19 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
               placeholder="e.g. Send AP scores" style={{flex:1,minWidth:0,background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"9px 10px",color:T.text,fontSize:12.5,fontFamily:T.font,outline:"none"}} />
             <button onClick={addChecklistItem} disabled={!checklistDraft.trim()} style={{padding:"9px 12px",background:T.lime,color:T.ink,border:"none",borderRadius:10,fontSize:12.5,fontWeight:600,cursor:checklistDraft.trim()?"pointer":"default",fontFamily:T.font,opacity:checklistDraft.trim()?1:0.45,flexShrink:0}}>Add</button>
           </div>
+          {/* D3 in the audit: this used to have no cap and no scroll
+              container at all -- every other Dashboard list caps at 4-5
+              items, so an unbounded Checklist could grow arbitrarily tall
+              next to Today's Plan in a fixed two-column grid row. Same
+              maxHeight/overflowY pattern the other lists already use. */}
           {checklistItems.length===0
             ? <div style={{fontSize:12.5,color:T.muted,padding:"6px 0 4px",textAlign:"center"}}>Nothing on your checklist.</div>
-            : checklistItems.map(item=>(
+            : <div style={{maxHeight:300,overflowY:"auto"}}>{checklistItems.map(item=>(
               <div key={item.id} onClick={()=>toggleChecklistItem(item.id)} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"9px 12px",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,cursor:"pointer"}}>
                 <div style={{width:18,height:18,borderRadius:"50%",border:`1.5px solid ${T.faint}`,background:"transparent",flex:"none",marginTop:1,display:"grid",placeItems:"center"}} />
                 <div style={{flex:1,minWidth:0,fontSize:12.5,color:T.text,fontWeight:500,lineHeight:1.4,overflowWrap:"break-word"}}>{item.title}</div>
               </div>
-            ))}
+            ))}</div>}
         </div>
 
       </div>
@@ -22300,7 +23077,11 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
           {upcomingEvents.length===0
             ?<div style={{fontSize:13,color:T.muted,padding:"18px 0",textAlign:"center"}}>Nothing on the horizon. Add deadlines to your calendar.</div>
             :upcomingEvents.map((ev,i)=>(
-              <div key={ev.id} onClick={()=>setActive("calendar")} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 0",borderBottom:i<upcomingEvents.length-1?`1px solid ${T.border}`:"none",cursor:"pointer"}}>
+              // D4 in the audit: this used to just switch tabs generically
+              // -- setDetailEventId is the exact prop Prep/Calendar already
+              // use to jump straight to an event's own detail view, it was
+              // just never called here.
+              <div key={ev.id} onClick={()=>setDetailEventId(ev.id)} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 0",borderBottom:i<upcomingEvents.length-1?`1px solid ${T.border}`:"none",cursor:"pointer"}}>
                 <div style={{width:44,height:44,borderRadius:10,background:ev.urgent?T.lime:T.card2,color:ev.urgent?T.ink:T.text,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                   <span style={{fontSize:15,fontWeight:800,lineHeight:1}}>{ev.d}</span>
                   <span style={{fontSize:8.5,fontWeight:700,letterSpacing:"0.04em"}}>{ev.mo}</span>
@@ -22312,6 +23093,11 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                 <span style={{fontSize:10.5,fontWeight:700,padding:"4px 9px",borderRadius:5,background:ev.urgent?"rgba(224,48,48,0.10)":T.card2,color:ev.urgent?"#E03030":T.muted,flexShrink:0}}>{ev.cd}</span>
               </div>
             ))}
+          {upcomingEventsTotal>upcomingEvents.length&&(
+            <button onClick={()=>setActive("calendar")} style={{width:"100%",marginTop:4,padding:"8px 0",background:"none",border:"none",color:T.muted,fontSize:11.5,fontWeight:600,cursor:"pointer",fontFamily:T.font,textAlign:"center"}}>
+              +{upcomingEventsTotal-upcomingEvents.length} more this week
+            </button>
+          )}
         </div>
         <div style={{background:T.card,borderRadius:8,padding:20,border:`1px solid ${T.border}`}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
@@ -22770,13 +23556,23 @@ function App() {
       // Respect the "Task & App Notifications" master toggle in Settings
       // (defaults on) — read fresh each poll so turning it off mid-session
       // takes effect immediately instead of needing a reload.
-      if(lsGet("settings",{}).notifMaster===false)return;
+      const settings=lsGet("settings",{});
+      if(settings.notifMaster===false)return;
       const events=lsGet("events",[]);
       const todayK=dayKey();
       const now=Date.now();
       const MISSED_NUDGE_MIN=15; // minutes late before a "still doing this?" nudge
+      // Real per-day, once-only nudge (see shouldFireStreakNudge) -- the
+      // "Streak reminders" toggle used to gate nothing, since no engine like
+      // this existed at all. Persisted (not just in notifiedRef) so a reload
+      // after 8pm doesn't send a second one the same day.
+      if(settings.streak!==false&&shouldFireStreakNudge(new Date().getHours(),getStreakNudgeSentDate()===todayK,lsGet("sessions",[]).filter(s=>s.d===todayK))){
+        markStreakNudgeSent(todayK);
+        try{new Notification("Studlin",{body:"Haven't studied yet today — a quick session keeps your streak alive."});}catch(e){}
+      }
       events.forEach(ev=>{
         if(!ev.time||ev.date!==todayK||ev.checklist||ev.status==="done")return;
+        if(!reminderCategoryAllowed(ev.kind,settings.deadline))return;
         // Already actively locked in on this exact task (started early, or
         // right on time) -- neither "starts in N minutes" nor "still doing
         // this?" makes sense to nag about something the student is
@@ -23108,18 +23904,42 @@ function App() {
     const task=events.find(e=>e.id===taskId);
     if(!task)return;
     if(shouldOfferProjectCheckIn(task,events))setProjectCheckInTaskId(taskId);
-    else if(task.kind==="study block")setExamCheckIn(task);
+    // P2 in the audit: this already deliberately fires beyond just
+    // exam-prep sessions (see the comment on the Lock-In completion path
+    // below) -- routineId is the one case that genuinely doesn't belong:
+    // a materialized daily habit (materializeHabitsForDate) also carries
+    // kind:"study block", but "how'd it go, how confident do you feel"
+    // has no real meaning for a recurring habit with no material at all.
+    else if(task.kind==="study block"&&!task.routineId)setExamCheckIn(task);
   };
   // Queues an insight-style nudge to storage instead of showing it live
   // while a Catch Me Up recovery banner is pending, per Part 2's "insight
   // nudges never render while recovery is pending" rule -- covers
-  // strugglingBucketOffer/peakInsightOffer (mount effect below) and
-  // examPrepSuggestion (submitExamCheckIn below), which can each fire
-  // independently and would otherwise recreate the exact multi-prompt
-  // problem Catch Me Up exists to fix. Write-only for now: nothing reads
-  // this yet since Dashboard/Today isn't converted on this branch.
+  // strugglingBucketOffer/peakInsightOffer (mount effect below),
+  // examPrepSuggestion (submitExamCheckIn below), and prepPromptBatch
+  // (the daily sweep effect), which can each fire independently and would
+  // otherwise recreate the exact multi-prompt problem Catch Me Up exists
+  // to fix. Drained back out by drainQueuedInsightNudges once recovery
+  // actually resolves -- see D10 in the audit for why this used to be
+  // write-only (nothing ever read it back, so everything queued here was
+  // silently lost).
   const queueInsightNudge=(kind,payload)=>{
     lsSet("queuedInsightNudges",[...lsGet("queuedInsightNudges",[]),{kind,payload,queuedAt:Date.now()}]);
+  };
+  // The other half of the fix above: pulls whatever queued up while
+  // recovery was pending back out, most-recent-per-kind, and routes each
+  // into the exact slot it would have used if it had fired live. Called
+  // once recovery is actually resolved (see the rebuild-confirm handler
+  // below, where setCatchUpBanner(null) fires).
+  const drainQueuedInsightNudges=()=>{
+    const queued=lsGet("queuedInsightNudges",[]);
+    if(queued.length===0)return;
+    const latest=pickLatestQueuedNudgesByKind(queued);
+    if(latest.strugglingBucket)setStrugglingBucketOffer(latest.strugglingBucket);
+    if(latest.peakInsight)setPeakInsightOffer(latest.peakInsight);
+    if(latest.examPrep)setExamPrepSuggestion(latest.examPrep);
+    if(latest.prepPromptBatch)setPrepPromptBatch(latest.prepPromptBatch);
+    lsSet("queuedInsightNudges",[]);
   };
   const submitExamCheckIn=(rating)=>{
     if(!examCheckIn)return;
@@ -23292,6 +24112,7 @@ function App() {
     lsSet("events",next);
     setCatchUpLastConfirmed(applied);
     setCatchUpBanner(null);
+    drainQueuedInsightNudges();
     setCatchUpPreviewOpen(false);
     setCatchUpPlan(null);
     setCatchUpExpandedId(null);
@@ -23817,11 +24638,27 @@ function App() {
   const notifs=(()=>{
     const ev=lsGet("events",[]); const tk=dayKey();
     const rel=(k)=>{const tomorrow=dayKey(new Date(Date.now()+86400000));if(k===tk)return"Today";if(k===tomorrow)return"Tomorrow";const p=k.split("-");return MON_SHORT[+p[1]-1]+" "+(+p[2]);};
-    const up=ev.filter(e=>e.date>=tk).sort((a,b)=>a.date===b.date?((a.time||"")<(b.time||"")?-1:1):(a.date<b.date?-1:1)).slice(0,4)
-      .map(e=>({icon:Icon.cal,title:e.title,sub:rel(e.date)+" · "+e.subject,color:T.blue}));
-    const list=[{icon:Icon.flame,title:getStreak()+"-day streak going",sub:"Study today to keep it alive",color:T.amber}].concat(up);
+    // D7 in the audit: this used to have no status filter and no cap at
+    // all, so a task marked done early with a future date could show here
+    // but not on Dashboard's own Upcoming card, and an event 40+ days out
+    // could appear here (nothing closer to fill the top-4) but never on
+    // that card (14-day cap). Same three conditions as Dashboard's
+    // upcomingEvents filter now, so the two can't disagree about what's
+    // actually upcoming.
+    const in14days=dayKey(new Date(Date.now()+14*86400000));
+    const up=ev.filter(e=>!e.checklist&&e.status!=="done"&&e.date>=tk&&e.date<=in14days).sort((a,b)=>a.date===b.date?((a.time||"")<(b.time||"")?-1:1):(a.date<b.date?-1:1)).slice(0,4)
+      .map(e=>({id:e.id,icon:Icon.cal,title:e.title,sub:rel(e.date)+" · "+e.subject,color:T.blue}));
+    const list=[{id:"streak",icon:Icon.flame,title:getStreak()+"-day streak going",sub:"Study today to keep it alive",color:T.amber}].concat(up);
     return list;
   })();
+  // D8 in the audit: notifSeen used to start false on every mount
+  // regardless of whether this exact set of notifications had already
+  // been opened before. Compares against what was last persisted as seen
+  // (see notifSignatureOf) -- only stays "unseen" when something actually
+  // changed since the last time the bell was opened.
+  useEffect(()=>{
+    if(notifSignatureOf(notifs)===getNotifSeenSignature())setNotifSeen(true);
+  },[]);
   useEffect(()=>{ touchStreak(); },[]);
   useEffect(()=>{ try{localStorage.setItem("studlin-active-tab",active);}catch(e){} },[active]);
   // Google Calendar's background sync (api/me.js google-calendar-pull)
@@ -23856,7 +24693,7 @@ function App() {
     const today=dayKey();
     if(lastDay===today)return;
     lsSet("lastLoginDay",today);
-    applyOverduePenalties();
+    cleanupOrphanedPenaltyStorage();
     const evs=lsGet("events",[]);
     // Ask before permanently clearing a pending task whose deadline has
     // already passed, instead of silently deleting it the moment this gate
@@ -23899,7 +24736,7 @@ function App() {
     // insight nudges below are gated on the same count so they can't fire
     // on top of (or right after dismissing) the recovery banner.
     const missedItems=computeCatchUpMissedItems(evs,today);
-    const recoveryPending=missedItems.length>=2;
+    const recoveryPending=missedItems.length>=CATCHUP_RECOVERY_THRESHOLD;
     // Proactive nudge — a RECENT run of misses in one bucket, checked right
     // after the log write above so today's data (if any landed here) is
     // already included. Independent of tier0Enabled below: this is about
@@ -23991,7 +24828,14 @@ function App() {
           setPrepAutoToast("Studlin scheduled prep time for "+scheduledTitles.length+" assignment"+(scheduledTitles.length!==1?"s":"")+" due soon");
           setTimeout(()=>setPrepAutoToast(""),4200);
         }else{
-          setPrepPromptBatch(nowActionable.map(ev=>({id:ev.id,title:ev.title,date:ev.date,noteId:ev.noteId,priority:ev.priority,difficulty:ev.difficulty,phases:ev.phases?ev.phases.map(p=>p.name):null})));
+          // D9 in the audit: this used to fire unconditionally, unlike the
+          // strugglingBucket/peakInsight nudges just above which already
+          // deferred to queueInsightNudge while recovery is pending -- a
+          // rough week could show this alongside the catch-up banner with
+          // no coordination at all. Same pattern now, same queue.
+          const batch=nowActionable.map(ev=>({id:ev.id,title:ev.title,date:ev.date,noteId:ev.noteId,priority:ev.priority,difficulty:ev.difficulty,phases:ev.phases?ev.phases.map(p=>p.name):null}));
+          if(recoveryPending)queueInsightNudge("prepPromptBatch",batch);
+          else setPrepPromptBatch(batch);
         }
       }
     }
@@ -24020,7 +24864,7 @@ function App() {
     // missedItems is still exactly as missed as it was; the banner names
     // the count, "Rebuild my week" computes the actual plan on tap.
     if(recoveryPending){
-      setCatchUpBanner({count:missedItems.length});
+      setCatchUpBanner({count:missedItems.length,staleDays:catchUpStalenessDays(missedItems,today)});
       logCatchUpEvent("recovery_banner_shown",{count:missedItems.length});
     }
   },[]);
@@ -24058,6 +24902,10 @@ function App() {
       </div>
     );
   };
+  // P9 in the audit: see bottomRightNotifSlot's own comment -- computed
+  // once here so all four render blocks below agree on the single winner
+  // instead of each independently deciding it's the one to show.
+  const bottomRightSlot=bottomRightNotifSlot(lockInErrorToast,prepAutoToast,prepPromptBatch.length,examPrepSuggestion);
   return (
     <div style={{display:"flex",height:"100vh",overflow:"hidden",background:isLight?T.bg:`radial-gradient(1200px 600px at 78% -8%, ${T.glow}, transparent 60%), ${T.bg}`,fontFamily:T.font,color:T.text}}>
       {/* SIDEBAR -- collapses to a ~48px icon rail by default (navCollapsed),
@@ -24102,7 +24950,7 @@ function App() {
           // motivational pull comes from being seen every time the app
           // opens (same instinct as Duolingo keeping its flame in the
           // persistent header rather than burying it in a profile tab).
-          const streak=Math.max(1,getStreak());
+          const streak=getStreak(); // D12: a genuine 0-day streak now honestly shows 0, not a floored "1"
           // Notifications used to live in the now-removed top bar -- it's
           // the one thing there that had no other entry point anywhere
           // else in the app (unlike streak/level/pricing/avatar, all
@@ -24112,7 +24960,7 @@ function App() {
           const openNotif=()=>{
             const r=notifBtnRef.current&&notifBtnRef.current.getBoundingClientRect();
             setNotifAnchor(r?{bottom:window.innerHeight-r.bottom,left:r.right+8}:{bottom:20,left:20});
-            setNotifOpen(o=>!o);setNotifSeen(true);
+            setNotifOpen(o=>!o);setNotifSeen(true);setNotifSeenSignature(notifSignatureOf(notifs));
           };
           const notifBell=(
             <div style={{position:"relative",flexShrink:0}}>
@@ -24125,7 +24973,7 @@ function App() {
                 <div style={{position:"fixed",bottom:notifAnchor.bottom,left:notifAnchor.left,width:340,maxWidth:"86vw",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:999,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
                   <div style={{padding:"13px 16px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                     <span style={{fontSize:13,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Notifications</span>
-                    <span onClick={()=>setNotifOpen(false)} style={{fontSize:11,color:T.lime,cursor:"pointer",fontWeight:600}}>Mark all read</span>
+                    <span onClick={()=>{setNotifSeenSignature(notifSignatureOf(notifs));setNotifOpen(false);}} style={{fontSize:11,color:T.lime,cursor:"pointer",fontWeight:600}}>Mark all read</span>
                   </div>
                   <div style={{maxHeight:360,overflowY:"auto"}}>
                     {notifs.map((n,i)=>(
@@ -24417,8 +25265,12 @@ function App() {
         // this doesn't double up with it). The deliberate, already-modal
         // Timer flow is where this fits without adding friction; a plain
         // checkbox-click completion (markDone) deliberately does NOT get
-        // this prompt — see submitExamCheckIn below.
-        if(timerTask.kind==="study block")setExamCheckIn(timerTask);
+        // this prompt — see submitExamCheckIn below. P2 in the audit:
+        // !routineId excludes a materialized daily habit -- same
+        // kind:"study block", but no real "confidence in material" concept
+        // applies to a recurring habit, matching handleTaskCompleted's own
+        // identical exclusion above.
+        if(timerTask.kind==="study block"&&!timerTask.routineId)setExamCheckIn(timerTask);
         // Modal stays open to show the XP/leaderboard reward summary — it
         // closes itself (setTimerTask(null) via onClose) once dismissed.
       }} />}
@@ -24448,7 +25300,7 @@ function App() {
         return (
           <div style={{position:"fixed",top:76,left:"50%",transform:"translateX(-50%)",zIndex:999,width:"min(480px, calc(100vw - 40px))",padding:"16px 20px",borderRadius:tokens.radius.card,background:tokens.color.accentSubtle,border:`1px solid ${tokens.color.accent}55`,boxShadow:"0 8px 24px rgba(0,0,0,0.25)",animation:"studlinPop 0.2s ease",display:"flex",alignItems:"center",gap:16}}>
             <div style={{flex:1,fontSize:tokens.type.size.itemTitle,color:tokens.color.textPrimary}}>
-              {catchUpBanner.count} thing{catchUpBanner.count!==1?"s":""} from yesterday didn't get done.
+              {catchUpBanner.count} thing{catchUpBanner.count!==1?"s":""} from {catchUpStalenessLabel(catchUpBanner.staleDays||1)} didn't get done.
             </div>
             <Btn onClick={openCatchUpPreview} style={{flexShrink:0}}>Rebuild my week</Btn>
           </div>
@@ -24578,7 +25430,11 @@ function App() {
           </div>
         </div>
       )}
-      {prepPromptBatch.length>0&&(
+      {/* P9 in the audit: these four all rendered at the same fixed
+          bottom-right position with no coordination -- bottomRightSlot
+          (computed once, above, from bottomRightNotifSlot) picks one
+          winner instead of letting them stack on top of each other. */}
+      {bottomRightSlot==="promptBatch"&&(
         <div style={{position:"fixed",bottom:20,right:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           <div style={{fontSize:13,color:T.white,marginBottom:10}}>
             Due soon. Want Studlin to find prep time for these?
@@ -24600,12 +25456,12 @@ function App() {
           <Btn variant="ghost" onClick={declineAllPrepPrompts} style={{padding:"7px 14px",fontSize:12,width:"100%",justifyContent:"center"}}>Dismiss all</Btn>
         </div>
       )}
-      {prepAutoToast&&(
+      {bottomRightSlot==="autoToast"&&(
         <div style={{position:"fixed",bottom:20,right:20,zIndex:999,padding:"11px 18px",borderRadius:10,background:T.teal,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           {prepAutoToast}
         </div>
       )}
-      {lockInErrorToast&&(
+      {bottomRightSlot==="error"&&(
         <div style={{position:"fixed",bottom:20,right:20,zIndex:1001,padding:"11px 18px",borderRadius:10,background:T.red,color:"#fff",fontSize:13,fontWeight:600,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           {lockInErrorToast}
         </div>
@@ -24618,7 +25474,7 @@ function App() {
         </div>
       </Modal>
       <ProjectCheckInModal taskId={projectCheckInTaskId} onClose={()=>setProjectCheckInTaskId(null)} onToast={(msg)=>{setDashToast(msg);setTimeout(()=>setDashToast(""),2800);}} />
-      {examPrepSuggestion&&(
+      {bottomRightSlot==="suggestion"&&(
         <div style={{position:"fixed",bottom:20,right:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:360}}>
           <div style={{fontSize:13,color:T.text,marginBottom:12,lineHeight:1.5}}>{examPrepSuggestion.reason}</div>
           <div style={{display:"flex",gap:8}}>
@@ -24677,7 +25533,13 @@ function App() {
           </div>
         </div>
       )}
-      {headsUpEvent&&(
+      {/* N4 in the audit: this banner (and liveInvite below) rendered at
+          zIndex:999, above the fullscreen Lock-In overlay's zIndex:600 --
+          both could visibly pop up mid-session, contradicting Rule 4
+          ("lock-in overrules everything") already enforced for chat chimes
+          elsewhere in this file. !timerTask keeps both consistent with
+          that same rule instead of interrupting an active session. */}
+      {headsUpEvent&&!timerTask&&(
         <div style={{position:"fixed",bottom:20,left:20,zIndex:999,padding:"12px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:300,display:"flex",alignItems:"center",gap:12}}>
           <div style={{fontSize:12.5,color:T.text,flex:1}}>
             <strong>{headsUpEvent.title}</strong> starts soon — {fmtRolloverClock(headsUpEvent.time)}.
@@ -24689,7 +25551,7 @@ function App() {
         </div>
       )}
 
-      {liveInvite&&(
+      {liveInvite&&!timerTask&&(
         <div style={{position:"fixed",bottom:headsUpEvent?110:20,left:20,zIndex:999,padding:"12px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.teal}55`,boxShadow:`0 8px 24px rgba(0,0,0,0.35), 0 0 0 1px ${T.teal}22`,animation:"studlinPop 0.2s ease",maxWidth:300,display:"flex",alignItems:"center",gap:12}}>
           <div style={{fontSize:12.5,color:T.text,flex:1}}>
             <strong>{liveInvite.title}</strong> is locking in right now — join?
