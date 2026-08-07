@@ -1988,8 +1988,8 @@ function findSlotWithEviction(events,routines,prefs,desiredDate,desiredTime,dura
 // date-less items, and anything the student has pinned are never eligible,
 // mirroring rebalanceDay's isFlexPending exclusions. Deliberately does not
 // introduce a new task.status value ("missed") — several existing filters
-// (findSlotWithEviction, computePausePlan, applyOverduePenalties, the daily
-// rollover detection itself) do exact-equality checks on status that a new
+// (findSlotWithEviction, computePausePlan, the daily rollover detection
+// itself) do exact-equality checks on status that a new
 // enum value would silently break; status stays "pending"|"done".
 const TIER0_FIXED_KINDS=new Set(["exam","class","busy block","reminder"]);
 // A task can be started through the Lock-In Timer -- and therefore can
@@ -5064,31 +5064,20 @@ function getTotalMinutesFocused(){
   const s=lsGet("sessions",[]);
   return s.reduce((acc,x)=>acc+(x.m||0),0);
 }
-function applyOverduePenalties(){
-  const today=dayKey();
-  const events=lsGet("events",[]);
-  const penalized=lsGet("penalizedTasks",{});
-  let added=0;
-  events.forEach(ev=>{
-    if(penalized[ev.id])return;
-    if(ev.status!=="pending")return;
-    if(ev.date>=today)return;
-    if(ev.deadline&&ev.deadline<today)return;
-    // Two live scales coexist in the same events array (legacy raw 0-10,
-    // current Add/Edit Task slider 0-1000) -- reading .priority/.difficulty
-    // raw here made this penalty's magnitude differ by ~18,000x between two
-    // functionally-identical overdue tasks depending only on which UI
-    // created them. normalizeTaskVal (0-1) *10 puts both back on the same
-    // ~1-10 magnitude this formula's constants were originally tuned
-    // around, instead of collapsing every legacy-scale task's penalty
-    // toward near-zero.
-    const p=normalizeTaskVal(ev.priority,1)*10;
-    const d=normalizeTaskVal(ev.difficulty,1)*10;
-    const pen=Math.round((ev.duration||25)*p*d);
-    added+=pen;
-    penalized[ev.id]=true;
-  });
-  if(added>0){lsSet("xpPenaltyTotal",(lsGet("xpPenaltyTotal",0)+added));lsSet("penalizedTasks",penalized);}
+// N9/N10 in the audit: this used to compute a real per-task XP penalty
+// and accumulate it into xpPenaltyTotal on every load, with penalizedTasks
+// growing by one entry per overdue task forever, no cleanup -- but
+// nothing anywhere (levelInfo, profileStats) ever actually read
+// xpPenaltyTotal, so the computation was pure overhead with zero visible
+// effect. Actually making it punish students would be a real product
+// decision (Studlin's whole brand personality is motivating, not
+// punishing -- see CLAUDE.md), not something to decide unilaterally here,
+// so removed rather than wired up. cleanupOrphanedPenaltyStorage (called
+// once below) clears out what already accumulated in existing accounts.
+function cleanupOrphanedPenaltyStorage(){
+  if(lsGet("penaltyStorageCleaned",false))return;
+  try{localStorage.removeItem("studlin-xpPenaltyTotal");localStorage.removeItem("studlin-penalizedTasks");}catch(e){}
+  lsSet("penaltyStorageCleaned",true);
 }
 function levelInfo(){const minutes=getTotalMinutesFocused();const per=300;const level=Math.floor(minutes/per)+1;const into=minutes-(level-1)*per;const title=getProfTitle(minutes);const nextTier=PROF_TIERS.find(t=>t.minMinutes>minutes)||null;const curTierMinutes=(PROF_TIERS.slice().reverse().find(t=>minutes>=t.minMinutes)||PROF_TIERS[0]).minMinutes;const tierPct=nextTier?Math.round(Math.max(0,Math.min(100,(minutes-curTierMinutes)/(nextTier.minMinutes-curTierMinutes)*100))):100;return {minutes,level,into,per,toNext:per-into,pct:Math.round(into/per*100),title,nextTier,tierPct};}
 function weekStreak(){const days=new Set(lsGet("days",[]));const now=new Date();const dow=(now.getDay()+6)%7;const mon=new Date(now);mon.setDate(now.getDate()-dow);return ["M","T","W","T","F","S","S"].map((lab,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);const k=dayKey(d);const today=k===dayKey(now);return {lab,on:days.has(k),today,future:d>now&&!today};});}
@@ -10413,8 +10402,15 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
           <button onClick={()=>{resetCreateGroup();setCreateGroupOpen(true);}} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:T.lime,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>{Icon.plus} Create Group</button>
         </div>
         <Card style={{padding:0,overflow:"hidden"}}>
+          {/* N6 in the audit: this used to be passive text with no button,
+              unlike every other empty state in this component. */}
           {inboxShown.length===0
-            ?<div style={{padding:20,fontSize:12.5,color:T.muted,lineHeight:1.6}}>{inboxTab==="Groups"?"No groups yet. Create one to start a project chat.":"No friends or groups yet. Search below to add classmates."}</div>
+            ?<div style={{padding:20,textAlign:"center"}}>
+                <div style={{fontSize:12.5,color:T.muted,lineHeight:1.6,marginBottom:12}}>{inboxTab==="Groups"?"No groups yet. Create one to start a project chat.":"No friends or groups yet. Search below to add classmates."}</div>
+                {inboxTab==="Groups"
+                  ?<BtnSm onClick={()=>{resetCreateGroup();setCreateGroupOpen(true);}}>{Icon.plus} Create Group</BtnSm>
+                  :<BtnSm onClick={()=>setInviteOpen(true)}>{Icon.mail} Invite classmates</BtnSm>}
+              </div>
             :inboxShown.map((row,i)=>{
                 if(row.kind==="group"){
                   const g=row.group;
@@ -10490,13 +10486,27 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
                       <div style={{width:34,height:34,borderRadius:9,background:T.lime+"18",border:`1px solid ${T.lime}30`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,flexShrink:0}}>{Icon.zap}</div>
                       <div>
                         <div style={{fontSize:13,fontWeight:700,color:T.white}}>Be the pioneer on your campus.</div>
-                        <div style={{fontSize:11,color:T.muted}}>Invite classmates to auto-sync routines and conquer the leaderboard!</div>
+                        {/* N3 in the audit: "conquer the leaderboard" -- no
+                            leaderboard exists anywhere in the app anymore.
+                            Matches the real value prop (see the Growth
+                            Banner right below: auto-synced routines +
+                            shared scheduling). */}
+                        <div style={{fontSize:11,color:T.muted}}>Invite classmates to auto-sync routines and study together.</div>
                       </div>
                     </div>
                     <Btn onClick={()=>setInviteOpen(true)} style={{width:"100%",justifyContent:"center"}}>{Icon.mail} Invite classmates</Btn>
                   </div>
             }
           </Card>
+        </div>
+      )}
+      {/* N7 in the audit: this whole section used to just not render at
+          all when Profile's school field was empty -- more likely for a
+          first-time HS student than a college one, leaving a barer page
+          right where the most inviting pitch on it would otherwise be. */}
+      {!mySchool&&(
+        <div style={{marginBottom:24,padding:"16px 18px",borderRadius:10,background:T.card,border:`1px solid ${T.border}`,fontSize:12,color:T.muted,lineHeight:1.6}}>
+          Add your school in Profile to find and connect with classmates automatically.
         </div>
       )}
 
@@ -21142,7 +21152,12 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:4}}>Private Account · Serious Mode</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Strip gamification and go heads-down. Focus minutes, levels, and Weekly Wrapped are hidden. Chat, calendar sharing, and notes stay fully accessible.</div>
-              <Row label="Private Account / Serious Mode" sub="Hides focus minutes, tiers, and leaderboard on Dashboard and Profile. Calendar stays a clean task grid either way." k="_" right={
+              {/* N3 in the audit: no leaderboard exists anywhere in the
+                  app, and this toggle doesn't affect Dashboard at all
+                  (only Profile actually reads seriousMode) -- matches the
+                  card's own accurate description just above instead of
+                  contradicting it. */}
+              <Row label="Private Account / Serious Mode" sub="Hides focus minutes and tiers on Profile. Calendar stays a clean task grid either way." k="_" right={
                 <div onClick={()=>{const next=!seriousMode;setSeriousMode(next);const s=lsGet("settings",{});lsSet("settings",{...s,seriousMode:next});}} style={{width:38,height:20,borderRadius:10,background:seriousMode?T.purple:T.card2,border:`1px solid ${seriousMode?T.purple:T.border}`,position:"relative",cursor:"pointer",transition:"all 0.2s",flexShrink:0}}>
                   <div style={{width:14,height:14,borderRadius:"50%",background:seriousMode?T.bg:"#fff",position:"absolute",top:2,left:seriousMode?21:2,transition:"left 0.2s"}} />
                 </div>
@@ -23836,7 +23851,7 @@ function App() {
     const today=dayKey();
     if(lastDay===today)return;
     lsSet("lastLoginDay",today);
-    applyOverduePenalties();
+    cleanupOrphanedPenaltyStorage();
     const evs=lsGet("events",[]);
     // Ask before permanently clearing a pending task whose deadline has
     // already passed, instead of silently deleting it the moment this gate
