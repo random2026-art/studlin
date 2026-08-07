@@ -13514,7 +13514,7 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
 
-function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange}) {
+function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange}) {
   // Phase 10b: user-driven zoom (drag handle below), replacing the old
   // fixed constant. Persisted via getCalZoom/saveCalZoom so it's
   // remembered across visits and shared with DayPlanner. Deliberately not
@@ -13707,8 +13707,16 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
           const duration = prev.liveDuration!=null ? prev.liveDuration : info.origDuration;
           if(startMin!==info.origStartMin || duration!==info.origDuration){
             const newTime = String(Math.floor(startMin/60)).padStart(2,"0")+":"+String(startMin%60).padStart(2,"0");
-            const next = eventsRef.current.map(x=>x.id===info.id?{...x,time:newTime,duration}:x);
-            setEvents(next); lsSet("events", next);
+            if(info.isRoutine){
+              // Same "just this one, or every week?" confirm move-drag
+              // already asks (onResizeRoutineOccurrence below), not a
+              // silent write -- resizing a recurring class shouldn't be
+              // less deliberate than moving one.
+              if(onResizeRoutineOccurrence)onResizeRoutineOccurrence(info.routineId,info.date,newTime,duration);
+            }else{
+              const next = eventsRef.current.map(x=>x.id===info.id?{...x,time:newTime,duration}:x);
+              setEvents(next); lsSet("events", next);
+            }
           }
         }
         return null;
@@ -13720,10 +13728,15 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
     return ()=>{ document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); };
-  },[wkResize && wkResize.id, setEvents]);
+  },[wkResize && wkResize.id, setEvents, onResizeRoutineOccurrence]);
   const startWkResize=(ev,edge,e,startMin,duration)=>{
     e.stopPropagation(); e.preventDefault();
-    wkResizeInfo.current={id:ev.id, edge, startClientY:e.clientY, origStartMin:startMin, origDuration:duration};
+    // Routine occurrences (a scanned/manual recurring class, an activity)
+    // carry isRoutine/routineId/date already -- expandRoutineOccurrences's
+    // own per-occurrence override shape ({startTime,duration} keyed by
+    // date) was built with exactly this in mind (see its "Phase 7e"
+    // comment), just never wired to a drag gesture until now.
+    wkResizeInfo.current={id:ev.id, edge, startClientY:e.clientY, origStartMin:startMin, origDuration:duration, isRoutine:!!ev.isRoutine, routineId:ev.routineId, date:ev.date};
     setWkResize({id:ev.id, edge, liveStartMin:null, liveDuration:null});
     document.body.style.cursor = "ns-resize";
     document.body.style.userSelect = "none";
@@ -13955,7 +13968,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   const origStartMin = hh * 60 + mm;
                   const dur = ev.duration || 30;
                   const isRoutine = !!ev.isRoutine;
-                  const isResizing = !isRoutine && wkResize && wkResize.id===ev.id;
+                  const isResizing = wkResize && wkResize.id===ev.id;
                   const effStartMin = isResizing && wkResize.liveStartMin!=null ? wkResize.liveStartMin : origStartMin;
                   const effDuration = isResizing && wkResize.liveDuration!=null ? wkResize.liveDuration : dur;
                   const topPx = effStartMin * (WK_PX_HR / 60);
@@ -14031,24 +14044,23 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                       {!catchUpPending&&over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:"0 0 0 1.5px rgba(255,255,255,0.9)",zIndex:1}} />}
                       <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                       {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isWarningKind?tokens.color.warning:tokens.color.textSecondary,marginTop:1}}>{fmtTime(String(Math.floor(effStartMin/60)).padStart(2,"0")+":"+String(effStartMin%60).padStart(2,"0"))}{effDuration ? " · "+effDuration+"m" : ""}</div>}
-                      {/* Drag-to-resize edge handles -- real events only (see
-                          wkResize's own comment for why routines are excluded).
+                      {/* Drag-to-resize edge handles -- routine occurrences
+                          included now (startWkResize/onUp branch on
+                          isRoutine and route through onResizeRoutineOccurrence's
+                          own "just this one / every week" confirm instead of
+                          writing directly, same as move-drag already does).
                           draggable={false} stops the parent block's native
                           HTML5 drag from starting when the grab begins here,
                           so it doesn't fight with the custom mouse-tracking
                           resize below. */}
-                      {!isRoutine && (
-                        <div draggable={false}
-                          onMouseDown={(e)=>startWkResize(ev,"top",e,origStartMin,dur)}
-                          onClick={(e)=>e.stopPropagation()}
-                          style={{position:"absolute",top:-2,left:0,right:0,height:6,cursor:"ns-resize",zIndex:4}} />
-                      )}
-                      {!isRoutine && (
-                        <div draggable={false}
-                          onMouseDown={(e)=>startWkResize(ev,"bottom",e,origStartMin,dur)}
-                          onClick={(e)=>e.stopPropagation()}
-                          style={{position:"absolute",bottom:-2,left:0,right:0,height:6,cursor:"ns-resize",zIndex:4}} />
-                      )}
+                      <div draggable={false}
+                        onMouseDown={(e)=>startWkResize(ev,"top",e,origStartMin,dur)}
+                        onClick={(e)=>e.stopPropagation()}
+                        style={{position:"absolute",top:-2,left:0,right:0,height:6,cursor:"ns-resize",zIndex:4}} />
+                      <div draggable={false}
+                        onMouseDown={(e)=>startWkResize(ev,"bottom",e,origStartMin,dur)}
+                        onClick={(e)=>e.stopPropagation()}
+                        style={{position:"absolute",bottom:-2,left:0,right:0,height:6,cursor:"ns-resize",zIndex:4}} />
                       {isRoutine&&editRoutineMode&&hoveredRoutineId===ev.routineId&&(
                         <button onClick={(e)=>{e.stopPropagation();if(onDeleteRoutine)onDeleteRoutine(ev.routineId);if(setHoveredRoutineId)setHoveredRoutineId(null);}} title="Delete this routine block (every week)"
                           style={{position:"absolute",top:-8,right:-8,width:18,height:18,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.red,fontSize:11,lineHeight:1,cursor:"pointer",display:"grid",placeItems:"center",boxShadow:"0 4px 10px -2px rgba(0,0,0,0.4)"}}>×</button>
@@ -17403,7 +17415,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   const [previewDragActive,setPreviewDragActive]=useState(false);
   // Phase 7e: set when a routine occurrence was just dropped somewhere new,
   // waiting on the student to pick "just this one" or "every week".
-  const [routineDropPending,setRoutineDropPending]=useState(null); // {routineId,fromDate,toDate,toTime}|null
+  const [routineDropPending,setRoutineDropPending]=useState(null); // {routineId,fromDate,toDate,toTime,newDuration?}|null -- newDuration only set by a resize
   // Drives the right-hand column (5e): null = "upcoming across everything",
   // a course id = filtered to just that course.
   const [selectedCourseId,setSelectedCourseId]=useState(null);
@@ -18150,9 +18162,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   const onDropRoutineOccurrence=(routineId,fromDate,toDate,toTime)=>{
     setRoutineDropPending({routineId,fromDate,toDate,toTime});
   };
+  // Resize never changes the day -- fromDate and toDate are always the
+  // same occurrence's own date, so the confirm modal below always offers
+  // both "just this one" and "every week" (same as any same-day move).
+  const onResizeRoutineOccurrence=(routineId,date,newStartTime,newDuration)=>{
+    setRoutineDropPending({routineId,fromDate:date,toDate:date,toTime:newStartTime,newDuration});
+  };
   const applyRoutineDropScope=(scope)=>{
     if(!routineDropPending)return;
-    const {routineId,fromDate,toDate,toTime}=routineDropPending;
+    const {routineId,fromDate,toDate,toTime,newDuration}=routineDropPending;
     const rule=routines.find(r=>r.id===routineId);
     if(!rule){setRoutineDropPending(null);return;}
     if(scope==="always"){
@@ -18170,10 +18188,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       const remainingDays=rule.days.filter(d=>d!==fromDow);
       if(remainingDays.length===0){
         // No sibling days left on the original rule -- nothing to protect
-        // from bleed, just retime/move the same rule in place.
-        persistRoutines(routines.map(r=>r.id===routineId?{...r,days:[toDow],startTime:toTime}:r));
+        // from bleed, just retime/move the same rule in place. newDuration
+        // is only ever set by a resize (see onResizeRoutineOccurrence) --
+        // an ordinary move leaves the rule's own duration untouched.
+        persistRoutines(routines.map(r=>r.id===routineId?{...r,days:[toDow],startTime:toTime,...(newDuration!=null?{duration:newDuration}:{})}:r));
       }else{
-        const movedRoutine={...rule,id:String(Date.now()+Math.random()*1000),days:[toDow],startTime:toTime};
+        const movedRoutine={...rule,id:String(Date.now()+Math.random()*1000),days:[toDow],startTime:toTime,...(newDuration!=null?{duration:newDuration}:{})};
         persistRoutines(routines.map(r=>r.id===routineId?{...r,days:remainingDays}:r).concat([movedRoutine]));
       }
     }else{
@@ -18183,7 +18203,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       // when fromDate===toDate, so this branch can trust that.
       const overrides=getRoutineOverrides();
       const forRoutine={...(overrides[routineId]||{})};
-      forRoutine[toDate]={startTime:toTime,duration:rule.duration||30};
+      forRoutine[toDate]={startTime:toTime,duration:newDuration!=null?newDuration:(rule.duration||30)};
       saveRoutineOverrides({...overrides,[routineId]:forRoutine});
       // routineOverrides lives in its own localStorage key, not in
       // `routines` React state -- expandRoutineOccurrences reads the
@@ -19454,7 +19474,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
           selDay={selDay} setSelDay={setSelDay} onDeleteEvent={deleteEventWithUndo} catchUpPending={catchUpPending}
           sidebarDragChip={sidebarDragChip} onDropSidebarChip={(dk,time,anchorPoint)=>{openNewEventForDrop(sidebarDragChip,dk,time,anchorPoint);setSidebarDragChip(null);}}
-          onDropRoutineOccurrence={onDropRoutineOccurrence} previewEvent={previewEvent} highlightedSessionId={highlightedSessionId}
+          onDropRoutineOccurrence={onDropRoutineOccurrence} onResizeRoutineOccurrence={onResizeRoutineOccurrence} previewEvent={previewEvent} highlightedSessionId={highlightedSessionId}
           onPreviewMove={(date,startTime,endTime)=>setPreviewOverride({date,startTime,endTime})}
           onPreviewResize={(endTime)=>setPreviewOverride(o=>({date:(o&&o.date)||previewEvent.date,startTime:(o&&o.startTime)||previewEvent.startTime,endTime}))}
           onPreviewDraggingChange={setPreviewDragActive} />
