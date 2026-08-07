@@ -14341,7 +14341,13 @@ function RosterList({items,setItems,makeNewItem,addLabel}){
           </div>
         ))}
       </div>
-      <button type="button" onClick={addRow} style={{background:"none",border:"none",color:T.lime,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0}}>+ Add another{addLabel?" "+addLabel:""}</button>
+      {/* "Another" only reads right once something already exists -- on
+          an empty list (e.g. the Activities step, sitting right below its
+          own separate "Start with default activities" button) it made
+          this look like a secondary add-on to that button instead of an
+          equally valid way to build a fully custom list from scratch,
+          which addRow already supports either way. */}
+      <button type="button" onClick={addRow} style={{background:"none",border:"none",color:T.lime,fontSize:12.5,fontFamily:T.font,cursor:"pointer",padding:0}}>{items.length===0?"+ Add"+(addLabel?" an "+addLabel:" one"):"+ Add another"+(addLabel?" "+addLabel:"")}</button>
     </div>
   );
 }
@@ -15429,7 +15435,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
               <div style={{marginBottom:8}}>
                 <div style={{fontSize:12.5,fontWeight:600,color:T.text,marginBottom:2}}>Assignments, exams &amp; projects</div>
                 <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>
-                  {review.items.length===0?"None found — add one if you know of any.":"AI dates and detail are guesses — check them. Anything already past its date is unchecked."}
+                  {review.items.length===0?"None found — add one if you know of any. You can also add a syllabus for this class anytime from Courses.":"AI dates and detail are guesses — check them. Anything already past its date is unchecked."}
                 </div>
                 <div style={{display:"flex",flexDirection:"column",gap:8}}>
                   {review.items.map((it,i)=>(
