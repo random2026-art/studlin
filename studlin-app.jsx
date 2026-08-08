@@ -16744,8 +16744,16 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
   const toggleDay=(i)=>setDays(d=>d.includes(i)?d.filter(x=>x!==i):[...d,i]);
   const isFree=kind==="free";
   const isHabit=kind==="habit";
+  // Habits still need at least one day up front -- they materialize a real
+  // event automatically each of their own days (materializeHabitsForDate),
+  // with no drag-onto-the-calendar path the way an unscheduled class/
+  // activity/free-period routine already has (see isUnscheduled in the
+  // sidebar, and the drop-to-add fix in commitNewEvent). Every other kind
+  // can now save with zero days picked -- name + color only -- and get
+  // scheduled later by dragging it onto the calendar instead of being
+  // forced to pick a day before it's even allowed to exist.
   const submitAdd=()=>{
-    if((!isFree&&!title.trim())||days.length===0)return;
+    if((!isFree&&!title.trim())||(isHabit&&days.length===0))return;
     onAddRoutine({title:isFree?(title.trim()||"Free Period"):title.trim(),kind,days:[...days],startTime:isHabit?null:startTime,duration,...(kind!=="class"?{color}:{}),
       // Only meaningful for something with a real fixed meeting time --
       // same isFixedKind-style gating "New task"'s own commute row uses,
@@ -16778,7 +16786,7 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
             <Field label="Type"><SelectChip options={[{value:"class",label:"Class"},{value:"busy",label:"Activity"},{value:"free",label:"Free Period"},{value:"habit",label:"Habit"}]} value={kind} onChange={setKind} /></Field>
             {kind!=="class"&&<Field label="Color"><ColorSelect value={color} onChange={setColor} /></Field>}
             {isHabit&&<div style={{fontSize:11.5,color:T.muted,marginTop:-6,marginBottom:14}}>No fixed time — Studlin fits it in wherever there's room each day.</div>}
-            <Field label="Repeats on" hint={days.length===0?"Pick at least one day":undefined}>
+            <Field label="Repeats on" hint={days.length===0?(isHabit?"Pick at least one day":"Optional — skip this and drag it onto your calendar to set when"):undefined}>
               <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                 {ROUTINE_DOW.map((d,i)=>{
                   const sel=days.includes(i);
@@ -16807,7 +16815,7 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
             )}
             <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
               <Btn variant="subtle" onClick={()=>{resetForm();setAddingRoutine(false);}}>Cancel</Btn>
-              <Btn onClick={submitAdd} disabled={(!isFree&&!title.trim())||days.length===0} style={{opacity:(!isFree&&!title.trim())||days.length===0?0.45:1}}>Add</Btn>
+              <Btn onClick={submitAdd} disabled={(!isFree&&!title.trim())||(isHabit&&days.length===0)} style={{opacity:(!isFree&&!title.trim())||(isHabit&&days.length===0)?0.45:1}}>Add</Btn>
             </div>
           </div>
         )}
@@ -17818,14 +17826,15 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
     if(!open)return;
     setDayTimes({});setDayTimeEditingIdx(null);
     if(editRoutine){
-      // Edit mode: seed everything from the existing rule. Always
-      // "selected days" repeat -- a routine is never a one-off, that's
-      // what an editRoutine even means -- with the rule's own days
-      // pre-checked and its one shared time as the default.
+      // Edit mode: seed everything from the existing rule, with the rule's
+      // own days pre-checked and its one shared time as the default.
+      // Starts on "Does not repeat" for an already-unscheduled activity
+      // (days:[]) so the dropdown reflects its real current state, not a
+      // fake default.
       setTitle(editRoutine.title||"");
       setEvKind(editRoutine.kind==="busy"?"busy":editRoutine.kind||"class");
       setSubject(editRoutine.subject||"None");
-      setRepeat("selected");
+      setRepeat(editRoutine.days&&editRoutine.days.length>0?"selected":"none");
       setRepeatDays(editRoutine.days||[]);
       const st=editRoutine.startTime||"09:00";
       setStartTime(st);
@@ -17877,7 +17886,15 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
   // whatever the student is trying to see or drop onto underneath it.
   if(hidden)return null;
   const toggleRepeatDay=(i)=>setRepeatDays(d=>d.includes(i)?d.filter(x=>x!==i):[...d,i]);
-  const invalid=!title.trim()||(!allDay&&timeToMinutes(endTime)<=timeToMinutes(startTime))||(repeat==="selected"&&repeatDays.length===0);
+  const invalid=!title.trim()||(!allDay&&timeToMinutes(endTime)<=timeToMinutes(startTime))||(repeat==="selected"&&repeatDays.length===0)||(editRoutine&&evKind==="habit"&&repeat==="none");
+  // editRoutine used to force repeat to "selected" permanently with the
+  // dropdown itself hidden -- there was no way to see or reach "Does not
+  // repeat" while editing an existing activity at all. Now the dropdown is
+  // always shown; picking "Does not repeat" here clears the activity back
+  // to unscheduled (days:[]) rather than deleting it outright -- the same
+  // state a freshly-created name+color-only activity already starts in,
+  // draggable onto the calendar again whenever you actually want it back.
+  const showDayFields=(editRoutine&&repeat!=="none")||repeat==="selected"||repeat==="weekly";
   // Non-blocking on purpose -- see findOverlapConflict's own comment. The
   // live preview block on the calendar already visually overlaps
   // whatever this collides with, but that's easy to miss; this names it.
@@ -17896,7 +17913,7 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
     if(editRoutine){
       onSave({
         title:title.trim(),kind:evKind,subject:subject==="None"?"":subject,
-        days:repeatDays,startTime,duration:Math.max(5,timeToMinutes(endTime)-timeToMinutes(startTime)),
+        days:repeat==="none"?[]:repeatDays,startTime,duration:Math.max(5,timeToMinutes(endTime)-timeToMinutes(startTime)),
         dayTimes,
         ...(evKind!=="class"?{color:routineColor}:{}),
         ...common,
@@ -17974,7 +17991,7 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
               </div>
             ))}
           </div>
-          {evKind==="habit"&&(editRoutine||repeat==="selected"||repeat==="weekly")&&<div style={{fontSize:11.5,color:T.muted,marginTop:-4}}>No fixed time — Studlin fits it in wherever there's room each day.</div>}
+          {evKind==="habit"&&showDayFields&&<div style={{fontSize:11.5,color:T.muted,marginTop:-4}}>No fixed time — Studlin fits it in wherever there's room each day.</div>}
           {!editRoutine&&(
             <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11.5,color:T.muted,cursor:"pointer"}}>
               <input type="checkbox" checked={allDay} onChange={e=>setAllDay(e.target.checked)} /> All day
@@ -17988,14 +18005,12 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
           {/* A single study session recurring weekly the way a class does
               doesn't make sense -- hidden for session drops (Phase 4). */}
           {!hideRepeat&&(<>
-          {!editRoutine&&(
-            <select value={repeat} onChange={e=>setRepeat(e.target.value)} style={{...wizardSelectStyle,padding:"6px 8px",fontSize:12}}>
-              <option value="none">Does not repeat</option>
-              <option value="weekly">Repeats weekly</option>
-              <option value="selected">On selected days</option>
-            </select>
-          )}
-          {(editRoutine||repeat==="selected"||repeat==="weekly")&&(
+          <select value={repeat} onChange={e=>setRepeat(e.target.value)} style={{...wizardSelectStyle,padding:"6px 8px",fontSize:12}}>
+            <option value="none">Does not repeat</option>
+            <option value="weekly">Repeats weekly</option>
+            <option value="selected">On selected days</option>
+          </select>
+          {showDayFields&&(
             <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
               {ROUTINE_DOW.map((d,i)=><button key={i} type="button" onClick={()=>toggleRepeatDay(i)} style={wizardChipStyle(repeatDays.includes(i))}>{d}</button>)}
             </div>
@@ -18005,7 +18020,7 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
               day defaults to the shared Start/End time above; clicking a
               day here opens its own time, stored separately, without
               touching any other day. */}
-          {(editRoutine||repeat==="selected"||repeat==="weekly")&&evKind!=="habit"&&repeatDays.length>1&&(()=>{
+          {showDayFields&&evKind!=="habit"&&repeatDays.length>1&&(()=>{
             const fmt12=(t)=>{if(!t)return"";let[h,m]=t.split(":").map(Number);const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+String(m).padStart(2,"0")+" "+ap;};
             const sharedDur=Math.max(5,timeToMinutes(endTime)-timeToMinutes(startTime));
             return (
@@ -18784,13 +18799,20 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // many the per-day time overrides actually need -- one object again
   // when there are none, same shape as before this change.
   const saveRoutineEditFromModal=(patch)=>{
-    if(!routineEditItem||!patch.title.trim()||patch.days.length===0)return;
     const isHabit=patch.kind==="habit";
+    // A habit still needs at least one day (see submitAdd's own comment --
+    // no drag-to-schedule path exists for it). Everything else can now be
+    // saved back down to zero days -- "Does not repeat" in the edit form --
+    // without deleting the activity; it just goes back to unscheduled,
+    // same as a freshly-created name+color-only one.
+    if(!routineEditItem||!patch.title.trim()||(isHabit&&patch.days.length===0))return;
     const subj=patch.subject&&patch.subject!=="None"?patch.subject:"";
     const base={title:patch.title.trim(),kind:patch.kind,...(subj?{subject:subj}:{subject:""}),courseId:subj?courseIdForLabel(subj):null,
       commuteBefore:patch.commuteBefore||undefined,commuteAfter:patch.commuteAfter||undefined,location:patch.location||undefined,movable:patch.movable,
       ...(patch.kind!=="class"&&patch.color?{color:patch.color}:{})};
-    const rebuilt=isHabit
+    const rebuilt=patch.days.length===0
+      ?[{...base,id:routineEditItem.id,days:[],startTime:isHabit?null:patch.startTime,duration:patch.duration}]
+      :isHabit
       ?[{...base,id:routineEditItem.id,days:patch.days,startTime:null,duration:patch.duration}]
       :buildRoutineObjectsForDays({...base,id:routineEditItem.id},patch.days,patch.startTime,patch.duration,patch.dayTimes);
     persistRoutines([...routines.filter(r=>r.id!==routineEditItem.id),...rebuilt]);
