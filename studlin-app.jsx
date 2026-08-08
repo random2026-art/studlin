@@ -13933,7 +13933,7 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
 
-function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange}) {
+function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onClearPendingRoutineChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange}) {
   // Phase 10b: user-driven zoom (drag handle below), replacing the old
   // fixed constant. Persisted via getCalZoom/saveCalZoom so it's
   // remembered across visits and shared with DayPlanner. Deliberately not
@@ -14130,8 +14130,14 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
               // Same "just this one, or every week?" confirm move-drag
               // already asks (onResizeRoutineOccurrence below), not a
               // silent write -- resizing a recurring class shouldn't be
-              // less deliberate than moving one.
-              if(onResizeRoutineOccurrence)onResizeRoutineOccurrence(info.routineId,info.date,newTime,duration);
+              // less deliberate than moving one. The block itself keeps
+              // showing this adjusted size via pendingRoutineChange (a
+              // prop driven by the parent's routineDropPending, not local
+              // state) until the scope popover is answered or dismissed --
+              // snapping back to the old size the instant you let go, before
+              // you've even seen what you're confirming, was the actual
+              // complaint here.
+              if(onResizeRoutineOccurrence)onResizeRoutineOccurrence(info.routineId,info.date,newTime,duration,info.anchorRect);
             }else{
               const next = eventsRef.current.map(x=>x.id===info.id?{...x,time:newTime,duration}:x);
               setEvents(next); lsSet("events", next);
@@ -14150,12 +14156,19 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
   },[wkResize && wkResize.id, setEvents, onResizeRoutineOccurrence]);
   const startWkResize=(ev,edge,e,startMin,duration)=>{
     e.stopPropagation(); e.preventDefault();
+    // Grabbing an edge again while last time's scope popover is still up
+    // (didn't answer it yet) dismisses that stale popover instead of
+    // fighting with this new drag -- lets you keep adjusting freely
+    // instead of having to explicitly cancel first.
+    if(onClearPendingRoutineChange)onClearPendingRoutineChange();
     // Routine occurrences (a scanned/manual recurring class, an activity)
     // carry isRoutine/routineId/date already -- expandRoutineOccurrences's
     // own per-occurrence override shape ({startTime,duration} keyed by
     // date) was built with exactly this in mind (see its "Phase 7e"
-    // comment), just never wired to a drag gesture until now.
-    wkResizeInfo.current={id:ev.id, edge, startClientY:e.clientY, origStartMin:startMin, origDuration:duration, isRoutine:!!ev.isRoutine, routineId:ev.routineId, date:ev.date};
+    // comment), just never wired to a drag gesture until now. anchorRect
+    // (the block's own bounding box at drag-start) lets the scope popover
+    // open right beside it instead of centered over the whole screen.
+    wkResizeInfo.current={id:ev.id, edge, startClientY:e.clientY, origStartMin:startMin, origDuration:duration, isRoutine:!!ev.isRoutine, routineId:ev.routineId, date:ev.date, anchorRect:e.currentTarget.parentElement.getBoundingClientRect()};
     setWkResize({id:ev.id, edge, liveStartMin:null, liveDuration:null});
     document.body.style.cursor = "ns-resize";
     document.body.style.userSelect = "none";
@@ -14217,7 +14230,11 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
       const rect = col ? col.getBoundingClientRect() : null;
       onDropSidebarChip(dk, time, {x:rect?rect.right:e.clientX,y:e.clientY});
     } else if (wkDragRoutineOccurrence && onDropRoutineOccurrence) {
-      onDropRoutineOccurrence(wkDragRoutineOccurrence.routineId, wkDragRoutineOccurrence.fromDate, dk, time);
+      // Same day-column-right-edge anchor as the sidebar-chip drop above --
+      // keeps the scope popover beside the block instead of overlapping it.
+      const col = wkColRefs.current[dk];
+      const rect = col ? col.getBoundingClientRect() : null;
+      onDropRoutineOccurrence(wkDragRoutineOccurrence.routineId, wkDragRoutineOccurrence.fromDate, dk, time, {x:rect?rect.right:e.clientX,y:e.clientY});
     } else if (wkDragId) {
       // Routed through the same guarded moveEvent the Monthly grid uses, so
       // the deadline Hard Wall (Tier 2) has one enforcement point, not two.
@@ -14398,8 +14415,17 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   const dur = ev.duration || 30;
                   const isRoutine = !!ev.isRoutine;
                   const isResizing = wkResize && wkResize.id===ev.id;
-                  const effStartMin = isResizing && wkResize.liveStartMin!=null ? wkResize.liveStartMin : origStartMin;
-                  const effDuration = isResizing && wkResize.liveDuration!=null ? wkResize.liveDuration : dur;
+                  // A same-day resize/retime still awaiting a "just this
+                  // one / every week" answer -- keeps the block showing the
+                  // adjusted size/time instead of snapping back to the old
+                  // one the instant the mouse is released, before the
+                  // popover's even been answered. Only same-day (fromDate
+                  // ===toDate): a cross-day move has no single occurrence
+                  // left at its OLD date/time to keep previewing.
+                  const pendingForThis = isRoutine && pendingRoutineChange && pendingRoutineChange.fromDate===pendingRoutineChange.toDate && pendingRoutineChange.routineId===ev.routineId && pendingRoutineChange.fromDate===ev.date ? pendingRoutineChange : null;
+                  const pendingStartMin = pendingForThis ? timeToMinutes(pendingForThis.toTime) : null;
+                  const effStartMin = isResizing && wkResize.liveStartMin!=null ? wkResize.liveStartMin : (pendingStartMin!=null ? pendingStartMin : origStartMin);
+                  const effDuration = isResizing && wkResize.liveDuration!=null ? wkResize.liveDuration : (pendingForThis && pendingForThis.newDuration!=null ? pendingForThis.newDuration : dur);
                   const topPx = effStartMin * (WK_PX_HR / 60);
                   // See computeEventBlockHeightPx -- the 22px minimum-visibility
                   // floor for a short block used to be able to visually bleed
@@ -14453,7 +14479,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                     )}
                     <div
                       draggable
-                      onDragStart={()=>{ if(!isRoutine){setWkDragId(ev.id); setWkDragDeadline(ev.deadline||null);closePopover();} else {setWkDragRoutineOccurrence({routineId:ev.routineId,fromDate:ev.date});} }}
+                      onDragStart={()=>{ if(!isRoutine){setWkDragId(ev.id); setWkDragDeadline(ev.deadline||null);closePopover();} else {if(onClearPendingRoutineChange)onClearPendingRoutineChange();setWkDragRoutineOccurrence({routineId:ev.routineId,fromDate:ev.date});} }}
                       onDoubleClick={()=>{ if(!isRoutine)openEdit(ev); else if(onEditRoutine)onEditRoutine(ev.routineId); }}
                       onClick={(e)=>{
                         if(isRoutine){ if(editRoutineMode&&onEditRoutine)onEditRoutine(ev.routineId); return; }
@@ -18699,15 +18725,22 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     setSidebarDragChip(null);
   };
   // ── Phase 7e: recurring per-occurrence edit-scope ──
-  const onDropRoutineOccurrence=(routineId,fromDate,toDate,toTime)=>{
-    setRoutineDropPending({routineId,fromDate,toDate,toTime});
+  const onDropRoutineOccurrence=(routineId,fromDate,toDate,toTime,anchorPoint)=>{
+    setRoutineDropPending({routineId,fromDate,toDate,toTime,anchorX:(anchorPoint&&anchorPoint.x)||null,anchorY:(anchorPoint&&anchorPoint.y)||null});
   };
   // Resize never changes the day -- fromDate and toDate are always the
-  // same occurrence's own date, so the confirm modal below always offers
+  // same occurrence's own date, so the confirm popover below always offers
   // both "just this one" and "every week" (same as any same-day move).
-  const onResizeRoutineOccurrence=(routineId,date,newStartTime,newDuration)=>{
-    setRoutineDropPending({routineId,fromDate:date,toDate:date,toTime:newStartTime,newDuration});
+  // anchorRect is the resized block's own bounding box (see startWkResize) --
+  // anchor beside its right edge, level with its top, matching the same
+  // "beside the thing you just touched" spirit as the drop-point anchors.
+  const onResizeRoutineOccurrence=(routineId,date,newStartTime,newDuration,anchorRect)=>{
+    setRoutineDropPending({routineId,fromDate:date,toDate:date,toTime:newStartTime,newDuration,anchorX:anchorRect?anchorRect.right:null,anchorY:anchorRect?anchorRect.top:null});
   };
+  // Grabbing an edge/block again before answering the last scope popover
+  // dismisses it instead of leaving it stranded pointing at a now-stale
+  // proposed time/duration.
+  const clearRoutineDropPending=()=>setRoutineDropPending(null);
   const applyRoutineDropScope=(scope)=>{
     if(!routineDropPending)return;
     const {routineId,fromDate,toDate,toTime,newDuration}=routineDropPending;
@@ -20113,7 +20146,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
           selDay={selDay} setSelDay={setSelDay} onDeleteEvent={deleteEventWithUndo} catchUpPending={catchUpPending}
           sidebarDragChip={sidebarDragChip} onDropSidebarChip={(dk,time,anchorPoint)=>{openNewEventForDrop(sidebarDragChip,dk,time,anchorPoint);setSidebarDragChip(null);}}
-          onDropRoutineOccurrence={onDropRoutineOccurrence} onResizeRoutineOccurrence={onResizeRoutineOccurrence} previewEvent={previewEvent} highlightedSessionId={highlightedSessionId}
+          onDropRoutineOccurrence={onDropRoutineOccurrence} onResizeRoutineOccurrence={onResizeRoutineOccurrence} pendingRoutineChange={routineDropPending} onClearPendingRoutineChange={clearRoutineDropPending} previewEvent={previewEvent} highlightedSessionId={highlightedSessionId}
           onPreviewMove={(date,startTime,endTime)=>setPreviewOverride({date,startTime,endTime})}
           onPreviewResize={(endTime)=>setPreviewOverride(o=>({date:(o&&o.date)||previewEvent.date,startTime:(o&&o.startTime)||previewEvent.startTime,endTime}))}
           onPreviewDraggingChange={setPreviewDragActive} />
@@ -20211,22 +20244,47 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           drop landed on the same date it started on (see
           getRoutineOverrides' comment for why a cross-day single-
           occurrence move isn't representable yet). */}
-      <Modal open={!!routineDropPending} onClose={()=>setRoutineDropPending(null)} title="Apply this change to..." width={380}
-        footer={
-          <div style={{display:"flex",gap:10,justifyContent:"flex-end",padding:"14px 22px",borderTop:`1px solid ${T.border}`}}>
-            <Btn variant="subtle" onClick={()=>setRoutineDropPending(null)}>Cancel</Btn>
-            {routineDropPending&&routineDropPending.fromDate===routineDropPending.toDate&&(
-              <Btn variant="subtle" onClick={()=>applyRoutineDropScope("once")}>Just this one</Btn>
-            )}
-            <Btn onClick={()=>applyRoutineDropScope("always")}>Every week</Btn>
+      {/* Anchored popover, not a full-screen Modal -- a 2-button, 1-sentence
+          decision doesn't need to dim and block the entire calendar behind
+          it, and a full-screen version also made adjusting again (grab the
+          edge/block a second time) require an explicit dismiss first.
+          Deliberately no full-screen click-catcher: startWkResize and the
+          move onDragStart above both already call
+          onClearPendingRoutineChange the instant a new drag begins, so
+          regrabbing the same block dismisses this on its own -- an
+          invisible overlay here would just eat that first click instead of
+          letting it reach the resize handle underneath. Positioning
+          mirrors NewEventModal's own anchored-popover formula (prefer
+          opening to the right of the anchor point, fall back left; clamp
+          vertically) for the same "beside what you touched" feel. */}
+      {routineDropPending && (()=>{
+        const POPOVER_WIDTH=320;
+        const ESTIMATED_HEIGHT=150;
+        const x=routineDropPending.anchorX!=null?routineDropPending.anchorX:window.innerWidth-POPOVER_WIDTH-40;
+        const y=routineDropPending.anchorY!=null?routineDropPending.anchorY:window.innerHeight/2;
+        const fitsRight=x+10+POPOVER_WIDTH<=window.innerWidth-8;
+        const left=fitsRight?Math.max(8,x+10):Math.max(8,x-10-POPOVER_WIDTH);
+        const top=Math.min(Math.max(8,y-24),Math.max(8,window.innerHeight-ESTIMATED_HEIGHT-8));
+        const sameDay=routineDropPending.fromDate===routineDropPending.toDate;
+        return ReactDOM.createPortal((
+          <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top,left,width:POPOVER_WIDTH,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:999,animation:"studlinPop 0.15s cubic-bezier(.2,.85,.3,1)"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 12px",borderBottom:`1px solid ${T.border}`}}>
+              <div style={{fontSize:12.5,fontWeight:700,color:T.white}}>Apply this change to…</div>
+              <button type="button" onClick={()=>setRoutineDropPending(null)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,lineHeight:1,padding:0}}>×</button>
+            </div>
+            <div style={{padding:"10px 12px",fontSize:12,color:T.muted,lineHeight:1.5}}>
+              {sameDay
+                ? "This repeats every week. Change just this one occurrence, or every week going forward?"
+                : "Moving this to a different day changes it every week it repeats -- a single occurrence can only be retimed on its own day, not relocated."}
+            </div>
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end",padding:"10px 12px",borderTop:`1px solid ${T.border}`}}>
+              <Btn variant="subtle" onClick={()=>setRoutineDropPending(null)}>Cancel</Btn>
+              {sameDay && <Btn variant="subtle" onClick={()=>applyRoutineDropScope("once")}>Just this one</Btn>}
+              <Btn onClick={()=>applyRoutineDropScope("always")}>Every week</Btn>
+            </div>
           </div>
-        }>
-        <div style={{padding:"18px 22px",fontSize:13,color:T.muted,lineHeight:1.5}}>
-          {routineDropPending&&routineDropPending.fromDate!==routineDropPending.toDate
-            ? "Moving this to a different day changes it every week it repeats -- a single occurrence can only be retimed on its own day, not relocated."
-            : "This repeats every week. Change just this one occurrence, or every week going forward?"}
-        </div>
-      </Modal>
+        ), document.body);
+      })()}
       {/* ── "Can I go?" -- a pure dry-run, nothing here ever
           writes to the calendar. See checkTimeOffImpact's own comment for
           why: it's the exact same "compute, don't commit" approach the
