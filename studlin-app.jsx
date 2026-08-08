@@ -6352,7 +6352,7 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
   
   return (
     <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:95,background:"rgba(8,12,10,0.72)",backdropFilter:"blur(7px)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-      <div onClick={e=>e.stopPropagation()} style={{width:520,maxWidth:"100%",background:T.surface,border:"1px solid "+T.border,borderRadius:8,padding:26,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)",maxHeight:"90vh",overflowY:"auto"}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:520,maxWidth:"100%",background:T.card,border:"1px solid "+T.border,borderRadius:8,padding:26,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)",maxHeight:"90vh",overflowY:"auto"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:24}}>
           <span style={{display:"inline-flex",width:34,height:34,borderRadius:10,background:T.lime+"20",border:"1px solid "+T.lime+"44",alignItems:"center",justifyContent:"center",color:T.lime}}>{Icon.settings}</span>
           <div style={{fontSize:18,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>Study Schedule Preferences</div>
@@ -6476,7 +6476,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
   const choose=(name)=>{setPlanLS(name);onClose();if(onUpgraded)onUpgraded(name);};
   return (
     <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:90,background:"rgba(8,12,10,0.72)",backdropFilter:"blur(7px)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <div onClick={e=>e.stopPropagation()} style={{width:580,maxWidth:"92vw",background:T.surface,border:"1px solid "+T.border,borderRadius:8,padding:26,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)"}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:580,maxWidth:"92vw",background:T.card,border:"1px solid "+T.border,borderRadius:8,padding:26,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
           <span style={{display:"inline-flex",width:30,height:30,borderRadius:8,background:T.lime+"1c",border:"1px solid "+T.lime+"44",alignItems:"center",justifyContent:"center",color:T.lime}}>{Icon.wand}</span>
           <div style={{fontSize:17,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>You have hit your {feature} limit</div>
@@ -10120,7 +10120,7 @@ function Notes({setActive=()=>{}}){
 
                 {/* Contextual selection popover */}
                 {popover&&(
-                  <div style={{position:"absolute",top:popover.y,left:popover.x,transform:"translateX(-50%)",zIndex:30,display:"flex",gap:4,background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:"4px 6px",boxShadow:"0 8px 24px rgba(0,0,0,0.4)",whiteSpace:"nowrap"}}>
+                  <div style={{position:"absolute",top:popover.y,left:popover.x,transform:"translateX(-50%)",zIndex:30,display:"flex",gap:4,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"4px 6px",boxShadow:"0 8px 24px rgba(0,0,0,0.4)",whiteSpace:"nowrap"}}>
                     <button onMouseDown={e=>{e.preventDefault();setPendingSel(popover.selText);setPendingSelGlobal(false);setCommentInputOpen(true);}} style={{padding:"5px 10px",borderRadius:5,border:"none",background:"transparent",color:T.blue,cursor:"pointer",fontSize:12,fontFamily:T.font,fontWeight:600}}>Add Comment</button>
                     <div style={{width:1,background:T.border}} />
                     <button onMouseDown={e=>{e.preventDefault();doAddFlag(popover.selText);}} style={{padding:"5px 10px",borderRadius:5,border:"none",background:"transparent",color:T.amber,cursor:"pointer",fontSize:12,fontFamily:T.font,fontWeight:600}}>Flag for Tutor</button>
@@ -10946,7 +10946,7 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
       {/* ── INVITE MODAL ── */}
       {inviteOpen&&(
         <div onClick={()=>setInviteOpen(false)} style={{position:"fixed",inset:0,zIndex:90,background:"rgba(8,12,10,0.78)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <div onClick={e=>e.stopPropagation()} style={{width:460,maxWidth:"92vw",background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:28,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)"}}>
+          <div onClick={e=>e.stopPropagation()} style={{width:460,maxWidth:"92vw",background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:28,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)"}}>
             <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
               <div style={{width:42,height:42,borderRadius:12,background:T.lime+"18",border:`1px solid ${T.lime}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,flexShrink:0}}>{Icon.users}</div>
               <div>
@@ -16606,6 +16606,39 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
   };
   return (
     <Modal open={open} onClose={onClose} title="Manage your Weekly Routine" sub="Locked recurring blocks Studlin always schedules around. Add, edit, or clear one anytime." width={560}>
+      {/* Moved above the list (2026-08-08) -- with a full class schedule
+          already on the routine, "+ Add Recurring Activity" used to sit
+          below every existing item AND the Term dates section, so adding
+          just one more thing meant scrolling past everything already
+          there first, and got worse the more you'd already added. Matches
+          the Calendar sidebar's own Courses/Activities "+ Add new"
+          placement (top of the section, not the bottom). */}
+      {!addingRoutine
+        ? <Btn variant="subtle" onClick={()=>setAddingRoutine(true)} style={{width:"100%",justifyContent:"center",marginBottom:16}}>+ Add Recurring Activity</Btn>
+        : (
+          <div style={{border:`1px solid ${T.border}`,borderRadius:10,padding:14,marginBottom:16}}>
+            {!isFree&&<Field label="Name"><Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="e.g. Track Practice" autoFocus /></Field>}
+            <Field label="Type"><SelectChip options={[{value:"class",label:"Class"},{value:"busy",label:"Activity"},{value:"free",label:"Free Period"},{value:"habit",label:"Habit"}]} value={kind} onChange={setKind} /></Field>
+            {kind!=="class"&&<Field label="Color"><ColorSelect value={color} onChange={setColor} /></Field>}
+            {isHabit&&<div style={{fontSize:11.5,color:T.muted,marginTop:-6,marginBottom:14}}>No fixed time — Studlin fits it in wherever there's room each day.</div>}
+            <Field label="Repeats on" hint={days.length===0?"Pick at least one day":undefined}>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {ROUTINE_DOW.map((d,i)=>{
+                  const sel=days.includes(i);
+                  return <button key={i} type="button" onClick={()=>toggleDay(i)} style={{padding:"6px 12px",borderRadius:7,fontSize:12,fontWeight:sel?600:400,cursor:"pointer",border:`1px solid ${sel?T.lime+"66":T.border}`,background:sel?T.lime+"14":"transparent",color:sel?T.lime:T.muted,fontFamily:T.font}}>{d}</button>;
+                })}
+              </div>
+            </Field>
+            <div style={{display:"grid",gridTemplateColumns:isHabit?"1fr":"1fr 1fr",gap:12,marginBottom:14}}>
+              {!isHabit&&<Field label="Start time"><TimeInput value={startTime} onChange={setStartTime} /></Field>}
+              <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={30} value={duration} onChange={setDuration} /></Field>
+            </div>
+            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+              <Btn variant="subtle" onClick={()=>{resetForm();setAddingRoutine(false);}}>Cancel</Btn>
+              <Btn onClick={submitAdd} disabled={(!isFree&&!title.trim())||days.length===0} style={{opacity:(!isFree&&!title.trim())||days.length===0?0.45:1}}>Add</Btn>
+            </div>
+          </div>
+        )}
       {routines.length===0&&!addingRoutine&&(
         <div style={{fontSize:12.5,color:T.muted,padding:"10px 0 16px",textAlign:"center"}}>No recurring blocks yet.</div>
       )}
@@ -16641,32 +16674,6 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
           <DateField label="School ends" value={termEnd} onChange={setTermEnd} />
         </div>
       </div>
-      {!addingRoutine
-        ? <Btn variant="subtle" onClick={()=>setAddingRoutine(true)} style={{width:"100%",justifyContent:"center"}}>+ Add Recurring Activity</Btn>
-        : (
-          <div style={{border:`1px solid ${T.border}`,borderRadius:10,padding:14}}>
-            {!isFree&&<Field label="Name"><Input value={title} onChange={e=>setTitle(e.target.value)} placeholder="e.g. Track Practice" autoFocus /></Field>}
-            <Field label="Type"><SelectChip options={[{value:"class",label:"Class"},{value:"busy",label:"Activity"},{value:"free",label:"Free Period"},{value:"habit",label:"Habit"}]} value={kind} onChange={setKind} /></Field>
-            {kind!=="class"&&<Field label="Color"><ColorSelect value={color} onChange={setColor} /></Field>}
-            {isHabit&&<div style={{fontSize:11.5,color:T.muted,marginTop:-6,marginBottom:14}}>No fixed time — Studlin fits it in wherever there's room each day.</div>}
-            <Field label="Repeats on" hint={days.length===0?"Pick at least one day":undefined}>
-              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                {ROUTINE_DOW.map((d,i)=>{
-                  const sel=days.includes(i);
-                  return <button key={i} type="button" onClick={()=>toggleDay(i)} style={{padding:"6px 12px",borderRadius:7,fontSize:12,fontWeight:sel?600:400,cursor:"pointer",border:`1px solid ${sel?T.lime+"66":T.border}`,background:sel?T.lime+"14":"transparent",color:sel?T.lime:T.muted,fontFamily:T.font}}>{d}</button>;
-                })}
-              </div>
-            </Field>
-            <div style={{display:"grid",gridTemplateColumns:isHabit?"1fr":"1fr 1fr",gap:12,marginBottom:14}}>
-              {!isHabit&&<Field label="Start time"><TimeInput value={startTime} onChange={setStartTime} /></Field>}
-              <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={30} value={duration} onChange={setDuration} /></Field>
-            </div>
-            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-              <Btn variant="subtle" onClick={()=>{resetForm();setAddingRoutine(false);}}>Cancel</Btn>
-              <Btn onClick={submitAdd} disabled={(!isFree&&!title.trim())||days.length===0} style={{opacity:(!isFree&&!title.trim())||days.length===0?0.45:1}}>Add</Btn>
-            </div>
-          </div>
-        )}
     </Modal>
   );
 }
@@ -25689,15 +25696,15 @@ function App() {
       {notifPermModal && <NotifPermModal onAllow={handleNotifAllow} onDeny={handleNotifDeny} />}
       {!calOnboardDone&&(
         <div style={{position:"fixed",inset:0,zIndex:200,background:"rgba(8,12,10,0.82)",backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px"}}>
-          <div style={{width:"100%",maxWidth:480,background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:"32px 32px 26px",boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease"}}>
+          <div style={{width:"100%",maxWidth:480,background:T.card,border:`1px solid ${T.border}`,borderRadius:10,padding:"32px 32px 26px",boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease"}}>
             <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:6}}>
               <div style={{width:44,height:44,borderRadius:12,background:T.lime+"18",border:`1px solid ${T.lime}33`,display:"flex",alignItems:"center",justifyContent:"center",color:T.lime,fontSize:20}}>{Icon.cal}</div>
               <div>
-                <div style={{fontSize:19,fontWeight:700,color:"rgba(255,255,255,0.95)",letterSpacing:"-0.02em"}}>Connect your calendar</div>
-                <div style={{fontSize:12,color:"rgba(255,255,255,0.6)"}}>Pull existing events into Studlin · takes 10 seconds</div>
+                <div style={{fontSize:19,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>Connect your calendar</div>
+                <div style={{fontSize:12,color:T.muted}}>Pull existing events into Studlin · takes 10 seconds</div>
               </div>
             </div>
-            <p style={{fontSize:13,color:"rgba(255,255,255,0.65)",lineHeight:1.7,margin:"18px 0 20px"}}>
+            <p style={{fontSize:13,color:T.muted,lineHeight:1.7,margin:"18px 0 20px"}}>
               Studlin can read your upcoming events so you never double book a study block. Your calendar data is cached locally and never stored on our servers.
             </p>
             <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:24}}>
@@ -25738,7 +25745,7 @@ function App() {
                     <svg width="18" height="18" viewBox="0 0 24 24" fill={T.text}><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
                   </div>
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:13,fontWeight:600,color:T.white}}>Apple Calendar<span style={{marginLeft:8,fontSize:10.5,fontWeight:600,color:"rgba(255,255,255,0.35)"}}>(Coming Soon)</span></div>
+                    <div style={{fontSize:13,fontWeight:600,color:T.white}}>Apple Calendar<span style={{marginLeft:8,fontSize:10.5,fontWeight:600,color:T.faint}}>(Coming Soon)</span></div>
                     <div style={{fontSize:11,color:T.muted,marginTop:1}}>Import iCloud events</div>
                   </div>
                   <BtnSm variant="subtle" disabled style={{flexShrink:0,cursor:"not-allowed"}}>Connect</BtnSm>
@@ -25746,19 +25753,19 @@ function App() {
               </div>
             </div>
             <div style={{borderTop:`1px solid ${T.border}`,paddingTop:18,marginBottom:20}}>
-              <div style={{fontSize:13,fontWeight:600,color:"rgba(255,255,255,0.95)",marginBottom:2}}>Do you work a job?</div>
-              <div style={{fontSize:11.5,color:"rgba(255,255,255,0.5)",marginBottom:10}}>So Studlin knows not to schedule study time over your shifts.</div>
+              <div style={{fontSize:13,fontWeight:600,color:T.white,marginBottom:2}}>Do you work a job?</div>
+              <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>So Studlin knows not to schedule study time over your shifts.</div>
               <div style={{display:"flex",gap:8}}>
-                <button type="button" onClick={()=>setWorksJob(true)} style={{flex:1,padding:"9px 0",borderRadius:8,fontSize:12.5,fontWeight:600,cursor:"pointer",border:`1.5px solid ${worksJob===true?T.lime:T.border}`,background:worksJob===true?T.lime+"18":"transparent",color:worksJob===true?T.lime:"rgba(255,255,255,0.65)",fontFamily:T.font}}>Yes</button>
-                <button type="button" onClick={()=>setWorksJob(false)} style={{flex:1,padding:"9px 0",borderRadius:8,fontSize:12.5,fontWeight:600,cursor:"pointer",border:`1.5px solid ${worksJob===false?T.lime:T.border}`,background:worksJob===false?T.lime+"18":"transparent",color:worksJob===false?T.lime:"rgba(255,255,255,0.65)",fontFamily:T.font}}>No</button>
+                <button type="button" onClick={()=>setWorksJob(true)} style={{flex:1,padding:"9px 0",borderRadius:8,fontSize:12.5,fontWeight:600,cursor:"pointer",border:`1.5px solid ${worksJob===true?T.lime:T.border}`,background:worksJob===true?T.lime+"18":"transparent",color:worksJob===true?T.lime:T.muted,fontFamily:T.font}}>Yes</button>
+                <button type="button" onClick={()=>setWorksJob(false)} style={{flex:1,padding:"9px 0",borderRadius:8,fontSize:12.5,fontWeight:600,cursor:"pointer",border:`1.5px solid ${worksJob===false?T.lime:T.border}`,background:worksJob===false?T.lime+"18":"transparent",color:worksJob===false?T.lime:T.muted,fontFamily:T.font}}>No</button>
               </div>
-              {worksJob===true&&<div style={{fontSize:11.5,color:"rgba(255,255,255,0.5)",marginTop:8}}>Add your shifts in the next step, with your classes.</div>}
+              {worksJob===true&&<div style={{fontSize:11.5,color:T.muted,marginTop:8}}>Add your shifts in the next step, with your classes.</div>}
             </div>
             <div style={{display:"flex",gap:10}}>
               <Btn style={{flex:1,justifyContent:"center"}} onClick={()=>{lsSet("cal-onboard-done",true);if(worksJob!==null)lsSet("has-job",worksJob);setCalOnboardDone(true);}}>Done</Btn>
               <Btn variant="subtle" style={{flex:1,justifyContent:"center"}} onClick={()=>{lsSet("cal-onboard-done",true);if(worksJob!==null)lsSet("has-job",worksJob);setCalOnboardDone(true);}}>Skip for now</Btn>
             </div>
-            <div style={{fontSize:11,color:"rgba(255,255,255,0.35)",textAlign:"center",marginTop:14,lineHeight:1.5}}>You can connect or disconnect calendars anytime in Settings → Integrations.</div>
+            <div style={{fontSize:11,color:T.faint,textAlign:"center",marginTop:14,lineHeight:1.5}}>You can connect or disconnect calendars anytime in Settings → Integrations.</div>
           </div>
         </div>
       )}
