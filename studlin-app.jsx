@@ -5206,6 +5206,32 @@ function dayWorkloadTier(minutes){
   if(minutes>=DAY_WORKLOAD_MODERATE_MINS)return "moderate";
   return "light";
 }
+// The Month grid's own capacity bar (see its render site) used to fire
+// off the same fixed DAY_WORKLOAD_HEAVY_MINS threshold above -- but a
+// normal full course load crosses 4 hours scheduled on almost every
+// weekday regardless of which student it is, so the bar ended up
+// rendering under nearly every single cell, diluting itself into noise
+// instead of flagging anything meaningful. Relative to that month's own
+// average instead, same reasoning computeWeekBalancePlan already uses
+// for "heavy relative to the week" -- only a day meaningfully above a
+// student's OWN typical day now qualifies, which self-calibrates to any
+// course load instead of guessing one fixed number for everyone.
+// MIN_ABSOLUTE_MINS still guards a near-empty month (a light week where
+// every day happens to be near-zero shouldn't flag the one day with 20
+// minutes on it just because that's technically "above average").
+const MONTH_HEAVY_RELATIVE_RATIO=1.4;
+const MONTH_HEAVY_MIN_ABSOLUTE_MINS=90;
+function computeMonthHeavyDays(dayMinutesEntries){
+  const entries=dayMinutesEntries||[];
+  const real=entries.filter(d=>d.minutes>0);
+  const heavy=new Set();
+  if(real.length===0)return heavy;
+  const avg=real.reduce((s,d)=>s+d.minutes,0)/real.length;
+  entries.forEach(d=>{
+    if(d.minutes>=MONTH_HEAVY_MIN_ABSOLUTE_MINS&&d.minutes>=avg*MONTH_HEAVY_RELATIVE_RATIO)heavy.add(d.key);
+  });
+  return heavy;
+}
 const SPLIT_SESSION_MIN_MINUTES=10;
 function splitSessionDuration(totalDuration,splitCount){
   return Math.max(SPLIT_SESSION_MIN_MINUTES,Math.round((totalDuration||0)/Math.max(1,splitCount||1)));
@@ -20203,61 +20229,66 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         <Card style={{padding:16}}>
           <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
             {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((d,i)=><div key={i} style={{fontSize:10,fontWeight:600,color:T.muted,textAlign:"center",padding:"6px 0",letterSpacing:"0.05em"}}>{d}</div>)}
-            {cells.map((c,i)=>{
+            {(()=>{
+              // Computed once per render, relative to every real (in-month)
+              // day currently visible -- see computeMonthHeavyDays' own
+              // comment for why this replaced the old fixed-minutes
+              // threshold. Out-of-month lead/trail days (c.out) are
+              // excluded from the average itself, though a heavy one could
+              // still be flagged against it -- moot in practice since
+              // they're faded/inert anyway.
+              const monthHeavyDays=computeMonthHeavyDays(cells.filter(c=>!c.out).map(c=>({key:c.key,minutes:dayWorkloadMinutes((byDay[c.key]||[]).filter(ev=>ev.kind!=="free period"))})));
+              return cells.map((c,i)=>{
               const evs=(byDay[c.key]||[]).filter(ev=>ev.kind!=="free period");
               const isToday=c.key===todayK;
               const isSel=c.key===selDay;
-              // Capacity meter along the cell's bottom edge -- light days
-              // get nothing (no need to flag an easy day). Deliberately
-              // neutral (not amber/red): color in this cell is already
-              // spoken for by the "N tasks due" pill below (red=overdue,
-              // lime=on track), and an amber line sitting right next to
-              // that red pill read as a second, competing warning signal
-              // instead of a separate "how full is this day" one. A plain
-              // 2px border-width delta between moderate/heavy was also too
-              // subtle to actually perceive at this size -- a fill bar
-              // whose WIDTH scales with real minutes scheduled reads much
-              // faster at a glance.
-              const workloadTier=dayWorkloadTier(dayWorkloadMinutes(evs));
-              const workloadPct=Math.max(0,Math.min(100,Math.round(dayWorkloadMinutes(evs)/DAY_WORKLOAD_HEAVY_MINS*100)));
+              const isHeavyThisMonth=monthHeavyDays.has(c.key);
               return (
                 <div key={i} onClick={()=>{setSelDay(c.key);}} onDoubleClick={()=>setDayDetailKey(c.key)}
                   onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(sidebarDragChip){openNewEventForDrop(sidebarDragChip,c.key,"09:00",{x:e.clientX,y:e.clientY});setSidebarDragChip(null);}else if(dragId){moveEvent(dragId,c.key);setDragId(null);}}}
-                  title={workloadTier!=="light"?dayWorkloadMinutes(evs)+" minutes scheduled":undefined}
+                  title={isHeavyThisMonth?dayWorkloadMinutes(evs)+" minutes scheduled -- heavier than your average day this month":undefined}
                   style={{position:"relative",minHeight:64,minWidth:0,borderRadius:9,padding:"6px 7px",cursor:"pointer",background:isSel?T.card2:"transparent",border:"1px solid "+(isSel?T.lime+"55":"transparent"),transition:"all 0.12s",opacity:c.out?0.35:1}}>
                   <div style={{display:"flex",justifyContent:"flex-start"}}>
                     <span style={{width:22,height:22,borderRadius:"50%",display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:isToday?700:500,background:isToday?T.lime:"transparent",color:isToday?T.ink:c.out?T.faint:T.text}}>{c.d}</span>
                   </div>
                   {isSel && <button type="button" onClick={(e)=>{e.stopPropagation();openNew(c.key);}} title="Add a task on this day"
                     style={{position:"absolute",top:4,right:4,width:16,height:16,borderRadius:"50%",border:`1px solid ${T.border}`,background:T.card,color:T.muted,fontSize:11,lineHeight:1,cursor:"pointer",display:"grid",placeItems:"center",padding:0}}>+</button>}
-                  {workloadTier!=="light"&&(
-                    <div style={{position:"absolute",left:7,right:7,bottom:5,height:3,borderRadius:2,background:T.border,overflow:"hidden"}}>
-                      <div style={{width:workloadPct+"%",height:"100%",borderRadius:2,background:T.muted}} />
-                    </div>
+                  {/* Fixed-width, not a scaled fill -- this is a binary
+                      "notably heavier than your other days this month"
+                      flag now, not a percentage, so there's nothing to
+                      scale against. Deliberately rare (see
+                      computeMonthHeavyDays): a normal full course load
+                      shouldn't trip this on nearly every cell the way the
+                      old fixed-threshold version did. */}
+                  {isHeavyThisMonth&&(
+                    <div style={{position:"absolute",left:7,bottom:5,width:20,height:3,borderRadius:2,background:T.muted}} />
                   )}
-                  {/* Phase 10b: a single compact "N tasks due" bar instead
+                  {/* Phase 10b: a single compact "N tasks due" pill instead
                       of listing individual event chips -- matches Shovel's
                       day-cell header exactly, and directly addresses the
                       "Tue's oversized exam block eats the whole cell"
-                      complaint. Any overdue/high-priority item in the day
-                      still shows as a colored bar (red for overdue, else
-                      the day's own accent), so the at-a-glance urgency
-                      signal isn't lost, just condensed into one line.
-                      Clicking it jumps straight to the day detail, same
-                      destination double-click already reaches. */}
+                      complaint. Always lime now (2026-08-08) -- it used to
+                      recolor red whenever something was overdue, which
+                      collided with any other use of red/color-by-severity
+                      in this same cell. A small red dot instead, same
+                      "flag it, don't repaint the whole thing" language
+                      Week/Day view already use for an overdue event block,
+                      so the calendar speaks one consistent visual language
+                      for "something needs attention" instead of two. */}
                   {evs.length>0&&(()=>{
                     const anyOverdue=!catchUpPending&&evs.some(ev=>daysOverdue(ev)>0);
-                    const barColor=anyOverdue?T.red:T.lime;
                     return (
                       <div onClick={e=>{e.stopPropagation();setDayDetailKey(c.key);}}
-                        style={{marginTop:4,fontSize:9.5,fontWeight:700,color:barColor,background:barColor+"18",border:`1px solid ${barColor}33`,borderRadius:4,padding:"3px 6px",cursor:"pointer",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
-                        {evs.length} task{evs.length!==1?"s":""} due
+                        style={{marginTop:4,display:"flex",alignItems:"center",gap:4,fontSize:9.5,fontWeight:700,color:T.lime,background:T.lime+"18",border:`1px solid ${T.lime}33`,borderRadius:4,padding:"3px 6px",cursor:"pointer",overflow:"hidden"}}>
+                        {anyOverdue&&<span title="Something's overdue" style={{width:6,height:6,borderRadius:"50%",background:T.red,flexShrink:0}} />}
+                        <span style={{whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{evs.length} task{evs.length!==1?"s":""} due</span>
                       </div>
                     );
                   })()}
                 </div>
               );
-            })}
+              });
+            })()}
           </div>
           <div style={{fontSize:10.5,color:T.faint,marginTop:10,paddingLeft:6}}>Click a day to see its schedule · double-click for the full day view · + to add a task · drag tasks between days</div>
         </Card>
@@ -21012,7 +21043,33 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
             </>}>
             {detailEvs.length === 0 ? (
               <div style={{textAlign:"center",padding:"24px 12px",color:T.muted,fontSize:13}}>Nothing here yet — add the first thing.</div>
-            ) : (
+            ) : (<>
+              {/* A specific workload readout, not just an item count -- there's
+                  real room here for it, unlike the Month grid's own tiny
+                  cells (see computeMonthHeavyDays there for why that one had
+                  to be relative/rare instead). Absolute DAY_WORKLOAD_HEAVY_MINS
+                  is the right threshold in THIS context specifically: it's
+                  shown once for one day a student deliberately opened, not
+                  repeated across 30 cells at once, so it doesn't dilute
+                  itself into noise the way it did on the grid. */}
+              {(()=>{
+                const mins=dayWorkloadMinutes(detailEvs);
+                const tier=dayWorkloadTier(mins);
+                const hrs=Math.floor(mins/60),rem=mins%60;
+                const label=(hrs>0?hrs+"h"+(rem>0?" "+rem+"m":""):mins+"m")+" scheduled";
+                const pct=Math.max(4,Math.min(100,Math.round(mins/DAY_WORKLOAD_HEAVY_MINS*100)));
+                return (
+                  <div style={{marginBottom:14}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:5}}>
+                      <span style={{fontSize:11,fontWeight:600,color:T.muted}}>{label}</span>
+                      {tier==="heavy"&&<span style={{fontSize:10.5,color:T.muted}}>Heavier than a typical day</span>}
+                    </div>
+                    <div style={{height:5,borderRadius:3,background:T.border,overflow:"hidden"}}>
+                      <div style={{width:pct+"%",height:"100%",borderRadius:3,background:T.muted}} />
+                    </div>
+                  </div>
+                );
+              })()}
               <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:420,overflowY:"auto"}}>
                 {detailEvs.map(ev => {
                   const isDone = ev.status === "done";
@@ -21068,7 +21125,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
                   );
                 })}
               </div>
-            )}
+            </>)}
           </Modal>
         ), document.body);
       })()}

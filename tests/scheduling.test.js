@@ -3681,3 +3681,54 @@ describe("shouldShowSyllabusNudge / dismissSyllabusNudge (Courses sidebar 'missi
     assert.equal(m.shouldShowSyllabusNudge(), false);
   });
 });
+
+describe("computeMonthHeavyDays (regression: Month grid's capacity bar used to fire off a fixed minute threshold, tripping on nearly every cell for a normal full course load)", () => {
+  test("a day meaningfully above the month's own average is flagged", () => {
+    const m = loadStudlinModule();
+    // Average of [60,60,60,300] (excluding nothing, all real) is 120 --
+    // 300 is well past 120*1.4.
+    const heavy = m.computeMonthHeavyDays([
+      { key: "d1", minutes: 60 }, { key: "d2", minutes: 60 },
+      { key: "d3", minutes: 60 }, { key: "d4", minutes: 300 },
+    ]);
+    assert.equal(heavy.size, 1);
+    assert.equal(heavy.has("d4"), true);
+  });
+
+  test("a uniformly busy month (every day near the same load) flags nothing -- this is the actual fix, not just a smaller threshold", () => {
+    const m = loadStudlinModule();
+    const heavy = m.computeMonthHeavyDays([
+      { key: "d1", minutes: 240 }, { key: "d2", minutes: 250 },
+      { key: "d3", minutes: 230 }, { key: "d4", minutes: 245 },
+    ]);
+    assert.equal(heavy.size, 0);
+  });
+
+  test("a near-empty month doesn't flag its one non-zero day just for being technically above a near-zero average", () => {
+    const m = loadStudlinModule();
+    const heavy = m.computeMonthHeavyDays([
+      { key: "d1", minutes: 0 }, { key: "d2", minutes: 0 },
+      { key: "d3", minutes: 0 }, { key: "d4", minutes: 20 },
+    ]);
+    assert.equal(heavy.size, 0, "20 minutes is below MONTH_HEAVY_MIN_ABSOLUTE_MINS regardless of the average");
+  });
+
+  test("a completely empty month is a harmless no-op, not a divide-by-zero", () => {
+    const m = loadStudlinModule();
+    const heavy = m.computeMonthHeavyDays([]);
+    assert.equal(heavy.size, 0);
+    const heavyAllZero = m.computeMonthHeavyDays([{ key: "d1", minutes: 0 }, { key: "d2", minutes: 0 }]);
+    assert.equal(heavyAllZero.size, 0);
+  });
+
+  test("multiple genuinely-outlier days can all be flagged, not just the single heaviest one", () => {
+    const m = loadStudlinModule();
+    const heavy = m.computeMonthHeavyDays([
+      { key: "d1", minutes: 60 }, { key: "d2", minutes: 300 },
+      { key: "d3", minutes: 60 }, { key: "d4", minutes: 310 },
+    ]);
+    assert.equal(heavy.size, 2);
+    assert.equal(heavy.has("d2"), true);
+    assert.equal(heavy.has("d4"), true);
+  });
+});
