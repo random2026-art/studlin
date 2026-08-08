@@ -13933,7 +13933,7 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
 
-function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onClearPendingRoutineChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange}) {
+function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange}) {
   // Phase 10b: user-driven zoom (drag handle below), replacing the old
   // fixed constant. Persisted via getCalZoom/saveCalZoom so it's
   // remembered across visits and shared with DayPlanner. Deliberately not
@@ -14149,18 +14149,25 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
       wkResizeInfo.current = null;
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
+      if(onRoutineDragStateChange)onRoutineDragStateChange(false);
     };
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
     return ()=>{ document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); };
-  },[wkResize && wkResize.id, setEvents, onResizeRoutineOccurrence]);
+  },[wkResize && wkResize.id, setEvents, onResizeRoutineOccurrence, onRoutineDragStateChange]);
   const startWkResize=(ev,edge,e,startMin,duration)=>{
     e.stopPropagation(); e.preventDefault();
     // Grabbing an edge again while last time's scope popover is still up
-    // (didn't answer it yet) dismisses that stale popover instead of
-    // fighting with this new drag -- lets you keep adjusting freely
-    // instead of having to explicitly cancel first.
-    if(onClearPendingRoutineChange)onClearPendingRoutineChange();
+    // (didn't answer it yet) hides that popover for the duration of this
+    // new drag -- purely a visibility flag now, NOT a clear of the
+    // underlying pending preview. Nulling the preview data itself here
+    // (the original approach) meant the block's displayed size snapped
+    // back to its true stored original the instant you regrabbed it,
+    // before you'd even moved the mouse -- exactly the "goes back to the
+    // origin place" bug. The popover reappears, beside the new position,
+    // once this drag ends and produces its own (possibly updated) pending
+    // change.
+    if(onRoutineDragStateChange)onRoutineDragStateChange(true);
     // Routine occurrences (a scanned/manual recurring class, an activity)
     // carry isRoutine/routineId/date already -- expandRoutineOccurrences's
     // own per-occurrence override shape ({startTime,duration} keyed by
@@ -14243,9 +14250,13 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
       return;
     }
     setWkDragId(null); setWkDragDeadline(null); setWkDragOverDay(null); setWkDropTime(null); setWkDragRoutineOccurrence(null);
+    if(onRoutineDragStateChange)onRoutineDragStateChange(false);
   };
 
-  const handleDragEnd = () => { setWkDragId(null); setWkDragDeadline(null); setWkDragOverDay(null); setWkDropTime(null); setWkDragRoutineOccurrence(null); };
+  // Also fires on a cancelled drag (dropped outside a valid target, Escape)
+  // -- without resetting the flag here too, that path would leave the scope
+  // popover permanently hidden even though nothing was actually dropped.
+  const handleDragEnd = () => { setWkDragId(null); setWkDragDeadline(null); setWkDragOverDay(null); setWkDropTime(null); setWkDragRoutineOccurrence(null); if(onRoutineDragStateChange)onRoutineDragStateChange(false); };
 
   const DAY_NAMES = ["MON","TUE","WED","THU","FRI","SAT","SUN"];
 
@@ -14436,7 +14447,16 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   // exactly, not get clamped against a neighbor that hasn't
                   // moved yet.
                   const nextInCol = dayLaidOut.filter(o => o.col === col && o.start > start).sort((a, b) => a.start - b.start)[0];
-                  const heightPx = isResizing ? Math.max(22, effDuration * (WK_PX_HR / 60)) : computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, WK_PX_HR);
+                  // The actual root cause of "resizing snaps back to the old
+                  // size until you confirm scope": effDuration above already
+                  // folded pendingForThis in correctly, but this height calc
+                  // only ever consulted it while isResizing was true (i.e.
+                  // mid-drag) -- the instant the mouse was released,
+                  // isResizing went false and this silently fell back to the
+                  // ELSE branch's plain `dur` (the raw, pre-change value),
+                  // discarding the pending preview entirely. Same condition
+                  // as effDuration's own fallback now.
+                  const heightPx = (isResizing||pendingForThis) ? Math.max(22, effDuration * (WK_PX_HR / 60)) : computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, WK_PX_HR);
                   const isDone = ev.status === "done";
                   const over = daysOverdue(ev);
                   // Subject color used to BE the block's fill. Now it's a
@@ -14479,7 +14499,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                     )}
                     <div
                       draggable
-                      onDragStart={()=>{ if(!isRoutine){setWkDragId(ev.id); setWkDragDeadline(ev.deadline||null);closePopover();} else {if(onClearPendingRoutineChange)onClearPendingRoutineChange();setWkDragRoutineOccurrence({routineId:ev.routineId,fromDate:ev.date});} }}
+                      onDragStart={()=>{ if(!isRoutine){setWkDragId(ev.id); setWkDragDeadline(ev.deadline||null);closePopover();} else {if(onRoutineDragStateChange)onRoutineDragStateChange(true);setWkDragRoutineOccurrence({routineId:ev.routineId,fromDate:ev.date});} }}
                       onDoubleClick={()=>{ if(!isRoutine)openEdit(ev); else if(onEditRoutine)onEditRoutine(ev.routineId); }}
                       onClick={(e)=>{
                         if(isRoutine){ if(editRoutineMode&&onEditRoutine)onEditRoutine(ev.routineId); return; }
@@ -14509,12 +14529,19 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                           HTML5 drag from starting when the grab begins here,
                           so it doesn't fight with the custom mouse-tracking
                           resize below. */}
+                      {/* Seeded from effStartMin/effDuration (the currently
+                          DISPLAYED values -- pending-aware), not raw
+                          origStartMin/dur (the true stored original).
+                          Regrabbing to adjust further after an unconfirmed
+                          resize now continues the drag from where it
+                          visually is instead of silently resetting the
+                          delta-math baseline back to the pre-pending size. */}
                       <div draggable={false}
-                        onMouseDown={(e)=>startWkResize(ev,"top",e,origStartMin,dur)}
+                        onMouseDown={(e)=>startWkResize(ev,"top",e,effStartMin,effDuration)}
                         onClick={(e)=>e.stopPropagation()}
                         style={{position:"absolute",top:-2,left:0,right:0,height:6,cursor:"ns-resize",zIndex:4}} />
                       <div draggable={false}
-                        onMouseDown={(e)=>startWkResize(ev,"bottom",e,origStartMin,dur)}
+                        onMouseDown={(e)=>startWkResize(ev,"bottom",e,effStartMin,effDuration)}
                         onClick={(e)=>e.stopPropagation()}
                         style={{position:"absolute",bottom:-2,left:0,right:0,height:6,cursor:"ns-resize",zIndex:4}} />
                       {isRoutine&&editRoutineMode&&hoveredRoutineId===ev.routineId&&(
@@ -16569,7 +16596,15 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
   const colorOf=(tg)=>{const s=userSubjects.find(x=>x.id===tg||x.label===tg);return s?s.color:T.muted;};
   const [addingRoutine,setAddingRoutine]=useState(false);
   const [title,setTitle]=useState("");
-  const [kind,setKind]=useState("class");
+  // "Class" used to be the default here, but adding a class already has
+  // its own dedicated, richer flow (Courses' own "+ Add new" -> the
+  // syllabus-scan wizard) -- defaulting to it in this generic routine
+  // modal made no sense from the one place that actually opens straight
+  // into this form, Activities' own "+ Add new". Kept as a selectable
+  // option (still useful for a manual meeting time this modal's other
+  // entry point, Settings/Tools' "Routine", might want), just not
+  // pre-selected.
+  const [kind,setKind]=useState("busy");
   const [days,setDays]=useState([]);
   const [startTime,setStartTime]=useState("15:30");
   const [duration,setDuration]=useState(60);
@@ -16588,7 +16623,7 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
   const setTermStart=(v)=>{setTermStartState(v);saveTerm(v,termEnd);};
   const setTermEnd=(v)=>{setTermEndState(v);saveTerm(termStart,v);};
   useEffect(()=>{ if(!open)setAddingRoutine(false); },[open]);
-  const resetForm=()=>{setTitle("");setKind("class");setDays([]);setStartTime("15:30");setDuration(60);setColor(SUBJECT_COLORS[0]);};
+  const resetForm=()=>{setTitle("");setKind("busy");setDays([]);setStartTime("15:30");setDuration(60);setColor(SUBJECT_COLORS[0]);};
   const toggleDay=(i)=>setDays(d=>d.includes(i)?d.filter(x=>x!==i):[...d,i]);
   const isFree=kind==="free";
   const isHabit=kind==="habit";
@@ -17962,6 +17997,14 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // Phase 7e: set when a routine occurrence was just dropped somewhere new,
   // waiting on the student to pick "just this one" or "every week".
   const [routineDropPending,setRoutineDropPending]=useState(null); // {routineId,fromDate,toDate,toTime,newDuration?}|null -- newDuration only set by a resize
+  // Whether WeeklyPlanner currently has an active resize or move-drag on a
+  // routine occurrence -- purely a popover-visibility flag, deliberately
+  // separate from routineDropPending itself. The popover hides while this
+  // is true (see its render condition below) but the underlying pending
+  // preview is left completely alone, so regrabbing the same block to keep
+  // adjusting continues from what's currently displayed instead of
+  // reverting to the true stored original the instant you touch it again.
+  const [routineDragActive,setRoutineDragActive]=useState(false);
   // Drives the right-hand column (5e): null = "upcoming across everything",
   // a course id = filtered to just that course.
   const [selectedCourseId,setSelectedCourseId]=useState(null);
@@ -18744,10 +18787,6 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   const onResizeRoutineOccurrence=(routineId,date,newStartTime,newDuration,anchorRect)=>{
     setRoutineDropPending({routineId,fromDate:date,toDate:date,toTime:newStartTime,newDuration,anchorX:anchorRect?anchorRect.right:null,anchorY:anchorRect?anchorRect.top:null});
   };
-  // Grabbing an edge/block again before answering the last scope popover
-  // dismisses it instead of leaving it stranded pointing at a now-stale
-  // proposed time/duration.
-  const clearRoutineDropPending=()=>setRoutineDropPending(null);
   const applyRoutineDropScope=(scope)=>{
     if(!routineDropPending)return;
     const {routineId,fromDate,toDate,toTime,newDuration}=routineDropPending;
@@ -20153,7 +20192,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
           selDay={selDay} setSelDay={setSelDay} onDeleteEvent={deleteEventWithUndo} catchUpPending={catchUpPending}
           sidebarDragChip={sidebarDragChip} onDropSidebarChip={(dk,time,anchorPoint)=>{openNewEventForDrop(sidebarDragChip,dk,time,anchorPoint);setSidebarDragChip(null);}}
-          onDropRoutineOccurrence={onDropRoutineOccurrence} onResizeRoutineOccurrence={onResizeRoutineOccurrence} pendingRoutineChange={routineDropPending} onClearPendingRoutineChange={clearRoutineDropPending} previewEvent={previewEvent} highlightedSessionId={highlightedSessionId}
+          onDropRoutineOccurrence={onDropRoutineOccurrence} onResizeRoutineOccurrence={onResizeRoutineOccurrence} pendingRoutineChange={routineDropPending} onRoutineDragStateChange={setRoutineDragActive} previewEvent={previewEvent} highlightedSessionId={highlightedSessionId}
           onPreviewMove={(date,startTime,endTime)=>setPreviewOverride({date,startTime,endTime})}
           onPreviewResize={(endTime)=>setPreviewOverride(o=>({date:(o&&o.date)||previewEvent.date,startTime:(o&&o.startTime)||previewEvent.startTime,endTime}))}
           onPreviewDraggingChange={setPreviewDragActive} />
@@ -20256,15 +20295,20 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           it, and a full-screen version also made adjusting again (grab the
           edge/block a second time) require an explicit dismiss first.
           Deliberately no full-screen click-catcher: startWkResize and the
-          move onDragStart above both already call
-          onClearPendingRoutineChange the instant a new drag begins, so
-          regrabbing the same block dismisses this on its own -- an
-          invisible overlay here would just eat that first click instead of
-          letting it reach the resize handle underneath. Positioning
-          mirrors NewEventModal's own anchored-popover formula (prefer
-          opening to the right of the anchor point, fall back left; clamp
-          vertically) for the same "beside what you touched" feel. */}
-      {routineDropPending && (()=>{
+          move onDragStart above both flip routineDragActive true the
+          instant a new drag begins (hiding this popover via the render
+          condition below), so regrabbing the same block dismisses it on
+          its own -- an invisible overlay here would just eat that first
+          click instead of letting it reach the resize handle underneath.
+          Deliberately does NOT clear routineDropPending itself on regrab
+          (an earlier version did) -- that data stays the block's "last
+          known preview" throughout, which is what stops the block from
+          visibly snapping back to its true stored original the moment you
+          touch it again. Positioning mirrors NewEventModal's own
+          anchored-popover formula (prefer opening to the right of the
+          anchor point, fall back left; clamp vertically) for the same
+          "beside what you touched" feel. */}
+      {routineDropPending && !routineDragActive && (()=>{
         const POPOVER_WIDTH=320;
         const ESTIMATED_HEIGHT=150;
         const x=routineDropPending.anchorX!=null?routineDropPending.anchorX:window.innerWidth-POPOVER_WIDTH-40;
