@@ -13942,7 +13942,7 @@ function computeEventBlockHeightPx(durationMins, gapToNextMins, pxPerHr) {
   return Math.min(floored, Math.max(4, gapToNextMins * (pxPerHr / 60)));
 }
 
-function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange}) {
+function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset, todayK, colorOf, fmtTime, fmtTimeRange, openNew, openEdit, routines, editRoutineMode, hoveredRoutineId, setHoveredRoutineId, onEditRoutine, onDeleteRoutine, schoolWindow, selDay, setSelDay, onDeleteEvent, catchUpPending, sidebarDragChip, onDropSidebarChip, onDropRoutineOccurrence, onResizeRoutineOccurrence, pendingRoutineChange, onRoutineDragStateChange, previewEvent, highlightedSessionId, onPreviewMove, onPreviewResize, onPreviewDraggingChange}) {
   // Phase 10b: user-driven zoom (drag handle below), replacing the old
   // fixed constant. Persisted via getCalZoom/saveCalZoom so it's
   // remembered across visits and shared with DayPlanner. Deliberately not
@@ -14477,24 +14477,25 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   const heightPx = (isResizing||pendingForThis) ? Math.max(22, effDuration * (WK_PX_HR / 60)) : computeEventBlockHeightPx(dur, nextInCol ? nextInCol.start - start : null, WK_PX_HR);
                   const isDone = ev.status === "done";
                   const over = daysOverdue(ev);
-                  // Subject color used to BE the block's fill. Now it's a
-                  // marker on top of a kind-based fill instead (a 3px left
-                  // edge) -- "which class is this" stays answerable at a
-                  // glance without competing with the kind-based color
-                  // language that now carries the dominant read. See
-                  // design-tokens.js's usage rules.
                   const subjectColor = ev.color||colorOf(ev.courseId||ev.subject);
                   const isStudy = ev.kind === "study block";
                   const isExam = ev.kind === "exam";
                   const isWarningKind = isExam || ev.kind === "deadline";
-                  // Fill is kind-based only: neutral for fixed items (class,
-                  // busy block, reminder, everything else), accent for study/
-                  // work blocks, warning tint for exams/deadlines themselves.
+                  // Fixed items (class, busy block, reminder, everything
+                  // else) tint their fill with the subject's own color now
+                  // (2026-08-08) -- previously a flat neutral shared by
+                  // every subject, so a full week of different classes all
+                  // looked the same except for the thin 3px marker. Same
+                  // tint level DayPlanner's own equivalent already used
+                  // (color+"1E"), just never carried over here. Study
+                  // blocks and exams/deadlines keep their own deliberate
+                  // kind-based treatment untouched -- those need to read as
+                  // "focus time" / "urgent" regardless of which subject.
                   const kindStyle = isStudy
                     ? {background:tokens.color.accent,color:T.ink}
                     : isWarningKind
                       ? {background:tokens.color.warningSubtle,border:`1px solid ${tokens.color.warning}`,color:tokens.color.warning}
-                      : {background:tokens.color.surfaceSunken,color:tokens.color.textPrimary};
+                      : {background:subjectColor+"1E",color:subjectColor};
                   const dimmedByRoutineMode = editRoutineMode && !isRoutine;
                   const highlightedByRoutineMode = editRoutineMode && isRoutine;
                   const isSelected = !isRoutine && selectedEventId === ev.id;
@@ -14538,7 +14539,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                       {overflowCount>0&&<span title={overflowCount+" more at this time — open the day to see them"} style={{position:"absolute",bottom:2,right:2,fontSize:8,fontWeight:800,color:kindStyle.color,background:"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>+{overflowCount}</span>}
                       {conflictTitles.length>0&&<span title={"Overlaps with "+conflictTitles.join(", ")} style={{position:"absolute",top:2,left:2,fontSize:9,lineHeight:1,zIndex:1,filter:"drop-shadow(0 1px 1px rgba(0,0,0,0.35))"}}>⚠️</span>}
                       <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"EXAM · ":""}{ev.title}</div>
-                      {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isWarningKind?tokens.color.warning:tokens.color.textSecondary,marginTop:1}}>{fmtTime(String(Math.floor(effStartMin/60)).padStart(2,"0")+":"+String(effStartMin%60).padStart(2,"0"))}{effDuration ? " · "+effDuration+"m" : ""}</div>}
+                      {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isWarningKind?tokens.color.warning:tokens.color.textSecondary,marginTop:1}}>{fmtTimeRange(String(Math.floor(effStartMin/60)).padStart(2,"0")+":"+String(effStartMin%60).padStart(2,"0"),effDuration)}</div>}
                       {/* Drag-to-resize edge handles -- routine occurrences
                           included now (startWkResize/onUp branch on
                           isRoutine and route through onResizeRoutineOccurrence's
@@ -16388,7 +16389,7 @@ function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip
 // illegibility on a packed day and clamp to a narrow window on a light
 // one). The container just scrolls, same as any normal calendar, landing
 // near the current time or the first real event on open.
-function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew}) {
+function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, fmtTimeRange, openEdit, markDone, uncrossDone, prefs, setSelDay, catchUpPending, openNew}) {
   const scrollRef=useRef(null);
   const [dayPreviewOpen,setDayPreviewOpen]=useState(false);
   const stepDay=(n)=>{const d=new Date(selDay+"T12:00:00");d.setDate(d.getDate()+n);setSelDay(dayKey(d));};
@@ -16526,7 +16527,7 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
                   {overflowCount>0&&<span title={overflowCount+" more at this time"} style={{position:"absolute",bottom:2,right:2,fontSize:8,fontWeight:800,color:kindStyle.color,background:"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>+{overflowCount}</span>}
                   {conflictTitles.length>0&&<span title={"Overlaps with "+conflictTitles.join(", ")} style={{position:"absolute",top:2,left:2,fontSize:9,lineHeight:1,zIndex:1,filter:"drop-shadow(0 1px 1px rgba(0,0,0,0.35))"}}>⚠️</span>}
                   <div style={{fontSize:11.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:isDone?"line-through":"none"}}>{isExam?"EXAM · ":""}{ev.title}</div>
-                  {heightPx>34&&<div style={{fontSize:9.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:2}}>{fmtTime(ev.time)}{dur?" · "+dur+"m":""}</div>}
+                  {heightPx>34&&<div style={{fontSize:9.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:2}}>{fmtTimeRange(ev.time,dur)}</div>}
                 </div>
                 {ev.commuteAfter>0 && (
                   <div title={ev.commuteAfter+" min commute"} style={commuteStripStyle(ev.commuteAfter,"after")}>
@@ -16540,7 +16541,7 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
         </div>
       </div>
     </Card>
-    <DayPreviewModal open={dayPreviewOpen} onClose={()=>setDayPreviewOpen(false)} dayEvents={dayEvents} selDay={selDay} dayLabel={niceDayLabel} colorOf={colorOf} fmtTime={fmtTime} catchUpPending={catchUpPending} openNew={openNew} />
+    <DayPreviewModal open={dayPreviewOpen} onClose={()=>setDayPreviewOpen(false)} dayEvents={dayEvents} selDay={selDay} dayLabel={niceDayLabel} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} catchUpPending={catchUpPending} openNew={openNew} />
     </>
   );
 }
@@ -16554,7 +16555,7 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
 // DayPlanner) and colorOf (so a class's color here always matches its
 // color everywhere else in the app -- never a fresh palette).
 const DAY_PREVIEW_ICON_BY_KIND={"class":Icon.cal,"study block":Icon.brain,"exam":Icon.zap,"deadline":Icon.file,"reminder":Icon.clock};
-function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime,catchUpPending,openNew}){
+function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime,fmtTimeRange,catchUpPending,openNew}){
   if(!open)return null;
   const visibleEvs=(dayEvents||[]).filter(ev=>ev.kind!=="free period"&&ev.time);
   const starts=visibleEvs.map(ev=>{const p=ev.time.split(":").map(Number);return p[0]*60+p[1];});
@@ -16629,7 +16630,7 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
                     <span style={{color,display:"flex",flexShrink:0}}>{iconFor(ev.kind)}</span>
                     <span style={{fontSize:12,fontWeight:700,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</span>
                   </div>
-                  {heightPx>30&&<div style={{fontSize:10,color:T.muted,marginTop:2,marginLeft:19}}>{fmtTime(ev.time)}{dur?" · "+dur+"m":""}</div>}
+                  {heightPx>30&&<div style={{fontSize:10,color:T.muted,marginTop:2,marginLeft:19}}>{fmtTimeRange(ev.time,dur)}</div>}
                   {overflowCount>0&&<div style={{fontSize:9.5,fontWeight:700,color,marginTop:1,marginLeft:19}}>+{overflowCount} more at this time</div>}
                 </div>
               );
@@ -18914,6 +18915,23 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // consumer calling it on one crashed the whole app. Defensive at the
   // source now, on top of the specific call site that actually crashed.
   const fmtTime=(t)=>{if(!t)return "—";const p=t.split(":");let h=+p[0];const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+p[1]+" "+ap;};
+  // "4:00 PM · 60m" (start + raw duration) made a student do the mental
+  // math to know when something actually ends. A plain range reads
+  // faster -- and drops the ":00" on whole-hour times (so a normal class
+  // shows "4 - 5 PM", not "4:00 - 5:00 PM") the same way Shovel's own
+  // calendar does. Shares one AM/PM suffix when both ends fall in the
+  // same half of the day; shows both when a block crosses noon/midnight.
+  const fmtTimeRange=(startTime,durationMins)=>{
+    if(!startTime)return "—";
+    const startMin=timeToMinutes(startTime);
+    const endMin=Math.min(1439,startMin+(durationMins||0));
+    const part=(mins,includeSuffix)=>{
+      let h=Math.floor(mins/60);const m=mins%60;const ap=h>=12?"PM":"AM";h=h%12||12;
+      return h+(m!==0?":"+String(m).padStart(2,"0"):"")+(includeSuffix?" "+ap:"");
+    };
+    const sameSuffix=(startMin>=12*60)===(endMin>=12*60);
+    return part(startMin,!sameSuffix)+" - "+part(endMin,true);
+  };
   const niceDate=(k)=>{const p=k.split("-");return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});};
   // Computed straight from `events`/routines for `selDay` (rather than the
   // month-grid-scoped `byDay`) so this stays correct even when `selDay`
@@ -20245,7 +20263,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         </Card>
       )}
       {calView==="weekly"&&(
-        <WeeklyPlanner events={events} setEvents={setEvents} moveEvent={moveEvent} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openNew={openNew} openEdit={openEdit}
+        <WeeklyPlanner events={events} setEvents={setEvents} moveEvent={moveEvent} weekOffset={weekOffset} setWeekOffset={setWeekOffset} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} openNew={openNew} openEdit={openEdit}
           routines={routines} editRoutineMode={editRoutineMode} hoveredRoutineId={hoveredRoutineId} setHoveredRoutineId={setHoveredRoutineId}
           onEditRoutine={(routineId)=>{const rule=routines.find(r=>r.id===routineId);if(rule)openRoutineEdit(rule);}} onDeleteRoutine={deleteRoutineItem} schoolWindow={schoolWindow}
           selDay={selDay} setSelDay={setSelDay} onDeleteEvent={deleteEventWithUndo} catchUpPending={catchUpPending}
@@ -20256,7 +20274,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           onPreviewDraggingChange={setPreviewDragActive} />
       )}
       {calView==="daily"&&(
-        <DayPlanner dayEvents={dayEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} openNew={openNew} />
+        <DayPlanner dayEvents={dayEvents} selDay={selDay} todayK={todayK} colorOf={colorOf} fmtTime={fmtTime} fmtTimeRange={fmtTimeRange} openEdit={openEdit} markDone={markDone} uncrossDone={uncrossDone} prefs={getSchedulePreferences()} setSelDay={setSelDay} catchUpPending={catchUpPending} openNew={openNew} />
       )}
     </div>
       {/* Right-hand column (Phase 5e) -- upcoming across everything by
