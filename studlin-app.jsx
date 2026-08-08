@@ -958,7 +958,7 @@ function mergeCourses(keepId,mergeIds){
 // section) are wired to real mock class data; every other entry here is just
 // a selectable name with no further behavior.
 const SCHOOL_DIRECTORY=[
-  {name:"Harvard University",type:"college"},{name:"Lincoln High School",type:"highschool"},
+  {name:"Brightwell University",type:"college"},{name:"Lincoln High School",type:"highschool"},
   {name:"Stanford University",type:"college"},{name:"New York University",type:"college"},
   {name:"UC Berkeley",type:"college"},{name:"UCLA",type:"college"},
   {name:"MIT",type:"college"},{name:"Lehigh University",type:"college"},
@@ -1140,7 +1140,11 @@ const subjectRowStyle=(color)=>({display:"flex",alignItems:"center",gap:8,paddin
 // exactly these two SCHOOL_DIRECTORY entries. Every other school is just a
 // name with no further behavior (see ExploreClassesCard's mount point in
 // Profile(), gated on an exact affiliation match against these two strings).
-const DEMO_SCHOOL_COLLEGE="Harvard University";
+// A real, prestigious university's name shouldn't be attached to fake
+// demo classes and a fake professor -- reads like Studlin claims some
+// actual affiliation/endorsement it doesn't have. Fictional institution,
+// deliberately generic-sounding, chosen to not resemble any real school.
+const DEMO_SCHOOL_COLLEGE="Brightwell University";
 const DEMO_SCHOOL_HS="Lincoln High School";
 
 // Event dates are stored as `dayOffset` (days from "today") and resolved to a
@@ -14409,7 +14413,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                     <div style={{borderTop:"2px solid #E5484D"}} />
                   </div>
                 )}
-                {(() => { const dayLaidOut = layoutDayEvents(visibleEvs); return dayLaidOut.map(({ev, col, totalCols, displayCol, displayTotalCols, start, hidden, overflowCount}) => {
+                {(() => { const dayLaidOut = layoutDayEvents(visibleEvs); return dayLaidOut.map(({ev, col, totalCols, displayCol, displayTotalCols, start, end, hidden, overflowCount}) => {
                   // A real schedule conflict (fixed-kind events are exempt
                   // from conflict-avoidance -- see resolveManualSlot) used
                   // to split into as many equal-width columns as there
@@ -14425,6 +14429,15 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                   const origStartMin = hh * 60 + mm;
                   const dur = ev.duration || 30;
                   const isRoutine = !!ev.isRoutine;
+                  // totalCols>1 already means "layoutDayEvents needed a
+                  // second column here," i.e. a genuine real-time overlap --
+                  // that signal already existed for column-width purposes,
+                  // it just never surfaced as a warning. A drag-and-drop
+                  // move/resize could silently create this with nothing on
+                  // screen ever saying so, unlike the New Event form's own
+                  // inline overlap check (findOverlapConflict), which only
+                  // ever ran there, never for drag-and-drop.
+                  const conflictTitles = totalCols>1 ? dayLaidOut.filter(o=>o.ev.id!==ev.id&&o.start<end&&start<o.end).map(o=>o.ev.title) : [];
                   const isResizing = wkResize && wkResize.id===ev.id;
                   // A same-day resize/retime still awaiting a "just this
                   // one / every week" answer -- keeps the block showing the
@@ -14518,6 +14531,7 @@ function WeeklyPlanner({events, setEvents, moveEvent, weekOffset, setWeekOffset,
                           behind" now, not a per-item red dot competing with it. */}
                       {!catchUpPending&&over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:"0 0 0 1.5px rgba(255,255,255,0.9)",zIndex:1}} />}
                       {overflowCount>0&&<span title={overflowCount+" more at this time — open the day to see them"} style={{position:"absolute",bottom:2,right:2,fontSize:8,fontWeight:800,color:kindStyle.color,background:"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>+{overflowCount}</span>}
+                      {conflictTitles.length>0&&<span title={"Overlaps with "+conflictTitles.join(", ")} style={{position:"absolute",top:2,left:2,fontSize:9,lineHeight:1,zIndex:1,filter:"drop-shadow(0 1px 1px rgba(0,0,0,0.35))"}}>⚠️</span>}
                       <div style={{fontSize:9.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                       {heightPx > 34 && <div style={{fontSize:8.5,color:isStudy?T.ink+"aa":isWarningKind?tokens.color.warning:tokens.color.textSecondary,marginTop:1}}>{fmtTime(String(Math.floor(effStartMin/60)).padStart(2,"0")+":"+String(effStartMin%60).padStart(2,"0"))}{effDuration ? " · "+effDuration+"m" : ""}</div>}
                       {/* Drag-to-resize edge handles -- routine occurrences
@@ -15426,19 +15440,51 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
     setAddMode("hsReview");
   };
 
+  // Used to be image-only (accept + this handler both hard-rejected
+  // anything else with "Upload a photo or screenshot"), inconsistent with
+  // the syllabus-scan and college-schedule uploads elsewhere in this same
+  // wizard, which both already accept PDF/.docx/.txt too via
+  // handleScanFile's identical extension-branching pattern -- reused here
+  // rather than reinvented.
   const handleHsScheduleFile=async(e)=>{
     const file=e.target.files&&e.target.files[0];if(!file)return;e.target.value="";
-    const ext=file.name.split(".").pop().toLowerCase();
-    if(!IMAGE_EXT_MEDIA_TYPES[ext]){setScanError("Upload a photo or screenshot of your schedule (JPG, PNG, etc).");return;}
     setScanning(true);setScanError("");
     try{
-      const dataUrl=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsDataURL(file);});
-      const base64=(dataUrl.split(",")[1])||"";
-      const result=await extractHsScheduleFromImage(base64,IMAGE_EXT_MEDIA_TYPES[ext]);
+      const ext=file.name.split(".").pop().toLowerCase();
+      if(IMAGE_EXT_MEDIA_TYPES[ext]){
+        const dataUrl=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsDataURL(file);});
+        const base64=(dataUrl.split(",")[1])||"";
+        const result=await extractHsScheduleFromImage(base64,IMAGE_EXT_MEDIA_TYPES[ext]);
+        if(result.error){setScanError(result.error);return;}
+        if(result.periods.length===0){setScanError("Couldn't make out any periods in that image. Try a clearer photo, or add classes manually.");return;}
+        buildHsReviewFromPeriods(result.periods);
+        return;
+      }
+      let text="";
+      if(ext==="pdf"){
+        const pdfjsLib=await window._pdfjs;const buf=await file.arrayBuffer();const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+        for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();text+=tc.items.map(it=>it.str).join(" ")+"\n\n";}
+      }else if(ext==="docx"){
+        if(!window.mammoth)throw new Error("Document reader still loading, try again in a moment.");
+        const buf=await file.arrayBuffer();
+        const mres=await window.mammoth.extractRawText({arrayBuffer:buf});
+        text=mres.value;
+      }else if(ext==="doc"){
+        setScanError("Studlin can only read .docx, not the older .doc format. Try re-saving it as .docx or PDF.");
+        setScanning(false);
+        return;
+      }else if(ext==="txt"){
+        text=await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.readAsText(file);});
+      }else{
+        setScanError("Upload a photo, PDF, Word doc, or text file of your schedule.");
+        setScanning(false);
+        return;
+      }
+      const result=await extractHsScheduleFromText(text);
       if(result.error){setScanError(result.error);return;}
-      if(result.periods.length===0){setScanError("Couldn't make out any periods in that image. Try a clearer photo, or add classes manually.");return;}
+      if(result.periods.length===0){setScanError("Couldn't find any periods in that. Try a clearer file, or add classes manually.");return;}
       buildHsReviewFromPeriods(result.periods);
-    }catch(err){setScanError("Couldn't read that image: "+err.message);}
+    }catch(err){setScanError("Couldn't read that file: "+err.message);}
     finally{setScanning(false);}
   };
 
@@ -15823,7 +15869,7 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
           </>)}
 
           {step==="classes"&&addMode==="hsSchedule"&&(<>
-            <TitleSub title="Upload your class schedule" sub="A photo, or paste the text, of your period-by-period schedule. Studlin turns each period into a class, color-coded by time -- and works out your free periods from your school hours below." />
+            <TitleSub title="Upload your class schedule" sub="A file or photo, or paste the text, of your period-by-period schedule. Studlin turns each period into a class, color-coded by time -- and works out your free periods from your school hours below." />
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:20}}>
               <TimeField label="School starts" value={schoolStart} onChange={setSchoolStart} />
               <TimeField label="School ends" value={schoolEnd} onChange={setSchoolEnd} />
@@ -15836,13 +15882,13 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                     style={{width:"100%",background:T.card2,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:T.text,fontSize:13,fontFamily:T.font,outline:"none",resize:"vertical",boxSizing:"border-box"}} />
                   <Btn onClick={handleHsPasteScan} disabled={!hsPasteText.trim()} style={{marginTop:10,width:"100%",justifyContent:"center",opacity:hsPasteText.trim()?1:0.45}}>Scan this text</Btn>
                 </div>
-              ) : <button type="button" onClick={()=>hsFileInputRef.current&&hsFileInputRef.current.click()} style={{width:"100%",padding:"32px",borderRadius:12,border:`1.5px dashed ${T.borderHover}`,background:T.card2,color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:13,textAlign:"center"}}>Tap to choose a photo</button>
+              ) : <button type="button" onClick={()=>hsFileInputRef.current&&hsFileInputRef.current.click()} style={{width:"100%",padding:"32px",borderRadius:12,border:`1.5px dashed ${T.borderHover}`,background:T.card2,color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:13,textAlign:"center"}}>Tap to choose a file or photo</button>
             }
-            <input ref={hsFileInputRef} type="file" accept=".png,.jpg,.jpeg,.webp,.gif" style={{display:"none"}} onChange={handleHsScheduleFile} />
+            <input ref={hsFileInputRef} type="file" accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif" style={{display:"none"}} onChange={handleHsScheduleFile} />
             {scanError&&<div style={{fontSize:12,color:T.red,marginTop:10}}>{scanError}</div>}
             {!scanning&&(
               <button type="button" onClick={()=>{setHsPasteMode(m=>!m);setScanError("");}} style={{marginTop:12,background:"none",border:"none",color:T.muted,fontSize:12,fontFamily:T.font,cursor:"pointer",padding:0,textDecoration:"underline"}}>
-                {hsPasteMode?"Upload a photo instead":"No photo? Paste the text instead"}
+                {hsPasteMode?"Upload a file instead":"No file? Paste the text instead"}
               </button>
             )}
           </>)}
@@ -16429,13 +16475,17 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
                 <div style={{borderTop:"2px solid #E5484D"}} />
               </div>
             )}
-            {dayLaidOut.map(({ev,col,totalCols,displayCol,displayTotalCols,start,hidden,overflowCount})=>{
+            {dayLaidOut.map(({ev,col,totalCols,displayCol,displayTotalCols,start,end,hidden,overflowCount})=>{
               // See the matching comment in WeeklyPlanner -- layoutDayEvents
               // caps visible columns and flags overflow items hidden:true
               // instead of rendering an ever-thinner sliver per conflict.
               if(hidden)return null;
               const topPx=(start-spanStart)*(pxPerHr/60);
               const dur=ev.duration||30;
+              // Same reasoning as WeeklyPlanner's identical addition --
+              // totalCols>1 already meant a genuine real-time overlap, it
+              // just never surfaced as a warning anywhere on screen.
+              const conflictTitles=totalCols>1?dayLaidOut.filter(o=>o.ev.id!==ev.id&&o.start<end&&start<o.end).map(o=>o.ev.title):[];
               const nextInCol=dayLaidOut.filter(o=>o.col===col&&o.start>start).sort((a,b)=>a.start-b.start)[0];
               const heightPx=computeEventBlockHeightPx(dur,nextInCol?nextInCol.start-start:null,pxPerHr);
               const isDone=ev.status==="done";
@@ -16469,6 +16519,7 @@ function DayPlanner({dayEvents, selDay, todayK, colorOf, fmtTime, openEdit, mark
                   style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:6,padding:"4px 8px",cursor:"pointer",overflow:"hidden",zIndex:3,opacity:isDone?0.6:1,boxSizing:"border-box",...kindStyle}}>
                   {!catchUpPending&&over>0&&<span title={over+"d overdue"} style={{position:"absolute",top:3,right:3,width:7,height:7,borderRadius:"50%",background:T.red,boxShadow:`0 0 0 1.5px ${isExam?T.ink:"#fff"}`,zIndex:1}} />}
                   {overflowCount>0&&<span title={overflowCount+" more at this time"} style={{position:"absolute",bottom:2,right:2,fontSize:8,fontWeight:800,color:kindStyle.color,background:"rgba(0,0,0,0.18)",borderRadius:8,padding:"1px 4px",lineHeight:1.3,zIndex:1}}>+{overflowCount}</span>}
+                  {conflictTitles.length>0&&<span title={"Overlaps with "+conflictTitles.join(", ")} style={{position:"absolute",top:2,left:2,fontSize:9,lineHeight:1,zIndex:1,filter:"drop-shadow(0 1px 1px rgba(0,0,0,0.35))"}}>⚠️</span>}
                   <div style={{fontSize:11.5,fontWeight:700,color:kindStyle.color,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:isDone?"line-through":"none"}}>{isExam?"EXAM · ":""}{ev.title}</div>
                   {heightPx>34&&<div style={{fontSize:9.5,color:isStudy?T.ink+"aa":isExam?color:T.muted,marginTop:2}}>{fmtTime(ev.time)}{dur?" · "+dur+"m":""}</div>}
                 </div>
@@ -16555,11 +16606,12 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
                 <div style={{width:"100%",borderTop:`1.5px dashed ${T.faint}`,fontSize:10.5,color:T.faint,paddingLeft:8}}>{fmtGapLabel(g.start)}–{fmtGapLabel(g.end)} Free Time</div>
               </div>
             ))}
-            {dayLaidOut.map(({ev,col,totalCols,displayCol,displayTotalCols,start,hidden,overflowCount})=>{
+            {dayLaidOut.map(({ev,col,totalCols,displayCol,displayTotalCols,start,end,hidden,overflowCount})=>{
               // See the matching comment in WeeklyPlanner.
               if(hidden)return null;
               const topPx=(start-spanStart)*(pxPerHr/60);
               const dur=ev.duration||30;
+              const conflictTitles=totalCols>1?dayLaidOut.filter(o=>o.ev.id!==ev.id&&o.start<end&&start<o.end).map(o=>o.ev.title):[];
               const nextInCol=dayLaidOut.filter(o=>o.col===col&&o.start>start).sort((a,b)=>a.start-b.start)[0];
               const heightPx=computeEventBlockHeightPx(dur,nextInCol?nextInCol.start-start:null,pxPerHr);
               const color=ev.color||colorOf(ev.courseId||ev.subject);
@@ -16567,6 +16619,7 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
               const widthPct=100/displayTotalCols;
               return(
                 <div key={ev.id} style={{position:"absolute",top:topPx,left:`calc(${leftPct}% + 2px)`,width:`calc(${widthPct}% - 4px)`,height:heightPx,borderRadius:8,padding:"6px 10px",overflow:"hidden",zIndex:3,boxSizing:"border-box",background:color+"22",border:`1px solid ${color}55`,display:"flex",flexDirection:"column",justifyContent:"center"}}>
+                  {conflictTitles.length>0&&<span title={"Overlaps with "+conflictTitles.join(", ")} style={{position:"absolute",top:2,right:2,fontSize:9,lineHeight:1,zIndex:1,filter:"drop-shadow(0 1px 1px rgba(0,0,0,0.35))"}}>⚠️</span>}
                   <div style={{display:"flex",alignItems:"center",gap:6}}>
                     <span style={{color,display:"flex",flexShrink:0}}>{iconFor(ev.kind)}</span>
                     <span style={{fontSize:12,fontWeight:700,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</span>
@@ -22805,11 +22858,11 @@ function StreakDetailModal({open,onClose,streak}){
           <button onClick={onClose} style={{width:30,height:30,borderRadius:8,border:`1px solid ${T.border}`,background:T.card2,color:T.muted,display:"grid",placeItems:"center",cursor:"pointer",fontSize:15}}>×</button>
         </div>
         <div style={{padding:"20px 22px"}}>
-          <div style={{display:"flex",alignItems:"baseline",gap:6,marginBottom:2}}>
+          <div style={{display:"flex",alignItems:"baseline",justifyContent:"center",gap:6,marginBottom:2}}>
             <span style={{fontFamily:T.hand,fontSize:38,fontWeight:600,color:T.text}}>{streak}</span>
             <span style={{fontSize:13,color:T.muted}}>day streak</span>
           </div>
-          <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.10em",color:T.muted,marginBottom:10}}>LONGEST: {longest}</div>
+          <div style={{fontFamily:T.mono,fontSize:10.5,letterSpacing:"0.10em",color:T.muted,marginBottom:10,textAlign:"center"}}>LONGEST: {longest}</div>
           {/* D11 in the audit: the freeze-token mechanic needs to actually
               be visible to mean anything -- same "earn a token every 7
               days, bank up to 2, auto-spent on a missed day" idea

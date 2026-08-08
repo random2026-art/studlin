@@ -77,7 +77,17 @@ window._pdfjs=import("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.11.0/mammoth.browser.min.js" defer></script>
 </head>
 <body>
-<div id="root"></div>
+<!-- Static, JS-free loading state -- shows the instant the HTML parses,
+     long before React/Babel/the ~1.7MB app script finish downloading and
+     the in-browser JSX transform runs. ReactDOM's render() replaces
+     #root's children wholesale the moment the app actually mounts, so
+     this disappears on its own -- no hide script, nothing to get stuck. -->
+<div id="root">
+  <div style="position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:#0D120F;">
+    <div style="width:32px;height:32px;border-radius:50%;border:3px solid rgba(174,206,94,0.18);border-top-color:#AECE5E;animation:studlinSpin 0.8s linear infinite;"></div>
+    <div style="font-family:'Geist',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;font-size:13px;font-weight:600;color:#849389;letter-spacing:0.03em;">Studlin</div>
+  </div>
+</div>
 <script src="datastore-events-sync.js?v=2"></script>
 <script src="design-tokens.js?v=1"></script>
 <script type="text/babel" src="studlin-app.jsx?v=197"></script>
