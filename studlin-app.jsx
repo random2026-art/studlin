@@ -3212,11 +3212,25 @@ function checkTimeOffImpact(hours,opts){
   const startTime=(opts&&opts.startTime)||minutesToTime(now.getHours()*60+now.getMinutes());
   const startMins=timeToMinutes(startTime);
   const endMins=startMins+hours*60;
+  const overlapsWindow=(s,en)=>!(endMins<=s||startMins>=en);
+  // Fixed commitments (a class, a recurring activity like a weekly church
+  // service) never live in `events` at all -- they only ever exist as
+  // virtual occurrences expanded from `routines` (see
+  // expandRoutineOccurrences). This check used to only ever scan `events`,
+  // so asking "can I go" during a recurring activity already on the
+  // schedule silently came back "you're good" -- nothing in `events`
+  // overlapped, even though the routine plainly did. Free periods are
+  // deliberately excluded -- they represent open time, not a commitment;
+  // expandRoutineOccurrences already skips habits (no fixed time to check).
+  const fixedConflicts=expandRoutineOccurrences(routines,date,date)
+    .filter(o=>o.kind!=="free period")
+    .filter(o=>{const s=timeToMinutes(o.time);return overlapsWindow(s,s+(o.duration||30));})
+    .map(o=>({title:o.title,time:o.time,duration:o.duration||30}));
   const affected=events.filter(e=>e.date===date&&e.time&&e.status==="pending"&&e.kind!=="free period").filter(e=>{
     const s=timeToMinutes(e.time),en=s+(e.duration||30);
-    return !(endMins<=s||startMins>=en);
+    return overlapsWindow(s,en);
   });
-  if(affected.length===0)return {ok:true};
+  if(affected.length===0&&fixedConflicts.length===0)return {ok:true};
   const synthetic={id:"timeoff-sim",date,time:startTime,duration:hours*60,kind:"busy block",status:"pending"};
   const blocked=[];
   const displaced=[];
@@ -3234,8 +3248,8 @@ function checkTimeOffImpact(hours,opts){
       scratch=others.concat([{...task,date:slot.date,time:slot.time}]);
     }
   }
-  if(blocked.length===0&&displaced.length===0)return {ok:true};
-  return {ok:false,blocked,displaced};
+  if(blocked.length===0&&displaced.length===0&&fixedConflicts.length===0)return {ok:true};
+  return {ok:false,blocked,displaced,fixedConflicts};
 }
 // Attack Block — calibration-based duration estimation. Instead of asking a
 // student to guess how long an ambiguous task takes (the exact skill they're
@@ -20559,9 +20573,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           </div>
         </div>
         {timeOffResult&&(
-          <div style={{fontSize:13,lineHeight:1.5,padding:"12px 14px",borderRadius:10,background:timeOffResult.ok?T.teal+"14":timeOffResult.blocked&&timeOffResult.blocked.length>0?T.red+"14":T.amber+"14",border:`1px solid ${timeOffResult.ok?T.teal+"33":timeOffResult.blocked&&timeOffResult.blocked.length>0?T.red+"33":T.amber+"33"}`,color:T.text}}>
+          <div style={{fontSize:13,lineHeight:1.5,padding:"12px 14px",borderRadius:10,background:timeOffResult.ok?T.teal+"14":(timeOffResult.fixedConflicts&&timeOffResult.fixedConflicts.length>0)||(timeOffResult.blocked&&timeOffResult.blocked.length>0)?T.red+"14":T.amber+"14",border:`1px solid ${timeOffResult.ok?T.teal+"33":(timeOffResult.fixedConflicts&&timeOffResult.fixedConflicts.length>0)||(timeOffResult.blocked&&timeOffResult.blocked.length>0)?T.red+"33":T.amber+"33"}`,color:T.text}}>
             {timeOffResult.ok?"Go ahead — nothing's at risk."
               :(<>
+                {timeOffResult.fixedConflicts&&timeOffResult.fixedConflicts.map(c=>(
+                  <div key={c.title+c.time} style={{marginBottom:4}}>You already have <strong>{c.title}</strong> then, {fmtTime(c.time)}–{fmtTime(minutesToTime(timeToMinutes(c.time)+c.duration))}.</div>
+                ))}
                 {timeOffResult.blocked.map(title=>(
                   <div key={title} style={{marginBottom:4}}>I'd hold off — "{title}" doesn't have room to recover if you take this.</div>
                 ))}

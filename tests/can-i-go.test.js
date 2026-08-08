@@ -91,4 +91,68 @@ describe("checkTimeOffImpact", () => {
     const result = m.checkTimeOffImpact(2);
     assert.equal(result.ok, false);
   });
+
+  // Regression (2026-08-08): a fixed recurring Activity (e.g. a weekly
+  // church service) never lived in `events` at all -- only routines -- so
+  // this check was completely blind to it, reporting "ok:true" for a
+  // window that plainly overlapped a real, fixed commitment.
+  describe("fixed routine occurrences (e.g. a recurring Activity like church)", () => {
+    test("a fixed activity overlapping the requested window is now caught", () => {
+      const m = loadStudlinModule({ now: "2026-08-10T09:00:00" }); // Monday
+      m.saveWeeklyRoutine([
+        { id: "r1", title: "Church", kind: "busy", days: [0], startTime: "08:00", duration: 420 }, // 8am-3pm
+      ]);
+      // 3 hours starting 1pm -> 1pm-4pm, overlaps Church's 8am-3pm.
+      const result = m.checkTimeOffImpact(3, { date: "2026-08-10", startTime: "13:00" });
+      assert.equal(result.ok, false);
+      assert.equal(result.fixedConflicts.length, 1);
+      assert.equal(result.fixedConflicts[0].title, "Church");
+    });
+
+    test("a fixed activity that doesn't overlap the window is not flagged", () => {
+      const m = loadStudlinModule({ now: "2026-08-10T09:00:00" });
+      m.saveWeeklyRoutine([
+        { id: "r1", title: "Church", kind: "busy", days: [0], startTime: "08:00", duration: 420 }, // ends 3pm
+      ]);
+      const result = m.checkTimeOffImpact(3, { date: "2026-08-10", startTime: "16:00" });
+      assert.equal(result.ok, true);
+    });
+
+    test("a free-period routine never counts as a fixed conflict -- it represents open time", () => {
+      const m = loadStudlinModule({ now: "2026-08-10T09:00:00" });
+      m.saveWeeklyRoutine([
+        { id: "r1", title: "Free Period", kind: "free", days: [0], startTime: "13:00", duration: 180 },
+      ]);
+      const result = m.checkTimeOffImpact(3, { date: "2026-08-10", startTime: "13:00" });
+      assert.equal(result.ok, true);
+    });
+
+    test("a habit routine (no fixed time) is never treated as a fixed conflict", () => {
+      const m = loadStudlinModule({ now: "2026-08-10T09:00:00" });
+      m.saveWeeklyRoutine([
+        { id: "r1", title: "Read", kind: "habit", days: [0], duration: 20 },
+      ]);
+      const result = m.checkTimeOffImpact(3, { date: "2026-08-10", startTime: "13:00" });
+      assert.equal(result.ok, true);
+    });
+
+    test("a fixed conflict and an at-risk study block can both be reported at once", () => {
+      const m = loadStudlinModule({ now: "2026-08-10T09:00:00" });
+      m.saveWeeklyRoutine([
+        { id: "r1", title: "Church", kind: "busy", days: [0], startTime: "08:00", duration: 420 },
+      ]);
+      m.lsSet("events", [
+        { id: "e1", date: "2026-08-10", time: "13:30", duration: 30, kind: "deadline", status: "pending", deadline: "2026-08-10", title: "Due today" },
+      ]);
+      const result = m.checkTimeOffImpact(3, { date: "2026-08-10", startTime: "13:00" });
+      assert.equal(result.ok, false);
+      assert.equal(result.fixedConflicts.length, 1);
+      assert.equal(result.fixedConflicts[0].title, "Church");
+      // Whether the study task lands as "blocked" or "displaced" depends on
+      // work-hours math not central to this regression -- the point here is
+      // that a fixed-routine conflict and a task-level conflict are both
+      // surfaced together, not one hiding the other.
+      assert.equal(result.blocked.length + result.displaced.length, 1);
+    });
+  });
 });
