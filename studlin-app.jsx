@@ -17772,6 +17772,12 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
   const [commuteAfter,setCommuteAfter]=useState("");
   const [location,setLocation]=useState("");
   const [movable,setMovable]=useState(false); // Fixed by default; toggle on = Free
+  // Only meaningful for editing an existing non-class routine -- a Class
+  // routine inherits its subject's color (same gating RoutineControlCenter's
+  // own Add form already uses), and a one-off event has no persistent color
+  // identity of its own. This was simply never built for the edit path, the
+  // gap behind "can't change an activity's color" (only its Add form could).
+  const [routineColor,setRoutineColor]=useState(T.lime);
 
   // Live preview (2026-07-30): reports this form's current title/date/time
   // up to the caller on every relevant change while open, so the calendar
@@ -17816,6 +17822,7 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
       setCommuteAfter(editRoutine.commuteAfter?String(editRoutine.commuteAfter):"");
       setLocation(editRoutine.location||"");
       setMovable(!!editRoutine.movable);
+      setRoutineColor(editRoutine.color||T.lime);
       return;
     }
     setTitle(initialTitle||"");
@@ -17877,6 +17884,7 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
         title:title.trim(),kind:evKind,subject:subject==="None"?"":subject,
         days:repeatDays,startTime,duration:Math.max(5,timeToMinutes(endTime)-timeToMinutes(startTime)),
         dayTimes,
+        ...(evKind!=="class"?{color:routineColor}:{}),
         ...common,
       });
       return;
@@ -18017,6 +18025,7 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
           {(editRoutine||repeat==="selected"||repeat==="weekly")&&(<>
             <Field label="Type"><SelectChip options={[{value:"class",label:"Class"},{value:"busy",label:"Activity"},{value:"free",label:"Free Period"},{value:"habit",label:"Habit"}]} value={evKind} onChange={setEvKind} /></Field>
             {evKind==="class"&&subjectOptions&&<Field label="Subject"><SelectChip options={subjectOptions} value={subject} onChange={setSubject} /></Field>}
+            {editRoutine&&evKind!=="class"&&<Field label="Color"><ColorSelect value={routineColor} onChange={setRoutineColor} /></Field>}
           </>)}
           </>)}
           {/* Inline label+pill row, matching Shovel's own plain-text
@@ -18140,6 +18149,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   const [renamingCourseId,setRenamingCourseId]=useState(null);
   const [renameDraft,setRenameDraft]=useState("");
   const [confirmDeleteCourseId,setConfirmDeleteCourseId]=useState(null);
+  // Same "⋯" + inline-confirm pattern as Courses above, for the sidebar's
+  // Activities rows -- previously delete only lived in the Manage Routine
+  // modal (with no confirm step there), and rename/color only worked once
+  // you already knew clicking the row opened the full edit form.
+  const [activityMenuOpenId,setActivityMenuOpenId]=useState(null);
+  const [confirmDeleteActivityId,setConfirmDeleteActivityId]=useState(null);
   // Same cascading-delete-with-undo pattern as Settings' "Subjects & Labels"
   // (countLinkedForSubject/announceCourseDelete/undoCourseDeletes there) --
   // ported here rather than shared, matching this file's convention of
@@ -18759,7 +18774,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     const isHabit=patch.kind==="habit";
     const subj=patch.subject&&patch.subject!=="None"?patch.subject:"";
     const base={title:patch.title.trim(),kind:patch.kind,...(subj?{subject:subj}:{subject:""}),courseId:subj?courseIdForLabel(subj):null,
-      commuteBefore:patch.commuteBefore||undefined,commuteAfter:patch.commuteAfter||undefined,location:patch.location||undefined,movable:patch.movable};
+      commuteBefore:patch.commuteBefore||undefined,commuteAfter:patch.commuteAfter||undefined,location:patch.location||undefined,movable:patch.movable,
+      ...(patch.kind!=="class"&&patch.color?{color:patch.color}:{})};
     const rebuilt=isHabit
       ?[{...base,id:routineEditItem.id,days:patch.days,startTime:null,duration:patch.duration}]
       :buildRoutineObjectsForDays({...base,id:routineEditItem.id},patch.days,patch.startTime,patch.duration,patch.dayTimes);
@@ -18872,12 +18888,27 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       lsSet("events",lsGet("events",[]).map(e=>e.id===sessionId?{...e,date,time:startTime,duration:duration||e.duration||25}:e));
       setEvents(lsGet("events",[]));
     }else if(chipKind==="activity"&&routineId){
-      // Update the existing unscheduled (or already-scheduled) routine in
-      // place instead of creating a second one. "Does not repeat" doesn't
-      // really apply to updating a recurring routine -- fall back to just
-      // the dropped day, same as picking "weekly" for that one day.
-      const days=repeat==="none"?[(()=>{const d=new Date(date+"T12:00:00").getDay();return d===0?6:d-1;})()]:repeatDays;
-      persistRoutines(routines.map(r=>r.id===routineId?{...r,days,startTime,duration:duration||r.duration||60,...common}:r));
+      // Additive, not a blind overwrite (2026-08-08 fix): dropping the same
+      // activity chip onto a day it's NOT already on adds that day at the
+      // dropped time, leaving every other day of this activity exactly
+      // where it was -- dragging Gym onto a new Wednesday slot used to
+      // silently retime/replace its whole Mon/Wed/Fri pattern into just
+      // that one day (the original 2026-07-29 fix only ever guarded against
+      // an EXACT re-drop creating a duplicate; it never distinguished that
+      // from a genuinely new day). Dropping onto a day it's already on
+      // still just retimes that one day in place -- same reasoning
+      // applyRoutineDropScope's "always" split already established, reused
+      // here via buildRoutineObjectsForDays rather than a second
+      // implementation of the same day-split logic.
+      const rule=routines.find(r=>r.id===routineId);
+      if(!rule){setNewEventOpen(false);setSidebarDragChip(null);return;}
+      const targetDays=repeat==="none"?[(()=>{const d=new Date(date+"T12:00:00").getDay();return d===0?6:d-1;})()]:repeatDays;
+      const dur=duration||rule.duration||60;
+      const dayTimesOverride={};
+      targetDays.forEach(d=>{dayTimesOverride[d]=(dayTimes&&dayTimes[d])?dayTimes[d]:{startTime,duration:dur};});
+      const mergedDays=Array.from(new Set([...(rule.days||[]),...targetDays]));
+      const rebuilt=buildRoutineObjectsForDays({...rule,...common,id:routineId},mergedDays,rule.startTime,rule.duration,dayTimesOverride);
+      persistRoutines([...routines.filter(r=>r.id!==routineId),...rebuilt]);
     }else if(repeat==="none"){
       const isCourse=chipKind==="course"&&courseId;
       commitTasks([{id:"ev-"+Date.now()+"-"+Math.round(Math.random()*1000),title,date,time:allDay?null:startTime,duration,
@@ -20106,12 +20137,33 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
             {routines.filter(r=>r.kind!=="class").length===0&&<div style={{fontSize:11,color:T.faint,padding:"4px 0"}}>No activities yet.</div>}
             {routines.filter(r=>r.kind!=="class").map(r=>{
               const isUnscheduled=!r.days||r.days.length===0;
+              const isConfirmingDelete=confirmDeleteActivityId===r.id;
               return (
-                <div key={r.id} onClick={()=>openRoutineEdit(r)}
-                  draggable onDragStart={()=>setSidebarDragChip({title:r.title,color:r.color||T.muted,movable:false,kind:"activity",routineId:r.id})} onDragEnd={()=>setSidebarDragChip(null)}
-                  style={{...subjectRowStyle(r.color||T.muted),cursor:"pointer",...(isUnscheduled?{border:`1px dashed ${(r.color||T.muted)}66`}:{})}}>
-                  <span style={{fontSize:12,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{r.title}</span>
-                  {isUnscheduled&&<span title="Drag onto the calendar to set when it repeats" style={{fontSize:9,color:T.faint,flexShrink:0}}>not scheduled</span>}
+                <div key={r.id} style={{position:"relative"}}>
+                  {isConfirmingDelete?(
+                    <div style={{padding:"8px 10px",borderRadius:8,border:`1px solid ${T.red}55`,background:T.red+"12"}}>
+                      <div style={{fontSize:10.5,color:T.text,marginBottom:8,lineHeight:1.4}}>Delete "{r.title}"?</div>
+                      <div style={{display:"flex",gap:6}}>
+                        <button onClick={()=>{deleteRoutineItem(r.id);setConfirmDeleteActivityId(null);}} style={{fontSize:10.5,fontWeight:600,padding:"4px 9px",borderRadius:5,background:T.red,color:"#fff",border:"none",cursor:"pointer",fontFamily:T.font}}>Delete</button>
+                        <button onClick={()=>setConfirmDeleteActivityId(null)} style={{fontSize:10.5,padding:"4px 9px",borderRadius:5,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,cursor:"pointer",fontFamily:T.font}}>Cancel</button>
+                      </div>
+                    </div>
+                  ):(
+                    <div onClick={()=>openRoutineEdit(r)}
+                      draggable onDragStart={()=>setSidebarDragChip({title:r.title,color:r.color||T.muted,movable:false,kind:"activity",routineId:r.id})} onDragEnd={()=>setSidebarDragChip(null)}
+                      style={{...subjectRowStyle(r.color||T.muted),cursor:"pointer",justifyContent:"space-between",...(isUnscheduled?{border:`1px dashed ${(r.color||T.muted)}66`}:{})}}>
+                      <span style={{fontSize:12,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{r.title}</span>
+                      {isUnscheduled&&<span title="Drag onto the calendar to set when it repeats" style={{fontSize:9,color:T.faint,flexShrink:0,marginRight:4}}>not scheduled</span>}
+                      <button type="button" onClick={(e)=>{e.stopPropagation();setActivityMenuOpenId(activityMenuOpenId===r.id?null:r.id);}}
+                        style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:"0 0 0 6px",fontSize:14,lineHeight:1,flexShrink:0}}>⋯</button>
+                    </div>
+                  )}
+                  {activityMenuOpenId===r.id&&(
+                    <div onMouseLeave={()=>setActivityMenuOpenId(null)} style={{position:"absolute",top:"100%",right:0,zIndex:40,marginTop:4,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 12px 28px -12px rgba(0,0,0,0.5)",overflow:"hidden",minWidth:170}}>
+                      <button onClick={()=>{setActivityMenuOpenId(null);openRoutineEdit(r);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Rename / change color</button>
+                      <button onClick={()=>{setActivityMenuOpenId(null);setConfirmDeleteActivityId(r.id);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.red,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Delete</button>
+                    </div>
+                  )}
                 </div>
               );
             })}
