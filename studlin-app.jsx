@@ -1651,6 +1651,16 @@ function expandRoutineOccurrences(routines,startDateKey,endDateKey){
         status:"pending",
         isRoutine:true,
         overridden:!!override,
+        // A recurring class/activity's commuteBefore/After (set via
+        // editing it -- NewEventModal's editRoutine mode already saves
+        // these correctly onto the rule, see saveRoutineEditFromModal)
+        // was never actually copied onto the materialized occurrence
+        // here, so WeeklyPlanner/DayPlanner's ev.commuteBefore>0 check
+        // never found it -- real, correctly-saved commute data for any
+        // recurring item silently never rendered anywhere on the
+        // calendar, only for one-off events built via buildTask.
+        commuteBefore:r.commuteBefore||0,
+        commuteAfter:r.commuteAfter||0,
       });
     });
   }
@@ -16698,6 +16708,14 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
   // choice there would be redundant. Only busy/free/habit ("Activities")
   // have no color of their own today.
   const [color,setColor]=useState(SUBJECT_COLORS[0]);
+  // Previously the only way to give a recurring class/activity a commute
+  // buffer was to add it here with none, then separately go find it on
+  // the calendar and double-click into NewEventModal's editRoutine mode
+  // (the only place these fields existed at all) -- a real, one-off
+  // event created via "New task" already gets this on the same form it's
+  // created on. Same fields, same convention as that one.
+  const [commuteBefore,setCommuteBefore]=useState("");
+  const [commuteAfter,setCommuteAfter]=useState("");
   // Self-contained: reads/writes schoolTerm storage directly rather than
   // threading it through CalendarTab's already-large props/state surface —
   // it's a standalone settings pair (see getSchoolTerm/saveSchoolTerm,
@@ -16708,13 +16726,18 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
   const setTermStart=(v)=>{setTermStartState(v);saveTerm(v,termEnd);};
   const setTermEnd=(v)=>{setTermEndState(v);saveTerm(termStart,v);};
   useEffect(()=>{ if(!open)setAddingRoutine(false); },[open]);
-  const resetForm=()=>{setTitle("");setKind("busy");setDays([]);setStartTime("15:30");setDuration(60);setColor(SUBJECT_COLORS[0]);};
+  const resetForm=()=>{setTitle("");setKind("busy");setDays([]);setStartTime("15:30");setDuration(60);setColor(SUBJECT_COLORS[0]);setCommuteBefore("");setCommuteAfter("");};
   const toggleDay=(i)=>setDays(d=>d.includes(i)?d.filter(x=>x!==i):[...d,i]);
   const isFree=kind==="free";
   const isHabit=kind==="habit";
   const submitAdd=()=>{
     if((!isFree&&!title.trim())||days.length===0)return;
-    onAddRoutine({title:isFree?(title.trim()||"Free Period"):title.trim(),kind,days:[...days],startTime:isHabit?null:startTime,duration,...(kind!=="class"?{color}:{})});
+    onAddRoutine({title:isFree?(title.trim()||"Free Period"):title.trim(),kind,days:[...days],startTime:isHabit?null:startTime,duration,...(kind!=="class"?{color}:{}),
+      // Only meaningful for something with a real fixed meeting time --
+      // same isFixedKind-style gating "New task"'s own commute row uses,
+      // just expressed here as "not habit, not free period" since those
+      // are this form's own two no-fixed-time exceptions.
+      ...(!isHabit&&!isFree&&(+commuteBefore>0||+commuteAfter>0)?{commuteBefore:Math.max(0,+commuteBefore||0),commuteAfter:Math.max(0,+commuteAfter||0)}:{})});
     resetForm();
     setAddingRoutine(false);
   };
@@ -16753,6 +16776,21 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
               {!isHabit&&<Field label="Start time"><TimeInput value={startTime} onChange={setStartTime} /></Field>}
               <Field label="Duration (minutes)"><NumField min={5} max={480} fallback={30} value={duration} onChange={setDuration} /></Field>
             </div>
+            {/* Same inline label+pill row the New Task modal already uses
+                for a one-off event's commute buffer -- not meaningful for
+                a habit (no fixed time to commute to) or a free period. */}
+            {!isHabit&&!isFree&&(
+              <div style={{display:"flex",alignItems:"center",gap:10,fontSize:11,color:T.muted,flexWrap:"wrap",marginBottom:14}}>
+                <span style={{display:"flex",alignItems:"center",gap:5}}>Commute before:
+                  <input type="number" min={0} placeholder="0" value={commuteBefore} onChange={e=>setCommuteBefore(e.target.value)}
+                    style={{width:42,background:T.card2,border:`1px solid ${T.border}`,borderRadius:5,padding:"2px 5px",color:T.text,fontSize:11,fontFamily:T.font,outline:"none"}} /> min
+                </span>
+                <span style={{display:"flex",alignItems:"center",gap:5}}>after:
+                  <input type="number" min={0} placeholder="0" value={commuteAfter} onChange={e=>setCommuteAfter(e.target.value)}
+                    style={{width:42,background:T.card2,border:`1px solid ${T.border}`,borderRadius:5,padding:"2px 5px",color:T.text,fontSize:11,fontFamily:T.font,outline:"none"}} /> min
+                </span>
+              </div>
+            )}
             <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
               <Btn variant="subtle" onClick={()=>{resetForm();setAddingRoutine(false);}}>Cancel</Btn>
               <Btn onClick={submitAdd} disabled={(!isFree&&!title.trim())||days.length===0} style={{opacity:(!isFree&&!title.trim())||days.length===0?0.45:1}}>Add</Btn>

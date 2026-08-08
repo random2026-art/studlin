@@ -671,6 +671,26 @@ describe("materializeHabitsForDate (flexible daily habits)", () => {
     const occurrences = m.getRoutineOccurrencesForDate("2026-07-20");
     assert.equal(occurrences.length, 0, "habits must be excluded from expandRoutineOccurrences, not given a fake time");
   });
+
+  test("regression: a recurring class/activity's commuteBefore/After is carried onto its materialized occurrence, not silently dropped", () => {
+    const m = loadStudlinModule();
+    const rule = { id: "rt-track", title: "Track Practice", kind: "busy", days: [dow], startTime: "16:00", duration: 60, subject: "", commuteBefore: 15, commuteAfter: 10 };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([rule]));
+    const occurrences = m.getRoutineOccurrencesForDate("2026-07-20");
+    assert.equal(occurrences.length, 1);
+    assert.equal(occurrences[0].commuteBefore, 15);
+    assert.equal(occurrences[0].commuteAfter, 10);
+  });
+
+  test("a routine with no commute set defaults to 0, not undefined -- WeeklyPlanner's ev.commuteBefore>0 check needs a real number", () => {
+    const m = loadStudlinModule();
+    const rule = { id: "rt-calc", title: "Calculus II", kind: "class", days: [dow], startTime: "09:00", duration: 60, subject: "Calculus II" };
+    m.localStorage.setItem("studlin-weeklyRoutine", JSON.stringify([rule]));
+    const occurrences = m.getRoutineOccurrencesForDate("2026-07-20");
+    assert.equal(occurrences.length, 1);
+    assert.equal(occurrences[0].commuteBefore, 0);
+    assert.equal(occurrences[0].commuteAfter, 0);
+  });
 });
 
 describe("school term awareness (class routines suppressed outside term dates)", () => {
