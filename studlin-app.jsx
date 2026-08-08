@@ -330,20 +330,25 @@ const Prog = ({pct,color=T.lime,height=4}) => <div style={{height,background:T.c
 const Divider = ({style={}}) => <div style={{height:"1px",background:T.border,...style}} />;
 
 // Phase 9a: first-time explainer for the Attack Block toggle -- shown
-// above it in both places it appears (Add Task, Edit Task's retroactive
-// toggle) until dismissed once, ever, anywhere. Attack Block has never
-// had any explanatory copy beyond a single line of subtext, and the user
-// specifically wants a first-time student to understand *why* it's smart
-// (it calibrates duration estimates that feed the scheduler), not just
-// that it exists.
+// below it now (2026-08-08; used to be above), in both places it appears
+// (Add Task, Edit Task's retroactive toggle), until dismissed once, ever,
+// anywhere. Explaining the mechanism before a student has even seen the
+// toggle it's attached to meant reading about "Attack Block" as an
+// abstraction with no concrete anchor yet -- the toggle's own label and
+// subtext ("I don't know how long this takes" / "Start with a short
+// probe session...") are already clear and self-sufficient on their own;
+// this is elaboration for whoever wants the why, not a prerequisite to
+// understanding what they're about to see. Copy tightened at the same
+// time -- three sentences to say "we time your first session so future
+// scheduling gets more accurate" wasn't getting to the point.
 const ATTACK_BLOCK_EXPLAINER_SEEN_KEY = "attackBlockExplainerSeen";
 const AttackBlockExplainer = () => {
   const [dismissed, setDismissed] = useState(() => lsGet(ATTACK_BLOCK_EXPLAINER_SEEN_KEY, false));
   if (dismissed) return null;
   return (
-    <div style={{background:T.lime+"14",border:`1px solid ${T.lime}33`,borderRadius:6,padding:"10px 12px",marginBottom:10,display:"flex",gap:10,alignItems:"flex-start"}}>
+    <div style={{background:T.lime+"14",border:`1px solid ${T.lime}33`,borderRadius:6,padding:"10px 12px",marginTop:10,display:"flex",gap:10,alignItems:"flex-start"}}>
       <div style={{flex:1,fontSize:11.5,color:T.text,lineHeight:1.5}}>
-        <strong>Attack Block</strong> runs a short trial session first, before committing to a full study plan. How long it actually takes you feeds directly into Studlin's scheduling — so the more you use it, the better Studlin gets at planning your work.
+        <strong>Attack Block</strong> times a short first session, then uses that real number to schedule the rest. The more you use it, the more accurate your plan gets.
       </div>
       <button type="button" onClick={()=>{lsSet(ATTACK_BLOCK_EXPLAINER_SEEN_KEY,true);setDismissed(true);}}
         style={{flexShrink:0,background:"none",border:"none",color:T.lime,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font,padding:0,whiteSpace:"nowrap"}}>Got it</button>
@@ -17455,12 +17460,12 @@ function EventDetailModal({eventId,onClose,commit,onToast,setActive}){
         </div>
       )}
       {canAddAttackBlock&&(<>
-        <AttackBlockExplainer />
         <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
           <div onClick={()=>setAddAttackBlock(a=>!a)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
             <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>Start an Attack Block for this</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>A short probe session, scheduled the moment you save. Studlin figures out the rest.</div></div>
             <div style={{width:36,height:20,borderRadius:10,background:addAttackBlock?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer"}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:addAttackBlock?18:2,transition:"left 0.2s"}} /></div>
           </div>
+          <AttackBlockExplainer />
           {addAttackBlock&&(<>
             <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
               <Field label="Probe session length"><NumField min={15} max={60} fallback={ATTACK_BLOCK_DEFAULT_PROBE_MINS} value={attackProbeMins} onChange={setAttackProbeMins} /></Field>
@@ -20682,12 +20687,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         {isTaskKind&&!isChecklistMode&&(evSplitEnabled?(
           <div style={{fontSize:11,color:T.faint,marginBottom:14}}>"I don't know how long this takes" isn't available while Split into sessions is on — turn Split off below to use it instead.</div>
         ):(<>
-          <AttackBlockExplainer />
           <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
             <div onClick={()=>setEvAttackBlock(a=>!a)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
               <div><div style={{fontSize:12.5,fontWeight:600,color:T.text}}>I don't know how long this takes</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Start with a short probe session. Studlin figures out the rest.</div></div>
               <div style={{width:36,height:20,borderRadius:10,background:evAttackBlock?T.lime:T.faint,position:"relative",transition:"background 0.2s",cursor:"pointer"}}><div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:evAttackBlock?18:2,transition:"left 0.2s"}} /></div>
             </div>
+            <AttackBlockExplainer />
             {evAttackBlock&&(
               <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
                 <Field label="Probe session length"><NumField min={15} max={60} fallback={ATTACK_BLOCK_DEFAULT_PROBE_MINS} value={evAttackProbeMins} onChange={setEvAttackProbeMins} /></Field>
