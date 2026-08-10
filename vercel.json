@@ -1,4 +1,5 @@
 {
+  "outputDirectory": ".",
   "rewrites": [
     { "source": "/app", "destination": "/studlin-web-app.html" },
     { "source": "/app/(.*)", "destination": "/studlin-web-app.html" },
