@@ -15178,7 +15178,6 @@ function App() {
       const events = lsGet("events", []);
       const todayK = dayKey();
       const now = Date.now();
-      const MISSED_NUDGE_MIN = 15;
       if (settings.streak !== false && shouldFireStreakNudge((/* @__PURE__ */ new Date()).getHours(), getStreakNudgeSentDate() === todayK, lsGet("sessions", []).filter((s) => s.d === todayK))) {
         markStreakNudgeSent(todayK);
         try {
@@ -15203,21 +15202,6 @@ function App() {
             }
           }
         });
-        const missedKey = ev.id + "-missed";
-        const minsSinceStart = -minsUntil;
-        if (isTimerEligible(ev) && !notifiedRef.current.has(missedKey) && minsSinceStart >= MISSED_NUDGE_MIN && minsSinceStart < MISSED_NUDGE_MIN + 1) {
-          notifiedRef.current.add(missedKey);
-          try {
-            const n = new Notification("Studlin", { body: 'Still doing "' + ev.title + '"? It was due to start ' + MISSED_NUDGE_MIN + " min ago \u2014 tap to reschedule." });
-            n.onclick = () => {
-              try {
-                window.focus();
-              } catch (e) {
-              }
-            };
-          } catch (e) {
-          }
-        }
       });
     };
     check();

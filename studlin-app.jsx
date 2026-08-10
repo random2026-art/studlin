@@ -2519,10 +2519,9 @@ function findTier0Slot(task,events,routines,prefs,todayKey){
   // No daily-digest ask-mode exists yet to escalate a tolerance violation
   // to (tracked separately) — for now, a candidate outside the window is
   // simply never legal for Tier 0, full stop. That degrades gracefully:
-  // the task stays pending and untouched, and the existing missed-task
-  // notification (gated on isTimerEligible, which every exam-prep session
-  // satisfies) is what actually asks the student, same as any other
-  // missed study block Tier 0 can't legally place.
+  // the task just stays pending and untouched, same as any other missed
+  // study block Tier 0 can't legally place -- the student notices and
+  // checks it off (or reschedules) on their own time, same as always.
   const withinExamPrepTolerance=(dateKey)=>{
     if(!isExamPrep)return true;
     const gap=Math.round((new Date(dateKey+"T12:00:00")-new Date(task.date+"T12:00:00"))/86400000);
@@ -23952,7 +23951,6 @@ function App() {
       const events=lsGet("events",[]);
       const todayK=dayKey();
       const now=Date.now();
-      const MISSED_NUDGE_MIN=15; // minutes late before a "still doing this?" nudge
       // Real per-day, once-only nudge (see shouldFireStreakNudge) -- the
       // "Streak reminders" toggle used to gate nothing, since no engine like
       // this existed at all. Persisted (not just in notifiedRef) so a reload
@@ -23983,26 +23981,13 @@ function App() {
             try{new Notification("Studlin",{body:ev.title+" starts in "+lead+" minutes"});}catch(e){}
           }
         });
-        // Missed-task nudge — a task that's sat pending 15+ minutes past its
-        // own start time gets one follow-up asking if it's still happening,
-        // instead of just silently aging in place. Same 1-minute trailing
-        // window as the lead-time reminders, so it fires once right as it
-        // crosses the threshold, not for every already-stale task on load.
-        // Regression: this used to fire for every timed event regardless of
-        // kind, including fixed real-world commitments (Gym, a class) that
-        // have no Begin/Lock-In flow at all -- "still doing this?" guaranteed
-        // misfires for those, since there's no in-app way to ever answer
-        // "yes" short of manually checking the box mid-workout. Scoped to
-        // the same Timer-eligible kinds the Begin button itself uses.
-        const missedKey=ev.id+"-missed";
-        const minsSinceStart=-minsUntil;
-        if(isTimerEligible(ev)&&!notifiedRef.current.has(missedKey)&&minsSinceStart>=MISSED_NUDGE_MIN&&minsSinceStart<MISSED_NUDGE_MIN+1){
-          notifiedRef.current.add(missedKey);
-          try{
-            const n=new Notification("Studlin",{body:"Still doing \""+ev.title+"\"? It was due to start "+MISSED_NUDGE_MIN+" min ago — tap to reschedule."});
-            n.onclick=()=>{try{window.focus();}catch(e){}};
-          }catch(e){}
-        }
+        // The old "still doing this? tap to reschedule" nudge at 15 min
+        // past start was removed -- it only ever checked whether Begin had
+        // been tapped (timerTask), not whether the student was actually
+        // working. Plenty of real study happens without ever hitting
+        // Begin, so it misfired "reschedule" at people mid-task with no
+        // way to tell it "yes, I'm fine" short of checking the box, which
+        // was always available anyway.
       });
     };
     check();
