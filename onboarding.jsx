@@ -477,8 +477,8 @@ function App() {
     return 0;
   });
   const [state, setState] = useState(() => {
-    try { const saved = JSON.parse(localStorage.getItem("studlin-onboarding")||"null"); if (saved && typeof saved === "object") return {goals:[],plan:"pro",...saved}; } catch(e){}
-    return { goals: [], plan: "pro" };
+    try { const saved = JSON.parse(localStorage.getItem("studlin-onboarding")||"null"); if (saved && typeof saved === "object") return {goals:[],...saved}; } catch(e){}
+    return { goals: [] };
   });
 
   useEffect(()=>{

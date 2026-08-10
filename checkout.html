@@ -82,28 +82,22 @@ body{font-family:'Geist',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;b
 <div class="checkout">
   <div class="summary">
     <div class="brand"><span class="glyph">S</span> Studlin</div>
-    <h2 id="summaryHeading">Start your <em>free trial.</em></h2>
-    <p class="sub" id="summarySub">7 days free. Cancel anytime. We'll remind you 2 days before your trial ends.</p>
+    <h2 id="summaryHeading">Start your <em>Pro plan.</em></h2>
+    <p class="sub" id="summarySub">Cancel anytime. No trial games -- just a real free tier underneath if you're not ready.</p>
     <div class="plan-card">
       <div class="plan-name" id="summaryPlanName">STUDLIN PRO</div>
-      <div class="plan-price" id="summaryPrice">$9.99 <span class="per">/ month</span></div>
-      <div class="plan-note" id="summaryNote">$0.00 today · billed after 7-day trial</div>
+      <div class="plan-price" id="summaryPrice">$6.99 <span class="per">/ month</span></div>
+      <div class="plan-note" id="summaryNote">Charged today, then every month</div>
       <ul class="plan-features" id="summaryFeatures"></ul>
-    </div>
-    <div class="trial-timeline" id="trialTimeline">
-      <h4>How your trial works</h4>
-      <div class="tl-step"><div class="tl-dot"></div><div class="tl-text"><strong>Today</strong><span>Full access unlocked instantly</span></div></div>
-      <div class="tl-step"><div class="tl-dot"></div><div class="tl-text"><strong>Day 5</strong><span>We'll send a reminder email</span></div></div>
-      <div class="tl-step"><div class="tl-dot" style="background:rgba(246,241,230,0.3)"></div><div class="tl-text"><strong>Day 7</strong><span id="trialEnd">Subscription begins at $9.99/mo</span></div></div>
     </div>
   </div>
   <div class="form-side">
     <a href="/onboarding" class="back-link" id="backLink">← Back to plans</a>
     <h3 id="formHeading">Enter your payment details</h3>
-    <p class="form-sub" id="formSub">Your card won't be charged today.</p>
+    <p class="form-sub" id="formSub">You'll be charged today, then every billing period.</p>
     <div class="billing-toggle" id="billingToggle">
       <button class="active" id="btnMonthly" onclick="setBilling('monthly')">Monthly</button>
-      <button id="btnAnnual" onclick="setBilling('annual')">Annual <span class="save">Save 20%</span></button>
+      <button id="btnAnnual" onclick="setBilling('annual')">Annual <span class="save">Save 29%</span></button>
     </div>
     <label class="form-label">Full name</label>
     <input type="text" class="form-input" id="fullName" placeholder="Your full name">
@@ -114,7 +108,7 @@ body{font-family:'Geist',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;b
     <div id="card-errors" role="alert"></div>
     <label class="form-label">Country</label>
     <input type="text" class="form-input" id="country" value="United States" placeholder="Country">
-    <button class="pay-btn" id="payBtn" onclick="handlePayment()">Start free trial</button>
+    <button class="pay-btn" id="payBtn" onclick="handlePayment()">Subscribe to Pro</button>
     <div class="secure-note">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
       Secured by Stripe · 256-bit encryption
@@ -153,8 +147,7 @@ let plan=params.get('plan')||'pro';
 let billing=params.get('billing')||'monthly';
 
 const PLAN_DATA={
-  pro:{name:'STUDLIN PRO',monthly:'$9.99',annual:'$7.99',annualTotal:'$95.88',features:['Unlimited AI chat: every model, plus 4 dedicated study modes','Auto-generate flashcards from your notes, a PDF, or a YouTube lecture, no manual typing','Unlimited deadline scans','Unlimited AI note scans (files, lectures & YouTube)','Study groups + shared scheduling']},
-  max:{name:'STUDLIN MAX',monthly:'$24.99',annual:'$19.99',annualTotal:'$239.88',features:['Everything in Pro, completely unlimited','Priority AI: faster responses, no queue','Bulk ops: 100 flashcards generated at once','Advanced analytics & learning paths','Priority support']},
+  pro:{name:'STUDLIN PRO',monthly:'$6.99',annual:'$4.99',annualTotal:'$59.88',features:['Unlimited AI study plans, flashcards, syllabus scans, attack sessions & project breakdowns','Smart Reschedule -- not on Free at all','Unlimited AI chat: every model, plus 4 dedicated study modes','Auto-generate flashcards from your notes, a PDF, or a YouTube lecture, no manual typing']},
 };
 
 const CREDIT_PACKS={'150':{price:'$4.99',label:'150 AI Credits'},'500':{price:'$14.99',label:'500 AI Credits'},'1000':{price:'$24.99',label:'1,000 AI Credits'},'3000':{price:'$59.99',label:'3,000 AI Credits'}};
@@ -176,7 +169,6 @@ function updateUI(){
     document.getElementById('summaryPrice').innerHTML=price+' <span class="per">one-time</span>';
     document.getElementById('summaryNote').textContent=note;
     document.getElementById('summaryFeatures').innerHTML=['Instant delivery to your account','Works with AI chat, flashcards, essays & more','Credits never expire','Top up anytime you need more'].map(f=>'<li><span class="ck">✓</span> '+f+'</li>').join('');
-    document.getElementById('trialTimeline').style.display='none';
     document.getElementById('billingToggle').style.display='none';
     document.getElementById('formHeading').textContent='Complete your purchase';
     document.getElementById('formSub').textContent='You will be charged immediately.';
@@ -190,12 +182,11 @@ function updateUI(){
     const period=billing==='annual'?'/ year':'/ month';
     document.getElementById('summaryPlanName').textContent=p.name;
     document.getElementById('summaryPrice').innerHTML=price+' <span class="per">'+period+'</span>';
-    document.getElementById('summaryNote').textContent=billing==='annual'?'$0.00 today · '+p.annualTotal+'/year after 7-day trial':'$0.00 today · billed after 7-day trial';
-    document.getElementById('trialEnd').textContent=billing==='annual'?'Subscription begins at '+p.annualTotal+'/year':'Subscription begins at '+price+'/mo';
+    document.getElementById('summaryNote').textContent=billing==='annual'?'Charged '+p.annualTotal+' today, then yearly':'Charged '+price+' today, then monthly';
     document.getElementById('summaryFeatures').innerHTML=p.features.map(f=>'<li><span class="ck">✓</span> '+f+'</li>').join('');
     document.getElementById('btnMonthly').className=billing==='monthly'?'active':'';
     document.getElementById('btnAnnual').className=billing==='annual'?'active':'';
-    document.getElementById('payBtn').textContent='Start free trial';
+    document.getElementById('payBtn').textContent='Subscribe to Pro';
   }
 }
 function setBilling(b){billing=b;updateUI();}
@@ -248,7 +239,7 @@ async function handlePayment(){
   }catch(err){
     errEl.textContent=err.message||'Something went wrong.';
     btn.disabled=false;
-    btn.textContent=isCredits?'Pay':'Start free trial';
+    btn.textContent=isCredits?'Pay':'Subscribe to Pro';
     updateUI();
   }
 }

@@ -465,31 +465,27 @@ function TourStep({ targetRef, title, body, step, total, onNext, onSkip, isLast 
 
 // ─── PRICING PLAN CARDS ───────────────────────────────────────────────────────
 // Shared by the "See Pricing" nav-bar modal and the full-screen post-tour
-// paywall intercept — same 3 plans, same billing-aware pricing (mirrors
-// checkout.html's PLAN_DATA), just rendered inside different wrappers.
+// paywall intercept — 2 plans (Free / Pro, Max retired 2026-08-10), same
+// billing-aware pricing (mirrors checkout.html's PLAN_DATA), just rendered
+// inside different wrappers. No trial tag on Pro -- pure freemium, the Free
+// tier itself is the "try before you buy."
 const PRICING_PLANS=(billing)=>([
   {
     key:"free",name:"Free",price:"$0",per:"forever",tag:null,
     desc:"Get organized. No credit card needed.",
-    features:["120 AI chat messages / month","3 deadline scans / month","3 AI note scans / month (files, lectures & YouTube)","3 AI flashcard generations / month","Manual flashcards & notes: unlimited","Calendar, tasks, focus timer, streaks & XP"],
+    features:["Calendar, tasks, focus timer, streaks & XP: unlimited","Studlin Network & calendar connections: unlimited","Syllabus & schedule imports: 11 / month","1 AI study plan / month (sessions, flashcards & practice exam)","3 AI flashcard generations / month","2 attack sessions / month","1 project breakdown / month"],
     cta:"Get started free",variant:"subtle",
   },
   {
-    key:"pro",name:"Pro",price:billing==="annual"?"$7.99":"$9.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:"7 DAYS FREE",
-    desc:"Everything on Free is still manual. Pro is where the AI actually does the work.",
-    features:["Unlimited AI chat, deadline scans, note scans & flashcard generation","All AI models: Flash, Standard & Research","AI flashcards from notes, PDFs & YouTube","Full essay suite: grammar, rewrite & citations","AI note cleanup & study groups"],
-    cta:"Start free trial",variant:"lime",featured:true,
-  },
-  {
-    key:"max",name:"Max",price:billing==="annual"?"$19.99":"$24.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:null,
-    desc:"For the heaviest workload: every subject, every week, no caps.",
-    features:["Everything in Pro, completely unlimited","Priority AI: faster responses, no queue","Bulk flashcard generation (100 at once)","3× XP multiplier + advanced analytics"],
-    cta:"Upgrade to Max",variant:"ink",
+    key:"pro",name:"Pro",price:billing==="annual"?"$4.99":"$6.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:null,
+    desc:"Everything on Free, with no caps, plus Smart Reschedule.",
+    features:["Unlimited AI study plans, flashcards, syllabus scans, attack sessions & project breakdowns","Smart Reschedule — plan-only, not on Free","All AI models: Flash, Standard & Research","Full essay suite: grammar, rewrite & citations"],
+    cta:"Upgrade to Pro",variant:"lime",featured:true,
   },
 ]);
 function PlanCards({ billing, onSelect }) {
   return (
-    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14}}>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:14}}>
       {PRICING_PLANS(billing).map((plan,i)=>(
         <div key={i} style={{
           background:plan.featured?T.forest:T.card2,
@@ -5285,7 +5281,7 @@ function sessionStats(){
 const fmtH=(m)=>m>=60?Math.floor(m/60)+"h "+(m%60)+"m":m+"m";
 function getPlan(){return lsGet("plan","Free");}
 function setPlanLS(p){lsSet("plan",p);}
-function getCreditLimit(){const p=getPlan();return p==="Max"?500:p==="Pro"?200:120;}
+function getCreditLimit(){return getPlan()==="Pro"?100000:120;}
 function getCredits(){return lsGet("credits",getCreditLimit());}
 function setCreditsLS(n){lsSet("credits",Math.max(0,n));}
 const CREDIT_COST={standard:1,flash:1};
@@ -5333,6 +5329,30 @@ const FLASHCARD_GEN_LIMIT=3;
 const getFlashcardGenUsage=makeMonthlyUsage("flashcardGens");
 function canGenFlashcards(){return getPlan()!=="Free"||getFlashcardGenUsage().count<FLASHCARD_GEN_LIMIT;}
 function recordFlashcardGen(){const u=getFlashcardGenUsage();lsSet("flashcardGens",{month:u.month,count:u.count+1});}
+
+// Studlin Prep's three AI-driven planning flows (2026-08-10 pricing pass) --
+// same named-limit pattern as the scans/generation above. One study plan a
+// month is enough to prove the whole "confidence question -> sessions ->
+// flashcards -> practice exam" flow is real before asking for money.
+const EXAM_PLAN_LIMIT=1;
+const getExamPlanUsage=makeMonthlyUsage("examPlanBuilds");
+function canBuildExamPlan(){return getPlan()!=="Free"||getExamPlanUsage().count<EXAM_PLAN_LIMIT;}
+function recordExamPlanBuild(){const u=getExamPlanUsage();lsSet("examPlanBuilds",{month:u.month,count:u.count+1});}
+
+const ATTACK_SESSION_LIMIT=2;
+const getAttackSessionUsage=makeMonthlyUsage("attackSessionStarts");
+function canStartAttackSession(){return getPlan()!=="Free"||getAttackSessionUsage().count<ATTACK_SESSION_LIMIT;}
+function recordAttackSessionStart(){const u=getAttackSessionUsage();lsSet("attackSessionStarts",{month:u.month,count:u.count+1});}
+
+const PROJECT_BREAKDOWN_LIMIT=1;
+const getProjectBreakdownUsage=makeMonthlyUsage("projectBreakdowns");
+function canBreakDownProject(){return getPlan()!=="Free"||getProjectBreakdownUsage().count<PROJECT_BREAKDOWN_LIMIT;}
+function recordProjectBreakdown(){const u=getProjectBreakdownUsage();lsSet("projectBreakdowns",{month:u.month,count:u.count+1});}
+
+// Smart Reschedule -- paid-only, no free tier at all (not a capped
+// free-taste feature like the three above). Deliberate: this is the "I'm
+// desperate right now" moment, and desperate moments convert.
+function canUseSmartReschedule(){return getPlan()!=="Free";}
 
 // ─── XP · LEVEL · STREAK · PLAN (all derived from real activity) ───────────────
 const DOW_FULL=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
@@ -6527,33 +6547,25 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
 // ─── UPGRADE MODAL (shared paywall) ───────────────────────────────────────────
 function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
   if(!open)return null;
-  const tiers=[
-    {name:"Pro",price:"$9.99",perks:["Unlimited AI chat, scans & flashcard generation","Every AI model + 4 study modes","Unlimited decks + notes scanning"],color:T.lime},
-    {name:"Max",price:"$24.99",perks:["Everything in Pro, completely unlimited","Priority AI: faster, no queue","Advanced analytics + learning paths"],color:T.purple},
-  ];
-  const choose=(name)=>{setPlanLS(name);onClose();if(onUpgraded)onUpgraded(name);};
+  const tier={name:"Pro",price:"$6.99",perks:["Unlimited AI study plans, flashcards, syllabus scans, attack sessions & project breakdowns","Smart Reschedule — not on Free at all","Every AI model + 4 study modes"],color:T.lime};
+  const choose=()=>{setPlanLS("Pro");onClose();if(onUpgraded)onUpgraded("Pro");};
   return (
     <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:90,background:"rgba(8,12,10,0.72)",backdropFilter:"blur(7px)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <div onClick={e=>e.stopPropagation()} style={{width:580,maxWidth:"92vw",background:T.card,border:"1px solid "+T.border,borderRadius:8,padding:26,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)"}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:400,maxWidth:"92vw",background:T.card,border:"1px solid "+T.border,borderRadius:8,padding:26,boxShadow:"0 40px 90px -30px rgba(0,0,0,0.65)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
           <span style={{display:"inline-flex",width:30,height:30,borderRadius:8,background:T.lime+"1c",border:"1px solid "+T.lime+"44",alignItems:"center",justifyContent:"center",color:T.lime}}>{Icon.wand}</span>
           <div style={{fontSize:17,fontWeight:700,color:T.white,letterSpacing:"-0.01em"}}>You have hit your {feature} limit</div>
         </div>
         <div style={{fontSize:12.5,color:T.text,lineHeight:1.6,marginBottom:18}}>{detail}</div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
-          {tiers.map(t=>(
-            <div key={t.name} style={{background:T.card,border:"1px solid "+(t.name==="Max"?t.color+"55":T.border),borderRadius:12,padding:16,position:"relative"}}>
-              {t.name==="Max"&&<span style={{position:"absolute",top:-8,right:12,fontSize:9,fontWeight:700,letterSpacing:"0.08em",background:t.color,color:"#fff",padding:"2px 8px",borderRadius:4}}>BEST VALUE</span>}
-              <div style={{fontSize:13,fontWeight:700,color:t.color,marginBottom:2}}>{t.name}</div>
-              <div style={{fontSize:24,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>{t.price}<span style={{fontSize:11,color:T.muted,fontWeight:400}}> /month</span></div>
-              <div style={{margin:"10px 0 14px"}}>
-                {t.perks.map((p,i)=>(
-                  <div key={i} style={{display:"flex",gap:7,alignItems:"center",fontSize:11.5,color:T.text,padding:"3px 0"}}><span style={{color:t.color,display:"inline-flex"}}>{Icon.check}</span>{p}</div>
-                ))}
-              </div>
-              <Btn onClick={()=>choose(t.name)} style={{width:"100%",justifyContent:"center",background:t.name==="Max"?t.color:T.lime,color:t.name==="Max"?"#fff":T.ink}}>Upgrade to {t.name}</Btn>
-            </div>
-          ))}
+        <div style={{background:T.card,border:"1px solid "+T.border,borderRadius:12,padding:16,marginBottom:14}}>
+          <div style={{fontSize:13,fontWeight:700,color:tier.color,marginBottom:2}}>{tier.name}</div>
+          <div style={{fontSize:24,fontWeight:700,color:T.white,letterSpacing:"-0.02em"}}>{tier.price}<span style={{fontSize:11,color:T.muted,fontWeight:400}}> /month</span></div>
+          <div style={{margin:"10px 0 14px"}}>
+            {tier.perks.map((p,i)=>(
+              <div key={i} style={{display:"flex",gap:7,alignItems:"center",fontSize:11.5,color:T.text,padding:"3px 0"}}><span style={{color:tier.color,display:"inline-flex"}}>{Icon.check}</span>{p}</div>
+            ))}
+          </div>
+          <Btn onClick={choose} style={{width:"100%",justifyContent:"center",background:T.lime,color:T.ink}}>Upgrade to Pro</Btn>
         </div>
         <div onClick={onClose} style={{textAlign:"center",fontSize:12,color:T.muted,cursor:"pointer",padding:6}}>Maybe later</div>
       </div>
@@ -7058,6 +7070,10 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
   };
   const commitBuildPlan=async()=>{
     if(!buildPlanExam||!buildPlanPreview)return;
+    if(!canBuildExamPlan()){
+      setUpgradeModal({feature:"AI study plans",detail:"You've used your "+EXAM_PLAN_LIMIT+" free study plan this month. It resets in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+", or upgrade for unlimited right now."});
+      return;
+    }
     setBuildPlanLoading(true);
     const events=removeGenericExamPrepSessions(lsGet("events",[]),buildPlanExam.id);
     const routines=getWeeklyRoutine();
@@ -7098,6 +7114,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
       finalSessions=placedSessions.map((s,i)=>buildPlanFocuses[i]?{...s,notes:buildPlanFocuses[i]}:s);
     }
     lsSet("events",events.concat(finalSessions));
+    recordExamPlanBuild();
     // Also generate flashcards/a practice exam if requested -- replaces
     // any existing ones for this exam outright. This whole flow is
     // already preview-then-confirm (the Confirm plan click just made); a
@@ -18089,7 +18106,7 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
   ), document.body);
 }
 
-function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,setDetailEventId,registerSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange}={}){
+function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,setDetailEventId,registerSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange,setPricingOpen=()=>{}}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.lime},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   // Accepts either a real course id or a label, same as StudlinPrep/Notes'
@@ -18781,6 +18798,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // confirm-before-delete and "ask before filling the gap" for free, reusing
   // the same modal skip_class already drives.
   const skipOneOccurrence=(ev)=>{
+    if(!canUseSmartReschedule()){setPricingOpen(true);return;}
     setPauseError("");setPauseLastIntent(null);
     setPausePreview(computeClassSkipPlan([ev.routineId],ev.date));
     setPauseOpen(true);
@@ -19428,6 +19446,12 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     // the linked chain task -- degrades to an unphased chain for a plain
     // Assignment, so this one call covers both types.
     if((evKind==="assignment"||evKind==="project")&&evAttackBlock){
+      const isProject=evKind==="project";
+      if(isProject?!canBreakDownProject():!canStartAttackSession()){
+        setDeadlineToast("Free plan's "+(isProject?"project breakdowns":"attack sessions")+" for this month are used up — upgrade for unlimited.");
+        setTimeout(()=>setDeadlineToast(""),3200);
+        return;
+      }
       const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
       const prefs=getSchedulePreferences();
       const phases=evKind==="project"?(evProjectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
@@ -19435,6 +19459,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       const markerId=String(Date.now()+Math.random()*1000);
       const pair=buildAssignmentAttackBlockPair(markerId,{title:evTitle.trim(),subject:subj,courseId:courseIdForLabel(subj),notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins,outline},phases,events,routines,prefs,evDate,evTime);
       if(!pair){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
+      if(isProject)recordProjectBreakdown();else recordAttackSessionStart();
       commitTasks([pair.marker,pair.task]);
       return;
     }
@@ -19572,6 +19597,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     // deterministic placement, not LLM reasoning about a duration nobody has
     // yet.
     if(evAttackBlock){
+      const isProject=evKind==="project";
+      if(isProject?!canBreakDownProject():!canStartAttackSession()){
+        setAiLoading(false);
+        setDeadlineToast("Free plan's "+(isProject?"project breakdowns":"attack sessions")+" for this month are used up — upgrade for unlimited.");
+        setTimeout(()=>setDeadlineToast(""),3200);
+        return;
+      }
       const subj=evSubject==="None"?"":(evSubject==="Other"&&evCustom.trim()?evCustom.trim():evSubject);
       const phases=evKind==="project"?(evProjectPlan.phases||[]).map(p=>p.trim()).filter(Boolean):[];
       const outline=evKind==="project"?normalizeOutlineDraft(evProjectPlan.outline):[];
@@ -19579,6 +19611,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       const pair=buildAssignmentAttackBlockPair(markerId,{title:evTitle.trim(),subject:subj,courseId:courseIdForLabel(subj),notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins,outline},phases,events,routines,prefs,desiredStartDate,windowStartTime);
       setAiLoading(false);
       if(!pair){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
+      if(isProject)recordProjectBreakdown();else recordAttackSessionStart();
       commitTasks([pair.marker,pair.task]);
       return;
     }
@@ -19823,6 +19856,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
 
   const confirmPausePlan=()=>{
     if(!pausePreview)return;
+    if(!canUseSmartReschedule()){setPauseOpen(false);setPricingOpen(true);return;}
     const all=lsGet("events",[]);
     // A moved/retimed entry whose id points at a virtual routine occurrence
     // (isRoutine:true — never in `events` to begin with, see
@@ -20309,7 +20343,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
                   // since both are the same underlying job (redistribute
                   // what's already scheduled). See the picker list inside
                   // the pauseOpen modal below.
-                  {icon:Icon.refresh,label:"Reschedule",sub:"Push back, clear, or balance your week",onClick:()=>{setToolsMenuOpen(false);setPauseOpen(true);setPauseError("");setPausePreview(null);},danger:true},
+                  // Smart Reschedule is paid-only, no free tier at all (see
+                  // canUseSmartReschedule) -- deliberately not a capped
+                  // free-taste feature like the Prep flows above. Free users
+                  // get the pricing modal instead of the pauseOpen flow.
+                  {icon:Icon.refresh,label:"Reschedule",sub:"Push back, clear, or balance your week",onClick:()=>{setToolsMenuOpen(false);if(!canUseSmartReschedule()){setPricingOpen(true);return;}setPauseOpen(true);setPauseError("");setPausePreview(null);},danger:true},
                 ].map(item=>(
                   <div key={item.label} onClick={item.onClick} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 14px",cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                     <span style={{width:16,color:item.danger?T.red:T.muted,display:"flex",marginTop:2}}>{item.icon}</span>
@@ -21514,8 +21552,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     try{return new Date(iso).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});}catch(e){return "the end of your billing period";}
   };
   const planPriceText=(plan,interval)=>{
-    if(plan==="Max")return interval==="year"?"$239.88/year":"$24.99/mo";
-    if(plan==="Pro")return interval==="year"?"$95.88/year":"$9.99/mo";
+    if(plan==="Pro")return interval==="year"?"$59.88/year":"$6.99/mo";
     return "Free";
   };
   const subscriptionPlanLine=()=>{
@@ -22673,26 +22710,34 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               <Card style={{marginBottom:12}}>
                 <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:2}}>AI chat messages</div>
                 <div style={{fontSize:12,color:T.muted,marginBottom:18}}>Resets in {daysLeft} day{daysLeft!==1?"s":""} · {plan} plan</div>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                  <span style={{fontSize:12.5,color:T.text}}>{plan} plan</span>
-                  <span style={{fontSize:12.5,color:pct>=80?"#E05252":T.text,fontWeight:600}}>{pct}% used</span>
-                </div>
-                <div style={{height:6,background:T.card2,borderRadius:99,overflow:"hidden",marginBottom:8}}>
-                  <div style={{height:"100%",width:pct+"%",background:barColor,borderRadius:99,transition:"width 0.4s"}} />
-                </div>
-                <div style={{display:"flex",justifyContent:"space-between",fontSize:11.5,color:T.muted}}>
-                  <span>{used} used</span>
-                  <span>{cr} remaining / {lim}</span>
-                </div>
+                {plan==="Pro"?(
+                  <div style={{fontSize:13,color:T.lime,fontWeight:600}}>Unlimited</div>
+                ):(<>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                    <span style={{fontSize:12.5,color:T.text}}>{plan} plan</span>
+                    <span style={{fontSize:12.5,color:pct>=80?"#E05252":T.text,fontWeight:600}}>{pct}% used</span>
+                  </div>
+                  <div style={{height:6,background:T.card2,borderRadius:99,overflow:"hidden",marginBottom:8}}>
+                    <div style={{height:"100%",width:pct+"%",background:barColor,borderRadius:99,transition:"width 0.4s"}} />
+                  </div>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:11.5,color:T.muted}}>
+                    <span>{used} used</span>
+                    <span>{cr} remaining / {lim}</span>
+                  </div>
+                </>)}
               </Card>
               <Card style={{marginBottom:12}}>
                 <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>Your AI features</div>
                 {[
-                  ["Deadline scans",plan==="Free"?getSyllabusScanUsage().count+" / "+SYLLABUS_SCAN_LIMIT+" this month":"Unlimited"],
+                  ["Syllabus & schedule imports",plan==="Free"?getSyllabusScanUsage().count+" / "+SYLLABUS_SCAN_LIMIT+" this month":"Unlimited"],
                   ["AI note scans (files, lectures & YouTube)",plan==="Free"?getNoteScanUsage().count+" / "+NOTE_SCAN_LIMIT+" this month":"Unlimited"],
                   ["AI flashcard generations",plan==="Free"?getFlashcardGenUsage().count+" / "+FLASHCARD_GEN_LIMIT+" this month":"Unlimited"],
-                ].map(([action,status],i)=>(
-                  <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:i<2?`1px solid ${T.border}`:"none"}}>
+                  ["AI study plans",plan==="Free"?getExamPlanUsage().count+" / "+EXAM_PLAN_LIMIT+" this month":"Unlimited"],
+                  ["Attack sessions",plan==="Free"?getAttackSessionUsage().count+" / "+ATTACK_SESSION_LIMIT+" this month":"Unlimited"],
+                  ["Project breakdowns",plan==="Free"?getProjectBreakdownUsage().count+" / "+PROJECT_BREAKDOWN_LIMIT+" this month":"Unlimited"],
+                  ["Smart Reschedule",plan==="Free"?"Pro only":"Unlimited"],
+                ].map(([action,status],i,arr)=>(
+                  <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:i<arr.length-1?`1px solid ${T.border}`:"none"}}>
                     <span style={{fontSize:12.5,color:T.text}}>{action}</span>
                     <span style={{fontSize:12,color:T.muted,fontFamily:T.mono}}>{status}</span>
                   </div>
@@ -22715,13 +22760,13 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                 </div>
                 <div style={{textAlign:"right"}}>
                   <div style={{fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:T.bg,opacity:0.6}}>AI CHAT MESSAGES</div>
-                  <div style={{fontSize:26,fontWeight:700,color:T.bg,letterSpacing:"-0.02em",marginTop:4}}>{getCredits()} / {getCreditLimit()}</div>
-                  <div style={{fontSize:13,color:T.bg,opacity:0.75,marginTop:4}}>Resets in {daysUntilReset()} day{daysUntilReset()!==1?"s":""}</div>
+                  <div style={{fontSize:26,fontWeight:700,color:T.bg,letterSpacing:"-0.02em",marginTop:4}}>{getPlan()==="Pro"?"Unlimited":getCredits()+" / "+getCreditLimit()}</div>
+                  <div style={{fontSize:13,color:T.bg,opacity:0.75,marginTop:4}}>{getPlan()==="Pro"?"No monthly cap":"Resets in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")}</div>
                 </div>
               </div>
               <div style={{display:"flex",gap:8,marginTop:18,flexWrap:"wrap"}}>
                 <a href="checkout.html?credits=500" style={{background:T.bg,color:T.lime,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Buy credit packs</a>
-                <a href="checkout.html?plan=max&billing=monthly" style={{background:"transparent",border:`1px solid ${T.bg}55`,color:T.bg,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Upgrade to Max</a>
+                {getPlan()!=="Pro"&&<a href="checkout.html?plan=pro&billing=monthly" style={{background:"transparent",border:`1px solid ${T.bg}55`,color:T.bg,padding:"8px 16px",borderRadius:7,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Upgrade to Pro</a>}
               </div>
             </Card>
             {account.stripeSubscriptionId&&(
@@ -22755,7 +22800,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             </Card>
             <Card>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:10}}>Billing history</div>
-              {[["Jun 1, 2026","Pro plan · monthly","$9.99","Paid"],["May 1, 2026","Pro plan · monthly","$9.99","Paid"],["Apr 28, 2026","Credit pack · 300","$8.99","Paid"],["Apr 1, 2026","Pro plan · monthly","$9.99","Paid"]].map(([d,t,a,s],i)=>(
+              {[["Jun 1, 2026","Pro plan · monthly","$6.99","Paid"],["May 1, 2026","Pro plan · monthly","$6.99","Paid"],["Apr 28, 2026","Credit pack · 300","$8.99","Paid"],["Apr 1, 2026","Pro plan · monthly","$6.99","Paid"]].map(([d,t,a,s],i)=>(
                 <div key={i} style={{display:"grid",gridTemplateColumns:"110px 1fr 80px 70px",gap:14,padding:"11px 0",borderBottom:i<3?`1px solid ${T.border}`:"none",fontSize:12.5,alignItems:"center"}}>
                   <span style={{color:T.muted,fontFamily:T.mono,fontSize:11}}>{d}</span>
                   <span style={{color:T.text}}>{t}</span>
@@ -22875,7 +22920,7 @@ function Profile({setActive,seriousMode=false}={}) {
                 regardless of actual plan -- the Subscription tab already
                 reads the real plan correctly (account.plan||getPlan()),
                 just needed the same check here. */}
-            <Badge color={getPlan()==="Max"?T.purple:T.lime}>{getPlan()}</Badge>
+            <Badge color={T.lime}>{getPlan()}</Badge>
             {!seriousMode&&<span onClick={()=>setStreakModalOpen(true)} style={{cursor:"pointer"}}><Badge color={T.amber}>{streak}-day streak</Badge></span>}
             {!seriousMode&&<Badge color={T.blue}>{lvl.title}</Badge>}
             {status&&<Badge color={T.teal}>{status==="highschool"?"High School":"College"}</Badge>}
@@ -24198,12 +24243,19 @@ function App() {
   // disappear before the student had a chance to read it.
   const [lockInErrorToast,setLockInErrorToast]=useState("");
   const acceptPrepPrompt=(item)=>{
+    const isProject=item.phases&&item.phases.length>0;
+    if(isProject?!canBreakDownProject():!canStartAttackSession()){
+      setPrepAutoToast(isProject?"Free plan's project breakdown for this month is used up — upgrade for unlimited.":"Free plan's attack sessions for this month are used up — upgrade for unlimited.");
+      setTimeout(()=>setPrepAutoToast(""),4200);
+      return;
+    }
     const events=lsGet("events",[]);
     const routines=getWeeklyRoutine();
     const prefs=getSchedulePreferences();
     const task=startPhaseAwareAttackChain({title:item.title,deadline:item.date,priority:item.priority,difficulty:item.difficulty,noteId:item.noteId,dueEventId:item.id},item.phases,events,routines,prefs,dayKey(),prefs.workStartTime);
     const next=events.map(e=>e.id===item.id?{...e,prepPending:false}:e).concat([task]);
     lsSet("events",next);
+    if(isProject)recordProjectBreakdown();else recordAttackSessionStart();
     setPrepPromptBatch(b=>b.filter(x=>x.id!==item.id));
   };
   const declinePrepPrompt=(item)=>{
@@ -25423,7 +25475,7 @@ function App() {
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
           {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} onTaskCompleted={handleTaskCompleted} />:
            active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} setActivePage={setActive} />:
-           active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} />:
+           active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} setPricingOpen={setPricingOpen} />:
            active==="notes"?<Notes setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="profile"?<Profile setActive={setActive} seriousMode={seriousMode} />:
@@ -25462,9 +25514,9 @@ function App() {
         }} />
         <div style={{marginTop:20,padding:"16px 18px",background:T.card2,borderRadius:12,border:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
           <div style={{fontSize:13,color:T.text,fontWeight:500}}>
-            Grammarly + Quizlet + ChatGPT + Notion = <span style={{color:T.red,fontWeight:700}}>$55/mo</span>.&nbsp;&nbsp;Pro is <span style={{color:T.lime,fontWeight:700}}>$9.99</span>.
+            Grammarly + Quizlet + ChatGPT + Notion = <span style={{color:T.red,fontWeight:700}}>$55/mo</span>.&nbsp;&nbsp;Pro is <span style={{color:T.lime,fontWeight:700}}>$6.99</span>.
           </div>
-          <div style={{fontSize:12,color:T.muted}}>All plans include a 14-day money-back guarantee. No credit card for Free or trial.</div>
+          <div style={{fontSize:12,color:T.muted}}>All plans include a 14-day money-back guarantee. No credit card needed for Free.</div>
         </div>
       </Modal>
       <Modal open={creditsOpen} onClose={()=>{setCreditsOpen(false);setCreditCheckout(null);setBoughtMsg("");}} title={creditCheckout?"Complete purchase":"AI Credits"} sub={creditCheckout?("Purchase "+creditCheckout.label+" for "+creditCheckout.price):"Every AI action uses credits. Top up, upgrade, or just check your balance."} width={620}
@@ -25495,10 +25547,10 @@ function App() {
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",position:"relative"}}>
                 <div>
                   <div style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.14em",fontWeight:600,color:"rgba(8,12,40,0.6)"}}>CURRENT BALANCE</div>
-                  <div style={{fontFamily:T.hand,fontSize:54,fontWeight:700,color:T.ink,lineHeight:0.9,marginTop:4}}>{getCredits()}<span style={{fontFamily:T.font,fontSize:18,fontWeight:500,color:"rgba(8,12,40,0.55)",marginLeft:4}}>/ {getCreditLimit()}</span></div>
-                  <div style={{fontSize:12,color:"rgba(8,12,40,0.65)",marginTop:4}}>Resets in {daysUntilReset()} day{daysUntilReset()!==1?"s":""} · {getCreditLimit()-getCredits()} used this cycle</div>
+                  <div style={{fontFamily:T.hand,fontSize:54,fontWeight:700,color:T.ink,lineHeight:0.9,marginTop:4}}>{getPlan()==="Pro"?"Unlimited":getCredits()+""}<span style={{fontFamily:T.font,fontSize:18,fontWeight:500,color:"rgba(8,12,40,0.55)",marginLeft:4}}>{getPlan()==="Pro"?"":"/ "+getCreditLimit()}</span></div>
+                  <div style={{fontSize:12,color:"rgba(8,12,40,0.65)",marginTop:4}}>{getPlan()==="Pro"?"No monthly cap":"Resets in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+" · "+(getCreditLimit()-getCredits())+" used this cycle"}</div>
                 </div>
-                <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.16em",fontWeight:700,background:T.ink,color:T.lime,padding:"4px 8px",borderRadius:5}}>PRO</span>
+                <span style={{fontFamily:T.mono,fontSize:10,letterSpacing:"0.16em",fontWeight:700,background:T.ink,color:T.lime,padding:"4px 8px",borderRadius:5}}>{getPlan().toUpperCase()}</span>
               </div>
               <div style={{height:5,background:"rgba(8,12,40,0.15)",borderRadius:99,marginTop:14,overflow:"hidden",position:"relative"}}><div style={{height:"100%",width:Math.min(100,Math.round(getCredits()/getCreditLimit()*100))+"%",background:T.ink,borderRadius:99}} /></div>
             </div>
@@ -25545,9 +25597,9 @@ function App() {
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:16,padding:"12px 14px",background:T.card2,borderRadius:10,border:`1px solid ${T.border}`}}>
               <div>
                 <div style={{fontSize:12.5,color:T.text,fontWeight:600}}>Hit your cap often?</div>
-                <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>Max plan gives you 500 credits / month.</div>
+                <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>Pro plan gives you unlimited AI chat, no credits needed.</div>
               </div>
-              <a href="checkout.html?plan=max&billing=monthly" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:600,background:T.ink,color:T.lime,textDecoration:"none",fontFamily:T.font}}>Upgrade to Max</a>
+              <a href="checkout.html?plan=pro&billing=monthly" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:600,background:T.ink,color:T.lime,textDecoration:"none",fontFamily:T.font}}>Upgrade to Pro</a>
             </div>
           </>
         )}

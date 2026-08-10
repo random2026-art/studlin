@@ -267,7 +267,7 @@ async function sendWelcome(user, req, res) {
             </table>
 
             <p style="margin:0;font-size:13px;color:#999;line-height:1.6;">
-              You're on the <strong style="color:#0D120F;">Free plan</strong>. Upgrade to Pro anytime for unlimited AI chat, syllabus scans, note scans & flashcard generation.
+              You're on the <strong style="color:#0D120F;">Free plan</strong>. Upgrade to Pro anytime ($6.99/mo) for unlimited AI study plans, flashcards & syllabus scans, plus Smart Reschedule.
             </p>
           </td>
         </tr>

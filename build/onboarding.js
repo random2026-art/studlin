@@ -344,10 +344,10 @@ function App() {
   const [state, setState] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem("studlin-onboarding") || "null");
-      if (saved && typeof saved === "object") return { goals: [], plan: "pro", ...saved };
+      if (saved && typeof saved === "object") return { goals: [], ...saved };
     } catch (e) {
     }
-    return { goals: [], plan: "pro" };
+    return { goals: [] };
   });
   useEffect(() => {
     return firebase.auth().onAuthStateChanged((u) => {
