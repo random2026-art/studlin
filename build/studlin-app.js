@@ -15167,6 +15167,7 @@ function NotifPermModal({ onAllow = () => {
 function App() {
   seedEventsIfStale();
   const notifiedRef = useRef(/* @__PURE__ */ new Set());
+  const [timerTask, setTimerTask] = useState(null);
   useEffect(() => {
     if (typeof Notification === "undefined") return;
     const LEAD_TIMES = [10, 5];
@@ -15298,7 +15299,6 @@ function App() {
     setDensityState(name);
     if (typeof localStorage !== "undefined") localStorage.setItem("studlin-density", name);
   };
-  const [timerTask, setTimerTask] = useState(null);
   const completeTaskWithMinutes = (taskId, mins, evTime) => {
     const all = lsGet("events", []);
     const target = all.find((ev) => ev.id === taskId);

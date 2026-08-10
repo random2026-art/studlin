@@ -23930,6 +23930,15 @@ function App() {
   // it intentionally resets on reload — a reminder whose window already
   // passed before a refresh isn't worth reconstructing.
   const notifiedRef=useRef(new Set());
+  // Declared here (not further down where the rest of the timer-lock-in
+  // state lives) because the reminder-poll effect right below reads
+  // timerTask in its dependency array -- it used to sit after that effect
+  // textually, which is a genuine TDZ violation (reading a const before
+  // its declaration executes) that Babel's default ES5 downlevel silently
+  // papered over by compiling it to `var`. esbuild's precompiled output
+  // doesn't downlevel block scoping, so the same latent bug now throws for
+  // real on every render. Moved up instead of leaving the effect broken.
+  const [timerTask,setTimerTask]=useState(null);
   useEffect(()=>{
     if(typeof Notification==="undefined")return;
     const LEAD_TIMES=[10,5]; // minutes before start
@@ -24080,7 +24089,6 @@ function App() {
   const setTheme=(name)=>{ setThemeState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-theme",name); };
   const setAccent=(name)=>{ setAccentState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-accent",name); };
   const setDensity=(name)=>{ setDensityState(name); if(typeof localStorage!=="undefined") localStorage.setItem("studlin-density",name); };
-  const [timerTask,setTimerTask]=useState(null);
   // Shared by TaskTimerModal's own onComplete AND the orphaned-session
   // recovery flow below, so both paths apply the exact same double-count
   // guard (a task's minutes only ever get logged toward XP once, however
