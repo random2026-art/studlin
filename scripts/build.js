@@ -33,7 +33,16 @@ function compileOne(name, { dev = false } = {}) {
     // one.
     sourcemap: dev ? "inline" : false,
     sourcefile: name,
-    minify: !dev,
+    // NOT minified, even in prod. esbuild's minifier introduced a real
+    // "Cannot access 'h' before initialization" TDZ ReferenceError inside
+    // App() on the live site (confirmed 2026-08-10 by reproducing it
+    // directly against the deployed bundle) -- almost certainly a variable-
+    // lifetime mis-analysis across some closure, not something worth
+    // debugging blind against a minifier's internals. The actual goal here
+    // is skipping the live in-browser Babel transpile, not shaving extra
+    // bytes off an already-cached file; minification was a bonus that
+    // isn't worth the correctness risk.
+    minify: false,
   });
   for (const w of warnings) console.warn(`[build] ${name}: ${w.text}`);
   const outPath = path.join(OUT_DIR, name.replace(/\.jsx$/, ".js"));
