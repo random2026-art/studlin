@@ -23003,7 +23003,14 @@ function Profile({setActive,seriousMode=false}={}) {
 // ─── LEVEL ROADMAP MODAL ─────────────────────────────────────────────────────
 function LevelRoadmapModal({open,onClose,currentMinutes}){
   if(!open)return null;
-  return(
+  // Portaled straight to <body> -- Profile renders inside [data-page], which
+  // carries the transform-bearing studlinRise entrance animation and is
+  // therefore a containing block for any position:fixed descendant
+  // regardless of nesting depth. Left un-portaled, this modal's "centered"
+  // coordinates resolve relative to [data-page]'s own (padded, sidebar-
+  // adjacent) box instead of the real viewport, landing it off-center. Same
+  // fix already used for CalendarTab's day-detail modal and others.
+  return ReactDOM.createPortal((
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
       <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:460,maxHeight:"80vh",background:T.card,borderRadius:10,border:`1px solid ${T.border}`,overflow:"hidden",display:"flex",flexDirection:"column",boxShadow:"0 28px 70px -20px rgba(0,0,0,0.55)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
         <div style={{padding:"20px 22px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
@@ -23044,7 +23051,7 @@ function LevelRoadmapModal({open,onClose,currentMinutes}){
         </div>
       </div>
     </div>
-  );
+  ),document.body);
 }
 
 // ─── STREAK DETAIL MODAL ─────────────────────────────────────────────────────
@@ -23056,7 +23063,11 @@ function StreakDetailModal({open,onClose,streak}){
   if(!open)return null;
   const {cells,longest}=computeStreakHeatmap();
   const freezeTokens=getStreakFreezeTokens();
-  return(
+  // Portaled straight to <body> -- same [data-page] containing-block issue
+  // as LevelRoadmapModal above (Profile renders inside [data-page], which
+  // is a containing block for position:fixed descendants regardless of
+  // nesting depth, so un-portaled this lands off-center).
+  return ReactDOM.createPortal((
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,animation:"studlinFade 0.18s ease-out"}}>
       <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:460,background:T.card,borderRadius:10,border:`1px solid ${T.border}`,overflow:"hidden",boxShadow:"0 28px 70px -20px rgba(0,0,0,0.55)",animation:"studlinPop 0.22s cubic-bezier(.2,.85,.3,1)"}}>
         <div style={{padding:"20px 22px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
@@ -23090,7 +23101,7 @@ function StreakDetailModal({open,onClose,streak}){
         </div>
       </div>
     </div>
-  );
+  ),document.body);
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
