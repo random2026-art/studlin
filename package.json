@@ -1,6 +1,8 @@
 {
   "private": true,
   "scripts": {
+    "build": "node scripts/build.js",
+    "build:watch": "node scripts/build.js --watch",
     "test": "node --test",
     "test:rules": "firebase emulators:exec --only firestore \"node --test tests/firestore-rules.test.js\""
   },
