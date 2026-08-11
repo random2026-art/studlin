@@ -15770,19 +15770,19 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   // same threading a single sequential commit always had.
   const commitAllToCalendar=()=>{
     if(windowInvalid)return;
-    // O4 in the audit: this used to bail out entirely whenever
-    // pendingClasses was empty, which is *always* true on a pure HS
-    // whole-schedule commit (commitHsSchedule writes straight to storage,
-    // never through pendingClasses -- see O1 above) -- so "Add to
-    // Calendar" silently did nothing and the only way through the wizard
-    // was "Skip all," which reads as abandoning the flow, not finishing
-    // it. hsClassesCommitted>0 means there really is something to
-    // finish: everything below this guard is already a safe no-op on an
-    // empty pendingClasses (subjects/routine just get re-saved unchanged),
-    // so nothing here risks re-committing or duplicating those classes --
-    // it just lets the shared finish housekeeping (schedule prefs, term,
-    // holidays, wake/sleep, onFinish) actually run.
-    if(pendingClasses.length===0&&hsClassesCommitted===0)return;
+    // O4 in the audit fixed the HS-whole-schedule-commit half of this
+    // (hsClassesCommitted>0 counts as "something to finish" even with
+    // pendingClasses empty), but still returned early -- silently doing
+    // nothing -- for a student with genuinely zero classes staged at all.
+    // That was only survivable because "Skip all" existed as a separate
+    // escape hatch; removing "Skip all" from real onboarding (2026-08-11)
+    // turned this into a real dead end -- the "classes" step's own "Skip,
+    // I'll add classes later" button explicitly offers deferring classes,
+    // so finishing here has to actually honor that, not silently no-op.
+    // Everything below is already a safe no-op on an empty pendingClasses
+    // (subjects/routine just get re-saved unchanged) -- this just lets the
+    // shared finish housekeeping (schedule prefs, term, holidays,
+    // wake/sleep, onFinish) run unconditionally.
     let subjects=getSubjects();
     // Opened from an existing course's own "Import syllabus" action
     // (targetCourseId set) -- attach to that exact course instead of
@@ -16305,8 +16305,8 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
                 // the honest story instead of a blanket "go back."
                 <div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"24px 0"}}>
                   {hsClassesCommitted>0
-                    ?hsClassesCommitted+" class"+(hsClassesCommitted!==1?"es":"")+" already added from your schedule scan — nothing else staged. Hit Finish below, or go back to add more."
-                    :"No classes staged yet — go back and add one."}
+                    ?hsClassesCommitted+" class"+(hsClassesCommitted!==1?"es":"")+" already added from your schedule scan, nothing else staged. Hit Finish below, or go back to add more."
+                    :"No classes staged yet. That's fine, you can add them anytime from Courses. Hit Finish below, or go back to add some now."}
                 </div>
               ):pendingClasses.map(cls=>{
                 const clsPreview=finalPreview.find(p=>p.classId===cls.id);
@@ -16427,10 +16427,14 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
             {step==="calendarSync"&&(
               <Btn onClick={()=>setStep("finalReview")}>Continue</Btn>
             )}
-            {step==="finalReview"&&(()=>{
-              const hasSomethingToFinish=pendingClasses.length>0||hsClassesCommitted>0;
-              return <Btn onClick={commitAllToCalendar} disabled={!hasSomethingToFinish} style={{opacity:hasSomethingToFinish?1:0.45}}>{pendingClasses.length>0?"Add to Calendar":"Finish"}</Btn>;
-            })()}
+            {step==="finalReview"&&(
+              // Never disabled on account of an empty pendingClasses --
+              // zero classes is a legitimate, explicitly-offered outcome
+              // ("Skip, I'll add classes later" back on the classes step),
+              // not a mistake to block. commitAllToCalendar's own
+              // windowInvalid guard is the only real precondition left.
+              <Btn onClick={commitAllToCalendar}>{pendingClasses.length>0?"Add to Calendar":"Finish"}</Btn>
+            )}
           </div>
         </div>
       </div>
