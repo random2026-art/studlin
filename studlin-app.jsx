@@ -17758,7 +17758,7 @@ function findOverlapConflict(date,startTime,endTime,events,routines){
 // editRoutine (the rule being edited) is the one thing that switches this
 // between create and edit mode -- present means Save+Delete, absent means
 // Create.
-function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,anchorY,color,hideRepeat,onPreviewChange,liveOverride,events,routines,hidden,editRoutine,subjectOptions,onClose,onCreate,onSave,onDelete}){
+function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKind,anchorX,anchorY,color,hideRepeat,onPreviewChange,liveOverride,events,routines,hidden,editRoutine,subjectOptions,onClose,onCreate,onSave,onDelete}){
   const [title,setTitle]=useState("");
   const [date,setDate]=useState("");
   const [startTime,setStartTime]=useState("09:00");
@@ -17848,7 +17848,15 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,anchorX,a
       return;
     }
     setTitle(initialTitle||"");
-    setEvKind("class");
+    // A course chip dragged from the Courses sidebar is unambiguously a
+    // Class. Anything else (an Activity chip, a plain "+ New event" click)
+    // defaults to Activity, not Class -- Class already has its own richer
+    // dedicated flow (Courses' own "+ Add new" -> the syllabus-scan
+    // wizard), same reasoning RoutineControlCenterModal's own Add form
+    // already applies to its default. Previously this always defaulted to
+    // "class" regardless of what was actually dragged, so dropping an
+    // Activity chip here silently mislabeled it.
+    setEvKind(initialKind==="course"?"class":"busy");
     setSubject("None");
     const d=initialDate||dayKey();
     setDate(d);
@@ -18899,8 +18907,18 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // its days, so a genuinely different per-day time has to be a
   // different routine object, not a field on the same one).
   const buildRoutineObjectsForDays=(base,days,startTime,duration,dayTimes)=>{
-    const withOverride=days.filter(d=>dayTimes&&dayTimes[d]);
-    const shared=days.filter(d=>!(dayTimes&&dayTimes[d]));
+    // A day only counts as a real override if it actually differs from the
+    // shared time -- an entry that happens to match startTime/duration
+    // exactly (e.g. a day's override got set/cleared back to the same
+    // value) used to still split that day into its own disconnected
+    // routine object, silently fragmenting one multi-day activity into
+    // several identical-looking sidebar entries instead of staying one.
+    const isRealOverride=(d)=>{
+      const ov=dayTimes&&dayTimes[d];
+      return !!ov&&(ov.startTime!==startTime||ov.duration!==duration);
+    };
+    const withOverride=days.filter(isRealOverride);
+    const shared=days.filter(d=>!isRealOverride(d));
     const out=[];
     if(shared.length>0)out.push({...base,id:base.id||"rt-"+Date.now()+"-"+Math.round(Math.random()*1000),days:shared,startTime,duration});
     withOverride.forEach(d=>{
@@ -20507,7 +20525,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           );
         })()}
       </Modal>
-      <NewEventModal open={newEventOpen||!!routineEditItem} initialTitle={newEventPrefill.title} initialDate={newEventPrefill.date} initialStartTime={newEventPrefill.startTime}
+      <NewEventModal open={newEventOpen||!!routineEditItem} initialTitle={newEventPrefill.title} initialDate={newEventPrefill.date} initialStartTime={newEventPrefill.startTime} initialKind={newEventPrefill.chipKind}
         anchorX={newEventPrefill.anchorX} anchorY={newEventPrefill.anchorY} color={newEventPrefill.color}
         hideRepeat={newEventPrefill.chipKind==="session"}
         onPreviewChange={setPreviewEvent}

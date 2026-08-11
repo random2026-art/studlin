@@ -11339,7 +11339,7 @@ function findOverlapConflict(date, startTime, endTime, events, routines) {
   const candidates = dayEvents.map((e) => ({ title: e.title, start: timeToMinutes(e.time), end: timeToMinutes(e.time) + (e.duration || 30) })).concat(dayRoutines.map((r) => ({ title: r.title, start: timeToMinutes(r.time), end: timeToMinutes(r.time) + (r.duration || 30) })));
   return candidates.find((c) => startMin < c.end && c.start < endMin) || null;
 }
-function NewEventModal({ open, initialTitle, initialDate, initialStartTime, anchorX, anchorY, color, hideRepeat, onPreviewChange, liveOverride, events, routines, hidden, editRoutine, subjectOptions, onClose, onCreate, onSave, onDelete }) {
+function NewEventModal({ open, initialTitle, initialDate, initialStartTime, initialKind, anchorX, anchorY, color, hideRepeat, onPreviewChange, liveOverride, events, routines, hidden, editRoutine, subjectOptions, onClose, onCreate, onSave, onDelete }) {
   const [title, setTitle] = useState("");
   const [date, setDate] = useState("");
   const [startTime, setStartTime] = useState("09:00");
@@ -11386,7 +11386,7 @@ function NewEventModal({ open, initialTitle, initialDate, initialStartTime, anch
       return;
     }
     setTitle(initialTitle || "");
-    setEvKind("class");
+    setEvKind(initialKind === "course" ? "class" : "busy");
     setSubject("None");
     const d = initialDate || dayKey();
     setDate(d);
@@ -12022,8 +12022,12 @@ function CalendarTab({ setActive = () => {
     setNewEventOpen(true);
   };
   const buildRoutineObjectsForDays = (base, days, startTime, duration, dayTimes) => {
-    const withOverride = days.filter((d) => dayTimes && dayTimes[d]);
-    const shared = days.filter((d) => !(dayTimes && dayTimes[d]));
+    const isRealOverride = (d) => {
+      const ov = dayTimes && dayTimes[d];
+      return !!ov && (ov.startTime !== startTime || ov.duration !== duration);
+    };
+    const withOverride = days.filter(isRealOverride);
+    const shared = days.filter((d) => !isRealOverride(d));
     const out = [];
     if (shared.length > 0) out.push({ ...base, id: base.id || "rt-" + Date.now() + "-" + Math.round(Math.random() * 1e3), days: shared, startTime, duration });
     withOverride.forEach((d) => {
@@ -13373,6 +13377,7 @@ Examples:
       initialTitle: newEventPrefill.title,
       initialDate: newEventPrefill.date,
       initialStartTime: newEventPrefill.startTime,
+      initialKind: newEventPrefill.chipKind,
       anchorX: newEventPrefill.anchorX,
       anchorY: newEventPrefill.anchorY,
       color: newEventPrefill.color,
