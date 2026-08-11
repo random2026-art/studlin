@@ -678,10 +678,41 @@ const SCHOOL_DIRECTORY = [
   { name: "University of Florida", type: "college" },
   { name: "Miami Dade College", type: "college" }
 ];
+const SCHOOL_NAME_STOPWORDS = /* @__PURE__ */ new Set(["the", "of", "at", "a", "an"]);
+const SCHOOL_NAME_DROPPABLE_SUFFIX = /* @__PURE__ */ new Set(["university", "college"]);
+function normalizeSchoolName(name) {
+  return (name || "").trim().toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+function schoolSignificantWords(name) {
+  return normalizeSchoolName(name).split(" ").filter((w) => w && !SCHOOL_NAME_STOPWORDS.has(w));
+}
+function isNearDuplicateSchoolName(labelA, labelB) {
+  const a = normalizeSchoolName(labelA), b = normalizeSchoolName(labelB);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const dropSuffix = (s) => {
+    const w = s.split(" ");
+    return w.length > 1 && SCHOOL_NAME_DROPPABLE_SUFFIX.has(w[w.length - 1]) ? w.slice(0, -1).join(" ") : s;
+  };
+  if (dropSuffix(a) === dropSuffix(b)) return true;
+  const compactA = a.replace(/\s+/g, ""), compactB = b.replace(/\s+/g, "");
+  const initialsOf = (name) => schoolSignificantWords(name).map((w) => w[0]).join("");
+  if (compactA.length <= 6 && compactA === initialsOf(labelB)) return true;
+  if (compactB.length <= 6 && compactB === initialsOf(labelA)) return true;
+  const wordsA = a.split(" "), wordsB = b.split(" ");
+  if (wordsA.length === wordsB.length && wordsA.every((w, i) => {
+    const w2 = wordsB[i];
+    if (w === w2) return true;
+    const shorter = w.length < w2.length ? w : w2, longer = w.length < w2.length ? w2 : w;
+    return shorter.length >= 3 && longer.startsWith(shorter);
+  })) return true;
+  return false;
+}
 const SchoolSelect = ({ value, onChange, placeholder, theme, statusFilter, onCommit }) => {
   const [q, setQ] = useState(value || "");
   const [open, setOpen] = useState(false);
   const [liveMatches, setLiveMatches] = useState([]);
+  const [suggestion, setSuggestion] = useState(null);
   useEffect(() => {
     setQ(value || "");
   }, [value]);
@@ -718,7 +749,32 @@ const SchoolSelect = ({ value, onChange, placeholder, theme, statusFilter, onCom
   const pick = (name) => {
     setQ(name);
     onChange(name);
+    setSuggestion(null);
     setOpen(false);
+  };
+  const checkAndCommit = async (typed) => {
+    const norm = typed.toLowerCase();
+    if (matches.some((m) => m.toLowerCase() === norm)) {
+      if (onCommit) onCommit(typed);
+      return;
+    }
+    const prefixHit = matches.find((m) => isNearDuplicateSchoolName(m, typed));
+    if (prefixHit) {
+      setSuggestion(prefixHit);
+      return;
+    }
+    try {
+      const snap = await fsdb().collection("schools").limit(300).get();
+      const all = snap.docs.map((d) => d.data());
+      const pool2 = statusFilter ? all.filter((s) => s.type === statusFilter) : all;
+      const hit = pool2.find((s) => isNearDuplicateSchoolName(s.name, typed));
+      if (hit) {
+        setSuggestion(hit.name);
+        return;
+      }
+    } catch (e) {
+    }
+    if (onCommit) onCommit(typed);
   };
   return /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(
     "input",
@@ -728,16 +784,25 @@ const SchoolSelect = ({ value, onChange, placeholder, theme, statusFilter, onCom
         setQ(e.target.value);
         onChange(e.target.value);
         setOpen(true);
+        setSuggestion(null);
       },
       onFocus: () => setOpen(true),
       onBlur: () => {
-        if (onCommit && q.trim()) onCommit(q.trim());
+        const typed = q.trim();
+        if (typed) checkAndCommit(typed);
         setTimeout(() => setOpen(false), 150);
       },
       placeholder: placeholder || "Search or type your school",
       style: { width: "100%", background: th.bg, border: `1px solid ${th.border}`, borderRadius: 8, padding: "10px 12px", color: th.text, fontSize: 13.5, fontFamily: T.font, outline: "none", boxSizing: "border-box" }
     }
-  ), open && q.trim() && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 20, background: th.bg, border: `1px solid ${th.border}`, borderRadius: 8, overflow: "hidden", boxShadow: "0 12px 28px -12px rgba(0,0,0,0.35)" } }, matches.length > 0 ? matches.map((name) => /* @__PURE__ */ React.createElement("div", { key: name, onMouseDown: (e) => e.preventDefault(), onClick: () => pick(name), style: { padding: "9px 12px", fontSize: 13, color: th.text, cursor: "pointer", borderBottom: `1px solid ${th.border}` } }, name)) : /* @__PURE__ */ React.createElement("div", { onMouseDown: (e) => e.preventDefault(), onClick: () => setOpen(false), style: { padding: "9px 12px", fontSize: 12.5, color: th.muted, cursor: "pointer" } }, `Can't find your school? Use "`, q, '" instead')));
+  ), open && q.trim() && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 20, background: th.bg, border: `1px solid ${th.border}`, borderRadius: 8, overflow: "hidden", boxShadow: "0 12px 28px -12px rgba(0,0,0,0.35)" } }, matches.length > 0 ? matches.map((name) => /* @__PURE__ */ React.createElement("div", { key: name, onMouseDown: (e) => e.preventDefault(), onClick: () => pick(name), style: { padding: "9px 12px", fontSize: 13, color: th.text, cursor: "pointer", borderBottom: `1px solid ${th.border}` } }, name)) : /* @__PURE__ */ React.createElement("div", { onMouseDown: (e) => e.preventDefault(), onClick: () => setOpen(false), style: { padding: "9px 12px", fontSize: 12.5, color: th.muted, cursor: "pointer" } }, `Can't find your school? Use "`, q, '" instead')), suggestion && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 6, padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.lime}44`, background: T.lime + "0f", fontSize: 11.5, color: th.text, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", null, "Did you mean ", /* @__PURE__ */ React.createElement("strong", null, suggestion), "?"), /* @__PURE__ */ React.createElement("span", { style: { display: "flex", gap: 8, flexShrink: 0 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onMouseDown: (e) => e.preventDefault(), onClick: () => {
+    const s = suggestion;
+    pick(s);
+    if (onCommit) onCommit(s);
+  }, style: { background: T.lime, color: T.ink, border: "none", borderRadius: 5, padding: "4px 9px", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font } }, "Use this"), /* @__PURE__ */ React.createElement("button", { type: "button", onMouseDown: (e) => e.preventDefault(), onClick: () => {
+    if (onCommit && q.trim()) onCommit(q.trim());
+    setSuggestion(null);
+  }, style: { background: "none", border: `1px solid ${th.border}`, color: th.muted, borderRadius: 5, padding: "4px 9px", fontSize: 11, cursor: "pointer", fontFamily: T.font } }, "No, keep mine"))));
 };
 const ColorSelect = ({ value, onChange }) => {
   const [open, setOpen] = useState(false);
@@ -6840,15 +6905,32 @@ function FriendsChat({ onFriendRequestSent, onActiveChatChange, initialTarget, o
     }
     let active = true;
     setClassmatesLoading(true);
-    fsdb().collection("profiles").where("schoolLower", "==", mySchool.toLowerCase()).limit(20).get().then((snap) => {
-      if (!active) return;
-      const results = snap.docs.map((d) => profileToFriend(d.id, d.data())).filter((u) => u.uid !== myUid);
-      setClassmates(results);
-    }).catch(() => {
-      if (active) setClassmates([]);
-    }).finally(() => {
-      if (active) setClassmatesLoading(false);
-    });
+    (async () => {
+      try {
+        const dirSnap = await fsdb().collection("schools").limit(300).get();
+        const variants = /* @__PURE__ */ new Set([mySchool]);
+        dirSnap.docs.forEach((d) => {
+          const name = d.data().name;
+          if (name && isNearDuplicateSchoolName(name, mySchool)) variants.add(name);
+        });
+        const snaps = await Promise.all(Array.from(variants).map(
+          (name) => fsdb().collection("profiles").where("schoolLower", "==", name.toLowerCase()).limit(20).get()
+        ));
+        if (!active) return;
+        const seen = /* @__PURE__ */ new Set();
+        const results = [];
+        snaps.forEach((snap) => snap.docs.forEach((d) => {
+          if (d.id === myUid || seen.has(d.id)) return;
+          seen.add(d.id);
+          results.push(profileToFriend(d.id, d.data()));
+        }));
+        setClassmates(results.slice(0, 20));
+      } catch (e) {
+        if (active) setClassmates([]);
+      } finally {
+        if (active) setClassmatesLoading(false);
+      }
+    })();
     return () => {
       active = false;
     };

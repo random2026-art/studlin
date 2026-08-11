@@ -976,6 +976,49 @@ const SCHOOL_DIRECTORY=[
   {name:"Northwestern University",type:"college"},{name:"Washington High School",type:"highschool"},
   {name:"University of Florida",type:"college"},{name:"Miami Dade College",type:"college"},
 ];
+// Same "near-duplicate" problem S6 solved for course labels (isNearDuplicate
+// CourseLabel above), but schools need two extra shapes that never come up
+// for course names: a droppable generic suffix ("Penn State" vs "Penn
+// State University" -- the exact same school, not a same-word-count near
+// miss), and acronyms ("PSU" vs "Penn State University"). Kept as its own
+// function rather than generalizing isNearDuplicateCourseLabel -- the two
+// extra checks below are specific to how people actually write institution
+// names and would be false positives for course labels (e.g. two DIFFERENT
+// short course codes coincidentally matching another course's initials).
+const SCHOOL_NAME_STOPWORDS=new Set(["the","of","at","a","an"]);
+const SCHOOL_NAME_DROPPABLE_SUFFIX=new Set(["university","college"]);
+function normalizeSchoolName(name){
+  return (name||"").trim().toLowerCase().replace(/[^a-z0-9\s]/g," ").replace(/\s+/g," ").trim();
+}
+function schoolSignificantWords(name){
+  return normalizeSchoolName(name).split(" ").filter(w=>w&&!SCHOOL_NAME_STOPWORDS.has(w));
+}
+function isNearDuplicateSchoolName(labelA,labelB){
+  const a=normalizeSchoolName(labelA),b=normalizeSchoolName(labelB);
+  if(!a||!b)return false;
+  if(a===b)return true;
+  const dropSuffix=(s)=>{const w=s.split(" ");return w.length>1&&SCHOOL_NAME_DROPPABLE_SUFFIX.has(w[w.length-1])?w.slice(0,-1).join(" "):s;};
+  if(dropSuffix(a)===dropSuffix(b))return true;
+  // A short compact form (<=6 chars, so a genuinely long name's own
+  // no-spaces form doesn't coincidentally equal another long name's
+  // initials) matching the OTHER side's initials -- "UCLA" vs "University
+  // of California Los Angeles" (stopword "of" excluded from the initials).
+  const compactA=a.replace(/\s+/g,""),compactB=b.replace(/\s+/g,"");
+  const initialsOf=(name)=>schoolSignificantWords(name).map(w=>w[0]).join("");
+  if(compactA.length<=6&&compactA===initialsOf(labelB))return true;
+  if(compactB.length<=6&&compactB===initialsOf(labelA))return true;
+  // Same word count, each word exact or a real (>=3 char) prefix of the
+  // other -- same reasoning isNearDuplicateCourseLabel already uses for
+  // typos/abbreviated single words ("Penn St" / "Penn State").
+  const wordsA=a.split(" "),wordsB=b.split(" ");
+  if(wordsA.length===wordsB.length&&wordsA.every((w,i)=>{
+    const w2=wordsB[i];
+    if(w===w2)return true;
+    const shorter=w.length<w2.length?w:w2,longer=w.length<w2.length?w2:w;
+    return shorter.length>=3&&longer.startsWith(shorter);
+  }))return true;
+  return false;
+}
 // Searchable school picker — type-to-filter + click-to-select, same shape as
 // the friend-search pattern used in Studlin Network (text input + filtered
 // list). Typing always calls onChange immediately, so a school that isn't in
@@ -987,6 +1030,13 @@ const SchoolSelect=({value,onChange,placeholder,theme,statusFilter,onCommit})=>{
   const [q,setQ]=useState(value||"");
   const [open,setOpen]=useState(false);
   const [liveMatches,setLiveMatches]=useState([]); // [{name,type}] from the shared cross-user schools directory
+  // "Did you mean X?" -- a real, different-looking entry from what's typed
+  // (isNearDuplicateSchoolName), held here rather than committed straight
+  // to the shared directory, so two students who mean the same school but
+  // typed it differently ("PSU Harrisburg" / "Penn State Harrisburg") get
+  // a chance to converge on one canonical entry instead of silently
+  // minting a second one that classmate-matching can never connect.
+  const [suggestion,setSuggestion]=useState(null);
   useEffect(()=>{setQ(value||"");},[value]);
   // Live results from every student who's ever picked/typed a school
   // before, not just this hardcoded seed list -- debounced the same way
@@ -1022,19 +1072,44 @@ const SchoolSelect=({value,onChange,placeholder,theme,statusFilter,onCommit})=>{
     return true;
   }).slice(0,6);
   const th=theme||{bg:T.card2,border:T.border,text:T.text,muted:T.muted};
-  const pick=(name)=>{setQ(name);onChange(name);setOpen(false);};
+  const pick=(name)=>{setQ(name);onChange(name);setSuggestion(null);setOpen(false);};
+  // Checks a just-typed, not-already-listed school against the shared
+  // directory for a near-duplicate before ever committing it -- the
+  // in-flight `matches` (already fetched for the typed prefix) catches most
+  // realistic typos for free ("Penn St" and "Penn State" share a prefix);
+  // an acronym like "PSU" shares no prefix with "Penn State University" at
+  // all, so that case only gets caught by one extra, capped fetch, run on
+  // blur (not every keystroke) and only when nothing cheaper already
+  // matched. Revisit with a real search index if the schools directory
+  // ever grows past a few hundred entries -- a full-collection fetch stops
+  // being cheap well before that.
+  const checkAndCommit=async(typed)=>{
+    const norm=typed.toLowerCase();
+    if(matches.some(m=>m.toLowerCase()===norm)){if(onCommit)onCommit(typed);return;}
+    const prefixHit=matches.find(m=>isNearDuplicateSchoolName(m,typed));
+    if(prefixHit){setSuggestion(prefixHit);return;}
+    try{
+      const snap=await fsdb().collection('schools').limit(300).get();
+      const all=snap.docs.map(d=>d.data());
+      const pool2=statusFilter?all.filter(s=>s.type===statusFilter):all;
+      const hit=pool2.find(s=>isNearDuplicateSchoolName(s.name,typed));
+      if(hit){setSuggestion(hit.name);return;}
+    }catch(e){}
+    if(onCommit)onCommit(typed);
+  };
   return (
     <div style={{position:"relative"}}>
       <input
         value={q}
-        onChange={e=>{setQ(e.target.value);onChange(e.target.value);setOpen(true);}}
+        onChange={e=>{setQ(e.target.value);onChange(e.target.value);setOpen(true);setSuggestion(null);}}
         onFocus={()=>setOpen(true)}
         onBlur={()=>{
           // Fires once when the student is actually done editing (whether
           // they picked a suggestion or typed something brand new) --
           // never on every keystroke, which is what makes this safe to use
           // as the trigger for adding a new school to the shared directory.
-          if(onCommit&&q.trim())onCommit(q.trim());
+          const typed=q.trim();
+          if(typed)checkAndCommit(typed);
           setTimeout(()=>setOpen(false),150);
         }}
         placeholder={placeholder||"Search or type your school"}
@@ -1048,6 +1123,15 @@ const SchoolSelect=({value,onChange,placeholder,theme,statusFilter,onCommit})=>{
               ))
             : <div onMouseDown={e=>e.preventDefault()} onClick={()=>setOpen(false)} style={{padding:"9px 12px",fontSize:12.5,color:th.muted,cursor:"pointer"}}>Can't find your school? Use "{q}" instead</div>
           }
+        </div>
+      )}
+      {suggestion&&(
+        <div style={{marginTop:6,padding:"8px 10px",borderRadius:8,border:`1px solid ${T.lime}44`,background:T.lime+"0f",fontSize:11.5,color:th.text,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
+          <span>Did you mean <strong>{suggestion}</strong>?</span>
+          <span style={{display:"flex",gap:8,flexShrink:0}}>
+            <button type="button" onMouseDown={e=>e.preventDefault()} onClick={()=>{const s=suggestion;pick(s);if(onCommit)onCommit(s);}} style={{background:T.lime,color:T.ink,border:"none",borderRadius:5,padding:"4px 9px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Use this</button>
+            <button type="button" onMouseDown={e=>e.preventDefault()} onClick={()=>{if(onCommit&&q.trim())onCommit(q.trim());setSuggestion(null);}} style={{background:"none",border:`1px solid ${th.border}`,color:th.muted,borderRadius:5,padding:"4px 9px",fontSize:11,cursor:"pointer",fontFamily:T.font}}>No, keep mine</button>
+          </span>
         </div>
       )}
     </div>
@@ -10450,9 +10534,8 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
   });
 
   // ── Classmates at my school — real, auto-populated, replaces the old
-  // hardcoded NETWORK_DIRECTORY mock. Exact-match on schoolLower (not the
-  // prefix-range query the manual search box below uses), gated on the
-  // current user actually having a school set.
+  // hardcoded NETWORK_DIRECTORY mock. Gated on the current user actually
+  // having a school set.
   const mySchool=(getProfile().school||getProfile().affiliation||"").trim();
   const [classmates,setClassmates]=useState([]);
   const [classmatesLoading,setClassmatesLoading]=useState(false);
@@ -10460,14 +10543,40 @@ function FriendsChat({onFriendRequestSent,onActiveChatChange,initialTarget,onIni
     if(!myUid||!mySchool){setClassmates([]);return;}
     let active=true;
     setClassmatesLoading(true);
-    fsdb().collection('profiles').where('schoolLower','==',mySchool.toLowerCase()).limit(20).get()
-      .then(snap=>{
+    (async()=>{
+      try{
+        // Union results across mySchool's own exact string AND every name
+        // in the shared directory that's a near-duplicate of it (see
+        // isNearDuplicateSchoolName) -- a student who typed "PSU
+        // Harrisburg" and one who typed "Penn State Harrisburg" need to
+        // show up for each other, not just students who typed the
+        // identical string. Several small queries in parallel rather than
+        // one `where(...,'in',...)` -- avoids relying on a specific
+        // Firestore SDK's array-size limit for that operator.
+        const dirSnap=await fsdb().collection('schools').limit(300).get();
+        const variants=new Set([mySchool]);
+        dirSnap.docs.forEach(d=>{
+          const name=d.data().name;
+          if(name&&isNearDuplicateSchoolName(name,mySchool))variants.add(name);
+        });
+        const snaps=await Promise.all(Array.from(variants).map(name=>
+          fsdb().collection('profiles').where('schoolLower','==',name.toLowerCase()).limit(20).get()
+        ));
         if(!active)return;
-        const results=snap.docs.map(d=>profileToFriend(d.id,d.data())).filter(u=>u.uid!==myUid);
-        setClassmates(results);
-      })
-      .catch(()=>{if(active)setClassmates([]);})
-      .finally(()=>{if(active)setClassmatesLoading(false);});
+        const seen=new Set();
+        const results=[];
+        snaps.forEach(snap=>snap.docs.forEach(d=>{
+          if(d.id===myUid||seen.has(d.id))return;
+          seen.add(d.id);
+          results.push(profileToFriend(d.id,d.data()));
+        }));
+        setClassmates(results.slice(0,20));
+      }catch(e){
+        if(active)setClassmates([]);
+      }finally{
+        if(active)setClassmatesLoading(false);
+      }
+    })();
     return ()=>{active=false;};
   },[myUid,mySchool]);
 

@@ -141,7 +141,7 @@ function loadStudlinModule(options) {
     "getStreakFreezeTokens","STREAK_FREEZE_MILESTONE_DAYS","STREAK_FREEZE_MAX",
     "touchStreak","getStreak","isNearDuplicateCourseLabel","findDuplicateCourseGroups",
     "ensureSubjectsForClassRoutines","shouldShowSyllabusNudge","dismissSyllabusNudge",
-    "SYLLABUS_NUDGE_COOLDOWN_MS","classNeedsSyllabus"];
+    "SYLLABUS_NUDGE_COOLDOWN_MS","classNeedsSyllabus","isNearDuplicateSchoolName"];
   for (var i = 0; i < exportNames.length; i++) {
     try { globalThis[exportNames[i]] = eval(exportNames[i]); } catch (e) {}
   }

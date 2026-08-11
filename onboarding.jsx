@@ -422,14 +422,148 @@ function StepVerify({ advanceToProfile }) {
 
 const USERNAME_RE = /^[a-z][a-z0-9_]{2,19}$/;
 
+// Same near-duplicate matcher studlin-app.jsx's own SchoolSelect and
+// classmate-matching query use (see that file's own comment for the full
+// reasoning) -- kept byte-identical here on purpose, same convention this
+// file already uses for isPasswordAccount/other small cross-bundle copies.
+// This is the one piece that MUST stay in sync between the two files: if
+// it ever drifts, a school judged a near-duplicate at signup could stop
+// being judged one in Settings (or vice versa), silently breaking
+// classmate-matching for anyone caught on the wrong side of the drift.
+const SCHOOL_NAME_STOPWORDS = new Set(["the","of","at","a","an"]);
+const SCHOOL_NAME_DROPPABLE_SUFFIX = new Set(["university","college"]);
+function normalizeSchoolName(name) {
+  return (name||"").trim().toLowerCase().replace(/[^a-z0-9\s]/g," ").replace(/\s+/g," ").trim();
+}
+function schoolSignificantWords(name) {
+  return normalizeSchoolName(name).split(" ").filter(w=>w&&!SCHOOL_NAME_STOPWORDS.has(w));
+}
+function isNearDuplicateSchoolName(labelA, labelB) {
+  const a = normalizeSchoolName(labelA), b = normalizeSchoolName(labelB);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const dropSuffix = (s) => { const w=s.split(" "); return w.length>1&&SCHOOL_NAME_DROPPABLE_SUFFIX.has(w[w.length-1])?w.slice(0,-1).join(" "):s; };
+  if (dropSuffix(a) === dropSuffix(b)) return true;
+  const compactA = a.replace(/\s+/g,""), compactB = b.replace(/\s+/g,"");
+  const initialsOf = (name) => schoolSignificantWords(name).map(w=>w[0]).join("");
+  if (compactA.length<=6 && compactA===initialsOf(labelB)) return true;
+  if (compactB.length<=6 && compactB===initialsOf(labelA)) return true;
+  const wordsA = a.split(" "), wordsB = b.split(" ");
+  if (wordsA.length===wordsB.length && wordsA.every((w,i)=>{
+    const w2 = wordsB[i];
+    if (w===w2) return true;
+    const shorter = w.length<w2.length?w:w2, longer = w.length<w2.length?w2:w;
+    return shorter.length>=3 && longer.startsWith(shorter);
+  })) return true;
+  return false;
+}
+// Registers a school in the shared cross-user directory (same collection/
+// shape studlin-app.jsx's own ensureSchoolInDirectory writes) so the very
+// first student to type it makes it findable for every student after --
+// silently no-ops (security rules reject the update, caught and ignored)
+// if it's already there, which is fine: the point is just that it exists.
+function ensureSchoolInDirectory(name, type) {
+  if (!name || !name.trim()) return;
+  const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"").slice(0,100);
+  if (!slug) return;
+  try { firebase.firestore().collection('schools').doc(slug).set({ name: name.trim(), nameLower: name.trim().toLowerCase(), type, createdAt: new Date().toISOString() }).catch(()=>{}); } catch(e) {}
+}
+// Lean version of studlin-app.jsx's SchoolSelect -- live-search autocomplete
+// against the same shared directory, plus the same "did you mean X?"
+// near-duplicate nudge before a genuinely new entry gets created. Doesn't
+// carry the local SCHOOL_DIRECTORY seed list or the two wired demo
+// schools -- those exist there for the main app's own onboarding-adjacent
+// wizards; a brand-new signup has nothing to seed a first paint from, so
+// this only ever shows real, live results.
+function SchoolField({ value, onChange, statusFilter, onCommitted }) {
+  const [q, setQ] = useState(value || "");
+  const [open, setOpen] = useState(false);
+  const [matches, setMatches] = useState([]); // [name,...]
+  const [suggestion, setSuggestion] = useState(null);
+  const [focused, setFocused] = useState(false);
+  useEffect(()=>{ setQ(value||""); }, [value]);
+  useEffect(()=>{
+    const term = q.trim().toLowerCase();
+    if (!term) { setMatches([]); return; }
+    let active = true;
+    const t = setTimeout(()=>{
+      firebase.firestore().collection('schools').where('nameLower','>=',term).where('nameLower','<=',term+"").limit(15).get()
+        .then(snap=>{
+          if (!active) return;
+          const rows = snap.docs.map(d=>d.data());
+          const filtered = statusFilter ? rows.filter(s=>s.type===statusFilter) : rows;
+          setMatches(filtered.map(s=>s.name));
+        })
+        .catch(()=>{ if (active) setMatches([]); });
+    }, 250);
+    return ()=>{ active=false; clearTimeout(t); };
+  }, [q, statusFilter]);
+  const pick = (name) => { setQ(name); onChange(name); setSuggestion(null); setOpen(false); };
+  const checkAndCommit = async (typed) => {
+    const norm = typed.toLowerCase();
+    if (matches.some(m=>m.toLowerCase()===norm)) { ensureSchoolInDirectory(typed, statusFilter); if (onCommitted) onCommitted(typed); return; }
+    const prefixHit = matches.find(m=>isNearDuplicateSchoolName(m, typed));
+    if (prefixHit) { setSuggestion(prefixHit); return; }
+    try {
+      const snap = await firebase.firestore().collection('schools').limit(300).get();
+      const all = snap.docs.map(d=>d.data());
+      const pool = statusFilter ? all.filter(s=>s.type===statusFilter) : all;
+      const hit = pool.find(s=>isNearDuplicateSchoolName(s.name, typed));
+      if (hit) { setSuggestion(hit.name); return; }
+    } catch(e) {}
+    ensureSchoolInDirectory(typed, statusFilter);
+    if (onCommitted) onCommitted(typed);
+  };
+  const hasValue = !!(q && q.length);
+  return (
+    <div className="field" style={{position:"relative"}}>
+      <div className={"input-wrap" + (hasValue?" has-value":"") + (focused?" is-focused":"")}>
+        <label>{statusFilter==="highschool" ? "School name" : statusFilter==="college" ? "University" : "School"}</label>
+        <input
+          value={q}
+          onChange={e=>{ setQ(e.target.value); onChange(e.target.value); setOpen(true); setSuggestion(null); }}
+          onFocus={()=>{ setFocused(true); setOpen(true); }}
+          onBlur={()=>{
+            setFocused(false);
+            const typed = q.trim();
+            if (typed) checkAndCommit(typed);
+            setTimeout(()=>setOpen(false), 150);
+          }}
+          autoComplete="off"
+        />
+      </div>
+      {open && q.trim() && (
+        <div className="school-dropdown">
+          {matches.length>0
+            ? matches.map(name=>(
+                <div key={name} className="school-dropdown-item" onMouseDown={e=>e.preventDefault()} onClick={()=>pick(name)}>{name}</div>
+              ))
+            : <div className="school-dropdown-empty" onMouseDown={e=>e.preventDefault()} onClick={()=>setOpen(false)}>Can't find your school? Use "{q}" instead</div>
+          }
+        </div>
+      )}
+      {suggestion && (
+        <div className="school-suggest">
+          <span>Did you mean <strong>{suggestion}</strong>?</span>
+          <span style={{display:"flex",gap:8}}>
+            <button type="button" className="use-btn" onMouseDown={e=>e.preventDefault()} onClick={()=>{ const s=suggestion; pick(s); ensureSchoolInDirectory(s, statusFilter); if (onCommitted) onCommitted(s); }}>Use this</button>
+            <button type="button" className="keep-btn" onMouseDown={e=>e.preventDefault()} onClick={()=>{ const typed=q.trim(); if (typed) { ensureSchoolInDirectory(typed, statusFilter); if (onCommitted) onCommitted(typed); } setSuggestion(null); }}>No, keep mine</button>
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Post-auth profile fork — the only other thing collected before the user
-// lands in the product, stripped to exactly three fields. Student status
-// (high school/college) is no longer asked here at all — it's optional and
-// settable later in Settings if a student wants it. Username isn't asked
-// either: finishOnboarding derives one silently from first+last name so
-// Studlin Network search/autocomplete keep working without adding a field
-// here. Weekly routine and peak study window stay deferred to the Calendar
-// tab's first-visit wizard, same as before.
+// lands in the product. Student status (high school/college) is asked
+// right here, immediately before the school field it gates: the school
+// field's own label/placeholder and the shared-directory search it runs
+// against both depend on knowing which one a student is first. Username
+// isn't asked either: finishOnboarding derives one silently from first+
+// last name so Studlin Network search/autocomplete keep working without
+// adding a field here. Weekly routine and peak study window stay deferred
+// to the Calendar tab's first-visit wizard, same as before.
 function StepProfile({ state, set }) {
   // Google accounts arrive with a full display name already — split it into
   // first/last once, on mount, so returning/Google users don't have to
@@ -457,7 +591,14 @@ function StepProfile({ state, set }) {
 
       <TextField label="First name" value={state.firstName||""} onChange={v=>set({...state, firstName:v})} autoFocus autoComplete="given-name" error={firstNameError} warning={firstNameWarning} />
       <TextField label="Last name" value={state.lastName||""} onChange={v=>set({...state, lastName:v})} autoComplete="family-name" error={lastNameError} warning={lastNameWarning} />
-      <TextField label="Enter your University / School" value={state.school||""} onChange={v=>set({...state, school:v})} hint="Just the name, no need to search a list." />
+      <SelectField label="High school or college?" value={state.status||""} onChange={v=>set({...state, status:v, school:""})}
+        options={[{value:"highschool",label:"High School"},{value:"college",label:"College"}]} />
+      {/* Gated on status -- the field's own label and which half of the
+          shared directory it searches both depend on knowing this first,
+          same reasoning Settings' own affiliation field already applies. */}
+      {state.status && (
+        <SchoolField value={state.school||""} onChange={v=>set({...state, school:v})} statusFilter={state.status} />
+      )}
     </div>
   );
 }
@@ -502,7 +643,7 @@ function App() {
       return !!state.terms && (!!firebase.auth().currentUser || !!(state.provider) || !!(state.email && (state.password||"").length >= 8));
     }
     if (step === 1) return isVerifiedOrGoogle(firebase.auth().currentUser);
-    if (step === 2) return isValidNameShape(state.firstName) && isValidNameShape(state.lastName) && !!(state.school||"").trim();
+    if (step === 2) return isValidNameShape(state.firstName) && isValidNameShape(state.lastName) && !!state.status && !!(state.school||"").trim();
     return true;
   };
 
@@ -548,12 +689,11 @@ function App() {
   };
 
   // The real "hand off to the app" step — writes the profile fork straight
-  // to the authenticated user's Firestore doc and sets the flag the main
+  // to the authenticated user's Firestore doc(s) and sets the flag the main
   // app's own separate first-run wizard (InitWizard) checks. Weekly Routine
   // and peak-study-window collection are deliberately NOT seeded here
   // anymore — that's the Calendar tab's first-visit wizard's job now, so the
-  // user lands on the Dashboard, not forced into Calendar. Student status
-  // isn't collected here either — it's optional, set later in Settings.
+  // user lands on the Dashboard, not forced into Calendar.
   const finishOnboarding = async () => {
     if (!isStepValid() || finishing) return;
     setFinishing(true); setFinishError("");
@@ -574,9 +714,15 @@ function App() {
     // Mirrors the app's own local `profile` object (studlin-app.jsx's
     // getProfile()/saveProfile()) so name/school/username are available to
     // the Calendar's routine wizard immediately, with no Firestore round-trip.
+    // status must be included here too -- the main app calls upsertProfile()
+    // unconditionally on every load (see App()'s onAuthStateChanged), which
+    // reads status from THIS local object, not from what finishOnboarding
+    // just wrote to Firestore directly below. Leaving it out here would let
+    // that very next auto-upsert silently overwrite the correct status back
+    // to empty the moment the student lands on /app.
     try {
       const prevProfile = JSON.parse(localStorage.getItem("studlin-profile")||"null") || {};
-      localStorage.setItem("studlin-profile", JSON.stringify({ ...prevProfile, name: fullName || prevProfile.name || "", username: uname, affiliation: (state.school||"").trim(), school: (state.school||"").trim() }));
+      localStorage.setItem("studlin-profile", JSON.stringify({ ...prevProfile, name: fullName || prevProfile.name || "", username: uname, affiliation: (state.school||"").trim(), school: (state.school||"").trim(), status: state.status||"" }));
     } catch(e){}
     try { localStorage.removeItem("studlin-onboarding"); } catch(e){}
     if (u) {
@@ -594,6 +740,22 @@ function App() {
           affiliation: (state.school||"").trim(),
           onboarded: true,
           onboardedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }, { merge: true });
+      } catch(e) {}
+      try {
+        // The `users` write above is the account record; classmate-matching
+        // (studlin-app.jsx's own Studlin Network) reads from `profiles`
+        // instead and specifically needs schoolLower -- writing school only
+        // to `users` (the bug this fixes) left every new signup's school
+        // invisible to matching until they separately opened Settings and
+        // re-saved it there through Profile's own upsertProfile call. Same
+        // fields that call writes, profiles/{uid} has no field allowlist
+        // (unlike users/{uid} -- see firestore.rules) so this is a normal
+        // merge, no rules change needed.
+        const school = (state.school||"").trim();
+        await firebase.firestore().collection('profiles').doc(u.uid).set({
+          school, schoolLower: school.toLowerCase(), status: state.status||"",
           updatedAt: new Date().toISOString(),
         }, { merge: true });
       } catch(e) {}

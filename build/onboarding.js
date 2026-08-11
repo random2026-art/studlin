@@ -315,6 +315,146 @@ function StepVerify({ advanceToProfile }) {
   }, disabled: checking, autoFocus: true }), err && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: "#C4544A", marginBottom: 16, padding: "12px 14px", background: "#FCF1EF", borderRadius: 10, border: "1px solid #F5D4D0", textAlign: "center" } }, err), /* @__PURE__ */ React.createElement("button", { className: "cta lime", disabled: code.length !== 6 || checking, onClick: submitCode, style: { width: "100%", justifyContent: "center", marginBottom: 12 } }, checking ? "Verifying\u2026" : "Verify email"), /* @__PURE__ */ React.createElement("button", { className: "provider", disabled: sendStatus === "sending" || sendStatus === "sent", onClick: resend }, sendStatus === "sending" ? "Sending\u2026" : sendStatus === "sent" ? "Sent, check your inbox" : "Resend code"));
 }
 const USERNAME_RE = /^[a-z][a-z0-9_]{2,19}$/;
+const SCHOOL_NAME_STOPWORDS = /* @__PURE__ */ new Set(["the", "of", "at", "a", "an"]);
+const SCHOOL_NAME_DROPPABLE_SUFFIX = /* @__PURE__ */ new Set(["university", "college"]);
+function normalizeSchoolName(name) {
+  return (name || "").trim().toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+function schoolSignificantWords(name) {
+  return normalizeSchoolName(name).split(" ").filter((w) => w && !SCHOOL_NAME_STOPWORDS.has(w));
+}
+function isNearDuplicateSchoolName(labelA, labelB) {
+  const a = normalizeSchoolName(labelA), b = normalizeSchoolName(labelB);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const dropSuffix = (s) => {
+    const w = s.split(" ");
+    return w.length > 1 && SCHOOL_NAME_DROPPABLE_SUFFIX.has(w[w.length - 1]) ? w.slice(0, -1).join(" ") : s;
+  };
+  if (dropSuffix(a) === dropSuffix(b)) return true;
+  const compactA = a.replace(/\s+/g, ""), compactB = b.replace(/\s+/g, "");
+  const initialsOf = (name) => schoolSignificantWords(name).map((w) => w[0]).join("");
+  if (compactA.length <= 6 && compactA === initialsOf(labelB)) return true;
+  if (compactB.length <= 6 && compactB === initialsOf(labelA)) return true;
+  const wordsA = a.split(" "), wordsB = b.split(" ");
+  if (wordsA.length === wordsB.length && wordsA.every((w, i) => {
+    const w2 = wordsB[i];
+    if (w === w2) return true;
+    const shorter = w.length < w2.length ? w : w2, longer = w.length < w2.length ? w2 : w;
+    return shorter.length >= 3 && longer.startsWith(shorter);
+  })) return true;
+  return false;
+}
+function ensureSchoolInDirectory(name, type) {
+  if (!name || !name.trim()) return;
+  const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 100);
+  if (!slug) return;
+  try {
+    firebase.firestore().collection("schools").doc(slug).set({ name: name.trim(), nameLower: name.trim().toLowerCase(), type, createdAt: (/* @__PURE__ */ new Date()).toISOString() }).catch(() => {
+    });
+  } catch (e) {
+  }
+}
+function SchoolField({ value, onChange, statusFilter, onCommitted }) {
+  const [q, setQ] = useState(value || "");
+  const [open, setOpen] = useState(false);
+  const [matches, setMatches] = useState([]);
+  const [suggestion, setSuggestion] = useState(null);
+  const [focused, setFocused] = useState(false);
+  useEffect(() => {
+    setQ(value || "");
+  }, [value]);
+  useEffect(() => {
+    const term = q.trim().toLowerCase();
+    if (!term) {
+      setMatches([]);
+      return;
+    }
+    let active = true;
+    const t = setTimeout(() => {
+      firebase.firestore().collection("schools").where("nameLower", ">=", term).where("nameLower", "<=", term + "\uF8FF").limit(15).get().then((snap) => {
+        if (!active) return;
+        const rows = snap.docs.map((d) => d.data());
+        const filtered = statusFilter ? rows.filter((s) => s.type === statusFilter) : rows;
+        setMatches(filtered.map((s) => s.name));
+      }).catch(() => {
+        if (active) setMatches([]);
+      });
+    }, 250);
+    return () => {
+      active = false;
+      clearTimeout(t);
+    };
+  }, [q, statusFilter]);
+  const pick = (name) => {
+    setQ(name);
+    onChange(name);
+    setSuggestion(null);
+    setOpen(false);
+  };
+  const checkAndCommit = async (typed) => {
+    const norm = typed.toLowerCase();
+    if (matches.some((m) => m.toLowerCase() === norm)) {
+      ensureSchoolInDirectory(typed, statusFilter);
+      if (onCommitted) onCommitted(typed);
+      return;
+    }
+    const prefixHit = matches.find((m) => isNearDuplicateSchoolName(m, typed));
+    if (prefixHit) {
+      setSuggestion(prefixHit);
+      return;
+    }
+    try {
+      const snap = await firebase.firestore().collection("schools").limit(300).get();
+      const all = snap.docs.map((d) => d.data());
+      const pool = statusFilter ? all.filter((s) => s.type === statusFilter) : all;
+      const hit = pool.find((s) => isNearDuplicateSchoolName(s.name, typed));
+      if (hit) {
+        setSuggestion(hit.name);
+        return;
+      }
+    } catch (e) {
+    }
+    ensureSchoolInDirectory(typed, statusFilter);
+    if (onCommitted) onCommitted(typed);
+  };
+  const hasValue = !!(q && q.length);
+  return /* @__PURE__ */ React.createElement("div", { className: "field", style: { position: "relative" } }, /* @__PURE__ */ React.createElement("div", { className: "input-wrap" + (hasValue ? " has-value" : "") + (focused ? " is-focused" : "") }, /* @__PURE__ */ React.createElement("label", null, statusFilter === "highschool" ? "School name" : statusFilter === "college" ? "University" : "School"), /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      value: q,
+      onChange: (e) => {
+        setQ(e.target.value);
+        onChange(e.target.value);
+        setOpen(true);
+        setSuggestion(null);
+      },
+      onFocus: () => {
+        setFocused(true);
+        setOpen(true);
+      },
+      onBlur: () => {
+        setFocused(false);
+        const typed = q.trim();
+        if (typed) checkAndCommit(typed);
+        setTimeout(() => setOpen(false), 150);
+      },
+      autoComplete: "off"
+    }
+  )), open && q.trim() && /* @__PURE__ */ React.createElement("div", { className: "school-dropdown" }, matches.length > 0 ? matches.map((name) => /* @__PURE__ */ React.createElement("div", { key: name, className: "school-dropdown-item", onMouseDown: (e) => e.preventDefault(), onClick: () => pick(name) }, name)) : /* @__PURE__ */ React.createElement("div", { className: "school-dropdown-empty", onMouseDown: (e) => e.preventDefault(), onClick: () => setOpen(false) }, `Can't find your school? Use "`, q, '" instead')), suggestion && /* @__PURE__ */ React.createElement("div", { className: "school-suggest" }, /* @__PURE__ */ React.createElement("span", null, "Did you mean ", /* @__PURE__ */ React.createElement("strong", null, suggestion), "?"), /* @__PURE__ */ React.createElement("span", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement("button", { type: "button", className: "use-btn", onMouseDown: (e) => e.preventDefault(), onClick: () => {
+    const s = suggestion;
+    pick(s);
+    ensureSchoolInDirectory(s, statusFilter);
+    if (onCommitted) onCommitted(s);
+  } }, "Use this"), /* @__PURE__ */ React.createElement("button", { type: "button", className: "keep-btn", onMouseDown: (e) => e.preventDefault(), onClick: () => {
+    const typed = q.trim();
+    if (typed) {
+      ensureSchoolInDirectory(typed, statusFilter);
+      if (onCommitted) onCommitted(typed);
+    }
+    setSuggestion(null);
+  } }, "No, keep mine"))));
+}
 function StepProfile({ state, set }) {
   useEffect(() => {
     if (!state.firstName && !state.lastName && state.name) {
@@ -328,7 +468,15 @@ function StepProfile({ state, set }) {
   const lastNameError = lastNameVal && !isValidNameShape(lastNameVal) ? "Enter a valid last name" : "";
   const firstNameWarning = !firstNameError && firstNameVal && looksLikeGibberishName(firstNameVal) ? "This doesn't look like a typical name, go ahead if it's correct" : "";
   const lastNameWarning = !lastNameError && lastNameVal && looksLikeGibberishName(lastNameVal) ? "This doesn't look like a typical name, go ahead if it's correct" : "";
-  return /* @__PURE__ */ React.createElement("div", { className: "frame" }, /* @__PURE__ */ React.createElement("div", { className: "frame-head" }, /* @__PURE__ */ React.createElement("h2", null, "Tell us ", /* @__PURE__ */ React.createElement("em", null, "about you")), /* @__PURE__ */ React.createElement("p", null, "Just the basics. Everything else you can set up later.")), /* @__PURE__ */ React.createElement(TextField, { label: "First name", value: state.firstName || "", onChange: (v) => set({ ...state, firstName: v }), autoFocus: true, autoComplete: "given-name", error: firstNameError, warning: firstNameWarning }), /* @__PURE__ */ React.createElement(TextField, { label: "Last name", value: state.lastName || "", onChange: (v) => set({ ...state, lastName: v }), autoComplete: "family-name", error: lastNameError, warning: lastNameWarning }), /* @__PURE__ */ React.createElement(TextField, { label: "Enter your University / School", value: state.school || "", onChange: (v) => set({ ...state, school: v }), hint: "Just the name, no need to search a list." }));
+  return /* @__PURE__ */ React.createElement("div", { className: "frame" }, /* @__PURE__ */ React.createElement("div", { className: "frame-head" }, /* @__PURE__ */ React.createElement("h2", null, "Tell us ", /* @__PURE__ */ React.createElement("em", null, "about you")), /* @__PURE__ */ React.createElement("p", null, "Just the basics. Everything else you can set up later.")), /* @__PURE__ */ React.createElement(TextField, { label: "First name", value: state.firstName || "", onChange: (v) => set({ ...state, firstName: v }), autoFocus: true, autoComplete: "given-name", error: firstNameError, warning: firstNameWarning }), /* @__PURE__ */ React.createElement(TextField, { label: "Last name", value: state.lastName || "", onChange: (v) => set({ ...state, lastName: v }), autoComplete: "family-name", error: lastNameError, warning: lastNameWarning }), /* @__PURE__ */ React.createElement(
+    SelectField,
+    {
+      label: "High school or college?",
+      value: state.status || "",
+      onChange: (v) => set({ ...state, status: v, school: "" }),
+      options: [{ value: "highschool", label: "High School" }, { value: "college", label: "College" }]
+    }
+  ), state.status && /* @__PURE__ */ React.createElement(SchoolField, { value: state.school || "", onChange: (v) => set({ ...state, school: v }), statusFilter: state.status }));
 }
 const isVerifiedOrGoogle = (u) => !!u && (!isPasswordAccount(u) || u.emailVerified);
 function App() {
@@ -369,7 +517,7 @@ function App() {
       return !!state.terms && (!!firebase.auth().currentUser || !!state.provider || !!(state.email && (state.password || "").length >= 8));
     }
     if (step === 1) return isVerifiedOrGoogle(firebase.auth().currentUser);
-    if (step === 2) return isValidNameShape(state.firstName) && isValidNameShape(state.lastName) && !!(state.school || "").trim();
+    if (step === 2) return isValidNameShape(state.firstName) && isValidNameShape(state.lastName) && !!state.status && !!(state.school || "").trim();
     return true;
   };
   const [transitioning, setTransitioning] = useState(false);
@@ -430,7 +578,7 @@ function App() {
     }
     try {
       const prevProfile = JSON.parse(localStorage.getItem("studlin-profile") || "null") || {};
-      localStorage.setItem("studlin-profile", JSON.stringify({ ...prevProfile, name: fullName || prevProfile.name || "", username: uname, affiliation: (state.school || "").trim(), school: (state.school || "").trim() }));
+      localStorage.setItem("studlin-profile", JSON.stringify({ ...prevProfile, name: fullName || prevProfile.name || "", username: uname, affiliation: (state.school || "").trim(), school: (state.school || "").trim(), status: state.status || "" }));
     } catch (e) {
     }
     try {
@@ -444,6 +592,16 @@ function App() {
           affiliation: (state.school || "").trim(),
           onboarded: true,
           onboardedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }, { merge: true });
+      } catch (e) {
+      }
+      try {
+        const school = (state.school || "").trim();
+        await firebase.firestore().collection("profiles").doc(u.uid).set({
+          school,
+          schoolLower: school.toLowerCase(),
+          status: state.status || "",
           updatedAt: (/* @__PURE__ */ new Date()).toISOString()
         }, { merge: true });
       } catch (e) {
