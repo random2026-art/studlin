@@ -473,13 +473,13 @@ const PRICING_PLANS=(billing)=>([
   {
     key:"free",name:"Free",price:"$0",per:"forever",tag:null,
     desc:"Get organized. No credit card needed.",
-    features:["Calendar, tasks, focus timer, streaks & XP: unlimited","Studlin Network & calendar connections: unlimited","Syllabus & schedule imports: 11 / month","1 AI study plan / month (sessions, flashcards & practice exam)","3 AI flashcard generations / month","2 attack sessions / month","1 project breakdown / month"],
+    features:["Calendar, tasks, focus timer, streaks & XP: unlimited","Studlin Network & calendar connections: unlimited","Syllabus & schedule imports: 8 / month","1 AI study plan / month (sessions, flashcards & practice exam)","3 AI flashcard generations / month","Attack sessions: unlimited","1 project breakdown / month"],
     cta:"Get started free",variant:"subtle",
   },
   {
     key:"pro",name:"Pro",price:billing==="annual"?"$4.99":"$6.99",per:billing==="annual"?"/mo · billed yearly":"/mo",tag:null,
     desc:"Everything on Free, with no caps, plus Smart Reschedule.",
-    features:["Unlimited AI study plans, flashcards, syllabus scans, attack sessions & project breakdowns","Smart Reschedule — plan-only, not on Free","All AI models: Flash, Standard & Research","Full essay suite: grammar, rewrite & citations"],
+    features:["Unlimited AI study plans, flashcards, syllabus scans, attack sessions & project breakdowns","Smart Reschedule, not on Free","All AI models: Flash, Standard & Research","Unlimited AI chat, every day"],
     cta:"Upgrade to Pro",variant:"lime",featured:true,
   },
 ]);
@@ -6542,7 +6542,7 @@ function ScheduleSettingsPanel({open,onClose,onSave}){
 // ─── UPGRADE MODAL (shared paywall) ───────────────────────────────────────────
 function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
   if(!open)return null;
-  const tier={name:"Pro",price:"$6.99",perks:["Unlimited AI study plans, flashcards, syllabus scans, attack sessions & project breakdowns","Smart Reschedule — not on Free at all","Every AI model + 4 study modes"],color:T.lime};
+  const tier={name:"Pro",price:"$6.99",perks:["Unlimited AI study plans, flashcards, syllabus scans, attack sessions & project breakdowns","Smart Reschedule, not on Free at all","Every AI model + 4 study modes"],color:T.lime};
   const choose=()=>{setPlanLS("Pro");onClose();if(onUpgraded)onUpgraded("Pro");};
   return (
     <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:90,background:"rgba(8,12,10,0.72)",backdropFilter:"blur(7px)",display:"flex",alignItems:"center",justifyContent:"center"}}>
