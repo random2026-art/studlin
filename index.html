@@ -342,6 +342,28 @@ body::after{
 .mockup-in.mi2{transition-delay:.25s;}
 .mockup-in.mi3{transition-delay:.4s;}
 .card.reveal.in .mockup-in,.feat-row.reveal.in .mockup-in{opacity:1;transform:none;}
+.flag-grid{display:grid;grid-template-columns:1.05fr 1fr;gap:48px;align-items:center;}
+@media(max-width:900px){.flag-grid{grid-template-columns:1fr;gap:28px;}}
+
+/* ============ INTERACTIVE STEP-THROUGH (exam plan) ============ */
+.prep-steps{display:flex;flex-direction:column;gap:5px;margin:22px 0 26px;}
+.prep-step{display:flex;align-items:center;gap:13px;text-align:left;width:100%;padding:10px 12px;border-radius:12px;border:1px solid transparent;background:none;cursor:pointer;font-family:inherit;transition:background .2s,border-color .2s;}
+.prep-step:hover{background:rgba(184,224,74,0.08);}
+.prep-step.active{background:rgba(184,224,74,0.12);border-color:rgba(184,224,74,0.28);}
+.prep-step .ps-num{flex:none;width:25px;height:25px;border-radius:50%;display:grid;place-items:center;font-family:var(--mono);font-size:12px;font-weight:700;background:var(--panel-2);color:var(--cream-faint);transition:background .2s,color .2s;}
+.prep-step.active .ps-num{background:var(--lime);color:var(--ink);}
+.prep-step .ps-body{display:flex;flex-direction:column;gap:0;}
+.prep-step .ps-body strong{font-size:14.5px;color:var(--cream);font-weight:600;}
+.prep-step .ps-body span{font-size:11.5px;color:var(--cream-faint);}
+.prep-panel{display:none;flex-direction:column;gap:10px;}
+.prep-panel.active{display:flex;}
+
+/* before/after toggle (network card) */
+.ba-toggle{display:inline-flex;background:var(--panel-2);border-radius:99px;padding:3px;gap:2px;margin-bottom:12px;}
+.ba-toggle button{border:none;background:none;padding:6px 14px;border-radius:99px;font-family:var(--mono);font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:#888;cursor:pointer;font-weight:700;transition:background .2s,color .2s;}
+.ba-toggle button.active{background:var(--spark);color:var(--ink);}
+.ba-panel{display:none;}
+.ba-panel.active{display:block;}
 
 /* ============ STATS ============ */
 .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:24px;overflow:hidden;}
@@ -1173,7 +1195,7 @@ body::after{
   <!-- FLAGSHIP: the idea everything else builds on -->
   <div class="wrap">
     <div class="card col-12 reveal lime" style="padding:44px;" data-spot>
-      <div style="display:grid;grid-template-columns:1.05fr 1fr;gap:48px;align-items:center;">
+      <div class="flag-grid">
         <div>
           <div class="knum">The idea</div>
           <h3 style="font-size:40px;line-height:1.05;">Studlin figures you out.</h3>
@@ -1262,40 +1284,86 @@ body::after{
       </div>
 
       <div class="card col-12 reveal" style="padding:44px;margin-top:28px;" data-spot>
-        <div style="display:grid;grid-template-columns:1.05fr 1fr;gap:48px;align-items:center;">
+        <div class="flag-grid">
           <div>
             <div class="knum">The exam · Studlin Prep</div>
             <h3 style="font-size:40px;line-height:1.05;">Pick an exam. Get a full plan.</h3>
-            <p>Answer a few quick questions, add your material. Studlin builds the sessions, flashcards, and practice exam for you.</p>
+            <div class="prep-steps" id="prepSteps">
+              <button type="button" class="prep-step active" data-step="1" onclick="setPrepStep(1)">
+                <span class="ps-num">1</span>
+                <span class="ps-body"><strong>Tell us about it</strong><span>How hard, how much it matters</span></span>
+              </button>
+              <button type="button" class="prep-step" data-step="2" onclick="setPrepStep(2)">
+                <span class="ps-num">2</span>
+                <span class="ps-body"><strong>Add your material</strong><span>Notes, slides, past exams</span></span>
+              </button>
+              <button type="button" class="prep-step" data-step="3" onclick="setPrepStep(3)">
+                <span class="ps-num">3</span>
+                <span class="ps-body"><strong>Get your plan</strong><span>Sessions, flashcards, practice exam</span></span>
+              </button>
+              <button type="button" class="prep-step" data-step="4" onclick="setPrepStep(4)">
+                <span class="ps-num">4</span>
+                <span class="ps-body"><strong>Studlin learns</strong><span>Every result feeds back in</span></span>
+              </button>
+            </div>
             <a href="/app" class="btn btn-lime magnetic">Build a study plan <span class="ar">→</span></a>
           </div>
-          <div style="display:flex;flex-direction:column;gap:10px;">
-            <div class="mockup-in" style="background:#fff;border-radius:16px;padding:16px 18px;">
-              <div class="mono" style="font-size:9.5px;color:#aaa;letter-spacing:0.1em;margin-bottom:8px;">BIO MIDTERM · CONFIDENCE</div>
-              <div style="font-size:12.5px;color:var(--ink);margin-bottom:8px;">How confident are you on this material?</div>
-              <div style="display:flex;gap:5px;">
-                <span style="flex:1;height:6px;border-radius:99px;background:var(--panel-2);"></span>
-                <span style="flex:1;height:6px;border-radius:99px;background:var(--panel-2);"></span>
-                <span style="flex:1;height:6px;border-radius:99px;background:var(--spark);"></span>
-                <span style="flex:1;height:6px;border-radius:99px;background:var(--panel-2);"></span>
-                <span style="flex:1;height:6px;border-radius:99px;background:var(--panel-2);"></span>
+          <div>
+            <div class="prep-panel active" data-panel="1">
+              <div class="mockup-in" style="background:#fff;border-radius:16px;padding:16px 18px;">
+                <div class="mono" style="font-size:9.5px;color:#aaa;letter-spacing:0.1em;margin-bottom:8px;">BIO MIDTERM</div>
+                <div style="font-size:12.5px;color:var(--ink);margin-bottom:6px;">How confident are you?</div>
+                <div style="display:flex;gap:5px;margin-bottom:14px;">
+                  <span style="flex:1;height:6px;border-radius:99px;background:var(--panel-2);"></span>
+                  <span style="flex:1;height:6px;border-radius:99px;background:var(--panel-2);"></span>
+                  <span style="flex:1;height:6px;border-radius:99px;background:var(--spark);"></span>
+                  <span style="flex:1;height:6px;border-radius:99px;background:var(--panel-2);"></span>
+                  <span style="flex:1;height:6px;border-radius:99px;background:var(--panel-2);"></span>
+                </div>
+                <div style="font-size:12.5px;color:var(--ink);margin-bottom:6px;">How big a deal is this?</div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                  <span class="mono" style="font-size:10px;padding:5px 10px;border-radius:99px;background:var(--panel-2);color:#888;">Low</span>
+                  <span class="mono" style="font-size:10px;padding:5px 10px;border-radius:99px;background:var(--panel-2);color:#888;">Medium</span>
+                  <span class="mono" style="font-size:10px;padding:5px 10px;border-radius:99px;background:var(--spark);color:var(--ink);font-weight:700;">High priority</span>
+                </div>
               </div>
             </div>
-            <div class="mockup-in mi2" style="background:#163A2C;border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:18px;">
-              <div class="mono" style="font-size:10px;color:rgba(245,242,234,0.55);letter-spacing:0.1em;margin-bottom:10px;">5 SESSIONS SCHEDULED</div>
-              <div style="font-size:13px;color:#F5F2EA;margin-bottom:6px;">Session 3 · <strong style="color:var(--spark);">Chapter 7, your weak spots</strong></div>
-              <div style="font-size:11.5px;color:rgba(245,242,234,0.6);">Tue 4:00pm · 45min</div>
+            <div class="prep-panel" data-panel="2">
+              <div style="background:#fff;border-radius:16px;padding:16px 18px;">
+                <div class="mono" style="font-size:9.5px;color:#aaa;letter-spacing:0.1em;margin-bottom:10px;">MATERIAL ADDED</div>
+                <div style="display:flex;flex-direction:column;gap:9px;font-size:12.5px;color:var(--ink);">
+                  <div>📄 Ch 3 notes.pdf</div>
+                  <div>📄 Lecture slides, weeks 1-5</div>
+                  <div>📄 Last year's practice exam</div>
+                </div>
+              </div>
             </div>
-            <div class="mockup-in mi3" style="background:#fff;border-radius:16px;padding:16px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-              <span class="mono" style="font-size:10px;background:var(--spark);color:var(--ink);padding:5px 10px;border-radius:99px;font-weight:700;">🔗 24 flashcards</span>
-              <span class="mono" style="font-size:10px;color:#888;">+ 1 practice exam generated</span>
+            <div class="prep-panel" data-panel="3">
+              <div style="display:flex;flex-direction:column;gap:10px;">
+                <div style="background:#163A2C;border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:18px;">
+                  <div class="mono" style="font-size:10px;color:rgba(245,242,234,0.55);letter-spacing:0.1em;margin-bottom:10px;">5 SESSIONS SCHEDULED</div>
+                  <div style="font-size:13px;color:#F5F2EA;margin-bottom:6px;">Session 3 · <strong style="color:var(--spark);">Chapter 7, your weak spots</strong></div>
+                  <div style="font-size:11.5px;color:rgba(245,242,234,0.6);">Tue 4:00pm · 45min</div>
+                </div>
+                <div style="background:#fff;border-radius:16px;padding:16px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                  <span class="mono" style="font-size:10px;background:var(--spark);color:var(--ink);padding:5px 10px;border-radius:99px;font-weight:700;">🔗 24 flashcards</span>
+                  <span class="mono" style="font-size:10px;color:#888;">+ 1 practice exam</span>
+                </div>
+              </div>
+            </div>
+            <div class="prep-panel" data-panel="4">
+              <div style="background:#163A2C;border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:16px 18px;">
+                <div class="mono" style="font-size:9.5px;color:rgba(245,242,234,0.55);letter-spacing:0.1em;margin-bottom:8px;">AFTER SESSION 3</div>
+                <div style="font-size:12.5px;color:#F5F2EA;margin-bottom:10px;">Missed 3 on Ch 7. Added a review session.</div>
+                <div style="font-size:11px;color:rgba(245,242,234,0.6);">Running ~15min long lately. Adjusting your next plan.</div>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
       <div class="card col-12 reveal" style="padding:44px;margin-top:20px;" data-spot>
-        <div style="display:grid;grid-template-columns:1.05fr 1fr;gap:48px;align-items:center;">
+        <div class="flag-grid">
           <div>
             <div class="knum">The assignment · Attack Sessions</div>
             <h3 style="font-size:40px;line-height:1.05;">Don't know how long it'll take? Find out.</h3>
@@ -1313,7 +1381,7 @@ body::after{
       </div>
 
       <div class="card col-12 reveal" style="padding:44px;margin-top:20px;" data-spot>
-        <div style="display:grid;grid-template-columns:1.05fr 1fr;gap:48px;align-items:center;">
+        <div class="flag-grid">
           <div>
             <div class="knum">The project · Project Breakdown</div>
             <h3 style="font-size:40px;line-height:1.05;">Big projects, broken down for you.</h3>
@@ -1359,20 +1427,24 @@ body::after{
   <div class="feat-movement">
     <div class="wrap">
       <div class="card col-12 reveal" style="padding:44px;" data-spot>
-        <div style="display:grid;grid-template-columns:1.05fr 1fr;gap:48px;align-items:center;">
+        <div class="flag-grid">
           <div>
             <div class="knum">Studlin Network</div>
             <h3 style="font-size:40px;line-height:1.05;">No more "does 4pm work?" texts.</h3>
-            <p>Add your group. Studlin finds the one slot everyone's free. Studying for that Chem exam? Join a friend's lock-in session already underway instead of starting from scratch. Studying alongside someone else builds real accountability, you show up because they're counting on you too.</p>
+            <p>Add your group. Studlin finds the time everyone's free, or join a friend's lock-in already underway.</p>
             <a href="/app" class="btn btn-lime magnetic">Start a group <span class="ar">→</span></a>
           </div>
-          <div style="display:flex;flex-direction:column;gap:10px;">
-            <div class="mockup-in" style="background:#fff;border-radius:16px;padding:14px 16px;opacity:0.7;">
-              <div class="mono" style="font-size:9.5px;color:#aaa;letter-spacing:0.1em;margin-bottom:8px;">GROUP CHAT · BEFORE</div>
+          <div>
+            <div class="ba-toggle" id="baToggle">
+              <button type="button" class="active" data-ba="1" onclick="setBaPanel(1)">Before</button>
+              <button type="button" data-ba="2" onclick="setBaPanel(2)">After</button>
+            </div>
+            <div class="ba-panel active mockup-in" data-bapanel="1" style="background:#fff;border-radius:16px;padding:14px 16px;">
+              <div class="mono" style="font-size:9.5px;color:#aaa;letter-spacing:0.1em;margin-bottom:8px;">GROUP CHAT</div>
               <div style="font-size:12px;color:#888;line-height:1.6;">"does thu work" · "no i have practice" · "sat?" · "cant, family thing" · "so... when"</div>
             </div>
-            <div class="mockup-in mi2" style="background:#163A2C;border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:18px;">
-              <div class="mono" style="font-size:10px;color:rgba(245,242,234,0.55);letter-spacing:0.1em;margin-bottom:10px;">CHEM EXAM · 3 FRIENDS · AFTER</div>
+            <div class="ba-panel" data-bapanel="2" style="background:#163A2C;border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:18px;">
+              <div class="mono" style="font-size:10px;color:rgba(245,242,234,0.55);letter-spacing:0.1em;margin-bottom:10px;">CHEM EXAM · 3 FRIENDS</div>
               <div style="font-size:13px;color:#F5F2EA;margin-bottom:10px;">Everyone's free <strong style="color:var(--spark);">Thu 4:00pm</strong></div>
               <span class="mono" style="font-size:10px;background:var(--spark);color:var(--ink);padding:5px 10px;border-radius:99px;font-weight:700;">Join their lock-in session ✓</span>
             </div>
@@ -1817,6 +1889,18 @@ body::after{
       sky.appendChild(sh);
     }
   })();
+
+  // Exam Plan interactive step-through
+  function setPrepStep(n){
+    document.querySelectorAll('#prepSteps .prep-step').forEach(function(b){b.classList.toggle('active', +b.dataset.step === n);});
+    document.querySelectorAll('.prep-panel').forEach(function(p){p.classList.toggle('active', +p.dataset.panel === n);});
+  }
+
+  // Network before/after toggle
+  function setBaPanel(n){
+    document.querySelectorAll('#baToggle button').forEach(function(b){b.classList.toggle('active', +b.dataset.ba === n);});
+    document.querySelectorAll('.ba-panel').forEach(function(p){p.classList.toggle('active', +p.dataset.bapanel === n);});
+  }
 
   // Demo video modal
   // TODO: replace YOUTUBE_VIDEO_ID with your actual YouTube video ID
