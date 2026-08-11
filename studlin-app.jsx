@@ -3013,7 +3013,7 @@ function reconcileFixedEventConflicts(newFixedEvents){
 // Handoff for reconcileFixedEventConflicts' result from a component that
 // doesn't own App's scheduleChangeAlerts state (SettingsTab isn't a child
 // of CalendarTab) -- same one-shot localStorage flag idiom this file
-// already uses for openNoteId/pendingRoutineWizard/openPrepExamId. App
+// already uses for openNoteId/pendingRoutineCenter/openPrepExamId. App
 // reads and clears this on mount. Deliberately NOT merged into Tier 0's
 // own tier0Batch -- that banner's header text ("you missed the original
 // time") would be flat-out wrong for a session that got bumped by a new
@@ -8757,7 +8757,7 @@ function Flashcards() {
   const [draft,setDraft]=useState([]);
   const colorMap={Biology:T.teal,"English IV":T.purple,Calculus:T.blue,Spanish:T.amber,Chemistry:T.red};
 
-  // One-shot deep-link flag (matches the pendingTour/pendingRoutineWizard
+  // One-shot deep-link flag (matches the pendingTour/pendingRoutineCenter
   // pattern used elsewhere) -- originally kept as reusable infrastructure
   // with nothing writing it; Studlin Prep's "All Flashcards" list now
   // does, alongside a companion openDeckAction ("study"/"edit"/"send",
@@ -9298,7 +9298,7 @@ function Notes({setActive=()=>{}}){
   const [upgradeModal,setUpgradeModal]=useState(null); // {feature, detail}
   const resetNote=(feature,limit,saved)=>"You've used all "+limit+" free "+feature+" this month"+(saved?" — "+saved:"")+". They reset in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+", or upgrade for unlimited right now.";
 
-  // One-shot deep-link flag (matches the pendingTour/pendingRoutineWizard
+  // One-shot deep-link flag (matches the pendingTour/pendingRoutineCenter
   // pattern used elsewhere) — currently unset by anything since the
   // Dashboard card that used to write it was removed, kept as reusable
   // infrastructure for the next thing that wants to link straight to a note.
@@ -14891,8 +14891,8 @@ function WizardHsBuilder({schoolStart,setSchoolStart,schoolEnd,setSchoolEnd,item
 // passing it here seeds (and keeps synced with) this builder's own title
 // state and hides the now-redundant Title field, instead of forcing the
 // student to retype the same name a second time before "+ Add" will work.
-// Omit it (existing callers, e.g. RoutineWizardModal) and behavior is
-// unchanged -- an empty, always-visible Title field, exactly as before.
+// Omit it and behavior is unchanged -- an empty, always-visible Title
+// field, exactly as before.
 function WizardCollegeBuilder({items,addItem,removeItem,updateItem,defaultTitle,hideHeading}){
   const [title,setTitle]=useState(defaultTitle||"");
   const [kind,setKind]=useState("class");
@@ -15224,8 +15224,8 @@ function PhasesOutlineEditor({item,onChange,subject}){
 // ─── CLASS SETUP WIZARD ──────────────────────────────────────────────────────
 // Replaces the old subjOnboardOpen (subjects+color, no times) and
 // RoutineWizardModal's automatic first-run pop-open (RoutineWizardModal
-// itself is untouched, still reachable later via "Manage Routine"). One
-// guided flow instead of three disconnected ones: pick status, add classes
+// itself has since been removed entirely -- see RoutineControlCenterModal's
+// own comment). One guided flow instead of three disconnected ones: pick status, add classes
 // one at a time (scan a syllabus or enter manually, review before it commits
 // anything), then whatever else repeats weekly (work, sports, clubs), then a
 // preferred focus window. Every write goes through the same plain
@@ -16475,124 +16475,6 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
   );
 }
 
-// Multi-step wizard: status fork → HS/College builder → preferred focus
-// window. Deferred to the Calendar tab's first visit rather than living in
-// onboarding, and reopenable anytime via "Manage Routine" (Calendar header
-// or Settings > Calendar Preferences) with existing routines pre-filled.
-function RoutineWizardModal({open,initialStatus,existingRoutines,onFinish,onSkip}){
-  const [wizStep,setWizStep]=useState("status");
-  const [status,setStatus]=useState(initialStatus||"");
-  const [schoolStart,setSchoolStart]=useState("08:00");
-  const [schoolEnd,setSchoolEnd]=useState("15:00");
-  const [items,setItems]=useState([]);
-  const [workStart,setWorkStart]=useState("10:00");
-  const [workEnd,setWorkEnd]=useState("18:00");
-  // This step is the one titled "Preferred Focus Windows" — the name
-  // promises peak-hour preference, not just a work-hours range, so it
-  // needs the same picker ScheduleSettingsPanel uses. Also reachable later
-  // via "Manage Routine" if a student wants to declare or fix this.
-  const [peakBuckets,setPeakBuckets]=useState([]);
-  const togglePeakBucket=(id)=>setPeakBuckets(prev=>prev.includes(id)?prev.filter(b=>b!==id):[...prev,id]);
-
-  useEffect(()=>{
-    if(!open)return;
-    setWizStep("status");
-    setStatus(initialStatus||"");
-    const hsRule=(existingRoutines||[]).find(r=>r.id==="hs-school");
-    if(hsRule){
-      setSchoolStart(hsRule.startTime||"08:00");
-      const startMins=timeToMinutes(hsRule.startTime||"08:00")+(hsRule.duration||420);
-      setSchoolEnd(minutesToTime(Math.min(23*60+45,startMins)));
-    }else{setSchoolStart("08:00");setSchoolEnd("15:00");}
-    setItems((existingRoutines||[]).filter(r=>r.id!=="hs-school").map(r=>({...r})));
-    const prefs=getSchedulePreferences();
-    setWorkStart(prefs.workStartTime||"10:00");
-    setWorkEnd(prefs.workEndTime||"18:00");
-    setPeakBuckets(prefs.peakHourBuckets||[]);
-  },[open]);
-
-  const addItem=(item)=>setItems(prev=>[...prev,{id:String(Date.now()+Math.random()*1000),...item}]);
-  const removeItem=(id)=>setItems(prev=>prev.filter(x=>x.id!==id));
-  const updateItem=(id,patch)=>setItems(prev=>prev.map(x=>x.id===id?{...x,...patch}:x));
-
-  const goToWindowStep=()=>{
-    if(status==="highschool"&&workStart==="10:00"){
-      const suggested=Math.min(23*60+45,timeToMinutes(schoolEnd)+60);
-      setWorkStart(minutesToTime(suggested));
-    }
-    setWizStep("window");
-  };
-
-  // Same invalid-window guard as ScheduleSettingsPanel — this wizard is the
-  // other place workStartTime/workEndTime get persisted, so it needs the
-  // same protection against saving a start/end pair the scheduler can never
-  // actually place anything in.
-  const windowInvalid=timeToMinutes(workEnd)<=timeToMinutes(workStart);
-
-  const finish=()=>{
-    if(windowInvalid)return;
-    const routine=[...items];
-    if(status==="highschool"){
-      routine.push({id:"hs-school",title:"School",kind:"class",days:[0,1,2,3,4],startTime:schoolStart,duration:Math.max(15,timeToMinutes(schoolEnd)-timeToMinutes(schoolStart))});
-    }
-    onFinish(routine,{workStartTime:workStart,workEndTime:workEnd,peakHourBuckets:peakBuckets});
-  };
-
-  const lockedRanges=status==="highschool"?[{start:timeToMinutes(schoolStart),end:timeToMinutes(schoolEnd)}]:[];
-
-  return (
-    <>
-      <Modal open={open} onClose={onSkip}
-        title={wizStep==="status"?"Set up your Weekly Routine?":wizStep==="build"?"Map your schedule":"Preferred Focus Windows"}
-        sub={wizStep==="status"?"Add your classes, sports, or work shifts once, and our AI will automatically shield those times every single week.":wizStep==="window"?"When do you typically prefer to study?":undefined}
-        width={620}
-        footer={
-          <div style={{display:"flex",width:"100%",justifyContent:"space-between",alignItems:"center"}}>
-            <Btn variant="subtle" onClick={onSkip}>Skip and Setup Later</Btn>
-            <div style={{display:"flex",gap:10}}>
-              {wizStep!=="status"&&<Btn variant="subtle" onClick={()=>setWizStep(wizStep==="window"?"build":"status")}>Back</Btn>}
-              {wizStep==="status"&&<Btn onClick={()=>setWizStep("build")} disabled={!status} style={{opacity:status?1:0.45}}>Map Routine Now</Btn>}
-              {wizStep==="build"&&<Btn onClick={goToWindowStep}>Continue</Btn>}
-              {wizStep==="window"&&<Btn onClick={finish} disabled={windowInvalid} style={{opacity:windowInvalid?0.45:1}}>Finish</Btn>}
-            </div>
-          </div>
-        }>
-        {wizStep==="status"&&(
-          <div style={{display:"flex",gap:10}}>
-            <button type="button" onClick={()=>setStatus("highschool")} style={wizardStatusChipStyle(status==="highschool")}>High School</button>
-            <button type="button" onClick={()=>setStatus("college")} style={wizardStatusChipStyle(status==="college")}>College</button>
-          </div>
-        )}
-        {wizStep==="build"&&status==="highschool"&&<WizardHsBuilder schoolStart={schoolStart} setSchoolStart={setSchoolStart} schoolEnd={schoolEnd} setSchoolEnd={setSchoolEnd} items={items.filter(i=>i.id!=="hs-school")} addItem={addItem} removeItem={removeItem} />}
-        {wizStep==="build"&&status==="college"&&<WizardCollegeBuilder items={items} addItem={addItem} removeItem={removeItem} updateItem={updateItem} />}
-        {wizStep==="window"&&(
-          <div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-              <Field label="Preferred study start"><TimeInput value={workStart} onChange={setWorkStart} lockedRanges={lockedRanges} /></Field>
-              <Field label="Preferred study end"><TimeInput value={workEnd} onChange={setWorkEnd} /></Field>
-            </div>
-            {windowInvalid&&<div style={{fontSize:11.5,color:T.red,marginTop:8}}>End time must be after start time.</div>}
-            <div style={{marginTop:20}}>
-              <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:T.muted,marginBottom:8}}>
-                Peak Focus Hours <span style={{textTransform:"none",fontWeight:400,color:T.faint}}>(optional)</span>
-              </label>
-              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                {TIER0_HOUR_BUCKETS.map(b=>(
-                  <button key={b.id} type="button" onClick={()=>togglePeakBucket(b.id)} style={peakChipStyle(peakBuckets.includes(b.id))}>
-                    {PEAK_BUCKET_LABELS[b.id]}
-                    <span style={{opacity:0.7,marginLeft:4}}>{fmtClock12(minutesToTime(b.startMin))}–{fmtClock12(minutesToTime(b.endMin))}</span>
-                  </button>
-                ))}
-              </div>
-              <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.4}}>When are you actually sharpest? Studlin prefers these times for rescheduling missed work. Leave blank and it'll learn from your habits over time.</div>
-            </div>
-          </div>
-        )}
-      </Modal>
-    </>
-  );
-}
-
 // Day view — a single-column, full-24h schedule that scrolls (see
 // DAY_PLANNER_PX_PER_HR below) rather than shrinking everything down to
 // fit one screen, landing scrolled to just before the first real task on
@@ -16860,11 +16742,13 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
   );
 }
 
-// Ongoing routine management dashboard (as opposed to RoutineWizardModal,
-// which is only the first-run setup flow). Lists every locked recurring
-// block with Edit/Delete, plus an inline expandable "+ Add Recurring
-// Activity" form — reuses the same fields/components as the existing "Edit
-// routine block" modal for visual consistency.
+// Ongoing routine management dashboard -- the sole "manage your routine"
+// surface now (2026-08-11: replaced the older first-run-only
+// RoutineWizardModal here too, previously Settings' own separate, more
+// limited entry point). Lists every locked recurring block with
+// Edit/Delete, plus an inline expandable "+ Add Recurring Activity" form
+// -- reuses the same fields/components as the existing "Edit routine
+// block" modal for visual consistency.
 function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRoutine, onDeleteRoutine, onAddRoutine, onEditOnCalendar, onHolidayImpact}) {
   // Component-local, same convention as StudlinPrep/Notes/CalendarTab's own
   // colorOf -- id match preferred (courseId, once a routine/course carries
@@ -18336,7 +18220,7 @@ function NewEventModal({open,initialTitle,initialDate,initialStartTime,initialKi
   ), document.body);
 }
 
-function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpenedFromSettings,setDetailEventId,registerSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange}={}){
+function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRoutineCenterOpenedFromSettings,setDetailEventId,registerSetEvents,onTaskCompleted,catchUpPending,onWizardOpenChange}={}){
   const [userSubjects,setUserSubjectsState]=useState(()=>getSubjects());
   const SUBJ=[{value:"None",label:"None",color:T.lime},...userSubjects.map(s=>({value:s.label,label:s.label,color:s.color})),{value:"Other",label:"Other",color:T.lime}];
   // Accepts either a real course id or a label, same as StudlinPrep/Notes'
@@ -18514,18 +18398,21 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   const [timeOffDate,setTimeOffDate]=useState(()=>dayKey());
   const [timeOffTime,setTimeOffTime]=useState("18:00");
 
-  // RoutineWizardModal itself is untouched and still reachable later via
-  // "Manage Routine" (Settings > Calendar Preferences, arrives here via
-  // openWizardOnMount) — only its automatic first-run pop-open was removed
-  // in favor of ClassSetupWizard above.
-  const [routineWizardOpen,setRoutineWizardOpen]=useState(false);
+  // Routine Control Center — the ongoing management dashboard, reached via
+  // the gear icon on the Calendar toolbar and (since 2026-08-11) also via
+  // "Manage Routine" in Settings > Calendar Preferences, which used to
+  // open a separate, older first-run-only wizard (RoutineWizardModal,
+  // removed) that had no Term dates or Holidays and duplicated fields
+  // already covered elsewhere in Settings (status in Profile, work hours/
+  // peak focus in Study Schedule).
+  const [routineCenterOpen,setRoutineCenterOpen]=useState(false);
   // Reports up to App() whenever either setup wizard opens/closes, so
   // App-level popups (expiredPending's "missed its deadline" prompt) can
   // suppress themselves the same way weekBalanceNudge does locally --
   // found stacking on top of Class Setup Wizard mid-flow.
   useEffect(()=>{
-    if(onWizardOpenChange)onWizardOpenChange(classSetupOpen||routineWizardOpen);
-  },[classSetupOpen,routineWizardOpen]);
+    if(onWizardOpenChange)onWizardOpenChange(classSetupOpen||routineCenterOpen);
+  },[classSetupOpen,routineCenterOpen]);
   // First-time guided walkthrough — Add Task -> Studlin Reschedule -> chains
   // into ClassSetupWizard once it finishes, via that wizard's own
   // finish/skip handlers below.
@@ -18552,10 +18439,6 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     lsSet("seenCalendarTour",true);
     setClassSetupOpen(true);
   };
-  // Routine Control Center — the ongoing management dashboard reached via the
-  // gear icon on the Calendar toolbar (as opposed to routineWizardOpen, which
-  // is only the first-run setup flow).
-  const [routineCenterOpen,setRoutineCenterOpen]=useState(false);
   // "Add task" is a decision point, not a form -- brain dump vs. syllabus
   // scan vs. one task (manual or AI-placed) gets picked here, before any
   // fields show, instead of being discovered partway through one dense
@@ -18563,8 +18446,8 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   const [addMenuOpen,setAddMenuOpen]=useState(false);
   const [toolsMenuOpen,setToolsMenuOpen]=useState(false);
   useEffect(()=>{
-    if(openWizardOnMount){setRoutineWizardOpen(true);if(onWizardOpenedFromSettings)onWizardOpenedFromSettings();}
-  },[openWizardOnMount]);
+    if(openRoutineCenterOnMount){setRoutineCenterOpen(true);if(onRoutineCenterOpenedFromSettings)onRoutineCenterOpenedFromSettings();}
+  },[openRoutineCenterOnMount]);
   // ClassSetupWizard's own finish/skip -- both mark subjects AND routine
   // "handled" together (it's one combined flow now), then re-sync this
   // component's React state from what the wizard just wrote straight to
@@ -18601,19 +18484,6 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     setQuickScanTargetCourseId(null);
     syncClassSetupState();
   };
-  // RoutineWizardModal's own finish/skip -- reachable now only via "Manage
-  // Routine" (openWizardOnMount above), not as a first-run auto-trigger.
-  const finishRoutineWizard=(routine,prefs)=>{
-    persistRoutines(routine);
-    setSchedulePreferences({...getSchedulePreferences(),...prefs});
-    lsSet("hasConfiguredRoutine",true);
-    setRoutineWizardOpen(false);
-  };
-  const skipRoutineWizard=()=>{
-    lsSet("hasConfiguredRoutine",true);
-    setRoutineWizardOpen(false);
-  };
-
   const mk=(off,time,title,subject,kind)=>{const d=new Date();d.setDate(d.getDate()+off);return {id:"seed-"+off+"-"+time,date:dayKey(d),time,title,subject,kind};};
   const seed=[
     mk(0,"14:30","Chem quiz · Periodic trends","Chemistry","exam"),
@@ -21718,7 +21588,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           actually in the middle of answering. Still fires normally once
           the wizard closes, since only the render is gated here, not the
           trigger effect that decided there's something to say. */}
-      {weekBalanceNudge&&!classSetupOpen&&!routineWizardOpen&&(
+      {weekBalanceNudge&&!classSetupOpen&&!routineCenterOpen&&(
         <div style={{position:"fixed",bottom:20,left:20,zIndex:999,padding:"14px 16px",borderRadius:12,background:T.card,border:`1px solid ${T.border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.35)",animation:"studlinPop 0.2s ease",maxWidth:340}}>
           <div style={{fontSize:13,color:T.white,marginBottom:10,lineHeight:1.5}}>Your week's a bit lopsided. Some days are carrying a lot more than others. Want Studlin to spread it out?</div>
           <div style={{display:"flex",gap:8}}>
@@ -21727,7 +21597,6 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
           </div>
         </div>
       )}
-      <RoutineWizardModal open={routineWizardOpen} initialStatus={getProfile().status} existingRoutines={routines} onFinish={finishRoutineWizard} onSkip={skipRoutineWizard} />
       <RoutineControlCenterModal open={routineCenterOpen} onClose={()=>setRoutineCenterOpen(false)} routines={routines} fmtTime={fmtTime}
         onEditRoutine={openRoutineEdit} onDeleteRoutine={deleteRoutineItem}
         onAddRoutine={(rule)=>{const newId=String(Date.now()+Math.random()*1000);persistRoutines([...routines,{id:newId,groupId:newId,...rule,subject:""}]);}}
@@ -21753,7 +21622,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
 // Appearance/Notifications/etc, and shadowing that with a same-named prop
 // would be a silent, easy-to-miss bug (or a hard compile error, since both
 // are declared with const in the same scope).
-function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineWizard=()=>{}, setScheduleSettingsOpen=()=>{}, setPricingOpen=()=>{}, setActivePage=()=>{}}) {
+function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()=>{}, density="Comfortable", setDensity=()=>{}, seriousMode=false, setSeriousMode=()=>{}, onOpenRoutineCenter=()=>{}, setScheduleSettingsOpen=()=>{}, setPricingOpen=()=>{}, setActivePage=()=>{}}) {
   const [active,setActive]=useState("General");
   const [prepScheduleMode,setPrepScheduleMode]=useState(()=>getPrepScheduleMode());
   // One-time cleanup surface for courses that duplicated before the
@@ -22737,7 +22606,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             <Card style={{marginBottom:12}}>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:3}}>Weekly Routine</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Your classes, sports, and shifts: the times the AI treats as absolute and never schedules over.</div>
-              <Btn onClick={onOpenRoutineWizard}>Manage Routine</Btn>
+              <Btn onClick={onOpenRoutineCenter}>Manage Routine</Btn>
             </Card>
             <Card>
               <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:3}}>Auto-schedule prep time</div>
@@ -24528,7 +24397,7 @@ function App() {
   // entry tagged kind:"moved"|"attention". SettingsTab doesn't hold this
   // state directly (it isn't a child of this component), so it hands
   // results over via a one-shot localStorage flag, same idiom as
-  // pendingTour/pendingRoutineWizard above.
+  // pendingTour/pendingRoutineCenter above.
   const [scheduleChangeAlerts,setScheduleChangeAlerts]=useState([]);
   useEffect(()=>{
     const pending=lsGet("pendingScheduleChangeAlerts",[]);
@@ -25078,8 +24947,8 @@ function App() {
   // Cross-tab deep link for Settings > Calendar Preferences' "Manage Routine"
   // link — CalendarTab owns the wizard's actual open/closed state, so this
   // just switches tabs and leaves a one-shot flag for it to pick up on mount.
-  const [pendingRoutineWizard,setPendingRoutineWizard]=useState(false);
-  const openRoutineWizardOnCalendar=()=>{setActive("calendar");setPendingRoutineWizard(true);};
+  const [pendingRoutineCenter,setPendingRoutineCenter]=useState(false);
+  const openRoutineCenterOnCalendar=()=>{setActive("calendar");setPendingRoutineCenter(true);};
   const myUid=firebase.auth().currentUser?.uid||null;
 
   // Global unread count for the sidebar badge — mounted here (not inside
@@ -25777,8 +25646,8 @@ function App() {
             keeps the entrance animation but stops that side effect. */}
         <div key={active} data-page onAnimationEnd={e=>{e.currentTarget.style.animation="none";}} style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"studlinRise 0.45s cubic-bezier(.2,.8,.2,1) both",background:active==="dashboard"?T.bg:undefined}}>
           {active==="dashboard"?<Dashboard setActive={setActive} seriousMode={seriousMode} rescheduleTask={rescheduleTask} setRescheduleTask={setRescheduleTask} dashToast={dashToast} setDashToast={setDashToast} setDetailEventId={setDetailEventId} onTaskCompleted={handleTaskCompleted} />:
-           active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineWizard={openRoutineWizardOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} setActivePage={setActive} />:
-           active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openWizardOnMount={pendingRoutineWizard} onWizardOpenedFromSettings={()=>setPendingRoutineWizard(false)} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} />:
+           active==="settings"?<SettingsTab theme={theme} setTheme={setTheme} accent={accent} setAccent={setAccent} density={density} setDensity={setDensity} seriousMode={seriousMode} setSeriousMode={setSeriousMode} onOpenRoutineCenter={openRoutineCenterOnCalendar} setScheduleSettingsOpen={setScheduleSettingsOpen} setPricingOpen={setPricingOpen} setActivePage={setActive} />:
+           active==="calendar"?<CalendarTab setActive={setActive} onTaskSaved={handleTaskSaved} openRoutineCenterOnMount={pendingRoutineCenter} onRoutineCenterOpenedFromSettings={()=>setPendingRoutineCenter(false)} setDetailEventId={setDetailEventId} registerSetEvents={(fn)=>{calendarSetEventsRef.current=fn;}} onTaskCompleted={handleTaskCompleted} catchUpPending={!!catchUpBanner} onWizardOpenChange={setCalendarWizardOpen} />:
            active==="notes"?<Notes setActive={setActive} />:
            active==="friends"?<FriendsChat onFriendRequestSent={askNotifIfNeeded} onActiveChatChange={setOpenChatRoomId} initialTarget={pendingChatTarget} onInitialTargetConsumed={()=>setPendingChatTarget(null)} />:
            active==="profile"?<Profile setActive={setActive} seriousMode={seriousMode} />:
