@@ -22114,7 +22114,18 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
         const res=await authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"canvas-pull"})});
         data=await res.json();
         if(!res.ok||!data.connected)return;
-        if(data.lastSyncError){showToast(sub.label+": "+data.lastSyncError,"error");return;}
+        if(data.lastSyncError){
+          // Persisted on the subscription record itself (not a separate
+          // top-level state) so the Canvas Integrations row can show a
+          // real reconnect banner -- same purpose as Google Calendar's own
+          // googleSyncError, but this survives a page reload without
+          // needing a fresh network round trip, since it's read straight
+          // out of the same importedCals list the row already renders from.
+          const nextSubs=importedCals.map(s=>s.id===sub.id?{...s,lastSyncError:data.lastSyncError}:s);
+          setImportedCals(nextSubs);saveImportedCalendars(nextSubs);
+          showToast(sub.label+": "+data.lastSyncError,"error");
+          return;
+        }
       }else{
         const res=await fetch("/api/cal-proxy?url="+encodeURIComponent(sub.url));
         data=await res.json();
@@ -22136,7 +22147,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
       const merged=mergeImportedEvents(lsGet("events",[]),sub.id,data.events,classifications);
       const result=reconcileFixedEventConflicts(merged.filter(e=>e.importSubId===sub.id));
       surfaceReconcileResult(result);
-      const nextSubs=importedCals.map(s=>s.id===sub.id?{...s,lastSyncedAt:Date.now()}:s);
+      const nextSubs=importedCals.map(s=>s.id===sub.id?{...s,lastSyncedAt:Date.now(),lastSyncError:null}:s);
       setImportedCals(nextSubs);saveImportedCalendars(nextSubs);
       const newCount=merged.filter(e=>e.importSubId===sub.id&&!existingUids.has(e.externalUid)).length;
       showToast(sub.label+(newCount>0?": "+newCount+" new item"+(newCount!==1?"s":"")+" found.":" synced.")+reconcileToastSuffix(result));
@@ -22795,20 +22806,28 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                     hint that shows the right instructions and classifies
                     what comes back into real Assignments/Exams/Projects
                     instead of one generic "busy block."  */}
-                {(()=>{const canvasConnected=importedCals.filter(c=>c.sourceType==="Canvas");return(
-                  <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${canvasConnected.length>0?T.teal+"44":T.border}`,transition:"border-color 0.2s"}}>
+                {(()=>{
+                  const canvasConnected=importedCals.filter(c=>c.sourceType==="Canvas");
+                  // Read straight off the subscription record (see
+                  // resyncCalendar) -- the once-a-day auto-resync keeps this
+                  // current even if the student never opens Settings, same
+                  // as Google Calendar's own reconnect banner (googleSyncError)
+                  // but persisted here instead of re-derived on every load.
+                  const canvasError=canvasConnected.find(c=>c.lastSyncError);
+                  return(
+                  <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${canvasError?T.red+"44":canvasConnected.length>0?T.teal+"44":T.border}`,transition:"border-color 0.2s"}}>
                     <div style={{width:40,height:40,borderRadius:10,background:"rgba(226,80,45,0.10)",border:"1px solid rgba(226,80,45,0.22)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#E2502D" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
                     </div>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontSize:13,fontWeight:600,color:T.white}}>Canvas LMS</div>
-                      <div style={{fontSize:11,color:canvasConnected.length>0?T.teal:T.muted,marginTop:2}}>
-                        {canvasConnected.length>0?canvasConnected.length+" connected · syncs automatically":"Access token or calendar feed. No school IT setup required"}
+                      <div style={{fontSize:11,color:canvasError?T.red:canvasConnected.length>0?T.teal:T.muted,marginTop:2}}>
+                        {canvasError?"Sync stopped working. Reconnect below.":canvasConnected.length>0?canvasConnected.length+" connected · syncs automatically":"Access token or calendar feed. No school IT setup required"}
                       </div>
                     </div>
-                    <BtnSm variant={canvasConnected.length>0?"subtle":"lime"} onClick={()=>openImportCalModal("canvas")} style={{flexShrink:0}}>{canvasConnected.length>0?"Manage":"Connect"}</BtnSm>
+                    <BtnSm variant={canvasError?"lime":canvasConnected.length>0?"subtle":"lime"} onClick={()=>openImportCalModal("canvas")} style={{flexShrink:0}}>{canvasError?"Reconnect":canvasConnected.length>0?"Manage":"Connect"}</BtnSm>
                   </div>
-                );})()}
+                  );})()}
                 {(()=>{const schoologyConnected=importedCals.filter(c=>c.sourceType==="Schoology");return(
                   <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${schoologyConnected.length>0?T.teal+"44":T.border}`,transition:"border-color 0.2s"}}>
                     <div style={{width:40,height:40,borderRadius:10,background:T.lime+"14",border:`1px solid ${T.lime}33`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:T.lime}}>
@@ -22889,7 +22908,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                         </ol>
                         <div style={{fontSize:10.5,color:T.faint,marginTop:8,lineHeight:1.5}}>Studlin uses this to read your courses, assignments, and grade weights. It's stored securely on Studlin's servers and is never visible to anyone else.</div>
                       </div>
-                      <Field label="Canvas domain">
+                      <Field label="Canvas domain" hint="Works with instructure.com addresses or your school's own Canvas domain.">
                         <Input value={canvasDomainInput} onChange={e=>setCanvasDomainInput(e.target.value)} placeholder="yourschool.instructure.com" autoFocus />
                       </Field>
                       <Field label="Access token">

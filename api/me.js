@@ -3,7 +3,7 @@ const { admin, db, auth } = require('./_lib/firebase-admin');
 const { setCors, verifyAuth } = require('./_lib/auth');
 const { withSentry } = require('./_lib/sentry');
 const { exchangeCodeForTokens, refreshAccessToken, fetchGoogleCalendarEvents, registerCalendarWatch, stopCalendarWatch } = require('./_lib/google-calendar');
-const { normalizeCanvasDomain, fetchAllCanvasData } = require('./_lib/canvas');
+const { resolveCanvasDomain, fetchAllCanvasData } = require('./_lib/canvas');
 
 // Source of truth for the Free plan's monthly AI chat allowance — this is
 // what actually creates the user doc on first load. Must match
@@ -191,8 +191,13 @@ async function handleGoogleCalendarDisconnect(user, res) {
 async function handleCanvasConnect(user, req, res) {
   if (!db) return res.status(503).json({ error: 'Database unavailable.' });
   const { domain: rawDomain, token } = req.body || {};
-  const domain = normalizeCanvasDomain(rawDomain);
-  if (!domain) return res.status(400).json({ error: "That doesn't look like a Canvas domain ending in instructure.com. Check your school's Canvas web address." });
+  // Every failure reason (bad input, DNS failure, resolves to a private/
+  // internal address) gets the exact same generic message -- distinct
+  // errors here would let repeated attempts be used to map out which
+  // internal hosts exist, exactly what this check exists to prevent.
+  const resolved = await resolveCanvasDomain(rawDomain);
+  if (!resolved.ok) return res.status(400).json({ error: "Couldn't verify that Canvas domain. Double-check it, or use the calendar feed link instead." });
+  const domain = resolved.domain;
   if (!token || !String(token).trim()) return res.status(400).json({ error: 'Missing access token.' });
 
   try {
@@ -226,7 +231,14 @@ async function handleCanvasPull(user, res) {
     const data = doc.exists ? doc.data() : {};
     if (!data.canvasAccessToken) return res.status(200).json({ connected: false, events: [] });
     try {
-      const events = await fetchAllCanvasData(data.canvasDomain, data.canvasAccessToken);
+      // Re-verified on every pull, not just at connect time -- closes the
+      // gap where a custom domain's DNS could be pointed at an internal
+      // address sometime after the original connect (DNS rebinding).
+      // instructure.com domains skip the network round trip either way
+      // (see resolveCanvasDomain).
+      const resolved = await resolveCanvasDomain(data.canvasDomain);
+      if (!resolved.ok) throw new Error("Couldn't verify the Canvas domain on file. Try reconnecting.");
+      const events = await fetchAllCanvasData(resolved.domain, data.canvasAccessToken);
       const now = new Date().toISOString();
       await db.collection('users').doc(user.uid).update({
         canvasSyncedEvents: events,

@@ -1,11 +1,16 @@
 // Regression tests for the Canvas Personal Access Token connector
 // (api/_lib/canvas.js) -- domain validation/SSRF-hardening and the
-// assignment-to-event normalizer, both pure. Run with `npm test`.
+// assignment-to-event normalizer, both pure (or, for resolveCanvasDomain's
+// instructure.com fast path, deterministic with no real network call).
+// The DNS-based custom-domain verification path (verifyPublicDomain) is
+// deliberately NOT exercised here -- a real lookup would make this suite
+// flaky/slow/network-dependent, same reasoning this codebase already
+// applies to every other live external call. Run with `npm test`.
 const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
-const { isAllowedCanvasDomain, normalizeCanvasDomain, canvasAssignmentToEvent, stripHtml } = require("../api/_lib/canvas.js");
+const { isAllowedCanvasDomain, extractHostname, isPrivateOrReservedIp, resolveCanvasDomain, canvasAssignmentToEvent, stripHtml } = require("../api/_lib/canvas.js");
 
-describe("isAllowedCanvasDomain (SSRF-hardening -- suffix-match must not be spoofable)", () => {
+describe("isAllowedCanvasDomain (fast path -- vendor-controlled DNS, trusted with no network round trip)", () => {
   test("allows instructure.com and any school's *.instructure.com subdomain", () => {
     assert.equal(isAllowedCanvasDomain("instructure.com"), true);
     assert.equal(isAllowedCanvasDomain("myschool.instructure.com"), true);
@@ -16,28 +21,80 @@ describe("isAllowedCanvasDomain (SSRF-hardening -- suffix-match must not be spoo
   test("rejects a lookalike suffix trick", () => {
     assert.equal(isAllowedCanvasDomain("instructure.com.evil.tld"), false);
   });
-  test("rejects a custom/self-hosted Canvas domain -- not a static suffix this can safely cover yet", () => {
+  test("a custom/self-hosted Canvas domain isn't on this fast path -- it goes through resolveCanvasDomain's DNS check instead", () => {
     assert.equal(isAllowedCanvasDomain("canvas.someuniversity.edu"), false);
   });
 });
 
-describe("normalizeCanvasDomain (accepts what a student is likely to paste)", () => {
+describe("extractHostname (pure parsing, no allow/deny decision -- that's resolveCanvasDomain's job)", () => {
   test("accepts a bare domain", () => {
-    assert.equal(normalizeCanvasDomain("myschool.instructure.com"), "myschool.instructure.com");
+    assert.equal(extractHostname("myschool.instructure.com"), "myschool.instructure.com");
   });
   test("accepts a full URL and strips it down to the hostname", () => {
-    assert.equal(normalizeCanvasDomain("https://myschool.instructure.com/calendar"), "myschool.instructure.com");
+    assert.equal(extractHostname("https://myschool.instructure.com/calendar"), "myschool.instructure.com");
+  });
+  test("accepts a custom domain just as readily as an instructure.com one", () => {
+    assert.equal(extractHostname("canvas.someuniversity.edu"), "canvas.someuniversity.edu");
   });
   test("lowercases the domain", () => {
-    assert.equal(normalizeCanvasDomain("MySchool.Instructure.com"), "myschool.instructure.com");
-  });
-  test("rejects a disallowed domain instead of guessing", () => {
-    assert.equal(normalizeCanvasDomain("canvas.someuniversity.edu"), null);
+    assert.equal(extractHostname("MySchool.Instructure.com"), "myschool.instructure.com");
   });
   test("rejects empty/garbage input", () => {
-    assert.equal(normalizeCanvasDomain(""), null);
-    assert.equal(normalizeCanvasDomain("   "), null);
-    assert.equal(normalizeCanvasDomain(undefined), null);
+    assert.equal(extractHostname(""), null);
+    assert.equal(extractHostname("   "), null);
+    assert.equal(extractHostname(undefined), null);
+  });
+});
+
+describe("isPrivateOrReservedIp (SSRF hardening -- what a custom domain must NOT resolve to)", () => {
+  test("blocks all three RFC1918 private ranges", () => {
+    assert.equal(isPrivateOrReservedIp("10.0.0.1"), true);
+    assert.equal(isPrivateOrReservedIp("172.16.0.1"), true);
+    assert.equal(isPrivateOrReservedIp("172.31.255.255"), true);
+    assert.equal(isPrivateOrReservedIp("192.168.1.1"), true);
+  });
+  test("blocks loopback", () => {
+    assert.equal(isPrivateOrReservedIp("127.0.0.1"), true);
+  });
+  test("blocks link-local, including the cloud metadata endpoint every major provider uses", () => {
+    assert.equal(isPrivateOrReservedIp("169.254.169.254"), true);
+  });
+  test("blocks carrier-grade NAT (100.64.0.0/10)", () => {
+    assert.equal(isPrivateOrReservedIp("100.64.0.1"), true);
+  });
+  test("blocks multicast/reserved/broadcast (224.0.0.0 and above)", () => {
+    assert.equal(isPrivateOrReservedIp("224.0.0.1"), true);
+    assert.equal(isPrivateOrReservedIp("255.255.255.255"), true);
+  });
+  test("allows real public IPv4 addresses", () => {
+    assert.equal(isPrivateOrReservedIp("8.8.8.8"), false);
+    assert.equal(isPrivateOrReservedIp("1.1.1.1"), false);
+  });
+  test("blocks IPv6 loopback, link-local, and unique-local", () => {
+    assert.equal(isPrivateOrReservedIp("::1"), true);
+    assert.equal(isPrivateOrReservedIp("fe80::1"), true);
+    assert.equal(isPrivateOrReservedIp("fd00::1"), true);
+  });
+  test("allows a real public IPv6 address", () => {
+    assert.equal(isPrivateOrReservedIp("2606:4700:4700::1111"), false);
+  });
+  test("blocks an IPv4-mapped IPv6 address pointing at a private range", () => {
+    assert.equal(isPrivateOrReservedIp("::ffff:127.0.0.1"), true);
+  });
+  test("malformed input fails closed (treated as blocked, not allowed)", () => {
+    assert.equal(isPrivateOrReservedIp("not-an-ip"), true);
+  });
+});
+
+describe("resolveCanvasDomain (instructure.com fast path)", () => {
+  test("resolves an instructure.com domain immediately, with no DNS lookup needed", async () => {
+    const result = await resolveCanvasDomain("myschool.instructure.com");
+    assert.equal(result.ok, true);
+    assert.equal(result.domain, "myschool.instructure.com");
+  });
+  test("rejects unparseable input without ever attempting a DNS lookup", async () => {
+    const result = await resolveCanvasDomain("");
+    assert.equal(result.ok, false);
   });
 });
 
