@@ -787,11 +787,6 @@ const lsSet=(k,v)=>{try{localStorage.setItem("studlin-"+k,JSON.stringify(v));}ca
 const reportError=(context)=>(e)=>{
   try{if(typeof Sentry!=="undefined")Sentry.captureException(e,{tags:{context}});}catch(e2){}
 };
-// Read the user's AI Tutor preferences (Settings > Study preferences) for
-// attaching to genuine chat/tutoring /api/chat calls only — one-shot utility
-// generations (citations, grammar, flashcard gen, etc.) never call this, so
-// their output is never affected by these style settings.
-const getAiPrefs=()=>({verbosity:lsGet("pref-verb","Balanced"),tutorStyle:lsGet("pref-tutorStyle","Socratic")});
 const SUBJECT_COLORS=["#D9806B","#7BACDF","#A691DB","#5FCBA8","#DCA64A","#7880A8","#3ECF8E","#FF8A80","#81C784","#CE93D8"];
 // Three lightness tiers of the same 10-hue family SUBJECT_COLORS already
 // established -- not a palette redesign, just lighter/darker versions of
@@ -6574,7 +6569,7 @@ function UpgradeModal({open,onClose,feature,detail,onUpgraded}){
 }
 
 // ─── NAV ICONS MAP ────────────────────────────────────────────────────────────
-const navIcon = {dashboard:Icon.grid,prep:Icon.brain,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.users,lectures:Icon.mic,solve:Icon.zap,aitutor:Icon.brain,grammar:Icon.check,humanizer:Icon.scan,feedback:Icon.heart,settings:Icon.settings,profile:Icon.user};
+const navIcon = {dashboard:Icon.grid,prep:Icon.brain,writestudio:Icon.pen,essays:Icon.pen,flashcards:Icon.layers,notes:Icon.file,calendar:Icon.cal,friends:Icon.users,lectures:Icon.mic,solve:Icon.zap,grammar:Icon.check,humanizer:Icon.scan,feedback:Icon.heart,settings:Icon.settings,profile:Icon.user};
 
 // ─── AI CHAT (removed -- see Phase 2 of the Magic-Calendar plan; Studlin AI
 // is no longer a standalone chat surface, AI now shows up embedded in the
@@ -9234,7 +9229,6 @@ function Notes({setActive=()=>{}}){
   const activeSel=useRef(sel); // tracks last sel without re-render side-effects
   const [popover,setPopover]=useState(null); // {x,y,selText}
   const [noteComments,setNoteComments]=useState(()=>lsGet("note-comments",{}));
-  const [noteFlags,setNoteFlags]=useState(()=>lsGet("note-flags",{}));
   const [commentDraft,setCommentDraft]=useState("");
   const [commentInputOpen,setCommentInputOpen]=useState(false);
   const [pendingSel,setPendingSel]=useState(null);
@@ -9246,13 +9240,6 @@ function Notes({setActive=()=>{}}){
   const [sendNoteTarget,setSendNoteTarget]=useState("");
   const [sendNoteStatus,setSendNoteStatus]=useState(""); // "" | "sending" | "sent" | "error"
   const [sendNoteError,setSendNoteError]=useState("");
-
-  // Split-screen AI Tutor sidebar
-  const [tutorOpen,setTutorOpen]=useState(false);
-  const [tutorCtx,setTutorCtx]=useState("");
-  const [tutorMsgs,setTutorMsgs]=useState([]);
-  const [tutorInput,setTutorInput]=useState("");
-  const [tutorSending,setTutorSending]=useState(false);
 
   // AI study-tools panel — turn the active note into flashcards, a quiz, or a summary
   const [panelLoading,setPanelLoading]=useState(null); // "cards" | "quiz" | "summary" | null
@@ -9319,98 +9306,6 @@ function Notes({setActive=()=>{}}){
   const openDocComment=()=>{
     if(sel===null)return;
     setPendingSel(null);setPendingSelGlobal(true);setCommentInputOpen(true);setPopover(null);
-  };
-
-  const doAddFlag=(selText)=>{
-    if(!selText||sel===null)return;
-    const noteId=notes[sel].id;
-    const f={id:String(Date.now()),selectedText:selText,date:new Date().toLocaleDateString()};
-    const updated={...noteFlags,[noteId]:[...(noteFlags[noteId]||[]),f]};
-    setNoteFlags(updated);lsSet("note-flags",updated);
-    const all=lsGet("tutor-flags",[]);
-    all.push({...f,noteTitle:notes[sel].title,noteId,from:"notes"});
-    lsSet("tutor-flags",all);
-    setPopover(null);setPendingSel(null);
-    openTutorWithContext(selText);
-  };
-
-  // Immediately analyze the flagged text via the API and open the sidebar
-  const openTutorWithContext=async(selText)=>{
-    setTutorCtx(selText);
-    setTutorOpen(true);
-    setTutorMsgs([{role:"ai",text:"…",loading:true}]);
-    const analysisPrompt=
-      `A student flagged this passage from their study notes:\n\n"${selText.slice(0,600)}"\n\n`+
-      `Respond as their AI tutor. Follow these rules:\n`+
-      `- If the passage contains a question (has words like why, how, what, explain, define, or ends with "?"), answer it directly with a clear, engaging explanation. Use an analogy if it helps.\n`+
-      `- If the passage is a concept, formula, term, or statement, give a concise 2-sentence explanation of what it means, then ask ONE sharp follow-up question to test whether the student actually understands it.\n`+
-      `Be direct. Sound like a smart tutor, not a textbook. Keep it under 150 words.`;
-    try{
-      const res=await authFetch("/api/chat",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({messages:[{r:"user",t:analysisPrompt}],model:"standard",...getAiPrefs()})
-      });
-      if(!res.ok){
-        const errData=await res.json().catch(()=>({}));
-        throw new Error(errData.error||"HTTP "+res.status);
-      }
-      const data=await res.json();
-      setTutorMsgs([{role:"ai",text:data.reply||"I'm here to help. What would you like to know about this passage?"}]);
-    }catch(e){
-      console.error("[openTutorWithContext] error:",e);
-      setTutorMsgs([{role:"ai",text:"I'm here to help with \""+selText.slice(0,60)+(selText.length>60?"…":"")+"\". What would you like me to explain?"}]);
-    }
-  };
-
-  // Document-level tutor — no highlight required. Pulls the whole note as context
-  // and opens the sidebar ready for the student's first question.
-  const openTutorForDocument=()=>{
-    if(sel===null||!editorRef.current)return;
-    const tmp=document.createElement("div");tmp.innerHTML=editorRef.current.innerHTML;
-    const plain=(tmp.textContent||tmp.innerText||"").trim();
-    setTutorCtx(plain);
-    setTutorOpen(true);
-    setTutorMsgs([{role:"ai",text:plain?"I've got the whole note open — \""+notes[sel].title+"\". Ask me anything about it: a summary, a quiz, or something specific you're stuck on.":"This note is empty — write something first, then I can help you with it."}]);
-    setPopover(null);
-  };
-
-  const sendTutorMsg=async()=>{
-    const txt=tutorInput.trim();
-    if(!txt||tutorSending)return;
-    setTutorMsgs(m=>[...m,{role:"user",text:txt}]);
-    setTutorInput("");
-    setTutorSending(true);
-    try{
-      // Reconstruct conversation for the API. The conversation always starts with
-      // the analysis prompt (user) → initial AI response, then the real turns after.
-      // api/chat expects {r:"user"|"ai", t:"..."} — "ai" maps to assistant inside the API.
-      // Sliced generously since tutorCtx may be an entire note, not just a highlighted passage.
-      const ctx=tutorCtx?`[Notes for context: "${tutorCtx.slice(0,6000)}"]\n\n`:"";
-      const realMsgs=tutorMsgs.filter(m=>!m.loading);
-      // Synthetic opener restores the initial user→ai exchange so the model has context
-      const opener={r:"user",t:ctx+"Help me understand these notes and answer my questions about them."};
-      // Map existing display messages into API format
-      const history=realMsgs.map(m=>({r:m.role==="user"?"user":"ai",t:m.text}));
-      // Full sequence: opener → initial AI response → subsequent turns → new user msg
-      const apiMsgs=[opener,...history,{r:"user",t:txt}];
-      const res=await authFetch("/api/chat",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({messages:apiMsgs,model:"standard",...getAiPrefs()})
-      });
-      if(!res.ok){
-        const errData=await res.json().catch(()=>({}));
-        console.error("[sendTutorMsg] API error response:",res.status,errData);
-        throw new Error(errData.error||"HTTP "+res.status);
-      }
-      const data=await res.json();
-      setTutorMsgs(m=>[...m,{role:"ai",text:data.reply||"No response received."}]);
-    }catch(e){
-      console.error("[sendTutorMsg] error:",e);
-      setTutorMsgs(m=>[...m,{role:"ai",text:"Error: "+e.message+". Please try again."}]);
-    }
-    setTutorSending(false);
   };
 
   const cleanNotes=async()=>{
@@ -9695,10 +9590,6 @@ function Notes({setActive=()=>{}}){
     }
   };
   const removeComment=(nid,cid)=>{const u={...noteComments,[nid]:(noteComments[nid]||[]).filter(c=>c.id!==cid)};setNoteComments(u);lsSet("note-comments",u);};
-  const removeFlag=(nid,fid)=>{
-    const u={...noteFlags,[nid]:(noteFlags[nid]||[]).filter(f=>f.id!==fid)};setNoteFlags(u);lsSet("note-flags",u);
-    lsSet("tutor-flags",lsGet("tutor-flags",[]).filter(f=>f.id!==fid));
-  };
 
   // Plain-text extraction of the active note's canvas content, for feeding to the AI
   const getNotePlainText=()=>{
@@ -9774,8 +9665,7 @@ function Notes({setActive=()=>{}}){
   const activeNote=sel!==null?notes[sel]:null;
   const nid=activeNote?.id;
   const activeComments=nid?noteComments[nid]||[]:[];
-  const activeFlags=nid?noteFlags[nid]||[]:[];
-  const hasMargin=activeComments.length>0||activeFlags.length>0;
+  const hasMargin=activeComments.length>0;
 
   // Toolbar button style helper
   const tbBtn=(active=false)=>({padding:"5px 9px",borderRadius:5,border:`1px solid ${active?T.lime+"55":T.border}`,background:active?T.lime+"14":"transparent",color:active?T.lime:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:600,display:"inline-flex",alignItems:"center",gap:4,transition:"all 0.12s"});
@@ -10115,8 +10005,8 @@ function Notes({setActive=()=>{}}){
           })()}
         </div>
 
-        {/* Canvas area: editor + optional margin panel + optional tutor sidebar */}
-        <div style={{display:"grid",gridTemplateColumns:tutorOpen?"1fr 340px":hasMargin?"1fr 220px":"1fr",gap:12,alignItems:"start"}}>
+        {/* Canvas area: editor + optional margin panel */}
+        <div style={{display:"grid",gridTemplateColumns:hasMargin?"1fr 220px":"1fr",gap:12,alignItems:"start"}}>
 
           {/* ── RICH TEXT EDITOR CARD ── */}
           <Card style={{padding:0,overflow:"hidden",minHeight:480}}>
@@ -10170,9 +10060,6 @@ function Notes({setActive=()=>{}}){
                   <button onClick={openDocComment} title="Attach a note to the whole document (no highlight needed)" style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${T.blue}44`,background:T.blue+"14",color:T.blue,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
                     {Icon.chat} Add Comment
                   </button>
-                  <button onClick={openTutorForDocument} title="Ask the AI Tutor about this whole note (no highlight needed)" style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${T.amber}44`,background:T.amber+"14",color:T.amber,cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
-                    {Icon.brain} Ask Tutor
-                  </button>
                   <button onClick={cleanNotes} disabled={cleaning} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${T.lime}44`,background:cleaning?T.card2:T.lime+"14",color:cleaning?T.muted:T.lime,cursor:cleaning?"default":"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s"}}>
                     {cleaning?<>Cleaning…</>:<>{Icon.wand} Clean Notes</>}
                   </button>
@@ -10188,7 +10075,6 @@ function Notes({setActive=()=>{}}){
                   <div style={{display:"flex",gap:8,alignItems:"center"}}>
                     <Badge color={colorOf(activeNote.tag)}>{activeNote.tag}</Badge>
                     <span style={{fontSize:11,color:T.muted}}>{activeNote.date}</span>
-                    {activeFlags.length>0&&<span style={{fontSize:10.5,color:T.amber,fontWeight:600}}>{activeFlags.length} tutor flag{activeFlags.length!==1?"s":""}</span>}
                     {activeComments.length>0&&<span style={{fontSize:10.5,color:T.blue,fontWeight:600}}>{activeComments.length} comment{activeComments.length!==1?"s":""}</span>}
                   </div>
                 </div>
@@ -10197,8 +10083,6 @@ function Notes({setActive=()=>{}}){
                 {popover&&(
                   <div style={{position:"absolute",top:popover.y,left:popover.x,transform:"translateX(-50%)",zIndex:30,display:"flex",gap:4,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"4px 6px",boxShadow:"0 8px 24px rgba(0,0,0,0.4)",whiteSpace:"nowrap"}}>
                     <button onMouseDown={e=>{e.preventDefault();setPendingSel(popover.selText);setPendingSelGlobal(false);setCommentInputOpen(true);}} style={{padding:"5px 10px",borderRadius:5,border:"none",background:"transparent",color:T.blue,cursor:"pointer",fontSize:12,fontFamily:T.font,fontWeight:600}}>Add Comment</button>
-                    <div style={{width:1,background:T.border}} />
-                    <button onMouseDown={e=>{e.preventDefault();doAddFlag(popover.selText);}} style={{padding:"5px 10px",borderRadius:5,border:"none",background:"transparent",color:T.amber,cursor:"pointer",fontSize:12,fontFamily:T.font,fontWeight:600}}>Flag for Tutor</button>
                   </div>
                 )}
 
@@ -10244,47 +10128,8 @@ function Notes({setActive=()=>{}}){
             )}
           </Card>
 
-          {/* ── TUTOR SIDEBAR — split-screen AI panel ── */}
-          {tutorOpen&&(
-            <div style={{display:"flex",flexDirection:"column",height:"100%",background:T.card,border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",minHeight:480}}>
-              {/* Header */}
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 16px",borderBottom:`1px solid ${T.border}`,background:T.card2,flexShrink:0}}>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <div style={{width:26,height:26,borderRadius:7,background:T.amber+"22",border:`1px solid ${T.amber}44`,display:"flex",alignItems:"center",justifyContent:"center",color:T.amber}}>{Icon.brain}</div>
-                  <div>
-                    <div style={{fontSize:12,fontWeight:700,color:T.white}}>AI Tutor</div>
-                    <div style={{fontSize:10,color:T.muted}}>Ask about this note</div>
-                  </div>
-                </div>
-                <button onClick={()=>setTutorOpen(false)} style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:16,lineHeight:1,padding:4,borderRadius:4,display:"flex",alignItems:"center",justifyContent:"center"}}>{Icon.xmark}</button>
-              </div>
-              {/* Messages */}
-              <div style={{flex:1,overflowY:"auto",padding:"14px 14px 8px",display:"flex",flexDirection:"column",gap:10}}>
-                {tutorMsgs.map((m,i)=>(
-                  <div key={i} style={{display:"flex",flexDirection:"column",alignItems:m.role==="user"?"flex-end":"flex-start"}}>
-                    <div style={{maxWidth:"88%",padding:"9px 12px",borderRadius:m.role==="user"?"10px 10px 3px 10px":"10px 10px 10px 3px",background:m.role==="user"?T.lime+"22":T.card2,border:`1px solid ${m.role==="user"?T.lime+"33":T.border}`,fontSize:12.5,color:m.loading?T.muted:T.text,lineHeight:1.6,whiteSpace:"pre-wrap"}}>
-                      {m.loading?<span style={{animation:"studlinPulse 1.2s ease infinite",display:"inline-block"}}>Analyzing…</span>:m.text}
-                    </div>
-                  </div>
-                ))}
-                {tutorSending&&(
-                  <div style={{display:"flex",alignItems:"flex-start"}}>
-                    <div style={{padding:"9px 14px",borderRadius:"10px 10px 10px 3px",background:T.card2,border:`1px solid ${T.border}`,fontSize:12,color:T.muted}}>
-                      <span style={{animation:"studlinPulse 1.2s ease infinite",display:"inline-block"}}>Thinking…</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-              {/* Input */}
-              <div style={{padding:"10px 12px",borderTop:`1px solid ${T.border}`,flexShrink:0,display:"flex",gap:8,alignItems:"flex-end"}}>
-                <textarea value={tutorInput} onChange={e=>setTutorInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendTutorMsg();}}} placeholder="Ask your tutor…" rows={2} style={{flex:1,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",color:T.text,fontSize:12.5,fontFamily:T.font,resize:"none",outline:"none",lineHeight:1.5}} />
-                <button onClick={sendTutorMsg} disabled={!tutorInput.trim()||tutorSending} style={{padding:"8px 12px",borderRadius:8,border:"none",background:tutorInput.trim()&&!tutorSending?T.amber:T.card2,color:tutorInput.trim()&&!tutorSending?T.ink:T.faint,cursor:tutorInput.trim()&&!tutorSending?"pointer":"default",fontFamily:T.font,fontSize:12,fontWeight:700,transition:"all 0.15s",flexShrink:0}}>{Icon.send}</button>
-              </div>
-            </div>
-          )}
-
-          {/* ── MARGIN PANEL — comments & flags ── */}
-          {!tutorOpen&&hasMargin&&(
+          {/* ── MARGIN PANEL — comments ── */}
+          {hasMargin&&(
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
               <div style={{fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:T.faint,marginBottom:2}}>Annotations</div>
               {activeComments.map(c=>(
@@ -10293,17 +10138,6 @@ function Notes({setActive=()=>{}}){
                   <div style={{fontSize:12,color:T.text,lineHeight:1.5}}>{c.text}</div>
                   <div style={{fontSize:10,color:T.faint,marginTop:6}}>{c.date}</div>
                   <button onClick={()=>removeComment(nid,c.id)} style={{position:"absolute",top:6,right:6,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:13,lineHeight:1,padding:2}}>×</button>
-                </div>
-              ))}
-              {activeFlags.map(f=>(
-                <div key={f.id} style={{background:T.card,border:`1px solid ${T.amber}44`,borderLeft:`3px solid ${T.amber}`,borderRadius:8,padding:"10px 12px",position:"relative"}}>
-                  <div style={{fontSize:10,fontWeight:700,color:T.amber,marginBottom:4,letterSpacing:"0.05em",textTransform:"uppercase"}}>Tutor Flag</div>
-                  <div style={{fontSize:11,color:T.muted,lineHeight:1.5,fontStyle:"italic"}}>"{(f.selectedText||"").slice(0,60)}{f.selectedText&&f.selectedText.length>60?"…":""}"</div>
-                  <div style={{display:"flex",gap:8,marginTop:8,alignItems:"center"}}>
-                    <div style={{fontSize:10,color:T.faint}}>{f.date}</div>
-                    <button onMouseDown={e=>{e.preventDefault();openTutorWithContext(f.selectedText);}} style={{fontSize:10,color:T.amber,background:"none",border:"none",cursor:"pointer",padding:0,fontFamily:T.font,fontWeight:600}}>Open tutor →</button>
-                  </div>
-                  <button onClick={()=>removeFlag(nid,f.id)} style={{position:"absolute",top:6,right:6,background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:13,lineHeight:1,padding:2}}>×</button>
                 </div>
               ))}
             </div>
@@ -12679,14 +12513,12 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
   // Sharing a note/deck posts a pending card first — a lightweight one-click
   // confirmation before it actually goes out (mirrors the same verification
   // loop used for incoming shares below).
-  // Flags/comments live in separate note-flags/note-comments localStorage
-  // maps keyed by note id (see Notes' doAddFlag/doAddComment) — body alone
-  // doesn't carry them, so they're pulled in explicitly here and carried
-  // through respondToShare below so a shared note keeps its tutor context.
+  // Comments live in a separate note-comments localStorage map keyed by note
+  // id (see Notes' doAddComment) — body alone doesn't carry them, so they're
+  // pulled in explicitly here and carried through respondToShare below.
   const attachNote=(note)=>{
-    const flags=lsGet("note-flags",{})[note.id]||[];
     const comments=lsGet("note-comments",{})[note.id]||[];
-    sendMessage({kind:"note",status:"pending",meta:{title:note.title,id:note.id,body:note.body,flags,comments}});
+    sendMessage({kind:"note",status:"pending",meta:{title:note.title,id:note.id,body:note.body,comments}});
     setNotePicker(false);
   };
   const attachDeck=(deck)=>{sendMessage({kind:"deck",status:"pending",meta:{name:deck.name,count:deck.cards?deck.cards.length:(deck.count||0),id:deck.id,cards:deck.cards}});setDeckPicker(false);};
@@ -12729,12 +12561,8 @@ function ChatDrawer({open,target,myUid,onClose,onMakePermanent,onDeleteGroup,onU
         const notes=lsGet("notes",[]);
         const copy={id:String(Date.now()),title:msg.meta.title,body:sanitizeHtml(msg.meta.body||"<p>Shared from "+peerName+".</p>"),tag:"Shared",date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"}),createdAt:Date.now(),source:"shared",sharedFrom:peerName};
         lsSet("notes",[copy,...notes]);
-        // Carry the sender's flags/comments over onto the recipient's own
-        // copy (re-keyed to its new id) so tutor context survives the share.
-        if(msg.meta.flags&&msg.meta.flags.length){
-          const nf=lsGet("note-flags",{});
-          lsSet("note-flags",{...nf,[copy.id]:msg.meta.flags});
-        }
+        // Carry the sender's comments over onto the recipient's own copy
+        // (re-keyed to its new id).
         if(msg.meta.comments&&msg.meta.comments.length){
           const nc=lsGet("note-comments",{});
           lsSet("note-comments",{...nc,[copy.id]:msg.meta.comments});
@@ -22014,11 +21842,9 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const Chip = ({active,onClick,children}) => (
     <button type="button" onClick={onClick} style={{padding:"7px 14px",borderRadius:7,fontSize:12,cursor:"pointer",border:`1px solid ${active?T.lime+"66":T.border}`,background:active?T.lime+"14":"transparent",color:active?T.lime:T.muted,fontFamily:T.font,fontWeight:active?600:400,transition:"all 0.15s"}}>{children}</button>
   );
-  const [verb,setVerb]=useState(()=>lsGet("pref-verb","Balanced"));
-  const [tutorStyle,setTutorStyle]=useState(()=>lsGet("pref-tutorStyle","Socratic"));
   // Used to be an uncontrolled input with a defaultValue -- looked saved,
   // never wrote anywhere, reset to 180/30 on every reload. Real state now,
-  // same immediate-persist-on-change pattern as verb/tutorStyle above.
+  // immediate-persist-on-change.
   const [dailyFocusTarget,setDailyFocusTarget]=useState(()=>lsGet("pref-dailyFocusTarget",180));
   const [dailyFlashcardTarget,setDailyFlashcardTarget]=useState(()=>lsGet("pref-dailyFlashcardTarget",30));
   const accents=[{n:"Lime",c:"#AECE5E"},{n:"Forest",c:"#3E9576"},{n:"Sky",c:"#4F95D6"},{n:"Lilac",c:"#9474C9"},{n:"Peach",c:"#D07C4C"}];
@@ -22354,11 +22180,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
 
           {active==="Study preferences" && (<>
             <Card style={{marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>AI tutor</div>
-              <Field label="Response verbosity"><div style={{display:"flex",gap:6}}>{["Concise","Balanced","Comprehensive"].map(t=><Chip key={t} active={verb===t} onClick={()=>{setVerb(t);lsSet("pref-verb",t);}}>{t}</Chip>)}</div></Field>
-              <Field label="Tutor style">
-                <SelectChip options={["Socratic","Direct","Encouraging","Strict"]} value={tutorStyle} onChange={v=>{setTutorStyle(v);lsSet("pref-tutorStyle",v);}} />
-              </Field>
+              <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:16}}>Study tools</div>
               <Row label="Spaced repetition engine" sub="Intelligent scheduling based on recall performance." k="sr" />
               <Row label="Auto-save drafts" sub="Save essay and note changes every 30 seconds." k="auto" />
             </Card>
