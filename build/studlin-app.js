@@ -12059,13 +12059,31 @@ function CalendarTab({ setActive = () => {
         return d === 0 ? 6 : d - 1;
       })()] : repeatDays;
       const dur = duration || rule.duration || 60;
-      const dayTimesOverride = {};
-      targetDays.forEach((d) => {
-        dayTimesOverride[d] = dayTimes && dayTimes[d] ? dayTimes[d] : { startTime, duration: dur };
-      });
-      const mergedDays = Array.from(/* @__PURE__ */ new Set([...rule.days || [], ...targetDays]));
-      const rebuilt = buildRoutineObjectsForDays({ ...rule, ...common, id: routineId }, mergedDays, rule.startTime, rule.duration, dayTimesOverride);
-      persistRoutines([...routines.filter((r) => r.id !== routineId), ...rebuilt]);
+      const gid = rule.groupId || rule.id;
+      const groupDays = new Set(routines.filter((r) => (r.groupId || r.id) === gid).flatMap((r) => r.days || []));
+      const newDays = targetDays.filter((d) => !groupDays.has(d));
+      const conflictDays = targetDays.filter((d) => groupDays.has(d));
+      const results = [];
+      if (newDays.length > 0) {
+        const dayTimesOverride = {};
+        newDays.forEach((d) => {
+          dayTimesOverride[d] = dayTimes && dayTimes[d] ? dayTimes[d] : { startTime, duration: dur };
+        });
+        const mergedDays = Array.from(/* @__PURE__ */ new Set([...rule.days || [], ...newDays]));
+        results.push(...buildRoutineObjectsForDays({ ...rule, ...common, id: routineId }, mergedDays, rule.startTime, rule.duration, dayTimesOverride));
+      } else {
+        results.push(rule);
+      }
+      if (conflictDays.length > 0) {
+        const conflictBase = { ...rule, ...common, groupId: gid };
+        delete conflictBase.id;
+        const dayTimesOverride2 = {};
+        conflictDays.forEach((d) => {
+          dayTimesOverride2[d] = dayTimes && dayTimes[d] ? dayTimes[d] : { startTime, duration: dur };
+        });
+        results.push(...buildRoutineObjectsForDays(conflictBase, conflictDays, startTime, dur, dayTimesOverride2));
+      }
+      persistRoutines([...routines.filter((r) => r.id !== routineId), ...results]);
     } else if (repeat === "none") {
       const isCourse = chipKind === "course" && courseId;
       commitTasks([{

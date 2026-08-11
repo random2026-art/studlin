@@ -18963,20 +18963,41 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       // silently retime/replace its whole Mon/Wed/Fri pattern into just
       // that one day (the original 2026-07-29 fix only ever guarded against
       // an EXACT re-drop creating a duplicate; it never distinguished that
-      // from a genuinely new day). Dropping onto a day it's already on
-      // still just retimes that one day in place -- same reasoning
-      // applyRoutineDropScope's "always" split already established, reused
-      // here via buildRoutineObjectsForDays rather than a second
-      // implementation of the same day-split logic.
+      // from a genuinely new day).
       const rule=routines.find(r=>r.id===routineId);
       if(!rule){setNewEventOpen(false);setSidebarDragChip(null);return;}
       const targetDays=repeat==="none"?[(()=>{const d=new Date(date+"T12:00:00").getDay();return d===0?6:d-1;})()]:repeatDays;
       const dur=duration||rule.duration||60;
-      const dayTimesOverride={};
-      targetDays.forEach(d=>{dayTimesOverride[d]=(dayTimes&&dayTimes[d])?dayTimes[d]:{startTime,duration:dur};});
-      const mergedDays=Array.from(new Set([...(rule.days||[]),...targetDays]));
-      const rebuilt=buildRoutineObjectsForDays({...rule,...common,id:routineId},mergedDays,rule.startTime,rule.duration,dayTimesOverride);
-      persistRoutines([...routines.filter(r=>r.id!==routineId),...rebuilt]);
+      const gid=rule.groupId||rule.id;
+      // A day already covered by SOMETHING in this activity's group (this
+      // rule's own days, or a sibling placement's) used to get silently
+      // retimed in place by a re-drop -- confusing, and not what dropping a
+      // second occurrence onto an already-used day is for. Only days truly
+      // new to the whole group get merged into `rule`'s own day-set the old
+      // way; a day the group already has becomes its own separate,
+      // independent placement instead of overwriting what's already there.
+      // Repositioning an existing placement's time is what editing it
+      // directly (or dragging its actual calendar block) is for.
+      const groupDays=new Set(routines.filter(r=>(r.groupId||r.id)===gid).flatMap(r=>r.days||[]));
+      const newDays=targetDays.filter(d=>!groupDays.has(d));
+      const conflictDays=targetDays.filter(d=>groupDays.has(d));
+      const results=[];
+      if(newDays.length>0){
+        const dayTimesOverride={};
+        newDays.forEach(d=>{dayTimesOverride[d]=(dayTimes&&dayTimes[d])?dayTimes[d]:{startTime,duration:dur};});
+        const mergedDays=Array.from(new Set([...(rule.days||[]),...newDays]));
+        results.push(...buildRoutineObjectsForDays({...rule,...common,id:routineId},mergedDays,rule.startTime,rule.duration,dayTimesOverride));
+      }else{
+        results.push(rule);
+      }
+      if(conflictDays.length>0){
+        const conflictBase={...rule,...common,groupId:gid};
+        delete conflictBase.id;
+        const dayTimesOverride2={};
+        conflictDays.forEach(d=>{dayTimesOverride2[d]=(dayTimes&&dayTimes[d])?dayTimes[d]:{startTime,duration:dur};});
+        results.push(...buildRoutineObjectsForDays(conflictBase,conflictDays,startTime,dur,dayTimesOverride2));
+      }
+      persistRoutines([...routines.filter(r=>r.id!==routineId),...results]);
     }else if(repeat==="none"){
       const isCourse=chipKind==="course"&&courseId;
       commitTasks([{id:"ev-"+Date.now()+"-"+Math.round(Math.random()*1000),title,date,time:allDay?null:startTime,duration,
