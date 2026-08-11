@@ -375,7 +375,8 @@ body::after{
    wall of identical boxes the way the old bento grid did. */
 .feat-movement{padding:56px 0;}
 .feat-movement+.feat-movement{border-top:1px solid var(--line);}
-.feat-movement-head{text-align:center;max-width:560px;margin:0 auto 8px;}
+.feat-movement-head{text-align:center;max-width:620px;margin:0 auto 8px;}
+.feat-movement-head .lead{max-width:100%;margin:10px auto 0;}
 .feat-movement-head h2{font-family:var(--display);font-weight:700;font-size:clamp(26px,3vw,38px);line-height:1.1;letter-spacing:-0.025em;margin:10px 0 0;color:var(--cream);}
 .feat-row{display:flex;align-items:center;gap:56px;padding:40px 0;}
 .feat-row.rev{flex-direction:row-reverse;}
@@ -1173,7 +1174,7 @@ body::after{
         <div>
           <div class="knum">The idea</div>
           <h3 style="font-size:40px;line-height:1.05;">Studlin figures you out.</h3>
-          <p>It learns your peak hours, how long things really take you, what you keep putting off. The more you use it, the more it gets right — so your calendar goes from a guess to something that actually fits your life.</p>
+          <p>It learns your peak hours, how long things really take you, what you keep putting off. The more you use it, the more it gets right, so your calendar goes from a guess to something that actually fits your life.</p>
         </div>
         <div style="display:flex;flex-direction:column;gap:10px;">
           <div class="mini" style="background:#fff;">
@@ -1188,7 +1189,7 @@ body::after{
           </div>
           <div class="seq-3" style="background:#163A2C;border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:16px 18px;">
             <div class="mono" style="font-size:9.5px;color:rgba(245,242,234,0.55);letter-spacing:0.1em;margin-bottom:8px;">STUDLIN NOTICED</div>
-            <div style="font-size:12.5px;color:#F5F2EA;">You keep pushing off essay drafts until the night before — scheduling them earlier from now on.</div>
+            <div style="font-size:12.5px;color:#F5F2EA;">You keep pushing off reading assignments until the night before. Scheduling them earlier from now on.</div>
           </div>
         </div>
       </div>
@@ -1253,14 +1254,14 @@ body::after{
   <div class="feat-movement">
     <div class="wrap">
       <div class="feat-movement-head reveal">
-        <span class="sec-eyebrow">// The AI does the planning</span>
-        <h2>Three ways Studlin plans it for you.</h2>
+        <span class="sec-eyebrow">// Nobody else does this</span>
+        <h2>The exam. The assignment. The project.<br>Planned for you.</h2>
       </div>
 
       <div class="card col-12 reveal" style="padding:44px;margin-top:28px;" data-spot>
         <div style="display:grid;grid-template-columns:1.05fr 1fr;gap:48px;align-items:center;">
           <div>
-            <div class="knum">Studlin Prep</div>
+            <div class="knum">The exam · Studlin Prep</div>
             <h3 style="font-size:40px;line-height:1.05;">Pick an exam. Get a full plan.</h3>
             <p>Answer a few quick questions, add your material. Studlin builds the sessions, flashcards, and practice exam for you.</p>
             <a href="/app" class="btn btn-lime magnetic">Build a study plan <span class="ar">→</span></a>
@@ -1290,33 +1291,39 @@ body::after{
         </div>
       </div>
 
-      <div class="feat-row reveal" data-spot>
-        <div class="feat-text">
-          <div class="knum">Attack Sessions</div>
-          <h3>Don't know how long it'll take? Find out.</h3>
-          <p>Start an attack session. Studlin gives it a trial run, learns your pace, then books the time you'll actually need.</p>
-        </div>
-        <div class="feat-visual">
-          <div class="mini">
-            <div class="mono" style="font-size:10px;color:var(--lime);letter-spacing:0.1em;margin-bottom:10px;">HISTORY ESSAY · ATTACK SESSION</div>
-            <div class="seq-1" style="font-size:12.5px;color:var(--ink);margin-bottom:8px;">20 min trial run, turns out this takes a while</div>
-            <div class="seq-2 mono" style="font-size:10px;background:var(--spark);color:var(--ink);padding:5px 10px;border-radius:99px;font-weight:700;display:inline-block;">→ 3× 45min blocks scheduled</div>
+      <div class="card col-12 reveal" style="padding:44px;margin-top:20px;" data-spot>
+        <div style="display:grid;grid-template-columns:1.05fr 1fr;gap:48px;align-items:center;">
+          <div>
+            <div class="knum">The assignment · Attack Sessions</div>
+            <h3 style="font-size:40px;line-height:1.05;">Don't know how long it'll take? Find out.</h3>
+            <p>Start an attack session. Studlin gives it a trial run, learns your pace, then books the time you'll actually need.</p>
+            <a href="/app" class="btn btn-lime magnetic">Start an attack session <span class="ar">→</span></a>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <div class="mini" style="background:#fff;">
+              <div class="mono" style="font-size:10px;color:var(--lime);letter-spacing:0.1em;margin-bottom:10px;">CALC PROBLEM SET · ATTACK SESSION</div>
+              <div class="seq-1" style="font-size:12.5px;color:var(--ink);margin-bottom:8px;">20 min trial run, turns out this takes a while</div>
+              <div class="seq-2 mono" style="font-size:10px;background:var(--spark);color:var(--ink);padding:5px 10px;border-radius:99px;font-weight:700;display:inline-block;">→ 3× 45min blocks scheduled</div>
+            </div>
           </div>
         </div>
       </div>
 
-      <div class="feat-row rev reveal" data-spot>
-        <div class="feat-text">
-          <div class="knum">Project Breakdown</div>
-          <h3>Big projects, broken down for you.</h3>
-          <p>Give Studlin the project overview. It splits it into steps and proposes when to work on each. Add your group and Studlin finds the time everyone's actually free — no more "when are we meeting" texts.</p>
-        </div>
-        <div class="feat-visual">
-          <div class="mini">
-            <div style="display:flex;flex-direction:column;gap:7px;font-size:12px;color:var(--ink);">
-              <div class="seq-1">1. Research &amp; outline <span style="color:#888;">· 40m</span></div>
-              <div class="seq-2">2. First draft <span style="color:#888;">· 1h 20m</span></div>
-              <div class="seq-3">3. Group review <span style="color:var(--lime);font-weight:600;">· Thu 5pm, everyone's free</span></div>
+      <div class="card col-12 reveal" style="padding:44px;margin-top:20px;" data-spot>
+        <div style="display:grid;grid-template-columns:1.05fr 1fr;gap:48px;align-items:center;">
+          <div>
+            <div class="knum">The project · Project Breakdown</div>
+            <h3 style="font-size:40px;line-height:1.05;">Big projects, broken down for you.</h3>
+            <p>Give Studlin the project overview. It splits it into steps and proposes when to work on each. Add your group and Studlin finds the time everyone's actually free, no more "when are we meeting" texts.</p>
+            <a href="/app" class="btn btn-lime magnetic">Break down a project <span class="ar">→</span></a>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <div class="mini" style="background:#fff;">
+              <div style="display:flex;flex-direction:column;gap:7px;font-size:12px;color:var(--ink);">
+                <div class="seq-1">1. Research &amp; outline <span style="color:#888;">· 40m</span></div>
+                <div class="seq-2">2. First draft <span style="color:#888;">· 1h 20m</span></div>
+                <div class="seq-3">3. Group review <span style="color:var(--lime);font-weight:600;">· Thu 5pm, everyone's free</span></div>
+              </div>
             </div>
           </div>
         </div>
@@ -1353,7 +1360,7 @@ body::after{
           <div>
             <div class="knum">Studlin Network</div>
             <h3 style="font-size:40px;line-height:1.05;">No more "does 4pm work?" texts.</h3>
-            <p>Add your group. Studlin finds the one slot everyone's free. Studying for that Chem exam? Join a friend's lock-in session already underway instead of starting from scratch.</p>
+            <p>Add your group. Studlin finds the one slot everyone's free. Studying for that Chem exam? Join a friend's lock-in session already underway instead of starting from scratch. Studying alongside someone else builds real accountability, you show up because they're counting on you too.</p>
             <a href="/app" class="btn btn-lime magnetic">Start a group <span class="ar">→</span></a>
           </div>
           <div style="display:flex;flex-direction:column;gap:10px;">
@@ -1376,14 +1383,15 @@ body::after{
   <div class="feat-movement">
     <div class="wrap">
       <div class="feat-movement-head reveal">
-        <span class="sec-eyebrow">// Stay consistent</span>
-        <h2>The habits that make it stick.</h2>
+        <span class="sec-eyebrow">// Backed by how habits actually form</span>
+        <h2>Not gamified for fun. Built on methods that work.</h2>
+        <p class="lead" style="margin-top:10px;">The Pomodoro Technique for focus. Streaks for consistency. Studying with people for accountability. Studlin builds real, research-backed habits into the app instead of just handing you a to-do list.</p>
       </div>
       <div class="feat-pair reveal">
         <div class="fp-item">
           <div class="knum">Focus Sessions</div>
-          <h3>Built on what actually works.</h3>
-          <p>Pomodoro-style focus blocks, built into every session. The time you sit down actually counts.</p>
+          <h3>The Pomodoro Technique, built in.</h3>
+          <p>Timed focus blocks with short breaks, a decades-old technique for cutting procrastination and holding attention. Every study session gets one automatically.</p>
           <div class="mini">
             <div class="mono" style="font-size:10px;color:var(--lime);letter-spacing:0.1em;margin-bottom:8px;">FOCUS SESSION</div>
             <div style="font-size:22px;font-weight:700;color:var(--ink);font-family:var(--mono);">24:59</div>
@@ -1392,8 +1400,8 @@ body::after{
         </div>
         <div class="fp-item">
           <div class="knum">Streaks</div>
-          <h3>The reason you'll show up tomorrow.</h3>
-          <p>Check off tasks, keep the streak alive. Even the boring days count.</p>
+          <h3>Small wins, every day, add up.</h3>
+          <p>Consistency beats occasional cramming. Check off tasks, keep the streak alive, and the habit builds itself. Even the boring days count.</p>
           <div class="mini" style="display:flex;align-items:flex-end;gap:12px;">
             <span class="streakbig" style="color:var(--lime);">12</span>
             <div style="padding-bottom:2px;"><div style="font-weight:600;font-size:13px;color:var(--cream);">day streak</div><div style="font-size:11.5px;color:var(--cream-faint);">longest: 31</div></div>
@@ -1486,9 +1494,9 @@ body::after{
         <div class="pc-billed" data-m="billed monthly" data-a="billed annually · save $24/yr">billed monthly</div>
         <ul class="pc-feats">
           <li><span class="pc-ck">✓</span> Unlimited AI study plans, flashcards, syllabus scans &amp; project breakdowns</li>
-          <li><span class="pc-ck">✓</span> Smart Reschedule — not on Free at all</li>
+          <li><span class="pc-ck">✓</span> Smart Reschedule, not on Free at all</li>
           <li><span class="pc-ck">✓</span> All AI models: Flash, Standard &amp; Research</li>
-          <li><span class="pc-ck">✓</span> Full essay suite: grammar, rewrite &amp; citations</li>
+          <li><span class="pc-ck">✓</span> Unlimited AI chat, every day</li>
         </ul>
         <hr class="pc-hr">
         <a href="/app" class="pc-btn pc-btn-primary magnetic">Upgrade to Pro <span class="ar">→</span></a>
