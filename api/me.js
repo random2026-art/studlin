@@ -3,6 +3,7 @@ const { admin, db, auth } = require('./_lib/firebase-admin');
 const { setCors, verifyAuth } = require('./_lib/auth');
 const { withSentry } = require('./_lib/sentry');
 const { exchangeCodeForTokens, refreshAccessToken, fetchGoogleCalendarEvents, registerCalendarWatch, stopCalendarWatch } = require('./_lib/google-calendar');
+const { normalizeCanvasDomain, fetchAllCanvasData } = require('./_lib/canvas');
 
 // Source of truth for the Free plan's monthly AI chat allowance — this is
 // what actually creates the user doc on first load. Must match
@@ -176,6 +177,88 @@ async function handleGoogleCalendarDisconnect(user, res) {
   } catch (err) {
     console.error('google calendar disconnect error:', err);
     return res.status(500).json({ error: 'Could not disconnect Google Calendar.' });
+  }
+}
+
+// Personal Access Token connect -- the richer alternative to the .ics
+// Calendar Feed import (api/cal-proxy.js). Unlike a calendar-feed URL
+// (fine to keep client-side, see importedCalendars in studlin-app.jsx), a
+// Canvas token is a real account credential with broad read access to
+// courses, grades, and files -- so it's stored the same way as Google
+// Calendar's refresh token: server-side only, on users/{uid}, never
+// readable by any client (see firestore.rules users/{userId}: allow read:
+// if false).
+async function handleCanvasConnect(user, req, res) {
+  if (!db) return res.status(503).json({ error: 'Database unavailable.' });
+  const { domain: rawDomain, token } = req.body || {};
+  const domain = normalizeCanvasDomain(rawDomain);
+  if (!domain) return res.status(400).json({ error: "That doesn't look like a Canvas domain ending in instructure.com. Check your school's Canvas web address." });
+  if (!token || !String(token).trim()) return res.status(400).json({ error: 'Missing access token.' });
+
+  try {
+    const events = await fetchAllCanvasData(domain, String(token).trim());
+    const now = new Date().toISOString();
+    await db.collection('users').doc(user.uid).set({
+      canvasDomain: domain,
+      canvasAccessToken: String(token).trim(),
+      canvasConnectedAt: now,
+      canvasSyncedEvents: events,
+      canvasLastSyncedAt: now,
+      canvasLastSyncError: null,
+    }, { merge: true });
+    return res.status(200).json({ events, lastSyncedAt: now });
+  } catch (err) {
+    console.error('canvas connect error:', err);
+    return res.status(err.status && err.status < 500 ? err.status : 500).json({ error: err.message || 'Could not connect to Canvas. Please try again.' });
+  }
+}
+
+// Live re-fetch (not a cached read like Google Calendar's own pull) -- a
+// stored Canvas token has no OAuth popup to hang on, so unlike
+// pullGoogleCalendarIfConnected there's no downside to just calling Canvas
+// again on every resync. Shared by the manual per-item "sync now" and the
+// once-a-day auto-resync, same as resyncCalendar already does for every
+// .ics-based import in studlin-app.jsx.
+async function handleCanvasPull(user, res) {
+  if (!db) return res.status(503).json({ error: 'Database unavailable.' });
+  try {
+    const doc = await db.collection('users').doc(user.uid).get();
+    const data = doc.exists ? doc.data() : {};
+    if (!data.canvasAccessToken) return res.status(200).json({ connected: false, events: [] });
+    try {
+      const events = await fetchAllCanvasData(data.canvasDomain, data.canvasAccessToken);
+      const now = new Date().toISOString();
+      await db.collection('users').doc(user.uid).update({
+        canvasSyncedEvents: events,
+        canvasLastSyncedAt: now,
+        canvasLastSyncError: null,
+      });
+      return res.status(200).json({ connected: true, events, lastSyncedAt: now, lastSyncError: null });
+    } catch (syncErr) {
+      await db.collection('users').doc(user.uid).update({ canvasLastSyncError: syncErr.message || 'Sync failed' }).catch(() => {});
+      return res.status(200).json({ connected: true, events: data.canvasSyncedEvents || [], lastSyncedAt: data.canvasLastSyncedAt || null, lastSyncError: syncErr.message || 'Sync failed' });
+    }
+  } catch (err) {
+    console.error('canvas pull error:', err);
+    return res.status(500).json({ error: 'Could not load synced Canvas data.' });
+  }
+}
+
+async function handleCanvasDisconnect(user, res) {
+  if (!db) return res.status(503).json({ error: 'Database unavailable.' });
+  try {
+    await db.collection('users').doc(user.uid).update({
+      canvasDomain: admin.firestore.FieldValue.delete(),
+      canvasAccessToken: admin.firestore.FieldValue.delete(),
+      canvasConnectedAt: admin.firestore.FieldValue.delete(),
+      canvasSyncedEvents: admin.firestore.FieldValue.delete(),
+      canvasLastSyncedAt: admin.firestore.FieldValue.delete(),
+      canvasLastSyncError: admin.firestore.FieldValue.delete(),
+    });
+    return res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error('canvas disconnect error:', err);
+    return res.status(500).json({ error: 'Could not disconnect Canvas.' });
   }
 }
 
@@ -459,6 +542,9 @@ module.exports = withSentry(async (req, res) => {
     if (action === 'google-calendar-connect') return handleGoogleCalendarConnect(user, req, res);
     if (action === 'google-calendar-pull') return handleGoogleCalendarPull(user, res);
     if (action === 'google-calendar-disconnect') return handleGoogleCalendarDisconnect(user, res);
+    if (action === 'canvas-connect') return handleCanvasConnect(user, req, res);
+    if (action === 'canvas-pull') return handleCanvasPull(user, res);
+    if (action === 'canvas-disconnect') return handleCanvasDisconnect(user, res);
     return handleSubscriptionAction(user, req, res);
   }
 

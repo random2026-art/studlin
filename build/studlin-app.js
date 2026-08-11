@@ -1055,12 +1055,13 @@ const detectCalendarSourceType = (url) => {
     if (h.startsWith("outlook.")) return "Outlook";
     if (h === "schoology.com" || h.endsWith(".schoology.com")) return "Schoology";
     if (h === "instructure.com" || h.endsWith(".instructure.com")) return "Canvas";
+    if (h === "blackboard.com" || h.endsWith(".blackboard.com")) return "Blackboard";
     return "Work schedule";
   } catch (e) {
     return "Calendar";
   }
 };
-const isAcademicCalendarSource = (sourceType) => sourceType === "Schoology" || sourceType === "Canvas";
+const isAcademicCalendarSource = (sourceType) => sourceType === "Schoology" || sourceType === "Canvas" || sourceType === "Blackboard";
 const PLATFORM_HELP = {
   schoology: {
     label: "Schoology",
@@ -1080,8 +1081,24 @@ const PLATFORM_HELP = {
       "Copy the link and paste it below"
     ],
     note: null
+  },
+  blackboard: {
+    label: "Blackboard",
+    steps: [
+      "Log into Blackboard and open Calendar from the left-hand menu",
+      "Click the gear/settings icon in the top right of the calendar",
+      'Choose "Share Calendar" and turn it on',
+      "Copy the link it gives you and paste it below"
+    ],
+    note: "Studlin currently supports Blackboard accounts hosted on a blackboard.com address. If your school uses its own custom domain for Blackboard, this link may not work yet."
   }
 };
+const CANVAS_TOKEN_STEPS = [
+  "Log into Canvas and click Account in the left sidebar, then Settings",
+  "Scroll down to Approved Integrations and click + New Access Token",
+  'Purpose can be anything ("Studlin" works), leave the expiry date blank, then click Generate Token',
+  "Copy the token Canvas shows right away. It will not be shown again, so paste it below now"
+];
 function mergeImportedEvents(existingEvents, subId, fetchedEvents, classifications) {
   const fetchedByUid = new Map(fetchedEvents.filter((e) => e.uid).map((e) => [e.uid, e]));
   const kept = existingEvents.filter((ev) => {
@@ -1118,6 +1135,13 @@ function mergeImportedEvents(existingEvents, subId, fetchedEvents, classificatio
       // -- confidenceLog starts empty so the exam-prep check-in flow works
       // on it exactly like any other exam the moment it lands.
       ...c && c.kind === "exam" ? { examWeight: c.examWeight || "major", confidenceLog: [] } : {},
+      // Real, professor-configured grade weighting from Canvas's
+      // assignment_groups.group_weight (see canvasAssignmentToEvent in
+      // api/_lib/canvas.js) -- not an AI guess from prose like every other
+      // gradeWeightPercent source in this file. Only ICS/token imports
+      // that actually carry this ever set e.gradeWeightPercent; every
+      // other caller is unaffected.
+      ...c && c.kind === "exam" && e.gradeWeightPercent != null ? { gradeWeightPercent: e.gradeWeightPercent } : {},
       // Second real bug from the same live discussion: a classified
       // "project" used to collapse to plain kind:"deadline" with no
       // phases/outline, so isProjectMarker() never fired and it silently
@@ -14270,13 +14294,63 @@ function SettingsTab({ theme = "dark", setTheme = () => {
   const [importCalReview, setImportCalReview] = useState(null);
   const [importCalPlatformHint, setImportCalPlatformHint] = useState(null);
   const [removeCalConfirm, setRemoveCalConfirm] = useState(null);
+  const [importCalMethod, setImportCalMethod] = useState("token");
+  const [canvasDomainInput, setCanvasDomainInput] = useState("");
+  const [canvasTokenInput, setCanvasTokenInput] = useState("");
   const openImportCalModal = (hint) => {
     setImportCalUrl("");
     setImportCalLabel("");
     setImportCalError("");
     setImportCalReview(null);
     setImportCalPlatformHint(hint || null);
+    setImportCalMethod("token");
+    setCanvasDomainInput("");
+    setCanvasTokenInput("");
     setImportCalOpen(true);
+  };
+  const connectCanvasToken = async () => {
+    const domain = canvasDomainInput.trim();
+    const token = canvasTokenInput.trim();
+    if (!domain) {
+      setImportCalError("Enter your school's Canvas domain.");
+      return;
+    }
+    if (!token) {
+      setImportCalError("Paste your Canvas access token.");
+      return;
+    }
+    setImportCalError("");
+    setImportCalLoading(true);
+    try {
+      const res = await authFetch("/api/me", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "canvas-connect", domain, token }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Couldn't connect to Canvas. Check your domain and token.");
+      setImportCalLoading(false);
+      let events = data.events;
+      if (events.length > 0) {
+        setImportCalClassifying(true);
+        const classifications = await classifyImportedCalendarEvents(events, "Canvas", mgmtSubjs.map((s) => s.label));
+        setImportCalClassifying(false);
+        events = events.map((e) => {
+          const c = e.uid && classifications[e.uid];
+          return { ...e, kind: c ? c.kind : "assignment", subjectGuess: c ? c.subject : e.subject, examWeight: c && c.examWeight, include: true };
+        });
+      }
+      setImportCalReview({
+        subId: "canvas-token",
+        url: null,
+        label: "Canvas",
+        sourceType: "Canvas",
+        events,
+        skippedAllDay: 0,
+        classified: true,
+        viaToken: true
+      });
+    } catch (e) {
+      setImportCalLoading(false);
+      setImportCalClassifying(false);
+      setImportCalError(e.message || "Couldn't connect to Canvas. Check your domain and token.");
+    }
   };
   const onImportCalUrlChange = (v) => {
     setImportCalUrl(v);
@@ -14325,7 +14399,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
   };
   const confirmImportCalendar = () => {
     if (!importCalReview) return;
-    const { subId, url, label, sourceType, events: reviewEvents, classified } = importCalReview;
+    const { subId, url, label, sourceType, events: reviewEvents, classified, viaToken } = importCalReview;
     const fetched = classified ? reviewEvents.filter((e) => e.include !== false) : reviewEvents;
     const classifications = classified ? Object.fromEntries(
       fetched.filter((e) => e.uid).map((e) => [e.uid, { kind: e.kind, subject: e.subjectGuess, examWeight: e.examWeight }])
@@ -14333,8 +14407,8 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     const merged = mergeImportedEvents(lsGet("events", []), subId, fetched, classifications);
     const result = reconcileFixedEventConflicts(merged.filter((e) => e.importSubId === subId));
     surfaceReconcileResult(result);
-    const sub = { id: subId, url, label, sourceType, lastSyncedAt: Date.now() };
-    const nextSubs = [...importedCals, sub];
+    const sub = { id: subId, url, label, sourceType, lastSyncedAt: Date.now(), ...viaToken ? { viaToken: true } : {} };
+    const nextSubs = [...importedCals.filter((s) => s.id !== subId), sub];
     setImportedCals(nextSubs);
     saveImportedCalendars(nextSubs);
     setImportCalOpen(false);
@@ -14343,9 +14417,20 @@ function SettingsTab({ theme = "dark", setTheme = () => {
   };
   const resyncCalendar = async (sub) => {
     try {
-      const res = await fetch("/api/cal-proxy?url=" + encodeURIComponent(sub.url));
-      const data = await res.json();
-      if (!res.ok || !data.ok) return;
+      let data;
+      if (sub.viaToken) {
+        const res = await authFetch("/api/me", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "canvas-pull" }) });
+        data = await res.json();
+        if (!res.ok || !data.connected) return;
+        if (data.lastSyncError) {
+          showToast(sub.label + ": " + data.lastSyncError, "error");
+          return;
+        }
+      } else {
+        const res = await fetch("/api/cal-proxy?url=" + encodeURIComponent(sub.url));
+        data = await res.json();
+        if (!res.ok || !data.ok) return;
+      }
       const existingUids = new Set(lsGet("events", []).filter((e) => e.importSubId === sub.id).map((e) => e.externalUid));
       const newEvents = data.events.filter((e) => e.uid && !existingUids.has(e.uid));
       let classifications;
@@ -14371,6 +14456,10 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     saveImportedCalendars(nextSubs);
     setRemoveCalConfirm(null);
     showToast(sub.label + " removed");
+    if (sub.viaToken) {
+      authFetch("/api/me", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "canvas-disconnect" }) }).catch(() => {
+      });
+    }
   };
   useEffect(() => {
     const today = dayKey();
@@ -14604,10 +14693,13 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     setPrepScheduleModeLS(v);
   } }))), active === "Integrations" && /* @__PURE__ */ React.createElement(React.Fragment, null, integrationToast && /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", top: 20, right: 20, zIndex: 999, padding: "11px 18px", borderRadius: 10, background: integrationToast.type === "error" ? T.red : T.teal, color: "#fff", fontSize: 13, fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", animation: "studlinPop 0.2s ease", maxWidth: 340 } }, integrationToast.msg), /* @__PURE__ */ React.createElement(Card, { style: { marginBottom: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4 } }, "Calendar Integrations"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.text, marginBottom: 16, lineHeight: 1.6 } }, "Pull your existing events into Studlin. A pasted calendar link is never stored on our servers. Google Calendar syncs automatically in the background instead, which means your sync credential and a copy of your synced events are kept securely server-side \u2014 never readable by anyone but you."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", borderRadius: 10, background: T.card2, border: `1px solid ${calGoogleLinked ? T.teal + "44" : T.border}`, transition: "border-color 0.2s" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 40, height: 40, borderRadius: 10, background: "rgba(66,133,244,0.10)", border: "1px solid rgba(66,133,244,0.22)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none" }, /* @__PURE__ */ React.createElement("path", { d: "M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z", fill: "#4285F4" }), /* @__PURE__ */ React.createElement("path", { d: "M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z", fill: "#34A853" }), /* @__PURE__ */ React.createElement("path", { d: "M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z", fill: "#FBBC05" }), /* @__PURE__ */ React.createElement("path", { d: "M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z", fill: "#EA4335" }))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, "Google Calendar"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: googleSyncError ? T.red : calGoogleLinked ? T.teal : googleSyncing ? T.amber : T.muted, marginTop: 2 } }, googleSyncing ? "Importing events from Google\u2026" : googleSyncError ? "Sync stopped working \u2014 reconnect below" : calGoogleLinked ? "Connected \xB7 syncs automatically \xB7 last synced " + timeAgoLabel(googleLastSynced) : "Read-only \xB7 imports your upcoming events, and blocks the time on your calendar"), !calGoogleLinked && !googleSyncing && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.faint, marginTop: 3 } }, `Seeing an "unverified app" warning? Paste your calendar's secret address into "Calendar or work schedule" below instead: no verification needed.`)), calGoogleLinked && !googleSyncError && /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: syncGoogleNow, disabled: googleSyncing, style: { flexShrink: 0, opacity: googleSyncing ? 0.55 : 1 } }, Icon.refresh), /* @__PURE__ */ React.createElement(BtnSm, { variant: calGoogleLinked && !googleSyncError ? "subtle" : "lime", onClick: googleSyncError ? connectGoogle : calGoogleLinked ? disconnectGoogle : connectGoogle, disabled: googleSyncing, style: { flexShrink: 0, opacity: googleSyncing ? 0.55 : 1 } }, googleSyncing ? "Syncing\u2026" : googleSyncError ? "Reconnect" : calGoogleLinked ? "Disconnect" : "Connect")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", borderRadius: 10, background: T.card2, border: `1px solid ${importedCals.length > 0 ? T.teal + "44" : T.border}`, transition: "border-color 0.2s" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 40, height: 40, borderRadius: 10, background: T.lime + "14", border: `1px solid ${T.lime}33`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color: T.lime } }, Icon.link), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, "Calendar or work schedule"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: importedCals.length > 0 ? T.teal : T.muted, marginTop: 2 } }, importedCals.length > 0 ? importedCals.length + " connected \xB7 Google, Outlook, iCloud, or a shift-scheduling app" : "Paste any calendar link: Google, Outlook, iCloud, or your work shift schedule")), /* @__PURE__ */ React.createElement(BtnSm, { variant: importedCals.length > 0 ? "subtle" : "lime", onClick: () => openImportCalModal(), style: { flexShrink: 0 } }, importedCals.length > 0 ? "Manage" : "Connect")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", borderRadius: 10, background: T.card2, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { width: 40, height: 40, borderRadius: 10, background: T.lime + "14", border: `1px solid ${T.lime}33`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color: T.lime } }, Icon.file), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, "Scan your work schedule"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, "No calendar link? Upload a photo \u2014 for When I Work, Homebase, or any shift app")), /* @__PURE__ */ React.createElement(BtnSm, { variant: "lime", onClick: openWorkScanModal, style: { flexShrink: 0 } }, "Scan")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", borderRadius: 10, background: T.card2, border: `1px solid ${T.border}`, opacity: 0.5 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 40, height: 40, borderRadius: 10, background: "rgba(255,255,255,0.06)", border: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: T.text }, /* @__PURE__ */ React.createElement("path", { d: "M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z" }))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, "Apple Calendar, one-tap", /* @__PURE__ */ React.createElement("span", { style: { marginLeft: 8, fontSize: 10.5, fontWeight: 600, color: T.faint } }, "(Coming Soon)")), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, "Direct sign-in, no link to paste \u2014 you can already connect iCloud above in the meantime")), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: true, style: { flexShrink: 0, cursor: "not-allowed" } }, "Connect")), (() => {
     const canvasConnected = importedCals.filter((c) => c.sourceType === "Canvas");
-    return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", borderRadius: 10, background: T.card2, border: `1px solid ${canvasConnected.length > 0 ? T.teal + "44" : T.border}`, transition: "border-color 0.2s" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 40, height: 40, borderRadius: 10, background: "rgba(226,80,45,0.10)", border: "1px solid rgba(226,80,45,0.22)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "#E2502D", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("path", { d: "M22 10v6M2 10l10-5 10 5-10 5z" }), /* @__PURE__ */ React.createElement("path", { d: "M6 12v5c3 3 9 3 12 0v-5" }))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, "Canvas LMS"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: canvasConnected.length > 0 ? T.teal : T.muted, marginTop: 2 } }, canvasConnected.length > 0 ? canvasConnected.length + " connected \xB7 syncs automatically" : "Personal calendar feed \u2014 no school IT setup required")), /* @__PURE__ */ React.createElement(BtnSm, { variant: canvasConnected.length > 0 ? "subtle" : "lime", onClick: () => openImportCalModal("canvas"), style: { flexShrink: 0 } }, canvasConnected.length > 0 ? "Manage" : "Connect"));
+    return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", borderRadius: 10, background: T.card2, border: `1px solid ${canvasConnected.length > 0 ? T.teal + "44" : T.border}`, transition: "border-color 0.2s" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 40, height: 40, borderRadius: 10, background: "rgba(226,80,45,0.10)", border: "1px solid rgba(226,80,45,0.22)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "#E2502D", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("path", { d: "M22 10v6M2 10l10-5 10 5-10 5z" }), /* @__PURE__ */ React.createElement("path", { d: "M6 12v5c3 3 9 3 12 0v-5" }))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, "Canvas LMS"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: canvasConnected.length > 0 ? T.teal : T.muted, marginTop: 2 } }, canvasConnected.length > 0 ? canvasConnected.length + " connected \xB7 syncs automatically" : "Access token or calendar feed. No school IT setup required")), /* @__PURE__ */ React.createElement(BtnSm, { variant: canvasConnected.length > 0 ? "subtle" : "lime", onClick: () => openImportCalModal("canvas"), style: { flexShrink: 0 } }, canvasConnected.length > 0 ? "Manage" : "Connect"));
   })(), (() => {
     const schoologyConnected = importedCals.filter((c) => c.sourceType === "Schoology");
     return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", borderRadius: 10, background: T.card2, border: `1px solid ${schoologyConnected.length > 0 ? T.teal + "44" : T.border}`, transition: "border-color 0.2s" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 40, height: 40, borderRadius: 10, background: T.lime + "14", border: `1px solid ${T.lime}33`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color: T.lime } }, Icon.link), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, "Schoology"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: schoologyConnected.length > 0 ? T.teal : T.muted, marginTop: 2 } }, schoologyConnected.length > 0 ? schoologyConnected.length + " connected \xB7 syncs automatically" : "Personal calendar feed \u2014 no school IT setup required")), /* @__PURE__ */ React.createElement(BtnSm, { variant: schoologyConnected.length > 0 ? "subtle" : "lime", onClick: () => openImportCalModal("schoology"), style: { flexShrink: 0 } }, schoologyConnected.length > 0 ? "Manage" : "Connect"));
+  })(), (() => {
+    const blackboardConnected = importedCals.filter((c) => c.sourceType === "Blackboard");
+    return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", borderRadius: 10, background: T.card2, border: `1px solid ${blackboardConnected.length > 0 ? T.teal + "44" : T.border}`, transition: "border-color 0.2s" } }, /* @__PURE__ */ React.createElement("div", { style: { width: 40, height: 40, borderRadius: 10, background: T.lime + "14", border: `1px solid ${T.lime}33`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color: T.lime } }, Icon.link), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, "Blackboard"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: blackboardConnected.length > 0 ? T.teal : T.muted, marginTop: 2 } }, blackboardConnected.length > 0 ? blackboardConnected.length + " connected \xB7 syncs automatically" : "Personal calendar feed. No school IT setup required")), /* @__PURE__ */ React.createElement(BtnSm, { variant: blackboardConnected.length > 0 ? "subtle" : "lime", onClick: () => openImportCalModal("blackboard"), style: { flexShrink: 0 } }, blackboardConnected.length > 0 ? "Manage" : "Connect"));
   })()), (calGoogleLinked || calAppleLinked) && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 14, padding: "10px 14px", borderRadius: 8, background: T.teal + "10", border: `1px solid ${T.teal}25`, fontSize: 12, color: T.teal, lineHeight: 1.6 } }, "Calendar sync active. Events appear in read-only mode on your Studlin calendar and are stored locally on this device."), DEV_MODE && /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", disabled: canvasSeeding, style: { marginTop: 14 }, onClick: async () => {
     setCanvasSeeding(true);
     try {
@@ -14621,14 +14713,20 @@ function SettingsTab({ theme = "dark", setTheme = () => {
       open: importCalOpen,
       onClose: () => setImportCalOpen(false),
       title: importCalReview ? "Review " + importCalReview.label : importCalPlatformHint ? "Connect " + PLATFORM_HELP[importCalPlatformHint].label : "Connect a calendar or work schedule",
-      sub: importCalReview ? importCalReview.classified ? "Studlin sorted these into assignments, exams, and projects \u2014 check anything that looks off before adding." : "These will be added as fixed, occupied time \u2014 Studlin will plan around them." : importCalPlatformHint ? "Paste your personal " + PLATFORM_HELP[importCalPlatformHint].label + " calendar feed link \u2014 see how below." : "Paste a calendar or work-schedule link (Google, Outlook, iCloud, or your shift-scheduling app's calendar feed).",
+      sub: importCalReview ? importCalReview.classified ? "Studlin sorted these into assignments, exams, and projects. Check anything that looks off before adding." : "These will be added as fixed, occupied time \u2014 Studlin will plan around them." : importCalPlatformHint === "canvas" && importCalMethod === "token" ? "Connect with an access token to pull real assignment details and grade weights straight from Canvas." : importCalPlatformHint ? "Paste your personal " + PLATFORM_HELP[importCalPlatformHint].label + " calendar feed link. See how below." : "Paste a calendar or work-schedule link (Google, Outlook, iCloud, or your shift-scheduling app's calendar feed).",
       width: 520,
-      footer: importCalReview ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setImportCalReview(null) }, "Back"), /* @__PURE__ */ React.createElement(Btn, { onClick: confirmImportCalendar, disabled: importCalReview.events.length === 0, style: { opacity: importCalReview.events.length === 0 ? 0.45 : 1 } }, "Add ", importCalReview.classified ? importCalReview.events.filter((e) => e.include !== false).length : importCalReview.events.length, " to Calendar \u2192")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setImportCalOpen(false) }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: fetchCalendarPreview, disabled: importCalLoading || importCalClassifying, style: { opacity: importCalLoading || importCalClassifying ? 0.6 : 1 } }, importCalClassifying ? "Sorting into assignments/exams\u2026" : importCalLoading ? "Checking\u2026" : "Continue"))
+      footer: importCalReview ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setImportCalReview(null) }, "Back"), /* @__PURE__ */ React.createElement(Btn, { onClick: confirmImportCalendar, disabled: importCalReview.events.length === 0, style: { opacity: importCalReview.events.length === 0 ? 0.45 : 1 } }, "Add ", importCalReview.classified ? importCalReview.events.filter((e) => e.include !== false).length : importCalReview.events.length, " to Calendar \u2192")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setImportCalOpen(false) }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: importCalPlatformHint === "canvas" && importCalMethod === "token" ? connectCanvasToken : fetchCalendarPreview, disabled: importCalLoading || importCalClassifying, style: { opacity: importCalLoading || importCalClassifying ? 0.6 : 1 } }, importCalClassifying ? "Sorting into assignments/exams\u2026" : importCalLoading ? importCalPlatformHint === "canvas" && importCalMethod === "token" ? "Connecting\u2026" : "Checking\u2026" : "Continue"))
     },
-    !importCalReview ? /* @__PURE__ */ React.createElement(React.Fragment, null, importCalPlatformHint && PLATFORM_HELP[importCalPlatformHint] && (() => {
+    !importCalReview ? /* @__PURE__ */ React.createElement(React.Fragment, null, importCalPlatformHint === "canvas" && importCalMethod === "token" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: T.text, marginBottom: 8 } }, "How to generate a Canvas access token"), /* @__PURE__ */ React.createElement("ol", { style: { margin: 0, paddingLeft: 18, fontSize: 11.5, color: T.muted, lineHeight: 1.8 } }, CANVAS_TOKEN_STEPS.map((s, i) => /* @__PURE__ */ React.createElement("li", { key: i }, s))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.faint, marginTop: 8, lineHeight: 1.5 } }, "Studlin uses this to read your courses, assignments, and grade weights. It's stored securely on Studlin's servers and is never visible to anyone else.")), /* @__PURE__ */ React.createElement(Field, { label: "Canvas domain" }, /* @__PURE__ */ React.createElement(Input, { value: canvasDomainInput, onChange: (e) => setCanvasDomainInput(e.target.value), placeholder: "yourschool.instructure.com", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Access token" }, /* @__PURE__ */ React.createElement(Input, { type: "password", value: canvasTokenInput, onChange: (e) => setCanvasTokenInput(e.target.value), placeholder: "Paste the token Canvas gave you" }), importCalError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.red, marginTop: 6 } }, importCalError)), /* @__PURE__ */ React.createElement("button", { onClick: () => {
+      setImportCalMethod("feed");
+      setImportCalError("");
+    }, style: { background: "none", border: "none", padding: 0, marginTop: 2, fontSize: 11.5, color: T.muted, textDecoration: "underline", cursor: "pointer", fontFamily: T.font } }, "Token generation blocked at your school? Use a calendar link instead \u2192")) : /* @__PURE__ */ React.createElement(React.Fragment, null, importCalPlatformHint && PLATFORM_HELP[importCalPlatformHint] && (() => {
       const help = PLATFORM_HELP[importCalPlatformHint];
       return /* @__PURE__ */ React.createElement("div", { style: { background: T.card2, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px", marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: T.text, marginBottom: 8 } }, "How to find your ", help.label, " calendar link"), /* @__PURE__ */ React.createElement("ol", { style: { margin: 0, paddingLeft: 18, fontSize: 11.5, color: T.muted, lineHeight: 1.8 } }, help.steps.map((s, i) => /* @__PURE__ */ React.createElement("li", { key: i }, s))), help.note && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.faint, marginTop: 8, lineHeight: 1.5 } }, help.note));
-    })(), /* @__PURE__ */ React.createElement(Field, { label: "Calendar link" }, /* @__PURE__ */ React.createElement(Input, { value: importCalUrl, onChange: (e) => onImportCalUrlChange(e.target.value), placeholder: "https://calendar.google.com/calendar/ical/\u2026", autoFocus: true }), importCalError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.red, marginTop: 6 } }, importCalError)), importCalUrl.trim() && /* @__PURE__ */ React.createElement(Field, { label: "Label", hint: "How this shows up in Studlin \u2014 edit it if you'd like." }, /* @__PURE__ */ React.createElement(Input, { value: importCalLabel, onChange: (e) => setImportCalLabel(e.target.value) })), importedCals.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 18, paddingTop: 16, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 10 } }, "Connected calendars"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, importedCals.map((sub) => /* @__PURE__ */ React.createElement("div", { key: sub.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: T.card2, borderRadius: 9, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, sub.label), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 1 } }, "synced ", timeAgoLabel(sub.lastSyncedAt))), /* @__PURE__ */ React.createElement("button", { onClick: () => resyncCalendar(sub), title: "Sync now", style: { width: 26, height: 26, borderRadius: 6, border: `1px solid ${T.border}`, background: "transparent", color: T.muted, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 } }, Icon.refresh), /* @__PURE__ */ React.createElement("button", { onClick: () => setRemoveCalConfirm(sub), title: "Remove", style: { padding: "5px 10px", borderRadius: 6, border: `1px solid ${T.border}`, background: "transparent", color: T.muted, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, flexShrink: 0 } }, "Remove")))))) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, importCalReview.events.length, " event", importCalReview.events.length !== 1 ? "s" : "", " found", importCalReview.skippedAllDay > 0 && " \xB7 " + importCalReview.skippedAllDay + " all-day entr" + (importCalReview.skippedAllDay !== 1 ? "ies" : "y") + " skipped for now"), importCalReview.events.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { padding: "24px 16px", textAlign: "center", color: T.muted, fontSize: 12.5 } }, "Nothing to import from this link right now.") : importCalReview.classified ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, maxHeight: 400, overflowY: "auto" } }, importCalReview.events.map((ev, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { padding: "10px 12px", borderRadius: 9, background: T.card2, border: `1px solid ${T.border}`, opacity: ev.include === false ? 0.5 : 1 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "flex-start", gap: 9 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: ev.include !== false, onChange: () => setImportCalReview((r) => ({ ...r, events: r.events.map((x, xi) => xi === i ? { ...x, include: !x.include } : x) })), style: { marginTop: 11, cursor: "pointer", flexShrink: 0 } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted, flexShrink: 0 } }, (/* @__PURE__ */ new Date(ev.date + "T12:00:00")).toLocaleDateString("en-US", { month: "short", day: "numeric" }), " \xB7 ", fmtClock12(ev.time))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(
+    })(), /* @__PURE__ */ React.createElement(Field, { label: "Calendar link" }, /* @__PURE__ */ React.createElement(Input, { value: importCalUrl, onChange: (e) => onImportCalUrlChange(e.target.value), placeholder: "https://calendar.google.com/calendar/ical/\u2026", autoFocus: true }), importCalError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.red, marginTop: 6 } }, importCalError)), importCalUrl.trim() && /* @__PURE__ */ React.createElement(Field, { label: "Label", hint: "How this shows up in Studlin \u2014 edit it if you'd like." }, /* @__PURE__ */ React.createElement(Input, { value: importCalLabel, onChange: (e) => setImportCalLabel(e.target.value) })), importCalPlatformHint === "canvas" && /* @__PURE__ */ React.createElement("button", { onClick: () => {
+      setImportCalMethod("token");
+      setImportCalError("");
+    }, style: { background: "none", border: "none", padding: 0, marginTop: 2, fontSize: 11.5, color: T.muted, textDecoration: "underline", cursor: "pointer", fontFamily: T.font } }, "\u2190 Use an access token instead (gets full descriptions and real grade weights)")), importedCals.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 18, paddingTop: 16, borderTop: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: T.muted, marginBottom: 10 } }, "Connected calendars"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, importedCals.map((sub) => /* @__PURE__ */ React.createElement("div", { key: sub.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: T.card2, borderRadius: 9, border: `1px solid ${T.border}` } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, sub.label), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 1 } }, "synced ", timeAgoLabel(sub.lastSyncedAt))), /* @__PURE__ */ React.createElement("button", { onClick: () => resyncCalendar(sub), title: "Sync now", style: { width: 26, height: 26, borderRadius: 6, border: `1px solid ${T.border}`, background: "transparent", color: T.muted, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 } }, Icon.refresh), /* @__PURE__ */ React.createElement("button", { onClick: () => setRemoveCalConfirm(sub), title: "Remove", style: { padding: "5px 10px", borderRadius: 6, border: `1px solid ${T.border}`, background: "transparent", color: T.muted, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font, flexShrink: 0 } }, "Remove")))))) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.muted, marginBottom: 10 } }, importCalReview.events.length, " event", importCalReview.events.length !== 1 ? "s" : "", " found", importCalReview.skippedAllDay > 0 && " \xB7 " + importCalReview.skippedAllDay + " all-day entr" + (importCalReview.skippedAllDay !== 1 ? "ies" : "y") + " skipped for now"), importCalReview.events.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { padding: "24px 16px", textAlign: "center", color: T.muted, fontSize: 12.5 } }, "Nothing to import from this link right now.") : importCalReview.classified ? /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, maxHeight: 400, overflowY: "auto" } }, importCalReview.events.map((ev, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { padding: "10px 12px", borderRadius: 9, background: T.card2, border: `1px solid ${T.border}`, opacity: ev.include === false ? 0.5 : 1 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "flex-start", gap: 9 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: ev.include !== false, onChange: () => setImportCalReview((r) => ({ ...r, events: r.events.map((x, xi) => xi === i ? { ...x, include: !x.include } : x) })), style: { marginTop: 11, cursor: "pointer", flexShrink: 0 } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: T.muted, flexShrink: 0 } }, (/* @__PURE__ */ new Date(ev.date + "T12:00:00")).toLocaleDateString("en-US", { month: "short", day: "numeric" }), " \xB7 ", fmtClock12(ev.time))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement(
       SelectChip,
       {
         options: [{ value: "assignment", label: "Assignment" }, { value: "exam", label: "Exam" }, { value: "project", label: "Project" }, { value: "class", label: "Class" }],
@@ -14643,7 +14741,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
         placeholder: "Subject",
         style: { width: 130, padding: "6px 9px", fontSize: 11.5 }
       }
-    ))))))) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, importCalReview.events.map((ev, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", justifyContent: "space-between", gap: 10, padding: "9px 12px", background: T.card2, borderRadius: 8, fontSize: 12.5 } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, flexShrink: 0 } }, (/* @__PURE__ */ new Date(ev.date + "T12:00:00")).toLocaleDateString("en-US", { month: "short", day: "numeric" }), " \xB7 ", fmtClock12(ev.time))))))
+    ), ev.kind === "exam" && ev.gradeWeightPercent != null && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 600, color: T.teal, background: T.teal + "14", border: `1px solid ${T.teal}33`, borderRadius: 6, padding: "3px 7px" } }, ev.gradeWeightPercent, "% of grade"))))))) : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, importCalReview.events.map((ev, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", justifyContent: "space-between", gap: 10, padding: "9px 12px", background: T.card2, borderRadius: 8, fontSize: 12.5 } }, /* @__PURE__ */ React.createElement("span", { style: { color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ev.title), /* @__PURE__ */ React.createElement("span", { style: { color: T.muted, flexShrink: 0 } }, (/* @__PURE__ */ new Date(ev.date + "T12:00:00")).toLocaleDateString("en-US", { month: "short", day: "numeric" }), " \xB7 ", fmtClock12(ev.time))))))
   ), /* @__PURE__ */ React.createElement(
     Modal,
     {

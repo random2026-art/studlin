@@ -2,12 +2,17 @@
 // Avoids browser CORS restrictions when importing iCloud / other calendar links.
 const { withSentry } = require('./_lib/sentry');
 
-// Schoology and Canvas are safe to allow with the same suffix-match check
-// as everything else here: both are SaaS platforms where the calendar-feed
-// hostname is always vendor-controlled DNS (*.schoology.com,
-// *.instructure.com) -- no school or district ever gets a subdomain outside
-// that zone, so the suffix can't be spoofed the way a fake lookalike domain
-// could be. PowerSchool and Infinite Campus are deliberately NOT here yet --
+// Schoology, Canvas, and Blackboard are safe to allow with the same
+// suffix-match check as everything else here: all three are SaaS
+// platforms where the calendar-feed hostname is always vendor-controlled
+// DNS (*.schoology.com, *.instructure.com, *.blackboard.com) -- no school
+// or district ever gets a subdomain outside that zone, so the suffix
+// can't be spoofed the way a fake lookalike domain could be. Blackboard
+// also ships as a self-hosted product on arbitrary institution-owned
+// domains, which this deliberately does NOT cover -- same reasoning as
+// PowerSchool and Infinite Campus below. Only the SaaS-hosted
+// *.blackboard.com instances are supported today.
+// PowerSchool and Infinite Campus are deliberately NOT here yet --
 // both are commonly self-hosted on arbitrary district-owned domains
 // (ps.somedistrict.k12.state.us, etc.), so there's no static suffix that
 // covers "any real instance" without either missing most real districts or
@@ -20,6 +25,7 @@ const ALLOWED_DOMAINS = [
   'outlook.office365.com',
   'schoology.com',
   'instructure.com',
+  'blackboard.com',
 ];
 
 function isAllowedCalendarHost(hostname) {
@@ -37,7 +43,7 @@ async function fetchCalendarRevalidated(url, maxRedirects = 3) {
   for (let i = 0; i <= maxRedirects; i++) {
     const parsed = new URL(current);
     if (!isAllowedCalendarHost(parsed.hostname)) {
-      throw Object.assign(new Error('Domain not allowed. Only iCloud, Google, Outlook, Schoology, and Canvas calendar feeds are supported.'), { status: 403 });
+      throw Object.assign(new Error('Domain not allowed. Only iCloud, Google, Outlook, Schoology, Canvas, and Blackboard calendar feeds are supported.'), { status: 403 });
     }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
@@ -68,7 +74,7 @@ module.exports = withSentry(async (req, res) => {
   try { parsed = new URL(url); } catch { return res.status(400).json({ error: 'Invalid URL' }); }
 
   if (!isAllowedCalendarHost(parsed.hostname)) {
-    return res.status(403).json({ error: 'Domain not allowed. Only iCloud, Google, Outlook, Schoology, and Canvas calendar feeds are supported.' });
+    return res.status(403).json({ error: 'Domain not allowed. Only iCloud, Google, Outlook, Schoology, Canvas, and Blackboard calendar feeds are supported.' });
   }
 
   try {

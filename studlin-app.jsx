@@ -1502,14 +1502,16 @@ const detectCalendarSourceType=(url)=>{
     if(h.startsWith("outlook."))return "Outlook";
     if(h==="schoology.com"||h.endsWith(".schoology.com"))return "Schoology";
     if(h==="instructure.com"||h.endsWith(".instructure.com"))return "Canvas";
+    if(h==="blackboard.com"||h.endsWith(".blackboard.com"))return "Blackboard";
     return "Work schedule";
   }catch(e){return "Calendar";}
 };
-// Schoology/Canvas is the one case where "what kind of import is this"
-// isn't just a display label -- it's also what tells fetchCalendarPreview
-// below to run the AI classification pass (see classifyImportedCalendarEvents)
-// instead of leaving every imported item as a generic "busy block."
-const isAcademicCalendarSource=(sourceType)=>sourceType==="Schoology"||sourceType==="Canvas";
+// Schoology/Canvas/Blackboard is the one case where "what kind of import is
+// this" isn't just a display label -- it's also what tells
+// fetchCalendarPreview below to run the AI classification pass (see
+// classifyImportedCalendarEvents) instead of leaving every imported item as
+// a generic "busy block."
+const isAcademicCalendarSource=(sourceType)=>sourceType==="Schoology"||sourceType==="Canvas"||sourceType==="Blackboard";
 // Step-by-step, platform-specific instructions shown inside the connect
 // modal itself (not a separate help page, not a hover tooltip -- the old
 // Canvas tooltip was hover-only, which doesn't work on touch and collapses
@@ -1536,7 +1538,27 @@ const PLATFORM_HELP={
     ],
     note:null,
   },
+  blackboard:{
+    label:"Blackboard",
+    steps:[
+      "Log into Blackboard and open Calendar from the left-hand menu",
+      "Click the gear/settings icon in the top right of the calendar",
+      "Choose \"Share Calendar\" and turn it on",
+      "Copy the link it gives you and paste it below",
+    ],
+    note:"Studlin currently supports Blackboard accounts hosted on a blackboard.com address. If your school uses its own custom domain for Blackboard, this link may not work yet.",
+  },
 };
+// Steps for the Canvas Personal Access Token connect flow, shown instead
+// of PLATFORM_HELP.canvas when importCalMethod is "token" (the default for
+// a Canvas connect). Kept separate from PLATFORM_HELP since Canvas is the
+// only platform with two different connect methods to explain.
+const CANVAS_TOKEN_STEPS=[
+  "Log into Canvas and click Account in the left sidebar, then Settings",
+  "Scroll down to Approved Integrations and click + New Access Token",
+  "Purpose can be anything (\"Studlin\" works), leave the expiry date blank, then click Generate Token",
+  "Copy the token Canvas shows right away. It will not be shown again, so paste it below now",
+];
 // Reconciles one imported subscription's freshly-fetched events against
 // whatever's already in the student's calendar for that subscription.
 // Pure data-in/data-out so it's directly unit-testable (see harness.js) --
@@ -1610,6 +1632,13 @@ function mergeImportedEvents(existingEvents,subId,fetchedEvents,classifications)
       // -- confidenceLog starts empty so the exam-prep check-in flow works
       // on it exactly like any other exam the moment it lands.
       ...(c&&c.kind==="exam"?{examWeight:c.examWeight||"major",confidenceLog:[]}:{}),
+      // Real, professor-configured grade weighting from Canvas's
+      // assignment_groups.group_weight (see canvasAssignmentToEvent in
+      // api/_lib/canvas.js) -- not an AI guess from prose like every other
+      // gradeWeightPercent source in this file. Only ICS/token imports
+      // that actually carry this ever set e.gradeWeightPercent; every
+      // other caller is unaffected.
+      ...(c&&c.kind==="exam"&&e.gradeWeightPercent!=null?{gradeWeightPercent:e.gradeWeightPercent}:{}),
       // Second real bug from the same live discussion: a classified
       // "project" used to collapse to plain kind:"deadline" with no
       // phases/outline, so isProjectMarker() never fired and it silently
@@ -21947,11 +21976,61 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   // behaves exactly as before.
   const [importCalPlatformHint,setImportCalPlatformHint]=useState(null);
   const [removeCalConfirm,setRemoveCalConfirm]=useState(null); // subscription pending removal
+  // 'token'|'feed' -- only meaningful when importCalPlatformHint==="canvas".
+  // Token is the default: it gets real assignment descriptions, quiz
+  // detection, and real grade weights (see connectCanvasToken below) that
+  // the .ics Calendar Feed can't expose. "feed" is the fallback for
+  // schools that restrict or block student token generation.
+  const [importCalMethod,setImportCalMethod]=useState("token");
+  const [canvasDomainInput,setCanvasDomainInput]=useState("");
+  const [canvasTokenInput,setCanvasTokenInput]=useState("");
 
   const openImportCalModal=(hint)=>{
     setImportCalUrl("");setImportCalLabel("");setImportCalError("");setImportCalReview(null);
     setImportCalPlatformHint(hint||null);
+    setImportCalMethod("token");
+    setCanvasDomainInput("");setCanvasTokenInput("");
     setImportCalOpen(true);
+  };
+  // The Canvas Personal Access Token connect flow -- a real account
+  // credential, so unlike every other calendar import above it's sent to
+  // /api/me (server-side storage, never client-side) instead of
+  // /api/cal-proxy. Mirrors fetchCalendarPreview's own classify-then-review
+  // shape below so the same review modal renders either way.
+  const connectCanvasToken=async()=>{
+    const domain=canvasDomainInput.trim();
+    const token=canvasTokenInput.trim();
+    if(!domain){setImportCalError("Enter your school's Canvas domain.");return;}
+    if(!token){setImportCalError("Paste your Canvas access token.");return;}
+    setImportCalError("");setImportCalLoading(true);
+    try{
+      const res=await authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"canvas-connect",domain,token})});
+      const data=await res.json();
+      if(!res.ok)throw new Error(data.error||"Couldn't connect to Canvas. Check your domain and token.");
+      setImportCalLoading(false);
+      let events=data.events;
+      if(events.length>0){
+        setImportCalClassifying(true);
+        const classifications=await classifyImportedCalendarEvents(events,"Canvas",mgmtSubjs.map(s=>s.label));
+        setImportCalClassifying(false);
+        // Falls back to the real Canvas course name (e.subject) instead of
+        // a generic "Other" when classification itself fails -- unlike the
+        // .ics path, a token connect already knows the real course name
+        // straight from Canvas, so there's a better fallback available here.
+        events=events.map(e=>{
+          const c=e.uid&&classifications[e.uid];
+          return {...e,kind:c?c.kind:"assignment",subjectGuess:c?c.subject:e.subject,examWeight:c&&c.examWeight,include:true};
+        });
+      }
+      setImportCalReview({
+        subId:"canvas-token",
+        url:null,label:"Canvas",sourceType:"Canvas",
+        events,skippedAllDay:0,classified:true,viaToken:true,
+      });
+    }catch(e){
+      setImportCalLoading(false);setImportCalClassifying(false);
+      setImportCalError(e.message||"Couldn't connect to Canvas. Check your domain and token.");
+    }
   };
   const onImportCalUrlChange=(v)=>{
     setImportCalUrl(v);
@@ -21996,7 +22075,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   };
   const confirmImportCalendar=()=>{
     if(!importCalReview)return;
-    const {subId,url,label,sourceType,events:reviewEvents,classified}=importCalReview;
+    const {subId,url,label,sourceType,events:reviewEvents,classified,viaToken}=importCalReview;
     // Unchecked rows never make it to mergeImportedEvents at all -- "skip
     // this one" has to mean it's not on the calendar, not just untagged.
     const fetched=classified?reviewEvents.filter(e=>e.include!==false):reviewEvents;
@@ -22006,8 +22085,15 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     const merged=mergeImportedEvents(lsGet("events",[]),subId,fetched,classifications);
     const result=reconcileFixedEventConflicts(merged.filter(e=>e.importSubId===subId));
     surfaceReconcileResult(result);
-    const sub={id:subId,url,label,sourceType,lastSyncedAt:Date.now()};
-    const nextSubs=[...importedCals,sub];
+    // url stays null for a token-based subscription -- there's no calendar
+    // link to remember, resyncCalendar routes on viaToken instead (see
+    // below) and fetches straight from the stored server-side token.
+    const sub={id:subId,url,label,sourceType,lastSyncedAt:Date.now(),...(viaToken?{viaToken:true}:{})};
+    // Filters out any existing entry with this same id first -- normally a
+    // no-op (a fresh connect's subId is always new), but a fixed id like
+    // Canvas token's "canvas-token" makes a reconnect update the existing
+    // row in place instead of appending a second, duplicate one.
+    const nextSubs=[...importedCals.filter(s=>s.id!==subId),sub];
     setImportedCals(nextSubs);saveImportedCalendars(nextSubs);
     setImportCalOpen(false);setImportCalReview(null);
     showToast(fetched.length+" event"+(fetched.length!==1?"s":"")+" synced from "+label+reconcileToastSuffix(result));
@@ -22023,9 +22109,17 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   // a day with nothing new triggers no AI call at all.
   const resyncCalendar=async(sub)=>{
     try{
-      const res=await fetch("/api/cal-proxy?url="+encodeURIComponent(sub.url));
-      const data=await res.json();
-      if(!res.ok||!data.ok)return;
+      let data;
+      if(sub.viaToken){
+        const res=await authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"canvas-pull"})});
+        data=await res.json();
+        if(!res.ok||!data.connected)return;
+        if(data.lastSyncError){showToast(sub.label+": "+data.lastSyncError,"error");return;}
+      }else{
+        const res=await fetch("/api/cal-proxy?url="+encodeURIComponent(sub.url));
+        data=await res.json();
+        if(!res.ok||!data.ok)return;
+      }
       // Computed unconditionally now (used to live only inside the
       // isAcademicCalendarSource branch, purely for classification) --
       // third fix from the same live discussion: this count was already
@@ -22055,6 +22149,12 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     setImportedCals(nextSubs);saveImportedCalendars(nextSubs);
     setRemoveCalConfirm(null);
     showToast(sub.label+" removed");
+    // The token itself only ever lives server-side (see handleCanvasConnect
+    // in api/me.js) -- removing the subscription client-side doesn't touch
+    // it, so this is the only thing that actually deletes it.
+    if(sub.viaToken){
+      authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"canvas-disconnect"})}).catch(()=>{});
+    }
   };
   // Once-a-day silent resync -- same shape as every other once-a-day gate
   // in the app, keyed off a dedicated flag rather than reusing an
@@ -22703,7 +22803,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontSize:13,fontWeight:600,color:T.white}}>Canvas LMS</div>
                       <div style={{fontSize:11,color:canvasConnected.length>0?T.teal:T.muted,marginTop:2}}>
-                        {canvasConnected.length>0?canvasConnected.length+" connected · syncs automatically":"Personal calendar feed — no school IT setup required"}
+                        {canvasConnected.length>0?canvasConnected.length+" connected · syncs automatically":"Access token or calendar feed. No school IT setup required"}
                       </div>
                     </div>
                     <BtnSm variant={canvasConnected.length>0?"subtle":"lime"} onClick={()=>openImportCalModal("canvas")} style={{flexShrink:0}}>{canvasConnected.length>0?"Manage":"Connect"}</BtnSm>
@@ -22721,6 +22821,20 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                       </div>
                     </div>
                     <BtnSm variant={schoologyConnected.length>0?"subtle":"lime"} onClick={()=>openImportCalModal("schoology")} style={{flexShrink:0}}>{schoologyConnected.length>0?"Manage":"Connect"}</BtnSm>
+                  </div>
+                );})()}
+                {(()=>{const blackboardConnected=importedCals.filter(c=>c.sourceType==="Blackboard");return(
+                  <div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:10,background:T.card2,border:`1px solid ${blackboardConnected.length>0?T.teal+"44":T.border}`,transition:"border-color 0.2s"}}>
+                    <div style={{width:40,height:40,borderRadius:10,background:T.lime+"14",border:`1px solid ${T.lime}33`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:T.lime}}>
+                      {Icon.link}
+                    </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:600,color:T.white}}>Blackboard</div>
+                      <div style={{fontSize:11,color:blackboardConnected.length>0?T.teal:T.muted,marginTop:2}}>
+                        {blackboardConnected.length>0?blackboardConnected.length+" connected · syncs automatically":"Personal calendar feed. No school IT setup required"}
+                      </div>
+                    </div>
+                    <BtnSm variant={blackboardConnected.length>0?"subtle":"lime"} onClick={()=>openImportCalModal("blackboard")} style={{flexShrink:0}}>{blackboardConnected.length>0?"Manage":"Connect"}</BtnSm>
                   </div>
                 );})()}
               </div>
@@ -22743,7 +22857,11 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
             </Card>
             <Modal open={importCalOpen} onClose={()=>setImportCalOpen(false)}
               title={importCalReview?"Review "+importCalReview.label:importCalPlatformHint?"Connect "+PLATFORM_HELP[importCalPlatformHint].label:"Connect a calendar or work schedule"}
-              sub={importCalReview?(importCalReview.classified?"Studlin sorted these into assignments, exams, and projects — check anything that looks off before adding.":"These will be added as fixed, occupied time — Studlin will plan around them."):(importCalPlatformHint?"Paste your personal "+PLATFORM_HELP[importCalPlatformHint].label+" calendar feed link — see how below.":"Paste a calendar or work-schedule link (Google, Outlook, iCloud, or your shift-scheduling app's calendar feed).")}
+              sub={importCalReview?(importCalReview.classified?"Studlin sorted these into assignments, exams, and projects. Check anything that looks off before adding.":"These will be added as fixed, occupied time — Studlin will plan around them."):(
+                importCalPlatformHint==="canvas"&&importCalMethod==="token"?"Connect with an access token to pull real assignment details and grade weights straight from Canvas.":
+                importCalPlatformHint?"Paste your personal "+PLATFORM_HELP[importCalPlatformHint].label+" calendar feed link. See how below.":
+                "Paste a calendar or work-schedule link (Google, Outlook, iCloud, or your shift-scheduling app's calendar feed)."
+              )}
               width={520}
               footer={importCalReview?(
                 <>
@@ -22755,28 +22873,59 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
               ):(
                 <>
                   <Btn variant="subtle" onClick={()=>setImportCalOpen(false)}>Cancel</Btn>
-                  <Btn onClick={fetchCalendarPreview} disabled={importCalLoading||importCalClassifying} style={{opacity:(importCalLoading||importCalClassifying)?0.6:1}}>{importCalClassifying?"Sorting into assignments/exams…":importCalLoading?"Checking…":"Continue"}</Btn>
+                  <Btn onClick={importCalPlatformHint==="canvas"&&importCalMethod==="token"?connectCanvasToken:fetchCalendarPreview} disabled={importCalLoading||importCalClassifying} style={{opacity:(importCalLoading||importCalClassifying)?0.6:1}}>
+                    {importCalClassifying?"Sorting into assignments/exams…":importCalLoading?(importCalPlatformHint==="canvas"&&importCalMethod==="token"?"Connecting…":"Checking…"):"Continue"}
+                  </Btn>
                 </>
               )}>
               {!importCalReview?(
                 <>
-                  {importCalPlatformHint&&PLATFORM_HELP[importCalPlatformHint]&&(()=>{const help=PLATFORM_HELP[importCalPlatformHint];return(
-                    <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
-                      <div style={{fontSize:11,fontWeight:700,color:T.text,marginBottom:8}}>How to find your {help.label} calendar link</div>
-                      <ol style={{margin:0,paddingLeft:18,fontSize:11.5,color:T.muted,lineHeight:1.8}}>
-                        {help.steps.map((s,i)=><li key={i}>{s}</li>)}
-                      </ol>
-                      {help.note&&<div style={{fontSize:10.5,color:T.faint,marginTop:8,lineHeight:1.5}}>{help.note}</div>}
-                    </div>
-                  );})()}
-                  <Field label="Calendar link">
-                    <Input value={importCalUrl} onChange={e=>onImportCalUrlChange(e.target.value)} placeholder="https://calendar.google.com/calendar/ical/…" autoFocus />
-                    {importCalError&&<div style={{fontSize:11.5,color:T.red,marginTop:6}}>{importCalError}</div>}
-                  </Field>
-                  {importCalUrl.trim()&&(
-                    <Field label="Label" hint="How this shows up in Studlin — edit it if you'd like.">
-                      <Input value={importCalLabel} onChange={e=>setImportCalLabel(e.target.value)} />
-                    </Field>
+                  {importCalPlatformHint==="canvas"&&importCalMethod==="token"?(
+                    <>
+                      <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
+                        <div style={{fontSize:11,fontWeight:700,color:T.text,marginBottom:8}}>How to generate a Canvas access token</div>
+                        <ol style={{margin:0,paddingLeft:18,fontSize:11.5,color:T.muted,lineHeight:1.8}}>
+                          {CANVAS_TOKEN_STEPS.map((s,i)=><li key={i}>{s}</li>)}
+                        </ol>
+                        <div style={{fontSize:10.5,color:T.faint,marginTop:8,lineHeight:1.5}}>Studlin uses this to read your courses, assignments, and grade weights. It's stored securely on Studlin's servers and is never visible to anyone else.</div>
+                      </div>
+                      <Field label="Canvas domain">
+                        <Input value={canvasDomainInput} onChange={e=>setCanvasDomainInput(e.target.value)} placeholder="yourschool.instructure.com" autoFocus />
+                      </Field>
+                      <Field label="Access token">
+                        <Input type="password" value={canvasTokenInput} onChange={e=>setCanvasTokenInput(e.target.value)} placeholder="Paste the token Canvas gave you" />
+                        {importCalError&&<div style={{fontSize:11.5,color:T.red,marginTop:6}}>{importCalError}</div>}
+                      </Field>
+                      <button onClick={()=>{setImportCalMethod("feed");setImportCalError("");}} style={{background:"none",border:"none",padding:0,marginTop:2,fontSize:11.5,color:T.muted,textDecoration:"underline",cursor:"pointer",fontFamily:T.font}}>
+                        Token generation blocked at your school? Use a calendar link instead →
+                      </button>
+                    </>
+                  ):(
+                    <>
+                      {importCalPlatformHint&&PLATFORM_HELP[importCalPlatformHint]&&(()=>{const help=PLATFORM_HELP[importCalPlatformHint];return(
+                        <div style={{background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:14}}>
+                          <div style={{fontSize:11,fontWeight:700,color:T.text,marginBottom:8}}>How to find your {help.label} calendar link</div>
+                          <ol style={{margin:0,paddingLeft:18,fontSize:11.5,color:T.muted,lineHeight:1.8}}>
+                            {help.steps.map((s,i)=><li key={i}>{s}</li>)}
+                          </ol>
+                          {help.note&&<div style={{fontSize:10.5,color:T.faint,marginTop:8,lineHeight:1.5}}>{help.note}</div>}
+                        </div>
+                      );})()}
+                      <Field label="Calendar link">
+                        <Input value={importCalUrl} onChange={e=>onImportCalUrlChange(e.target.value)} placeholder="https://calendar.google.com/calendar/ical/…" autoFocus />
+                        {importCalError&&<div style={{fontSize:11.5,color:T.red,marginTop:6}}>{importCalError}</div>}
+                      </Field>
+                      {importCalUrl.trim()&&(
+                        <Field label="Label" hint="How this shows up in Studlin — edit it if you'd like.">
+                          <Input value={importCalLabel} onChange={e=>setImportCalLabel(e.target.value)} />
+                        </Field>
+                      )}
+                      {importCalPlatformHint==="canvas"&&(
+                        <button onClick={()=>{setImportCalMethod("token");setImportCalError("");}} style={{background:"none",border:"none",padding:0,marginTop:2,fontSize:11.5,color:T.muted,textDecoration:"underline",cursor:"pointer",fontFamily:T.font}}>
+                          ← Use an access token instead (gets full descriptions and real grade weights)
+                        </button>
+                      )}
+                    </>
                   )}
                   {importedCals.length>0&&(
                     <div style={{marginTop:18,paddingTop:16,borderTop:`1px solid ${T.border}`}}>
@@ -22826,6 +22975,12 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                                   onChange={v=>setImportCalReview(r=>({...r,events:r.events.map((x,xi)=>xi===i?{...x,kind:v}:x)}))} />
                                 <Input value={ev.subjectGuess||""} onChange={e=>setImportCalReview(r=>({...r,events:r.events.map((x,xi)=>xi===i?{...x,subjectGuess:e.target.value}:x)}))}
                                   placeholder="Subject" style={{width:130,padding:"6px 9px",fontSize:11.5}} />
+                                {/* Real Canvas grade weighting (assignment_groups.group_weight,
+                                    see canvasAssignmentToEvent), not an AI guess -- only ever set
+                                    on a Canvas token import's exam-kind items. */}
+                                {ev.kind==="exam"&&ev.gradeWeightPercent!=null&&(
+                                  <span style={{fontSize:10.5,fontWeight:600,color:T.teal,background:T.teal+"14",border:`1px solid ${T.teal}33`,borderRadius:6,padding:"3px 7px"}}>{ev.gradeWeightPercent}% of grade</span>
+                                )}
                               </div>
                             </div>
                           </div>

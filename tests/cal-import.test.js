@@ -103,11 +103,20 @@ describe("isAllowedCalendarHost (Schoology/Canvas unlock -- suffix-match must no
     assert.equal(isAllowedCalendarHost("instructure.com"), true);
     assert.equal(isAllowedCalendarHost("myschool.instructure.com"), true);
   });
+  test("allows Blackboard's own domain and any school's *.blackboard.com subdomain", () => {
+    assert.equal(isAllowedCalendarHost("blackboard.com"), true);
+    assert.equal(isAllowedCalendarHost("partner-1234.blackboard.com"), true);
+  });
   test("rejects an unrelated domain that merely contains the name", () => {
     assert.equal(isAllowedCalendarHost("notschoology.com"), false);
+    assert.equal(isAllowedCalendarHost("notblackboard.com"), false);
   });
-  test("rejects a lookalike suffix trick (schoology.com.evil.tld)", () => {
+  test("rejects a lookalike suffix trick (schoology.com.evil.tld / blackboard.com.evil.tld)", () => {
     assert.equal(isAllowedCalendarHost("schoology.com.evil.tld"), false);
+    assert.equal(isAllowedCalendarHost("blackboard.com.evil.tld"), false);
+  });
+  test("still rejects a self-hosted Blackboard on a custom institution domain -- not a static suffix this list can safely cover yet", () => {
+    assert.equal(isAllowedCalendarHost("bb.somedistrict.edu"), false);
   });
   test("still rejects PowerSchool/Infinite Campus -- district-hosted domains aren't a static suffix this list can safely cover yet", () => {
     assert.equal(isAllowedCalendarHost("powerschool.com"), false);
@@ -144,7 +153,7 @@ describe("normalizeCalendarUrl (regression: iCloud's own Public Calendar link de
   });
 });
 
-describe("detectCalendarSourceType / isAcademicCalendarSource (Schoology/Canvas recognition)", () => {
+describe("detectCalendarSourceType / isAcademicCalendarSource (Schoology/Canvas/Blackboard recognition)", () => {
   test("labels a Schoology feed link", () => {
     const { detectCalendarSourceType } = loadStudlinModule();
     assert.equal(detectCalendarSourceType("https://app.schoology.com/calendar/feed/abc123.ics"), "Schoology");
@@ -153,14 +162,19 @@ describe("detectCalendarSourceType / isAcademicCalendarSource (Schoology/Canvas 
     const { detectCalendarSourceType } = loadStudlinModule();
     assert.equal(detectCalendarSourceType("https://myschool.instructure.com/feeds/calendars/user_XXXX.ics"), "Canvas");
   });
+  test("labels a school-branded Blackboard feed link", () => {
+    const { detectCalendarSourceType } = loadStudlinModule();
+    assert.equal(detectCalendarSourceType("https://partner-1234.blackboard.com/webapps/calendar/calendarFeed/abc123/learn.ics"), "Blackboard");
+  });
   test("an unrelated link still falls back to the pre-existing generic label", () => {
     const { detectCalendarSourceType } = loadStudlinModule();
     assert.equal(detectCalendarSourceType("https://scheduling.homebase.com/ical/abc"), "Work schedule");
   });
-  test("isAcademicCalendarSource is true only for Schoology/Canvas, not any other connected calendar", () => {
+  test("isAcademicCalendarSource is true only for Schoology/Canvas/Blackboard, not any other connected calendar", () => {
     const { isAcademicCalendarSource } = loadStudlinModule();
     assert.equal(isAcademicCalendarSource("Schoology"), true);
     assert.equal(isAcademicCalendarSource("Canvas"), true);
+    assert.equal(isAcademicCalendarSource("Blackboard"), true);
     assert.equal(isAcademicCalendarSource("Google Calendar"), false);
     assert.equal(isAcademicCalendarSource("Work schedule"), false);
   });
@@ -298,6 +312,37 @@ describe("mergeImportedEvents classifications param (Schoology/Canvas: exam/assi
     const assignment = resynced.find((e) => e.externalUid === "u1");
     assert.equal(assignment.kind, "deadline");
     assert.equal(assignment.duration, null);
+  });
+});
+
+describe("mergeImportedEvents gradeWeightPercent (Canvas token connect: real assignment_groups.group_weight, not an AI guess)", () => {
+  test("an exam whose fetched event carries gradeWeightPercent keeps it on the merged item", () => {
+    const { mergeImportedEvents } = loadStudlinModule();
+    const fetchedWithWeight = [
+      { uid: "u1", title: "Unit 2 midterm", date: "2026-08-05", time: "09:00", duration: 50, gradeWeightPercent: 20 },
+    ];
+    const classifications = { u1: { kind: "exam", subject: "Biology", examWeight: "major" } };
+    const result = mergeImportedEvents([], "sub-1", fetchedWithWeight, classifications);
+    assert.equal(result[0].gradeWeightPercent, 20);
+  });
+
+  test("a non-exam item with gradeWeightPercent on the fetched event does not carry it through", () => {
+    const { mergeImportedEvents } = loadStudlinModule();
+    const fetchedWithWeight = [
+      { uid: "u1", title: "Ch. 4 problem set", date: "2026-08-01", time: "23:59", duration: 60, gradeWeightPercent: 20 },
+    ];
+    const classifications = { u1: { kind: "assignment", subject: "Biology" } };
+    const result = mergeImportedEvents([], "sub-1", fetchedWithWeight, classifications);
+    assert.equal(result[0].gradeWeightPercent, undefined);
+  });
+
+  test("an exam with no gradeWeightPercent on the fetched event (the .ics path, which never has one) is unaffected", () => {
+    const { mergeImportedEvents } = loadStudlinModule();
+    const fetched = [{ uid: "u2", title: "Unit 2 midterm", date: "2026-08-05", time: "09:00", duration: 50 }];
+    const classifications = { u2: { kind: "exam", subject: "Biology", examWeight: "major" } };
+    const result = mergeImportedEvents([], "sub-1", fetched, classifications);
+    assert.equal(result[0].gradeWeightPercent, undefined);
+    assert.equal(result[0].examWeight, "major");
   });
 });
 
