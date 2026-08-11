@@ -1,23 +1,28 @@
 // Server-side proxy for fetching .ics calendar files.
 // Avoids browser CORS restrictions when importing iCloud / other calendar links.
 const { withSentry } = require('./_lib/sentry');
+const { verifyPublicDomain } = require('./_lib/ssrf-guard');
 
 // Schoology, Canvas, and Blackboard are safe to allow with the same
 // suffix-match check as everything else here: all three are SaaS
 // platforms where the calendar-feed hostname is always vendor-controlled
 // DNS (*.schoology.com, *.instructure.com, *.blackboard.com) -- no school
 // or district ever gets a subdomain outside that zone, so the suffix
-// can't be spoofed the way a fake lookalike domain could be. Blackboard
-// also ships as a self-hosted product on arbitrary institution-owned
-// domains, which this deliberately does NOT cover -- same reasoning as
-// PowerSchool and Infinite Campus below. Only the SaaS-hosted
-// *.blackboard.com instances are supported today.
-// PowerSchool and Infinite Campus are deliberately NOT here yet --
-// both are commonly self-hosted on arbitrary district-owned domains
-// (ps.somedistrict.k12.state.us, etc.), so there's no static suffix that
-// covers "any real instance" without either missing most real districts or
-// being so broad it stops meaning anything. That needs a different
-// validation approach (e.g. SSRF-hardened IP-based checks), not this list.
+// can't be spoofed the way a fake lookalike domain could be.
+// Blackboard also ships as a self-hosted product on arbitrary
+// institution-owned domains -- that case isn't in this static list (no
+// static suffix could cover it safely), but IS supported via
+// isCalendarHostAllowedForPlatform below, which DNS-verifies a
+// non-listed domain isn't pointed at a private/internal address before
+// ever fetching it, and ONLY when the client identifies the connection as
+// a Blackboard one.
+// PowerSchool and Infinite Campus are deliberately NOT given the same
+// treatment yet -- both are commonly self-hosted on arbitrary
+// district-owned domains too, but nothing in this file currently marks a
+// request as "this is a PowerSchool/Infinite Campus connect" the way the
+// Blackboard platform hint does, so extending the same DNS-verified
+// fallback to them would need that plumbing added first, not just a
+// bigger allowlist.
 const ALLOWED_DOMAINS = [
   'icloud.com',
   'calendar.google.com',
@@ -32,17 +37,33 @@ function isAllowedCalendarHost(hostname) {
   return ALLOWED_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d));
 }
 
+// The full allow/deny decision for one request: the static allowlist
+// above first (fast, no network round trip, covers every SaaS platform
+// including *.blackboard.com), then -- ONLY when the client identified
+// this as a Blackboard connect (platform==='blackboard') -- a fallback for
+// a self-hosted Blackboard instance on its own institution-owned domain,
+// gated on verifyPublicDomain actually confirming it resolves to a real,
+// public address rather than an internal one. Deliberately scoped to
+// Blackboard only: widening this to any domain would turn cal-proxy into
+// a general-purpose URL fetcher, and PowerSchool/Infinite Campus/other
+// unvetted platforms stay blocked exactly as before.
+async function isCalendarHostAllowedForPlatform(hostname, platform) {
+  if (isAllowedCalendarHost(hostname)) return true;
+  if (platform === 'blackboard') return verifyPublicDomain(hostname);
+  return false;
+}
+
 // Re-validates the hostname on every hop instead of a bare
 // fetch(...,{redirect:'follow'}) -- the allowlist above is only as strong
 // as "every URL this proxy actually fetches passes it," and a plain
 // redirect:'follow' never re-checks that after the first hop. Capped at 3
 // redirects (real calendar feeds don't chain more than that) plus a 10s
 // timeout so a slow/hanging upstream can't tie up the function indefinitely.
-async function fetchCalendarRevalidated(url, maxRedirects = 3) {
+async function fetchCalendarRevalidated(url, platform, maxRedirects = 3) {
   let current = url;
   for (let i = 0; i <= maxRedirects; i++) {
     const parsed = new URL(current);
-    if (!isAllowedCalendarHost(parsed.hostname)) {
+    if (!(await isCalendarHostAllowedForPlatform(parsed.hostname, platform))) {
       throw Object.assign(new Error('Domain not allowed. Only iCloud, Google, Outlook, Schoology, Canvas, and Blackboard calendar feeds are supported.'), { status: 403 });
     }
     const controller = new AbortController();
@@ -66,19 +87,19 @@ module.exports = withSentry(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  let { url } = req.query;
+  let { url, platform } = req.query;
   if (!url) return res.status(400).json({ error: 'Missing url parameter' });
   url = normalizeCalendarUrl(url);
 
   let parsed;
   try { parsed = new URL(url); } catch { return res.status(400).json({ error: 'Invalid URL' }); }
 
-  if (!isAllowedCalendarHost(parsed.hostname)) {
+  if (!(await isCalendarHostAllowedForPlatform(parsed.hostname, platform))) {
     return res.status(403).json({ error: 'Domain not allowed. Only iCloud, Google, Outlook, Schoology, Canvas, and Blackboard calendar feeds are supported.' });
   }
 
   try {
-    const r = await fetchCalendarRevalidated(url);
+    const r = await fetchCalendarRevalidated(url, platform);
     if (!r.ok) return res.status(r.status).json({ error: 'Calendar server returned ' + r.status });
     const ics = await r.text();
     const { events, skippedAllDay } = parseICS(ics);
@@ -187,3 +208,4 @@ function parseICS(text) {
 module.exports.parseICS = parseICS;
 module.exports.normalizeCalendarUrl = normalizeCalendarUrl;
 module.exports.isAllowedCalendarHost = isAllowedCalendarHost;
+module.exports.isCalendarHostAllowedForPlatform = isCalendarHostAllowedForPlatform;

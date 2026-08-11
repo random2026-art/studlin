@@ -1090,7 +1090,7 @@ const PLATFORM_HELP = {
       'Choose "Share Calendar" and turn it on',
       "Copy the link it gives you and paste it below"
     ],
-    note: "Studlin currently supports Blackboard accounts hosted on a blackboard.com address. If your school uses its own custom domain for Blackboard, this link may not work yet."
+    note: "Works whether your school hosts Blackboard on a blackboard.com address or its own custom domain."
   }
 };
 const CANVAS_TOKEN_STEPS = [
@@ -14365,7 +14365,8 @@ function SettingsTab({ theme = "dark", setTheme = () => {
     setImportCalError("");
     setImportCalLoading(true);
     try {
-      const res = await fetch("/api/cal-proxy?url=" + encodeURIComponent(url));
+      const platformParam = importCalPlatformHint ? "&platform=" + encodeURIComponent(importCalPlatformHint) : "";
+      const res = await fetch("/api/cal-proxy?url=" + encodeURIComponent(url) + platformParam);
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || "Couldn't read that calendar link.");
       const label = importCalLabel || detectCalendarSourceType(url);
@@ -14430,7 +14431,8 @@ function SettingsTab({ theme = "dark", setTheme = () => {
           return;
         }
       } else {
-        const res = await fetch("/api/cal-proxy?url=" + encodeURIComponent(sub.url));
+        const platformParam = sub.sourceType === "Blackboard" ? "&platform=blackboard" : "";
+        const res = await fetch("/api/cal-proxy?url=" + encodeURIComponent(sub.url) + platformParam);
         data = await res.json();
         if (!res.ok || !data.ok) return;
       }

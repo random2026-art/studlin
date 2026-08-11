@@ -5,7 +5,7 @@
 const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
 const { loadStudlinModule } = require("./harness.js");
-const { parseICS, normalizeCalendarUrl, isAllowedCalendarHost } = require("../api/cal-proxy.js");
+const { parseICS, normalizeCalendarUrl, isAllowedCalendarHost, isCalendarHostAllowedForPlatform } = require("../api/cal-proxy.js");
 
 function pad(n) { return String(n).padStart(2, "0"); }
 // Builds an ICS timestamp for N days from now at a fixed hour, so fixtures
@@ -115,7 +115,7 @@ describe("isAllowedCalendarHost (Schoology/Canvas unlock -- suffix-match must no
     assert.equal(isAllowedCalendarHost("schoology.com.evil.tld"), false);
     assert.equal(isAllowedCalendarHost("blackboard.com.evil.tld"), false);
   });
-  test("still rejects a self-hosted Blackboard on a custom institution domain -- not a static suffix this list can safely cover yet", () => {
+  test("still rejects a self-hosted Blackboard on a custom institution domain -- not a static suffix, this fast-path check alone can't safely cover it (see isCalendarHostAllowedForPlatform below for the DNS-verified path that does)", () => {
     assert.equal(isAllowedCalendarHost("bb.somedistrict.edu"), false);
   });
   test("still rejects PowerSchool/Infinite Campus -- district-hosted domains aren't a static suffix this list can safely cover yet", () => {
@@ -128,6 +128,22 @@ describe("isAllowedCalendarHost (Schoology/Canvas unlock -- suffix-match must no
     assert.equal(isAllowedCalendarHost("calendar.google.com"), true);
     assert.equal(isAllowedCalendarHost("outlook.live.com"), true);
   });
+});
+
+describe("isCalendarHostAllowedForPlatform (self-hosted Blackboard on a custom domain -- DNS-verified, platform-gated fallback)", () => {
+  test("a static-allowlist domain is allowed regardless of platform, with no DNS lookup attempted", async () => {
+    assert.equal(await isCalendarHostAllowedForPlatform("blackboard.com", "blackboard"), true);
+    assert.equal(await isCalendarHostAllowedForPlatform("app.schoology.com", undefined), true);
+  });
+  test("a non-allowlisted domain is rejected outright when the platform isn't 'blackboard' -- no DNS lookup attempted, PowerSchool/Infinite Campus/generic domains stay blocked exactly as before", async () => {
+    assert.equal(await isCalendarHostAllowedForPlatform("bb.somedistrict.edu", undefined), false);
+    assert.equal(await isCalendarHostAllowedForPlatform("bb.somedistrict.edu", "schoology"), false);
+    assert.equal(await isCalendarHostAllowedForPlatform("ps.somedistrict.k12.state.us", "powerschool"), false);
+  });
+  // The true "custom Blackboard domain that resolves publicly" case needs
+  // a real DNS lookup (verifyPublicDomain) and is deliberately NOT
+  // exercised here -- see tests/ssrf-guard.test.js for the pure IP-range
+  // logic that decision is actually built on.
 });
 
 describe("normalizeCalendarUrl (regression: iCloud's own Public Calendar link defaults to webcal://, which the HTTP client can't fetch as-is)", () => {

@@ -1546,7 +1546,7 @@ const PLATFORM_HELP={
       "Choose \"Share Calendar\" and turn it on",
       "Copy the link it gives you and paste it below",
     ],
-    note:"Studlin currently supports Blackboard accounts hosted on a blackboard.com address. If your school uses its own custom domain for Blackboard, this link may not work yet.",
+    note:"Works whether your school hosts Blackboard on a blackboard.com address or its own custom domain.",
   },
 };
 // Steps for the Canvas Personal Access Token connect flow, shown instead
@@ -22041,7 +22041,13 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
     if(!url){setImportCalError("Paste a calendar link first.");return;}
     setImportCalError("");setImportCalLoading(true);
     try{
-      const res=await fetch("/api/cal-proxy?url="+encodeURIComponent(url));
+      // The platform hint (set when this modal was opened from a specific
+      // row) lets cal-proxy.js allow a self-hosted Blackboard instance on
+      // its own domain, not just *.blackboard.com -- see
+      // isCalendarHostAllowedForPlatform. Harmless to send for every other
+      // platform/hint too; the server only acts on it for "blackboard".
+      const platformParam=importCalPlatformHint?"&platform="+encodeURIComponent(importCalPlatformHint):"";
+      const res=await fetch("/api/cal-proxy?url="+encodeURIComponent(url)+platformParam);
       const data=await res.json();
       if(!res.ok||!data.ok)throw new Error(data.error||"Couldn't read that calendar link.");
       const label=importCalLabel||detectCalendarSourceType(url);
@@ -22127,7 +22133,11 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
           return;
         }
       }else{
-        const res=await fetch("/api/cal-proxy?url="+encodeURIComponent(sub.url));
+        // Same platform hint as fetchCalendarPreview above, this time
+        // sourced from the subscription's own sourceType so a Blackboard
+        // custom-domain resync (auto or manual) keeps passing the check.
+        const platformParam=sub.sourceType==="Blackboard"?"&platform=blackboard":"";
+        const res=await fetch("/api/cal-proxy?url="+encodeURIComponent(sub.url)+platformParam);
         data=await res.json();
         if(!res.ok||!data.ok)return;
       }
