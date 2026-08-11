@@ -15863,11 +15863,15 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
               to collapse the whole modal down to its own tiny content
               height, landing the footer right up against it with almost no
               breathing room -- read as "cut off," nudging the student to
-              scroll for content that was never there. This floor doesn't
-              affect longer steps (Holidays, Classes, etc.), which already
-              exceed it and scroll normally within the parent's own
+              scroll for content that was never there. 210 is a modest
+              floor, not a match for the tallest step (Awake time) -- 340
+              (the first attempt) gave short steps like End of Term/status
+              a huge dead void instead, which read just as unnatural as the
+              original cut-off. This floor doesn't affect longer steps
+              (Awake time, Holidays, Classes, etc.), which already exceed
+              it and scroll normally within the parent's own
               maxHeight:88vh cap. */}
-          <div style={{minHeight:340}}>
+          <div style={{minHeight:210}}>
 
           {step==="term"&&(<>
             <TitleSub title="When does this term run?" sub="Studlin stops expecting your classes outside these dates -- summer, before the term starts. You can always change this later in Settings." />
