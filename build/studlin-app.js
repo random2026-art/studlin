@@ -3991,6 +3991,31 @@ function computePausePlan(intent, forcedId) {
   });
   return { label, moved, couldntMove };
 }
+function computeHolidayPlan(start, end, label) {
+  const inWindow = (ev) => isQualifying(ev) && ev.date >= start && ev.date <= end;
+  const afterHoliday = (() => {
+    const d = /* @__PURE__ */ new Date(end + "T12:00:00");
+    d.setDate(d.getDate() + 1);
+    return dayKey(d);
+  })();
+  const all = lsGet("events", []);
+  const routinesNow = getWeeklyRoutine();
+  const prefsNow = getSchedulePreferences();
+  const affected = all.filter(inWindow).sort((a, b) => a.date === b.date ? (a.time || "") < (b.time || "") ? -1 : 1 : a.date < b.date ? -1 : 1);
+  let working = all.filter((ev) => !inWindow(ev));
+  const moved = [], couldntMove = [];
+  affected.forEach((ev) => {
+    const slot = findLegalSlotOrNull(working, routinesNow, prefsNow, afterHoliday, ev.time || prefsNow.workStartTime, ev.duration || 30, ev.deadline || null);
+    if (slot) {
+      moved.push({ id: ev.id, title: ev.title, oldDate: ev.date, oldTime: ev.time, newDate: slot.date, newTime: slot.time });
+      working = working.concat([{ ...ev, date: slot.date, time: slot.time }]);
+    } else {
+      couldntMove.push({ id: ev.id, title: ev.title, deadline: ev.deadline });
+      working = working.concat([ev]);
+    }
+  });
+  return { label, moved, couldntMove };
+}
 function addTaskWithRebalance(task) {
   const events = lsGet("events", []);
   const next = rebalanceDay(task.date, events.concat([task]), getWeeklyRoutine(), getSchedulePreferences());
@@ -10782,7 +10807,7 @@ function DayPreviewModal({ open, onClose, dayEvents, selDay, dayLabel, colorOf, 
     })))
   );
 }
-function RoutineControlCenterModal({ open, onClose, routines, fmtTime, onEditRoutine, onDeleteRoutine, onAddRoutine, onEditOnCalendar }) {
+function RoutineControlCenterModal({ open, onClose, routines, fmtTime, onEditRoutine, onDeleteRoutine, onAddRoutine, onEditOnCalendar, onHolidayImpact }) {
   const userSubjects = getSubjects();
   const colorOf = (tg) => {
     const s = userSubjects.find((x) => x.id === tg || x.label === tg);
@@ -10813,6 +10838,26 @@ function RoutineControlCenterModal({ open, onClose, routines, fmtTime, onEditRou
   const setTermEnd = (v) => {
     setTermEndState(v);
     saveTerm(termStart, v);
+  };
+  const [holidays, setHolidaysState] = useState(() => getHolidays());
+  const [holidayDraft, setHolidayDraft] = useState({ start: "", end: "", label: "" });
+  const [confirmDeleteHolidayId, setConfirmDeleteHolidayId] = useState(null);
+  const addHoliday = () => {
+    if (!holidayDraft.start || !holidayDraft.end) return;
+    const entry = { id: "hol-" + Date.now(), ...holidayDraft };
+    const next = [...holidays, entry];
+    setHolidaysState(next);
+    saveHolidays(next);
+    setHolidayDraft({ start: "", end: "", label: "" });
+    if (onHolidayImpact) {
+      const plan = computeHolidayPlan(entry.start, entry.end, (entry.label.trim() || "This break") + " added");
+      onHolidayImpact(plan);
+    }
+  };
+  const removeHoliday = (id) => {
+    const next = holidays.filter((h) => h.id !== id);
+    setHolidaysState(next);
+    saveHolidays(next);
   };
   useEffect(() => {
     if (!open) setAddingRoutine(false);
@@ -10880,7 +10925,13 @@ function RoutineControlCenterModal({ open, onClose, routines, fmtTime, onEditRou
   ), " min")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 10, justifyContent: "flex-end" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => {
     resetForm();
     setAddingRoutine(false);
-  } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: submitAdd, disabled: !isFree && !title.trim() || isHabit && days.length === 0, style: { opacity: !isFree && !title.trim() || isHabit && days.length === 0 ? 0.45 : 1 } }, "Add"))), routines.length === 0 && !addingRoutine && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "10px 0 16px", textAlign: "center" } }, "No recurring blocks yet."), routines.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 } }, routines.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 10, height: 10, borderRadius: "50%", background: r.kind === "class" ? colorOf(r.courseId || r.subject) : r.color || T.muted, flexShrink: 0 } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, r.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, formatDays(r.days), " \xB7 ", r.kind === "habit" ? "Anytime (" + (r.duration || 30) + " min)" : !r.startTime ? "Not scheduled yet \u2014 drag it onto your calendar" : fmtTime(r.startTime) + " \u2013 " + fmtTime(minutesToTime(timeToMinutes(r.startTime) + (r.duration || 30))))), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => onEditRoutine(r) }, "Edit"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "danger", onClick: () => onDeleteRoutine(r.id) }, "Delete")))), routines.length > 0 && onEditOnCalendar && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onEditOnCalendar, style: { background: "none", border: "none", color: T.lime, fontSize: 12.5, fontFamily: T.font, cursor: "pointer", padding: "0 0 16px", textDecoration: "underline" } }, "Edit directly on the calendar instead"), /* @__PURE__ */ React.createElement("div", { style: { border: `1px solid ${T.border}`, borderRadius: 10, padding: 14, marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: T.white, marginBottom: 2 } }, "Term dates"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 10 } }, "Outside these dates \u2014 summer, before the term starts \u2014 Studlin stops expecting your classes. Everything else on your routine still applies."), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement(DateField, { label: "School starts", value: termStart, onChange: setTermStart }), /* @__PURE__ */ React.createElement(DateField, { label: "School ends", value: termEnd, onChange: setTermEnd }))));
+  } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: submitAdd, disabled: !isFree && !title.trim() || isHabit && days.length === 0, style: { opacity: !isFree && !title.trim() || isHabit && days.length === 0 ? 0.45 : 1 } }, "Add"))), routines.length === 0 && !addingRoutine && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, padding: "10px 0 16px", textAlign: "center" } }, "No recurring blocks yet."), routines.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 } }, routines.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { width: 10, height: 10, borderRadius: "50%", background: r.kind === "class" ? colorOf(r.courseId || r.subject) : r.color || T.muted, flexShrink: 0 } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.white } }, r.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, formatDays(r.days), " \xB7 ", r.kind === "habit" ? "Anytime (" + (r.duration || 30) + " min)" : !r.startTime ? "Not scheduled yet \u2014 drag it onto your calendar" : fmtTime(r.startTime) + " \u2013 " + fmtTime(minutesToTime(timeToMinutes(r.startTime) + (r.duration || 30))))), /* @__PURE__ */ React.createElement(BtnSm, { variant: "subtle", onClick: () => onEditRoutine(r) }, "Edit"), /* @__PURE__ */ React.createElement(BtnSm, { variant: "danger", onClick: () => onDeleteRoutine(r.id) }, "Delete")))), routines.length > 0 && onEditOnCalendar && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onEditOnCalendar, style: { background: "none", border: "none", color: T.lime, fontSize: 12.5, fontFamily: T.font, cursor: "pointer", padding: "0 0 16px", textDecoration: "underline" } }, "Edit directly on the calendar instead"), /* @__PURE__ */ React.createElement("div", { style: { border: `1px solid ${T.border}`, borderRadius: 10, padding: 14, marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: T.white, marginBottom: 2 } }, "Term dates"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 10 } }, "Outside these dates, summer, before the term starts, Studlin stops expecting your classes. Everything else on your routine still applies."), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } }, /* @__PURE__ */ React.createElement(DateField, { label: "School starts", value: termStart, onChange: setTermStart }), /* @__PURE__ */ React.createElement(DateField, { label: "School ends", value: termEnd, onChange: setTermEnd }))), /* @__PURE__ */ React.createElement("div", { style: { border: `1px solid ${T.border}`, borderRadius: 10, padding: 14, marginBottom: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: T.white, marginBottom: 2 } }, "Holidays"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.muted, marginBottom: 10 } }, "Spring break, a long weekend. Studlin won't plan study sessions during these."), holidays.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 } }, holidays.map((h) => {
+    const isConfirming = confirmDeleteHolidayId === h.id;
+    return isConfirming ? /* @__PURE__ */ React.createElement("div", { key: h.id, style: { padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.red}55`, background: T.red + "12" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.text, marginBottom: 8 } }, 'Remove "', h.label || "Break", '"?'), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+      removeHoliday(h.id);
+      setConfirmDeleteHolidayId(null);
+    }, style: { fontSize: 10.5, fontWeight: 600, padding: "4px 9px", borderRadius: 5, background: T.red, color: "#fff", border: "none", cursor: "pointer", fontFamily: T.font } }, "Remove"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setConfirmDeleteHolidayId(null), style: { fontSize: 10.5, padding: "4px 9px", borderRadius: 5, background: "transparent", color: T.muted, border: `1px solid ${T.border}`, cursor: "pointer", fontFamily: T.font } }, "Cancel"))) : /* @__PURE__ */ React.createElement("div", { key: h.id, style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "7px 10px", borderRadius: 8, background: T.card2 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.text, fontWeight: 500 } }, h.label || "Break"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted } }, h.start, " \u2013 ", h.end), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setConfirmDeleteHolidayId(h.id), title: "Remove", style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 14, lineHeight: 1, padding: 0 } }, "\xD7")));
+  })), /* @__PURE__ */ React.createElement(Input, { value: holidayDraft.label, onChange: (e) => setHolidayDraft((d) => ({ ...d, label: e.target.value })), placeholder: "e.g. Spring Break", style: { marginBottom: 8 } }), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 } }, /* @__PURE__ */ React.createElement(DateField, { label: "Starts", value: holidayDraft.start, onChange: (v) => setHolidayDraft((d) => ({ ...d, start: v })) }), /* @__PURE__ */ React.createElement(DateField, { label: "Ends", value: holidayDraft.end, onChange: (v) => setHolidayDraft((d) => ({ ...d, end: v })) })), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: addHoliday, disabled: !holidayDraft.start || !holidayDraft.end, style: { width: "100%", justifyContent: "center", opacity: !holidayDraft.start || !holidayDraft.end ? 0.45 : 1 } }, "+ Add a break")));
 }
 const fmtMinsDur = (m) => m >= 60 ? Math.floor(m / 60) + "h" + (m % 60 ? " " + m % 60 + "m" : "") : m + "m";
 const timeAgoLabel = (ts) => {
@@ -13965,6 +14016,13 @@ Examples:
       onEditOnCalendar: () => {
         setRoutineCenterOpen(false);
         setEditRoutineMode(true);
+      },
+      onHolidayImpact: (plan) => {
+        if (plan.moved.length > 0 || plan.couldntMove.length > 0) {
+          setPauseLastIntent(null);
+          setPausePreview(plan);
+          setPauseOpen(true);
+        }
       }
     }
   ));

@@ -545,6 +545,79 @@ describe("computePausePlan (Studlin Reschedule)", () => {
   });
 });
 
+describe("computeHolidayPlan (adding a holiday over dates that already have sessions on them)", () => {
+  test("moves a qualifying event out of the range, to the day right after it ends", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T08:00:00" });
+    m.setSchedulePreferences(DEFAULT_PREFS);
+    const task = realTask({ id: "task-1", date: "2026-08-05", time: "10:00" }); // inside the holiday
+    m.localStorage.setItem("studlin-events", JSON.stringify([task]));
+    const result = m.computeHolidayPlan("2026-08-03", "2026-08-07", "Break added");
+    assert.equal(result.moved.length, 1);
+    assert.equal(result.moved[0].id, "task-1");
+    assert.equal(result.moved[0].newDate, "2026-08-08", "should land the day right after the holiday ends");
+  });
+
+  test("leaves events outside the range untouched", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T08:00:00" });
+    m.setSchedulePreferences(DEFAULT_PREFS);
+    const before = realTask({ id: "before-1", date: "2026-08-02", time: "10:00" });
+    const inside = realTask({ id: "inside-1", date: "2026-08-05", time: "10:00" });
+    const after = realTask({ id: "after-1", date: "2026-08-08", time: "10:00" });
+    m.localStorage.setItem("studlin-events", JSON.stringify([before, inside, after]));
+    const result = m.computeHolidayPlan("2026-08-03", "2026-08-07", "Break added");
+    const touchedIds = [...result.moved, ...result.couldntMove].map((x) => x.id);
+    assert.ok(!touchedIds.includes("before-1"), "an event before the range must not be touched");
+    assert.ok(!touchedIds.includes("after-1"), "an event already after the range must not be touched");
+    assert.ok(touchedIds.includes("inside-1"), "an event inside the range must be considered");
+  });
+
+  test("never offers a slot still inside the holiday range, even once the day right after is full", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T08:00:00" });
+    m.setSchedulePreferences(DEFAULT_PREFS);
+    // Fill the entire work day right after the holiday ends, so the search
+    // has to keep scanning forward -- it must never wrap back into the
+    // range it's trying to clear.
+    const filler = realTask({ id: "filler-1", date: "2026-08-08", time: "09:00", duration: 540 }); // 9am-6pm
+    const inside = realTask({ id: "inside-1", date: "2026-08-05", time: "10:00" });
+    m.localStorage.setItem("studlin-events", JSON.stringify([filler, inside]));
+    const result = m.computeHolidayPlan("2026-08-03", "2026-08-07", "Break added");
+    const moved = result.moved.find((x) => x.id === "inside-1");
+    assert.ok(moved, "the inside event should still find a legal slot");
+    assert.ok(moved.newDate > "2026-08-07", "the new date must fall after the holiday range, never inside it");
+  });
+
+  test("never moves a duration-less due-date marker's actual due date", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T08:00:00" });
+    m.setSchedulePreferences(DEFAULT_PREFS);
+    const marker = dueDateMarker({ date: "2026-08-05" });
+    m.localStorage.setItem("studlin-events", JSON.stringify([marker]));
+    const result = m.computeHolidayPlan("2026-08-03", "2026-08-07", "Break added");
+    const touchedIds = [...result.moved, ...result.couldntMove].map((x) => x.id);
+    assert.ok(!touchedIds.includes("marker-1"));
+  });
+
+  test("an event with a deadline that falls before any legal post-holiday slot ends up in couldntMove", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T08:00:00" });
+    m.setSchedulePreferences(DEFAULT_PREFS);
+    const task = realTask({ id: "task-1", date: "2026-08-05", time: "10:00", deadline: "2026-08-06" }); // due mid-holiday, before the range even ends
+    m.localStorage.setItem("studlin-events", JSON.stringify([task]));
+    const result = m.computeHolidayPlan("2026-08-03", "2026-08-07", "Break added");
+    assert.equal(result.moved.length, 0);
+    assert.equal(result.couldntMove.length, 1);
+    assert.equal(result.couldntMove[0].id, "task-1");
+  });
+
+  test("an empty range with nothing scheduled returns empty moved/couldntMove", () => {
+    const m = loadStudlinModule({ now: "2026-07-20T08:00:00" });
+    m.setSchedulePreferences(DEFAULT_PREFS);
+    m.localStorage.setItem("studlin-events", JSON.stringify([]));
+    const result = m.computeHolidayPlan("2026-08-03", "2026-08-07", "Break added");
+    assert.equal(result.moved.length, 0);
+    assert.equal(result.couldntMove.length, 0);
+    assert.equal(result.label, "Break added");
+  });
+});
+
 describe("matchEventByTitle", () => {
   test("returns no matches when nothing on that date resembles the phrase", () => {
     const m = loadStudlinModule();

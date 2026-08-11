@@ -71,6 +71,7 @@ function loadStudlinModule(options) {
 ;(function(){
   var exportNames = ["dayKey","lsGet","lsSet","findOpenSlotFor","findReliableSlotFor",
     "findLegalSlotOrNull","rebalanceDay","isTier0Missed","computePausePlan",
+    "computeHolidayPlan",
     "computeReviewOffsets","computeReviewDates","weekPrepLoad",
     "evaluateExamPrepAdjustment","buildExamSessionEvents","scoreTask",
     "normalizeTaskVal","PAUSE_QUALIFYING_KINDS","TIER0_FIXED_KINDS",

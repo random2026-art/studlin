@@ -6074,6 +6074,39 @@ function computePausePlan(intent,forcedId){
   });
   return {label,moved,couldntMove};
 }
+// Same engine as computePausePlan's shift/clear_day/clear_week tail above
+// (findLegalSlotOrNull per affected event), for a different trigger: a
+// student adding a holiday mid-term, over dates that may already have
+// pending sessions sitting on them. The holiday itself is already saved
+// by the time this preview is shown (see RoutineControlCenterModal's own
+// Holidays section) -- Cancel here just leaves those sessions where they
+// are, same as any holiday added today already does for everything that
+// already existed; it doesn't undo the holiday. desiredDate is always the
+// day right after the range (not each event's own old date) so nothing
+// gets offered a slot still inside the same not-yet-persisted holiday --
+// findOpenSlotFor only ever scans forward from what it's given, so the
+// result can't land before that floor either.
+function computeHolidayPlan(start,end,label){
+  const inWindow=(ev)=>isQualifying(ev)&&ev.date>=start&&ev.date<=end;
+  const afterHoliday=(()=>{const d=new Date(end+"T12:00:00");d.setDate(d.getDate()+1);return dayKey(d);})();
+  const all=lsGet("events",[]);
+  const routinesNow=getWeeklyRoutine();
+  const prefsNow=getSchedulePreferences();
+  const affected=all.filter(inWindow).sort((a,b)=>a.date===b.date?((a.time||"")<(b.time||"")?-1:1):(a.date<b.date?-1:1));
+  let working=all.filter(ev=>!inWindow(ev));
+  const moved=[],couldntMove=[];
+  affected.forEach(ev=>{
+    const slot=findLegalSlotOrNull(working,routinesNow,prefsNow,afterHoliday,ev.time||prefsNow.workStartTime,ev.duration||30,ev.deadline||null);
+    if(slot){
+      moved.push({id:ev.id,title:ev.title,oldDate:ev.date,oldTime:ev.time,newDate:slot.date,newTime:slot.time});
+      working=working.concat([{...ev,date:slot.date,time:slot.time}]);
+    }else{
+      couldntMove.push({id:ev.id,title:ev.title,deadline:ev.deadline});
+      working=working.concat([ev]);
+    }
+  });
+  return {label,moved,couldntMove};
+}
 
 // Standalone wrapper around rebalanceDay for callers outside CalendarTab's
 // React state (e.g. ChatDrawer, a sibling component with no access to
@@ -16832,7 +16865,7 @@ function DayPreviewModal({open,onClose,dayEvents,selDay,dayLabel,colorOf,fmtTime
 // block with Edit/Delete, plus an inline expandable "+ Add Recurring
 // Activity" form — reuses the same fields/components as the existing "Edit
 // routine block" modal for visual consistency.
-function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRoutine, onDeleteRoutine, onAddRoutine, onEditOnCalendar}) {
+function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRoutine, onDeleteRoutine, onAddRoutine, onEditOnCalendar, onHolidayImpact}) {
   // Component-local, same convention as StudlinPrep/Notes/CalendarTab's own
   // colorOf -- id match preferred (courseId, once a routine/course carries
   // one), label fallback otherwise.
@@ -16874,6 +16907,42 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
   const saveTerm=(start,end)=>saveSchoolTerm(start&&end?{start,end}:null);
   const setTermStart=(v)=>{setTermStartState(v);saveTerm(v,termEnd);};
   const setTermEnd=(v)=>{setTermEndState(v);saveTerm(termStart,v);};
+  // Same self-contained convention as Term dates above (getHolidays/
+  // saveHolidays, no threading through CalendarTab) -- this is the only
+  // place a student could ever edit holidays before now; onboarding's own
+  // Holidays step only ever wrote here once, on finish, and never again.
+  const [holidays,setHolidaysState]=useState(()=>getHolidays());
+  const [holidayDraft,setHolidayDraft]=useState({start:"",end:"",label:""});
+  const [confirmDeleteHolidayId,setConfirmDeleteHolidayId]=useState(null);
+  // Saves immediately, same zero-friction pattern as Term dates -- adding
+  // a holiday is never itself risky or undoable-feeling, so it shouldn't
+  // wait on a preview. What DOES need a preview is anything already
+  // sitting on those now-blocked dates: computeHolidayPlan runs after the
+  // save (never before -- the slot search must never consider a range
+  // that isn't persisted yet, see that function's own comment) and hands
+  // the result up to CalendarTab's existing reschedule-preview modal, the
+  // same Confirm/Cancel surface every other "something changed, here's
+  // what would move" action in this app already uses. Cancelling that
+  // preview leaves the holiday saved -- it only declines to relocate what
+  // was already on the calendar, same as a holiday added at onboarding
+  // (before anything existed to conflict) always implicitly does.
+  const addHoliday=()=>{
+    if(!holidayDraft.start||!holidayDraft.end)return;
+    const entry={id:"hol-"+Date.now(),...holidayDraft};
+    const next=[...holidays,entry];
+    setHolidaysState(next);
+    saveHolidays(next);
+    setHolidayDraft({start:"",end:"",label:""});
+    if(onHolidayImpact){
+      const plan=computeHolidayPlan(entry.start,entry.end,(entry.label.trim()||"This break")+" added");
+      onHolidayImpact(plan);
+    }
+  };
+  const removeHoliday=(id)=>{
+    const next=holidays.filter(h=>h.id!==id);
+    setHolidaysState(next);
+    saveHolidays(next);
+  };
   useEffect(()=>{ if(!open)setAddingRoutine(false); },[open]);
   const resetForm=()=>{setTitle("");setKind("busy");setDays([]);setStartTime("15:30");setDuration(60);setColor(SUBJECT_COLORS[0]);setCommuteBefore("");setCommuteAfter("");};
   const toggleDay=(i)=>setDays(d=>d.includes(i)?d.filter(x=>x!==i):[...d,i]);
@@ -16983,11 +17052,45 @@ function RoutineControlCenterModal({open, onClose, routines, fmtTime, onEditRout
       )}
       <div style={{border:`1px solid ${T.border}`,borderRadius:10,padding:14,marginBottom:16}}>
         <div style={{fontSize:12,fontWeight:700,color:T.white,marginBottom:2}}>Term dates</div>
-        <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>Outside these dates — summer, before the term starts — Studlin stops expecting your classes. Everything else on your routine still applies.</div>
+        <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>Outside these dates, summer, before the term starts, Studlin stops expecting your classes. Everything else on your routine still applies.</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
           <DateField label="School starts" value={termStart} onChange={setTermStart} />
           <DateField label="School ends" value={termEnd} onChange={setTermEnd} />
         </div>
+      </div>
+      <div style={{border:`1px solid ${T.border}`,borderRadius:10,padding:14,marginBottom:16}}>
+        <div style={{fontSize:12,fontWeight:700,color:T.white,marginBottom:2}}>Holidays</div>
+        <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>Spring break, a long weekend. Studlin won't plan study sessions during these.</div>
+        {holidays.length>0&&(
+          <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12}}>
+            {holidays.map(h=>{
+              const isConfirming=confirmDeleteHolidayId===h.id;
+              return isConfirming?(
+                <div key={h.id} style={{padding:"8px 10px",borderRadius:8,border:`1px solid ${T.red}55`,background:T.red+"12"}}>
+                  <div style={{fontSize:10.5,color:T.text,marginBottom:8}}>Remove "{h.label||"Break"}"?</div>
+                  <div style={{display:"flex",gap:6}}>
+                    <button type="button" onClick={()=>{removeHoliday(h.id);setConfirmDeleteHolidayId(null);}} style={{fontSize:10.5,fontWeight:600,padding:"4px 9px",borderRadius:5,background:T.red,color:"#fff",border:"none",cursor:"pointer",fontFamily:T.font}}>Remove</button>
+                    <button type="button" onClick={()=>setConfirmDeleteHolidayId(null)} style={{fontSize:10.5,padding:"4px 9px",borderRadius:5,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,cursor:"pointer",fontFamily:T.font}}>Cancel</button>
+                  </div>
+                </div>
+              ):(
+                <div key={h.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"7px 10px",borderRadius:8,background:T.card2}}>
+                  <div style={{fontSize:12,color:T.text,fontWeight:500}}>{h.label||"Break"}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <div style={{fontSize:11,color:T.muted}}>{h.start} – {h.end}</div>
+                    <button type="button" onClick={()=>setConfirmDeleteHolidayId(h.id)} title="Remove" style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:14,lineHeight:1,padding:0}}>×</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <Input value={holidayDraft.label} onChange={e=>setHolidayDraft(d=>({...d,label:e.target.value}))} placeholder="e.g. Spring Break" style={{marginBottom:8}} />
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+          <DateField label="Starts" value={holidayDraft.start} onChange={v=>setHolidayDraft(d=>({...d,start:v}))} />
+          <DateField label="Ends" value={holidayDraft.end} onChange={v=>setHolidayDraft(d=>({...d,end:v}))} />
+        </div>
+        <Btn variant="subtle" onClick={addHoliday} disabled={!holidayDraft.start||!holidayDraft.end} style={{width:"100%",justifyContent:"center",opacity:!holidayDraft.start||!holidayDraft.end?0.45:1}}>+ Add a break</Btn>
       </div>
     </Modal>
   );
@@ -21628,7 +21731,17 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       <RoutineControlCenterModal open={routineCenterOpen} onClose={()=>setRoutineCenterOpen(false)} routines={routines} fmtTime={fmtTime}
         onEditRoutine={openRoutineEdit} onDeleteRoutine={deleteRoutineItem}
         onAddRoutine={(rule)=>{const newId=String(Date.now()+Math.random()*1000);persistRoutines([...routines,{id:newId,groupId:newId,...rule,subject:""}]);}}
-        onEditOnCalendar={()=>{setRoutineCenterOpen(false);setEditRoutineMode(true);}} />
+        onEditOnCalendar={()=>{setRoutineCenterOpen(false);setEditRoutineMode(true);}}
+        onHolidayImpact={(plan)=>{
+          // Only worth interrupting for if the new holiday actually landed
+          // on something -- most holidays get added well ahead of time,
+          // with nothing there yet to reschedule.
+          if(plan.moved.length>0||plan.couldntMove.length>0){
+            setPauseLastIntent(null);
+            setPausePreview(plan);
+            setPauseOpen(true);
+          }
+        }} />
     </>
   );
 }
