@@ -454,18 +454,6 @@ body::after{
 }
 .streakbig{font-family:var(--display);font-weight:700;font-size:88px;line-height:0.82;color:var(--ink);letter-spacing:-0.04em;}
 
-/* generic looping "step reveal" — used across bento mockups so each one
-   plays out like a tiny movie instead of sitting there as a flat screenshot.
-   Same 6s duration on every step within a card keeps them in sync; the
-   staggered arrival % is what makes it read as a sequence. */
-@media (prefers-reduced-motion: no-preference){
-  .seq-1{animation:seqStep1 6s ease-in-out infinite;}
-  .seq-2{animation:seqStep2 6s ease-in-out infinite;}
-  .seq-3{animation:seqStep3 6s ease-in-out infinite;}
-}
-@keyframes seqStep1{0%,3%{opacity:0;transform:translateY(10px);}10%,88%{opacity:1;transform:translateY(0);}96%,100%{opacity:0;transform:translateY(-4px);}}
-@keyframes seqStep2{0%,26%{opacity:0;transform:translateY(10px);}33%,88%{opacity:1;transform:translateY(0);}96%,100%{opacity:0;transform:translateY(-4px);}}
-@keyframes seqStep3{0%,50%{opacity:0;transform:translateY(10px);}57%,88%{opacity:1;transform:translateY(0);}96%,100%{opacity:0;transform:translateY(-4px);}}
 
 /* leaderboard rows */
 .lbrow{display:flex;align-items:center;gap:13px;padding:11px 14px;border-radius:13px;margin-bottom:8px;}
@@ -1181,13 +1169,13 @@ body::after{
             <div class="mono" style="font-size:10px;color:var(--lime);letter-spacing:0.1em;margin-bottom:10px;">LAB REPORTS · YOUR AVERAGE</div>
             <div style="display:flex;align-items:baseline;gap:10px;">
               <span style="font-size:13px;color:#999;text-decoration:line-through;">Est. 45m</span>
-              <span class="seq-2" style="font-size:20px;font-weight:700;color:var(--ink);">→ 70m</span>
+              <span style="font-size:20px;font-weight:700;color:var(--ink);">→ 70m</span>
             </div>
-            <div class="chiprow seq-1" style="margin-top:10px;">
+            <div class="chiprow" style="margin-top:10px;">
               <span class="ck" style="background:var(--spark);color:var(--ink);">Peak hours: 4–6pm</span>
             </div>
           </div>
-          <div class="seq-3" style="background:#163A2C;border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:16px 18px;">
+          <div style="background:#163A2C;border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:16px 18px;">
             <div class="mono" style="font-size:9.5px;color:rgba(245,242,234,0.55);letter-spacing:0.1em;margin-bottom:8px;">STUDLIN NOTICED</div>
             <div style="font-size:12.5px;color:#F5F2EA;">You keep pushing off reading assignments until the night before. Scheduling them earlier from now on.</div>
           </div>
@@ -1214,9 +1202,9 @@ body::after{
           <div class="mini">
             <div class="mono" style="font-size:10px;color:var(--lime);letter-spacing:0.1em;margin-bottom:10px;">SYLLABUS.PDF · SCANNED</div>
             <div style="display:flex;flex-direction:column;gap:8px;font-size:12.5px;color:var(--ink);">
-              <div class="seq-1">📚 Bio 201 <span style="color:#888;">· MWF 9am</span></div>
-              <div class="seq-2">📌 Midterm exam <span style="color:#888;">· Oct 14</span></div>
-              <div class="seq-3">📌 Lab report due <span style="color:#888;">· Oct 21</span></div>
+              <div>📚 Bio 201 <span style="color:#888;">· MWF 9am</span></div>
+              <div>📌 Midterm exam <span style="color:#888;">· Oct 14</span></div>
+              <div>📌 Lab report due <span style="color:#888;">· Oct 21</span></div>
             </div>
           </div>
         </div>
@@ -1267,7 +1255,7 @@ body::after{
             <a href="/app" class="btn btn-lime magnetic">Build a study plan <span class="ar">→</span></a>
           </div>
           <div style="display:flex;flex-direction:column;gap:10px;">
-            <div class="seq-1" style="background:#fff;border-radius:16px;padding:16px 18px;">
+            <div style="background:#fff;border-radius:16px;padding:16px 18px;">
               <div class="mono" style="font-size:9.5px;color:#aaa;letter-spacing:0.1em;margin-bottom:8px;">BIO MIDTERM · CONFIDENCE</div>
               <div style="font-size:12.5px;color:var(--ink);margin-bottom:8px;">How confident are you on this material?</div>
               <div style="display:flex;gap:5px;">
@@ -1278,12 +1266,12 @@ body::after{
                 <span style="flex:1;height:6px;border-radius:99px;background:var(--panel-2);"></span>
               </div>
             </div>
-            <div class="seq-2" style="background:#163A2C;border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:18px;">
+            <div style="background:#163A2C;border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:18px;">
               <div class="mono" style="font-size:10px;color:rgba(245,242,234,0.55);letter-spacing:0.1em;margin-bottom:10px;">5 SESSIONS SCHEDULED</div>
               <div style="font-size:13px;color:#F5F2EA;margin-bottom:6px;">Session 3 · <strong style="color:var(--spark);">Chapter 7, your weak spots</strong></div>
               <div style="font-size:11.5px;color:rgba(245,242,234,0.6);">Tue 4:00pm · 45min</div>
             </div>
-            <div class="seq-3" style="background:#fff;border-radius:16px;padding:16px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <div style="background:#fff;border-radius:16px;padding:16px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
               <span class="mono" style="font-size:10px;background:var(--spark);color:var(--ink);padding:5px 10px;border-radius:99px;font-weight:700;">🔗 24 flashcards</span>
               <span class="mono" style="font-size:10px;color:#888;">+ 1 practice exam generated</span>
             </div>
@@ -1302,8 +1290,8 @@ body::after{
           <div style="display:flex;flex-direction:column;gap:10px;">
             <div class="mini" style="background:#fff;">
               <div class="mono" style="font-size:10px;color:var(--lime);letter-spacing:0.1em;margin-bottom:10px;">CALC PROBLEM SET · ATTACK SESSION</div>
-              <div class="seq-1" style="font-size:12.5px;color:var(--ink);margin-bottom:8px;">20 min trial run, turns out this takes a while</div>
-              <div class="seq-2 mono" style="font-size:10px;background:var(--spark);color:var(--ink);padding:5px 10px;border-radius:99px;font-weight:700;display:inline-block;">→ 3× 45min blocks scheduled</div>
+              <div style="font-size:12.5px;color:var(--ink);margin-bottom:8px;">20 min trial run, turns out this takes a while</div>
+              <div class="mono" style="font-size:10px;background:var(--spark);color:var(--ink);padding:5px 10px;border-radius:99px;font-weight:700;display:inline-block;">→ 3× 45min blocks scheduled</div>
             </div>
           </div>
         </div>
@@ -1320,9 +1308,9 @@ body::after{
           <div style="display:flex;flex-direction:column;gap:10px;">
             <div class="mini" style="background:#fff;">
               <div style="display:flex;flex-direction:column;gap:7px;font-size:12px;color:var(--ink);">
-                <div class="seq-1">1. Research &amp; outline <span style="color:#888;">· 40m</span></div>
-                <div class="seq-2">2. First draft <span style="color:#888;">· 1h 20m</span></div>
-                <div class="seq-3">3. Group review <span style="color:var(--lime);font-weight:600;">· Thu 5pm, everyone's free</span></div>
+                <div>1. Research &amp; outline <span style="color:#888;">· 40m</span></div>
+                <div>2. First draft <span style="color:#888;">· 1h 20m</span></div>
+                <div>3. Group review <span style="color:var(--lime);font-weight:600;">· Thu 5pm, everyone's free</span></div>
               </div>
             </div>
           </div>
@@ -1341,10 +1329,10 @@ body::after{
           <p>Something came up? Hit reschedule. Studlin finds a new time and shows you the trade-off.</p>
         </div>
         <div class="feat-visual">
-          <div class="seq-1" style="background:#163A2C;color:#F5F2EA;border-radius:13px;padding:13px 15px;font-family:var(--mono);font-size:12.5px;">
+          <div style="background:#163A2C;color:#F5F2EA;border-radius:13px;padding:13px 15px;font-family:var(--mono);font-size:12.5px;">
             <div style="opacity:.55;font-size:10px;margin-bottom:5px;">YOU</div>too tired tonight, reschedule my chem review
           </div>
-          <div class="seq-2" style="background:#fff;color:var(--ink);border-radius:13px;padding:13px 15px;margin-top:8px;font-size:12.5px;line-height:1.5;">
+          <div style="background:#fff;color:var(--ink);border-radius:13px;padding:13px 15px;margin-top:8px;font-size:12.5px;line-height:1.5;">
             <div class="mono" style="opacity:.5;font-size:10px;margin-bottom:5px;">STUDLIN</div>Moved to <strong>tomorrow, 5pm</strong>. Trade-off: 45min less buffer before your exam Friday.
           </div>
         </div>
@@ -1364,11 +1352,11 @@ body::after{
             <a href="/app" class="btn btn-lime magnetic">Start a group <span class="ar">→</span></a>
           </div>
           <div style="display:flex;flex-direction:column;gap:10px;">
-            <div class="seq-1" style="background:#fff;border-radius:16px;padding:14px 16px;opacity:0.7;">
+            <div style="background:#fff;border-radius:16px;padding:14px 16px;opacity:0.7;">
               <div class="mono" style="font-size:9.5px;color:#aaa;letter-spacing:0.1em;margin-bottom:8px;">GROUP CHAT · BEFORE</div>
               <div style="font-size:12px;color:#888;line-height:1.6;">"does thu work" · "no i have practice" · "sat?" · "cant, family thing" · "so... when"</div>
             </div>
-            <div class="seq-2" style="background:#163A2C;border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:18px;">
+            <div style="background:#163A2C;border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:18px;">
               <div class="mono" style="font-size:10px;color:rgba(245,242,234,0.55);letter-spacing:0.1em;margin-bottom:10px;">CHEM EXAM · 3 FRIENDS · AFTER</div>
               <div style="font-size:13px;color:#F5F2EA;margin-bottom:10px;">Everyone's free <strong style="color:var(--spark);">Thu 4:00pm</strong></div>
               <span class="mono" style="font-size:10px;background:var(--spark);color:var(--ink);padding:5px 10px;border-radius:99px;font-weight:700;">Join their lock-in session ✓</span>
