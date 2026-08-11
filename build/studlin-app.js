@@ -11540,6 +11540,8 @@ function CalendarTab({ setActive = () => {
   const [confirmDeleteCourseId, setConfirmDeleteCourseId] = useState(null);
   const [activityMenuOpenId, setActivityMenuOpenId] = useState(null);
   const [confirmDeleteActivityId, setConfirmDeleteActivityId] = useState(null);
+  const [expandedActivityGroupId, setExpandedActivityGroupId] = useState(null);
+  const [confirmDeleteGroupId, setConfirmDeleteGroupId] = useState(null);
   const [courseDeleteSnapshots, setCourseDeleteSnapshots] = useState(null);
   const [courseDeleteToast, setCourseDeleteToast] = useState("");
   const isFreshAccount = !lsGet("subjects-configured", false) && !lsGet("hasConfiguredRoutine", false) && !lsGet("seenCalendarTour", false);
@@ -11927,6 +11929,7 @@ function CalendarTab({ setActive = () => {
     return { start: timeToMinutes(r.startTime), end: timeToMinutes(r.startTime) + (r.duration || 0) };
   })();
   const deleteRoutineItem = (routineId) => persistRoutines(routines.filter((r) => r.id !== routineId));
+  const deleteRoutineGroup = (ids) => persistRoutines(routines.filter((r) => !ids.includes(r.id)));
   const skipOneOccurrence = (ev) => {
     setPauseError("");
     setPauseLastIntent(null);
@@ -12081,7 +12084,7 @@ function CalendarTab({ setActive = () => {
       const kind = isCourse ? "class" : evKind2 || "busy";
       const subj = isCourse ? title : kind === "class" ? subject || "" : "";
       const cid = isCourse ? courseId : kind === "class" && subj ? courseIdForLabelFuzzy(subj) : null;
-      const base = { title, kind, ...subj ? { subject: subj } : {}, ...cid ? { courseId: cid } : {}, ...common };
+      const base = { title, kind, groupId: "grp-" + Date.now() + "-" + Math.round(Math.random() * 1e3), ...subj ? { subject: subj } : {}, ...cid ? { courseId: cid } : {}, ...common };
       persistRoutines([...routines, ...buildRoutineObjectsForDays(base, repeatDays, startTime, duration || 60, dayTimes)]);
     }
     setNewEventOpen(false);
@@ -13107,43 +13110,88 @@ Examples:
       },
       s.label
     ))));
-  })(), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 18 } }, currentTermSubjects.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, padding: "4px 0 8px" } }, "No courses yet."), currentTermSubjects.map(renderCourseRow)), pastTermSubjects.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 18 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setPastCoursesOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, marginBottom: 6, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.faint, transform: pastCoursesOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Past terms (", pastTermSubjects.length, ")")), pastCoursesOpen && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, opacity: 0.6 } }, pastTermSubjects.map(renderCourseRow))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Activities"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setRoutineCenterOpen(true), style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "+ Add new")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, routines.filter((r) => r.kind !== "class").length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, padding: "4px 0" } }, "No activities yet."), routines.filter((r) => r.kind !== "class").map((r) => {
-    const isUnscheduled = !r.days || r.days.length === 0;
-    const isConfirmingDelete = confirmDeleteActivityId === r.id;
-    return /* @__PURE__ */ React.createElement("div", { key: r.id, style: { position: "relative" } }, isConfirmingDelete ? /* @__PURE__ */ React.createElement("div", { style: { padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.red}55`, background: T.red + "12" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.text, marginBottom: 8, lineHeight: 1.4 } }, 'Delete "', r.title, '"?'), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => {
-      deleteRoutineItem(r.id);
-      setConfirmDeleteActivityId(null);
-    }, style: { fontSize: 10.5, fontWeight: 600, padding: "4px 9px", borderRadius: 5, background: T.red, color: "#fff", border: "none", cursor: "pointer", fontFamily: T.font } }, "Delete"), /* @__PURE__ */ React.createElement("button", { onClick: () => setConfirmDeleteActivityId(null), style: { fontSize: 10.5, padding: "4px 9px", borderRadius: 5, background: "transparent", color: T.muted, border: `1px solid ${T.border}`, cursor: "pointer", fontFamily: T.font } }, "Cancel"))) : /* @__PURE__ */ React.createElement(
-      "div",
-      {
-        onClick: () => openRoutineEdit(r),
-        draggable: true,
-        onDragStart: () => setSidebarDragChip({ title: r.title, color: r.color || T.muted, movable: false, kind: "activity", routineId: r.id }),
-        onDragEnd: () => setSidebarDragChip(null),
-        style: { ...subjectRowStyle(r.color || T.muted), cursor: "pointer", justifyContent: "space-between", ...isUnscheduled ? { border: `1px dashed ${r.color || T.muted}66` } : {} }
-      },
-      /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 } }, r.title),
-      isUnscheduled && /* @__PURE__ */ React.createElement("span", { title: "Drag onto the calendar to set when it repeats", style: { fontSize: 9, color: T.faint, flexShrink: 0, marginRight: 4 } }, "not scheduled"),
-      /* @__PURE__ */ React.createElement(
-        "button",
+  })(), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 18 } }, currentTermSubjects.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, padding: "4px 0 8px" } }, "No courses yet."), currentTermSubjects.map(renderCourseRow)), pastTermSubjects.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 18 } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setPastCoursesOpen((v) => !v), style: { display: "flex", alignItems: "center", gap: 5, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, marginBottom: 6, fontFamily: T.font } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 9, color: T.faint, transform: pastCoursesOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" } }, "\u203A"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Past terms (", pastTermSubjects.length, ")")), pastCoursesOpen && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, opacity: 0.6 } }, pastTermSubjects.map(renderCourseRow))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Activities"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setRoutineCenterOpen(true), style: { background: "none", border: "none", color: T.lime, fontSize: 11, fontFamily: T.font, cursor: "pointer", padding: 0 } }, "+ Add new")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, (() => {
+    const activityRoutines = routines.filter((r) => r.kind !== "class");
+    if (activityRoutines.length === 0) return /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.faint, padding: "4px 0" } }, "No activities yet.");
+    const groupsMap = /* @__PURE__ */ new Map();
+    activityRoutines.forEach((r) => {
+      const gid = r.groupId || r.id;
+      if (!groupsMap.has(gid)) groupsMap.set(gid, []);
+      groupsMap.get(gid).push(r);
+    });
+    const fmtPlacementDays = (ds) => {
+      const sorted = [...ds || []].sort((a, b) => a - b);
+      if (sorted.length === 0) return "Not scheduled";
+      if (sorted.length === 7) return "Every day";
+      if (sorted.length === 5 && sorted.every((v, i) => v === i)) return "Mon\u2013Fri";
+      return sorted.map((i) => ROUTINE_DOW[i]).join(", ");
+    };
+    return Array.from(groupsMap.values()).map((group) => {
+      const primary = group[0];
+      const gid = primary.groupId || primary.id;
+      const isMulti = group.length > 1;
+      const isUnscheduled = !isMulti && (!primary.days || primary.days.length === 0);
+      const isConfirmingGroupDelete = confirmDeleteGroupId === gid;
+      const isExpanded = expandedActivityGroupId === gid;
+      return /* @__PURE__ */ React.createElement("div", { key: gid, style: { position: "relative" } }, isConfirmingGroupDelete ? /* @__PURE__ */ React.createElement("div", { style: { padding: "8px 10px", borderRadius: 8, border: `1px solid ${T.red}55`, background: T.red + "12" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: T.text, marginBottom: 8, lineHeight: 1.4 } }, 'Delete "', primary.title, '"', isMulti ? " and all " + group.length + " of its placements" : "", "?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => {
+        deleteRoutineGroup(group.map((r) => r.id));
+        setConfirmDeleteGroupId(null);
+      }, style: { fontSize: 10.5, fontWeight: 600, padding: "4px 9px", borderRadius: 5, background: T.red, color: "#fff", border: "none", cursor: "pointer", fontFamily: T.font } }, "Delete"), /* @__PURE__ */ React.createElement("button", { onClick: () => setConfirmDeleteGroupId(null), style: { fontSize: 10.5, padding: "4px 9px", borderRadius: 5, background: "transparent", color: T.muted, border: `1px solid ${T.border}`, cursor: "pointer", fontFamily: T.font } }, "Cancel"))) : /* @__PURE__ */ React.createElement(
+        "div",
         {
-          type: "button",
-          onClick: (e) => {
-            e.stopPropagation();
-            setActivityMenuOpenId(activityMenuOpenId === r.id ? null : r.id);
-          },
-          style: { background: "none", border: "none", color: T.muted, cursor: "pointer", padding: "0 0 0 6px", fontSize: 14, lineHeight: 1, flexShrink: 0 }
+          onClick: () => isMulti ? setExpandedActivityGroupId((x) => x === gid ? null : gid) : openRoutineEdit(primary),
+          draggable: true,
+          onDragStart: () => setSidebarDragChip({ title: primary.title, color: primary.color || T.muted, movable: false, kind: "activity", routineId: primary.id }),
+          onDragEnd: () => setSidebarDragChip(null),
+          style: { ...subjectRowStyle(primary.color || T.muted), cursor: "pointer", justifyContent: "space-between", ...isUnscheduled ? { border: `1px dashed ${primary.color || T.muted}66` } : {} }
         },
-        "\u22EF"
-      )
-    ), activityMenuOpenId === r.id && /* @__PURE__ */ React.createElement("div", { onMouseLeave: () => setActivityMenuOpenId(null), style: { position: "absolute", top: "100%", right: 0, zIndex: 40, marginTop: 4, background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 12px 28px -12px rgba(0,0,0,0.5)", overflow: "hidden", minWidth: 170 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => {
-      setActivityMenuOpenId(null);
-      openRoutineEdit(r);
-    }, style: { display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "none", border: "none", color: T.text, fontSize: 12, fontFamily: T.font, cursor: "pointer" } }, "Rename / change color"), /* @__PURE__ */ React.createElement("button", { onClick: () => {
-      setActivityMenuOpenId(null);
-      setConfirmDeleteActivityId(r.id);
-    }, style: { display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "none", border: "none", color: T.red, fontSize: 12, fontFamily: T.font, cursor: "pointer" } }, "Delete")));
-  })), (() => {
+        /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 } }, primary.title),
+        isMulti && /* @__PURE__ */ React.createElement("span", { title: "This activity has multiple placements -- click to see each one", style: { fontSize: 9, color: T.faint, flexShrink: 0, marginRight: 4 } }, group.length, " placements ", isExpanded ? "\u25BE" : "\u25B8"),
+        isUnscheduled && /* @__PURE__ */ React.createElement("span", { title: "Drag onto the calendar to set when it repeats", style: { fontSize: 9, color: T.faint, flexShrink: 0, marginRight: 4 } }, "not scheduled"),
+        /* @__PURE__ */ React.createElement(
+          "button",
+          {
+            type: "button",
+            onClick: (e) => {
+              e.stopPropagation();
+              setActivityMenuOpenId(activityMenuOpenId === gid ? null : gid);
+            },
+            style: { background: "none", border: "none", color: T.muted, cursor: "pointer", padding: "0 0 0 6px", fontSize: 14, lineHeight: 1, flexShrink: 0 }
+          },
+          "\u22EF"
+        )
+      ), activityMenuOpenId === gid && /* @__PURE__ */ React.createElement("div", { onMouseLeave: () => setActivityMenuOpenId(null), style: { position: "absolute", top: "100%", right: 0, zIndex: 40, marginTop: 4, background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, boxShadow: "0 12px 28px -12px rgba(0,0,0,0.5)", overflow: "hidden", minWidth: 170 } }, isMulti ? /* @__PURE__ */ React.createElement("button", { onClick: () => {
+        setActivityMenuOpenId(null);
+        setExpandedActivityGroupId(gid);
+      }, style: { display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "none", border: "none", color: T.text, fontSize: 12, fontFamily: T.font, cursor: "pointer" } }, "View placements") : /* @__PURE__ */ React.createElement("button", { onClick: () => {
+        setActivityMenuOpenId(null);
+        openRoutineEdit(primary);
+      }, style: { display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "none", border: "none", color: T.text, fontSize: 12, fontFamily: T.font, cursor: "pointer" } }, "Rename / change color"), /* @__PURE__ */ React.createElement("button", { onClick: () => {
+        setActivityMenuOpenId(null);
+        setConfirmDeleteGroupId(gid);
+      }, style: { display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "none", border: "none", color: T.red, fontSize: 12, fontFamily: T.font, cursor: "pointer" } }, isMulti ? "Delete all placements" : "Delete")), isMulti && isExpanded && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginTop: 4, paddingLeft: 10, borderLeft: `2px solid ${primary.color || T.muted}33` } }, group.map((r) => {
+        const isConfirmingPlacementDelete = confirmDeleteActivityId === r.id;
+        return isConfirmingPlacementDelete ? /* @__PURE__ */ React.createElement("div", { key: r.id, style: { padding: "6px 8px", borderRadius: 6, border: `1px solid ${T.red}55`, background: T.red + "12" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10, color: T.text, marginBottom: 6 } }, "Delete this placement?"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, /* @__PURE__ */ React.createElement("button", { onClick: () => {
+          deleteRoutineItem(r.id);
+          setConfirmDeleteActivityId(null);
+        }, style: { fontSize: 10, fontWeight: 600, padding: "3px 8px", borderRadius: 4, background: T.red, color: "#fff", border: "none", cursor: "pointer", fontFamily: T.font } }, "Delete"), /* @__PURE__ */ React.createElement("button", { onClick: () => setConfirmDeleteActivityId(null), style: { fontSize: 10, padding: "3px 8px", borderRadius: 4, background: "transparent", color: T.muted, border: `1px solid ${T.border}`, cursor: "pointer", fontFamily: T.font } }, "Cancel"))) : /* @__PURE__ */ React.createElement(
+          "div",
+          {
+            key: r.id,
+            onClick: () => openRoutineEdit(r),
+            style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, padding: "5px 8px", borderRadius: 6, cursor: "pointer", fontSize: 11 },
+            onMouseEnter: (e) => e.currentTarget.style.background = T.card2,
+            onMouseLeave: (e) => e.currentTarget.style.background = "none"
+          },
+          /* @__PURE__ */ React.createElement("span", { style: { color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, fmtPlacementDays(r.days), r.startTime ? " \xB7 " + fmtTime(r.startTime) : ""),
+          /* @__PURE__ */ React.createElement("button", { onClick: (e) => {
+            e.stopPropagation();
+            setConfirmDeleteActivityId(r.id);
+          }, title: "Delete this placement", style: { background: "none", border: "none", color: T.faint, cursor: "pointer", fontSize: 12, lineHeight: 1, flexShrink: 0 } }, "\xD7")
+        );
+      })));
+    });
+  })()), (() => {
     const unscheduledSessions = events.filter((e) => e.kind === "study block" && e.isExamPrepSession && e.status === "pending" && (!e.date || !e.time));
     if (unscheduledSessions.length === 0) return null;
     return /* @__PURE__ */ React.createElement("div", { style: { marginTop: 18 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 } }, "Study Sessions"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, unscheduledSessions.map((s) => {
@@ -13815,7 +13863,10 @@ Examples:
       fmtTime,
       onEditRoutine: openRoutineEdit,
       onDeleteRoutine: deleteRoutineItem,
-      onAddRoutine: (rule) => persistRoutines([...routines, { id: String(Date.now() + Math.random() * 1e3), ...rule, subject: "" }]),
+      onAddRoutine: (rule) => {
+        const newId = String(Date.now() + Math.random() * 1e3);
+        persistRoutines([...routines, { id: newId, groupId: newId, ...rule, subject: "" }]);
+      },
       onEditOnCalendar: () => {
         setRoutineCenterOpen(false);
         setEditRoutineMode(true);

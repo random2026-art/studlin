@@ -18191,6 +18191,16 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // you already knew clicking the row opened the full edit form.
   const [activityMenuOpenId,setActivityMenuOpenId]=useState(null);
   const [confirmDeleteActivityId,setConfirmDeleteActivityId]=useState(null);
+  // One activity can now hold several independent placements (a one-off
+  // Sunday church visit AND a separate weekly Wednesday one, say) that all
+  // share a groupId (see buildRoutineObjectsForDays/onAddRoutine) -- these
+  // two mirror activityMenuOpenId/confirmDeleteActivityId above but at the
+  // group level, for the "expand to see every placement" row and its own
+  // "delete the whole activity" confirm, kept separate so a single-
+  // placement row's own id-scoped menu/confirm above never collides with a
+  // group-level one sharing the same key space.
+  const [expandedActivityGroupId,setExpandedActivityGroupId]=useState(null);
+  const [confirmDeleteGroupId,setConfirmDeleteGroupId]=useState(null);
   // Same cascading-delete-with-undo pattern as Settings' "Subjects & Labels"
   // (countLinkedForSubject/announceCourseDelete/undoCourseDeletes there) --
   // ported here rather than shared, matching this file's convention of
@@ -18782,6 +18792,11 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
   // this rule created for them.
   const schoolWindow=(()=>{const r=routines.find(x=>x.id==="hs-school");if(!r)return null;return {start:timeToMinutes(r.startTime),end:timeToMinutes(r.startTime)+(r.duration||0)};})();
   const deleteRoutineItem=(routineId)=>persistRoutines(routines.filter(r=>r.id!==routineId));
+  // Removes every placement sharing a groupId in one persist cycle, not one
+  // deleteRoutineItem call per placement -- avoids re-running
+  // ensureSubjectsForClassRoutines/reconcileRoutineConflicts N times for
+  // what the student experiences as a single "delete this activity" action.
+  const deleteRoutineGroup=(ids)=>persistRoutines(routines.filter(r=>!ids.includes(r.id)));
   // "Skip just this one" — unlike deleteRoutineItem (which removes the rule
   // forever), this drops the student straight into the existing Studlin
   // Reschedule preview for a single occurrence: nothing is written to
@@ -18975,7 +18990,14 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       const kind=isCourse?"class":(evKind||"busy");
       const subj=isCourse?title:(kind==="class"?(subject||""):"");
       const cid=isCourse?courseId:(kind==="class"&&subj?courseIdForLabelFuzzy(subj):null);
-      const base={title,kind,...(subj?{subject:subj}:{}),...(cid?{courseId:cid}:{}),...common};
+      // groupId ties every placement this activity ever gets (this one plus
+      // any later independent one dragged in from the sidebar, see the
+      // chipKind==="activity" branch above) back to the same sidebar row --
+      // see buildRoutineObjectsForDays' own comment for why a genuinely
+      // different per-day time still has to live in its own routine object;
+      // groupId is what lets those stay visually one activity instead of
+      // reading as unrelated duplicates.
+      const base={title,kind,groupId:"grp-"+Date.now()+"-"+Math.round(Math.random()*1000),...(subj?{subject:subj}:{}),...(cid?{courseId:cid}:{}),...common};
       persistRoutines([...routines,...buildRoutineObjectsForDays(base,repeatDays,startTime,duration||60,dayTimes)]);
     }
     setNewEventOpen(false);
@@ -20187,39 +20209,94 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
             <button type="button" onClick={()=>setRoutineCenterOpen(true)} style={{background:"none",border:"none",color:T.lime,fontSize:11,fontFamily:T.font,cursor:"pointer",padding:0}}>+ Add new</button>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:6}}>
-            {routines.filter(r=>r.kind!=="class").length===0&&<div style={{fontSize:11,color:T.faint,padding:"4px 0"}}>No activities yet.</div>}
-            {routines.filter(r=>r.kind!=="class").map(r=>{
-              const isUnscheduled=!r.days||r.days.length===0;
-              const isConfirmingDelete=confirmDeleteActivityId===r.id;
-              return (
-                <div key={r.id} style={{position:"relative"}}>
-                  {isConfirmingDelete?(
-                    <div style={{padding:"8px 10px",borderRadius:8,border:`1px solid ${T.red}55`,background:T.red+"12"}}>
-                      <div style={{fontSize:10.5,color:T.text,marginBottom:8,lineHeight:1.4}}>Delete "{r.title}"?</div>
-                      <div style={{display:"flex",gap:6}}>
-                        <button onClick={()=>{deleteRoutineItem(r.id);setConfirmDeleteActivityId(null);}} style={{fontSize:10.5,fontWeight:600,padding:"4px 9px",borderRadius:5,background:T.red,color:"#fff",border:"none",cursor:"pointer",fontFamily:T.font}}>Delete</button>
-                        <button onClick={()=>setConfirmDeleteActivityId(null)} style={{fontSize:10.5,padding:"4px 9px",borderRadius:5,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,cursor:"pointer",fontFamily:T.font}}>Cancel</button>
+            {(()=>{
+              const activityRoutines=routines.filter(r=>r.kind!=="class");
+              if(activityRoutines.length===0)return <div style={{fontSize:11,color:T.faint,padding:"4px 0"}}>No activities yet.</div>;
+              // One activity can hold several independent placements now
+              // (a one-off Sunday church visit AND a separate weekly
+              // Wednesday one, say) -- group by groupId so they still read
+              // as one sidebar row instead of N duplicate-looking ones.
+              // Falls back to the routine's own id for data saved before
+              // groupId existed, which makes every legacy routine its own
+              // singleton group -- identical to today's one-row-per-item
+              // rendering, no migration needed.
+              const groupsMap=new Map();
+              activityRoutines.forEach(r=>{
+                const gid=r.groupId||r.id;
+                if(!groupsMap.has(gid))groupsMap.set(gid,[]);
+                groupsMap.get(gid).push(r);
+              });
+              const fmtPlacementDays=(ds)=>{
+                const sorted=[...(ds||[])].sort((a,b)=>a-b);
+                if(sorted.length===0)return "Not scheduled";
+                if(sorted.length===7)return "Every day";
+                if(sorted.length===5&&sorted.every((v,i)=>v===i))return "Mon–Fri";
+                return sorted.map(i=>ROUTINE_DOW[i]).join(", ");
+              };
+              return Array.from(groupsMap.values()).map(group=>{
+                const primary=group[0];
+                const gid=primary.groupId||primary.id;
+                const isMulti=group.length>1;
+                const isUnscheduled=!isMulti&&(!primary.days||primary.days.length===0);
+                const isConfirmingGroupDelete=confirmDeleteGroupId===gid;
+                const isExpanded=expandedActivityGroupId===gid;
+                return (
+                  <div key={gid} style={{position:"relative"}}>
+                    {isConfirmingGroupDelete?(
+                      <div style={{padding:"8px 10px",borderRadius:8,border:`1px solid ${T.red}55`,background:T.red+"12"}}>
+                        <div style={{fontSize:10.5,color:T.text,marginBottom:8,lineHeight:1.4}}>Delete "{primary.title}"{isMulti?" and all "+group.length+" of its placements":""}?</div>
+                        <div style={{display:"flex",gap:6}}>
+                          <button onClick={()=>{deleteRoutineGroup(group.map(r=>r.id));setConfirmDeleteGroupId(null);}} style={{fontSize:10.5,fontWeight:600,padding:"4px 9px",borderRadius:5,background:T.red,color:"#fff",border:"none",cursor:"pointer",fontFamily:T.font}}>Delete</button>
+                          <button onClick={()=>setConfirmDeleteGroupId(null)} style={{fontSize:10.5,padding:"4px 9px",borderRadius:5,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,cursor:"pointer",fontFamily:T.font}}>Cancel</button>
+                        </div>
                       </div>
-                    </div>
-                  ):(
-                    <div onClick={()=>openRoutineEdit(r)}
-                      draggable onDragStart={()=>setSidebarDragChip({title:r.title,color:r.color||T.muted,movable:false,kind:"activity",routineId:r.id})} onDragEnd={()=>setSidebarDragChip(null)}
-                      style={{...subjectRowStyle(r.color||T.muted),cursor:"pointer",justifyContent:"space-between",...(isUnscheduled?{border:`1px dashed ${(r.color||T.muted)}66`}:{})}}>
-                      <span style={{fontSize:12,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{r.title}</span>
-                      {isUnscheduled&&<span title="Drag onto the calendar to set when it repeats" style={{fontSize:9,color:T.faint,flexShrink:0,marginRight:4}}>not scheduled</span>}
-                      <button type="button" onClick={(e)=>{e.stopPropagation();setActivityMenuOpenId(activityMenuOpenId===r.id?null:r.id);}}
-                        style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:"0 0 0 6px",fontSize:14,lineHeight:1,flexShrink:0}}>⋯</button>
-                    </div>
-                  )}
-                  {activityMenuOpenId===r.id&&(
-                    <div onMouseLeave={()=>setActivityMenuOpenId(null)} style={{position:"absolute",top:"100%",right:0,zIndex:40,marginTop:4,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 12px 28px -12px rgba(0,0,0,0.5)",overflow:"hidden",minWidth:170}}>
-                      <button onClick={()=>{setActivityMenuOpenId(null);openRoutineEdit(r);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Rename / change color</button>
-                      <button onClick={()=>{setActivityMenuOpenId(null);setConfirmDeleteActivityId(r.id);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.red,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Delete</button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+                    ):(
+                      <div onClick={()=>isMulti?setExpandedActivityGroupId(x=>x===gid?null:gid):openRoutineEdit(primary)}
+                        draggable onDragStart={()=>setSidebarDragChip({title:primary.title,color:primary.color||T.muted,movable:false,kind:"activity",routineId:primary.id})} onDragEnd={()=>setSidebarDragChip(null)}
+                        style={{...subjectRowStyle(primary.color||T.muted),cursor:"pointer",justifyContent:"space-between",...(isUnscheduled?{border:`1px dashed ${(primary.color||T.muted)}66`}:{})}}>
+                        <span style={{fontSize:12,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{primary.title}</span>
+                        {isMulti&&<span title="This activity has multiple placements -- click to see each one" style={{fontSize:9,color:T.faint,flexShrink:0,marginRight:4}}>{group.length} placements {isExpanded?"▾":"▸"}</span>}
+                        {isUnscheduled&&<span title="Drag onto the calendar to set when it repeats" style={{fontSize:9,color:T.faint,flexShrink:0,marginRight:4}}>not scheduled</span>}
+                        <button type="button" onClick={(e)=>{e.stopPropagation();setActivityMenuOpenId(activityMenuOpenId===gid?null:gid);}}
+                          style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:"0 0 0 6px",fontSize:14,lineHeight:1,flexShrink:0}}>⋯</button>
+                      </div>
+                    )}
+                    {activityMenuOpenId===gid&&(
+                      <div onMouseLeave={()=>setActivityMenuOpenId(null)} style={{position:"absolute",top:"100%",right:0,zIndex:40,marginTop:4,background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 12px 28px -12px rgba(0,0,0,0.5)",overflow:"hidden",minWidth:170}}>
+                        {isMulti?(
+                          <button onClick={()=>{setActivityMenuOpenId(null);setExpandedActivityGroupId(gid);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>View placements</button>
+                        ):(
+                          <button onClick={()=>{setActivityMenuOpenId(null);openRoutineEdit(primary);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.text,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>Rename / change color</button>
+                        )}
+                        <button onClick={()=>{setActivityMenuOpenId(null);setConfirmDeleteGroupId(gid);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",color:T.red,fontSize:12,fontFamily:T.font,cursor:"pointer"}}>{isMulti?"Delete all placements":"Delete"}</button>
+                      </div>
+                    )}
+                    {isMulti&&isExpanded&&(
+                      <div style={{display:"flex",flexDirection:"column",gap:4,marginTop:4,paddingLeft:10,borderLeft:`2px solid ${(primary.color||T.muted)}33`}}>
+                        {group.map(r=>{
+                          const isConfirmingPlacementDelete=confirmDeleteActivityId===r.id;
+                          return isConfirmingPlacementDelete?(
+                            <div key={r.id} style={{padding:"6px 8px",borderRadius:6,border:`1px solid ${T.red}55`,background:T.red+"12"}}>
+                              <div style={{fontSize:10,color:T.text,marginBottom:6}}>Delete this placement?</div>
+                              <div style={{display:"flex",gap:6}}>
+                                <button onClick={()=>{deleteRoutineItem(r.id);setConfirmDeleteActivityId(null);}} style={{fontSize:10,fontWeight:600,padding:"3px 8px",borderRadius:4,background:T.red,color:"#fff",border:"none",cursor:"pointer",fontFamily:T.font}}>Delete</button>
+                                <button onClick={()=>setConfirmDeleteActivityId(null)} style={{fontSize:10,padding:"3px 8px",borderRadius:4,background:"transparent",color:T.muted,border:`1px solid ${T.border}`,cursor:"pointer",fontFamily:T.font}}>Cancel</button>
+                              </div>
+                            </div>
+                          ):(
+                            <div key={r.id} onClick={()=>openRoutineEdit(r)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6,padding:"5px 8px",borderRadius:6,cursor:"pointer",fontSize:11}}
+                              onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                              <span style={{color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{fmtPlacementDays(r.days)}{r.startTime?" · "+fmtTime(r.startTime):""}</span>
+                              <button onClick={(e)=>{e.stopPropagation();setConfirmDeleteActivityId(r.id);}} title="Delete this placement" style={{background:"none",border:"none",color:T.faint,cursor:"pointer",fontSize:12,lineHeight:1,flexShrink:0}}>×</button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              });
+            })()}
           </div>
           {/* Correction round (2026-07-31): manually-created study
               sessions with no time yet used to only be reachable by
@@ -21403,7 +21480,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       <RoutineWizardModal open={routineWizardOpen} initialStatus={getProfile().status} existingRoutines={routines} onFinish={finishRoutineWizard} onSkip={skipRoutineWizard} />
       <RoutineControlCenterModal open={routineCenterOpen} onClose={()=>setRoutineCenterOpen(false)} routines={routines} fmtTime={fmtTime}
         onEditRoutine={openRoutineEdit} onDeleteRoutine={deleteRoutineItem}
-        onAddRoutine={(rule)=>persistRoutines([...routines,{id:String(Date.now()+Math.random()*1000),...rule,subject:""}])}
+        onAddRoutine={(rule)=>{const newId=String(Date.now()+Math.random()*1000);persistRoutines([...routines,{id:newId,groupId:newId,...rule,subject:""}]);}}
         onEditOnCalendar={()=>{setRoutineCenterOpen(false);setEditRoutineMode(true);}} />
     </>
   );
