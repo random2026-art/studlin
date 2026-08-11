@@ -15859,6 +15859,15 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
       <div style={{width:"100%",maxWidth:620,maxHeight:"88vh",display:"flex",flexDirection:"column",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,boxShadow:"0 48px 100px -30px rgba(0,0,0,0.7)",animation:"studlinPop 0.25s ease"}}>
         <WizardStepper step={step} />
         <div style={{padding:"28px 32px 0",overflowY:"auto",flex:1,minHeight:0}}>
+          {/* A short step (e.g. "End of Term" -- just two date fields) used
+              to collapse the whole modal down to its own tiny content
+              height, landing the footer right up against it with almost no
+              breathing room -- read as "cut off," nudging the student to
+              scroll for content that was never there. This floor doesn't
+              affect longer steps (Holidays, Classes, etc.), which already
+              exceed it and scroll normally within the parent's own
+              maxHeight:88vh cap. */}
+          <div style={{minHeight:340}}>
 
           {step==="term"&&(<>
             <TitleSub title="When does this term run?" sub="Studlin stops expecting your classes outside these dates -- summer, before the term starts. You can always change this later in Settings." />
@@ -16364,19 +16373,29 @@ function ClassSetupWizard({open,initialStatus,onFinish,onSkip,quickScan,targetCo
             </>);
           })()}
 
+          </div>
         </div>
 
         <div style={{padding:"18px 32px",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
           <div style={{display:"flex",alignItems:"center",gap:16}}>
             {/* Real Back navigation (2026-07-29 fix, unified 2026-07-29
                 later the same day) -- now the single Back control for
-                every step including classes' own addMode sub-navigation,
-                always living next to Skip all instead of scattered as
-                separate inline links inside each screen's own content. */}
+                every step including classes' own addMode sub-navigation. */}
             {canGoBack&&(
               <button type="button" onClick={goBack} style={{fontSize:12.5,color:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>← Back</button>
             )}
-            <button type="button" onClick={onSkip} style={{fontSize:12.5,color:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>Skip all</button>
+            {/* "Skip all" removed for real onboarding (2026-08-11) -- a
+                one-click total bailout undermines a flow the student
+                actually needs to complete; each step's own Skip (below)
+                still lets them move past just that one field without
+                answering it. Kept, relabeled "Cancel", for quickScan --
+                that's an already-onboarded student re-opening this same
+                component from Settings to scan one more syllabus, not
+                onboarding, and shouldn't trap them mid-scan with no way
+                out. */}
+            {quickScan&&(
+              <button type="button" onClick={onSkip} style={{fontSize:12.5,color:T.muted,background:"none",border:"none",cursor:"pointer",fontFamily:T.font,padding:0}}>Cancel</button>
+            )}
           </div>
           <div style={{display:"flex",gap:10}}>
             {step==="term"&&(<>
@@ -18462,16 +18481,6 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     lsSet("subjects-configured",true);
     lsSet("hasConfiguredRoutine",true);
     setClassSetupOpen(false);
-    syncClassSetupState();
-  };
-  const skipClassSetup=()=>{
-    lsSet("subjects-configured",true);
-    lsSet("hasConfiguredRoutine",true);
-    setClassSetupOpen(false);
-    // Defensive: "Skip all" is a real exit path after an HS whole-schedule
-    // commit (commitHsSchedule saves straight to storage mid-wizard rather
-    // than staging through pendingClasses), so this needs the same resync
-    // finishClassSetup does, not just the onboarding flags.
     syncClassSetupState();
   };
   // Same re-sync finishClassSetup does, minus the onboarding flags (already
@@ -20714,7 +20723,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
         <TourStep {...CAL_TOUR_STEPS[calTourStep]} step={calTourStep} total={CAL_TOUR_STEPS.length}
           isLast={calTourStep===CAL_TOUR_STEPS.length-1} onNext={advanceCalTour} onSkip={skipCalTour} />
       )}
-      <ClassSetupWizard open={classSetupOpen} initialStatus={getProfile().status} onFinish={finishClassSetup} onSkip={skipClassSetup} onPartialSync={syncClassSetupState} />
+      <ClassSetupWizard open={classSetupOpen} initialStatus={getProfile().status} onFinish={finishClassSetup} onPartialSync={syncClassSetupState} />
       <ClassSetupWizard open={quickScanOpen} quickScan targetCourseId={quickScanTargetCourseId} initialStatus={getProfile().status} onFinish={finishQuickScan} onSkip={()=>{setQuickScanOpen(false);setQuickScanTargetCourseId(null);syncClassSetupState();}} onPartialSync={syncClassSetupState} />
       <Modal open={!!weeklyContentCourseId} onClose={()=>setWeeklyContentCourseId(null)} title="Class notes" sub="A short note for each day this class meets -- lecture, lab, homework due, whatever's useful." width={460}
         footer={<><Btn variant="subtle" onClick={()=>setWeeklyContentCourseId(null)}>Cancel</Btn><Btn onClick={saveWeeklyContent}>Save</Btn></>}>
