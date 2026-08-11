@@ -5300,7 +5300,7 @@ function makeMonthlyUsage(storageKey){
 }
 function daysUntilReset(){const n=new Date();const e=new Date(n.getFullYear(),n.getMonth()+1,1);return Math.ceil((e-n)/86400000);}
 
-const SYLLABUS_SCAN_LIMIT=11;
+const SYLLABUS_SCAN_LIMIT=8;
 const getSyllabusScanUsage=makeMonthlyUsage("syllabusScans");
 function canScanSyllabus(){return getPlan()!=="Free"||getSyllabusScanUsage().count<SYLLABUS_SCAN_LIMIT;}
 function recordSyllabusScan(){const u=getSyllabusScanUsage();lsSet("syllabusScans",{month:u.month,count:u.count+1});}
@@ -5339,10 +5339,10 @@ const getExamPlanUsage=makeMonthlyUsage("examPlanBuilds");
 function canBuildExamPlan(){return getPlan()!=="Free"||getExamPlanUsage().count<EXAM_PLAN_LIMIT;}
 function recordExamPlanBuild(){const u=getExamPlanUsage();lsSet("examPlanBuilds",{month:u.month,count:u.count+1});}
 
-const ATTACK_SESSION_LIMIT=2;
-const getAttackSessionUsage=makeMonthlyUsage("attackSessionStarts");
-function canStartAttackSession(){return getPlan()!=="Free"||getAttackSessionUsage().count<ATTACK_SESSION_LIMIT;}
-function recordAttackSessionStart(){const u=getAttackSessionUsage();lsSet("attackSessionStarts",{month:u.month,count:u.count+1});}
+// Attack Block (no phases -- a plain assignment, not a Project) is
+// deterministic probe-then-schedule with no AI call at all, so it's never
+// gated -- unlike the Project phase-breakdown branch just below, which
+// does call AI to propose the phases.
 
 const PROJECT_BREAKDOWN_LIMIT=1;
 const getProjectBreakdownUsage=makeMonthlyUsage("projectBreakdowns");
@@ -19446,9 +19446,14 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     // the linked chain task -- degrades to an unphased chain for a plain
     // Assignment, so this one call covers both types.
     if((evKind==="assignment"||evKind==="project")&&evAttackBlock){
+      // Only the Project branch (AI proposes the phase breakdown) is a real
+      // AI cost worth gating -- a plain Attack Block on an Assignment is
+      // deterministic probe-then-schedule, no AI call at all (see "Attack
+      // Block skips the AI call entirely" below), so it stays free and
+      // unlimited regardless of plan.
       const isProject=evKind==="project";
-      if(isProject?!canBreakDownProject():!canStartAttackSession()){
-        setDeadlineToast("Free plan's "+(isProject?"project breakdowns":"attack sessions")+" for this month are used up — upgrade for unlimited.");
+      if(isProject&&!canBreakDownProject()){
+        setDeadlineToast("Free plan's project breakdowns for this month are used up — upgrade for unlimited.");
         setTimeout(()=>setDeadlineToast(""),3200);
         return;
       }
@@ -19459,7 +19464,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       const markerId=String(Date.now()+Math.random()*1000);
       const pair=buildAssignmentAttackBlockPair(markerId,{title:evTitle.trim(),subject:subj,courseId:courseIdForLabel(subj),notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins,outline},phases,events,routines,prefs,evDate,evTime);
       if(!pair){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
-      if(isProject)recordProjectBreakdown();else recordAttackSessionStart();
+      if(isProject)recordProjectBreakdown();
       commitTasks([pair.marker,pair.task]);
       return;
     }
@@ -19597,10 +19602,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
     // deterministic placement, not LLM reasoning about a duration nobody has
     // yet.
     if(evAttackBlock){
+      // Same real-AI-cost-only gate as the other Add-Task submit path above --
+      // plain Attack Block is deterministic (see comment above), only the
+      // Project phase-breakdown branch actually calls AI.
       const isProject=evKind==="project";
-      if(isProject?!canBreakDownProject():!canStartAttackSession()){
+      if(isProject&&!canBreakDownProject()){
         setAiLoading(false);
-        setDeadlineToast("Free plan's "+(isProject?"project breakdowns":"attack sessions")+" for this month are used up — upgrade for unlimited.");
+        setDeadlineToast("Free plan's project breakdowns for this month are used up — upgrade for unlimited.");
         setTimeout(()=>setDeadlineToast(""),3200);
         return;
       }
@@ -19611,7 +19619,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openWizardOnMount,onWizardOpe
       const pair=buildAssignmentAttackBlockPair(markerId,{title:evTitle.trim(),subject:subj,courseId:courseIdForLabel(subj),notes:evNotes,deadline:evDeadline||null,priority:evPriority,difficulty:evDifficulty,probeMins:evAttackProbeMins,outline},phases,events,routines,prefs,desiredStartDate,windowStartTime);
       setAiLoading(false);
       if(!pair){setDeadlineToast("That time conflicts and there's no open slot before the deadline.");setTimeout(()=>setDeadlineToast(""),2800);return;}
-      if(isProject)recordProjectBreakdown();else recordAttackSessionStart();
+      if(isProject)recordProjectBreakdown();
       commitTasks([pair.marker,pair.task]);
       return;
     }
@@ -22733,7 +22741,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                   ["AI note scans (files, lectures & YouTube)",plan==="Free"?getNoteScanUsage().count+" / "+NOTE_SCAN_LIMIT+" this month":"Unlimited"],
                   ["AI flashcard generations",plan==="Free"?getFlashcardGenUsage().count+" / "+FLASHCARD_GEN_LIMIT+" this month":"Unlimited"],
                   ["AI study plans",plan==="Free"?getExamPlanUsage().count+" / "+EXAM_PLAN_LIMIT+" this month":"Unlimited"],
-                  ["Attack sessions",plan==="Free"?getAttackSessionUsage().count+" / "+ATTACK_SESSION_LIMIT+" this month":"Unlimited"],
+                  ["Attack sessions","Unlimited"],
                   ["Project breakdowns",plan==="Free"?getProjectBreakdownUsage().count+" / "+PROJECT_BREAKDOWN_LIMIT+" this month":"Unlimited"],
                   ["Smart Reschedule",plan==="Free"?"Pro only":"Unlimited"],
                 ].map(([action,status],i,arr)=>(
@@ -24244,8 +24252,12 @@ function App() {
   const [lockInErrorToast,setLockInErrorToast]=useState("");
   const acceptPrepPrompt=(item)=>{
     const isProject=item.phases&&item.phases.length>0;
-    if(isProject?!canBreakDownProject():!canStartAttackSession()){
-      setPrepAutoToast(isProject?"Free plan's project breakdown for this month is used up — upgrade for unlimited.":"Free plan's attack sessions for this month are used up — upgrade for unlimited.");
+    // Only the Project phase-breakdown branch is a real AI cost -- a plain
+    // attack session is deterministic probe-then-schedule, no AI call, so
+    // it's never gated (see the Add-Task submit handlers for the same
+    // reasoning).
+    if(isProject&&!canBreakDownProject()){
+      setPrepAutoToast("Free plan's project breakdown for this month is used up — upgrade for unlimited.");
       setTimeout(()=>setPrepAutoToast(""),4200);
       return;
     }
@@ -24255,7 +24267,7 @@ function App() {
     const task=startPhaseAwareAttackChain({title:item.title,deadline:item.date,priority:item.priority,difficulty:item.difficulty,noteId:item.noteId,dueEventId:item.id},item.phases,events,routines,prefs,dayKey(),prefs.workStartTime);
     const next=events.map(e=>e.id===item.id?{...e,prepPending:false}:e).concat([task]);
     lsSet("events",next);
-    if(isProject)recordProjectBreakdown();else recordAttackSessionStart();
+    if(isProject)recordProjectBreakdown();
     setPrepPromptBatch(b=>b.filter(x=>x.id!==item.id));
   };
   const declinePrepPrompt=(item)=>{

@@ -3441,7 +3441,7 @@ function daysUntilReset() {
   const e = new Date(n.getFullYear(), n.getMonth() + 1, 1);
   return Math.ceil((e - n) / 864e5);
 }
-const SYLLABUS_SCAN_LIMIT = 11;
+const SYLLABUS_SCAN_LIMIT = 8;
 const getSyllabusScanUsage = makeMonthlyUsage("syllabusScans");
 function canScanSyllabus() {
   return getPlan() !== "Free" || getSyllabusScanUsage().count < SYLLABUS_SCAN_LIMIT;
@@ -3485,15 +3485,6 @@ function canBuildExamPlan() {
 function recordExamPlanBuild() {
   const u = getExamPlanUsage();
   lsSet("examPlanBuilds", { month: u.month, count: u.count + 1 });
-}
-const ATTACK_SESSION_LIMIT = 2;
-const getAttackSessionUsage = makeMonthlyUsage("attackSessionStarts");
-function canStartAttackSession() {
-  return getPlan() !== "Free" || getAttackSessionUsage().count < ATTACK_SESSION_LIMIT;
-}
-function recordAttackSessionStart() {
-  const u = getAttackSessionUsage();
-  lsSet("attackSessionStarts", { month: u.month, count: u.count + 1 });
 }
 const PROJECT_BREAKDOWN_LIMIT = 1;
 const getProjectBreakdownUsage = makeMonthlyUsage("projectBreakdowns");
@@ -12518,8 +12509,8 @@ function CalendarTab({ setActive = () => {
     }
     if ((evKind === "assignment" || evKind === "project") && evAttackBlock) {
       const isProject = evKind === "project";
-      if (isProject ? !canBreakDownProject() : !canStartAttackSession()) {
-        setDeadlineToast("Free plan's " + (isProject ? "project breakdowns" : "attack sessions") + " for this month are used up \u2014 upgrade for unlimited.");
+      if (isProject && !canBreakDownProject()) {
+        setDeadlineToast("Free plan's project breakdowns for this month are used up \u2014 upgrade for unlimited.");
         setTimeout(() => setDeadlineToast(""), 3200);
         return;
       }
@@ -12535,7 +12526,6 @@ function CalendarTab({ setActive = () => {
         return;
       }
       if (isProject) recordProjectBreakdown();
-      else recordAttackSessionStart();
       commitTasks([pair.marker, pair.task]);
       return;
     }
@@ -12650,9 +12640,9 @@ function CalendarTab({ setActive = () => {
     const windowStartTime = isDesiredToday ? earliestTodayTime : minutesToTime(desiredStartMins);
     if (evAttackBlock) {
       const isProject = evKind === "project";
-      if (isProject ? !canBreakDownProject() : !canStartAttackSession()) {
+      if (isProject && !canBreakDownProject()) {
         setAiLoading(false);
-        setDeadlineToast("Free plan's " + (isProject ? "project breakdowns" : "attack sessions") + " for this month are used up \u2014 upgrade for unlimited.");
+        setDeadlineToast("Free plan's project breakdowns for this month are used up \u2014 upgrade for unlimited.");
         setTimeout(() => setDeadlineToast(""), 3200);
         return;
       }
@@ -12668,7 +12658,6 @@ function CalendarTab({ setActive = () => {
         return;
       }
       if (isProject) recordProjectBreakdown();
-      else recordAttackSessionStart();
       commitTasks([pair.marker, pair.task]);
       return;
     }
@@ -14603,7 +14592,7 @@ function SettingsTab({ theme = "dark", setTheme = () => {
       ["AI note scans (files, lectures & YouTube)", plan === "Free" ? getNoteScanUsage().count + " / " + NOTE_SCAN_LIMIT + " this month" : "Unlimited"],
       ["AI flashcard generations", plan === "Free" ? getFlashcardGenUsage().count + " / " + FLASHCARD_GEN_LIMIT + " this month" : "Unlimited"],
       ["AI study plans", plan === "Free" ? getExamPlanUsage().count + " / " + EXAM_PLAN_LIMIT + " this month" : "Unlimited"],
-      ["Attack sessions", plan === "Free" ? getAttackSessionUsage().count + " / " + ATTACK_SESSION_LIMIT + " this month" : "Unlimited"],
+      ["Attack sessions", "Unlimited"],
       ["Project breakdowns", plan === "Free" ? getProjectBreakdownUsage().count + " / " + PROJECT_BREAKDOWN_LIMIT + " this month" : "Unlimited"],
       ["Smart Reschedule", plan === "Free" ? "Pro only" : "Unlimited"]
     ].map(([action, status], i, arr) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: i < arr.length - 1 ? `1px solid ${T.border}` : "none" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, color: T.text } }, action), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: T.muted, fontFamily: T.mono } }, status)))), plan === "Free" && /* @__PURE__ */ React.createElement(Card, { style: { background: T.lime, border: "none" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: T.ink, marginBottom: 4 } }, "Unlock unlimited AI"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.ink, opacity: 0.75, marginBottom: 14 } }, "Upgrade to Pro for unlimited AI chat, scans & flashcard generation."), /* @__PURE__ */ React.createElement("button", { onClick: () => setPricingOpen(true), style: { background: T.ink, color: T.lime, border: "none", padding: "8px 18px", borderRadius: 8, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: T.font } }, "Upgrade to Pro")));
@@ -15399,8 +15388,8 @@ function App() {
   const [lockInErrorToast, setLockInErrorToast] = useState("");
   const acceptPrepPrompt = (item) => {
     const isProject = item.phases && item.phases.length > 0;
-    if (isProject ? !canBreakDownProject() : !canStartAttackSession()) {
-      setPrepAutoToast(isProject ? "Free plan's project breakdown for this month is used up \u2014 upgrade for unlimited." : "Free plan's attack sessions for this month are used up \u2014 upgrade for unlimited.");
+    if (isProject && !canBreakDownProject()) {
+      setPrepAutoToast("Free plan's project breakdown for this month is used up \u2014 upgrade for unlimited.");
       setTimeout(() => setPrepAutoToast(""), 4200);
       return;
     }
@@ -15411,7 +15400,6 @@ function App() {
     const next = events.map((e) => e.id === item.id ? { ...e, prepPending: false } : e).concat([task]);
     lsSet("events", next);
     if (isProject) recordProjectBreakdown();
-    else recordAttackSessionStart();
     setPrepPromptBatch((b) => b.filter((x) => x.id !== item.id));
   };
   const declinePrepPrompt = (item) => {

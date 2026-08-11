@@ -1906,16 +1906,6 @@ describe("2026-08-10 pricing pass: Studlin Prep free-tier limits + Smart Resched
     assert.equal(m.canBuildExamPlan(), false);
   });
 
-  test("Free plan gets exactly ATTACK_SESSION_LIMIT attack sessions, then is blocked", () => {
-    const m = loadStudlinModule();
-    m.setPlanLS("Free");
-    for (let i = 0; i < m.ATTACK_SESSION_LIMIT; i++) {
-      assert.equal(m.canStartAttackSession(), true, `should allow session #${i + 1}`);
-      m.recordAttackSessionStart();
-    }
-    assert.equal(m.canStartAttackSession(), false);
-  });
-
   test("Free plan gets exactly PROJECT_BREAKDOWN_LIMIT project breakdowns, then is blocked", () => {
     const m = loadStudlinModule();
     m.setPlanLS("Free");
@@ -1926,11 +1916,10 @@ describe("2026-08-10 pricing pass: Studlin Prep free-tier limits + Smart Resched
     assert.equal(m.canBreakDownProject(), false);
   });
 
-  test("Pro plan is never limited on study plans, attack sessions, or project breakdowns", () => {
+  test("Pro plan is never limited on study plans or project breakdowns", () => {
     const m = loadStudlinModule();
     m.setPlanLS("Pro");
     for (let i = 0; i < m.EXAM_PLAN_LIMIT + 5; i++) { assert.equal(m.canBuildExamPlan(), true); m.recordExamPlanBuild(); }
-    for (let i = 0; i < m.ATTACK_SESSION_LIMIT + 5; i++) { assert.equal(m.canStartAttackSession(), true); m.recordAttackSessionStart(); }
     for (let i = 0; i < m.PROJECT_BREAKDOWN_LIMIT + 5; i++) { assert.equal(m.canBreakDownProject(), true); m.recordProjectBreakdown(); }
   });
 

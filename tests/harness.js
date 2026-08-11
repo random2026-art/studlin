@@ -96,7 +96,6 @@ function loadStudlinModule(options) {
     "applyCheckInRating","computeExamReadiness","canGenQuiz","recordQuizGen",
     "getQuizGenUsage","QUIZ_GEN_LIMIT","setPlanLS","shouldShowWeekBalanceNudge",
     "canBuildExamPlan","recordExamPlanBuild","getExamPlanUsage","EXAM_PLAN_LIMIT",
-    "canStartAttackSession","recordAttackSessionStart","getAttackSessionUsage","ATTACK_SESSION_LIMIT",
     "canBreakDownProject","recordProjectBreakdown","getProjectBreakdownUsage","PROJECT_BREAKDOWN_LIMIT",
     "canUseSmartReschedule",
     "dismissWeekBalanceNudge","computeBusyWindowsPayload","BUSY_WINDOW_DAYS_AHEAD",
