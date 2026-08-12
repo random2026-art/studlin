@@ -5,7 +5,7 @@
 const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
 const { loadStudlinModule } = require("./harness.js");
-const { parseICS, normalizeCalendarUrl, isAllowedCalendarHost, isCalendarHostAllowedForPlatform } = require("../api/cal-proxy.js");
+const { parseICS, normalizeCalendarUrl, isAllowedCalendarHost, isCalendarHostAllowedForPlatform, isAcademicCalendarHost } = require("../api/cal-proxy.js");
 
 function pad(n) { return String(n).padStart(2, "0"); }
 // Builds an ICS timestamp for N days from now at a fixed hour, so fixtures
@@ -78,6 +78,33 @@ describe("parseICS (api/cal-proxy.js)", () => {
     assert.equal(skippedAllDay, 1);
   });
 
+  test("with {includeAllDay:true}, keeps date-only entries instead of dropping them, flagged and time/duration left null", () => {
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:final-exam@example.com",
+      "SUMMARY:Final Exam",
+      `DTSTART;VALUE=DATE:${icsDateOnly(5)}`,
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:real-shift@example.com",
+      "SUMMARY:Morning shift",
+      `DTSTART:${icsTimestamp(5, 8, 0)}`,
+      `DTEND:${icsTimestamp(5, 12, 0)}`,
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    const { events, skippedAllDay } = parseICS(ics, { includeAllDay: true });
+    assert.equal(events.length, 2, "the all-day entry is kept, not dropped");
+    assert.equal(skippedAllDay, 0);
+    const allDay = events.find((e) => e.uid === "final-exam@example.com");
+    assert.equal(allDay.allDay, true);
+    assert.equal(allDay.time, null);
+    assert.equal(allDay.duration, null);
+    const timed = events.find((e) => e.uid === "real-shift@example.com");
+    assert.equal(timed.allDay, undefined);
+  });
+
   test("filters out events already in the past", () => {
     const ics = [
       "BEGIN:VCALENDAR",
@@ -144,6 +171,25 @@ describe("isCalendarHostAllowedForPlatform (self-hosted Blackboard on a custom d
   // a real DNS lookup (verifyPublicDomain) and is deliberately NOT
   // exercised here -- see tests/ssrf-guard.test.js for the pure IP-range
   // logic that decision is actually built on.
+});
+
+describe("isAcademicCalendarHost (which sources get all-day exams/assignments included instead of dropped)", () => {
+  test("Canvas/Schoology/Blackboard's own domains and subdomains are academic", () => {
+    assert.equal(isAcademicCalendarHost("instructure.com"), true);
+    assert.equal(isAcademicCalendarHost("myschool.instructure.com"), true);
+    assert.equal(isAcademicCalendarHost("app.schoology.com"), true);
+    assert.equal(isAcademicCalendarHost("blackboard.com"), true);
+  });
+  test("a generic calendar source is never treated as academic, even with no platform hint", () => {
+    assert.equal(isAcademicCalendarHost("icloud.com"), false);
+    assert.equal(isAcademicCalendarHost("calendar.google.com"), false);
+    assert.equal(isAcademicCalendarHost("outlook.live.com"), false);
+  });
+  test("a non-listed domain is only academic when the client explicitly identified it as Blackboard", () => {
+    assert.equal(isAcademicCalendarHost("bb.somedistrict.edu", "blackboard"), true);
+    assert.equal(isAcademicCalendarHost("bb.somedistrict.edu", undefined), false);
+    assert.equal(isAcademicCalendarHost("bb.somedistrict.edu", "schoology"), false);
+  });
 });
 
 describe("normalizeCalendarUrl (regression: iCloud's own Public Calendar link defaults to webcal://, which the HTTP client can't fetch as-is)", () => {
@@ -359,6 +405,56 @@ describe("mergeImportedEvents gradeWeightPercent (Canvas token connect: real ass
     const result = mergeImportedEvents([], "sub-1", fetched, classifications);
     assert.equal(result[0].gradeWeightPercent, undefined);
     assert.equal(result[0].examWeight, "major");
+  });
+});
+
+describe("mergeImportedEvents all-day placeholder time (Canvas/Schoology/Blackboard exam/assignment with no clock time -- must not be silently dropped, and must never fabricate a real-looking time for something that isn't an exam-occupied block)", () => {
+  test("an all-day item classified exam gets the 9am placeholder, flagged timeUnconfirmed, and stays non-occupying (duration null)", () => {
+    const { mergeImportedEvents } = loadStudlinModule();
+    const fetched = [{ uid: "u1", title: "Final Exam", date: "2026-08-14", time: null, duration: null, allDay: true }];
+    const classifications = { u1: { kind: "exam", subject: "Biology" } };
+    const result = mergeImportedEvents([], "sub-1", fetched, classifications);
+    assert.equal(result[0].time, "09:00");
+    assert.equal(result[0].timeUnconfirmed, true);
+    assert.equal(result[0].duration, null);
+    assert.equal(result[0].kind, "exam");
+  });
+
+  test("an all-day item classified assignment gets the end-of-day placeholder, same as any other assignment with no specific time", () => {
+    const { mergeImportedEvents } = loadStudlinModule();
+    const fetched = [{ uid: "u1", title: "Reading response", date: "2026-08-14", time: null, duration: null, allDay: true }];
+    const classifications = { u1: { kind: "assignment", subject: "English" } };
+    const result = mergeImportedEvents([], "sub-1", fetched, classifications);
+    assert.equal(result[0].time, "23:59");
+    assert.equal(result[0].timeUnconfirmed, true);
+    assert.equal(result[0].duration, null);
+  });
+
+  test("an all-day item with no classification at all still gets a safe placeholder time instead of a null-time event", () => {
+    const { mergeImportedEvents } = loadStudlinModule();
+    const fetched = [{ uid: "u1", title: "Unclassified all-day item", date: "2026-08-14", time: null, duration: null, allDay: true }];
+    const result = mergeImportedEvents([], "sub-1", fetched);
+    assert.equal(result[0].time, "23:59");
+    assert.equal(result[0].timeUnconfirmed, true);
+  });
+
+  test("a normal (non-all-day) exam is untouched -- timeUnconfirmed stays unset, real time is preserved", () => {
+    const { mergeImportedEvents } = loadStudlinModule();
+    const fetched = [{ uid: "u1", title: "Unit 2 midterm", date: "2026-08-05", time: "09:15", duration: 50 }];
+    const classifications = { u1: { kind: "exam", subject: "Biology" } };
+    const result = mergeImportedEvents([], "sub-1", fetched, classifications);
+    assert.equal(result[0].time, "09:15");
+    assert.equal(result[0].timeUnconfirmed, undefined);
+  });
+
+  test("resyncing an all-day exam whose feed later gains a real time clears timeUnconfirmed", () => {
+    const { mergeImportedEvents } = loadStudlinModule();
+    const classifications = { u1: { kind: "exam", subject: "Biology" } };
+    const first = mergeImportedEvents([], "sub-1", [{ uid: "u1", title: "Final Exam", date: "2026-08-14", time: null, duration: null, allDay: true }], classifications);
+    assert.equal(first[0].timeUnconfirmed, true);
+    const resynced = mergeImportedEvents(first, "sub-1", [{ uid: "u1", title: "Final Exam", date: "2026-08-14", time: "13:00", duration: 90 }]);
+    assert.equal(resynced[0].time, "13:00");
+    assert.equal(resynced[0].timeUnconfirmed, undefined);
   });
 });
 

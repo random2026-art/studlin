@@ -1594,7 +1594,13 @@ function mergeImportedEvents(existingEvents,subId,fetchedEvents,classifications)
     // stays a non-occupying marker across a resync too; only a real
     // occupied-time import (busy block/class/exam) tracks the feed's own
     // duration on refresh.
-    return {...ev,title:fresh.title,date:fresh.date,time:fresh.time,duration:ev.kind==="deadline"?null:fresh.duration};
+    // fresh.allDay (Canvas/Schoology/Blackboard all-day items, see
+    // parseICS's includeAllDay) means fresh.time is null -- same
+    // placeholder-time resolution as the "added" branch below, and
+    // timeUnconfirmed self-corrects (cleared) if the school later
+    // publishes a real time for this item on a later resync.
+    const resolvedTime=fresh.allDay?(ev.kind==="exam"?"09:00":"23:59"):fresh.time;
+    return {...ev,title:fresh.title,date:fresh.date,time:resolvedTime,duration:ev.kind==="deadline"?null:fresh.duration,timeUnconfirmed:fresh.allDay||undefined};
   });
   // Order-independent dedup fix: a syllabus scan or manual entry may have
   // already created this exact item before this subscription ever synced
@@ -1617,9 +1623,19 @@ function mergeImportedEvents(existingEvents,subId,fetchedEvents,classifications)
     // block. "other" (announcements, general events with no real
     // schoolwork shape) falls back to the pre-existing generic behavior.
     const kind=!c?"busy block":(c.kind==="assignment"||c.kind==="project")?"deadline":c.kind==="other"?"busy block":c.kind;
+    // Canvas/Schoology/Blackboard all-day items (parseICS's includeAllDay
+    // path, api/cal-proxy.js) arrive with time:null rather than a
+    // fabricated clock time -- that's only ever decided here, once the
+    // real kind is known. Same placeholder convention
+    // buildSyllabusEventBatch already uses for an exam/assignment with no
+    // known time of its own (09:00/23:59), not a new one. Runs even when
+    // classification itself failed (c is falsy, kind stays "busy block")
+    // so a real-date/null-time event -- untested territory everywhere else
+    // timeToMinutes(x.time) is called -- can never reach the calendar.
+    const resolvedTime=e.allDay?(kind==="exam"?"09:00":"23:59"):e.time;
     return {
       id:"import-"+subId+"-"+e.uid.replace(/[^a-z0-9]+/gi,"").slice(0,24)+"-"+Math.random().toString(36).slice(2,6),
-      title:e.title,date:e.date,time:e.time,
+      title:e.title,date:e.date,time:resolvedTime,
       // A deadline marker with no duration doesn't occupy calendar time
       // (see TIER0_FIXED_KINDS/isDuePill) -- Studlin finds real study time
       // for it separately, instead of blocking whatever timestamp the
@@ -1627,6 +1643,10 @@ function mergeImportedEvents(existingEvents,subId,fetchedEvents,classifications)
       // import keeps its real timed slot and the feed's duration.
       duration:kind==="deadline"?null:e.duration,
       subject:c?c.subject:"General",kind,
+      // Marks a placeholder time as exactly that -- never presented to the
+      // student as a real, school-confirmed time (see the exam-detail
+      // header and the import review list, which both gate on this).
+      ...(e.allDay?{timeUnconfirmed:true}:{}),
       // Matches the shape every other exam-creation path in the app
       // already gives a fresh exam (see Brain Dump's own exam construction)
       // -- confidenceLog starts empty so the exam-prep check-in flow works
@@ -8076,7 +8096,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
                 })}
                 <div style={{padding:"12px 2px",display:"flex",justifyContent:"space-between",gap:12}}>
                   <div style={{fontSize:14,fontWeight:700,color:T.amber}}>{selectedExam.title}</div>
-                  <div style={{fontSize:11.5,color:T.amber,fontFamily:T.mono,flexShrink:0}}>{dayOfWeekLabel(selectedExam.date).slice(0,3)} {selectedExam.date.slice(5).replace("-","/")}{selectedExam.time?" · "+fmtRolloverClock(selectedExam.time):""}</div>
+                  <div style={{fontSize:11.5,color:T.amber,fontFamily:T.mono,flexShrink:0}}>{dayOfWeekLabel(selectedExam.date).slice(0,3)} {selectedExam.date.slice(5).replace("-","/")}{selectedExam.time&&!selectedExam.timeUnconfirmed?" · "+fmtRolloverClock(selectedExam.time):selectedExam.timeUnconfirmed?" · time TBD":""}</div>
                 </div>
                 {hasUnfocusedGenericSessions&&(
                   <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
@@ -21992,9 +22012,16 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const [importCalMethod,setImportCalMethod]=useState("token");
   const [canvasDomainInput,setCanvasDomainInput]=useState("");
   const [canvasTokenInput,setCanvasTokenInput]=useState("");
+  // Separate from importCalError -- that one only ever renders under the
+  // Access Token field (see the token Field below), so a missing/empty
+  // Canvas domain used to fail with an error message nowhere near the
+  // domain field itself. Clicking Continue with just the token filled in
+  // read as a dead button since nothing visibly changed near what the
+  // student was actually looking at.
+  const [canvasDomainError,setCanvasDomainError]=useState("");
 
   const openImportCalModal=(hint)=>{
-    setImportCalUrl("");setImportCalLabel("");setImportCalError("");setImportCalReview(null);
+    setImportCalUrl("");setImportCalLabel("");setImportCalError("");setCanvasDomainError("");setImportCalReview(null);
     setImportCalPlatformHint(hint||null);
     setImportCalMethod("token");
     setCanvasDomainInput("");setCanvasTokenInput("");
@@ -22008,9 +22035,10 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
   const connectCanvasToken=async()=>{
     const domain=canvasDomainInput.trim();
     const token=canvasTokenInput.trim();
-    if(!domain){setImportCalError("Enter your school's Canvas domain.");return;}
+    setCanvasDomainError("");setImportCalError("");
+    if(!domain){setCanvasDomainError("Enter your school's Canvas domain.");return;}
     if(!token){setImportCalError("Paste your Canvas access token.");return;}
-    setImportCalError("");setImportCalLoading(true);
+    setImportCalLoading(true);
     try{
       const res=await authFetch("/api/me",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"canvas-connect",domain,token})});
       const data=await res.json();
@@ -22927,13 +22955,14 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                         <div style={{fontSize:10.5,color:T.faint,marginTop:8,lineHeight:1.5}}>Studlin uses this to read your courses, assignments, and grade weights. It's stored securely on Studlin's servers and is never visible to anyone else.</div>
                       </div>
                       <Field label="Canvas domain" hint="Works with instructure.com addresses or your school's own Canvas domain.">
-                        <Input value={canvasDomainInput} onChange={e=>setCanvasDomainInput(e.target.value)} placeholder="yourschool.instructure.com" autoFocus />
+                        <Input value={canvasDomainInput} onChange={e=>{setCanvasDomainInput(e.target.value);if(canvasDomainError)setCanvasDomainError("");}} placeholder="yourschool.instructure.com" autoFocus />
+                        {canvasDomainError&&<div style={{fontSize:11.5,color:T.red,marginTop:6}}>{canvasDomainError}</div>}
                       </Field>
                       <Field label="Access token">
-                        <Input type="password" value={canvasTokenInput} onChange={e=>setCanvasTokenInput(e.target.value)} placeholder="Paste the token Canvas gave you" />
+                        <Input type="password" value={canvasTokenInput} onChange={e=>{setCanvasTokenInput(e.target.value);if(importCalError)setImportCalError("");}} placeholder="Paste the token Canvas gave you" />
                         {importCalError&&<div style={{fontSize:11.5,color:T.red,marginTop:6}}>{importCalError}</div>}
                       </Field>
-                      <button onClick={()=>{setImportCalMethod("feed");setImportCalError("");}} style={{background:"none",border:"none",padding:0,marginTop:2,fontSize:11.5,color:T.muted,textDecoration:"underline",cursor:"pointer",fontFamily:T.font}}>
+                      <button onClick={()=>{setImportCalMethod("feed");setImportCalError("");setCanvasDomainError("");}} style={{background:"none",border:"none",padding:0,marginTop:2,fontSize:11.5,color:T.muted,textDecoration:"underline",cursor:"pointer",fontFamily:T.font}}>
                         Token generation blocked at your school? Use a calendar link instead →
                       </button>
                     </>
@@ -22958,7 +22987,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                         </Field>
                       )}
                       {importCalPlatformHint==="canvas"&&(
-                        <button onClick={()=>{setImportCalMethod("token");setImportCalError("");}} style={{background:"none",border:"none",padding:0,marginTop:2,fontSize:11.5,color:T.muted,textDecoration:"underline",cursor:"pointer",fontFamily:T.font}}>
+                        <button onClick={()=>{setImportCalMethod("token");setImportCalError("");setCanvasDomainError("");}} style={{background:"none",border:"none",padding:0,marginTop:2,fontSize:11.5,color:T.muted,textDecoration:"underline",cursor:"pointer",fontFamily:T.font}}>
                           ← Use an access token instead (gets full descriptions and real grade weights)
                         </button>
                       )}
@@ -23004,7 +23033,7 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                             <div style={{flex:1,minWidth:0}}>
                               <div style={{display:"flex",justifyContent:"space-between",gap:10,marginBottom:6}}>
                                 <span style={{fontSize:12.5,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</span>
-                                <span style={{fontSize:11,color:T.muted,flexShrink:0}}>{new Date(ev.date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})} · {fmtClock12(ev.time)}</span>
+                                <span style={{fontSize:11,color:T.muted,flexShrink:0}}>{new Date(ev.date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}{!ev.allDay&&(" · "+fmtClock12(ev.time))}</span>
                               </div>
                               <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                                 <SelectChip options={[{value:"assignment",label:"Assignment"},{value:"exam",label:"Exam"},{value:"project",label:"Project"},{value:"class",label:"Class"}]}
@@ -23017,6 +23046,16 @@ function SettingsTab({theme="dark", setTheme=()=>{}, accent="Lime", setAccent=()
                                     on a Canvas token import's exam-kind items. */}
                                 {ev.kind==="exam"&&ev.gradeWeightPercent!=null&&(
                                   <span style={{fontSize:10.5,fontWeight:600,color:T.teal,background:T.teal+"14",border:`1px solid ${T.teal}33`,borderRadius:6,padding:"3px 7px"}}>{ev.gradeWeightPercent}% of grade</span>
+                                )}
+                                {/* The school gave a date but no clock time (parseICS's
+                                    includeAllDay path) -- on confirm, mergeImportedEvents
+                                    gives it a placeholder time (9am for an exam, end of
+                                    day otherwise) so it never gets dropped, but that time
+                                    is a guess, not a real one. Same amber "double-check
+                                    this" treatment the syllabus-scan review already uses
+                                    for a low-confidence guess. */}
+                                {ev.allDay&&(
+                                  <span style={{fontSize:10.5,fontWeight:600,color:T.amber,background:T.amber+"14",border:`1px solid ${T.amber}33`,borderRadius:6,padding:"3px 7px"}}>No time given. Check your syllabus.</span>
                                 )}
                               </div>
                             </div>
