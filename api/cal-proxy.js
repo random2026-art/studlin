@@ -53,6 +53,20 @@ async function isCalendarHostAllowedForPlatform(hostname, platform) {
   return false;
 }
 
+// Which sources get date-only (all-day) calendar entries included instead
+// of dropped -- see the "all-day" comment on parseICS below for why this
+// can't apply to every calendar source. Hostname-derived (not the client's
+// own `platform` query param) so it still catches a raw Canvas/Schoology
+// URL pasted into the generic "Connect a calendar" flow, not just a
+// platform-specific card. Same suffix-match idiom as isAllowedCalendarHost,
+// plus platform==='blackboard' for the self-hosted-custom-domain case
+// (already DNS-verified by isCalendarHostAllowedForPlatform above -- by the
+// time that's true, the client has explicitly identified this as Blackboard).
+const ACADEMIC_DOMAINS = ['schoology.com', 'instructure.com', 'blackboard.com'];
+function isAcademicCalendarHost(hostname, platform) {
+  return ACADEMIC_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d)) || platform === 'blackboard';
+}
+
 // Re-validates the hostname on every hop instead of a bare
 // fetch(...,{redirect:'follow'}) -- the allowlist above is only as strong
 // as "every URL this proxy actually fetches passes it," and a plain
@@ -102,7 +116,18 @@ module.exports = withSentry(async (req, res) => {
     const r = await fetchCalendarRevalidated(url, platform);
     if (!r.ok) return res.status(r.status).json({ error: 'Calendar server returned ' + r.status });
     const ics = await r.text();
-    const { events, skippedAllDay } = parseICS(ics);
+    // A wrong-but-reachable link (e.g. a Canvas calendar *page* URL instead
+    // of its "Calendar Feed" .ics link) still returns 200, just with an
+    // HTML body -- parseICS would silently find zero VEVENTs and this
+    // endpoint would report the exact same "ok, 0 events" shape as a
+    // legitimate empty feed, with no way for the student to tell "wrong
+    // link" apart from "nothing due right now." BEGIN:VCALENDAR is the one
+    // line every valid ICS body has per RFC 5545, even an empty feed.
+    if (!/BEGIN:VCALENDAR/i.test(ics)) {
+      return res.status(422).json({ error: 'That link didn\'t return real calendar data - double-check you copied the "Calendar Feed" (.ics) link, not a regular calendar page URL.' });
+    }
+    const includeAllDay = isAcademicCalendarHost(parsed.hostname, platform);
+    const { events, skippedAllDay } = parseICS(ics, { includeAllDay });
     return res.status(200).json({ ok: true, events, count: events.length, skippedAllDay });
   } catch (e) {
     return res.status(e.status || 500).json({ error: e.message || 'Server error' });
@@ -128,7 +153,8 @@ function parseDt(s) {
   return yr + '-' + mo + '-' + dy;
 }
 
-function parseICS(text) {
+function parseICS(text, opts) {
+  const includeAllDay = !!(opts && opts.includeAllDay);
   const lines = text
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
@@ -170,11 +196,19 @@ function parseICS(text) {
 
   // Date-only (all-day) entries have no clock-time component -- treating
   // those as real occupied time would silently block a student's whole
-  // day (e.g. a "Spring Break" all-day marker). Skip them for now but
-  // count them so the caller can say so honestly instead of just
-  // dropping them with no trace.
+  // day (e.g. a "Spring Break" all-day marker). Skipped by default and
+  // counted so the caller can say so honestly instead of just dropping
+  // them with no trace. When includeAllDay is set (Canvas/Schoology/
+  // Blackboard only -- see isAcademicCalendarHost -- where these items go
+  // through AI classification and student review before ever landing on
+  // the calendar, and a common real case is an exam entered with no
+  // specific time), they're kept instead, with time/duration left null so
+  // nothing here ever fabricates a clock time -- that's decided downstream
+  // in mergeImportedEvents, only for the items that actually turn out to
+  // need one (see its own comment).
   const timed = upcoming.filter(e => e.dtstart.length > 10);
-  const skippedAllDay = upcoming.length - timed.length;
+  const allDayEntries = includeAllDay ? upcoming.filter(e => e.dtstart.length <= 10) : [];
+  const skippedAllDay = includeAllDay ? 0 : upcoming.length - timed.length;
 
   const outEvents = timed.map(e => {
     let duration = 60;
@@ -200,7 +234,18 @@ function parseICS(text) {
       subject: 'General',
       kind: 'busy block',
     };
-  });
+  }).concat(allDayEntries.map(e => ({
+    id: 'apple-' + Math.random().toString(36).slice(2, 10),
+    uid: e.uid || null,
+    date: e.dtstart.slice(0, 10),
+    time: null,
+    duration: null,
+    allDay: true,
+    title: e.summary || 'Untitled',
+    description: e.description ? e.description.slice(0, 300) : '',
+    subject: 'General',
+    kind: 'busy block',
+  })));
 
   return { events: outEvents, skippedAllDay };
 }
@@ -209,3 +254,4 @@ module.exports.parseICS = parseICS;
 module.exports.normalizeCalendarUrl = normalizeCalendarUrl;
 module.exports.isAllowedCalendarHost = isAllowedCalendarHost;
 module.exports.isCalendarHostAllowedForPlatform = isCalendarHostAllowedForPlatform;
+module.exports.isAcademicCalendarHost = isAcademicCalendarHost;
