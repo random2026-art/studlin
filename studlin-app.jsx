@@ -17118,7 +17118,14 @@ function computeRescheduleCandidates(task,events,routines,prefs){
     candidates.push({date:d,dayOffset:i,placement,events:relocated,reason,taskMins,baseMins,rawBaseMins,pct,isHigh:pct>=15,evictedCount,isEmpty:rawBaseMins<=0});
   }
   candidates.sort((a,b)=>a.rawBaseMins-b.rawBaseMins||a.evictedCount-b.evictedCount||a.dayOffset-b.dayOffset);
-  return candidates.slice(0,RESCHEDULE_MAX_CANDIDATES);
+  // freeDaysTotal counts every genuinely open day found across the WHOLE
+  // scan window, not just the top 3 shown -- the actual tradeoff of picking
+  // one candidate over another isn't just "how full is this one day," it's
+  // "how many other truly free days do I still have if I use this one up."
+  // Computed before slicing so a free day that didn't make the top 3 (e.g.
+  // it had more evictions than a busier-but-cleaner day) still counts.
+  const freeDaysTotal=candidates.filter(c=>c.isEmpty).length;
+  return {candidates:candidates.slice(0,RESCHEDULE_MAX_CANDIDATES),freeDaysTotal};
 }
 
 // Completing an Attack-Block/project-linked task via a plain checkbox click
@@ -17212,10 +17219,10 @@ function ProjectCheckInModal({taskId,onClose,onToast}){
   );
 }
 
-function RescheduleModal({task,events,commit,onClose}){
+function RescheduleModal({task,events,commit,onClose,onManual}){
   const prefs=getSchedulePreferences();
   const routines=getWeeklyRoutine();
-  const candidates=useMemo(()=>computeRescheduleCandidates(task,events,routines,prefs),[task.id]);
+  const {candidates,freeDaysTotal}=useMemo(()=>computeRescheduleCandidates(task,events,routines,prefs),[task.id]);
   const [selectedIdx,setSelectedIdx]=useState(0);
   const selected=candidates[selectedIdx];
   const taskMins=task.duration||30;
@@ -17252,6 +17259,24 @@ function RescheduleModal({task,events,commit,onClose}){
                       :<>Adds <strong style={{color:c.isHigh?T.amber:T.muted}}>{c.pct}%</strong> to that day's workload</>}
                     {c.evictedCount>0?` · bumps ${c.evictedCount} other${c.evictedCount!==1?"s":""}`:""}
                   </div>
+                  {/* The tradeoff isn't just "how full is this one day" --
+                      picking a free day is the lightest option today, but it
+                      spends one of a limited number of genuinely open days
+                      you have coming up. Picking a busier day costs more
+                      right now but keeps every free day untouched for
+                      whatever actually needs one later (a real deadline
+                      crunch, wanting a night off). Both are legitimate
+                      choices; the point is making that visible instead of
+                      just ranking by "lightest." */}
+                  <div style={{fontSize:11,color:T.faint,marginTop:3}}>
+                    {c.isEmpty
+                      ?(freeDaysTotal<=1
+                        ?"This is your only fully free day coming up"
+                        :`Leaves ${freeDaysTotal-1} other fully free day${freeDaysTotal-1!==1?"s":""} coming up`)
+                      :(freeDaysTotal>0
+                        ?`Keeps all ${freeDaysTotal} of your free day${freeDaysTotal!==1?"s":""} open for something else`
+                        :"No fully free days coming up either way")}
+                  </div>
                 </div>
               ))}
             </div>
@@ -17261,6 +17286,11 @@ function RescheduleModal({task,events,commit,onClose}){
           <Btn onClick={confirm} disabled={candidates.length===0} style={{flex:1,justifyContent:"center",opacity:candidates.length===0?0.45:1}}>Confirm Reschedule</Btn>
           <Btn variant="subtle" onClick={onClose} style={{flex:1,justifyContent:"center"}}>Cancel</Btn>
         </div>
+        {onManual&&(
+          <button type="button" onClick={()=>{onManual();onClose();}} style={{display:"block",width:"100%",textAlign:"center",background:"none",border:"none",padding:0,marginTop:12,fontSize:11.5,color:T.muted,textDecoration:"underline",cursor:"pointer",fontFamily:T.font}}>
+            I'll pick the day, time, and duration myself →
+          </button>
+        )}
       </div>
     </div>
   );
@@ -18492,7 +18522,6 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // scan vs. one task (manual or AI-placed) gets picked here, before any
   // fields show, instead of being discovered partway through one dense
   // modal that tries to be all four at once.
-  const [addMenuOpen,setAddMenuOpen]=useState(false);
   const [toolsMenuOpen,setToolsMenuOpen]=useState(false);
   useEffect(()=>{
     if(openRoutineCenterOnMount){setRoutineCenterOpen(true);if(onRoutineCenterOpenedFromSettings)onRoutineCenterOpenedFromSettings();}
@@ -18587,6 +18616,13 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
   // Class Setup Wizard's per-item state, just a single object here since
   // Add Task only ever creates one exam at a time.
   const [evExamPlan,setEvExamPlan]=useState({materialFiles:[],materialLinks:[],materialOpen:false,pasteMaterialMode:false,pasteMaterialText:"",linkDraft:"",linkLabelDraft:"",proposeSessions:false,sessionCount:4});
+  // Optional: which exam (if any) a manually-placed Study Session counts
+  // toward -- same dueEventId convention every other exam-linked session
+  // already uses (buildExamSessionEvents, Prep's addOneSession), so once
+  // set, this session shows up on that exam's own page in Studlin Prep
+  // exactly like one Prep generated itself, with no separate sync step.
+  const [evLinkedExamId,setEvLinkedExamId]=useState(null);
+  const [examPickerOpen,setExamPickerOpen]=useState(false);
   // "How confident are you on this material?" -- the exact same single
   // question (and shaky/okay/solid vocabulary) Studlin Prep's Build Study
   // Plan flow already asks, feeding the same computeStudyPlanParams this
@@ -18625,6 +18661,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     setEvConfidence("okay");setEvSessionCountTouched(false);
     setEvProjectPlan({phases:undefined,phasesLoading:false,outline:undefined,outlineLoading:false});
     setEvCollabPickerOpen(false);setEvCollabCandidates([]);setEvCollabSelected([]);setEvCollabLoading(false);
+    setEvLinkedExamId(null);setExamPickerOpen(false);
   };
   const [evPriority,setEvPriority]=useState(500); // 0-1000 continuous scale
   // Difficulty slider removed from the UI entirely — deciding "how hard is
@@ -19385,6 +19422,10 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
       // effectiveTrailOut already read commuteBefore/commuteAfter off any
       // event, just needed a real value to read.
       ...(isFixedKind&&(+evCommuteBefore>0||+evCommuteAfter>0)?{commuteBefore:Math.max(0,+evCommuteBefore||0),commuteAfter:Math.max(0,+evCommuteAfter||0)}:{}),
+      // Optional exam link, Study Session only (manual-mode assignment) --
+      // see evLinkedExamId's own declaration for why this is the same
+      // dueEventId every other exam-linked session already uses.
+      ...(evLinkedExamId&&resolveAssignmentKind()==="study block"?{dueEventId:evLinkedExamId}:{}),
       ...(splitInfo||{})};
   };
   const commitTasks=(newTasks,opts)=>{
@@ -20595,24 +20636,16 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             </>)}
           </div>
           <div style={{position:"relative"}} ref={addTaskBtnRef}>
-            <button onClick={()=>setAddMenuOpen(o=>!o)} title="Add" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:T.lime,border:"none",borderRadius:4,color:T.ink,cursor:"pointer"}}>{Icon.plus}</button>
-            {addMenuOpen&&(<>
-              <div onClick={()=>setAddMenuOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
-              <div style={{position:"absolute",top:"calc(100% + 6px)",right:0,width:230,background:T.card,border:`1px solid ${T.border}`,borderRadius:6,boxShadow:"0 24px 60px -16px rgba(0,0,0,0.5)",zIndex:50,overflow:"hidden",animation:"studlinPop 0.18s cubic-bezier(.2,.85,.3,1)"}}>
-                {[
-                  {icon:Icon.zap,label:"AI schedule",sub:"One task, Studlin finds the time",onClick:()=>{setAddMenuOpen(false);openNewAI(selDay);}},
-                  {icon:Icon.cal,label:"Manual placement",sub:"One task, you pick the time",onClick:()=>{setAddMenuOpen(false);openNewManual(selDay);}},
-                ].map(item=>(
-                  <div key={item.label} onClick={item.onClick} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 14px",cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.background=T.card2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                    <span style={{width:16,color:T.muted,display:"flex",marginTop:2}}>{item.icon}</span>
-                    <div>
-                      <div style={{fontSize:12.5,fontWeight:600,color:T.text}}>{item.label}</div>
-                      <div style={{fontSize:11,color:T.muted,marginTop:1}}>{item.sub}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>)}
+            {/* Used to open a menu choosing "AI schedule" vs "Manual
+                placement" first -- pure friction, since the New Task modal
+                that opens next already has that exact same choice as its
+                own in-modal toggle (see openNew/setTaskMode and the
+                "I'll pick the time"/"Studlin finds the time" segmented
+                control). Go straight to the modal, defaulted to AI --
+                matches what the onboarding tour already tells students
+                this button does ("Tap Add Task and Studlin finds the time
+                for it"). Manual is still one click away inside the modal. */}
+            <button onClick={()=>openNewAI(selDay)} title="Add" style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",background:T.lime,border:"none",borderRadius:4,color:T.ink,cursor:"pointer"}}>{Icon.plus}</button>
           </div>
         </div>
       </div>
@@ -20953,7 +20986,7 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         </>
       )}
       {rescheduleTask&&(
-        <RescheduleModal task={rescheduleTask} events={events} onClose={()=>setRescheduleTask(null)} commit={(next,evictedCount)=>{
+        <RescheduleModal task={rescheduleTask} events={events} onClose={()=>setRescheduleTask(null)} onManual={()=>setSelDay(rescheduleTask.date)} commit={(next,evictedCount)=>{
           setEvents(next);lsSet("events",next);
           setRescheduleToast(evictedCount>0?`Task rescheduled — ${evictedCount} other${evictedCount!==1?"s":""} shifted to make room.`:"Task rescheduled.");
           setTimeout(()=>setRescheduleToast(""),2800);
@@ -21031,6 +21064,26 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
             </div>
           </Field>
         )}
+
+        {/* Optional exam link, Study Session only -- so a session created
+            for "study for the bio final" can actually count toward that
+            final in Studlin Prep instead of sitting on the calendar as an
+            unrelated block. Same picker-modal pattern already used for
+            linking a flashcard deck or a practice exam to an exam (see
+            LINK DECK TO EXAM), reused rather than invented fresh. */}
+        {evKind==="assignment"&&taskMode==="manual"&&evSubject!=="None"&&(()=>{
+          const linkedExam=evLinkedExamId?upcomingExams().find(ex=>ex.id===evLinkedExamId):null;
+          return (
+            <Field label="Link to a test (optional)" hint="Shows this session on that exam's page in Studlin Prep too.">
+              {linkedExam
+                ? <div style={{display:"flex",alignItems:"center",gap:8,padding:"9px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.card2}}>
+                    <div style={{flex:1,minWidth:0,fontSize:12.5,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{linkedExam.title} <span style={{color:T.muted}}>· {linkedExam.date}</span></div>
+                    <button type="button" onClick={()=>setEvLinkedExamId(null)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:11,textDecoration:"underline",padding:0,flexShrink:0}}>Unlink</button>
+                  </div>
+                : <button type="button" onClick={()=>setExamPickerOpen(true)} style={{background:"none",border:`1px solid ${T.border}`,borderRadius:8,padding:"9px 12px",color:T.muted,cursor:"pointer",fontFamily:T.font,fontSize:12.5,textAlign:"left",width:"100%"}}>+ Link to an exam</button>}
+            </Field>
+          );
+        })()}
 
         {isChecklistMode&&(
           <Field label="Due date (optional)"><Input type="date" value={evDeadline} onChange={ev=>setEvDeadline(ev.target.value)} /></Field>
@@ -21250,6 +21303,27 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
         {!isProjectKind&&(
           <Field label="Notes (optional)"><Textarea placeholder="e.g. Bring calculator, covers chapters 4 to 6." value={evNotes} onChange={ev=>setEvNotes(ev.target.value)} /></Field>
         )}
+      </Modal>
+
+      {/* ── LINK STUDY SESSION TO AN EXAM — same picker-modal pattern as
+          LINK DECK TO EXAM below, scoped to the subject already chosen
+          above so it's "which of THIS class's tests" not every exam on
+          the calendar. ── */}
+      <Modal open={examPickerOpen} onClose={()=>setExamPickerOpen(false)} title="Link to an exam" sub="Studlin will show this session on that exam's page in Studlin Prep too." width={440}>
+        {(()=>{
+          const subj=evSubject==="Other"?evCustom.trim():evSubject;
+          const pickableExams=upcomingExams().filter(ex=>ex.subject===subj);
+          return pickableExams.length===0
+            ? <div style={{fontSize:13,color:T.muted,padding:"18px 0",textAlign:"center"}}>No upcoming exams for {subj||"this class"} yet. Add one first, or skip this — you can always link it later in Studlin Prep.</div>
+            : <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {pickableExams.map(ex=>(
+                  <button key={ex.id} type="button" onClick={()=>{setEvLinkedExamId(ex.id);setExamPickerOpen(false);}} style={{textAlign:"left",padding:"11px 14px",borderRadius:10,border:`1px solid ${T.border}`,background:T.card2,cursor:"pointer",fontFamily:T.font}}>
+                    <div style={{fontSize:13,fontWeight:600,color:T.white}}>{ex.title}</div>
+                    <div style={{fontSize:11,color:T.muted,marginTop:2}}>{ex.date}</div>
+                  </button>
+                ))}
+              </div>;
+        })()}
       </Modal>
 
       {/* ── BRAIN DUMP — tell Studlin everything at once instead of one task at a time ── */}
@@ -23858,6 +23932,9 @@ function Dashboard({setActive, seriousMode=false, rescheduleTask, setRescheduleT
                     <div style={{fontSize:11,color:t.kind==="deadline"?T.amber:T.muted,marginTop:1}}>{t.subject}{t.kind==="deadline"?" · Due":t.kind==="study block"?" · Your study session":t.kind?" · "+t.kind:""}</div>
                   </div>
                   <span style={{fontFamily:T.mono,fontSize:10,color:T.faint}}>{fmtClock(t.time)}</span>
+                  {!t.done&&isTimerEligible(t)&&(
+                    <button onClick={(e)=>{e.stopPropagation();if(window._setTimerTask)window._setTimerTask(t.isChunk?{...t,duration:t.fullDuration}:t);}} style={{flexShrink:0,padding:"3px 9px",borderRadius:6,border:`1px solid ${T.lime}`,background:T.lime,color:T.ink,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:T.font}}>Begin</button>
+                  )}
                   {!t.done&&t.duration&&(t.kind==="study block"||t.kind==="deadline")&&(
                     <button onClick={(e)=>{e.stopPropagation();setRescheduleTask(t.isChunk?{...t,duration:t.fullDuration}:t);}} style={{flexShrink:0,padding:"3px 7px",borderRadius:6,border:`1px solid ${T.border}`,background:"transparent",color:T.muted,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:T.font}}>Reschedule</button>
                   )}
@@ -25890,7 +25967,7 @@ function App() {
       {/* DASHBOARD RESCHEDULE CONFIRM + TOAST — true sibling of [data-page],
           see the state declaration above for why. */}
       {rescheduleTask&&(
-        <RescheduleModal task={rescheduleTask} events={lsGet("events",[])} onClose={()=>setRescheduleTask(null)} commit={(next,evictedCount)=>{
+        <RescheduleModal task={rescheduleTask} events={lsGet("events",[])} onClose={()=>setRescheduleTask(null)} onManual={()=>setActive("calendar")} commit={(next,evictedCount)=>{
           lsSet("events",next);
           setDashToast(evictedCount>0?`Task rescheduled — ${evictedCount} other${evictedCount!==1?"s":""} shifted to make room.`:"Task rescheduled.");
           setTimeout(()=>setDashToast(""),2800);
