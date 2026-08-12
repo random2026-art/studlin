@@ -112,18 +112,17 @@ body::after{
 .hero-spot{position:absolute;inset:0;z-index:1;pointer-events:none;opacity:0;transition:opacity .45s ease;mix-blend-mode:screen;
   background:radial-gradient(420px circle at var(--sx,50%) var(--sy,50%),rgba(184,224,74,0.18),rgba(143,203,169,0.08) 40%,transparent 66%);}
 
-.nav{
-  position:fixed;top:0;left:0;right:0;z-index:100;
-  transition:background .3s,border-color .3s,backdrop-filter .3s;
-  border-bottom:1px solid transparent;
-}
-.nav.scrolled{
-  background:rgba(10,19,16,0.72);
-  backdrop-filter:blur(18px) saturate(160%);
-  -webkit-backdrop-filter:blur(18px) saturate(160%);
-  border-bottom-color:var(--line);
-}
-.nav .row{display:flex;align-items:center;justify-content:space-between;padding:18px 32px;max-width:1440px;margin:0 auto;}
+/* ===== NAV — full-width flat bar, not a floating card =====
+   Deliberately placed here, before the responsive @media blocks further
+   down, not after them -- CSS gives a later media-query rule priority
+   over an earlier unconditional one of equal specificity only because it
+   comes LATER in source order, not because it's inside @media. Putting
+   this base rule at the end of the stylesheet (where the old floating-
+   pill-nav override used to live) silently defeated every mobile padding
+   override below, at every viewport width. */
+.nav{position:fixed;top:0;left:0;right:0;z-index:100;border-bottom:1px solid transparent;transition:background .3s ease,border-color .3s ease,backdrop-filter .3s ease;}
+.nav.scrolled{background:rgba(250,249,245,0.88);-webkit-backdrop-filter:blur(18px) saturate(160%);backdrop-filter:blur(18px) saturate(160%);border-bottom-color:var(--line);}
+.nav .row{display:flex;align-items:center;justify-content:space-between;gap:22px;max-width:1240px;margin:0 auto;padding:20px clamp(16px,3vw,30px);}
 .brand{display:flex;align-items:center;gap:11px;font-weight:700;font-size:20px;letter-spacing:-0.03em;}
 .brand img{width:30px;height:30px;border-radius:8px;}
 .nav-links{display:flex;gap:6px;}
@@ -240,6 +239,12 @@ body::after{
 .hero-trust .txt{font-size:13.5px;color:var(--cream-faint);}
 .hero-trust .txt b{color:var(--cream);font-weight:600;}
 
+.hero-shot{position:relative;z-index:2;max-width:980px;margin:56px auto 0;border-radius:18px;overflow:hidden;
+  border:1px solid rgba(22,36,28,0.08);box-shadow:0 40px 90px -30px rgba(22,36,28,0.32),0 10px 26px -12px rgba(22,36,28,0.14);
+  opacity:0;animation:riseSoft .9s cubic-bezier(.2,.85,.25,1) both .74s;}
+.hero-shot img{display:block;width:100%;height:auto;}
+@media(max-width:768px){.hero-shot{margin-top:38px;border-radius:14px;}}
+
 /* floating app fragments */
 .frag{position:absolute;z-index:3;border-radius:16px;background:transparent;will-change:transform;}
 .frag .fin{border-radius:16px;padding:14px 16px;background:rgba(255,255,255,0.72);border:1px solid var(--line);backdrop-filter:blur(8px);box-shadow:0 24px 60px -28px rgba(0,0,0,0.6);}
@@ -353,6 +358,9 @@ body::after{
 .card h3{font-family:var(--display);font-weight:600;font-size:27px;line-height:1.05;letter-spacing:-0.025em;margin:14px 0 8px;color:var(--cream);}
 .card p{font-size:14.5px;line-height:1.55;color:var(--cream-dim);margin:0 0 20px;}
 .card .canvas{margin-top:auto;}
+.canvas.shotsingle img,.canvas.shotpair img{display:block;width:100%;height:auto;border-radius:12px;border:1px solid rgba(22,36,28,0.10);box-shadow:0 20px 44px -22px rgba(22,36,28,0.28);}
+.canvas.shotpair{display:flex;gap:10px;}
+.canvas.shotpair img{width:calc(50% - 5px);}
 .col-7{grid-column:span 7;}.col-5{grid-column:span 5;}.col-4{grid-column:span 4;}.col-6{grid-column:span 6;}.col-8{grid-column:span 8;}.col-12{grid-column:span 12;}
 .card.lime{background:var(--lime);border-color:transparent;}
 .card.lime .knum{color:rgba(10,19,16,0.55);}
@@ -768,8 +776,7 @@ body::after{
 
 /* ============ 768px — mobile ============ */
 @media(max-width:768px){
-  .nav{padding:12px clamp(12px,4vw,20px);}
-  .nav .row{padding:8px 8px 8px 18px;border-radius:18px;gap:12px;}
+  .nav .row{padding:14px clamp(12px,4vw,20px);gap:12px;}
   .hero{padding:110px 0 60px;}
   .hero h1{font-size:clamp(32px,9vw,68px);}
   .hero .sub{font-size:16px;margin:22px auto 0;}
@@ -811,8 +818,7 @@ body::after{
 /* ============ 480px — small phones ============ */
 @media(max-width:480px){
   .wrap{padding:0 16px;}
-  .nav{padding:10px 12px;}
-  .nav .row{padding:7px 7px 7px 15px;border-radius:14px;}
+  .nav .row{padding:12px clamp(10px,4vw,16px);}
   .brand{font-size:17px;}
   .brand img{width:26px;height:26px;}
   .hero{padding:95px 0 50px;}
@@ -855,7 +861,7 @@ body::after{
 @media(max-width:375px){
   .hero h1{font-size:28px;}
   .hero-ctas .btn{padding:13px 18px;font-size:14px;}
-  .nav .row{padding:6px 6px 6px 13px;}
+  .nav .row{padding:10px 14px;}
   .brand span{display:none;}
   .cta{margin:0 8px;padding:36px 16px;}
 }
@@ -1078,22 +1084,6 @@ body::after{
 .card.lime{box-shadow:0 16px 36px -18px rgba(184,224,74,0.42);}
 .plan.feat{box-shadow:0 30px 70px -40px rgba(22,54,42,0.26);}
 .device{box-shadow:0 60px 120px -46px rgba(22,36,28,0.34),0 0 0 1px rgba(22,36,28,0.06);}
-
-/* ===== FLOATING PILL NAV ===== */
-.nav{position:fixed;top:0;left:0;right:0;z-index:100;padding:18px clamp(16px,3vw,30px);transition:padding .3s ease;}
-.nav.scrolled{padding-top:10px;background:transparent;border-bottom-color:transparent;backdrop-filter:none;-webkit-backdrop-filter:none;}
-.nav .row{
-  display:flex;align-items:center;justify-content:space-between;gap:22px;
-  max-width:1180px;margin:0 auto;
-  padding:11px 12px 11px 24px;
-  background:rgba(255,255,255,0.80);
-  -webkit-backdrop-filter:blur(20px) saturate(180%);backdrop-filter:blur(20px) saturate(180%);
-  border:1px solid rgba(22,36,28,0.07);
-  border-radius:22px;
-  box-shadow:0 10px 34px -14px rgba(22,36,28,0.20),0 2px 6px -2px rgba(22,36,28,0.05);
-  transition:box-shadow .3s ease,background .3s ease;
-}
-.nav.scrolled .row{background:rgba(255,255,255,0.92);box-shadow:0 14px 40px -12px rgba(22,36,28,0.26),0 3px 8px -2px rgba(22,36,28,0.06);}
 </style>
 </head>
 <body>
@@ -1144,48 +1134,12 @@ body::after{
   <div class="hero-grid"></div>
   <div class="hero-spot" id="heroSpot"></div>
 
-  <!-- floating fragments, mini live UI -->
-  <div class="frag f1" data-depth="0.04"><div class="fin">
-    <div class="fl">Day streak</div><div class="fv">12</div>
-    <div class="fdays"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></div>
-  </div></div>
-  <div class="frag f2" data-depth="-0.05"><div class="fin">
-    <div class="fl"><span class="livepip"></span>Focus session</div><div class="fv mono-num" id="fragTimer">24:59</div>
-    <div class="fbar"><i id="fragBar"></i></div>
-  </div></div>
-  <div class="frag f3 fcardwrap" data-depth="0.06"><div class="fin">
-    <div class="fcard3d" id="heroCard">
-      <div class="face front"><div class="fl">Flashcard · Bio 201</div><div class="fq">What carries oxygen in blood?</div><div class="fhint">tap to flip</div></div>
-      <div class="face back"><div class="fl">Answer</div><div class="fq">Hemoglobin</div><div class="fhint good">+1 mastered</div></div>
-    </div>
-  </div></div>
-  <div class="frag f4" data-depth="-0.035"><div class="fin">
-    <div class="fl">Grade avg</div>
-    <div class="frow"><div class="fv">A−</div><div class="fbars"><b style="height:40%"></b><b style="height:55%"></b><b style="height:48%"></b><b style="height:70%"></b><b style="height:88%"></b></div></div>
-  </div></div>
-  <div class="frag f5" data-depth="0.045"><div class="fin">
-    <div class="fl">AI Tutor</div>
-    <div class="fchat">Explain entropy like I'm 12</div>
-    <div class="fchat ai">Imagine your room getting messy on its own…</div>
-  </div></div>
-  <div class="frag f6" data-depth="-0.04"><div class="fin">
-    <div class="fl">Up next</div>
-    <div class="fevent"><span class="edot"></span><div><div class="fq sm">Bio midterm review</div><div class="fhint">Fri · 9:00 AM</div></div></div>
-  </div></div>
-
   <div class="wrap hero-inner">
-    <a class="hero-pill" href="#showcase">
-      <span class="hp-dot"></span>
-      <span class="hp-key">Studlin</span>
-      <span class="hp-sep"></span>
-      <span class="hp-desc">Notes · AI · Flashcards · Tasks · Calendar</span>
-    </a>
     <h1>
-      <span class="line"><span class="reveal-up" style="white-space:nowrap;">Everything you</span></span>
-      <span class="line"><span class="reveal-up" style="white-space:nowrap;">need to <span class="serif">study.</span></span></span>
-      <span class="line"><span class="reveal-up"><span class="ul-lime">One app.</span></span></span>
+      <span class="line"><span class="reveal-up" style="white-space:nowrap;">The AI calendar that</span></span>
+      <span class="line"><span class="reveal-up">finally <span class="serif">understands</span> you.</span></span>
     </h1>
-    <p class="sub">AI tutor, smart notes, flashcards, essay polish, focus timer and streaks, fused into one intelligent operating system.<br>Replace the six apps that ignore each other.</p>
+    <p class="sub">It learns your habits, then plans your week around them.<br>The more you use it, the smarter it gets.</p>
 
     <div class="hero-ctas">
       <a href="/app" class="btn btn-lime btn-lg magnetic">Start free <span class="ar">→</span></a>
@@ -1200,6 +1154,14 @@ body::after{
       </div>
       <div class="txt">Made by Students for Students</div>
     </div>
+
+    <!-- Real product screenshot, not a decorative mockup -- the single
+         highest-leverage change here: a floating collage of fake widgets
+         reads as a template; the actual calendar (the thing that's already
+         good) speaks for itself. -->
+    <div class="hero-shot">
+      <img src="/assets/screenshots/calendar.png" alt="A real Studlin week, auto-scheduled around real classes" loading="eager">
+    </div>
   </div>
 
   <div class="scroll-cue">Scroll<div class="ln"></div></div>
@@ -1212,7 +1174,7 @@ body::after{
     <div class="marq-track" id="replaceMarq">
       <span class="marq-item">Group Chats <span class="x">×</span></span>
       <span class="marq-item">Flashcard Generator <span class="x">×</span></span>
-      <span class="marq-item">AI Tutor <span class="x">×</span></span>
+      <span class="marq-item">Syllabus Scanner <span class="x">×</span></span>
       <span class="marq-item">Focus Timer <span class="x">×</span></span>
       <span class="marq-item">Smart Calendar <span class="x">×</span></span>
       <span class="marq-item">Grade Tracker <span class="x">×</span></span>
@@ -1283,16 +1245,9 @@ body::after{
         <div class="knum">03 · Flashcards</div>
         <h3>Make a deck. Link it to your test. Done.</h3>
         <p>Build cards from a PDF, notes, or by hand. Link a deck to an exam and Studlin schedules your study sessions for you.</p>
-        <div class="canvas deckwrap deckgen" aria-hidden="true">
-          <div class="dg-doc"><i class="l1"></i><i class="l2"></i><i class="l3"></i><span class="mono">bio-notes.pdf</span></div>
-          <div class="dg-stream"><i></i><i></i><i></i></div>
-          <div class="dg-card c1">What is osmosis?</div>
-          <div class="dg-card c2">Define entropy</div>
-          <div class="dg-card c3">Mitosis vs meiosis?</div>
-          <div class="dg-progress"><i></i></div>
-        </div>
-        <div class="seq-3" style="margin-top:10px;animation-duration:6.5s;">
-          <span class="mono" style="font-size:10px;background:var(--spark);color:var(--ink);padding:5px 10px;border-radius:99px;font-weight:700;">🔗 Linked to Bio Midterm · 3 sessions scheduled</span>
+        <div class="canvas shotpair">
+          <img src="/assets/screenshots/flashcard-front.png" alt="A real Studlin flashcard, question side">
+          <img src="/assets/screenshots/flashcard-back.png" alt="The same card flipped to reveal the answer">
         </div>
       </div>
     </div>
@@ -1336,15 +1291,8 @@ body::after{
         <div class="knum">06 · Syllabus Import</div>
         <h3>Drop in your syllabus. Get every date.</h3>
         <p>Upload the PDF from day one. Studlin pulls every exam, deadline, and reading onto your calendar.</p>
-        <div class="canvas">
-          <div class="mini">
-            <div class="mono" style="font-size:10px;color:var(--lime);letter-spacing:0.1em;margin-bottom:10px;">SYLLABUS.PDF · SCANNED</div>
-            <div style="display:flex;flex-direction:column;gap:8px;font-size:12.5px;color:var(--ink);">
-              <div class="seq-1">📌 Midterm exam <span style="color:#888;">· Oct 14</span></div>
-              <div class="seq-2">📌 Essay due <span style="color:#888;">· Oct 21</span></div>
-              <div class="seq-3">📌 Final exam <span style="color:#888;">· Dec 9</span></div>
-            </div>
-          </div>
+        <div class="canvas shotsingle">
+          <img src="/assets/screenshots/syllabus-import.png" alt="A real syllabus scan result: every exam and assignment found automatically">
         </div>
       </div>
 
@@ -1365,22 +1313,9 @@ body::after{
         </div>
       </div>
 
-      <!-- tutor -->
-      <div class="card col-4 reveal" data-spot>
-        <div class="knum">08 · AI Tutor</div>
-        <h3>Upload anything. Ask anything.</h3>
-        <p>Snap a worksheet, paste a problem. The tutor walks you through it, never just hands over the answer.</p>
-        <div class="canvas">
-          <div style="display:flex;flex-direction:column;gap:8px;">
-            <div class="seq-1" style="align-self:flex-end;background:var(--bg);border:1px solid var(--line);padding:10px 14px;border-radius:14px 14px 4px 14px;font-size:12.5px;max-width:82%;">why is sin(2x) = 2sinxcosx?</div>
-            <div class="seq-2" style="align-self:flex-start;background:var(--panel-2);border:1px solid var(--line);padding:10px 14px;border-radius:14px 14px 14px 4px;font-size:12.5px;max-width:88%;line-height:1.5;">Start with sin(A+B)... <span class="mono" style="background:var(--spark);color:var(--ink);padding:1px 6px;border-radius:4px;">your turn →</span></div>
-          </div>
-        </div>
-      </div>
-
       <!-- streaks -->
-      <div class="card col-4 reveal d1 spark" data-spot>
-        <div class="knum">09 · Streaks</div>
+      <div class="card col-6 reveal d1 spark" data-spot>
+        <div class="knum">08 · Streaks</div>
         <h3>The reason you'll show up tomorrow.</h3>
         <p>Daily streaks and milestones that make the boring days count too.</p>
         <div class="canvas" style="display:flex;align-items:flex-end;gap:12px;">
@@ -1390,8 +1325,8 @@ body::after{
       </div>
 
       <!-- wrapped -->
-      <div class="card col-4 reveal lime" data-spot>
-        <div class="knum">10 · Wrapped</div>
+      <div class="card col-6 reveal lime" data-spot>
+        <div class="knum">09 · Wrapped</div>
         <h3>See what Studlin saved you.</h3>
         <p>A weekly recap of your focus time, and exactly how much planning Studlin just did for you.</p>
         <div class="canvas">
@@ -1437,7 +1372,7 @@ body::after{
             <div class="glow"></div>
             <div class="si">03<small>LOCK IN</small></div>
             <h3>Do the work without leaving the page.</h3>
-            <p>Writing tools, AI tutor, flashcards and focus music in one window. Hit the timer, play the music, watch the streak climb.</p>
+            <p>Notes, flashcards, and focus music in one window. Hit the timer, play the music, watch the streak climb.</p>
             <span class="stip">One tab replaces eight apps</span>
           </article>
 
@@ -1457,45 +1392,6 @@ body::after{
 </section>
 
 <!-- ============ TESTIMONIALS ============ -->
-<section class="sec" id="loved" style="background:var(--bg-2);border-top:1px solid var(--line);border-bottom:1px solid var(--line);">
-  <div class="wrap">
-    <div class="head center">
-      <span class="sec-eyebrow">// Loved by</span>
-      <h2>What students <span class="dim">are telling us.</span></h2>
-    </div>
-  </div>
-  <div class="tmarq">
-    <div class="trow marq">
-      <div class="marq-track">
-        <div class="tcard lime"><div class="stars">★★★★★</div><div class="tq">"My GPA went from 3.2 to 3.8 in one semester. The tutor explains things the way my professor never could."</div><div class="tm"><div class="tav">JT</div><div><div class="tn">Jordan T.</div><span class="tcat">GPA boost</span></div></div></div>
-        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"I stopped feeling overwhelmed almost right away. I actually get through my to-do list now instead of just staring at it."</div><div class="tm"><div class="tav">DK</div><div><div class="tn">Devon K.</div><span class="tcat">Less overwhelmed</span></div></div></div>
-        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"My SAT went from 1360 to 1530. Staying organized meant I actually spent my time studying instead of figuring out what to study."</div><div class="tm"><div class="tav">PS</div><div><div class="tn">Priya S.</div><span class="tcat">SAT prep</span></div></div></div>
-        <div class="tcard"><div class="stars">★★★★<span class="s-off">★</span></div><div class="tq">"I get more done in two focused hours than I used to in a whole night of cramming."</div><div class="tm"><div class="tav">MR</div><div><div class="tn">Maya R.</div><span class="tcat">Productivity</span></div></div></div>
-        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"The focus timer and music combo is unreal. I finally stopped checking my phone every five minutes."</div><div class="tm"><div class="tav">AC</div><div><div class="tn">Aisha C.</div><span class="tcat">Focus</span></div></div></div>
-        <div class="tcard lime"><div class="stars">★★★★★</div><div class="tq">"My GPA went from 3.2 to 3.8 in one semester. The tutor explains things the way my professor never could."</div><div class="tm"><div class="tav">JT</div><div><div class="tn">Jordan T.</div><span class="tcat">GPA boost</span></div></div></div>
-        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"I stopped feeling overwhelmed almost right away. I actually get through my to-do list now instead of just staring at it."</div><div class="tm"><div class="tav">DK</div><div><div class="tn">Devon K.</div><span class="tcat">Less overwhelmed</span></div></div></div>
-        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"My SAT went from 1360 to 1530. Staying organized meant I actually spent my time studying instead of figuring out what to study."</div><div class="tm"><div class="tav">PS</div><div><div class="tn">Priya S.</div><span class="tcat">SAT prep</span></div></div></div>
-        <div class="tcard"><div class="stars">★★★★<span class="s-off">★</span></div><div class="tq">"I get more done in two focused hours than I used to in a whole night of cramming."</div><div class="tm"><div class="tav">MR</div><div><div class="tn">Maya R.</div><span class="tcat">Productivity</span></div></div></div>
-        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"The focus timer and music combo is unreal. I finally stopped checking my phone every five minutes."</div><div class="tm"><div class="tav">AC</div><div><div class="tn">Aisha C.</div><span class="tcat">Focus</span></div></div></div>
-      </div>
-    </div>
-    <div class="trow rev marq">
-      <div class="marq-track">
-        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"It turned my 80 page bio PDF into a full deck in about ten seconds. I almost cried."</div><div class="tm"><div class="tav">LW</div><div><div class="tn">Leo W.</div><span class="tcat">Flashcards</span></div></div></div>
-        <div class="tcard lime"><div class="stars">★★★★★</div><div class="tq">"I told it I caught the flu and it rebuilt my entire week. No anxiety spiral."</div><div class="tm"><div class="tav">NR</div><div><div class="tn">Nadia R.</div><span class="tcat">Organized</span></div></div></div>
-        <div class="tcard"><div class="stars">★★★★<span class="s-off">★</span></div><div class="tq">"I run my whole study group off the streak graph. Nobody breaks their streak on a Sunday night."</div><div class="tm"><div class="tav">TK</div><div><div class="tn">Theo K.</div><span class="tcat">Streaks</span></div></div></div>
-        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"Saves me at least ten hours a week. That is a part time job's worth of time handed back to me."</div><div class="tm"><div class="tav">SD</div><div><div class="tn">Sam D.</div><span class="tcat">Time saved</span></div></div></div>
-        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"Went from academic probation to the Dean's List. I am not exaggerating."</div><div class="tm"><div class="tav">RM</div><div><div class="tn">Riley M.</div><span class="tcat">GPA boost</span></div></div></div>
-        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"It turned my 80 page bio PDF into a full deck in about ten seconds. I almost cried."</div><div class="tm"><div class="tav">LW</div><div><div class="tn">Leo W.</div><span class="tcat">Flashcards</span></div></div></div>
-        <div class="tcard lime"><div class="stars">★★★★★</div><div class="tq">"I told it I caught the flu and it rebuilt my entire week. No anxiety spiral."</div><div class="tm"><div class="tav">NR</div><div><div class="tn">Nadia R.</div><span class="tcat">Organized</span></div></div></div>
-        <div class="tcard"><div class="stars">★★★★<span class="s-off">★</span></div><div class="tq">"I run my whole study group off the streak graph. Nobody breaks their streak on a Sunday night."</div><div class="tm"><div class="tav">TK</div><div><div class="tn">Theo K.</div><span class="tcat">Streaks</span></div></div></div>
-        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"Saves me at least ten hours a week. That is a part time job's worth of time handed back to me."</div><div class="tm"><div class="tav">SD</div><div><div class="tn">Sam D.</div><span class="tcat">Time saved</span></div></div></div>
-        <div class="tcard"><div class="stars">★★★★★</div><div class="tq">"Went from academic probation to the Dean's List. I am not exaggerating."</div><div class="tm"><div class="tav">RM</div><div><div class="tn">Riley M.</div><span class="tcat">GPA boost</span></div></div></div>
-      </div>
-    </div>
-  </div>
-</section>
-
 <!-- ============ PRICING ============ -->
 <script>
 !function(){var C=document.createElement('canvas');C.style.cssText='position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:99999;';var X,R,P=[];function I(){if(!C.parentNode)document.body.appendChild(C);C.width=innerWidth;C.height=innerHeight;X=C.getContext('2d');}function rn(a,b){return a+Math.random()*(b-a);}window.confetti=function(o){o=o||{};I();var n=o.particleCount||100,org=o.origin||{x:.5,y:.5},cols=o.colors||['#B8E04A','#FF6B9D','#60C8FF','#FFB347','#A78BFA','#34D399'],sp=(o.spread||80)*Math.PI/180,vel=o.startVelocity||38,sc=o.scalar||1,tk=o.ticks||220;for(var i=0;i<n;i++){var a=-Math.PI/2+rn(-sp/2,sp/2),v=rn(vel*.55,vel)*sc;P.push({x:org.x*innerWidth,y:org.y*innerHeight,vx:Math.cos(a)*v,vy:Math.sin(a)*v,col:cols[0|Math.random()*cols.length],w:rn(7,13)*sc,h:rn(4,8)*sc,rot:rn(0,360),rv:rn(-8,8),life:tk,sq:Math.random()>.4});}if(R)return;R=requestAnimationFrame(function s(){X.clearRect(0,0,C.width,C.height);P=P.filter(function(p){p.x+=p.vx;p.y+=p.vy;p.vy+=0.38;p.vx*=0.99;p.rot+=p.rv;p.life--;var al=p.life<40?p.life/40:1;X.save();X.globalAlpha=al;X.fillStyle=p.col;X.translate(p.x,p.y);X.rotate(p.rot*Math.PI/180);if(p.sq)X.fillRect(-p.w/2,-p.h/2,p.w,p.h);else{X.beginPath();X.ellipse(0,0,p.w/2,p.h/3,0,0,Math.PI*2);X.fill();}X.restore();return p.life>0;});if(P.length)R=requestAnimationFrame(s);else{R=null;X.clearRect(0,0,C.width,C.height);}});}}();
@@ -1619,7 +1515,7 @@ body::after{
         <div class="cmp-cell good">
           <span class="cmp-mob">Studlin</span>
           <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>One subscription covers the entire stack</div>
-          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>Tutor grade help on demand, around the clock</div>
+          <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>AI help built into your notes, any time you're stuck</div>
           <div class="ci"><span class="cmp-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span>Study anywhere, any time, on any device</div>
         </div>
         <div class="cmp-cell bad">
@@ -1667,16 +1563,12 @@ body::after{
           <span class="pnote">or $19.99 billed annually</span>
         </div>
 
-        <!-- AI TUTOR & CREDITS -->
-        <div class="cpt-cat"><span class="cn"></span> AI Tutor &amp; Credits</div>
+        <!-- AI CREDITS -->
+        <div class="cpt-cat"><span class="cn"></span> AI Credits</div>
         <div class="cpt-f">Monthly AI chat messages</div>
         <div class="cpt-v txt">120</div>
         <div class="cpt-v col-pro txt">Unlimited</div>
         <div class="cpt-v txt">Unlimited</div>
-        <div class="cpt-f">AI chat tutor</div>
-        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
         <div class="cpt-f">AI models</div>
         <div class="cpt-v txt">Standard</div>
         <div class="cpt-v col-pro txt">All models</div>
@@ -1729,10 +1621,6 @@ body::after{
         <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
         <div class="cpt-f">Smart calendar &amp; planner</div>
         <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
-        <div class="cpt-f">AI video tutor suggestions</div>
-        <div class="cpt-v"><span class="cpt-no"></span></div>
         <div class="cpt-v col-pro"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
         <div class="cpt-v"><span class="cpt-yes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></span></div>
         <div class="cpt-f">Bulk operations</div>
@@ -1805,9 +1693,8 @@ body::after{
       <h2>Ask us <span class="dim">anything.</span></h2>
     </div>
     <div class="faq">
-      <div class="qitem open"><button class="qq">Is this cheating?<span class="ic">+</span></button><div class="qa"><div class="qa-in">No. Studlin's AI Tutor is built to teach, not to do the work for you. It won't hand over direct answers to homework or test questions, it walks you through the reasoning so you actually understand it.</div></div></div>
-      <div class="qitem"><button class="qq">How does Studlin compare to other study tools?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Most tools work fine until your plan changes, then you're on your own. Studlin actually reschedules around your real deadlines. It also happens to handle writing, flashcards, tutoring, and focus tracking, so you're not juggling five logins to get there.</div></div></div>
-      <div class="qitem"><button class="qq">What subjects does the AI Tutor support?<span class="ic">+</span></button><div class="qa"><div class="qa-in">All of them. Math with full LaTeX, sciences, humanities, languages, coding, business, including IB, AP, A Levels, IGCSE, SAT and MCAT exam boards.</div></div></div>
+      <div class="qitem open"><button class="qq">Is this cheating?<span class="ic">+</span></button><div class="qa"><div class="qa-in">No. Studlin never hands you a finished answer, it plans when you'll do the work and helps you get unstuck on your own notes along the way.</div></div></div>
+      <div class="qitem"><button class="qq">How does Studlin compare to other study tools?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Most tools work fine until your plan changes, then you're on your own. Studlin actually reschedules around your real deadlines. It also happens to handle notes, flashcards, and focus tracking, so you're not juggling five logins to get there.</div></div></div>
       <div class="qitem"><button class="qq">Can I import my existing notes and flashcards?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Yes. Studlin imports from all major study platforms and file formats, PDFs, spreadsheets, audio files, and more.</div></div></div>
       <div class="qitem"><button class="qq">Is there a student discount?<span class="ic">+</span></button><div class="qa"><div class="qa-in">Studlin is already built for students. Pro is $7.99/mo billed annually, cheaper than most single purpose tools it replaces.</div></div></div>
     </div>
@@ -1883,7 +1770,6 @@ body::after{
     const groups=[
       ['#features .head'],
       ['#showcase .head'],
-      ['#loved .head'],
       ['#compare .head'],['#compare .cmp-row'],
       ['#pricing .head'],
       ['#faq .head'],['#faq .qitem'],
