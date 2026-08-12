@@ -18957,7 +18957,15 @@ function CalendarTab({setActive=()=>{},onTaskSaved,openRoutineCenterOnMount,onRo
     // same as a freshly-created name+color-only one.
     if(!routineEditItem||!patch.title.trim()||(isHabit&&patch.days.length===0))return;
     const subj=patch.subject&&patch.subject!=="None"?patch.subject:"";
+    // groupId must survive an edit, same as it does through create
+    // (onAddRoutine) and drag-onto-calendar (commitNewEvent) -- dropping it
+    // here was the actual cause of "repeats Mon-Fri" splitting into 5
+    // unrelated-looking sidebar rows: once a routine's groupId is gone,
+    // buildRoutineObjectsForDays' per-day-override fragments (and any later
+    // drag onto another day) have nothing shared left to group under, so
+    // every fragment reads as its own separate activity.
     const base={title:patch.title.trim(),kind:patch.kind,...(subj?{subject:subj}:{subject:""}),courseId:subj?courseIdForLabel(subj):null,
+      groupId:routineEditItem.groupId||routineEditItem.id,
       commuteBefore:patch.commuteBefore||undefined,commuteAfter:patch.commuteAfter||undefined,location:patch.location||undefined,movable:patch.movable,
       ...(patch.kind!=="class"&&patch.color?{color:patch.color}:{})};
     const rebuilt=patch.days.length===0
