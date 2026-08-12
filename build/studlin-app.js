@@ -12026,6 +12026,7 @@ function CalendarTab({ setActive = () => {
       kind: patch.kind,
       ...subj ? { subject: subj } : { subject: "" },
       courseId: subj ? courseIdForLabel(subj) : null,
+      groupId: routineEditItem.groupId || routineEditItem.id,
       commuteBefore: patch.commuteBefore || void 0,
       commuteAfter: patch.commuteAfter || void 0,
       location: patch.location || void 0,
