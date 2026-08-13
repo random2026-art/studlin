@@ -6801,9 +6801,13 @@ async function generateFlashcardsFromText(content,context,count=10){
 // its own separate call and could disagree with itself between attempts,
 // which is a worse experience than promising less but being consistent
 // about it.
-async function generateQuizFromText(text,subject,count){
+// focus is optional -- a comma-separated list of topics to specifically
+// target (see wrongTopicsFor/the weak-spot follow-up quiz flow). Every
+// existing caller omits it and sees no behavior change.
+async function generateQuizFromText(text,subject,count,focus){
   const n=Math.max(3,Math.min(25,count||8));
-  const prompt="You're building a "+n+"-question multiple-choice practice quiz for a student studying "+(subject||"this material")+". Read the source material and return ONLY this JSON, no other text: "+
+  const focusInstruction=focus?" This quiz is a targeted follow-up for a student who already took a related quiz and got these topics wrong: "+focus+". Every question should probe one of those specific topics again -- write NEW questions, not the same ones, that test the same underlying concepts a different way.":"";
+  const prompt="You're building a "+n+"-question multiple-choice practice quiz for a student studying "+(subject||"this material")+"."+focusInstruction+" Read the source material and return ONLY this JSON, no other text: "+
     "{\"questions\":[{\"q\":\"the question text\",\"choices\":[\"four answer options, exactly 4, in any order\"],\"answerIndex\":0,\"topic\":\"a short 2-4 word topic label for what this question tests, e.g. 'cell membrane transport'\"}]}. "+
     "answerIndex is the 0-based index into choices of the single correct answer. Base every question directly on real academic content in the material below -- concepts, definitions, facts, processes -- never invent facts not present in it. If the material also contains course-administrative or policy information (grading breakdowns, exam schedule/count, attendance rules, syllabus logistics), ignore that entirely; it's never something to be tested on.\n\nMaterial:\n\n"+text.slice(0,MATERIAL_TEXT_CAP);
   try{
@@ -7652,7 +7656,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     const pe=lsGet("practiceExams",[]).find(p=>p.id===pendingPeId);
     return pe?{pe,idx:0,picked:null,answers:Array(pe.questions.length).fill(null),done:false}:null;
   }); // {pe, idx, picked, answers, done}
-  const startPracticeExam=(pe)=>setTakingQuiz({pe,idx:0,picked:null,answers:Array(pe.questions.length).fill(null),done:false});
+  const startPracticeExam=(pe)=>{setFollowUpReady(null);setFollowUpError("");setTakingQuiz({pe,idx:0,picked:null,answers:Array(pe.questions.length).fill(null),done:false});};
   const finishPracticeExam=()=>{
     const {pe,answers}=takingQuiz;
     const score=pe.questions.reduce((s,q,i)=>s+(answers[i]===q.answerIndex?1:0),0);
@@ -7694,6 +7698,45 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
     setTakingQuiz(t=>({...t,done:true,score,total,wrongTopics}));
     refresh();
   };
+  // Weak-spot follow-up: a real NEW practice exam targeting exactly what
+  // the student just got wrong, distinct from the generic "Review weak
+  // spots" calendar block finishPracticeExam already schedules above --
+  // that block is a spaced-repetition nudge to revisit the topic, this is
+  // an immediate, optional "test yourself on it right now" action. Grounds
+  // the new questions in the original exam's real material when it's
+  // still attached (pe.examEventId -> the exam's own sourceMaterials, the
+  // same source Build Study Plan reads), since that's the richest
+  // possible context; falls back to the missed questions' own text when
+  // there's no linked exam (a fully standalone practice exam) or its
+  // material is gone, so this works either way rather than only for one
+  // kind of practice exam.
+  const [followUpLoading,setFollowUpLoading]=useState(false);
+  const [followUpError,setFollowUpError]=useState("");
+  const [followUpReady,setFollowUpReady]=useState(null); // the newly created practice exam, offered via "Take it now"/"Later"
+  const generateFollowUpPracticeExam=async()=>{
+    if(!takingQuiz||!takingQuiz.done||!takingQuiz.wrongTopics||takingQuiz.wrongTopics.length===0)return;
+    if(!canGenQuiz()){
+      setUpgradeModal({feature:"AI practice exams",detail:"You've used all "+QUIZ_GEN_LIMIT+" free practice exams this month. They reset in "+daysUntilReset()+" day"+(daysUntilReset()!==1?"s":"")+", or upgrade for unlimited right now."});
+      return;
+    }
+    setFollowUpLoading(true);setFollowUpError("");
+    const {pe,answers,wrongTopics}=takingQuiz;
+    const wrongQs=pe.questions.filter((q,i)=>answers[i]!==q.answerIndex);
+    const exam=pe.examEventId?lsGet("events",[]).find(e=>e.id===pe.examEventId):null;
+    const examMaterial=exam&&exam.sourceMaterials&&exam.sourceMaterials.length>0?exam.sourceMaterials.map(f=>f.text).join("\n\n"):"";
+    const missedQsAsMaterial=wrongQs.map(q=>q.q+"\nCorrect answer: "+q.choices[q.answerIndex]).join("\n\n");
+    const basis=examMaterial||missedQsAsMaterial;
+    const count=Math.max(4,Math.min(15,wrongTopics.length*3));
+    const questions=await generateQuizFromText(basis,pe.subject,count,wrongTopics.join(", "));
+    setFollowUpLoading(false);
+    if(!questions||questions.length===0){setFollowUpError("Couldn't generate a follow-up. Try again.");return;}
+    recordQuizGen();
+    const newPe=createPracticeExam(pe.name+" (weak spots)",pe.subject,pe.examEventId,questions);
+    setFollowUpReady(newPe);
+    refresh();
+  };
+  const closeTakingQuiz=()=>{setTakingQuiz(null);setFollowUpReady(null);setFollowUpError("");};
+  const takeFollowUpNow=()=>{const newPe=followUpReady;setFollowUpReady(null);setFollowUpError("");if(newPe)startPracticeExam(newPe);};
 
   return(
     <div>
@@ -8847,7 +8890,7 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
       </Modal>
 
       {/* ── Direct execution: take a practice exam right here ── */}
-      <Modal open={!!takingQuiz} onClose={()=>setTakingQuiz(null)} title={takingQuiz?.pe?.name||"Practice Exam"} width={520}>
+      <Modal open={!!takingQuiz} onClose={closeTakingQuiz} title={takingQuiz?.pe?.name||"Practice Exam"} width={520}>
         {takingQuiz&&!takingQuiz.done&&(()=>{
           const q=takingQuiz.pe.questions[takingQuiz.idx];
           const picked=takingQuiz.picked;
@@ -8880,12 +8923,54 @@ function StudlinPrep({setActive=()=>{},setDetailEventId=()=>{}}={}){
           );
         })()}
         {takingQuiz&&takingQuiz.done&&(
-          <div style={{textAlign:"center",padding:"20px 0"}}>
-            <div style={{fontSize:32,fontWeight:800,color:T.lime,marginBottom:6}}>{takingQuiz.score}/{takingQuiz.total}</div>
-            {takingQuiz.wrongTopics&&takingQuiz.wrongTopics.length>0
-              ?<div style={{fontSize:12.5,color:T.muted,marginBottom:16}}>Studlin scheduled a review block for: {takingQuiz.wrongTopics.join(", ")}</div>
-              :<div style={{fontSize:13,color:T.muted,marginBottom:16}}>Clean sweep, nice work.</div>}
-            <Btn variant="subtle" onClick={()=>setTakingQuiz(null)}>Close</Btn>
+          <div style={{padding:"20px 0"}}>
+            <div style={{textAlign:"center"}}>
+              <div style={{fontSize:32,fontWeight:800,color:T.lime,marginBottom:6}}>{takingQuiz.score}/{takingQuiz.total}</div>
+              {takingQuiz.wrongTopics&&takingQuiz.wrongTopics.length>0
+                ?<div style={{fontSize:12.5,color:T.muted,marginBottom:16}}>Studlin scheduled a review block for: {takingQuiz.wrongTopics.join(", ")}</div>
+                :<div style={{fontSize:13,color:T.muted,marginBottom:16}}>Clean sweep, nice work.</div>}
+            </div>
+            {/* Right/wrong breakdown -- during the quiz itself each question
+                briefly shows correct/incorrect as you answer it, but that's
+                gone the moment you move to the next one. This is the first
+                place a student can actually review what they got wrong
+                after finishing, instead of having to remember it. */}
+            <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:260,overflowY:"auto",padding:"2px",marginBottom:16}}>
+              {takingQuiz.pe.questions.map((q,i)=>{
+                const picked=takingQuiz.answers[i];
+                const correct=picked===q.answerIndex;
+                return (
+                  <div key={i} style={{padding:"10px 12px",borderRadius:8,border:`1px solid ${correct?T.border:T.red+"33"}`,background:correct?T.card2:T.red+"0a"}}>
+                    <div style={{fontSize:12.5,color:T.text,fontWeight:600,marginBottom:4}}>{q.q}</div>
+                    {correct?(
+                      <div style={{fontSize:11.5,color:T.teal}}>✓ {q.choices[q.answerIndex]}</div>
+                    ):(
+                      <>
+                        <div style={{fontSize:11.5,color:T.red}}>✕ {picked!=null?q.choices[picked]:"No answer"}</div>
+                        <div style={{fontSize:11.5,color:T.teal,marginTop:2}}>✓ {q.choices[q.answerIndex]}</div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {followUpReady?(
+              <div style={{padding:"12px 14px",borderRadius:10,border:`1px solid ${T.limeDk}55`,background:T.lime+"0f",marginBottom:14,textAlign:"center"}}>
+                <div style={{fontSize:12.5,color:T.text,fontWeight:600,marginBottom:10}}>Follow-up ready: {followUpReady.questions.length} question{followUpReady.questions.length!==1?"s":""} on what you missed</div>
+                <div style={{display:"flex",gap:8,justifyContent:"center"}}>
+                  <Btn onClick={takeFollowUpNow}>Take it now</Btn>
+                  <Btn variant="subtle" onClick={()=>setFollowUpReady(null)}>Later</Btn>
+                </div>
+              </div>
+            ):takingQuiz.wrongTopics&&takingQuiz.wrongTopics.length>0&&(
+              <div style={{textAlign:"center",marginBottom:14}}>
+                <Btn variant="subtle" disabled={followUpLoading} onClick={generateFollowUpPracticeExam}>{followUpLoading?"Building your follow-up…":"Create a follow-up on what I missed"}</Btn>
+                {followUpError&&<div style={{fontSize:12,color:T.red,marginTop:8}}>{followUpError}</div>}
+              </div>
+            )}
+            <div style={{textAlign:"center"}}>
+              <Btn variant="subtle" onClick={closeTakingQuiz}>Close</Btn>
+            </div>
           </div>
         )}
       </Modal>
@@ -26345,6 +26430,22 @@ function App() {
           // exactly like a normal onClose, then navigate straight to the
           // linked deck/practice exam instead of leaving the student to
           // find it themselves.
+          // Was silently abandoning the running timer's progress here --
+          // TaskTimerModal already checkpoints elapsed time continuously
+          // (checkpointTimerSession, ~every tick) purely for crash/reload
+          // recovery, so the checkpoint on disk at this exact moment is
+          // already accurate. The only gap was that the "Looks like you
+          // were Xmin into..." recovery banner (recoveredSession) only
+          // ever got populated by the once-on-mount effect, so it wouldn't
+          // appear again until a future full page reload. Resolving it
+          // right here surfaces the same existing banner immediately once
+          // the student's back from the cards/quiz, with the same
+          // Resume/Mark done/Discard choices, instead of losing the
+          // session's progress or making them wait for a reload to get it
+          // back.
+          const cp=getTimerCheckpoint();
+          const resolved=cp&&cp.taskId===t.id?resolveOrphanedCheckpoint(cp,lsGet("events",[])):null;
+          if(resolved)setRecoveredSession(resolved);
           setTimerTask(null);
           if(t.deckId){lsSet("openDeckId",t.deckId);lsSet("openDeckAction","study");setActive("flashcards");}
           else if(t.practiceExamId){lsSet("openPracticeExamId",t.practiceExamId);if(t.dueEventId)lsSet("openPrepExamId",t.dueEventId);setActive("prep");}

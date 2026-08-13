@@ -4419,9 +4419,10 @@ async function generateFlashcardsFromText(content, context, count = 10) {
     return [];
   }
 }
-async function generateQuizFromText(text, subject, count) {
+async function generateQuizFromText(text, subject, count, focus) {
   const n = Math.max(3, Math.min(25, count || 8));
-  const prompt = "You're building a " + n + "-question multiple-choice practice quiz for a student studying " + (subject || "this material") + `. Read the source material and return ONLY this JSON, no other text: {"questions":[{"q":"the question text","choices":["four answer options, exactly 4, in any order"],"answerIndex":0,"topic":"a short 2-4 word topic label for what this question tests, e.g. 'cell membrane transport'"}]}. answerIndex is the 0-based index into choices of the single correct answer. Base every question directly on real academic content in the material below -- concepts, definitions, facts, processes -- never invent facts not present in it. If the material also contains course-administrative or policy information (grading breakdowns, exam schedule/count, attendance rules, syllabus logistics), ignore that entirely; it's never something to be tested on.
+  const focusInstruction = focus ? " This quiz is a targeted follow-up for a student who already took a related quiz and got these topics wrong: " + focus + ". Every question should probe one of those specific topics again -- write NEW questions, not the same ones, that test the same underlying concepts a different way." : "";
+  const prompt = "You're building a " + n + "-question multiple-choice practice quiz for a student studying " + (subject || "this material") + "." + focusInstruction + ` Read the source material and return ONLY this JSON, no other text: {"questions":[{"q":"the question text","choices":["four answer options, exactly 4, in any order"],"answerIndex":0,"topic":"a short 2-4 word topic label for what this question tests, e.g. 'cell membrane transport'"}]}. answerIndex is the 0-based index into choices of the single correct answer. Base every question directly on real academic content in the material below -- concepts, definitions, facts, processes -- never invent facts not present in it. If the material also contains course-administrative or policy information (grading breakdowns, exam schedule/count, attendance rules, syllabus logistics), ignore that entirely; it's never something to be tested on.
 
 Material:
 
@@ -4974,7 +4975,11 @@ function StudlinPrep({ setActive = () => {
     const pe = lsGet("practiceExams", []).find((p) => p.id === pendingPeId);
     return pe ? { pe, idx: 0, picked: null, answers: Array(pe.questions.length).fill(null), done: false } : null;
   });
-  const startPracticeExam = (pe) => setTakingQuiz({ pe, idx: 0, picked: null, answers: Array(pe.questions.length).fill(null), done: false });
+  const startPracticeExam = (pe) => {
+    setFollowUpReady(null);
+    setFollowUpError("");
+    setTakingQuiz({ pe, idx: 0, picked: null, answers: Array(pe.questions.length).fill(null), done: false });
+  };
   const finishPracticeExam = () => {
     const { pe, answers } = takingQuiz;
     const score = pe.questions.reduce((s, q, i) => s + (answers[i] === q.answerIndex ? 1 : 0), 0);
@@ -5019,6 +5024,46 @@ function StudlinPrep({ setActive = () => {
     }
     setTakingQuiz((t) => ({ ...t, done: true, score, total, wrongTopics }));
     refresh();
+  };
+  const [followUpLoading, setFollowUpLoading] = useState(false);
+  const [followUpError, setFollowUpError] = useState("");
+  const [followUpReady, setFollowUpReady] = useState(null);
+  const generateFollowUpPracticeExam = async () => {
+    if (!takingQuiz || !takingQuiz.done || !takingQuiz.wrongTopics || takingQuiz.wrongTopics.length === 0) return;
+    if (!canGenQuiz()) {
+      setUpgradeModal({ feature: "AI practice exams", detail: "You've used all " + QUIZ_GEN_LIMIT + " free practice exams this month. They reset in " + daysUntilReset() + " day" + (daysUntilReset() !== 1 ? "s" : "") + ", or upgrade for unlimited right now." });
+      return;
+    }
+    setFollowUpLoading(true);
+    setFollowUpError("");
+    const { pe, answers, wrongTopics } = takingQuiz;
+    const wrongQs = pe.questions.filter((q, i) => answers[i] !== q.answerIndex);
+    const exam = pe.examEventId ? lsGet("events", []).find((e) => e.id === pe.examEventId) : null;
+    const examMaterial = exam && exam.sourceMaterials && exam.sourceMaterials.length > 0 ? exam.sourceMaterials.map((f) => f.text).join("\n\n") : "";
+    const missedQsAsMaterial = wrongQs.map((q) => q.q + "\nCorrect answer: " + q.choices[q.answerIndex]).join("\n\n");
+    const basis = examMaterial || missedQsAsMaterial;
+    const count = Math.max(4, Math.min(15, wrongTopics.length * 3));
+    const questions = await generateQuizFromText(basis, pe.subject, count, wrongTopics.join(", "));
+    setFollowUpLoading(false);
+    if (!questions || questions.length === 0) {
+      setFollowUpError("Couldn't generate a follow-up. Try again.");
+      return;
+    }
+    recordQuizGen();
+    const newPe = createPracticeExam(pe.name + " (weak spots)", pe.subject, pe.examEventId, questions);
+    setFollowUpReady(newPe);
+    refresh();
+  };
+  const closeTakingQuiz = () => {
+    setTakingQuiz(null);
+    setFollowUpReady(null);
+    setFollowUpError("");
+  };
+  const takeFollowUpNow = () => {
+    const newPe = followUpReady;
+    setFollowUpReady(null);
+    setFollowUpError("");
+    if (newPe) startPracticeExam(newPe);
   };
   return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 2, background: T.card2, padding: 2, borderRadius: 4, width: "fit-content", marginBottom: 20, flexWrap: "wrap" } }, [{ id: "exams", label: "Exams" }, { id: "assignments", label: "Assignments" }, { id: "projects", label: "Projects" }, { id: "flashcards", label: "Flashcards" }, { id: "practiceExams", label: "Practice Exams" }].map((v) => /* @__PURE__ */ React.createElement("button", { key: v.id, onClick: () => {
     setTab(v.id);
@@ -5514,7 +5559,7 @@ function StudlinPrep({ setActive = () => {
       } }, "Cancel"), /* @__PURE__ */ React.createElement(Btn, { onClick: confirmNotesPicker, disabled: notesPickerSelected.length === 0 }, "Add ", notesPickerSelected.length || "", " to material"))
     },
     /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, matchingNotes.map((n) => /* @__PURE__ */ React.createElement("label", { key: n.id, style: { display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 12px", borderRadius: 10, border: `1px solid ${T.border}`, cursor: "pointer", background: notesPickerSelected.includes(n.id) ? T.card2 : "transparent" } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: notesPickerSelected.includes(n.id), onChange: () => toggleNotePick(n.id), style: { marginTop: 2, cursor: "pointer" } }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: T.text } }, n.title), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginTop: 2 } }, n.date)))))
-  ), /* @__PURE__ */ React.createElement(Modal, { open: !!takingQuiz, onClose: () => setTakingQuiz(null), title: takingQuiz?.pe?.name || "Practice Exam", width: 520 }, takingQuiz && !takingQuiz.done && (() => {
+  ), /* @__PURE__ */ React.createElement(Modal, { open: !!takingQuiz, onClose: closeTakingQuiz, title: takingQuiz?.pe?.name || "Practice Exam", width: 520 }, takingQuiz && !takingQuiz.done && (() => {
     const q = takingQuiz.pe.questions[takingQuiz.idx];
     const picked = takingQuiz.picked;
     return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: T.muted, marginBottom: 8 } }, "Question ", takingQuiz.idx + 1, " of ", takingQuiz.pe.questions.length), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: T.white, marginBottom: 14, lineHeight: 1.5 } }, q.q), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, q.choices.map((opt, i) => {
@@ -5536,7 +5581,11 @@ function StudlinPrep({ setActive = () => {
       if (isLast) finishPracticeExam();
       else setTakingQuiz((tq) => ({ ...tq, idx: tq.idx + 1, picked: null }));
     } }, takingQuiz.idx >= takingQuiz.pe.questions.length - 1 ? "See results" : "Next question \u2192")));
-  })(), takingQuiz && takingQuiz.done && /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", padding: "20px 0" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 32, fontWeight: 800, color: T.lime, marginBottom: 6 } }, takingQuiz.score, "/", takingQuiz.total), takingQuiz.wrongTopics && takingQuiz.wrongTopics.length > 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginBottom: 16 } }, "Studlin scheduled a review block for: ", takingQuiz.wrongTopics.join(", ")) : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, marginBottom: 16 } }, "Clean sweep, nice work."), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setTakingQuiz(null) }, "Close"))), /* @__PURE__ */ React.createElement(UpgradeModal, { open: !!upgradeModal, feature: upgradeModal ? upgradeModal.feature : "", detail: upgradeModal ? upgradeModal.detail : "", onClose: () => setUpgradeModal(null), onUpgraded: () => setUpgradeModal(null) }), flashcardsOverlay && ReactDOM.createPortal(/* @__PURE__ */ React.createElement("div", { style: { position: "fixed", inset: 0, zIndex: 900, background: T.bg, overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "sticky", top: 0, zIndex: 2, background: T.bg, borderBottom: `1px solid ${T.border}`, padding: "12px 32px" } }, /* @__PURE__ */ React.createElement("button", { onClick: () => setFlashcardsOverlay(false), style: { background: "none", border: "none", color: T.muted, fontSize: 12.5, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: "6px 0", display: "flex", alignItems: "center", gap: 6 } }, "\u2190 Back to Studlin Prep")), /* @__PURE__ */ React.createElement("div", { style: { padding: "24px 32px" } }, /* @__PURE__ */ React.createElement(Flashcards, null))), document.body));
+  })(), takingQuiz && takingQuiz.done && /* @__PURE__ */ React.createElement("div", { style: { padding: "20px 0" } }, /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 32, fontWeight: 800, color: T.lime, marginBottom: 6 } }, takingQuiz.score, "/", takingQuiz.total), takingQuiz.wrongTopics && takingQuiz.wrongTopics.length > 0 ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.muted, marginBottom: 16 } }, "Studlin scheduled a review block for: ", takingQuiz.wrongTopics.join(", ")) : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: T.muted, marginBottom: 16 } }, "Clean sweep, nice work.")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, maxHeight: 260, overflowY: "auto", padding: "2px", marginBottom: 16 } }, takingQuiz.pe.questions.map((q, i) => {
+    const picked = takingQuiz.answers[i];
+    const correct = picked === q.answerIndex;
+    return /* @__PURE__ */ React.createElement("div", { key: i, style: { padding: "10px 12px", borderRadius: 8, border: `1px solid ${correct ? T.border : T.red + "33"}`, background: correct ? T.card2 : T.red + "0a" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, fontWeight: 600, marginBottom: 4 } }, q.q), correct ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.teal } }, "\u2713 ", q.choices[q.answerIndex]) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.red } }, "\u2715 ", picked != null ? q.choices[picked] : "No answer"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: T.teal, marginTop: 2 } }, "\u2713 ", q.choices[q.answerIndex])));
+  })), followUpReady ? /* @__PURE__ */ React.createElement("div", { style: { padding: "12px 14px", borderRadius: 10, border: `1px solid ${T.limeDk}55`, background: T.lime + "0f", marginBottom: 14, textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: T.text, fontWeight: 600, marginBottom: 10 } }, "Follow-up ready: ", followUpReady.questions.length, " question", followUpReady.questions.length !== 1 ? "s" : "", " on what you missed"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, justifyContent: "center" } }, /* @__PURE__ */ React.createElement(Btn, { onClick: takeFollowUpNow }, "Take it now"), /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: () => setFollowUpReady(null) }, "Later"))) : takingQuiz.wrongTopics && takingQuiz.wrongTopics.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", marginBottom: 14 } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", disabled: followUpLoading, onClick: generateFollowUpPracticeExam }, followUpLoading ? "Building your follow-up\u2026" : "Create a follow-up on what I missed"), followUpError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: T.red, marginTop: 8 } }, followUpError)), /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center" } }, /* @__PURE__ */ React.createElement(Btn, { variant: "subtle", onClick: closeTakingQuiz }, "Close")))), /* @__PURE__ */ React.createElement(UpgradeModal, { open: !!upgradeModal, feature: upgradeModal ? upgradeModal.feature : "", detail: upgradeModal ? upgradeModal.detail : "", onClose: () => setUpgradeModal(null), onUpgraded: () => setUpgradeModal(null) }), flashcardsOverlay && ReactDOM.createPortal(/* @__PURE__ */ React.createElement("div", { style: { position: "fixed", inset: 0, zIndex: 900, background: T.bg, overflowY: "auto" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "sticky", top: 0, zIndex: 2, background: T.bg, borderBottom: `1px solid ${T.border}`, padding: "12px 32px" } }, /* @__PURE__ */ React.createElement("button", { onClick: () => setFlashcardsOverlay(false), style: { background: "none", border: "none", color: T.muted, fontSize: 12.5, fontWeight: 600, fontFamily: T.font, cursor: "pointer", padding: "6px 0", display: "flex", alignItems: "center", gap: 6 } }, "\u2190 Back to Studlin Prep")), /* @__PURE__ */ React.createElement("div", { style: { padding: "24px 32px" } }, /* @__PURE__ */ React.createElement(Flashcards, null))), document.body));
 }
 function Flashcards() {
   const MicIcon = /* @__PURE__ */ React.createElement("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round", strokeLinejoin: "round", style: { flexShrink: 0, display: "block" } }, /* @__PURE__ */ React.createElement("rect", { x: "9", y: "2", width: "6", height: "12", rx: "3" }), /* @__PURE__ */ React.createElement("path", { d: "M5 10v1a7 7 0 0 0 14 0v-1" }), /* @__PURE__ */ React.createElement("line", { x1: "12", y1: "18", x2: "12", y2: "22" }));
@@ -16600,6 +16649,9 @@ function App() {
         setTimerTask(null);
       },
       onGoToLinkedResource: (t) => {
+        const cp = getTimerCheckpoint();
+        const resolved = cp && cp.taskId === t.id ? resolveOrphanedCheckpoint(cp, lsGet("events", [])) : null;
+        if (resolved) setRecoveredSession(resolved);
         setTimerTask(null);
         if (t.deckId) {
           lsSet("openDeckId", t.deckId);
